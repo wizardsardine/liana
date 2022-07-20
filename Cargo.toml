@@ -1,0 +1,34 @@
+[package]
+name = "minisafed"
+version = "0.0.1"
+authors = ["Antoine Poinsot <darosior@protonmail.com>"]
+edition = "2018"
+repository = "https://github.com/revault/minisafed"
+license-file = "LICENCE"
+keywords = ["bitcoin", "wallet", "safe", "script", "miniscript", "inheritance", "recovery"]
+description = "Minisafe wallet daemon"
+exclude = [".github/", ".cirrus.yml", "tests/",  "test_data/", "contrib/", "pyproject.toml"]
+
+[[bin]]
+name = "minisafed"
+path = "src/bin/daemon.rs"
+
+[[bin]]
+name = "minisafe-cli"
+path = "src/bin/cli.rs"
+
+[dependencies]
+# For managing transactions (it re-exports the bitcoin crate)
+miniscript = { version = "6.0.0", features = ["compiler", "use-serde"] }
+
+# Don't reinvent the wheel
+dirs = "3.0"
+
+# We use TOML for the config, and JSON for RPC
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.5"
+serde_json = { version = "1.0", features = ["raw_value"] }
+
+# Logging stuff
+log = "0.4"
+fern = "0.6"
