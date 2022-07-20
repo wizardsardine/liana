@@ -32,3 +32,8 @@ serde_json = { version = "1.0", features = ["raw_value"] }
 # Logging stuff
 log = "0.4"
 fern = "0.6"
+
+# In order to have a backtrace on panic, because the
+# stdlib does not have a programmatic interface yet
+# to work with our custom panic hook.
+backtrace = "0.3"

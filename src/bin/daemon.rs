@@ -5,7 +5,7 @@ use std::{
     process, time,
 };
 
-use minisafed::config::Config;
+use minisafed::{config::Config, DaemonHandle};
 
 fn parse_args(args: Vec<String>) -> Option<PathBuf> {
     if args.len() == 1 {
@@ -56,6 +56,11 @@ fn main() {
     setup_logger(config.log_level).unwrap_or_else(|e| {
         eprintln!("Error setting up logger: {}", e);
         process::exit(1);
+    });
+
+    let _ = DaemonHandle::start(config).unwrap_or_else(|e| {
+        // The panic hook will log::error
+        panic!("Starting Minisafe daemon: {}", e);
     });
 
     // We are always logging to stdout, should it be then piped to the log file (if self) or
