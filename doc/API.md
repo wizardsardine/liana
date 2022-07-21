@@ -13,6 +13,10 @@ Note that all addresses are bech32-encoded *version 0* native Segwit `scriptPubK
 | [`getaddress`](#getaddress)                                 | Get an address                                       |
 | [`listutxos`](#listutxos)                                   | Display a paginated list of utxos                    |
 | [`getspendtx`](#getspendtx)                                 | Retrieve the Minisafe spend transaction to sign      |
+| [`updatespendtx`](#updatespendtx)                           | Update the Minisafe spend transaction                |
+| [`deletespendtx`](#deletespendtx)                           | Delete the Minisafe spend transaction                |
+| [`listspendtxs`](#listspendtxs)                             | Retrieve the Minisafe pending outgoing transactions  |
+| [`gethistory`](#gethistory)                                 | Retrieve the wallet history                          |
 | [`broadcast`](#broadcast)                                   | Broadcast a Spend transaction                        |
 
 # Reference
@@ -106,6 +110,51 @@ set of utxos to spend.
 | ---------- | ----------------------------------------------------------- | ------------------------------ |
 | `spend_tx` | [Spend transaction resources](#spend_transaction_resources) | Spend transaction informations |
 
+### `updatespendtx`
+
+The `updatespendtx` RPC Command stores or update the stored Spend transaction with the
+given one. The signatures from both the old & the new transactions will be merged.
+
+#### Request
+
+| Field       | Type         | Description                                                           |
+| ----------- | ------------ | --------------------------------------------------------------------- |
+| `spend_tx`  | string       | Base64-encoded Spend transaction PSBT                                 |
+
+#### Response
+
+None; the `result` field will be set to the empty object `{}`. Any value should be
+disregarded for forward compatibility.
+
+
+### `delspendtx`
+
+#### Request
+
+| Field          | Type   | Description                                         |
+| -------------- | ------ | --------------------------------------------------- |
+| `spend_txid`   | string | Hex encoded txid of the Spend transaction to delete |
+
+#### Response
+
+None; the `result` field will be set to the empty object `{}`. Any value should be
+disregarded for forward compatibility.
+
+
+### `listspendtxs`
+
+List spend transaction that are not totally signed or are not broadcasted.
+
+#### Request
+
+| Field          | Type   | Description                                                          |
+| -------------- | ------ | -------------------------------------------------------------------- |
+
+#### Response
+
+| Field          | Type   | Description                                                          |
+| -------------- | ------ | -------------------------------------------------------------------- |
+| `spend_txs`    | array  | Array of [Spend transaction resources](#spend_transaction_resources) |
 
 ##### Spend transaction resources
 
@@ -129,3 +178,35 @@ a signed psbt.
 
 | Field      | Type                                                        | Description                    |
 | ---------- | ----------------------------------------------------------- | ------------------------------ |
+
+### `gethistory`
+
+`gethistory` retrieves a paginated list of accounting events.
+
+Aiming at giving an accounting point of view, the amounts returned by this call are the total
+of inflows and outflows net of any change amount (that is technically a transaction output, but not a cash outflow).
+
+#### Request
+
+| Field         | Type         | Description                                                          |
+| ------------- | ------------ | -------------------------------------------------------------------- |
+| `kind`        | string array | Type of the events to retrieve, can be `deposit`, `cancel`, `spend`  |
+| `start`       | int          | Timestamp of the beginning of the period to retrieve events for      |
+| `end`         | int          | Timestamp of the end of the period to retrieve events for            |
+| `limit`       | int          | Maximum number of events to retrieve                                 |
+
+#### Response
+
+| Field          | Type   | Description                                |
+| -------------- | ------ | ------------------------------------------ |
+| `events`       | array  | Array of [Event resource](#event-resource) |
+
+##### Event Resource
+
+| Field         | Type          | Description                                                                                                             |
+| ------------- | ------------- | -----------------------------------------------------------------------------------------------------------------       |
+| `blockheight` | int           | Blockheight of the event final transaction                                                                              |
+| `txid`        | string        | Hex string  of the event final transaction id                                                                           |
+| `kind`        | string        | Type of the event. Can be `deposit`, `spend`                                                                  |
+| `date`        | int           | Timestamp of the event                                                                                                  |
+| `amount`      | int or `null` | Absolute amount in satoshis that is entering or exiting the wallet, `null` if the event is a `cancel` event             |
