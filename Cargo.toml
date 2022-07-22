@@ -37,3 +37,5 @@ fern = "0.6"
 # stdlib does not have a programmatic interface yet
 # to work with our custom panic hook.
 backtrace = "0.3"
+
+rusqlite = { version = "0.28", features = ["bundled", "unlock_notify"] }
