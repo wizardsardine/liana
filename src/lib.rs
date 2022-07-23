@@ -198,7 +198,7 @@ impl DaemonHandle {
     pub fn shutdown(self) {}
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::config::BitcoindConfig;
