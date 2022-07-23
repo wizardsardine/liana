@@ -36,5 +36,9 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           override: true
           profile: minimal
-      - name: Test on Rust ${{ matrix.toolchain }}
-        run: cargo test --verbose
+      - name: Test on Rust ${{ matrix.toolchain }} (only Windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo test --verbose --no-default-features
+      - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
+        if: matrix.os != 'windows-latest'
+        run: cargo test --verbose --color always -- --nocapture

@@ -12,10 +12,16 @@ exclude = [".github/", ".cirrus.yml", "tests/",  "test_data/", "contrib/", "pypr
 [[bin]]
 name = "minisafed"
 path = "src/bin/daemon.rs"
+required-features = ["jsonrpc_server"]
 
 [[bin]]
 name = "minisafe-cli"
 path = "src/bin/cli.rs"
+required-features = ["jsonrpc_server"]
+
+[features]
+default = ["jsonrpc_server"]
+jsonrpc_server = []
 
 [dependencies]
 # For managing transactions (it re-exports the bitcoin crate)
