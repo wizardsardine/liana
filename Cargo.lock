@@ -237,6 +237,7 @@ dependencies = [
  "dirs",
  "fern",
  "jsonrpc",
+ "libc",
  "log",
  "miniscript",
  "rusqlite",

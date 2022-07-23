@@ -45,6 +45,11 @@ fn default_poll_interval() -> Duration {
     Duration::from_secs(30)
 }
 
+#[cfg(unix)]
+fn default_daemon() -> bool {
+    false
+}
+
 /// Everything we need to know for talking to bitcoind serenely
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BitcoindConfig {
@@ -69,7 +74,9 @@ pub struct Config {
     /// An optional custom data directory
     pub data_dir: Option<PathBuf>,
     /// Whether to daemonize the process
-    pub daemon: Option<bool>,
+    #[cfg(unix)]
+    #[serde(default = "default_daemon")]
+    pub daemon: bool,
     /// What messages to log
     #[serde(
         deserialize_with = "deserialize_fromstr",
@@ -244,6 +251,7 @@ mod tests {
             "#.trim_start().replace("            ", "");
         let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
         let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
+        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
         assert_eq!(toml_str, serialized);
 
         // Invalid desc checksum

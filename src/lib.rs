@@ -1,5 +1,7 @@
 mod bitcoin;
 pub mod config;
+#[cfg(unix)]
+mod daemonize;
 mod database;
 
 use crate::{
@@ -50,6 +52,8 @@ pub enum StartupError {
     DatadirCreation(path::PathBuf, io::Error),
     Database(SqliteDbError),
     Bitcoind(BitcoindError),
+    #[cfg(unix)]
+    Daemonization(&'static str),
 }
 
 impl fmt::Display for StartupError {
@@ -66,6 +70,8 @@ impl fmt::Display for StartupError {
             ),
             Self::Database(e) => write!(f, "Error initializing database: '{}'.", e),
             Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
+            #[cfg(unix)]
+            Self::Daemonization(e) => write!(f, "Error when daemonizing: '{}'.", e),
         }
     }
 }
@@ -169,6 +175,20 @@ impl DaemonHandle {
         bitcoind.sanity_check(&config.main_descriptor, config.bitcoind_config.network)?;
         bitcoind.with_retry_limit(None);
         log::info!("Connection to bitcoind established and checked.");
+
+        // If we are on a UNIX system and they told us to daemonize, do it now.
+        // NOTE: it's safe to daemonize now, as we don't carry any open DB connection
+        // https://www.sqlite.org/howtocorrupt.html#_carrying_an_open_database_connection_across_a_fork_
+        #[cfg(unix)]
+        if config.daemon {
+            log::info!("Daemonizing");
+            let log_file = data_dir.as_path().join("log");
+            let pid_file = data_dir.as_path().join("revaultd.pid");
+            unsafe {
+                daemonize::daemonize(&data_dir, &log_file, &pid_file)
+                    .map_err(StartupError::Daemonization)?;
+            }
+        }
 
         Ok(Self {})
     }
@@ -369,7 +389,8 @@ mod tests {
         let config = Config {
             bitcoind_config,
             data_dir: Some(data_dir.clone()),
-            daemon: None,
+            #[cfg(unix)]
+            daemon: false,
             log_level: log::LevelFilter::Debug,
             main_descriptor: desc,
         };

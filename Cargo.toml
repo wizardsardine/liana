@@ -42,3 +42,6 @@ rusqlite = { version = "0.28", features = ["bundled", "unlock_notify"] }
 
 # To talk to bitcoind
 jsonrpc = "0.12"
+
+# Used for daemonization
+libc = "0.2"
