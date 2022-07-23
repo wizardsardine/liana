@@ -39,3 +39,6 @@ fern = "0.6"
 backtrace = "0.3"
 
 rusqlite = { version = "0.28", features = ["bundled", "unlock_notify"] }
+
+# To talk to bitcoind
+jsonrpc = "0.12"
