@@ -334,7 +334,9 @@ impl BitcoinD {
         );
 
         if let Some(warning) = res.get("warning").map(Json::as_str).flatten() {
-            return Some(warning.to_string());
+            if !warning.is_empty() {
+                return Some(warning.to_string());
+            }
         }
         if res.get("name").is_none() {
             return Some("Unknown error when create watchonly wallet".to_string());
