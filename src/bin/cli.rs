@@ -1,4 +1,4 @@
-use minisafed::config::{config_folder_path, Config};
+use minisafe::config::{config_folder_path, Config};
 
 use std::{
     env,
