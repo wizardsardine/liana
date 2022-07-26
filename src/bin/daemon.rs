@@ -5,7 +5,7 @@ use std::{
     process, time,
 };
 
-use minisafed::{config::Config, DaemonHandle};
+use minisafe::{config::Config, DaemonHandle};
 
 fn parse_args(args: Vec<String>) -> Option<PathBuf> {
     if args.len() == 1 {
