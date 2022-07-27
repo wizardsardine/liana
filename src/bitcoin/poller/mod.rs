@@ -1,6 +1,9 @@
 mod looper;
 
-use crate::bitcoin::{poller::looper::looper, BitcoinInterface};
+use crate::{
+    bitcoin::{poller::looper::looper, BitcoinInterface},
+    database::DatabaseInterface,
+};
 
 use std::{
     sync::{self, atomic},
@@ -14,11 +17,15 @@ pub struct Poller {
 }
 
 impl Poller {
-    pub fn start(bit: impl BitcoinInterface + 'static, poll_interval: time::Duration) -> Poller {
+    pub fn start(
+        bit: impl BitcoinInterface + 'static,
+        db: impl DatabaseInterface + 'static,
+        poll_interval: time::Duration,
+    ) -> Poller {
         let shutdown = sync::Arc::from(atomic::AtomicBool::from(false));
         let handle = thread::spawn({
             let shutdown = shutdown.clone();
-            move || looper(bit, shutdown, poll_interval)
+            move || looper(bit, db, shutdown, poll_interval)
         });
 
         Poller { shutdown, handle }

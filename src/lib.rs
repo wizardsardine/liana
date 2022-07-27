@@ -194,8 +194,11 @@ impl DaemonHandle {
 
         // Spawn the bitcoind poller with a retry limit high enough that we'd fail after that.
         let bitcoind = sync::Arc::from(sync::RwLock::from(bitcoind.with_retry_limit(None)));
-        let bit_poller =
-            poller::Poller::start(bitcoind.clone(), config.bitcoind_config.poll_interval_secs);
+        let bit_poller = poller::Poller::start(
+            bitcoind.clone(),
+            db,
+            config.bitcoind_config.poll_interval_secs,
+        );
         bit_poller.stop();
 
         Ok(Self {})

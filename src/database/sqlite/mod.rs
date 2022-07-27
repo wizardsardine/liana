@@ -6,11 +6,16 @@
 ///!
 ///! We leverage SQLite's `unlock_notify` feature to synchronize writes accross connection. More
 ///! about it at https://sqlite.org/unlock_notify.html.
-mod schema;
+pub mod schema;
 mod utils;
 
-use schema::{DbTip, DbWallet};
-use utils::{create_fresh_db, db_query};
+use crate::{
+    bitcoin::BlockChainTip,
+    database::sqlite::{
+        schema::{DbTip, DbWallet},
+        utils::{create_fresh_db, db_exec, db_query},
+    },
+};
 
 use std::{convert::TryInto, fmt, io, path};
 
@@ -178,12 +183,34 @@ impl SqliteConn {
         .pop()
         .expect("There is always a row in the wallet table")
     }
+
+    /// Update the network tip.
+    pub fn update_tip(&mut self, tip: &BlockChainTip) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx
+                .execute(
+                    "UPDATE tip SET blockheight = (?1), blockhash = (?2)",
+                    rusqlite::params![tip.height, tip.hash.to_vec()],
+                )
+                .map(|_| ())
+        })
+        .expect("Database must be available")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{env, fs, path, process, str::FromStr, thread};
+
+    fn dummy_options() -> FreshDbOptions {
+        let desc_str = "wsh(andor(pk(03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a),older(10000),pk(0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce)))";
+        let main_descriptor = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
+        FreshDbOptions {
+            bitcoind_network: bitcoin::Network::Bitcoin,
+            main_descriptor,
+        }
+    }
 
     #[test]
     fn db_startup_sanity_checks() {
@@ -202,15 +229,10 @@ mod tests {
             .to_string()
             .contains("database file not found"));
 
-        let desc_str = "wsh(andor(pk(03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a),older(10000),pk(0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce)))";
-        let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
-        let options = FreshDbOptions {
-            bitcoind_network: bitcoin::Network::Bitcoin,
-            main_descriptor: desc.clone(),
-        };
+        let options = dummy_options();
 
         let db = SqliteDb::new(db_path.clone(), Some(options.clone())).unwrap();
-        db.sanity_check(bitcoin::Network::Testnet, &desc)
+        db.sanity_check(bitcoin::Network::Testnet, &options.main_descriptor)
             .unwrap_err()
             .to_string()
             .contains("Database was created for network");
@@ -226,9 +248,50 @@ mod tests {
         // TODO: version check
 
         let db = SqliteDb::new(db_path.clone(), Some(options.clone())).unwrap();
-        db.sanity_check(bitcoin::Network::Bitcoin, &desc).unwrap();
+        db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
+            .unwrap();
         let db = SqliteDb::new(db_path.clone(), None).unwrap();
-        db.sanity_check(bitcoin::Network::Bitcoin, &desc).unwrap();
+        db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
+            .unwrap();
+
+        fs::remove_dir_all(&tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn db_tip_update() {
+        let tmp_dir = env::temp_dir().join(format!(
+            "minisafed-unit-tests-{}-{:?}",
+            process::id(),
+            thread::current().id()
+        ));
+        fs::create_dir_all(&tmp_dir).unwrap();
+
+        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("minisafed.sqlite3")]
+            .iter()
+            .collect();
+        let options = dummy_options();
+        let db = SqliteDb::new(db_path.clone(), Some(options.clone())).unwrap();
+
+        {
+            let mut conn = db.connection().unwrap();
+            let db_tip = conn.db_tip();
+            assert!(
+                db_tip.block_hash.is_none()
+                    && db_tip.block_height.is_none()
+                    && db_tip.network == options.bitcoind_network
+            );
+            let new_tip = BlockChainTip {
+                height: 746756,
+                hash: bitcoin::BlockHash::from_str(
+                    "00000000000000000006d50e4c9fd269ddf690c94f422dff85e96f1a84b3a615",
+                )
+                .unwrap(),
+            };
+            conn.update_tip(&new_tip);
+            let db_tip = conn.db_tip();
+            assert_eq!(db_tip.block_height.unwrap(), new_tip.height);
+            assert_eq!(db_tip.block_hash.unwrap(), new_tip.hash);
+        }
 
         fs::remove_dir_all(&tmp_dir).unwrap();
     }

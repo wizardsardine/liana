@@ -1,14 +1,46 @@
-use crate::bitcoin::BitcoinInterface;
+use crate::{
+    bitcoin::BitcoinInterface,
+    database::{DatabaseConnection, DatabaseInterface},
+};
 
 use std::{
     sync::{self, atomic},
     thread, time,
 };
 
+fn update_tip(bit: &impl BitcoinInterface, db_conn: &mut Box<dyn DatabaseConnection>) {
+    let bitcoin_tip = bit.chain_tip();
+
+    let current_tip = match db_conn.chain_tip() {
+        Some(tip) => tip,
+        None => {
+            db_conn.update_tip(&bitcoin_tip);
+            return;
+        }
+    };
+
+    // If the tip didn't change, there is nothing to update.
+    if current_tip == bitcoin_tip {
+        return;
+    }
+
+    if bitcoin_tip.height > current_tip.height {
+        // Make sure we are on the same chain.
+        if bit.is_in_chain(&current_tip) {
+            // All good, we just moved forward. Record the new tip.
+            db_conn.update_tip(&bitcoin_tip);
+            return;
+        }
+    }
+
+    // TODO: reorg handling.
+}
+
 /// Main event loop. Repeatedly polls the Bitcoin interface until told to stop through the
 /// `shutdown` atomic.
 pub fn looper(
     bit: impl BitcoinInterface,
+    db: impl DatabaseInterface,
     shutdown: sync::Arc<atomic::AtomicBool>,
     poll_interval: time::Duration,
 ) {
@@ -42,5 +74,8 @@ pub fn looper(
                 continue;
             }
         }
+
+        let mut db_conn = db.connection();
+        update_tip(&bit, &mut db_conn);
     }
 }
