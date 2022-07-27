@@ -42,3 +42,43 @@ jobs:
       - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
         if: matrix.os != 'windows-latest'
         run: cargo test --verbose --color always -- --nocapture
+
+  linter_gui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            components: rustfmt
+            override: true
+      - name: rustfmt
+        run: cd gui && cargo fmt -- --check
+
+  unit_tests_gui:
+    needs: linter_gui
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+          - nightly
+        os:
+          - ubuntu-latest
+          - macOS-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v2
+      - name: Install Rust ${{ matrix.toolchain }} toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+          profile: minimal
+      - name: Test on Rust ${{ matrix.toolchain }} (only Windows)
+        if: matrix.os == 'windows-latest'
+        run: cd gui && cargo test --verbose --no-default-features
+      - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
+        if: matrix.os != 'windows-latest'
+        run: cd gui && cargo test --verbose --color always -- --nocapture
