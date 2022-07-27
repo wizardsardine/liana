@@ -171,7 +171,7 @@ impl DaemonHandle {
             bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
             log::info!("Created a new watchonly wallet on bitcoind.");
         }
-        bitcoind.maybe_load_watchonly_wallet()?;
+        bitcoind.try_load_watchonly_wallet();
         bitcoind.sanity_check(&config.main_descriptor, config.bitcoind_config.network)?;
         bitcoind.with_retry_limit(None);
         log::info!("Connection to bitcoind established and checked.");

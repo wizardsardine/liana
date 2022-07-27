@@ -334,7 +334,9 @@ impl BitcoinD {
         );
 
         if let Some(warning) = res.get("warning").map(Json::as_str).flatten() {
-            return Some(warning.to_string());
+            if !warning.is_empty() {
+                return Some(warning.to_string());
+            }
         }
         if res.get("name").is_none() {
             return Some("Unknown error when create watchonly wallet".to_string());
@@ -416,27 +418,14 @@ impl BitcoinD {
         Ok(())
     }
 
-    pub fn maybe_load_watchonly_wallet(&self) -> Result<(), BitcoindError> {
-        match self.make_fallible_node_request(
+    /// Try to load the watchonly wallet in bitcoind. It will continue on error (since it's
+    /// likely the wallet is just already loaded) and log it as info instead.
+    pub fn try_load_watchonly_wallet(&self) {
+        if let Err(e) = self.make_fallible_node_request(
             "loadwallet",
             &params!(Json::String(self.watchonly_wallet_path.clone()),),
         ) {
-            Err(e) => {
-                if e.to_string().contains("is already loaded") {
-                    Ok(())
-                } else {
-                    Err(e)
-                }
-            }
-            Ok(res) => {
-                if let Some(warning) = res.get("warning").map(Json::as_str).flatten() {
-                    Err(BitcoindError::WalletLoading(warning.to_string()))
-                } else if res.get("name").is_none() {
-                    Err(BitcoindError::WalletLoading(res.to_string()))
-                } else {
-                    Ok(())
-                }
-            }
+            log::info!("Got error '{}' while trying to load watchonly on bitcoind. It is possibly already loaded.", e);
         }
     }
 

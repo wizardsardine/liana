@@ -1,0 +1,9 @@
+tags
+target/
+__pycache__
+config*.toml
+dummy_config.toml
+regtest/
+venv/
+pytest.log
+TODO
