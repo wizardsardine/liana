@@ -3,6 +3,9 @@ pub mod config;
 #[cfg(unix)]
 mod daemonize;
 mod database;
+pub mod descriptors;
+
+pub use miniscript;
 
 use crate::{
     bitcoin::d::{BitcoinD, BitcoindError},
