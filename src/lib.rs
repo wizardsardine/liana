@@ -10,10 +10,13 @@ pub use miniscript;
 use crate::{
     bitcoin::{
         d::{BitcoinD, BitcoindError},
-        poller,
+        poller, BitcoinInterface,
     },
     config::{config_folder_path, Config},
-    database::sqlite::{FreshDbOptions, SqliteDb, SqliteDbError},
+    database::{
+        sqlite::{FreshDbOptions, SqliteDb, SqliteDbError},
+        DatabaseInterface,
+    },
 };
 
 use std::{error, fmt, fs, io, path, sync};
@@ -124,7 +127,30 @@ fn create_datadir(datadir_path: &path::Path) -> Result<(), StartupError> {
     };
 }
 
-pub struct DaemonHandle {}
+pub struct DaemonControl {
+    config: Config,
+    bitcoin: Box<dyn BitcoinInterface>,
+    db: Box<dyn DatabaseInterface>,
+}
+
+impl DaemonControl {
+    pub fn new(
+        config: Config,
+        bitcoin: Box<dyn BitcoinInterface>,
+        db: Box<dyn DatabaseInterface>,
+    ) -> DaemonControl {
+        DaemonControl {
+            config,
+            bitcoin,
+            db,
+        }
+    }
+}
+
+pub struct DaemonHandle {
+    pub control: DaemonControl,
+    bitcoin_poller: poller::Poller,
+}
 
 impl DaemonHandle {
     /// This starts the Minisafe daemon. Call `shutdown` to shut it down.
@@ -138,6 +164,7 @@ impl DaemonHandle {
         // First, check the data directory
         let mut data_dir = config
             .data_dir
+            .clone()
             .unwrap_or(config_folder_path().ok_or(StartupError::DefaultDataDirNotFound)?);
         data_dir.push(config.bitcoind_config.network.to_string());
         let fresh_data_dir = !data_dir.as_path().exists();
@@ -158,8 +185,8 @@ impl DaemonHandle {
         } else {
             None
         };
-        let db = SqliteDb::new(db_path, options)?;
-        db.sanity_check(config.bitcoind_config.network, &config.main_descriptor)?;
+        let sqlite = SqliteDb::new(db_path, options)?;
+        sqlite.sanity_check(config.bitcoind_config.network, &config.main_descriptor)?;
         log::info!("Database initialized and checked.");
 
         // Now set up the bitcoind interface
@@ -197,19 +224,30 @@ impl DaemonHandle {
 
         // Spawn the bitcoind poller with a retry limit high enough that we'd fail after that.
         let bitcoind = sync::Arc::from(sync::RwLock::from(bitcoind.with_retry_limit(None)));
-        let bit_poller = poller::Poller::start(
+        let bitcoin_poller = poller::Poller::start(
             bitcoind.clone(),
-            db,
+            sqlite.clone(),
             config.bitcoind_config.poll_interval_secs,
         );
-        bit_poller.stop();
 
-        Ok(Self {})
+        // Finally, set up the API.
+        let control = DaemonControl {
+            config,
+            bitcoin: Box::from(bitcoind),
+            db: Box::from(sqlite),
+        };
+
+        Ok(Self {
+            control,
+            bitcoin_poller,
+        })
     }
 
     // NOTE: this moves out the data as it should not be reused after shutdown
     /// Shut down the Minisafe daemon.
-    pub fn shutdown(self) {}
+    pub fn shutdown(self) {
+        self.bitcoin_poller.stop();
+    }
 }
 
 #[cfg(all(test, unix))]
