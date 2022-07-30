@@ -1,4 +1,5 @@
 mod bitcoin;
+mod commands;
 pub mod config;
 #[cfg(unix)]
 mod daemonize;
