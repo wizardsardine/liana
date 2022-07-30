@@ -8,12 +8,15 @@ pub mod descriptors;
 pub use miniscript;
 
 use crate::{
-    bitcoin::d::{BitcoinD, BitcoindError},
+    bitcoin::{
+        d::{BitcoinD, BitcoindError},
+        poller,
+    },
     config::{config_folder_path, Config},
     database::sqlite::{FreshDbOptions, SqliteDb, SqliteDbError},
 };
 
-use std::{error, fmt, fs, io, path};
+use std::{error, fmt, fs, io, path, sync};
 
 #[cfg(not(test))]
 use std::{panic, process};
@@ -176,7 +179,6 @@ impl DaemonHandle {
         }
         bitcoind.try_load_watchonly_wallet();
         bitcoind.sanity_check(&config.main_descriptor, config.bitcoind_config.network)?;
-        bitcoind.with_retry_limit(None);
         log::info!("Connection to bitcoind established and checked.");
 
         // If we are on a UNIX system and they told us to daemonize, do it now.
@@ -192,6 +194,15 @@ impl DaemonHandle {
                     .map_err(StartupError::Daemonization)?;
             }
         }
+
+        // Spawn the bitcoind poller with a retry limit high enough that we'd fail after that.
+        let bitcoind = sync::Arc::from(sync::RwLock::from(bitcoind.with_retry_limit(None)));
+        let bit_poller = poller::Poller::start(
+            bitcoind.clone(),
+            db,
+            config.bitcoind_config.poll_interval_secs,
+        );
+        bit_poller.stop();
 
         Ok(Self {})
     }
@@ -343,6 +354,18 @@ mod tests {
         stream.flush().unwrap();
     }
 
+    // Send them a response to 'getblockchaininfo' saying we are far from being synced
+    fn complete_sync_check<'a>(server: &net::TcpListener) {
+        let net_resp = [
+            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"verificationprogress\":0.1}}\n".as_bytes(),
+        ]
+        .concat();
+        let (mut stream, _) = server.accept().unwrap();
+        read_til_json_end(&mut stream);
+        stream.write_all(&net_resp).unwrap();
+        stream.flush().unwrap();
+    }
+
     #[test]
     fn daemon_startup() {
         let tmp_dir = env::temp_dir().join(format!(
@@ -413,6 +436,7 @@ mod tests {
         complete_network_check(&server);
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, desc_str);
+        complete_sync_check(&server);
         daemon_thread.join().unwrap();
 
         // The datadir is created now, so if we restart it it won't create the wo wallet.
@@ -426,6 +450,7 @@ mod tests {
         complete_network_check(&server);
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, desc_str);
+        complete_sync_check(&server);
         daemon_thread.join().unwrap();
 
         fs::remove_dir_all(&tmp_dir).unwrap();

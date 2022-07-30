@@ -1,9 +1,9 @@
 ///! Implementation of the Bitcoin interface using bitcoind.
 ///!
 ///! We use the RPC interface and a watchonly descriptor wallet.
-use crate::config;
+use crate::{bitcoin::BlockChainTip, config};
 
-use std::{fs, io, time::Duration};
+use std::{convert::TryInto, fs, io, str::FromStr, time::Duration};
 
 use jsonrpc::{
     arg,
@@ -476,5 +476,62 @@ impl BitcoinD {
         }
 
         Ok(())
+    }
+
+    fn block_chain_info(&self) -> Json {
+        self.make_node_request("getblockchaininfo", &[])
+    }
+
+    pub fn sync_progress(&self) -> f64 {
+        // TODO: don't harass revaultd, be smarter like in revaultd.
+        roundup_progress(
+            self.block_chain_info()
+                .get("verificationprogress")
+                .and_then(Json::as_f64)
+                .expect("No valid 'verificationprogress' in getblockchaininfo response?"),
+        )
+    }
+
+    pub fn chain_tip(&self) -> BlockChainTip {
+        // We use getblockchaininfo to avoid a race between getblockcount and getblockhash
+        let chain_info = self.block_chain_info();
+        let hash = bitcoin::BlockHash::from_str(
+            chain_info
+                .get("bestblockhash")
+                .and_then(Json::as_str)
+                .expect("No valid 'bestblockhash' in 'getblockchaininfo' response?"),
+        )
+        .expect("Invalid blockhash from bitcoind?");
+        let height: i32 = chain_info
+            .get("blocks")
+            .and_then(Json::as_i64)
+            .expect("No valid 'blocks' in 'getblockchaininfo' response?")
+            .try_into()
+            .expect("Must fit by Bitcoin consensus");
+
+        BlockChainTip { hash, height }
+    }
+
+    pub fn get_block_hash(&self, height: i32) -> Option<bitcoin::BlockHash> {
+        Some(
+            self.make_fallible_node_request("getblockhash", &params!(Json::Number(height.into()),))
+                .ok()?
+                .as_str()
+                .and_then(|s| bitcoin::BlockHash::from_str(s).ok())
+                .expect("bitcoind must send valid block hashes"),
+        )
+    }
+}
+
+// Bitcoind uses a guess for the value of verificationprogress. It will eventually get to
+// be 1, and we want to be less conservative.
+fn roundup_progress(progress: f64) -> f64 {
+    let precision = 10u64.pow(5) as f64;
+    let progress_rounded = (progress * precision + 1.0) as u64;
+
+    if progress_rounded >= precision as u64 {
+        1.0
+    } else {
+        (progress_rounded as f64 / precision) as f64
     }
 }
