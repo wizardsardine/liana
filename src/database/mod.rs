@@ -8,6 +8,8 @@ use crate::{
     database::sqlite::{schema::DbTip, SqliteConn, SqliteDb},
 };
 
+use miniscript::bitcoin::util::bip32;
+
 pub trait DatabaseInterface: Send {
     fn connection(&self) -> Box<dyn DatabaseConnection>;
 }
@@ -24,6 +26,10 @@ pub trait DatabaseConnection {
 
     /// Update our best chain seen.
     fn update_tip(&mut self, tip: &BlockChainTip);
+
+    fn derivation_index(&mut self) -> bip32::ChildNumber;
+
+    fn update_derivation_index(&mut self, index: bip32::ChildNumber);
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -40,5 +46,13 @@ impl DatabaseConnection for SqliteConn {
 
     fn update_tip(&mut self, tip: &BlockChainTip) {
         self.update_tip(&tip)
+    }
+
+    fn derivation_index(&mut self) -> bip32::ChildNumber {
+        self.db_wallet().deposit_derivation_index
+    }
+
+    fn update_derivation_index(&mut self, index: bip32::ChildNumber) {
+        self.update_derivation_index(index)
     }
 }

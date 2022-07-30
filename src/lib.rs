@@ -22,6 +22,8 @@ use crate::{
 
 use std::{error, fmt, fs, io, path, sync};
 
+use miniscript::bitcoin::secp256k1;
+
 #[cfg(not(test))]
 use std::{panic, process};
 // A panic in any thread should stop the main thread, and print the panic.
@@ -146,6 +148,7 @@ pub struct DaemonControl {
     config: Config,
     bitcoin: Box<dyn BitcoinInterface>,
     db: Box<dyn DatabaseInterface>,
+    secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 }
 
 impl DaemonControl {
@@ -154,10 +157,12 @@ impl DaemonControl {
         bitcoin: Box<dyn BitcoinInterface>,
         db: Box<dyn DatabaseInterface>,
     ) -> DaemonControl {
+        let secp = secp256k1::Secp256k1::verification_only();
         DaemonControl {
             config,
             bitcoin,
             db,
+            secp,
         }
     }
 }
@@ -246,11 +251,7 @@ impl DaemonHandle {
         );
 
         // Finally, set up the API.
-        let control = DaemonControl {
-            config,
-            bitcoin: Box::from(bitcoind),
-            db: Box::from(sqlite),
-        };
+        let control = DaemonControl::new(config, Box::from(bitcoind), Box::from(sqlite));
 
         Ok(Self {
             control,
@@ -463,7 +464,7 @@ mod tests {
         };
 
         // Create a dummy config with this bitcoind
-        let desc_str = "wsh(andor(pk(03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a),older(10000),pk(0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce)))#39x77spy";
+        let desc_str = "wsh(andor(pk(xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/*),older(10000),pk(xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/*)))#tk6wzexy";
         let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
         let config = Config {
             bitcoind_config,
@@ -479,7 +480,21 @@ mod tests {
             let config = config.clone();
             move || {
                 let handle = DaemonHandle::start(config).unwrap();
+                // TODO: avoid scope creep. We should move the bitcoind-specific checks to the
+                // bitcoind module, test the startup with a mocked bitcoind interface, and not test
+                // commands here but in the commands module.
+                let addr = handle.control.get_new_address();
+                let addr2 = handle.control.get_new_address();
+                assert_eq!(
+                    addr,
+                    bitcoin::Address::from_str(
+                        "bc1qdu9dama0pwc6fd9lj4sqzq4f728y5q2ucqyj55mfzfvuxr268zks7yajm3"
+                    )
+                    .unwrap()
+                );
+                assert_ne!(addr, addr2);
                 handle.shutdown();
+                addr
             }
         });
         complete_sanity_check(&server);
@@ -490,11 +505,13 @@ mod tests {
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, desc_str);
         complete_sync_check(&server);
-        daemon_thread.join().unwrap();
+        let addr = daemon_thread.join().unwrap();
 
         // The datadir is created now, so if we restart it it won't create the wo wallet.
         let daemon_thread = thread::spawn(move || {
             let handle = DaemonHandle::start(config).unwrap();
+            // TODO: avoid scope creep. See above comment.
+            assert_ne!(handle.control.get_new_address(), addr);
             handle.shutdown();
         });
         complete_sanity_check(&server);
