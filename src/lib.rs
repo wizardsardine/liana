@@ -54,6 +54,20 @@ fn setup_panic_hook() {
     }));
 }
 
+#[derive(Debug, Clone)]
+pub struct Version {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+pub const VERSION: Version = Version { major: 0, minor: 1 };
+
 #[derive(Debug)]
 pub enum StartupError {
     Io(io::Error),
