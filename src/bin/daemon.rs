@@ -63,7 +63,9 @@ fn main() {
         // The panic hook will log::error
         panic!("Starting Minisafe daemon: {}", e);
     });
-    daemon.shutdown();
+    daemon
+        .rpc_server()
+        .expect("JSONRPC server must terminate cleanly");
 
     // We are always logging to stdout, should it be then piped to the log file (if self) or
     // not. So just make sure that all messages were actually written.

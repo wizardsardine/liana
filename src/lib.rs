@@ -5,15 +5,19 @@ pub mod config;
 mod daemonize;
 mod database;
 pub mod descriptors;
+#[cfg(feature = "jsonrpc_server")]
+mod jsonrpc;
 
 pub use miniscript;
 
+#[cfg(feature = "jsonrpc_server")]
+use crate::jsonrpc::server::{rpcserver_loop, rpcserver_setup};
 use crate::{
     bitcoin::{
         d::{BitcoinD, BitcoindError},
         poller, BitcoinInterface,
     },
-    config::{config_folder_path, Config},
+    config::Config,
     database::{
         sqlite::{FreshDbOptions, SqliteDb, SqliteDbError},
         DatabaseInterface,
@@ -183,9 +187,8 @@ impl DaemonHandle {
 
         // First, check the data directory
         let mut data_dir = config
-            .data_dir
-            .clone()
-            .unwrap_or(config_folder_path().ok_or(StartupError::DefaultDataDirNotFound)?);
+            .data_dir()
+            .ok_or(StartupError::DefaultDataDirNotFound)?;
         data_dir.push(config.bitcoind_config.network.to_string());
         let fresh_data_dir = !data_dir.as_path().exists();
         if fresh_data_dir {
@@ -257,6 +260,39 @@ impl DaemonHandle {
             control,
             bitcoin_poller,
         })
+    }
+
+    /// Start the JSONRPC server and listen for incoming commands until we die.
+    /// Like DaemonHandle::shutdown(), this stops the Bitcoin poller at teardown.
+    #[cfg(feature = "jsonrpc_server")]
+    pub fn rpc_server(self) -> Result<(), io::Error> {
+        let DaemonHandle {
+            control,
+            bitcoin_poller: poller,
+        } = self;
+
+        let rpc_socket: path::PathBuf = [
+            control
+                .config
+                .data_dir()
+                .expect("Didn't fail at startup, must not now")
+                .as_path(),
+            path::Path::new(&control.config.bitcoind_config.network.to_string()),
+            path::Path::new("minisafed_rpc"),
+        ]
+        .iter()
+        .collect();
+        let listener = rpcserver_setup(&rpc_socket)?;
+        log::info!("JSONRPC server started.");
+
+        // FIXME: don't use a Mutex...
+        let control = sync::Arc::from(sync::Mutex::from(control));
+        rpcserver_loop(listener, control)?;
+        log::info!("JSONRPC server stopped.");
+
+        poller.stop();
+
+        Ok(())
     }
 
     // NOTE: this moves out the data as it should not be reused after shutdown

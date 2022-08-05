@@ -94,6 +94,15 @@ pub struct Config {
     pub bitcoind_config: BitcoindConfig,
 }
 
+impl Config {
+    pub fn data_dir(&self) -> Option<PathBuf> {
+        self.data_dir
+            .as_ref()
+            .map(Clone::clone)
+            .or_else(config_folder_path)
+    }
+}
+
 #[derive(PartialEq, Eq, Debug)]
 pub enum ConfigError {
     DatadirNotFound,

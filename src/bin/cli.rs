@@ -14,7 +14,7 @@ use std::os::unix::net::UnixStream;
 // Exits with error
 fn show_usage() {
     eprintln!("Usage:");
-    eprintln!(" revault-cli [--conf conf_path] [--raw] <command> [<param 1> <param 2> ...]");
+    eprintln!(" minisafe-cli [--conf conf_path] [--raw] <command> [<param 1> <param 2> ...]");
     process::exit(1);
 }
 
@@ -73,7 +73,7 @@ fn rpc_request(method: String, params: Vec<String>) -> Json {
     object.insert("jsonrpc".to_string(), Json::String("2.0".to_string()));
     object.insert(
         "id".to_string(),
-        Json::String(format!("revault-cli-{}", process::id())),
+        Json::String(format!("minisafe-cli-{}", process::id())),
     );
     object.insert("method".to_string(), method);
     object.insert("params".to_string(), params);
@@ -94,7 +94,7 @@ fn socket_file(conf_file: Option<PathBuf>) -> PathBuf {
     [
         data_dir,
         config.bitcoind_config.network.to_string().as_str(),
-        "revaultd_rpc",
+        "minisafed_rpc",
     ]
     .iter()
     .collect()
@@ -127,7 +127,7 @@ fn main() {
         process::exit(1);
     });
     socket
-        .write_all(request.to_string().as_bytes())
+        .write_all(&[request.to_string().as_bytes(), b"\n"].concat())
         .unwrap_or_else(|e| {
             eprintln!("Writing to {:?}: '{}'", &socket_file, e);
             process::exit(1);
@@ -160,7 +160,7 @@ fn main() {
                         println!("{:#}", serde_json::json!({ "error": e }));
                     } else {
                         log::warn!(
-                            "revaultd response doesn't contain result or error: '{}'",
+                            "minisafed response doesn't contain result or error: '{}'",
                             response
                         );
                         println!("{:#}", response);
