@@ -483,8 +483,8 @@ mod tests {
                 // TODO: avoid scope creep. We should move the bitcoind-specific checks to the
                 // bitcoind module, test the startup with a mocked bitcoind interface, and not test
                 // commands here but in the commands module.
-                let addr = handle.control.get_new_address();
-                let addr2 = handle.control.get_new_address();
+                let addr = handle.control.get_new_address().address;
+                let addr2 = handle.control.get_new_address().address;
                 assert_eq!(
                     addr,
                     bitcoin::Address::from_str(
@@ -511,7 +511,7 @@ mod tests {
         let daemon_thread = thread::spawn(move || {
             let handle = DaemonHandle::start(config).unwrap();
             // TODO: avoid scope creep. See above comment.
-            assert_ne!(handle.control.get_new_address(), addr);
+            assert_ne!(handle.control.get_new_address().address, addr);
             handle.shutdown();
         });
         complete_sanity_check(&server);
