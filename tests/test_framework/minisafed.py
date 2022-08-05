@@ -1,6 +1,7 @@
 import os
 
 from test_framework.utils import (
+    UnixDomainSocketRpc,
     TailableProc,
     VERBOSE,
     LOG_LEVEL,
@@ -22,6 +23,8 @@ class Minisafed(TailableProc):
 
         self.conf_file = os.path.join(datadir, "config.toml")
         self.cmd_line = [MINISAFED_PATH, "--conf", f"{self.conf_file}"]
+        socket_path = os.path.join(os.path.join(datadir, "regtest"), "minisafed_rpc")
+        self.rpc = UnixDomainSocketRpc(socket_path)
 
         with open(self.conf_file, "w") as f:
             f.write(f"data_dir = '{datadir}'\n")
@@ -42,6 +45,7 @@ class Minisafed(TailableProc):
             [
                 "Database initialized and checked",
                 "Connection to bitcoind established and checked.",
+                "JSONRPC server started.",
             ]
         )
 
