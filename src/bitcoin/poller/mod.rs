@@ -23,10 +23,13 @@ impl Poller {
         poll_interval: time::Duration,
     ) -> Poller {
         let shutdown = sync::Arc::from(atomic::AtomicBool::from(false));
-        let handle = thread::spawn({
-            let shutdown = shutdown.clone();
-            move || looper(bit, db, shutdown, poll_interval)
-        });
+        let handle = thread::Builder::new()
+            .name("Bitcoin poller".to_string())
+            .spawn({
+                let shutdown = shutdown.clone();
+                move || looper(bit, db, shutdown, poll_interval)
+            })
+            .expect("Must not fail");
 
         Poller { shutdown, handle }
     }
