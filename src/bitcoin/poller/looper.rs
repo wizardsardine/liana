@@ -63,7 +63,7 @@ pub fn looper(
             let sync_progress = bit.sync_progress();
             log::info!(
                 "Block chain synchronization progress: {:.2}%",
-                sync_progress
+                sync_progress * 100.0
             );
             synced = sync_progress == 1.0;
             if !synced {
