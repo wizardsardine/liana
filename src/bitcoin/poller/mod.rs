@@ -19,7 +19,7 @@ pub struct Poller {
 impl Poller {
     pub fn start(
         bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
-        db: impl DatabaseInterface + 'static,
+        db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         poll_interval: time::Duration,
     ) -> Poller {
         let shutdown = sync::Arc::from(atomic::AtomicBool::from(false));

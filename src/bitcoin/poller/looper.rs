@@ -40,7 +40,7 @@ fn update_tip(bit: &impl BitcoinInterface, db_conn: &mut Box<dyn DatabaseConnect
 /// `shutdown` atomic.
 pub fn looper(
     bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
-    db: impl DatabaseInterface,
+    db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     shutdown: sync::Arc<atomic::AtomicBool>,
     poll_interval: time::Duration,
 ) {

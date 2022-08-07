@@ -148,6 +148,31 @@ fn create_datadir(datadir_path: &path::Path) -> Result<(), StartupError> {
     };
 }
 
+// Connect to the SQLite database. Create it if starting fresh, and do some sanity checks.
+// If all went well, returns the interface to the SQLite database.
+fn setup_sqlite(
+    config: &Config,
+    data_dir: &path::Path,
+    fresh_data_dir: bool,
+) -> Result<SqliteDb, StartupError> {
+    let db_path: path::PathBuf = [data_dir, path::Path::new("minisafed.sqlite3")]
+        .iter()
+        .collect();
+    let options = if fresh_data_dir {
+        Some(FreshDbOptions {
+            bitcoind_network: config.bitcoind_config.network,
+            main_descriptor: config.main_descriptor.clone(),
+        })
+    } else {
+        None
+    };
+    let sqlite = SqliteDb::new(db_path, options)?;
+    sqlite.sanity_check(config.bitcoind_config.network, &config.main_descriptor)?;
+    log::info!("Database initialized and checked.");
+
+    Ok(sqlite)
+}
+
 // Connect to bitcoind. Setup the watchonly wallet, and do some sanity checks.
 // If all went well, returns the interface to bitcoind.
 fn setup_bitcoind(
@@ -177,7 +202,8 @@ fn setup_bitcoind(
 pub struct DaemonControl {
     config: Config,
     bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
-    db: Box<dyn DatabaseInterface>,
+    // FIXME: Should we require Sync on DatabaseInterface rather than using a Mutex?
+    db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 }
 
@@ -185,7 +211,7 @@ impl DaemonControl {
     pub fn new(
         config: Config,
         bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
-        db: Box<dyn DatabaseInterface>,
+        db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     ) -> DaemonControl {
         let secp = secp256k1::Secp256k1::verification_only();
         DaemonControl {
@@ -207,12 +233,15 @@ impl DaemonHandle {
     ///
     /// You may specify a custom Bitcoin interface through the `bitcoin` parameter. If `None`, the
     /// default Bitcoin interface (`bitcoind` JSONRPC) will be used.
+    /// You may specify a custom Database interface through the `db` parameter. If `None`, the
+    /// default Database interface (SQLite) will be used.
     ///
     /// **Note**: we internally use threads, and set a panic hook. A downstream application must
     /// not overwrite this panic hook.
     pub fn start(
         config: Config,
         bitcoin: Option<impl BitcoinInterface + 'static>,
+        db: Option<impl DatabaseInterface + 'static>,
     ) -> Result<Self, StartupError> {
         #[cfg(not(test))]
         setup_panic_hook();
@@ -229,20 +258,14 @@ impl DaemonHandle {
         }
 
         // Then set up the database
-        let db_path: path::PathBuf = [data_dir.as_path(), path::Path::new("minisafed.sqlite3")]
-            .iter()
-            .collect();
-        let options = if fresh_data_dir {
-            Some(FreshDbOptions {
-                bitcoind_network: config.bitcoind_config.network,
-                main_descriptor: config.main_descriptor.clone(),
-            })
-        } else {
-            None
+        let db = match db {
+            Some(db) => sync::Arc::from(sync::Mutex::from(db)),
+            None => sync::Arc::from(sync::Mutex::from(setup_sqlite(
+                &config,
+                &data_dir,
+                fresh_data_dir,
+            )?)) as sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         };
-        let sqlite = SqliteDb::new(db_path, options)?;
-        sqlite.sanity_check(config.bitcoind_config.network, &config.main_descriptor)?;
-        log::info!("Database initialized and checked.");
 
         // Now, set up the Bitcoin interface.
         let bit = match bitcoin {
@@ -271,12 +294,12 @@ impl DaemonHandle {
         // Spawn the bitcoind poller with a retry limit high enough that we'd fail after that.
         let bitcoin_poller = poller::Poller::start(
             bit.clone(),
-            sqlite.clone(),
+            db.clone(),
             config.bitcoind_config.poll_interval_secs,
         );
 
         // Finally, set up the API.
-        let control = DaemonControl::new(config, bit, Box::from(sqlite));
+        let control = DaemonControl::new(config, bit, db);
 
         Ok(Self {
             control,
@@ -287,7 +310,7 @@ impl DaemonHandle {
     /// Start the Minisafe daemon with the default Bitcoin and database interfaces (`bitcoind` RPC
     /// and SQLite).
     pub fn start_default(config: Config) -> Result<DaemonHandle, StartupError> {
-        DaemonHandle::start(config, Option::<BitcoinD>::None)
+        DaemonHandle::start(config, Option::<BitcoinD>::None, Option::<SqliteDb>::None)
     }
 
     /// Start the JSONRPC server and listen for incoming commands until we die.

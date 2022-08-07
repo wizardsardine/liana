@@ -8,6 +8,8 @@ use crate::{
     database::sqlite::{schema::DbTip, SqliteConn, SqliteDb},
 };
 
+use std::sync;
+
 use miniscript::bitcoin::util::bip32;
 
 pub trait DatabaseInterface: Send {
@@ -17,6 +19,13 @@ pub trait DatabaseInterface: Send {
 impl DatabaseInterface for SqliteDb {
     fn connection(&self) -> Box<dyn DatabaseConnection> {
         Box::new(self.connection().expect("Database must be available"))
+    }
+}
+
+// FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
+impl DatabaseInterface for sync::Arc<sync::Mutex<dyn DatabaseInterface>> {
+    fn connection(&self) -> Box<dyn DatabaseConnection> {
+        self.lock().unwrap().connection()
     }
 }
 

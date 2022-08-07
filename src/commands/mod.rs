@@ -2,7 +2,7 @@
 //!
 //! External interface to the Minisafe daemon.
 
-use crate::{bitcoin::BitcoinInterface, DaemonControl, VERSION};
+use crate::{bitcoin::BitcoinInterface, database::DatabaseInterface, DaemonControl, VERSION};
 
 use miniscript::{
     bitcoin,
