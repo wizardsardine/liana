@@ -18,7 +18,7 @@ pub struct Poller {
 
 impl Poller {
     pub fn start(
-        bit: impl BitcoinInterface + 'static,
+        bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
         db: impl DatabaseInterface + 'static,
         poll_interval: time::Duration,
     ) -> Poller {

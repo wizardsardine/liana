@@ -59,7 +59,7 @@ fn main() {
         process::exit(1);
     });
 
-    let daemon = DaemonHandle::start(config).unwrap_or_else(|e| {
+    let daemon = DaemonHandle::start_default(config).unwrap_or_else(|e| {
         // The panic hook will log::error
         panic!("Starting Minisafe daemon: {}", e);
     });

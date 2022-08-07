@@ -148,9 +148,35 @@ fn create_datadir(datadir_path: &path::Path) -> Result<(), StartupError> {
     };
 }
 
+// Connect to bitcoind. Setup the watchonly wallet, and do some sanity checks.
+// If all went well, returns the interface to bitcoind.
+fn setup_bitcoind(
+    config: &Config,
+    data_dir: &path::Path,
+    fresh_data_dir: bool,
+) -> Result<BitcoinD, StartupError> {
+    // Now set up the bitcoind interface
+    let wo_path: path::PathBuf = [data_dir, path::Path::new("minisafed_watchonly_wallet")]
+        .iter()
+        .collect();
+    let bitcoind = BitcoinD::new(
+        &config.bitcoind_config,
+        wo_path.to_str().expect("Must be valid unicode").to_string(),
+    )?;
+    if fresh_data_dir {
+        bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
+        log::info!("Created a new watchonly wallet on bitcoind.");
+    }
+    bitcoind.try_load_watchonly_wallet();
+    bitcoind.sanity_check(&config.main_descriptor, config.bitcoind_config.network)?;
+    log::info!("Connection to bitcoind established and checked.");
+
+    Ok(bitcoind.with_retry_limit(None))
+}
+
 pub struct DaemonControl {
     config: Config,
-    bitcoin: Box<dyn BitcoinInterface>,
+    bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
     db: Box<dyn DatabaseInterface>,
     secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 }
@@ -158,7 +184,7 @@ pub struct DaemonControl {
 impl DaemonControl {
     pub fn new(
         config: Config,
-        bitcoin: Box<dyn BitcoinInterface>,
+        bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
         db: Box<dyn DatabaseInterface>,
     ) -> DaemonControl {
         let secp = secp256k1::Secp256k1::verification_only();
@@ -179,9 +205,15 @@ pub struct DaemonHandle {
 impl DaemonHandle {
     /// This starts the Minisafe daemon. Call `shutdown` to shut it down.
     ///
+    /// You may specify a custom Bitcoin interface through the `bitcoin` parameter. If `None`, the
+    /// default Bitcoin interface (`bitcoind` JSONRPC) will be used.
+    ///
     /// **Note**: we internally use threads, and set a panic hook. A downstream application must
     /// not overwrite this panic hook.
-    pub fn start(config: Config) -> Result<Self, StartupError> {
+    pub fn start(
+        config: Config,
+        bitcoin: Option<impl BitcoinInterface + 'static>,
+    ) -> Result<Self, StartupError> {
         #[cfg(not(test))]
         setup_panic_hook();
 
@@ -212,24 +244,15 @@ impl DaemonHandle {
         sqlite.sanity_check(config.bitcoind_config.network, &config.main_descriptor)?;
         log::info!("Database initialized and checked.");
 
-        // Now set up the bitcoind interface
-        let wo_path: path::PathBuf = [
-            data_dir.as_path(),
-            path::Path::new("minisafed_watchonly_wallet"),
-        ]
-        .iter()
-        .collect();
-        let bitcoind = BitcoinD::new(
-            &config.bitcoind_config,
-            wo_path.to_str().expect("Must be valid unicode").to_string(),
-        )?;
-        if fresh_data_dir {
-            bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
-            log::info!("Created a new watchonly wallet on bitcoind.");
-        }
-        bitcoind.try_load_watchonly_wallet();
-        bitcoind.sanity_check(&config.main_descriptor, config.bitcoind_config.network)?;
-        log::info!("Connection to bitcoind established and checked.");
+        // Now, set up the Bitcoin interface.
+        let bit = match bitcoin {
+            Some(bit) => sync::Arc::from(sync::Mutex::from(bit)),
+            None => sync::Arc::from(sync::Mutex::from(setup_bitcoind(
+                &config,
+                &data_dir,
+                fresh_data_dir,
+            )?)) as sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+        };
 
         // If we are on a UNIX system and they told us to daemonize, do it now.
         // NOTE: it's safe to daemonize now, as we don't carry any open DB connection
@@ -246,20 +269,25 @@ impl DaemonHandle {
         }
 
         // Spawn the bitcoind poller with a retry limit high enough that we'd fail after that.
-        let bitcoind = sync::Arc::from(sync::RwLock::from(bitcoind.with_retry_limit(None)));
         let bitcoin_poller = poller::Poller::start(
-            bitcoind.clone(),
+            bit.clone(),
             sqlite.clone(),
             config.bitcoind_config.poll_interval_secs,
         );
 
         // Finally, set up the API.
-        let control = DaemonControl::new(config, Box::from(bitcoind), Box::from(sqlite));
+        let control = DaemonControl::new(config, bit, Box::from(sqlite));
 
         Ok(Self {
             control,
             bitcoin_poller,
         })
+    }
+
+    /// Start the Minisafe daemon with the default Bitcoin and database interfaces (`bitcoind` RPC
+    /// and SQLite).
+    pub fn start_default(config: Config) -> Result<DaemonHandle, StartupError> {
+        DaemonHandle::start(config, Option::<BitcoinD>::None)
     }
 
     /// Start the JSONRPC server and listen for incoming commands until we die.
@@ -515,7 +543,7 @@ mod tests {
         let daemon_thread = thread::spawn({
             let config = config.clone();
             move || {
-                let handle = DaemonHandle::start(config).unwrap();
+                let handle = DaemonHandle::start_default(config).unwrap();
                 // TODO: avoid scope creep. We should move the bitcoind-specific checks to the
                 // bitcoind module, test the startup with a mocked bitcoind interface, and not test
                 // commands here but in the commands module.
@@ -545,7 +573,7 @@ mod tests {
 
         // The datadir is created now, so if we restart it it won't create the wo wallet.
         let daemon_thread = thread::spawn(move || {
-            let handle = DaemonHandle::start(config).unwrap();
+            let handle = DaemonHandle::start_default(config).unwrap();
             // TODO: avoid scope creep. See above comment.
             assert_ne!(handle.control.get_new_address().address, addr);
             handle.shutdown();

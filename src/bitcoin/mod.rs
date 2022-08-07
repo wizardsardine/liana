@@ -28,20 +28,33 @@ pub trait BitcoinInterface: Send {
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool;
 }
 
-impl BitcoinInterface for sync::Arc<sync::RwLock<d::BitcoinD>> {
+impl BitcoinInterface for d::BitcoinD {
     fn sync_progress(&self) -> f64 {
-        self.read().unwrap().sync_progress()
+        self.sync_progress()
     }
 
     fn chain_tip(&self) -> BlockChainTip {
-        self.read().unwrap().chain_tip()
+        self.chain_tip()
     }
 
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
-        self.read()
-            .unwrap()
-            .get_block_hash(tip.height)
+        self.get_block_hash(tip.height)
             .map(|bh| bh == tip.hash)
             .unwrap_or(false)
+    }
+}
+
+// FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
+impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>> {
+    fn sync_progress(&self) -> f64 {
+        self.lock().unwrap().sync_progress()
+    }
+
+    fn chain_tip(&self) -> BlockChainTip {
+        self.lock().unwrap().chain_tip()
+    }
+
+    fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
+        self.lock().unwrap().is_in_chain(tip)
     }
 }
