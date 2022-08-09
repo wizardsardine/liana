@@ -33,11 +33,13 @@ class Minisafed(TailableProc):
 
             f.write(f'main_descriptor = "{main_desc}"\n')
 
-            f.write("[bitcoind_config]\n")
+            f.write("[bitcoin_config]\n")
             f.write('network = "regtest"\n')
+            f.write("poll_interval_secs = 1\n")
+
+            f.write("[bitcoind_config]\n")
             f.write(f"cookie_path = '{bitcoind_cookie_path}'\n")
             f.write(f"addr = '127.0.0.1:{bitcoind_rpc_port}'\n")
-            f.write("poll_interval_secs = 1\n")
 
     def start(self):
         TailableProc.start(self)

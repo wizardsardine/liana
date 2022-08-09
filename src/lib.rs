@@ -80,6 +80,7 @@ pub enum StartupError {
     Io(io::Error),
     DefaultDataDirNotFound,
     DatadirCreation(path::PathBuf, io::Error),
+    MissingBitcoindConfig,
     Database(SqliteDbError),
     Bitcoind(BitcoindError),
     #[cfg(unix)]
@@ -97,6 +98,10 @@ impl fmt::Display for StartupError {
             Self::DatadirCreation(dir_path, e) => write!(
                 f,
                 "Could not create data directory at '{}': '{}'", dir_path.display(), e
+            ),
+            Self::MissingBitcoindConfig => write!(
+                f,
+                "Our Bitcoin interface is bitcoind but we have no 'bitcoind_config' entry in the configuration."
             ),
             Self::Database(e) => write!(f, "Error initializing database: '{}'.", e),
             Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
@@ -160,14 +165,14 @@ fn setup_sqlite(
         .collect();
     let options = if fresh_data_dir {
         Some(FreshDbOptions {
-            bitcoind_network: config.bitcoind_config.network,
+            bitcoind_network: config.bitcoin_config.network,
             main_descriptor: config.main_descriptor.clone(),
         })
     } else {
         None
     };
     let sqlite = SqliteDb::new(db_path, options)?;
-    sqlite.sanity_check(config.bitcoind_config.network, &config.main_descriptor)?;
+    sqlite.sanity_check(config.bitcoin_config.network, &config.main_descriptor)?;
     log::info!("Database initialized and checked.");
 
     Ok(sqlite)
@@ -185,7 +190,10 @@ fn setup_bitcoind(
         .iter()
         .collect();
     let bitcoind = BitcoinD::new(
-        &config.bitcoind_config,
+        config
+            .bitcoind_config
+            .as_ref()
+            .ok_or(StartupError::MissingBitcoindConfig)?,
         wo_path.to_str().expect("Must be valid unicode").to_string(),
     )?;
     if fresh_data_dir {
@@ -193,7 +201,7 @@ fn setup_bitcoind(
         log::info!("Created a new watchonly wallet on bitcoind.");
     }
     bitcoind.try_load_watchonly_wallet();
-    bitcoind.sanity_check(&config.main_descriptor, config.bitcoind_config.network)?;
+    bitcoind.sanity_check(&config.main_descriptor, config.bitcoin_config.network)?;
     log::info!("Connection to bitcoind established and checked.");
 
     Ok(bitcoind.with_retry_limit(None))
@@ -250,7 +258,7 @@ impl DaemonHandle {
         let mut data_dir = config
             .data_dir()
             .ok_or(StartupError::DefaultDataDirNotFound)?;
-        data_dir.push(config.bitcoind_config.network.to_string());
+        data_dir.push(config.bitcoin_config.network.to_string());
         let fresh_data_dir = !data_dir.as_path().exists();
         if fresh_data_dir {
             create_datadir(&data_dir)?;
@@ -295,7 +303,7 @@ impl DaemonHandle {
         let bitcoin_poller = poller::Poller::start(
             bit.clone(),
             db.clone(),
-            config.bitcoind_config.poll_interval_secs,
+            config.bitcoin_config.poll_interval_secs,
         );
 
         // Finally, set up the API.
@@ -328,7 +336,7 @@ impl DaemonHandle {
                 .data_dir()
                 .expect("Didn't fail at startup, must not now")
                 .as_path(),
-            path::Path::new(&control.config.bitcoind_config.network.to_string()),
+            path::Path::new(&control.config.bitcoin_config.network.to_string()),
             path::Path::new("minisafed_rpc"),
         ]
         .iter()
@@ -356,7 +364,7 @@ impl DaemonHandle {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::config::BitcoindConfig;
+    use crate::config::{BitcoinConfig, BitcoindConfig};
 
     use miniscript::{bitcoin, Descriptor, DescriptorPublicKey};
     use std::{
@@ -543,18 +551,21 @@ mod tests {
             net::SocketAddrV4::new(net::Ipv4Addr::new(127, 0, 0, 1), 0).into();
         let server = net::TcpListener::bind(&addr).unwrap();
         let addr = server.local_addr().unwrap();
-        let bitcoind_config = BitcoindConfig {
+        let bitcoin_config = BitcoinConfig {
             network,
+            poll_interval_secs: time::Duration::from_secs(2),
+        };
+        let bitcoind_config = BitcoindConfig {
             addr,
             cookie_path: cookie.clone(),
-            poll_interval_secs: time::Duration::from_secs(2),
         };
 
         // Create a dummy config with this bitcoind
         let desc_str = "wsh(andor(pk(xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/*),older(10000),pk(xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/*)))#tk6wzexy";
         let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
         let config = Config {
-            bitcoind_config,
+            bitcoin_config,
+            bitcoind_config: Some(bitcoind_config),
             data_dir: Some(data_dir.clone()),
             #[cfg(unix)]
             daemon: false,

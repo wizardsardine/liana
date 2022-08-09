@@ -93,7 +93,7 @@ fn socket_file(conf_file: Option<PathBuf>) -> PathBuf {
 
     [
         data_dir,
-        config.bitcoind_config.network.to_string().as_str(),
+        config.bitcoin_config.network.to_string().as_str(),
         "minisafed_rpc",
     ]
     .iter()

@@ -16,7 +16,7 @@ impl DaemonControl {
     pub fn get_info(&self) -> GetInfoResult {
         GetInfoResult {
             version: VERSION.to_string(),
-            network: self.config.bitcoind_config.network,
+            network: self.config.bitcoin_config.network,
             blockheight: self.bitcoin.chain_tip().height,
             sync: self.bitcoin.sync_progress(),
             descriptors: GetInfoDescriptors {
@@ -39,7 +39,7 @@ impl DaemonControl {
             .derive(index.into())
             .translate_pk2(|xpk| xpk.derive_public_key(&self.secp))
             .expect("All pubkeys were derived, no wildcard.")
-            .address(self.config.bitcoind_config.network)
+            .address(self.config.bitcoin_config.network)
             .expect("It's a wsh() descriptor");
         GetAddressResult { address }
     }
