@@ -7,6 +7,8 @@ mod database;
 pub mod descriptors;
 #[cfg(feature = "jsonrpc_server")]
 mod jsonrpc;
+#[cfg(test)]
+mod testutils;
 
 pub use miniscript;
 
@@ -359,6 +361,12 @@ impl DaemonHandle {
     pub fn shutdown(self) {
         self.bitcoin_poller.stop();
     }
+
+    // We need a shutdown utility that does not move for implementing Drop for the DummyMinisafe
+    #[cfg(test)]
+    pub fn test_shutdown(&mut self) {
+        self.bitcoin_poller.test_stop();
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -515,6 +523,10 @@ mod tests {
         stream.flush().unwrap();
     }
 
+    // TODO: we could move the dummy bitcoind thread stuff to the bitcoind module to test the
+    // bitcoind interface, and use the DummyMinisafe from testutils to sanity check the startup.
+    // Note that startup as checked by this unit test is also tested in the functional test
+    // framework.
     #[test]
     fn daemon_startup() {
         let tmp_dir = env::temp_dir().join(format!(
@@ -578,21 +590,7 @@ mod tests {
             let config = config.clone();
             move || {
                 let handle = DaemonHandle::start_default(config).unwrap();
-                // TODO: avoid scope creep. We should move the bitcoind-specific checks to the
-                // bitcoind module, test the startup with a mocked bitcoind interface, and not test
-                // commands here but in the commands module.
-                let addr = handle.control.get_new_address().address;
-                let addr2 = handle.control.get_new_address().address;
-                assert_eq!(
-                    addr,
-                    bitcoin::Address::from_str(
-                        "bc1qdu9dama0pwc6fd9lj4sqzq4f728y5q2ucqyj55mfzfvuxr268zks7yajm3"
-                    )
-                    .unwrap()
-                );
-                assert_ne!(addr, addr2);
                 handle.shutdown();
-                addr
             }
         });
         complete_sanity_check(&server);
@@ -603,13 +601,11 @@ mod tests {
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, desc_str);
         complete_sync_check(&server);
-        let addr = daemon_thread.join().unwrap();
+        daemon_thread.join().unwrap();
 
         // The datadir is created now, so if we restart it it won't create the wo wallet.
         let daemon_thread = thread::spawn(move || {
             let handle = DaemonHandle::start_default(config).unwrap();
-            // TODO: avoid scope creep. See above comment.
-            assert_ne!(handle.control.get_new_address().address, addr);
             handle.shutdown();
         });
         complete_sanity_check(&server);

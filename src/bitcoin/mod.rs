@@ -9,7 +9,7 @@ use std::sync;
 use miniscript::bitcoin;
 
 /// Information about the best block in the chain
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub struct BlockChainTip {
     pub hash: bitcoin::BlockHash,
     pub height: i32,

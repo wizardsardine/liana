@@ -64,3 +64,39 @@ pub struct GetInfoResult {
 pub struct GetAddressResult {
     pub address: bitcoin::Address,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutils::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn getinfo() {
+        let ms = DummyMinisafe::new();
+        // We can query getinfo
+        ms.handle.control.get_info();
+        ms.shutdown();
+    }
+
+    #[test]
+    fn getnewaddress() {
+        let ms = DummyMinisafe::new();
+
+        let control = &ms.handle.control;
+        // We can get an address
+        let addr = control.get_new_address().address;
+        assert_eq!(
+            addr,
+            bitcoin::Address::from_str(
+                "bc1qgudekhcrejgtlx3yhlvdul7t4q76e5lhm0vtcsndxs6aslh4r9jsqkqhwu"
+            )
+            .unwrap()
+        );
+        // We won't get the same twice.
+        let addr2 = control.get_new_address().address;
+        assert_ne!(addr, addr2);
+
+        ms.shutdown();
+    }
+}

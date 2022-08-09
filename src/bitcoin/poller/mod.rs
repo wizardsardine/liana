@@ -38,4 +38,9 @@ impl Poller {
         self.shutdown.store(true, atomic::Ordering::Relaxed);
         self.handle.join().expect("The poller loop must not fail");
     }
+
+    #[cfg(test)]
+    pub fn test_stop(&mut self) {
+        self.shutdown.store(true, atomic::Ordering::Relaxed);
+    }
 }
