@@ -2,10 +2,10 @@ use crate::{
     bitcoin::{BitcoinInterface, BlockChainTip},
     config::{BitcoinConfig, Config},
     database::{DatabaseConnection, DatabaseInterface},
-    DaemonControl, DaemonHandle,
+    DaemonHandle,
 };
 
-use std::{env, fs, path, process, str::FromStr, sync, thread, time};
+use std::{env, fs, io, path, process, str::FromStr, sync, thread, time};
 
 use miniscript::{
     bitcoin::{self, util::bip32},
@@ -77,17 +77,35 @@ impl DatabaseConnection for DummyDbConn {
 }
 
 pub struct DummyMinisafe {
-    tmp_dir: path::PathBuf,
+    pub tmp_dir: path::PathBuf,
     pub handle: DaemonHandle,
+}
+
+static mut COUNTER: sync::atomic::AtomicUsize = sync::atomic::AtomicUsize::new(0);
+fn uid() -> usize {
+    unsafe {
+        let uid = COUNTER.load(sync::atomic::Ordering::Relaxed);
+        COUNTER.fetch_add(1, sync::atomic::Ordering::Relaxed);
+        uid
+    }
+}
+
+pub fn tmp_dir() -> path::PathBuf {
+    env::temp_dir().join(format!(
+        "minisafed-unit-tests-{}-{:?}-{}-{}",
+        process::id(),
+        thread::current().id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos(),
+        uid(),
+    ))
 }
 
 impl DummyMinisafe {
     pub fn new() -> DummyMinisafe {
-        let tmp_dir = env::temp_dir().join(format!(
-            "minisafed-unit-tests-{}-{:?}",
-            process::id(),
-            thread::current().id()
-        ));
+        let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
         let data_dir: path::PathBuf = [tmp_dir.as_path(), path::Path::new("datadir")]
             .iter()
@@ -115,6 +133,13 @@ impl DummyMinisafe {
         let db = sync::Arc::from(sync::RwLock::from(DummyDb::new()));
         let handle = DaemonHandle::start(config, Some(DummyBitcoind {}), Some(db)).unwrap();
         DummyMinisafe { tmp_dir, handle }
+    }
+
+    #[cfg(feature = "jsonrpc_server")]
+    pub fn rpc_server(self) -> Result<(), io::Error> {
+        self.handle.rpc_server()?;
+        fs::remove_dir_all(&self.tmp_dir)?;
+        Ok(())
     }
 
     pub fn shutdown(self) {

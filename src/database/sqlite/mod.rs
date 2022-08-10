@@ -219,7 +219,8 @@ impl SqliteConn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, fs, path, process, str::FromStr, thread};
+    use crate::testutils::*;
+    use std::{fs, path, str::FromStr};
 
     fn dummy_options() -> FreshDbOptions {
         let desc_str = "wsh(andor(pk(03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a),older(10000),pk(0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce)))";
@@ -232,11 +233,7 @@ mod tests {
 
     #[test]
     fn db_startup_sanity_checks() {
-        let tmp_dir = env::temp_dir().join(format!(
-            "minisafed-unit-tests-{}-{:?}",
-            process::id(),
-            thread::current().id()
-        ));
+        let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
 
         let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("minisafed.sqlite3")]
@@ -277,11 +274,7 @@ mod tests {
 
     #[test]
     fn db_tip_update() {
-        let tmp_dir = env::temp_dir().join(format!(
-            "minisafed-unit-tests-{}-{:?}",
-            process::id(),
-            thread::current().id()
-        ));
+        let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
 
         let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("minisafed.sqlite3")]

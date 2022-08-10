@@ -372,13 +372,16 @@ impl DaemonHandle {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::config::{BitcoinConfig, BitcoindConfig};
+    use crate::{
+        config::{BitcoinConfig, BitcoindConfig},
+        testutils::*,
+    };
 
     use miniscript::{bitcoin, Descriptor, DescriptorPublicKey};
     use std::{
-        env, fs,
+        fs,
         io::{BufRead, BufReader, Write},
-        net, path, process,
+        net, path,
         str::FromStr,
         thread, time,
     };
@@ -529,11 +532,7 @@ mod tests {
     // framework.
     #[test]
     fn daemon_startup() {
-        let tmp_dir = env::temp_dir().join(format!(
-            "minisafed-unit-tests-{}-{:?}",
-            process::id(),
-            thread::current().id()
-        ));
+        let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
         let data_dir: path::PathBuf = [tmp_dir.as_path(), path::Path::new("datadir")]
             .iter()

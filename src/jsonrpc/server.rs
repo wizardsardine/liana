@@ -83,12 +83,13 @@ fn read_command(
 fn connection_handler(
     control: sync::Arc<sync::Mutex<DaemonControl>>,
     mut stream: net::UnixStream,
+    shutdown: sync::Arc<atomic::AtomicBool>,
 ) -> Result<(), io::Error> {
     let mut buf = vec![0; 2048];
     let mut end = 0;
     let mut cursor = 0;
 
-    loop {
+    while !shutdown.load(atomic::Ordering::Relaxed) {
         let req = match read_command(&mut stream, &mut buf, &mut end, &mut cursor)? {
             Some(req) => req,
             None => {
@@ -97,8 +98,10 @@ fn connection_handler(
             }
         };
 
-        // TODO: respond in case of invalid JSON or invalid JSONRPC request.
         let req_id = req.id.clone();
+        if &req.method == "stop" {
+            shutdown.store(true, atomic::Ordering::Relaxed);
+        }
 
         log::trace!("JSONRPC request: {:?}", serde_json::to_string(&req));
         let response = api::handle_request(&control.lock().unwrap(), req)
@@ -109,6 +112,8 @@ fn connection_handler(
             return Ok(());
         }
     }
+
+    Ok(())
 }
 
 // FIXME: have a decent way to share the DaemonControl between connections. Maybe make it Clone?
@@ -120,12 +125,14 @@ pub fn rpcserver_loop(
     // Keep it simple. We don't need great performances so just treat each connection in
     // its thread, with a given maximum number of connections.
     let connections_counter = sync::Arc::from(atomic::AtomicU32::new(0));
+    let shutdown = sync::Arc::from(atomic::AtomicBool::new(false));
 
-    loop {
+    listener.set_nonblocking(true)?;
+    while !shutdown.load(atomic::Ordering::Relaxed) {
         let (connection, _) = match listener.accept() {
             Ok(c) => c,
-            Err(e) => {
-                log::error!("Accepting new connection: '{}'", e);
+            Err(_) => {
+                thread::sleep(time::Duration::from_millis(100));
                 continue;
             }
         };
@@ -142,9 +149,10 @@ pub fn rpcserver_loop(
             .spawn({
                 let control = daemon_control.clone();
                 let counter = connections_counter.clone();
+                let shutdown = shutdown.clone();
 
                 move || {
-                    if let Err(e) = connection_handler(control, connection) {
+                    if let Err(e) = connection_handler(control, connection, shutdown) {
                         log::error!("Error while handling connection {}: '{}'", handler_id, e);
                     } else {
                         log::trace!("Connection {} terminated without error.", handler_id);
@@ -153,6 +161,8 @@ pub fn rpcserver_loop(
                 }
             })?;
     }
+
+    Ok(())
 }
 
 // Tries to bind to the socket, if we are told it's already in use try to connect
@@ -195,7 +205,10 @@ pub fn rpcserver_setup(socket_path: &path::Path) -> Result<net::UnixListener, io
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jsonrpc::{Params, ReqId};
+    use crate::{
+        jsonrpc::{Params, ReqId},
+        testutils::*,
+    };
 
     use std::{env, fs, io::Write, process};
 
@@ -376,5 +389,38 @@ mod tests {
         assert_eq!(req, read_req);
 
         fs::remove_file(&socket_path).unwrap();
+    }
+
+    // TODO: debug on MacOS
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn server_sanity_check() {
+        let ms = DummyMinisafe::new();
+        let socket_path: path::PathBuf = [
+            ms.tmp_dir.as_path(),
+            path::Path::new("datadir"),
+            path::Path::new("bitcoin"),
+            path::Path::new("minisafed_rpc"),
+        ]
+        .iter()
+        .collect();
+
+        let t = thread::spawn(move || ms.rpc_server().unwrap());
+        while !socket_path.exists() {
+            thread::sleep(time::Duration::from_millis(100));
+        }
+
+        let stop_req = Request {
+            jsonrpc: "2.0".to_string(),
+            method: "stop".to_string(),
+            params: None,
+            id: ReqId::Num(0),
+        };
+        write_messages(
+            &socket_path,
+            &[&serde_json::to_vec(&stop_req).unwrap(), b"\n"],
+        );
+
+        t.join().unwrap();
     }
 }
