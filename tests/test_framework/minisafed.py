@@ -1,3 +1,4 @@
+import logging
 import os
 
 from test_framework.utils import (
@@ -52,6 +53,14 @@ class Minisafed(TailableProc):
         )
 
     def stop(self, timeout=5):
+        try:
+            self.rpc.stop()
+            self.wait_for_log(
+                "Stopping the minisafe daemon.",
+            )
+            self.proc.wait(timeout)
+        except Exception as e:
+            logging.error(f"{self.prefix} : error when calling stop: '{e}'")
         return TailableProc.stop(self)
 
     def cleanup(self):

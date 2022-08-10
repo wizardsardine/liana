@@ -101,6 +101,7 @@ fn connection_handler(
         let req_id = req.id.clone();
         if &req.method == "stop" {
             shutdown.store(true, atomic::Ordering::Relaxed);
+            log::info!("Stopping the minisafe daemon.");
         }
 
         log::trace!("JSONRPC request: {:?}", serde_json::to_string(&req));
