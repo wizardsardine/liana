@@ -194,8 +194,10 @@ fn bind(socket_path: &path::Path) -> Result<net::UnixListener, io::Error> {
 pub fn rpcserver_setup(socket_path: &path::Path) -> Result<net::UnixListener, io::Error> {
     log::debug!("Binding socket at {}", socket_path.display());
     // Create the socket with RW permissions only for the user
+    #[cfg(not(test))]
     let old_umask = unsafe { libc::umask(0o177) };
     let listener = bind(&socket_path);
+    #[cfg(not(test))]
     unsafe {
         libc::umask(old_umask);
     }
