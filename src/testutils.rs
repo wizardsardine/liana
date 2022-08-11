@@ -92,13 +92,9 @@ fn uid() -> usize {
 
 pub fn tmp_dir() -> path::PathBuf {
     env::temp_dir().join(format!(
-        "minisafed-unit-tests-{}-{:?}-{}-{}",
+        "minisafed-{}-{:?}-{}",
         process::id(),
         thread::current().id(),
-        time::SystemTime::now()
-            .duration_since(time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos(),
         uid(),
     ))
 }
@@ -107,9 +103,8 @@ impl DummyMinisafe {
     pub fn new() -> DummyMinisafe {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
-        let data_dir: path::PathBuf = [tmp_dir.as_path(), path::Path::new("datadir")]
-            .iter()
-            .collect();
+        // Use a shorthand for 'datadir', to avoid overflowing SUN_LEN on MacOS.
+        let data_dir: path::PathBuf = [tmp_dir.as_path(), path::Path::new("d")].iter().collect();
 
         let network = bitcoin::Network::Bitcoin;
         let bitcoin_config = BitcoinConfig {

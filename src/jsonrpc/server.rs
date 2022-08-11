@@ -401,7 +401,7 @@ mod tests {
         let ms = DummyMinisafe::new();
         let socket_path: path::PathBuf = [
             ms.tmp_dir.as_path(),
-            path::Path::new("datadir"),
+            path::Path::new("d"),
             path::Path::new("bitcoin"),
             path::Path::new("minisafed_rpc"),
         ]
