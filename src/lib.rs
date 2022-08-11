@@ -209,6 +209,7 @@ fn setup_bitcoind(
     Ok(bitcoind.with_retry_limit(None))
 }
 
+#[derive(Clone)]
 pub struct DaemonControl {
     config: Config,
     bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
@@ -346,8 +347,6 @@ impl DaemonHandle {
         let listener = rpcserver_setup(&rpc_socket)?;
         log::info!("JSONRPC server started.");
 
-        // FIXME: don't use a Mutex...
-        let control = sync::Arc::from(sync::Mutex::from(control));
         rpcserver_loop(listener, control)?;
         log::info!("JSONRPC server stopped.");
 

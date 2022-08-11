@@ -81,7 +81,7 @@ fn read_command(
 
 // Handle all messages from this connection.
 fn connection_handler(
-    control: sync::Arc<sync::Mutex<DaemonControl>>,
+    control: DaemonControl,
     mut stream: net::UnixStream,
     shutdown: sync::Arc<atomic::AtomicBool>,
 ) -> Result<(), io::Error> {
@@ -105,8 +105,8 @@ fn connection_handler(
         }
 
         log::trace!("JSONRPC request: {:?}", serde_json::to_string(&req));
-        let response = api::handle_request(&control.lock().unwrap(), req)
-            .unwrap_or_else(|e| Response::error(req_id, e));
+        let response =
+            api::handle_request(&control, req).unwrap_or_else(|e| Response::error(req_id, e));
         log::trace!("JSONRPC response: {:?}", serde_json::to_string(&response));
         if let Err(e) = serde_json::to_writer(&stream, &response) {
             log::error!("Error writing response: '{}'", e);
@@ -121,7 +121,7 @@ fn connection_handler(
 /// The main event loop. Wait for connections, and treat requests sent through them.
 pub fn rpcserver_loop(
     listener: net::UnixListener,
-    daemon_control: sync::Arc<sync::Mutex<DaemonControl>>,
+    daemon_control: DaemonControl,
 ) -> Result<(), io::Error> {
     // Keep it simple. We don't need great performances so just treat each connection in
     // its thread, with a given maximum number of connections.
