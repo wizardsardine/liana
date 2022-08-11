@@ -58,10 +58,11 @@ fn main() {
         process::exit(1);
     });
 
-    let _ = DaemonHandle::start(config).unwrap_or_else(|e| {
+    let daemon = DaemonHandle::start(config).unwrap_or_else(|e| {
         // The panic hook will log::error
         panic!("Starting Minisafe daemon: {}", e);
     });
+    daemon.shutdown();
 
     // We are always logging to stdout, should it be then piped to the log file (if self) or
     // not. So just make sure that all messages were actually written.

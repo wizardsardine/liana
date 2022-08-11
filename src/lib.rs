@@ -1,4 +1,5 @@
 mod bitcoin;
+mod commands;
 pub mod config;
 #[cfg(unix)]
 mod daemonize;
@@ -10,13 +11,18 @@ pub use miniscript;
 use crate::{
     bitcoin::{
         d::{BitcoinD, BitcoindError},
-        poller,
+        poller, BitcoinInterface,
     },
     config::{config_folder_path, Config},
-    database::sqlite::{FreshDbOptions, SqliteDb, SqliteDbError},
+    database::{
+        sqlite::{FreshDbOptions, SqliteDb, SqliteDbError},
+        DatabaseInterface,
+    },
 };
 
 use std::{error, fmt, fs, io, path, sync};
+
+use miniscript::bitcoin::secp256k1;
 
 #[cfg(not(test))]
 use std::{panic, process};
@@ -50,6 +56,20 @@ fn setup_panic_hook() {
         process::exit(1);
     }));
 }
+
+#[derive(Debug, Clone)]
+pub struct Version {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+pub const VERSION: Version = Version { major: 0, minor: 1 };
 
 #[derive(Debug)]
 pub enum StartupError {
@@ -124,7 +144,33 @@ fn create_datadir(datadir_path: &path::Path) -> Result<(), StartupError> {
     };
 }
 
-pub struct DaemonHandle {}
+pub struct DaemonControl {
+    config: Config,
+    bitcoin: Box<dyn BitcoinInterface>,
+    db: Box<dyn DatabaseInterface>,
+    secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+}
+
+impl DaemonControl {
+    pub fn new(
+        config: Config,
+        bitcoin: Box<dyn BitcoinInterface>,
+        db: Box<dyn DatabaseInterface>,
+    ) -> DaemonControl {
+        let secp = secp256k1::Secp256k1::verification_only();
+        DaemonControl {
+            config,
+            bitcoin,
+            db,
+            secp,
+        }
+    }
+}
+
+pub struct DaemonHandle {
+    pub control: DaemonControl,
+    bitcoin_poller: poller::Poller,
+}
 
 impl DaemonHandle {
     /// This starts the Minisafe daemon. Call `shutdown` to shut it down.
@@ -138,6 +184,7 @@ impl DaemonHandle {
         // First, check the data directory
         let mut data_dir = config
             .data_dir
+            .clone()
             .unwrap_or(config_folder_path().ok_or(StartupError::DefaultDataDirNotFound)?);
         data_dir.push(config.bitcoind_config.network.to_string());
         let fresh_data_dir = !data_dir.as_path().exists();
@@ -158,8 +205,8 @@ impl DaemonHandle {
         } else {
             None
         };
-        let db = SqliteDb::new(db_path, options)?;
-        db.sanity_check(config.bitcoind_config.network, &config.main_descriptor)?;
+        let sqlite = SqliteDb::new(db_path, options)?;
+        sqlite.sanity_check(config.bitcoind_config.network, &config.main_descriptor)?;
         log::info!("Database initialized and checked.");
 
         // Now set up the bitcoind interface
@@ -197,19 +244,26 @@ impl DaemonHandle {
 
         // Spawn the bitcoind poller with a retry limit high enough that we'd fail after that.
         let bitcoind = sync::Arc::from(sync::RwLock::from(bitcoind.with_retry_limit(None)));
-        let bit_poller = poller::Poller::start(
+        let bitcoin_poller = poller::Poller::start(
             bitcoind.clone(),
-            db,
+            sqlite.clone(),
             config.bitcoind_config.poll_interval_secs,
         );
-        bit_poller.stop();
 
-        Ok(Self {})
+        // Finally, set up the API.
+        let control = DaemonControl::new(config, Box::from(bitcoind), Box::from(sqlite));
+
+        Ok(Self {
+            control,
+            bitcoin_poller,
+        })
     }
 
     // NOTE: this moves out the data as it should not be reused after shutdown
     /// Shut down the Minisafe daemon.
-    pub fn shutdown(self) {}
+    pub fn shutdown(self) {
+        self.bitcoin_poller.stop();
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -410,7 +464,7 @@ mod tests {
         };
 
         // Create a dummy config with this bitcoind
-        let desc_str = "wsh(andor(pk(03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a),older(10000),pk(0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce)))#39x77spy";
+        let desc_str = "wsh(andor(pk(xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/*),older(10000),pk(xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/*)))#tk6wzexy";
         let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
         let config = Config {
             bitcoind_config,
@@ -426,7 +480,21 @@ mod tests {
             let config = config.clone();
             move || {
                 let handle = DaemonHandle::start(config).unwrap();
+                // TODO: avoid scope creep. We should move the bitcoind-specific checks to the
+                // bitcoind module, test the startup with a mocked bitcoind interface, and not test
+                // commands here but in the commands module.
+                let addr = handle.control.get_new_address();
+                let addr2 = handle.control.get_new_address();
+                assert_eq!(
+                    addr,
+                    bitcoin::Address::from_str(
+                        "bc1qdu9dama0pwc6fd9lj4sqzq4f728y5q2ucqyj55mfzfvuxr268zks7yajm3"
+                    )
+                    .unwrap()
+                );
+                assert_ne!(addr, addr2);
                 handle.shutdown();
+                addr
             }
         });
         complete_sanity_check(&server);
@@ -437,11 +505,13 @@ mod tests {
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, desc_str);
         complete_sync_check(&server);
-        daemon_thread.join().unwrap();
+        let addr = daemon_thread.join().unwrap();
 
         // The datadir is created now, so if we restart it it won't create the wo wallet.
         let daemon_thread = thread::spawn(move || {
             let handle = DaemonHandle::start(config).unwrap();
+            // TODO: avoid scope creep. See above comment.
+            assert_ne!(handle.control.get_new_address(), addr);
             handle.shutdown();
         });
         complete_sanity_check(&server);

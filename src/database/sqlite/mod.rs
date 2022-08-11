@@ -19,7 +19,10 @@ use crate::{
 
 use std::{convert::TryInto, fmt, io, path};
 
-use miniscript::{bitcoin, Descriptor, DescriptorPublicKey};
+use miniscript::{
+    bitcoin::{self, util::bip32},
+    Descriptor, DescriptorPublicKey,
+};
 
 const DB_VERSION: i64 = 0;
 
@@ -191,6 +194,21 @@ impl SqliteConn {
                 .execute(
                     "UPDATE tip SET blockheight = (?1), blockhash = (?2)",
                     rusqlite::params![tip.height, tip.hash.to_vec()],
+                )
+                .map(|_| ())
+        })
+        .expect("Database must be available")
+    }
+
+    /// Update the deposit derivation index.
+    pub fn update_derivation_index(&mut self, index: bip32::ChildNumber) {
+        let new_index: u32 = index.into();
+        db_exec(&mut self.conn, |db_tx| {
+            // NOTE: should be updated if we ever have multi-wallet support
+            db_tx
+                .execute(
+                    "UPDATE wallets SET deposit_derivation_index = (?1)",
+                    rusqlite::params![new_index],
                 )
                 .map(|_| ())
         })
