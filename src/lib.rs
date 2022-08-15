@@ -513,6 +513,18 @@ mod tests {
         stream.flush().unwrap();
     }
 
+    // Send them a response to 'getblockhash' with the genesis block hash
+    fn complete_tip_init<'a>(server: &net::TcpListener) {
+        let net_resp = [
+            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f\"}\n".as_bytes(),
+        ]
+        .concat();
+        let (mut stream, _) = server.accept().unwrap();
+        read_til_json_end(&mut stream);
+        stream.write_all(&net_resp).unwrap();
+        stream.flush().unwrap();
+    }
+
     // Send them a response to 'getblockchaininfo' saying we are far from being synced
     fn complete_sync_check<'a>(server: &net::TcpListener) {
         let net_resp = [
@@ -598,6 +610,7 @@ mod tests {
         complete_network_check(&server);
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, desc_str);
+        complete_tip_init(&server);
         complete_sync_check(&server);
         daemon_thread.join().unwrap();
 
