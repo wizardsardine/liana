@@ -26,6 +26,22 @@ CREATE TABLE wallets (
     main_descriptor TEXT NOT NULL,
     deposit_derivation_index INTEGER NOT NULL
 );
+
+/* Our (U)TxOs. */
+CREATE TABLE coins (
+    id INTEGER PRIMARY KEY NOT NULL,
+    wallet_id INTEGER NOT NULL,
+    blockheight INTEGER,
+    txid BLOB NOT NULL,
+    vout INTEGER NOT NULL,
+    amount_sat INTEGER NOT NULL,
+    derivation_index INTEGER NOT NULL,
+    spend_txid BLOB,
+    UNIQUE (txid, vout),
+    FOREIGN KEY (wallet_id) REFERENCES wallets (id)
+        ON UPDATE RESTRICT
+        ON DELETE RESTRICT
+);
 ";
 
 /// A row in the "tip" table.
@@ -85,6 +101,57 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
             timestamp,
             main_descriptor,
             deposit_derivation_index,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DbCoin {
+    pub id: i64,
+    pub wallet_id: i64,
+    pub outpoint: bitcoin::OutPoint,
+    pub block_height: Option<i32>,
+    pub amount: bitcoin::Amount,
+    pub derivation_index: bip32::ChildNumber,
+    pub spend_txid: Option<bitcoin::Txid>,
+}
+
+impl std::hash::Hash for DbCoin {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.outpoint.hash(h)
+    }
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let id = row.get(0)?;
+        let wallet_id = row.get(1)?;
+
+        let block_height = row.get(2)?;
+        let txid: Vec<u8> = row.get(3)?;
+        let txid: bitcoin::Txid = encode::deserialize(&txid).expect("We only store valid txids");
+        let vout = row.get(4)?;
+        let outpoint = bitcoin::OutPoint { txid, vout };
+
+        let amount = row.get(5)?;
+        let amount = bitcoin::Amount::from_sat(amount);
+        let der_idx: u32 = row.get(6)?;
+        let derivation_index = bip32::ChildNumber::from(der_idx);
+
+        let spend_txid: Option<Vec<u8>> = row.get(7)?;
+        let spend_txid =
+            spend_txid.map(|txid| encode::deserialize(&txid).expect("We only store valid txids"));
+
+        Ok(DbCoin {
+            id,
+            wallet_id,
+            outpoint,
+            block_height,
+            amount,
+            derivation_index,
+            spend_txid,
         })
     }
 }

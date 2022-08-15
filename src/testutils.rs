@@ -1,11 +1,11 @@
 use crate::{
     bitcoin::{BitcoinInterface, BlockChainTip},
     config::{BitcoinConfig, Config},
-    database::{DatabaseConnection, DatabaseInterface},
+    database::{Coin, DatabaseConnection, DatabaseInterface},
     DaemonHandle,
 };
 
-use std::{env, fs, io, path, process, str::FromStr, sync, thread, time};
+use std::{collections::HashMap, env, fs, io, path, process, str::FromStr, sync, thread, time};
 
 use miniscript::{
     bitcoin::{self, util::bip32},
@@ -37,6 +37,7 @@ impl BitcoinInterface for DummyBitcoind {
 pub struct DummyDb {
     curr_index: bip32::ChildNumber,
     curr_tip: Option<BlockChainTip>,
+    coins: HashMap<bitcoin::OutPoint, Coin>,
 }
 
 impl DummyDb {
@@ -44,6 +45,7 @@ impl DummyDb {
         DummyDb {
             curr_index: 0.into(),
             curr_tip: None,
+            coins: HashMap::new(),
         }
     }
 }
@@ -59,6 +61,10 @@ pub struct DummyDbConn {
 }
 
 impl DatabaseConnection for DummyDbConn {
+    fn network(&mut self) -> bitcoin::Network {
+        bitcoin::Network::Bitcoin
+    }
+
     fn chain_tip(&mut self) -> Option<BlockChainTip> {
         self.db.read().unwrap().curr_tip
     }
@@ -73,6 +79,38 @@ impl DatabaseConnection for DummyDbConn {
 
     fn update_derivation_index(&mut self, index: bip32::ChildNumber) {
         self.db.write().unwrap().curr_index = index;
+    }
+
+    fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
+        self.db.read().unwrap().coins.clone()
+    }
+
+    fn new_unspent_coins<'a>(&mut self, coins: &[Coin]) {
+        for coin in coins {
+            self.db
+                .write()
+                .unwrap()
+                .coins
+                .insert(coin.outpoint, coin.clone());
+        }
+    }
+
+    fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32)]) {
+        for (op, height) in outpoints {
+            let mut db = self.db.write().unwrap();
+            let h = &mut db.coins.get_mut(op).unwrap().block_height;
+            assert!(h.is_none());
+            *h = Some(*height);
+        }
+    }
+
+    fn spend_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]) {
+        for (op, spend_txid) in outpoints {
+            let mut db = self.db.write().unwrap();
+            let spender = &mut db.coins.get_mut(op).unwrap().spend_txid;
+            assert!(spender.is_none());
+            *spender = Some(*spend_txid);
+        }
     }
 }
 

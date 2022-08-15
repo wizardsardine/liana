@@ -11,9 +11,12 @@ mod utils;
 
 use crate::{
     bitcoin::BlockChainTip,
-    database::sqlite::{
-        schema::{DbTip, DbWallet},
-        utils::{create_fresh_db, db_exec, db_query},
+    database::{
+        sqlite::{
+            schema::{DbCoin, DbTip, DbWallet},
+            utils::{create_fresh_db, db_exec, db_query},
+        },
+        Coin,
     },
 };
 
@@ -141,6 +144,9 @@ impl SqliteDb {
     }
 }
 
+// We only support single wallet. The id of the wallet row is always 1.
+const WALLET_ID: i64 = 1;
+
 pub struct SqliteConn {
     conn: rusqlite::Connection,
 }
@@ -214,13 +220,86 @@ impl SqliteConn {
         })
         .expect("Database must be available")
     }
+
+    /// Get all UTxOs.
+    pub fn unspent_coins(&mut self) -> Vec<DbCoin> {
+        db_query(
+            &mut self.conn,
+            "SELECT * FROM coins WHERE spend_txid is NULL",
+            rusqlite::params![],
+            |row| row.try_into(),
+        )
+        .expect("Db must not fail")
+    }
+
+    // FIXME: don't take the whole coin, we don't need it.
+    /// Store new, unconfirmed and unspent, coins.
+    /// Will panic if given a coin that is already in DB.
+    pub fn new_unspent_coins<'a>(&mut self, coins: impl IntoIterator<Item = &'a Coin>) {
+        db_exec(&mut self.conn, |db_tx| {
+            for coin in coins {
+                let deriv_index: u32 = coin.derivation_index.into();
+                db_tx.execute(
+                    "INSERT INTO coins (wallet_id, txid, vout, amount_sat, derivation_index) \
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        WALLET_ID,
+                        coin.outpoint.txid.to_vec(),
+                        coin.outpoint.vout,
+                        coin.amount.as_sat(),
+                        deriv_index,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("Database must be available")
+    }
+
+    /// Mark a set of coins as confirmed.
+    pub fn confirm_coins<'a>(
+        &mut self,
+        outpoints: impl IntoIterator<Item = &'a (bitcoin::OutPoint, i32)>,
+    ) {
+        db_exec(&mut self.conn, |db_tx| {
+            for (outpoint, height) in outpoints {
+                db_tx.execute(
+                    "UPDATE coins SET blockheight = ?1 WHERE txid = ?2 AND vout = ?3",
+                    rusqlite::params![height, outpoint.txid.to_vec(), outpoint.vout,],
+                )?;
+            }
+
+            Ok(())
+        })
+        .expect("Database must be available")
+    }
+
+    /// Mark a set of coins as spent.
+    pub fn spend_coins<'a>(
+        &mut self,
+        outpoints: impl IntoIterator<Item = &'a (bitcoin::OutPoint, bitcoin::Txid)>,
+    ) {
+        db_exec(&mut self.conn, |db_tx| {
+            for (outpoint, spend_txid) in outpoints {
+                db_tx.execute(
+                    "UPDATE coins SET spend_txid = ?1 WHERE txid = ?2 AND vout = ?3",
+                    rusqlite::params![spend_txid.to_vec(), outpoint.txid.to_vec(), outpoint.vout,],
+                )?;
+            }
+
+            Ok(())
+        })
+        .expect("Database must be available")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testutils::*;
-    use std::{fs, path, str::FromStr};
+    use std::{collections::HashSet, fs, path, str::FromStr};
+
+    use bitcoin::hashes::Hash;
 
     fn dummy_options() -> FreshDbOptions {
         let desc_str = "wsh(andor(pk(03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a),older(10000),pk(0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce)))";
@@ -229,6 +308,19 @@ mod tests {
             bitcoind_network: bitcoin::Network::Bitcoin,
             main_descriptor,
         }
+    }
+
+    fn dummy_db() -> (path::PathBuf, FreshDbOptions, SqliteDb) {
+        let tmp_dir = tmp_dir();
+        fs::create_dir_all(&tmp_dir).unwrap();
+
+        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("minisafed.sqlite3")]
+            .iter()
+            .collect();
+        let options = dummy_options();
+        let db = SqliteDb::new(db_path.clone(), Some(options.clone())).unwrap();
+
+        (tmp_dir, options, db)
     }
 
     #[test]
@@ -274,14 +366,7 @@ mod tests {
 
     #[test]
     fn db_tip_update() {
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
-
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("minisafed.sqlite3")]
-            .iter()
-            .collect();
-        let options = dummy_options();
-        let db = SqliteDb::new(db_path.clone(), Some(options.clone())).unwrap();
+        let (tmp_dir, options, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -302,6 +387,74 @@ mod tests {
             let db_tip = conn.db_tip();
             assert_eq!(db_tip.block_height.unwrap(), new_tip.height);
             assert_eq!(db_tip.block_hash.unwrap(), new_tip.hash);
+        }
+
+        fs::remove_dir_all(&tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn db_coins_update() {
+        let (tmp_dir, _, db) = dummy_db();
+
+        {
+            let mut conn = db.connection().unwrap();
+
+            // Necessarily empty at first.
+            assert!(conn.unspent_coins().is_empty());
+
+            // Add one, we'll get it.
+            let coin_a = Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
+                )
+                .unwrap(),
+                block_height: None,
+                amount: bitcoin::Amount::from_sat(98765),
+                derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                spend_txid: None,
+            };
+            conn.new_unspent_coins(&[coin_a.clone()]); // On 1.48, arrays aren't IntoIterator
+            assert_eq!(conn.unspent_coins()[0].outpoint, coin_a.outpoint);
+
+            // Add a second one, we'll get both.
+            let coin_b = Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571936f:12",
+                )
+                .unwrap(),
+                block_height: None,
+                amount: bitcoin::Amount::from_sat(1111),
+                derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
+                spend_txid: None,
+            };
+            conn.new_unspent_coins(&[coin_b.clone()]);
+            let outpoints: HashSet<bitcoin::OutPoint> = conn
+                .unspent_coins()
+                .into_iter()
+                .map(|c| c.outpoint)
+                .collect();
+            assert!(outpoints.contains(&coin_a.outpoint));
+            assert!(outpoints.contains(&coin_b.outpoint));
+
+            // Now if we confirm one, it'll be marked as such.
+            let height = 174500;
+            conn.confirm_coins(&[(coin_a.outpoint, height)]);
+            let coins = conn.unspent_coins();
+            assert_eq!(coins[0].block_height, Some(height));
+            assert!(coins[1].block_height.is_none());
+
+            // Now if we spend one, we'll only get the other one.
+            conn.spend_coins(&[(
+                coin_a.outpoint,
+                bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
+            )]);
+            let outpoints: HashSet<bitcoin::OutPoint> = conn
+                .unspent_coins()
+                .into_iter()
+                .map(|c| c.outpoint)
+                .collect();
+            assert!(!outpoints.contains(&coin_a.outpoint));
+            assert!(outpoints.contains(&coin_b.outpoint));
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();
