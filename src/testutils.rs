@@ -1,5 +1,5 @@
 use crate::{
-    bitcoin::{BitcoinInterface, BlockChainTip},
+    bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
     database::{Coin, DatabaseConnection, DatabaseInterface},
     DaemonHandle,
@@ -15,6 +15,14 @@ use miniscript::{
 pub struct DummyBitcoind {}
 
 impl BitcoinInterface for DummyBitcoind {
+    fn genesis_block(&self) -> BlockChainTip {
+        let hash = bitcoin::BlockHash::from_str(
+            "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+        )
+        .unwrap();
+        BlockChainTip { hash, height: 0 }
+    }
+
     fn sync_progress(&self) -> f64 {
         1.0
     }
@@ -31,6 +39,18 @@ impl BitcoinInterface for DummyBitcoind {
     fn is_in_chain(&self, _: &BlockChainTip) -> bool {
         // No reorg
         true
+    }
+
+    fn received_coins(&self, _: &BlockChainTip) -> Vec<UTxO> {
+        Vec::new()
+    }
+
+    fn confirmed_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, i32)> {
+        Vec::new()
+    }
+
+    fn spent_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
+        Vec::new()
     }
 }
 
