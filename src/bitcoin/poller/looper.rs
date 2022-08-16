@@ -8,7 +8,7 @@ use std::{
     thread, time,
 };
 
-use miniscript::bitcoin::{self, util::bip32};
+use miniscript::bitcoin;
 
 #[derive(Debug, Clone)]
 struct UpdatedCoins {
@@ -30,21 +30,26 @@ fn update_coins(
     let curr_coins = db_conn.unspent_coins();
     let mut received = Vec::new();
     for utxo in bit.received_coins(&previous_tip) {
-        // FIXME: have a DB table to query those...
-        let derivation_index = bip32::ChildNumber::from(0);
-        // This works because the hash only takes the outpoint into account.
-        if !curr_coins.contains_key(&utxo.outpoint) {
-            let UTxO {
-                outpoint, amount, ..
-            } = utxo;
-            let coin = Coin {
-                outpoint,
-                amount,
-                derivation_index,
-                block_height: None,
-                spend_txid: None,
-            };
-            received.push(coin);
+        if let Some(derivation_index) = db_conn.derivation_index_by_address(&utxo.address) {
+            if !curr_coins.contains_key(&utxo.outpoint) {
+                let UTxO {
+                    outpoint, amount, ..
+                } = utxo;
+                let coin = Coin {
+                    outpoint,
+                    amount,
+                    derivation_index,
+                    block_height: None,
+                    spend_txid: None,
+                };
+                received.push(coin);
+            }
+        } else {
+            log::error!(
+                "Could not get derivation index for coin '{}' (address: '{}')",
+                &utxo.outpoint,
+                &utxo.address
+            );
         }
     }
 

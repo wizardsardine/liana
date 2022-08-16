@@ -671,11 +671,12 @@ fn roundup_progress(progress: f64) -> f64 {
 }
 
 /// A 'received' entry in the 'listsinceblock' result.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct LSBlockEntry {
     pub outpoint: bitcoin::OutPoint,
     pub amount: bitcoin::Amount,
     pub block_height: Option<i32>,
+    pub address: bitcoin::Address,
 }
 
 impl From<&Json> for LSBlockEntry {
@@ -702,10 +703,17 @@ impl From<&Json> for LSBlockEntry {
             .and_then(Json::as_i64)
             .map(|bh| bh as i32);
 
+        let address = json
+            .get("address")
+            .and_then(Json::as_str)
+            .and_then(|s| bitcoin::Address::from_str(s).ok())
+            .expect("bitcoind can't give a bad address");
+
         LSBlockEntry {
             outpoint,
             amount,
             block_height,
+            address,
         }
     }
 }

@@ -46,6 +46,11 @@ pub trait DatabaseConnection {
 
     fn increment_derivation_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>);
 
+    fn derivation_index_by_address(
+        &mut self,
+        address: &bitcoin::Address,
+    ) -> Option<bip32::ChildNumber>;
+
     /// Get all UTxOs.
     fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
 
@@ -124,6 +129,14 @@ impl DatabaseConnection for SqliteConn {
 
     fn spend_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]) {
         self.spend_coins(outpoints)
+    }
+
+    fn derivation_index_by_address(
+        &mut self,
+        address: &bitcoin::Address,
+    ) -> Option<bip32::ChildNumber> {
+        self.db_address(address)
+            .map(|db_addr| db_addr.derivation_index)
     }
 }
 

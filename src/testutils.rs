@@ -133,6 +133,10 @@ impl DatabaseConnection for DummyDbConn {
             *spender = Some(*spend_txid);
         }
     }
+
+    fn derivation_index_by_address(&mut self, _: &bitcoin::Address) -> Option<bip32::ChildNumber> {
+        None
+    }
 }
 
 pub struct DummyMinisafe {

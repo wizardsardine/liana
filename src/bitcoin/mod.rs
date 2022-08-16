@@ -79,11 +79,13 @@ impl BitcoinInterface for d::BitcoinD {
                     outpoint,
                     amount,
                     block_height,
+                    address,
                 } = entry;
                 UTxO {
                     outpoint,
                     amount,
                     block_height,
+                    address,
                 }
             })
             .collect()
@@ -168,9 +170,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
 // FIXME: We could avoid this type (and all the conversions entailing allocations) if bitcoind
 // exposed the derivation index from the parent descriptor in the LSB result.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct UTxO {
     pub outpoint: bitcoin::OutPoint,
     pub amount: bitcoin::Amount,
     pub block_height: Option<i32>,
+    pub address: bitcoin::Address,
 }
