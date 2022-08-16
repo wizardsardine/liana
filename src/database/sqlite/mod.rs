@@ -13,7 +13,7 @@ use crate::{
     bitcoin::BlockChainTip,
     database::{
         sqlite::{
-            schema::{DbCoin, DbTip, DbWallet},
+            schema::{DbAddress, DbCoin, DbTip, DbWallet},
             utils::{create_fresh_db, db_exec, db_query},
         },
         Coin,
@@ -23,7 +23,7 @@ use crate::{
 use std::{convert::TryInto, fmt, io, path};
 
 use miniscript::{
-    bitcoin::{self, util::bip32},
+    bitcoin::{self, secp256k1, util::bip32},
     Descriptor, DescriptorPublicKey,
 };
 
@@ -93,10 +93,11 @@ impl SqliteDb {
     pub fn new(
         db_path: path::PathBuf,
         fresh_options: Option<FreshDbOptions>,
+        secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     ) -> Result<SqliteDb, SqliteDbError> {
         // Create the database if needed, and make sure the db file exists.
         if let Some(options) = fresh_options {
-            create_fresh_db(&db_path, options)?;
+            create_fresh_db(&db_path, options, secp)?;
             log::info!("Created a fresh database at {}.", db_path.display());
         }
         if !db_path.exists() {
@@ -291,6 +292,17 @@ impl SqliteConn {
         })
         .expect("Database must be available")
     }
+
+    pub fn db_address(&mut self, address: &bitcoin::Address) -> Option<DbAddress> {
+        db_query(
+            &mut self.conn,
+            "SELECT * FROM addresses WHERE address = ?1",
+            rusqlite::params![address.to_string()],
+            |row| row.try_into(),
+        )
+        .expect("Db must not fail")
+        .pop()
+    }
 }
 
 #[cfg(test)]
@@ -300,9 +312,10 @@ mod tests {
     use std::{collections::HashSet, fs, path, str::FromStr};
 
     use bitcoin::hashes::Hash;
+    use miniscript::{DescriptorTrait, TranslatePk2};
 
     fn dummy_options() -> FreshDbOptions {
-        let desc_str = "wsh(andor(pk(03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a),older(10000),pk(0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce)))";
+        let desc_str = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2d";
         let main_descriptor = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
         FreshDbOptions {
             bitcoind_network: bitcoin::Network::Bitcoin,
@@ -310,35 +323,42 @@ mod tests {
         }
     }
 
-    fn dummy_db() -> (path::PathBuf, FreshDbOptions, SqliteDb) {
+    fn dummy_db() -> (
+        path::PathBuf,
+        FreshDbOptions,
+        secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+        SqliteDb,
+    ) {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
+        let secp = secp256k1::Secp256k1::verification_only();
 
         let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("minisafed.sqlite3")]
             .iter()
             .collect();
         let options = dummy_options();
-        let db = SqliteDb::new(db_path.clone(), Some(options.clone())).unwrap();
+        let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
 
-        (tmp_dir, options, db)
+        (tmp_dir, options, secp, db)
     }
 
     #[test]
     fn db_startup_sanity_checks() {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
+        let secp = secp256k1::Secp256k1::verification_only();
 
         let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("minisafed.sqlite3")]
             .iter()
             .collect();
-        assert!(SqliteDb::new(db_path.clone(), None)
+        assert!(SqliteDb::new(db_path.clone(), None, &secp)
             .unwrap_err()
             .to_string()
             .contains("database file not found"));
 
         let options = dummy_options();
 
-        let db = SqliteDb::new(db_path.clone(), Some(options.clone())).unwrap();
+        let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
         db.sanity_check(bitcoin::Network::Testnet, &options.main_descriptor)
             .unwrap_err()
             .to_string()
@@ -346,7 +366,7 @@ mod tests {
         fs::remove_file(&db_path).unwrap();
         let other_desc_str = "wsh(andor(pk(037a27a76ebf33594c785e4fa41607860a960bb5aa3039654297b05bff57e4f9a9),older(10000),pk(0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce)))";
         let other_desc = Descriptor::<DescriptorPublicKey>::from_str(other_desc_str).unwrap();
-        let db = SqliteDb::new(db_path.clone(), Some(options.clone())).unwrap();
+        let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &other_desc)
             .unwrap_err()
             .to_string()
@@ -354,10 +374,10 @@ mod tests {
         fs::remove_file(&db_path).unwrap();
         // TODO: version check
 
-        let db = SqliteDb::new(db_path.clone(), Some(options.clone())).unwrap();
+        let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
             .unwrap();
-        let db = SqliteDb::new(db_path.clone(), None).unwrap();
+        let db = SqliteDb::new(db_path.clone(), None, &secp).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
             .unwrap();
 
@@ -366,7 +386,7 @@ mod tests {
 
     #[test]
     fn db_tip_update() {
-        let (tmp_dir, options, db) = dummy_db();
+        let (tmp_dir, options, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -394,7 +414,7 @@ mod tests {
 
     #[test]
     fn db_coins_update() {
-        let (tmp_dir, _, db) = dummy_db();
+        let (tmp_dir, _, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -455,6 +475,49 @@ mod tests {
                 .collect();
             assert!(!outpoints.contains(&coin_a.outpoint));
             assert!(outpoints.contains(&coin_b.outpoint));
+        }
+
+        fs::remove_dir_all(&tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_addresses_cache() {
+        let (tmp_dir, options, secp, db) = dummy_db();
+
+        {
+            let mut conn = db.connection().unwrap();
+
+            // There is the index for the first index
+            let addr = options
+                .main_descriptor
+                .derive(0)
+                .translate_pk2(|xpk| xpk.derive_public_key(&secp))
+                .expect("All pubkeys were derived, no wildcard.")
+                .address(options.bitcoind_network)
+                .expect("Always a P2WSH address");
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 0.into());
+
+            // There is the index for the 199th index (look-ahead limit)
+            let addr = options
+                .main_descriptor
+                .derive(199)
+                .translate_pk2(|xpk| xpk.derive_public_key(&secp))
+                .expect("All pubkeys were derived, no wildcard.")
+                .address(options.bitcoind_network)
+                .expect("Always a P2WSH address");
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 199.into());
+
+            // And not for the 200th one.
+            let addr = options
+                .main_descriptor
+                .derive(200)
+                .translate_pk2(|xpk| xpk.derive_public_key(&secp))
+                .expect("All pubkeys were derived, no wildcard.")
+                .address(options.bitcoind_network)
+                .expect("Always a P2WSH address");
+            assert!(conn.db_address(&addr).is_none());
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();

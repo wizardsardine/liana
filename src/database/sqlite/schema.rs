@@ -42,6 +42,14 @@ CREATE TABLE coins (
         ON UPDATE RESTRICT
         ON DELETE RESTRICT
 );
+
+/* A mapping from descriptor address to derivation index. Necessary until
+ * we can get the derivation index from the parent descriptor from bitcoind.
+ */
+CREATE TABLE addresses (
+    address TEXT NOT NULL UNIQUE,
+    derivation_index INTEGER NOT NULL UNIQUE
+);
 ";
 
 /// A row in the "tip" table.
@@ -152,6 +160,30 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             amount,
             derivation_index,
             spend_txid,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DbAddress {
+    pub address: bitcoin::Address,
+    pub derivation_index: bip32::ChildNumber,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbAddress {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let address: String = row.get(0)?;
+        let address = bitcoin::Address::from_str(&address).expect("We only store valid addresses");
+
+        let derivation_index: u32 = row.get(1)?;
+        let derivation_index = bip32::ChildNumber::from(derivation_index);
+        assert!(derivation_index.is_normal());
+
+        Ok(DbAddress {
+            address,
+            derivation_index,
         })
     }
 }

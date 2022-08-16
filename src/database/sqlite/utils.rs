@@ -2,6 +2,10 @@ use crate::database::sqlite::{schema::SCHEMA, FreshDbOptions, SqliteDbError, DB_
 
 use std::{convert::TryInto, fs, path, time};
 
+use miniscript::{bitcoin::secp256k1, DescriptorTrait, TranslatePk2};
+
+const LOOK_AHEAD_LIMIT: u32 = 200;
+
 /// Perform a set of modifications to the database inside a single transaction
 pub fn db_exec<F>(conn: &mut rusqlite::Connection, modifications: F) -> Result<(), rusqlite::Error>
 where
@@ -62,13 +66,35 @@ pub fn create_db_file(db_path: &path::Path) -> Result<(), std::io::Error> {
     };
 }
 
-pub fn create_fresh_db(db_path: &path::Path, options: FreshDbOptions) -> Result<(), SqliteDbError> {
+pub fn create_fresh_db(
+    db_path: &path::Path,
+    options: FreshDbOptions,
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+) -> Result<(), SqliteDbError> {
     create_db_file(db_path)?;
 
     let timestamp = time::SystemTime::now()
         .duration_since(time::UNIX_EPOCH)
         .map(|dur| timestamp_to_u32(dur.as_secs()))
         .expect("System clock went backward the epoch?");
+
+    // Fill the initial addresses. On a fresh database, the deposit_derivation_index is
+    // necessarily 0.
+    let mut query = String::with_capacity(100 * LOOK_AHEAD_LIMIT as usize);
+    for index in 0..LOOK_AHEAD_LIMIT {
+        // TODO: have this as a helper in descriptors.rs
+        let address = options
+            .main_descriptor
+            .derive(index)
+            .translate_pk2(|xpk| xpk.derive_public_key(secp))
+            .expect("All pubkeys were derived, no wildcard.")
+            .address(options.bitcoind_network)
+            .expect("Always a P2WSH address");
+        query += &format!(
+            "INSERT INTO addresses (address, derivation_index) VALUES (\"{}\", {});\n",
+            address, index
+        );
+    }
 
     let mut conn = rusqlite::Connection::open(db_path)?;
     db_exec(&mut conn, |tx| {
@@ -86,6 +112,7 @@ pub fn create_fresh_db(db_path: &path::Path, options: FreshDbOptions) -> Result<
                      VALUES (?1, ?2, ?3)",
             rusqlite::params![timestamp, options.main_descriptor.to_string(), 0,],
         )?;
+        tx.execute_batch(&query)?;
 
         Ok(())
     })?;
