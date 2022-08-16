@@ -31,7 +31,7 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         let index = db_conn.derivation_index();
         // TODO: handle should we wrap around instead of failing?
-        db_conn.update_derivation_index(index.increment().expect("TODO: handle wraparound"));
+        db_conn.increment_derivation_index(&self.secp);
         let address = self
             .config
             .main_descriptor

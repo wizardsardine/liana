@@ -8,7 +8,7 @@ use crate::{
 use std::{collections::HashMap, env, fs, io, path, process, str::FromStr, sync, thread, time};
 
 use miniscript::{
-    bitcoin::{self, util::bip32},
+    bitcoin::{self, secp256k1, util::bip32},
     descriptor,
 };
 
@@ -97,8 +97,9 @@ impl DatabaseConnection for DummyDbConn {
         self.db.read().unwrap().curr_index
     }
 
-    fn update_derivation_index(&mut self, index: bip32::ChildNumber) {
-        self.db.write().unwrap().curr_index = index;
+    fn increment_derivation_index(&mut self, _: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        let next_index = self.db.write().unwrap().curr_index.increment().unwrap();
+        self.db.write().unwrap().curr_index = next_index;
     }
 
     fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {

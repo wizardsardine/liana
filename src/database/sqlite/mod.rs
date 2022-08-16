@@ -14,7 +14,7 @@ use crate::{
     database::{
         sqlite::{
             schema::{DbAddress, DbCoin, DbTip, DbWallet},
-            utils::{create_fresh_db, db_exec, db_query},
+            utils::{create_fresh_db, db_exec, db_query, db_tx_query, LOOK_AHEAD_LIMIT},
         },
         Coin,
     },
@@ -23,8 +23,8 @@ use crate::{
 use std::{convert::TryInto, fmt, io, path};
 
 use miniscript::{
-    bitcoin::{self, secp256k1, util::bip32},
-    Descriptor, DescriptorPublicKey,
+    bitcoin::{self, secp256k1},
+    Descriptor, DescriptorPublicKey, DescriptorTrait, TranslatePk2,
 };
 
 const DB_VERSION: i64 = 0;
@@ -207,15 +207,47 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
-    /// Update the deposit derivation index.
-    pub fn update_derivation_index(&mut self, index: bip32::ChildNumber) {
-        let new_index: u32 = index.into();
+    pub fn increment_derivation_index(
+        &mut self,
+        secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    ) {
+        let network = self.db_tip().network;
+
         db_exec(&mut self.conn, |db_tx| {
+            let db_wallet: DbWallet = db_tx_query(
+                &db_tx,
+                "SELECT * FROM wallets",
+                rusqlite::params![],
+                |row| row.try_into(),
+            )
+            .expect("Db must not fail")
+            .pop()
+            .expect("There is always a row in the wallet table");
+            let next_index: u32 = db_wallet
+                .deposit_derivation_index
+                .increment()
+                .expect("Must not get in hardened territory")
+                .into();
             // NOTE: should be updated if we ever have multi-wallet support
+            db_tx.execute(
+                "UPDATE wallets SET deposit_derivation_index = (?1)",
+                rusqlite::params![next_index],
+            )?;
+
+            // Update the address to derivation index mapping.
+            // TODO: have this as a helper in descriptors.rs
+            let next_la_index = next_index + LOOK_AHEAD_LIMIT - 1;
+            let next_la_address = db_wallet
+                .main_descriptor
+                .derive(next_la_index)
+                .translate_pk2(|xpk| xpk.derive_public_key(secp))
+                .expect("All pubkeys were derived, no wildcard.")
+                .address(network)
+                .expect("It's a wsh() descriptor");
             db_tx
                 .execute(
-                    "UPDATE wallets SET deposit_derivation_index = (?1)",
-                    rusqlite::params![new_index],
+                    "INSERT INTO addresses (address, derivation_index) VALUES (?1, ?2)",
+                    rusqlite::params![next_la_address.to_string(), next_la_index],
                 )
                 .map(|_| ())
         })
@@ -311,7 +343,7 @@ mod tests {
     use crate::testutils::*;
     use std::{collections::HashSet, fs, path, str::FromStr};
 
-    use bitcoin::hashes::Hash;
+    use bitcoin::{hashes::Hash, util::bip32};
     use miniscript::{DescriptorTrait, TranslatePk2};
 
     fn dummy_options() -> FreshDbOptions {
@@ -518,6 +550,11 @@ mod tests {
                 .address(options.bitcoind_network)
                 .expect("Always a P2WSH address");
             assert!(conn.db_address(&addr).is_none());
+
+            // But if we increment the deposit derivation index, the 200th one will be there.
+            conn.increment_derivation_index(&secp);
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 200.into());
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();

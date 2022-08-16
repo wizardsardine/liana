@@ -4,7 +4,7 @@ use std::{convert::TryInto, fs, path, time};
 
 use miniscript::{bitcoin::secp256k1, DescriptorTrait, TranslatePk2};
 
-const LOOK_AHEAD_LIMIT: u32 = 200;
+pub const LOOK_AHEAD_LIMIT: u32 = 200;
 
 /// Perform a set of modifications to the database inside a single transaction
 pub fn db_exec<F>(conn: &mut rusqlite::Connection, modifications: F) -> Result<(), rusqlite::Error>
@@ -14,6 +14,27 @@ where
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     modifications(&tx)?;
     tx.commit()
+}
+
+/// Internal helper for queries boilerplate
+pub fn db_tx_query<P, F, T>(
+    tx: &rusqlite::Transaction,
+    stmt_str: &str,
+    params: P,
+    f: F,
+) -> Result<Vec<T>, rusqlite::Error>
+where
+    P: IntoIterator + rusqlite::Params,
+    P::Item: rusqlite::ToSql,
+    F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+{
+    // rustc says 'borrowed value does not live long enough'
+    let x = tx
+        .prepare(stmt_str)?
+        .query_map(params, f)?
+        .collect::<rusqlite::Result<Vec<T>>>();
+
+    x
 }
 
 /// Internal helper for queries boilerplate

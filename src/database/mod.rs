@@ -13,7 +13,7 @@ use crate::{
 
 use std::{collections::HashMap, sync};
 
-use miniscript::bitcoin::{self, util::bip32};
+use miniscript::bitcoin::{self, secp256k1, util::bip32};
 
 pub trait DatabaseInterface: Send {
     fn connection(&self) -> Box<dyn DatabaseConnection>;
@@ -44,7 +44,7 @@ pub trait DatabaseConnection {
 
     fn derivation_index(&mut self) -> bip32::ChildNumber;
 
-    fn update_derivation_index(&mut self, index: bip32::ChildNumber);
+    fn increment_derivation_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>);
 
     /// Get all UTxOs.
     fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
@@ -83,8 +83,8 @@ impl DatabaseConnection for SqliteConn {
         self.db_wallet().deposit_derivation_index
     }
 
-    fn update_derivation_index(&mut self, index: bip32::ChildNumber) {
-        self.update_derivation_index(index)
+    fn increment_derivation_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        self.increment_derivation_index(secp)
     }
 
     fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
