@@ -64,3 +64,23 @@ This command does not take any parameter for now.
 | Field         | Type   | Description        |
 | ------------- | ------ | ------------------ |
 | `address`     | string | A Bitcoin address  |
+
+
+### `listcoins`
+
+List our current Unspent Transaction Outputs.
+
+#### Request
+
+This command does not take any parameter for now.
+
+| Field         | Type              | Description                                                 |
+| ------------- | ----------------- | ----------------------------------------------------------- |
+
+#### Response
+
+| Field          | Type          | Description                                                      |
+| -------------- | ------------- | ---------------------------------------------------------------- |
+| `amount`       | int           | Value of the UTxO in satoshis                                    |
+| `outpoint`     | string        | Transaction id and output index of this coin                     |
+| `block_height` | int or null   | Blockheight the transaction was confirmed at, or `null`          |

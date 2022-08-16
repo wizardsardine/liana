@@ -2,7 +2,14 @@
 //!
 //! External interface to the Minisafe daemon.
 
-use crate::{bitcoin::BitcoinInterface, database::DatabaseInterface, DaemonControl, VERSION};
+mod utils;
+
+use crate::{
+    bitcoin::BitcoinInterface,
+    database::{Coin, DatabaseInterface},
+    DaemonControl, VERSION,
+};
+use utils::{deser_amount_from_sats, ser_amount};
 
 use miniscript::{
     bitcoin,
@@ -43,6 +50,30 @@ impl DaemonControl {
             .expect("It's a wsh() descriptor");
         GetAddressResult { address }
     }
+
+    /// Get a list of all currently unspent coins.
+    pub fn list_coins(&self) -> ListCoinsResult {
+        let mut db_conn = self.db.connection();
+        let coins: Vec<ListCoinsEntry> = db_conn
+            .unspent_coins()
+            // Can't use into_values as of Rust 1.48
+            .into_iter()
+            .map(|(_, coin)| {
+                let Coin {
+                    amount,
+                    outpoint,
+                    block_height,
+                    ..
+                } = coin;
+                ListCoinsEntry {
+                    amount,
+                    outpoint,
+                    block_height,
+                }
+            })
+            .collect();
+        ListCoinsResult { coins }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +94,22 @@ pub struct GetInfoResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetAddressResult {
     pub address: bitcoin::Address,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListCoinsEntry {
+    #[serde(
+        serialize_with = "ser_amount",
+        deserialize_with = "deser_amount_from_sats"
+    )]
+    pub amount: bitcoin::Amount,
+    pub outpoint: bitcoin::OutPoint,
+    pub block_height: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListCoinsResult {
+    pub coins: Vec<ListCoinsEntry>,
 }
 
 #[cfg(test)]
