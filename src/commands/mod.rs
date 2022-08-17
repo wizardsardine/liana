@@ -45,13 +45,13 @@ impl DaemonControl {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetInfoDescriptors {
     pub main: descriptor::Descriptor<descriptor::DescriptorPublicKey>,
 }
 
 /// Information about the daemon
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetInfoResult {
     pub version: String,
     pub network: bitcoin::Network,
