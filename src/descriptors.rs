@@ -335,6 +335,43 @@ impl InheritanceDescriptor {
             .expect("All pubkeys are derived, no wildcard.");
         DerivedInheritanceDescriptor(desc)
     }
+
+    /// Get the value (in blocks) of the relative timelock for the heir's spending path.
+    pub fn timelock_value(&self) -> u32 {
+        let wsh_desc = match &self.0 {
+            descriptor::Descriptor::Wsh(desc) => desc,
+            _ => unreachable!(),
+        };
+        let ms = match wsh_desc.as_inner() {
+            descriptor::WshInner::Ms(ms) => ms,
+            _ => unreachable!(),
+        };
+
+        let policy = ms
+            .lift()
+            .expect("Lifting can't fail on a Miniscript")
+            .normalized();
+        let subs = match policy {
+            SemanticPolicy::Threshold(1, subs) => subs,
+            _ => unreachable!(),
+        };
+        let heir_subs = subs
+            .iter()
+            .find_map(|s| match s {
+                SemanticPolicy::Threshold(2, subs) => Some(subs),
+                _ => None,
+            })
+            .expect("Always present");
+        let csv = heir_subs
+            .iter()
+            .find_map(|s| match s {
+                SemanticPolicy::Older(csv) => Some(csv),
+                _ => None,
+            })
+            .expect("Always present");
+
+        *csv
+    }
 }
 
 impl DerivedInheritanceDescriptor {
@@ -389,6 +426,18 @@ mod tests {
             "bc1qvjzcg25nsxmfccct0txjvljxjwn68htkrw57jqmjhfzvhyd2z4msc74w65",
             der_desc.address(bitcoin::Network::Bitcoin).to_string()
         );
+    }
+
+    #[test]
+    fn inheritance_descriptor_tl_value() {
+        let desc = InheritanceDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(1),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))").unwrap();
+        assert_eq!(desc.timelock_value(), 1);
+
+        let desc = InheritanceDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(42000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))").unwrap();
+        assert_eq!(desc.timelock_value(), 42000);
+
+        let desc = InheritanceDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(65535),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))").unwrap();
+        assert_eq!(desc.timelock_value(), 0xffff);
     }
 
     // TODO: test error conditions of deserialization.
