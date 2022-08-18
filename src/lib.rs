@@ -5,15 +5,21 @@ pub mod config;
 mod daemonize;
 mod database;
 pub mod descriptors;
+#[cfg(feature = "jsonrpc_server")]
+mod jsonrpc;
+#[cfg(test)]
+mod testutils;
 
 pub use miniscript;
 
+#[cfg(feature = "jsonrpc_server")]
+use crate::jsonrpc::server::{rpcserver_loop, rpcserver_setup};
 use crate::{
     bitcoin::{
         d::{BitcoinD, BitcoindError},
         poller, BitcoinInterface,
     },
-    config::{config_folder_path, Config},
+    config::Config,
     database::{
         sqlite::{FreshDbOptions, SqliteDb, SqliteDbError},
         DatabaseInterface,
@@ -76,6 +82,7 @@ pub enum StartupError {
     Io(io::Error),
     DefaultDataDirNotFound,
     DatadirCreation(path::PathBuf, io::Error),
+    MissingBitcoindConfig,
     Database(SqliteDbError),
     Bitcoind(BitcoindError),
     #[cfg(unix)]
@@ -93,6 +100,10 @@ impl fmt::Display for StartupError {
             Self::DatadirCreation(dir_path, e) => write!(
                 f,
                 "Could not create data directory at '{}': '{}'", dir_path.display(), e
+            ),
+            Self::MissingBitcoindConfig => write!(
+                f,
+                "Our Bitcoin interface is bitcoind but we have no 'bitcoind_config' entry in the configuration."
             ),
             Self::Database(e) => write!(f, "Error initializing database: '{}'.", e),
             Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
@@ -144,18 +155,74 @@ fn create_datadir(datadir_path: &path::Path) -> Result<(), StartupError> {
     };
 }
 
+// Connect to the SQLite database. Create it if starting fresh, and do some sanity checks.
+// If all went well, returns the interface to the SQLite database.
+fn setup_sqlite(
+    config: &Config,
+    data_dir: &path::Path,
+    fresh_data_dir: bool,
+) -> Result<SqliteDb, StartupError> {
+    let db_path: path::PathBuf = [data_dir, path::Path::new("minisafed.sqlite3")]
+        .iter()
+        .collect();
+    let options = if fresh_data_dir {
+        Some(FreshDbOptions {
+            bitcoind_network: config.bitcoin_config.network,
+            main_descriptor: config.main_descriptor.clone(),
+        })
+    } else {
+        None
+    };
+    let sqlite = SqliteDb::new(db_path, options)?;
+    sqlite.sanity_check(config.bitcoin_config.network, &config.main_descriptor)?;
+    log::info!("Database initialized and checked.");
+
+    Ok(sqlite)
+}
+
+// Connect to bitcoind. Setup the watchonly wallet, and do some sanity checks.
+// If all went well, returns the interface to bitcoind.
+fn setup_bitcoind(
+    config: &Config,
+    data_dir: &path::Path,
+    fresh_data_dir: bool,
+) -> Result<BitcoinD, StartupError> {
+    // Now set up the bitcoind interface
+    let wo_path: path::PathBuf = [data_dir, path::Path::new("minisafed_watchonly_wallet")]
+        .iter()
+        .collect();
+    let bitcoind = BitcoinD::new(
+        config
+            .bitcoind_config
+            .as_ref()
+            .ok_or(StartupError::MissingBitcoindConfig)?,
+        wo_path.to_str().expect("Must be valid unicode").to_string(),
+    )?;
+    if fresh_data_dir {
+        bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
+        log::info!("Created a new watchonly wallet on bitcoind.");
+    }
+    bitcoind.try_load_watchonly_wallet();
+    bitcoind.sanity_check(&config.main_descriptor, config.bitcoin_config.network)?;
+    log::info!("Connection to bitcoind established and checked.");
+
+    Ok(bitcoind.with_retry_limit(None))
+}
+
+#[derive(Clone)]
 pub struct DaemonControl {
     config: Config,
-    bitcoin: Box<dyn BitcoinInterface>,
-    db: Box<dyn DatabaseInterface>,
+    bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+    // FIXME: Should we require Sync on DatabaseInterface rather than using a Mutex?
+    db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 }
 
 impl DaemonControl {
     pub fn new(
         config: Config,
-        bitcoin: Box<dyn BitcoinInterface>,
-        db: Box<dyn DatabaseInterface>,
+        bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+        db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     ) -> DaemonControl {
         let secp = secp256k1::Secp256k1::verification_only();
         DaemonControl {
@@ -175,18 +242,26 @@ pub struct DaemonHandle {
 impl DaemonHandle {
     /// This starts the Minisafe daemon. Call `shutdown` to shut it down.
     ///
+    /// You may specify a custom Bitcoin interface through the `bitcoin` parameter. If `None`, the
+    /// default Bitcoin interface (`bitcoind` JSONRPC) will be used.
+    /// You may specify a custom Database interface through the `db` parameter. If `None`, the
+    /// default Database interface (SQLite) will be used.
+    ///
     /// **Note**: we internally use threads, and set a panic hook. A downstream application must
     /// not overwrite this panic hook.
-    pub fn start(config: Config) -> Result<Self, StartupError> {
+    pub fn start(
+        config: Config,
+        bitcoin: Option<impl BitcoinInterface + 'static>,
+        db: Option<impl DatabaseInterface + 'static>,
+    ) -> Result<Self, StartupError> {
         #[cfg(not(test))]
         setup_panic_hook();
 
         // First, check the data directory
         let mut data_dir = config
-            .data_dir
-            .clone()
-            .unwrap_or(config_folder_path().ok_or(StartupError::DefaultDataDirNotFound)?);
-        data_dir.push(config.bitcoind_config.network.to_string());
+            .data_dir()
+            .ok_or(StartupError::DefaultDataDirNotFound)?;
+        data_dir.push(config.bitcoin_config.network.to_string());
         let fresh_data_dir = !data_dir.as_path().exists();
         if fresh_data_dir {
             create_datadir(&data_dir)?;
@@ -194,39 +269,24 @@ impl DaemonHandle {
         }
 
         // Then set up the database
-        let db_path: path::PathBuf = [data_dir.as_path(), path::Path::new("minisafed.sqlite3")]
-            .iter()
-            .collect();
-        let options = if fresh_data_dir {
-            Some(FreshDbOptions {
-                bitcoind_network: config.bitcoind_config.network,
-                main_descriptor: config.main_descriptor.clone(),
-            })
-        } else {
-            None
+        let db = match db {
+            Some(db) => sync::Arc::from(sync::Mutex::from(db)),
+            None => sync::Arc::from(sync::Mutex::from(setup_sqlite(
+                &config,
+                &data_dir,
+                fresh_data_dir,
+            )?)) as sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         };
-        let sqlite = SqliteDb::new(db_path, options)?;
-        sqlite.sanity_check(config.bitcoind_config.network, &config.main_descriptor)?;
-        log::info!("Database initialized and checked.");
 
-        // Now set up the bitcoind interface
-        let wo_path: path::PathBuf = [
-            data_dir.as_path(),
-            path::Path::new("minisafed_watchonly_wallet"),
-        ]
-        .iter()
-        .collect();
-        let bitcoind = BitcoinD::new(
-            &config.bitcoind_config,
-            wo_path.to_str().expect("Must be valid unicode").to_string(),
-        )?;
-        if fresh_data_dir {
-            bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
-            log::info!("Created a new watchonly wallet on bitcoind.");
-        }
-        bitcoind.try_load_watchonly_wallet();
-        bitcoind.sanity_check(&config.main_descriptor, config.bitcoind_config.network)?;
-        log::info!("Connection to bitcoind established and checked.");
+        // Now, set up the Bitcoin interface.
+        let bit = match bitcoin {
+            Some(bit) => sync::Arc::from(sync::Mutex::from(bit)),
+            None => sync::Arc::from(sync::Mutex::from(setup_bitcoind(
+                &config,
+                &data_dir,
+                fresh_data_dir,
+            )?)) as sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+        };
 
         // If we are on a UNIX system and they told us to daemonize, do it now.
         // NOTE: it's safe to daemonize now, as we don't carry any open DB connection
@@ -243,15 +303,14 @@ impl DaemonHandle {
         }
 
         // Spawn the bitcoind poller with a retry limit high enough that we'd fail after that.
-        let bitcoind = sync::Arc::from(sync::RwLock::from(bitcoind.with_retry_limit(None)));
         let bitcoin_poller = poller::Poller::start(
-            bitcoind.clone(),
-            sqlite.clone(),
-            config.bitcoind_config.poll_interval_secs,
+            bit.clone(),
+            db.clone(),
+            config.bitcoin_config.poll_interval_secs,
         );
 
         // Finally, set up the API.
-        let control = DaemonControl::new(config, Box::from(bitcoind), Box::from(sqlite));
+        let control = DaemonControl::new(config, bit, db);
 
         Ok(Self {
             control,
@@ -259,23 +318,69 @@ impl DaemonHandle {
         })
     }
 
+    /// Start the Minisafe daemon with the default Bitcoin and database interfaces (`bitcoind` RPC
+    /// and SQLite).
+    pub fn start_default(config: Config) -> Result<DaemonHandle, StartupError> {
+        DaemonHandle::start(config, Option::<BitcoinD>::None, Option::<SqliteDb>::None)
+    }
+
+    /// Start the JSONRPC server and listen for incoming commands until we die.
+    /// Like DaemonHandle::shutdown(), this stops the Bitcoin poller at teardown.
+    #[cfg(feature = "jsonrpc_server")]
+    pub fn rpc_server(self) -> Result<(), io::Error> {
+        let DaemonHandle {
+            control,
+            bitcoin_poller: poller,
+        } = self;
+
+        let rpc_socket: path::PathBuf = [
+            control
+                .config
+                .data_dir()
+                .expect("Didn't fail at startup, must not now")
+                .as_path(),
+            path::Path::new(&control.config.bitcoin_config.network.to_string()),
+            path::Path::new("minisafed_rpc"),
+        ]
+        .iter()
+        .collect();
+        let listener = rpcserver_setup(&rpc_socket)?;
+        log::info!("JSONRPC server started.");
+
+        rpcserver_loop(listener, control)?;
+        log::info!("JSONRPC server stopped.");
+
+        poller.stop();
+
+        Ok(())
+    }
+
     // NOTE: this moves out the data as it should not be reused after shutdown
     /// Shut down the Minisafe daemon.
     pub fn shutdown(self) {
         self.bitcoin_poller.stop();
+    }
+
+    // We need a shutdown utility that does not move for implementing Drop for the DummyMinisafe
+    #[cfg(test)]
+    pub fn test_shutdown(&mut self) {
+        self.bitcoin_poller.test_stop();
     }
 }
 
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::config::BitcoindConfig;
+    use crate::{
+        config::{BitcoinConfig, BitcoindConfig},
+        testutils::*,
+    };
 
     use miniscript::{bitcoin, Descriptor, DescriptorPublicKey};
     use std::{
-        env, fs,
+        fs,
         io::{BufRead, BufReader, Write},
-        net, path, process,
+        net, path,
         str::FromStr,
         thread, time,
     };
@@ -420,13 +525,13 @@ mod tests {
         stream.flush().unwrap();
     }
 
+    // TODO: we could move the dummy bitcoind thread stuff to the bitcoind module to test the
+    // bitcoind interface, and use the DummyMinisafe from testutils to sanity check the startup.
+    // Note that startup as checked by this unit test is also tested in the functional test
+    // framework.
     #[test]
     fn daemon_startup() {
-        let tmp_dir = env::temp_dir().join(format!(
-            "minisafed-unit-tests-{}-{:?}",
-            process::id(),
-            thread::current().id()
-        ));
+        let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
         let data_dir: path::PathBuf = [tmp_dir.as_path(), path::Path::new("datadir")]
             .iter()
@@ -456,18 +561,21 @@ mod tests {
             net::SocketAddrV4::new(net::Ipv4Addr::new(127, 0, 0, 1), 0).into();
         let server = net::TcpListener::bind(&addr).unwrap();
         let addr = server.local_addr().unwrap();
-        let bitcoind_config = BitcoindConfig {
+        let bitcoin_config = BitcoinConfig {
             network,
+            poll_interval_secs: time::Duration::from_secs(2),
+        };
+        let bitcoind_config = BitcoindConfig {
             addr,
             cookie_path: cookie.clone(),
-            poll_interval_secs: time::Duration::from_secs(2),
         };
 
         // Create a dummy config with this bitcoind
         let desc_str = "wsh(andor(pk(xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/*),older(10000),pk(xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/*)))#tk6wzexy";
         let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
         let config = Config {
-            bitcoind_config,
+            bitcoin_config,
+            bitcoind_config: Some(bitcoind_config),
             data_dir: Some(data_dir.clone()),
             #[cfg(unix)]
             daemon: false,
@@ -479,22 +587,8 @@ mod tests {
         let daemon_thread = thread::spawn({
             let config = config.clone();
             move || {
-                let handle = DaemonHandle::start(config).unwrap();
-                // TODO: avoid scope creep. We should move the bitcoind-specific checks to the
-                // bitcoind module, test the startup with a mocked bitcoind interface, and not test
-                // commands here but in the commands module.
-                let addr = handle.control.get_new_address();
-                let addr2 = handle.control.get_new_address();
-                assert_eq!(
-                    addr,
-                    bitcoin::Address::from_str(
-                        "bc1qdu9dama0pwc6fd9lj4sqzq4f728y5q2ucqyj55mfzfvuxr268zks7yajm3"
-                    )
-                    .unwrap()
-                );
-                assert_ne!(addr, addr2);
+                let handle = DaemonHandle::start_default(config).unwrap();
                 handle.shutdown();
-                addr
             }
         });
         complete_sanity_check(&server);
@@ -505,13 +599,11 @@ mod tests {
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, desc_str);
         complete_sync_check(&server);
-        let addr = daemon_thread.join().unwrap();
+        daemon_thread.join().unwrap();
 
         // The datadir is created now, so if we restart it it won't create the wo wallet.
         let daemon_thread = thread::spawn(move || {
-            let handle = DaemonHandle::start(config).unwrap();
-            // TODO: avoid scope creep. See above comment.
-            assert_ne!(handle.control.get_new_address(), addr);
+            let handle = DaemonHandle::start_default(config).unwrap();
             handle.shutdown();
         });
         complete_sanity_check(&server);

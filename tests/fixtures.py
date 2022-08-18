@@ -117,7 +117,7 @@ def minisafed(bitcoind, directory):
     os.makedirs(datadir, exist_ok=True)
     bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
 
-    main_desc = "wsh(or_d(pk(02869ef67283b4bc9af9d8366efb31f718018bfd5970a69b3d16f22f51228f73dc),and_v(v:pkh(03bb4dc7ed08cc633893f457553ad941ff82195342467d350dbb63773dd17f113b),older(157680))))"
+    main_desc = "wsh(or_d(pk(tpubD9vQiBdDxYzU1V5D5UUmMTXF9FZC13PuQDs4aiv6rF7UCKQFvtVKZguYakX12C2bt8736ksioxu9Y9Nmp18gj4jDeNJEEqrBPEZXAxe5YcQ/*),and_v(v:pkh(tpubD9vQiBdDxYzU4cVFtApWj4devZrvcfWaPXX1zHdDc7GPfUsDKqGnbhraccfm7BAXgRgUbVQUV2v2o4NitjGEk7hpbuP85kvBrD4ahFDtNBJ/*),older(157680))))"
 
     minisafed = Minisafed(
         datadir,

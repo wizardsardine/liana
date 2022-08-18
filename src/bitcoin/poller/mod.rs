@@ -18,15 +18,18 @@ pub struct Poller {
 
 impl Poller {
     pub fn start(
-        bit: impl BitcoinInterface + 'static,
-        db: impl DatabaseInterface + 'static,
+        bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+        db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         poll_interval: time::Duration,
     ) -> Poller {
         let shutdown = sync::Arc::from(atomic::AtomicBool::from(false));
-        let handle = thread::spawn({
-            let shutdown = shutdown.clone();
-            move || looper(bit, db, shutdown, poll_interval)
-        });
+        let handle = thread::Builder::new()
+            .name("Bitcoin poller".to_string())
+            .spawn({
+                let shutdown = shutdown.clone();
+                move || looper(bit, db, shutdown, poll_interval)
+            })
+            .expect("Must not fail");
 
         Poller { shutdown, handle }
     }
@@ -34,5 +37,10 @@ impl Poller {
     pub fn stop(self) {
         self.shutdown.store(true, atomic::Ordering::Relaxed);
         self.handle.join().expect("The poller loop must not fail");
+    }
+
+    #[cfg(test)]
+    pub fn test_stop(&mut self) {
+        self.shutdown.store(true, atomic::Ordering::Relaxed);
     }
 }

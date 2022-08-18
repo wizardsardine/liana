@@ -2,7 +2,7 @@ use std::{
     env,
     io::{self, Write},
     path::PathBuf,
-    process, time,
+    process, thread, time,
 };
 
 use minisafe::{config::Config, DaemonHandle};
@@ -25,7 +25,7 @@ fn setup_logger(log_level: log::LevelFilter) -> Result<(), fern::InitError> {
     let dispatcher = fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
-                "[{}][{}][{}] {}",
+                "[{}][{}][{}][thread {}] {}",
                 time::SystemTime::now()
                     .duration_since(time::UNIX_EPOCH)
                     .unwrap_or_else(|e| {
@@ -35,6 +35,7 @@ fn setup_logger(log_level: log::LevelFilter) -> Result<(), fern::InitError> {
                     .as_secs(),
                 record.target(),
                 record.level(),
+                thread::current().name().unwrap_or("unnamed"),
                 message
             ))
         })
@@ -58,11 +59,13 @@ fn main() {
         process::exit(1);
     });
 
-    let daemon = DaemonHandle::start(config).unwrap_or_else(|e| {
+    let daemon = DaemonHandle::start_default(config).unwrap_or_else(|e| {
         // The panic hook will log::error
         panic!("Starting Minisafe daemon: {}", e);
     });
-    daemon.shutdown();
+    daemon
+        .rpc_server()
+        .expect("JSONRPC server must terminate cleanly");
 
     // We are always logging to stdout, should it be then piped to the log file (if self) or
     // not. So just make sure that all messages were actually written.

@@ -50,16 +50,21 @@ fn default_daemon() -> bool {
     false
 }
 
+// TODO: separate Bitcoin config and bitcoind-specific config.
 /// Everything we need to know for talking to bitcoind serenely
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BitcoindConfig {
-    /// The network we are operating on, one of "bitcoin", "testnet", "regtest"
-    pub network: Network,
     /// Path to bitcoind's cookie file, to authenticate the RPC connection
     pub cookie_path: PathBuf,
     /// The IP:port bitcoind's RPC is listening on
     pub addr: SocketAddr,
-    /// The poll interval for bitcoind
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BitcoinConfig {
+    /// The network we are operating on, one of "bitcoin", "testnet", "regtest", "signet"
+    pub network: Network,
+    /// The poll interval for the Bitcoin interface
     #[serde(
         deserialize_with = "deserialize_duration",
         serialize_with = "serialize_duration",
@@ -90,8 +95,19 @@ pub struct Config {
         serialize_with = "serialize_to_string"
     )]
     pub main_descriptor: Descriptor<DescriptorPublicKey>,
-    /// Everything we need to know to talk to bitcoind
-    pub bitcoind_config: BitcoindConfig,
+    /// Settings for the Bitcoin interface
+    pub bitcoin_config: BitcoinConfig,
+    /// Settings specific to bitcoind as the Bitcoin interface
+    pub bitcoind_config: Option<BitcoindConfig>,
+}
+
+impl Config {
+    pub fn data_dir(&self) -> Option<PathBuf> {
+        self.data_dir
+            .as_ref()
+            .map(Clone::clone)
+            .or_else(config_folder_path)
+    }
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -185,7 +201,7 @@ impl Config {
     /// Make sure the settings are sane.
     pub fn check(&self) -> Result<(), ConfigError> {
         // Check the network of the xpubs in the descriptors
-        let expected_network = match self.bitcoind_config.network {
+        let expected_network = match self.bitcoin_config.network {
             Network::Bitcoin => Network::Bitcoin,
             _ => Network::Testnet,
         };
@@ -204,7 +220,7 @@ impl Config {
         if unexpected_net {
             return Err(ConfigError::Unexpected(format!(
                 "Our bitcoin network is {} but one xpub is not for network {}",
-                self.bitcoind_config.network, expected_network
+                self.bitcoin_config.network, expected_network
             )));
         }
 
@@ -228,11 +244,13 @@ mod tests {
             log_level = "debug"
             main_descriptor = "wsh(andor(thresh(1,pk(xpub6BaZSKgpaVvibu2k78QsqeDWXp92xLHZxiu1WoqLB9hKhsBf3miBUDX7PJLgSPvkj66ThVHTqdnbXpeu8crXFmDUd4HeM4s4miQS2xsv3Qb/*)),and_v(v:multi(2,03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a,0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce),older(4)),thresh(2,pkh(xpub6AHA9hZDN11k2ijHMeS5QqHx2KP9aMBRhTDqANMnwVtdyw2TDYRmF8PjpvwUFcL1Et8Hj59S3gTSMcUQ5gAqTz3Wd8EsMTmF3DChhqPQBnU/*),a:pkh(xpub6AaffFGfH6WXfm6pwWzmUMuECQnoLeB3agMKaLyEBZ5ZVfwtnS5VJKqXBt8o5ooCWVy2H87GsZshp7DeKE25eWLyd1Ccuh2ZubQUkgpiVux/*))))#532k8uvf"
 
-            [bitcoind_config]
+            [bitcoin_config]
             network = "bitcoin"
+            poll_interval_secs = 18
+
+            [bitcoind_config]
             cookie_path = "/home/user/.bitcoin/.cookie"
             addr = "127.0.0.1:8332"
-            poll_interval_secs = 18
             "#.trim_start().replace("            ", "");
         toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
 
@@ -243,11 +261,13 @@ mod tests {
             log_level = 'TRACE'
             main_descriptor = 'wsh(andor(thresh(1,pk(xpub6BaZSKgpaVvibu2k78QsqeDWXp92xLHZxiu1WoqLB9hKhsBf3miBUDX7PJLgSPvkj66ThVHTqdnbXpeu8crXFmDUd4HeM4s4miQS2xsv3Qb/*)),and_v(v:multi(2,03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a,0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce),older(4)),thresh(2,pkh(xpub6AHA9hZDN11k2ijHMeS5QqHx2KP9aMBRhTDqANMnwVtdyw2TDYRmF8PjpvwUFcL1Et8Hj59S3gTSMcUQ5gAqTz3Wd8EsMTmF3DChhqPQBnU/*),a:pkh(xpub6AaffFGfH6WXfm6pwWzmUMuECQnoLeB3agMKaLyEBZ5ZVfwtnS5VJKqXBt8o5ooCWVy2H87GsZshp7DeKE25eWLyd1Ccuh2ZubQUkgpiVux/*))))#532k8uvf'
 
-            [bitcoind_config]
+            [bitcoin_config]
             network = 'bitcoin'
+            poll_interval_secs = 18
+
+            [bitcoind_config]
             cookie_path = '/home/user/.bitcoin/.cookie'
             addr = '127.0.0.1:8332'
-            poll_interval_secs = 18
             "#.trim_start().replace("            ", "");
         let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
         let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
@@ -263,16 +283,18 @@ mod tests {
             # The main descriptor semantics aren't checked, yet.
             main_descriptor = "wsh(andor(thresh(1,pk(xpub6BaZSKgpaVvibu2k78QsqeDWXp92xLHZxiu1WoqLB9hKhsBf3miBUDX7PJLgSPvkj66ThVHTqdnbXpeu8crXFmDUd4HeM4s4miQS2xsv3Qb/*)),and_v(v:multi(2,03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a,0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce),older(4)),thresh(2,pkh(xpub6AHA9hZDN11k2ijHMeS5QqHx2KP9aMBRhTDqANMnwVtdyw2TDYRmF8PjpvwUFcL1Et8Hj59S3gTSMcUQ5gAqTz3Wd8EsMTmF3DChhqPQBnU/*),a:pkh(xpub6AaffFGfH6WXfm6pwWzmUMuECQnoLeB3agMKaLyEBZ5ZVfwtnS5VJKqXBt8o5ooCWVy2H87GsZshp7DeKE25eWLyd1Ccuh2ZubQUkgpiVux/*))))#532k88vf"
 
-            [bitcoind_config]
+            [bitcoin_config]
             network = "bitcoin"
+            poll_interval_secs = 18
+
+            [bitcoind_config]
             cookie_path = "/home/user/.bitcoin/.cookie"
             addr = "127.0.0.1:8332"
-            poll_interval_secs = 18
         "#;
         let config_res: Result<Config, toml::de::Error> = toml::from_str(toml_str);
         config_res.expect_err("Deserializing an invalid toml_str");
 
-        // Not enough parameters: missing the network
+        // Not enough parameters: missing the Bitcoin network
         let toml_str = r#"
             daemon = false
             log_level = "trace"
@@ -281,10 +303,12 @@ mod tests {
             # The main descriptor semantics aren't checked, yet.
             main_descriptor = "wsh(andor(thresh(1,pk(xpub6BaZSKgpaVvibu2k78QsqeDWXp92xLHZxiu1WoqLB9hKhsBf3miBUDX7PJLgSPvkj66ThVHTqdnbXpeu8crXFmDUd4HeM4s4miQS2xsv3Qb/*)),and_v(v:multi(2,03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a,0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce),older(4)),thresh(2,pkh(xpub6AHA9hZDN11k2ijHMeS5QqHx2KP9aMBRhTDqANMnwVtdyw2TDYRmF8PjpvwUFcL1Et8Hj59S3gTSMcUQ5gAqTz3Wd8EsMTmF3DChhqPQBnU/*),a:pkh(xpub6AaffFGfH6WXfm6pwWzmUMuECQnoLeB3agMKaLyEBZ5ZVfwtnS5VJKqXBt8o5ooCWVy2H87GsZshp7DeKE25eWLyd1Ccuh2ZubQUkgpiVux/*))))#532k8uvf"
 
+            [bitcoin_config]
+            poll_interval_secs = 18
+
             [bitcoind_config]
             cookie_path = "/home/user/.bitcoin/.cookie"
             addr = "127.0.0.1:8332"
-            poll_interval_secs = 18
         "#;
         let config_res: Result<Config, toml::de::Error> = toml::from_str(toml_str);
         config_res.expect_err("Deserializing an invalid toml_str");

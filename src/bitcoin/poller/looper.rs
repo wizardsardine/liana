@@ -39,8 +39,8 @@ fn update_tip(bit: &impl BitcoinInterface, db_conn: &mut Box<dyn DatabaseConnect
 /// Main event loop. Repeatedly polls the Bitcoin interface until told to stop through the
 /// `shutdown` atomic.
 pub fn looper(
-    bit: impl BitcoinInterface,
-    db: impl DatabaseInterface,
+    bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+    db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     shutdown: sync::Arc<atomic::AtomicBool>,
     poll_interval: time::Duration,
 ) {
@@ -63,7 +63,7 @@ pub fn looper(
             let sync_progress = bit.sync_progress();
             log::info!(
                 "Block chain synchronization progress: {:.2}%",
-                sync_progress
+                sync_progress * 100.0
             );
             synced = sync_progress == 1.0;
             if !synced {
