@@ -177,7 +177,7 @@ impl DummyMinisafe {
 
         let owner_key = descriptor::DescriptorPublicKey::from_str("xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/*").unwrap();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/*").unwrap();
-        let desc = crate::descriptors::inheritance_descriptor(owner_key, heir_key, 10_000).unwrap();
+        let desc = crate::descriptors::InheritanceDescriptor::new(owner_key, heir_key, 10_000).unwrap();
         let config = Config {
             bitcoin_config,
             bitcoind_config: None,
