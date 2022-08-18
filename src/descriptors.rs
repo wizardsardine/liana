@@ -1,5 +1,6 @@
 use miniscript::{
-    descriptor,
+    bitcoin::{self, hashes::hash160, hashes::Hash, secp256k1, util::bip32},
+    descriptor::{self, DescriptorTrait},
     miniscript::{
         decode::Terminal,
         iter::PkPkh,
@@ -7,10 +8,10 @@ use miniscript::{
         Miniscript,
     },
     policy::{Liftable, Semantic as SemanticPolicy},
-    ScriptContext,
+    MiniscriptKey, ScriptContext, ToPublicKey, TranslatePk2,
 };
 
-use std::{error, fmt, str, sync};
+use std::{error, fmt, io::Write, str, sync};
 
 // Flag applied to the nSequence and CSV value before comparing them.
 //
@@ -40,6 +41,56 @@ impl std::fmt::Display for DescCreationError {
 
 impl error::Error for DescCreationError {}
 
+/// A public key used in derived descriptors
+#[derive(Debug, Eq, PartialEq, Clone, Ord, PartialOrd, Hash)]
+pub struct DerivedPublicKey {
+    /// Fingerprint of the master xpub and the derivation index used. We don't use a path
+    /// since we never derive at more than one depth.
+    pub origin: (bip32::Fingerprint, bip32::ChildNumber),
+    /// The actual key
+    pub key: bitcoin::PublicKey,
+}
+
+impl fmt::Display for DerivedPublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (fingerprint, deriv_index) = &self.origin;
+
+        write!(f, "[")?;
+        for byte in fingerprint.as_bytes().iter() {
+            write!(f, "{:02x}", byte)?;
+        }
+        write!(f, "/{}", deriv_index)?;
+        write!(f, "]{}", self.key)
+    }
+}
+
+impl MiniscriptKey for DerivedPublicKey {
+    // This allows us to be able to derive keys and key source even for PkH s
+    type Hash = Self;
+
+    fn is_uncompressed(&self) -> bool {
+        self.key.is_uncompressed()
+    }
+
+    fn to_pubkeyhash(&self) -> Self::Hash {
+        self.clone()
+    }
+}
+
+impl ToPublicKey for DerivedPublicKey {
+    fn to_public_key(&self) -> bitcoin::PublicKey {
+        self.key
+    }
+
+    fn hash_to_hash160(derived_key: &Self) -> hash160::Hash {
+        let mut engine = hash160::Hash::engine();
+        engine
+            .write_all(&derived_key.key.key.serialize())
+            .expect("engines don't error");
+        hash160::Hash::from_engine(engine)
+    }
+}
+
 // We require the locktime to:
 //  - not be disabled
 //  - be in number of blocks
@@ -68,6 +119,10 @@ fn is_unhardened_deriv(key: &descriptor::DescriptorPublicKey) -> bool {
 /// and a timelocked branch (the heir).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InheritanceDescriptor(descriptor::Descriptor<descriptor::DescriptorPublicKey>);
+
+/// Derived (containing only raw Bitcoin public keys) version of the inheritance descriptor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedInheritanceDescriptor(descriptor::Descriptor<DerivedPublicKey>);
 
 impl fmt::Display for InheritanceDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -196,6 +251,42 @@ impl InheritanceDescriptor {
             descriptor::Wsh::new(tl_miniscript).expect("Must pass sanity checks"),
         ))
     }
+
+    /// Derive this descriptor at a given index.
+    pub fn derive(
+        &self,
+        index: bip32::ChildNumber,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
+    ) -> DerivedInheritanceDescriptor {
+        assert!(index.is_normal());
+        let desc = self
+            .0
+            .derive(index.into())
+            .translate_pk2(|xpk| {
+                xpk.derive_public_key(secp).map(|key| {
+                    // FIXME: rust-miniscript will panic if we call
+                    // xpk.master_fingerprint() on a key without origin
+                    let origin = match xpk {
+                        descriptor::DescriptorPublicKey::XPub(..) => {
+                            (xpk.master_fingerprint(), index)
+                        }
+                        _ => unreachable!("All keys are always xpubs"),
+                    };
+
+                    DerivedPublicKey { key, origin }
+                })
+            })
+            .expect("All pubkeys are derived, no wildcard.");
+        DerivedInheritanceDescriptor(desc)
+    }
+}
+
+impl DerivedInheritanceDescriptor {
+    pub fn address(&self, network: bitcoin::Network) -> bitcoin::Address {
+        self.0
+            .address(network)
+            .expect("A P2WSH always has an address")
+    }
 }
 
 #[cfg(test)]
@@ -232,4 +323,17 @@ mod tests {
         .unwrap();
         InheritanceDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
     }
+
+    #[test]
+    fn inheritance_descriptor_derivation() {
+        let secp = secp256k1::Secp256k1::verification_only();
+        let desc = InheritanceDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2d").unwrap();
+        let der_desc = desc.derive(11.into(), &secp);
+        assert_eq!(
+            "bc1qvjzcg25nsxmfccct0txjvljxjwn68htkrw57jqmjhfzvhyd2z4msc74w65",
+            der_desc.address(bitcoin::Network::Bitcoin).to_string()
+        );
+    }
+
+    // TODO: test error conditions of deserialization.
 }
