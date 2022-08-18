@@ -2,7 +2,7 @@ use crate::database::sqlite::{schema::SCHEMA, FreshDbOptions, SqliteDbError, DB_
 
 use std::{convert::TryInto, fs, path, time};
 
-use miniscript::{bitcoin::secp256k1, DescriptorTrait, TranslatePk2};
+use miniscript::bitcoin::secp256k1;
 
 pub const LOOK_AHEAD_LIMIT: u32 = 200;
 
@@ -106,11 +106,8 @@ pub fn create_fresh_db(
         // TODO: have this as a helper in descriptors.rs
         let address = options
             .main_descriptor
-            .derive(index)
-            .translate_pk2(|xpk| xpk.derive_public_key(secp))
-            .expect("All pubkeys were derived, no wildcard.")
-            .address(options.bitcoind_network)
-            .expect("Always a P2WSH address");
+            .derive(index.into(), secp)
+            .address(options.bitcoind_network);
         query += &format!(
             "INSERT INTO addresses (address, derivation_index) VALUES (\"{}\", {});\n",
             address, index

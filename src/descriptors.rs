@@ -13,6 +13,8 @@ use miniscript::{
 
 use std::{error, fmt, io::Write, str, sync};
 
+use serde::{Deserialize, Serialize};
+
 // Flag applied to the nSequence and CSV value before comparing them.
 //
 // <https://github.com/bitcoin/bitcoin/blob/4a540683ec40393d6369da1a9e02e45614db936d/src/primitives/transaction.h#L87-L89>
@@ -24,6 +26,7 @@ pub enum DescCreationError {
     InvalidKey(descriptor::DescriptorPublicKey),
     Miniscript(miniscript::Error),
     IncompatibleDesc,
+    DerivedKeyParsing,
 }
 
 impl std::fmt::Display for DescCreationError {
@@ -35,6 +38,7 @@ impl std::fmt::Display for DescCreationError {
             }
             Self::Miniscript(e) => write!(f, "Miniscript error: '{}'.", e),
             Self::IncompatibleDesc => write!(f, "Descriptor is not compatible."),
+            Self::DerivedKeyParsing => write!(f, "Parsing derived key,"),
         }
     }
 }
@@ -61,6 +65,54 @@ impl fmt::Display for DerivedPublicKey {
         }
         write!(f, "/{}", deriv_index)?;
         write!(f, "]{}", self.key)
+    }
+}
+
+impl str::FromStr for DerivedPublicKey {
+    type Err = DescCreationError;
+
+    fn from_str(s: &str) -> Result<DerivedPublicKey, Self::Err> {
+        // The key is always of the form:
+        // [ fingerprint / index ]<key>
+
+        // 1 + 8 + 1 + 1 + 1 + 66 minimum
+        if s.len() < 78 {
+            return Err(DescCreationError::DerivedKeyParsing);
+        }
+
+        // Non-ASCII?
+        for ch in s.as_bytes() {
+            if *ch < 20 || *ch > 127 {
+                return Err(DescCreationError::DerivedKeyParsing);
+            }
+        }
+
+        if s.chars().next().expect("Size checked above") != '[' {
+            return Err(DescCreationError::DerivedKeyParsing);
+        }
+
+        let mut parts = s[1..].split(']');
+        let fg_deriv = parts.next().ok_or(DescCreationError::DerivedKeyParsing)?;
+        let key_str = parts.next().ok_or(DescCreationError::DerivedKeyParsing)?;
+
+        if fg_deriv.len() < 10 {
+            return Err(DescCreationError::DerivedKeyParsing);
+        }
+        let fingerprint = bip32::Fingerprint::from_str(&fg_deriv[..8])
+            .map_err(|_| DescCreationError::DerivedKeyParsing)?;
+        let deriv_index = bip32::ChildNumber::from_str(&fg_deriv[9..])
+            .map_err(|_| DescCreationError::DerivedKeyParsing)?;
+        if deriv_index.is_hardened() {
+            return Err(DescCreationError::DerivedKeyParsing);
+        }
+
+        let key = bitcoin::PublicKey::from_str(&key_str)
+            .map_err(|_| DescCreationError::DerivedKeyParsing)?;
+
+        Ok(DerivedPublicKey {
+            key,
+            origin: (fingerprint, deriv_index),
+        })
     }
 }
 
@@ -117,11 +169,11 @@ fn is_unhardened_deriv(key: &descriptor::DescriptorPublicKey) -> bool {
 
 /// A Miniscript descriptor with a main, unencombered, branch (the main owner of the coins)
 /// and a timelocked branch (the heir).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InheritanceDescriptor(descriptor::Descriptor<descriptor::DescriptorPublicKey>);
 
 /// Derived (containing only raw Bitcoin public keys) version of the inheritance descriptor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerivedInheritanceDescriptor(descriptor::Descriptor<DerivedPublicKey>);
 
 impl fmt::Display for InheritanceDescriptor {
@@ -210,7 +262,7 @@ impl InheritanceDescriptor {
         owner_key: descriptor::DescriptorPublicKey,
         heir_key: descriptor::DescriptorPublicKey,
         timelock: u32,
-    ) -> Result<descriptor::Descriptor<descriptor::DescriptorPublicKey>, DescCreationError> {
+    ) -> Result<InheritanceDescriptor, DescCreationError> {
         csv_check(timelock)?;
 
         if let Some(key) = vec![&owner_key, &heir_key]
@@ -247,9 +299,13 @@ impl InheritanceDescriptor {
         miniscript::Segwitv0::check_local_validity(&tl_miniscript)
             .expect("Miniscript must be sane");
 
-        Ok(descriptor::Descriptor::Wsh(
+        Ok(InheritanceDescriptor(descriptor::Descriptor::Wsh(
             descriptor::Wsh::new(tl_miniscript).expect("Must pass sanity checks"),
-        ))
+        )))
+    }
+
+    pub fn as_inner(&self) -> &descriptor::Descriptor<descriptor::DescriptorPublicKey> {
+        &self.0
     }
 
     /// Derive this descriptor at a given index.
