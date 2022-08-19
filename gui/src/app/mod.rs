@@ -3,6 +3,7 @@ pub mod context;
 pub mod menu;
 pub mod message;
 pub mod state;
+pub mod view;
 
 mod error;
 
@@ -76,12 +77,12 @@ impl App {
                 let res = self.context.load_daemon_config(*cfg);
                 self.update(Message::DaemonConfigLoaded(res))
             }
-            Message::Menu(menu) => {
+            Message::View(view::Message::Menu(menu)) => {
                 self.context.menu = menu;
                 self.state = new_state(&self.context);
                 self.state.load(&self.context)
             }
-            Message::Clipboard(text) => clipboard::write(text),
+            Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
             Message::Event(Event::Window(window::Event::CloseRequested)) => {
                 self.stop();
                 Command::none()
@@ -91,6 +92,6 @@ impl App {
     }
 
     pub fn view(&self) -> Element<Message> {
-        self.state.view(&self.context)
+        self.state.view(&self.context).map(Message::View)
     }
 }

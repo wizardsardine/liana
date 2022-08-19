@@ -1,10 +1,10 @@
 use iced::pure::{column, Element};
 use iced::{Command, Subscription};
 
-use super::{context::Context, message::Message};
+use super::{context::Context, message::Message, view};
 
 pub trait State {
-    fn view(&self, ctx: &Context) -> Element<Message>;
+    fn view<'a>(&self, ctx: &'a Context) -> Element<'a, view::Message>;
     fn update(&mut self, ctx: &Context, message: Message) -> Command<Message>;
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
@@ -17,8 +17,8 @@ pub trait State {
 pub struct Home {}
 
 impl State for Home {
-    fn view(&self, _ctx: &Context) -> Element<Message> {
-        column().into()
+    fn view<'a>(&self, ctx: &'a Context) -> Element<'a, view::Message> {
+        view::dashboard(&ctx.menu, None, column())
     }
     fn update(&mut self, _ctx: &Context, _message: Message) -> Command<Message> {
         Command::none()
