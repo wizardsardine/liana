@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub mod error;
 pub mod jsonrpc;
 
+use minisafe::config::Config;
+
 use super::{model::*, Daemon, DaemonError};
 
 pub trait Client {
@@ -20,12 +22,13 @@ pub trait Client {
 
 #[derive(Debug, Clone)]
 pub struct Minisafed<C: Client> {
+    config: Config,
     client: C,
 }
 
 impl<C: Client> Minisafed<C> {
-    pub fn new(client: C) -> Minisafed<C> {
-        Minisafed { client }
+    pub fn new(client: C, config: Config) -> Minisafed<C> {
+        Minisafed { client, config }
     }
 
     /// Generic call function for RPC calls.
@@ -45,6 +48,10 @@ impl<C: Client> Minisafed<C> {
 impl<C: Client + Debug> Daemon for Minisafed<C> {
     fn is_external(&self) -> bool {
         true
+    }
+
+    fn config(&self) -> &Config {
+        &self.config
     }
 
     fn stop(&mut self) -> Result<(), DaemonError> {

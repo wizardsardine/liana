@@ -10,12 +10,10 @@ use minisafe::config::Config as DaemonConfig;
 use minisafe_gui::{
     app::{
         self,
+        cache::Cache,
         config::{default_datadir, ConfigError},
-        context::{ConfigContext, Context},
-        menu::Menu,
         App,
     },
-    conversion::Converter,
     installer::{self, Installer},
     loader::{self, Loader},
 };
@@ -163,17 +161,12 @@ impl Application for GUI {
                 }
             }
             (State::Loader(loader), Message::Load(msg)) => {
-                if let loader::Message::Synced(_info, minisafed) = *msg {
-                    let config = ConfigContext {
-                        gui: loader.gui_config.clone(),
-                        daemon: loader.daemon_config.clone(),
+                if let loader::Message::Synced(info, minisafed) = *msg {
+                    let cache = Cache {
+                        blockheight: info.blockheight,
                     };
 
-                    let converter = Converter::new(config.daemon.bitcoin_config.network);
-
-                    let context = Context::new(config, minisafed, converter, Menu::Home);
-
-                    let (app, command) = App::new(context);
+                    let (app, command) = App::new(cache, loader.gui_config.clone(), minisafed);
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
                 } else {

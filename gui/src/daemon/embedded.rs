@@ -3,15 +3,22 @@ use std::sync::Mutex;
 use super::{model::*, Daemon, DaemonError};
 use minisafe::{config::Config, DaemonHandle};
 
-#[derive(Default)]
 pub struct EmbeddedDaemon {
+    config: Config,
     handle: Option<Mutex<DaemonHandle>>,
 }
 
 impl EmbeddedDaemon {
-    pub fn start(&mut self, config: Config) -> Result<(), DaemonError> {
-        let handle =
-            DaemonHandle::start_default(config).map_err(|e| DaemonError::Start(e.to_string()))?;
+    pub fn new(config: Config) -> Self {
+        Self {
+            config,
+            handle: None,
+        }
+    }
+
+    pub fn start(&mut self) -> Result<(), DaemonError> {
+        let handle = DaemonHandle::start_default(self.config.clone())
+            .map_err(|e| DaemonError::Start(e.to_string()))?;
         self.handle = Some(Mutex::new(handle));
         Ok(())
     }
@@ -38,6 +45,10 @@ impl Daemon for EmbeddedDaemon {
         self.handle.take().unwrap().into_inner().unwrap().shutdown();
         self.handle = Some(Mutex::new(next));
         Ok(())
+    }
+
+    fn config(&self) -> &Config {
+        &self.config
     }
 
     fn stop(&mut self) -> Result<(), DaemonError> {

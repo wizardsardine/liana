@@ -1,7 +1,9 @@
 mod message;
 mod warning;
 
-pub use message::Message;
+pub mod settings;
+
+pub use message::*;
 use warning::warn;
 
 use iced::{
