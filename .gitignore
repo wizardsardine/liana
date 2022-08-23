@@ -7,3 +7,4 @@ regtest/
 venv/
 pytest.log
 TODO
+**/target
