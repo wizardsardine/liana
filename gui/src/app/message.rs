@@ -9,4 +9,5 @@ pub enum Message {
     View(view::Message),
     LoadDaemonConfig(Box<DaemonConfig>),
     DaemonConfigLoaded(Result<(), Error>),
+    BlockHeight(Result<i32, Error>),
 }

@@ -40,6 +40,8 @@ pub trait Daemon: Debug {
         Ok(())
     }
 
+    fn config(&self) -> &Config;
+
     fn stop(&mut self) -> Result<(), DaemonError>;
 
     fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;

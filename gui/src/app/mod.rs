@@ -1,5 +1,5 @@
+pub mod cache;
 pub mod config;
-pub mod context;
 pub mod menu;
 pub mod message;
 pub mod state;
@@ -7,6 +7,8 @@ pub mod view;
 
 mod error;
 
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,35 +16,55 @@ use iced::pure::Element;
 use iced::{clipboard, time, Command, Subscription};
 use iced_native::{window, Event};
 
+pub use minisafe::config::Config as DaemonConfig;
+
 pub use config::Config;
 pub use message::Message;
 
 use state::{Home, State};
 
-use crate::app::context::Context;
+use crate::{
+    app::{cache::Cache, error::Error, menu::Menu},
+    daemon::Daemon,
+};
 
 pub struct App {
     should_exit: bool,
     state: Box<dyn State>,
-    context: Context,
-}
-
-pub fn new_state(_context: &Context) -> Box<dyn State> {
-    Home {}.into()
+    cache: Cache,
+    config: Config,
+    daemon: Arc<dyn Daemon + Sync + Send>,
 }
 
 impl App {
-    pub fn new(context: Context) -> (App, Command<Message>) {
-        let state = new_state(&context);
-        let cmd = state.load(&context);
+    pub fn new(
+        cache: Cache,
+        config: Config,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+    ) -> (App, Command<Message>) {
+        let state: Box<dyn State> = Home {}.into();
+        let cmd = state.load(daemon.clone());
         (
             Self {
                 should_exit: false,
                 state,
-                context,
+                cache,
+                config,
+                daemon,
             },
             cmd,
         )
+    }
+
+    fn load_state(&mut self, menu: &Menu) -> Command<Message> {
+        self.state = match menu {
+            menu::Menu::Settings => {
+                state::SettingsState::new(self.daemon.config().clone(), self.daemon.is_external())
+                    .into()
+            }
+            menu::Menu::Home => Home {}.into(),
+        };
+        self.state.load(self.daemon.clone())
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -59,9 +81,9 @@ impl App {
 
     pub fn stop(&mut self) {
         log::info!("Close requested");
-        if !self.context.daemon.is_external() {
+        if !self.daemon.is_external() {
             log::info!("Stopping internal daemon...");
-            if let Some(d) = Arc::get_mut(&mut self.context.daemon) {
+            if let Some(d) = Arc::get_mut(&mut self.daemon) {
                 d.stop().expect("Daemon is internal");
                 log::info!("Internal daemon stopped");
                 self.should_exit = true;
@@ -73,25 +95,65 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
+            Message::Tick => {
+                let daemon = self.daemon.clone();
+                Command::perform(
+                    async move {
+                        daemon
+                            .get_info()
+                            .map(|res| res.blockheight)
+                            .map_err(|e| e.into())
+                    },
+                    Message::BlockHeight,
+                )
+            }
+            Message::BlockHeight(res) => {
+                if let Ok(blockheight) = res {
+                    self.cache.blockheight = blockheight;
+                }
+                Command::none()
+            }
             Message::LoadDaemonConfig(cfg) => {
-                let res = self.context.load_daemon_config(*cfg);
+                let res = self.load_daemon_config(*cfg);
                 self.update(Message::DaemonConfigLoaded(res))
             }
-            Message::View(view::Message::Menu(menu)) => {
-                self.context.menu = menu;
-                self.state = new_state(&self.context);
-                self.state.load(&self.context)
-            }
+            Message::View(view::Message::Menu(menu)) => self.load_state(&menu),
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
             Message::Event(Event::Window(window::Event::CloseRequested)) => {
                 self.stop();
                 Command::none()
             }
-            _ => self.state.update(&self.context, message),
+            _ => self.state.update(self.daemon.clone(), &self.cache, message),
         }
     }
 
+    pub fn load_daemon_config(&mut self, cfg: DaemonConfig) -> Result<(), Error> {
+        loop {
+            if let Some(daemon) = Arc::get_mut(&mut self.daemon) {
+                daemon.load_config(cfg)?;
+                break;
+            }
+        }
+
+        let mut daemon_config_file = OpenOptions::new()
+            .write(true)
+            .open(&self.config.minisafed_config_path)
+            .map_err(|e| Error::Config(e.to_string()))?;
+
+        let content =
+            toml::to_string(&self.daemon.config()).map_err(|e| Error::Config(e.to_string()))?;
+
+        daemon_config_file
+            .write_all(content.as_bytes())
+            .map_err(|e| {
+                log::warn!("failed to write to file: {:?}", e);
+                Error::Config(e.to_string())
+            })?;
+
+        Ok(())
+    }
+
     pub fn view(&self) -> Element<Message> {
-        self.state.view(&self.context).map(Message::View)
+        self.state.view(&self.cache).map(Message::View)
     }
 }

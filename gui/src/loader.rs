@@ -19,7 +19,6 @@ type Minisafed = client::Minisafed<client::jsonrpc::JsonRPCClient>;
 
 pub struct Loader {
     pub gui_config: GUIConfig,
-    pub daemon_config: Config,
     pub daemon_started: bool,
 
     should_exit: bool,
@@ -56,13 +55,12 @@ impl Loader {
         .unwrap();
         (
             Loader {
-                daemon_config,
                 gui_config,
                 step: Step::Connecting,
                 should_exit: false,
                 daemon_started: false,
             },
-            Command::perform(connect(path), Message::Loaded),
+            Command::perform(connect(path, daemon_config), Message::Loaded),
         )
     }
 
@@ -203,9 +201,12 @@ pub fn cover<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Element<'a, T> {
         .into()
 }
 
-async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
+async fn connect(
+    socket_path: PathBuf,
+    config: Config,
+) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
     let client = client::jsonrpc::JsonRPCClient::new(socket_path);
-    let minisafed = Minisafed::new(client);
+    let minisafed = Minisafed::new(client, config);
 
     debug!("Searching for external daemon");
     minisafed.get_info()?;
@@ -221,8 +222,8 @@ pub async fn start_daemon(config_path: PathBuf) -> Result<Arc<dyn Daemon + Sync 
     let config = Config::from_file(Some(config_path))
         .map_err(|e| DaemonError::Start(format!("Error parsing config: {}", e)))?;
 
-    let mut daemon = EmbeddedDaemon::default();
-    daemon.start(config)?;
+    let mut daemon = EmbeddedDaemon::new(config);
+    daemon.start()?;
 
     Ok(Arc::new(daemon))
 }
