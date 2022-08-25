@@ -490,6 +490,38 @@ impl SqliteConn {
         .expect("Db must not fail")
     }
 
+    /// Retrieves a limited and ordered list of transactions ids that happened during the given
+    /// range.
+    pub fn db_list_txids(&mut self, start: u32, end: u32, limit: u64) -> Vec<bitcoin::Txid> {
+        db_query(
+            &mut self.conn,
+            "SELECT DISTINCT(txid) FROM ( \
+                SELECT * from ( \
+                    SELECT txid, blocktime AS date FROM coins \
+                    WHERE blocktime >= (?1) \
+                    AND blocktime <= (?2) \
+                    ORDER BY blocktime DESC LIMIT (?3) \
+                ) \
+                UNION \
+                SELECT * FROM (
+                    SELECT spend_txid AS txid, spend_block_time AS date FROM coins \
+                    WHERE spend_block_time >= (?1) \
+                    AND spend_block_time <= (?2) \
+                    ORDER BY spend_block_time DESC LIMIT (?3) \
+                ) \
+                ORDER BY date DESC LIMIT (?3) \
+            )",
+            rusqlite::params![start, end, limit],
+            |row| {
+                let txid: Vec<u8> = row.get(0)?;
+                let txid: bitcoin::Txid =
+                    encode::deserialize(&txid).expect("We only store valid txids");
+                Ok(txid)
+            },
+        )
+        .expect("Db must not fail")
+    }
+
     pub fn delete_spend(&mut self, txid: &bitcoin::Txid) {
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(
@@ -1085,6 +1117,159 @@ mod tests {
             let db_wallet = conn.db_wallet();
             assert!(db_wallet.rescan_timestamp.is_none());
             assert_eq!(db_wallet.timestamp, dummy_timestamp);
+        }
+
+        fs::remove_dir_all(&tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_list_txids() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        {
+            let mut conn = db.connection().unwrap();
+
+            let coins = [
+                Coin {
+                    outpoint: bitcoin::OutPoint::from_str(
+                        "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
+                    )
+                    .unwrap(),
+                    block_height: None,
+                    block_time: None,
+                    amount: bitcoin::Amount::from_sat(98765),
+                    derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                    is_change: false,
+                    spend_txid: None,
+                    spend_block: None,
+                },
+                Coin {
+                    outpoint: bitcoin::OutPoint::from_str(
+                        "c449539458c60bee6c0d8905ba1dadb20b9187b82045d306a408b894cea492b0:2",
+                    )
+                    .unwrap(),
+                    block_height: Some(101_095),
+                    block_time: Some(1_121_000),
+                    amount: bitcoin::Amount::from_sat(98765),
+                    derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
+                    is_change: false,
+                    spend_txid: None,
+                    spend_block: None,
+                },
+                Coin {
+                    outpoint: bitcoin::OutPoint::from_str(
+                        "f0801fd9ca8bca0624c230ab422b2e2c4c8dc995e4e1dbc6412510959cce1e4f:3",
+                    )
+                    .unwrap(),
+                    block_height: Some(101_099),
+                    block_time: Some(1_122_000),
+                    amount: bitcoin::Amount::from_sat(98765),
+                    derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
+                    is_change: false,
+                    spend_txid: Some(
+                        bitcoin::Txid::from_str(
+                            "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7",
+                        )
+                        .unwrap(),
+                    ),
+                    spend_block: Some(SpendBlock {
+                        height: 101_199,
+                        time: 1_123_000,
+                    }),
+                },
+                Coin {
+                    outpoint: bitcoin::OutPoint::from_str(
+                        "19f56e65069f0a7a3bfb00c6a7085cc0669e03e91befeca1ee9891c9e737b2fb:4",
+                    )
+                    .unwrap(),
+                    block_height: Some(101_100),
+                    block_time: Some(1_124_000),
+                    amount: bitcoin::Amount::from_sat(98765),
+                    derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
+                    is_change: false,
+                    spend_txid: None,
+                    spend_block: None,
+                },
+                Coin {
+                    outpoint: bitcoin::OutPoint::from_str(
+                        "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:5",
+                    )
+                    .unwrap(),
+                    block_height: Some(101_102),
+                    block_time: Some(1_125_000),
+                    amount: bitcoin::Amount::from_sat(98765),
+                    derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
+                    is_change: false,
+                    spend_txid: Some(
+                        bitcoin::Txid::from_str(
+                            "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6",
+                        )
+                        .unwrap(),
+                    ),
+                    spend_block: Some(SpendBlock {
+                        height: 101_105,
+                        time: 1_126_000,
+                    }),
+                },
+            ];
+            conn.new_unspent_coins(&coins);
+            conn.confirm_coins(
+                &coins
+                    .iter()
+                    .filter_map(|c| {
+                        c.block_height
+                            .map(|b| (c.outpoint, b, c.block_time.unwrap()))
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            conn.confirm_spend(
+                &coins
+                    .iter()
+                    .filter_map(|c| {
+                        c.spend_block
+                            .as_ref()
+                            .map(|b| (c.outpoint, c.spend_txid.unwrap(), b.height, b.time))
+                    })
+                    .collect::<Vec<_>>(),
+            );
+
+            let db_txids = conn.db_list_txids(1_123_000, 1_127_000, 10);
+            assert_eq!(
+                &db_txids[..],
+                &[
+                    bitcoin::Txid::from_str(
+                        "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6"
+                    )
+                    .unwrap(),
+                    bitcoin::Txid::from_str(
+                        "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9"
+                    )
+                    .unwrap(),
+                    bitcoin::Txid::from_str(
+                        "19f56e65069f0a7a3bfb00c6a7085cc0669e03e91befeca1ee9891c9e737b2fb"
+                    )
+                    .unwrap(),
+                    bitcoin::Txid::from_str(
+                        "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7"
+                    )
+                    .unwrap()
+                ]
+            );
+
+            let db_txids = conn.db_list_txids(1_123_000, 1_127_000, 2);
+            assert_eq!(
+                &db_txids[..],
+                &[
+                    bitcoin::Txid::from_str(
+                        "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6"
+                    )
+                    .unwrap(),
+                    bitcoin::Txid::from_str(
+                        "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9"
+                    )
+                    .unwrap(),
+                ]
+            );
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();

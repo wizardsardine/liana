@@ -13,6 +13,14 @@ use std::{collections::HashMap, fmt, sync};
 
 use miniscript::bitcoin;
 
+/// Information about a block
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+pub struct Block {
+    pub hash: bitcoin::BlockHash,
+    pub height: i32,
+    pub time: u32,
+}
+
 /// Information about the best block in the chain
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub struct BlockChainTip {
@@ -66,7 +74,7 @@ pub trait BitcoinInterface: Send {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)>;
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>;
 
     /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
     fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip>;
@@ -88,6 +96,12 @@ pub trait BitcoinInterface: Send {
     /// Get the last block chain tip with a timestamp below this. Timestamp must be a valid block
     /// timestamp.
     fn block_before_date(&self, timestamp: u32) -> Option<BlockChainTip>;
+
+    /// Get a transaction related to the wallet along with potential confirmation info.
+    fn wallet_transaction(
+        &self,
+        txid: &bitcoin::Txid,
+    ) -> Option<(bitcoin::Transaction, Option<Block>)>;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -158,10 +172,8 @@ impl BitcoinInterface for d::BitcoinD {
         for op in outpoints {
             // TODO: batch those calls to gettransaction
             if let Some(res) = self.get_transaction(&op.txid) {
-                if let Some(h) = res.block_height {
-                    if let Some(t) = res.block_time {
-                        confirmed.push((*op, h, t));
-                    }
+                if let Some(block) = res.block {
+                    confirmed.push((*op, block.height, block.time));
                 }
             } else {
                 log::error!("Transaction not in wallet for coin '{}'.", op);
@@ -200,7 +212,7 @@ impl BitcoinInterface for d::BitcoinD {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)> {
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)> {
         let mut spent = Vec::with_capacity(outpoints.len());
 
         let mut cache: HashMap<bitcoin::Txid, Option<d::GetTxRes>> = HashMap::new();
@@ -219,15 +231,8 @@ impl BitcoinInterface for d::BitcoinD {
             let mut txs_to_cache: Vec<(bitcoin::Txid, Option<d::GetTxRes>)> = Vec::new();
 
             if let Some(tx) = tx {
-                if let Some(block_height) = tx.block_height {
-                    // TODO: make both block time and height under the same Option.
-                    assert!(tx.block_height.is_some());
-                    spent.push((
-                        *op,
-                        *txid,
-                        block_height,
-                        tx.block_time.expect("Confirmed tx."),
-                    ));
+                if let Some(block) = tx.block {
+                    spent.push((*op, *txid, block));
                 } else if !tx.conflicting_txs.is_empty() {
                     for txid in &tx.conflicting_txs {
                         let tx: Option<&d::GetTxRes> = match cache.get(txid) {
@@ -239,13 +244,8 @@ impl BitcoinInterface for d::BitcoinD {
                             }
                         };
                         if let Some(tx) = tx {
-                            if let Some(block_height) = tx.block_height {
-                                spent.push((
-                                    *op,
-                                    *txid,
-                                    block_height,
-                                    tx.block_time.expect("Spend is confirmed"),
-                                ))
+                            if let Some(block) = tx.block {
+                                spent.push((*op, *txid, block))
                             }
                         }
                     }
@@ -309,6 +309,13 @@ impl BitcoinInterface for d::BitcoinD {
         let tip = self.chain_tip();
         self.get_block_stats(tip.hash).time
     }
+
+    fn wallet_transaction(
+        &self,
+        txid: &bitcoin::Txid,
+    ) -> Option<(bitcoin::Transaction, Option<Block>)> {
+        self.get_transaction(txid).map(|res| (res.tx, res.block))
+    }
 }
 
 // FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
@@ -354,7 +361,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)> {
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)> {
         self.lock().unwrap().spent_coins(outpoints)
     }
 
@@ -384,6 +391,13 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn tip_time(&self) -> u32 {
         self.lock().unwrap().tip_time()
+    }
+
+    fn wallet_transaction(
+        &self,
+        txid: &bitcoin::Txid,
+    ) -> Option<(bitcoin::Transaction, Option<Block>)> {
+        self.lock().unwrap().wallet_transaction(txid)
     }
 }
 

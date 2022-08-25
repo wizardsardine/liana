@@ -2,7 +2,11 @@
 ///!
 ///! We use the RPC interface and a watchonly descriptor wallet.
 mod utils;
-use crate::{bitcoin::BlockChainTip, config, descriptors::MultipathDescriptor};
+use crate::{
+    bitcoin::{Block, BlockChainTip},
+    config,
+    descriptors::MultipathDescriptor,
+};
 use utils::block_before_date;
 
 use std::{cmp, collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
@@ -12,7 +16,11 @@ use jsonrpc::{
     client::Client,
     simple_http::{self, SimpleHttpTransport},
 };
-use miniscript::{bitcoin, descriptor};
+
+use miniscript::{
+    bitcoin::{self, hashes::hex::FromHex},
+    descriptor,
+};
 
 use serde_json::Value as Json;
 
@@ -1035,12 +1043,15 @@ impl From<Json> for LSBlockRes {
 #[derive(Debug, Clone)]
 pub struct GetTxRes {
     pub conflicting_txs: Vec<bitcoin::Txid>,
-    pub block_height: Option<i32>,
-    pub block_time: Option<u32>,
+    pub block: Option<Block>,
+    pub tx: bitcoin::Transaction,
 }
 
 impl From<Json> for GetTxRes {
     fn from(json: Json) -> GetTxRes {
+        let block_hash = json.get("blockhash").and_then(Json::as_str).map(|s| {
+            bitcoin::BlockHash::from_str(s).expect("Invalid blockhash in `gettransaction` response")
+        });
         let block_height = json
             .get("blockheight")
             .and_then(Json::as_i64)
@@ -1060,11 +1071,21 @@ impl From<Json> for GetTxRes {
                     })
                     .collect()
             });
-
+        let block = match (block_hash, block_height, block_time) {
+            (Some(hash), Some(height), Some(time)) => Some(Block { hash, time, height }),
+            _ => None,
+        };
+        let hex = json
+            .get("hex")
+            .and_then(Json::as_str)
+            .expect("Must be present in bitcoind response");
+        let bytes = Vec::from_hex(hex).expect("bitcoind returned a wrong transaction format");
+        let tx: bitcoin::Transaction = bitcoin::consensus::encode::deserialize(&bytes)
+            .expect("bitcoind returned a wrong transaction format");
         GetTxRes {
             conflicting_txs: conflicting_txs.unwrap_or_default(),
-            block_height,
-            block_time,
+            block,
+            tx,
         }
     }
 }
