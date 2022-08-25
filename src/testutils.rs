@@ -1,20 +1,28 @@
 use crate::{
-    bitcoin::{BitcoinInterface, BlockChainTip},
+    bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
-    database::{DatabaseConnection, DatabaseInterface},
+    database::{Coin, DatabaseConnection, DatabaseInterface},
     DaemonHandle,
 };
 
-use std::{env, fs, io, path, process, str::FromStr, sync, thread, time};
+use std::{collections::HashMap, env, fs, io, path, process, str::FromStr, sync, thread, time};
 
 use miniscript::{
-    bitcoin::{self, util::bip32},
+    bitcoin::{self, secp256k1, util::bip32},
     descriptor,
 };
 
 pub struct DummyBitcoind {}
 
 impl BitcoinInterface for DummyBitcoind {
+    fn genesis_block(&self) -> BlockChainTip {
+        let hash = bitcoin::BlockHash::from_str(
+            "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+        )
+        .unwrap();
+        BlockChainTip { hash, height: 0 }
+    }
+
     fn sync_progress(&self) -> f64 {
         1.0
     }
@@ -32,11 +40,24 @@ impl BitcoinInterface for DummyBitcoind {
         // No reorg
         true
     }
+
+    fn received_coins(&self, _: &BlockChainTip) -> Vec<UTxO> {
+        Vec::new()
+    }
+
+    fn confirmed_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, i32)> {
+        Vec::new()
+    }
+
+    fn spent_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
+        Vec::new()
+    }
 }
 
 pub struct DummyDb {
     curr_index: bip32::ChildNumber,
     curr_tip: Option<BlockChainTip>,
+    coins: HashMap<bitcoin::OutPoint, Coin>,
 }
 
 impl DummyDb {
@@ -44,6 +65,7 @@ impl DummyDb {
         DummyDb {
             curr_index: 0.into(),
             curr_tip: None,
+            coins: HashMap::new(),
         }
     }
 }
@@ -59,6 +81,10 @@ pub struct DummyDbConn {
 }
 
 impl DatabaseConnection for DummyDbConn {
+    fn network(&mut self) -> bitcoin::Network {
+        bitcoin::Network::Bitcoin
+    }
+
     fn chain_tip(&mut self) -> Option<BlockChainTip> {
         self.db.read().unwrap().curr_tip
     }
@@ -71,8 +97,45 @@ impl DatabaseConnection for DummyDbConn {
         self.db.read().unwrap().curr_index
     }
 
-    fn update_derivation_index(&mut self, index: bip32::ChildNumber) {
-        self.db.write().unwrap().curr_index = index;
+    fn increment_derivation_index(&mut self, _: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        let next_index = self.db.write().unwrap().curr_index.increment().unwrap();
+        self.db.write().unwrap().curr_index = next_index;
+    }
+
+    fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
+        self.db.read().unwrap().coins.clone()
+    }
+
+    fn new_unspent_coins<'a>(&mut self, coins: &[Coin]) {
+        for coin in coins {
+            self.db
+                .write()
+                .unwrap()
+                .coins
+                .insert(coin.outpoint, coin.clone());
+        }
+    }
+
+    fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32)]) {
+        for (op, height) in outpoints {
+            let mut db = self.db.write().unwrap();
+            let h = &mut db.coins.get_mut(op).unwrap().block_height;
+            assert!(h.is_none());
+            *h = Some(*height);
+        }
+    }
+
+    fn spend_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]) {
+        for (op, spend_txid) in outpoints {
+            let mut db = self.db.write().unwrap();
+            let spender = &mut db.coins.get_mut(op).unwrap().spend_txid;
+            assert!(spender.is_none());
+            *spender = Some(*spend_txid);
+        }
+    }
+
+    fn derivation_index_by_address(&mut self, _: &bitcoin::Address) -> Option<bip32::ChildNumber> {
+        None
     }
 }
 

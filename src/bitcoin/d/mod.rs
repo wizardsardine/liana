@@ -3,7 +3,7 @@
 ///! We use the RPC interface and a watchonly descriptor wallet.
 use crate::{bitcoin::BlockChainTip, config};
 
-use std::{convert::TryInto, fs, io, str::FromStr, time::Duration};
+use std::{collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
 
 use jsonrpc::{
     arg,
@@ -278,6 +278,14 @@ impl BitcoinD {
             .expect("We must not fail to make a request for more than a minute")
     }
 
+    fn make_faillible_wallet_request(
+        &self,
+        method: &str,
+        params: &[Box<serde_json::value::RawValue>],
+    ) -> Result<Json, BitcoindError> {
+        self.make_request(&self.watchonly_client, method, params)
+    }
+
     fn get_bitcoind_version(&self) -> u64 {
         self.make_node_request("getnetworkinfo", &[])
             .get("version")
@@ -521,8 +529,134 @@ impl BitcoinD {
                 .expect("bitcoind must send valid block hashes"),
         )
     }
-}
 
+    pub fn list_since_block(&self, block_hash: &bitcoin::BlockHash) -> LSBlockRes {
+        self.make_wallet_request(
+            "listsinceblock",
+            &params!(Json::String(block_hash.to_string()),),
+        )
+        .into()
+    }
+
+    pub fn get_transaction(&self, txid: &bitcoin::Txid) -> Option<GetTxRes> {
+        // TODO: Maybe assert we got a -5 error, and not any other kind of error?
+        self.make_faillible_wallet_request(
+            "gettransaction",
+            &params!(Json::String(txid.to_string())),
+        )
+        .ok()
+        .map(|res| res.into())
+    }
+
+    /// Efficient check that a coin is spent.
+    pub fn is_spent(&self, op: &bitcoin::OutPoint) -> bool {
+        // The result of gettxout is empty if the outpoint is spent.
+        self.make_node_request(
+            "gettxout",
+            &params!(
+                Json::String(op.txid.to_string()),
+                Json::Number(op.vout.into())
+            ),
+        )
+        .get("bestblock")
+        .is_none()
+    }
+
+    /// So, bitcoind has no API for getting the transaction spending a wallet UTXO. Instead we are
+    /// therefore using a rather convoluted way to get it the other way around, since the spending
+    /// transaction is actually *part of the wallet transactions*.
+    /// So, what we do there is listing all outgoing transactions of the wallet since the last poll
+    /// and iterating through each of those to check if it spends the transaction we are interested
+    /// in (requiring an other RPC call for each!!).
+    pub fn get_spender_txid(&self, spent_outpoint: &bitcoin::OutPoint) -> Option<bitcoin::Txid> {
+        // Get the hash of the block parent of the spent transaction's block.
+        let req = self.make_wallet_request(
+            "gettransaction",
+            &params!(Json::String(spent_outpoint.txid.to_string())),
+        );
+        let spent_tx_height = match req.get("blockheight").and_then(Json::as_i64) {
+            Some(h) => h,
+            // FIXME: we assume it's confirmed. If we were to change the logic in the poller, we'd
+            // need to handle it here.
+            None => return None,
+        };
+        let block_hash = if let Ok(res) = self.make_fallible_node_request(
+            "getblockhash",
+            &params!(Json::Number((spent_tx_height - 1).into())),
+        ) {
+            res.as_str()
+                .expect("'getblockhash' result isn't a string")
+                .to_string()
+        } else {
+            // Possibly a race.
+            return None;
+        };
+
+        // Now we can get all transactions related to us since the spent transaction confirmed.
+        // We'll use it to locate the spender.
+        let lsb_res =
+            self.make_wallet_request("listsinceblock", &params!(Json::String(block_hash)));
+        let transactions = lsb_res
+            .get("transactions")
+            .and_then(Json::as_array)
+            .expect("tx array must be there");
+
+        // Get the spent txid to ignore the entries about this transaction
+        let spent_txid = spent_outpoint.txid.to_string();
+        // We use a cache to avoid needless iterations, since listsinceblock returns an entry
+        // per transaction output, not per transaction.
+        let mut visited_txs = HashSet::with_capacity(transactions.len());
+        for transaction in transactions {
+            if transaction.get("category").and_then(Json::as_str) != Some("send") {
+                continue;
+            }
+
+            let spending_txid = transaction
+                .get("txid")
+                .and_then(Json::as_str)
+                .expect("A valid txid must be present");
+            if visited_txs.contains(&spending_txid) || &spent_txid == spending_txid {
+                continue;
+            } else {
+                visited_txs.insert(spending_txid);
+            }
+
+            let gettx_res = self.make_wallet_request(
+                "gettransaction",
+                &params!(
+                    Json::String(spending_txid.to_string()),
+                    Json::Bool(true), // watchonly
+                    Json::Bool(true)  // verbose
+                ),
+            );
+            let vin = gettx_res
+                .get("decoded")
+                .and_then(|d| d.get("vin").and_then(Json::as_array))
+                .expect("A valid vin array must be present");
+
+            for input in vin {
+                let txid = input
+                    .get("txid")
+                    .and_then(Json::as_str)
+                    .and_then(|t| bitcoin::Txid::from_str(t).ok())
+                    .expect("A valid txid must be present");
+                let vout = input
+                    .get("vout")
+                    .and_then(Json::as_u64)
+                    .expect("A valid vout must be present") as u32;
+                let input_outpoint = bitcoin::OutPoint { txid, vout };
+
+                if spent_outpoint == &input_outpoint {
+                    return bitcoin::Txid::from_str(spending_txid)
+                        .map(Some)
+                        .expect("Must be a valid txid");
+                }
+            }
+        }
+
+        None
+    }
+}
 // Bitcoind uses a guess for the value of verificationprogress. It will eventually get to
 // be 1, and we want to be less conservative.
 fn roundup_progress(progress: f64) -> f64 {
@@ -533,5 +667,98 @@ fn roundup_progress(progress: f64) -> f64 {
         1.0
     } else {
         (progress_rounded as f64 / precision) as f64
+    }
+}
+
+/// A 'received' entry in the 'listsinceblock' result.
+#[derive(Debug, Clone)]
+pub struct LSBlockEntry {
+    pub outpoint: bitcoin::OutPoint,
+    pub amount: bitcoin::Amount,
+    pub block_height: Option<i32>,
+    pub address: bitcoin::Address,
+}
+
+impl From<&Json> for LSBlockEntry {
+    fn from(json: &Json) -> LSBlockEntry {
+        let txid = json
+            .get("txid")
+            .and_then(Json::as_str)
+            .and_then(|s| bitcoin::Txid::from_str(s).ok())
+            .expect("bitcoind can't give a bad block hash");
+        let vout = json
+            .get("vout")
+            .and_then(Json::as_u64)
+            .expect("bitcoind can't give a bad vout") as u32;
+        let outpoint = bitcoin::OutPoint { txid, vout };
+
+        // Must be a received entry, hence not negative.
+        let amount = json
+            .get("amount")
+            .and_then(Json::as_f64)
+            .and_then(|a| bitcoin::Amount::from_btc(a).ok())
+            .expect("bitcoind won't give us a bad amount");
+        let block_height = json
+            .get("blockheight")
+            .and_then(Json::as_i64)
+            .map(|bh| bh as i32);
+
+        let address = json
+            .get("address")
+            .and_then(Json::as_str)
+            .and_then(|s| bitcoin::Address::from_str(s).ok())
+            .expect("bitcoind can't give a bad address");
+
+        LSBlockEntry {
+            outpoint,
+            amount,
+            block_height,
+            address,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LSBlockRes {
+    pub received_coins: Vec<LSBlockEntry>,
+}
+
+impl From<Json> for LSBlockRes {
+    fn from(json: Json) -> LSBlockRes {
+        let received_coins = json
+            .get("transactions")
+            .and_then(Json::as_array)
+            .expect("Array must be present")
+            .into_iter()
+            .filter_map(|j| {
+                if j.get("category")
+                    .and_then(Json::as_str)
+                    .expect("must be present")
+                    == "receive"
+                {
+                    let lsb_entry: LSBlockEntry = j.into();
+                    Some(lsb_entry)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        LSBlockRes { received_coins }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct GetTxRes {
+    pub block_height: Option<i32>,
+}
+
+impl From<Json> for GetTxRes {
+    fn from(json: Json) -> GetTxRes {
+        let block_height = json
+            .get("blockheight")
+            .and_then(Json::as_i64)
+            .map(|bh| bh as i32);
+        GetTxRes { block_height }
     }
 }

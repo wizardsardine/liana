@@ -161,6 +161,7 @@ fn setup_sqlite(
     config: &Config,
     data_dir: &path::Path,
     fresh_data_dir: bool,
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> Result<SqliteDb, StartupError> {
     let db_path: path::PathBuf = [data_dir, path::Path::new("minisafed.sqlite3")]
         .iter()
@@ -173,7 +174,7 @@ fn setup_sqlite(
     } else {
         None
     };
-    let sqlite = SqliteDb::new(db_path, options)?;
+    let sqlite = SqliteDb::new(db_path, options, secp)?;
     sqlite.sanity_check(config.bitcoin_config.network, &config.main_descriptor)?;
     log::info!("Database initialized and checked.");
 
@@ -223,8 +224,8 @@ impl DaemonControl {
         config: Config,
         bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+        secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     ) -> DaemonControl {
-        let secp = secp256k1::Secp256k1::verification_only();
         DaemonControl {
             config,
             bitcoin,
@@ -257,6 +258,8 @@ impl DaemonHandle {
         #[cfg(not(test))]
         setup_panic_hook();
 
+        let secp = secp256k1::Secp256k1::verification_only();
+
         // First, check the data directory
         let mut data_dir = config
             .data_dir()
@@ -275,6 +278,7 @@ impl DaemonHandle {
                 &config,
                 &data_dir,
                 fresh_data_dir,
+                &secp,
             )?)) as sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         };
 
@@ -310,7 +314,7 @@ impl DaemonHandle {
         );
 
         // Finally, set up the API.
-        let control = DaemonControl::new(config, bit, db);
+        let control = DaemonControl::new(config, bit, db, secp);
 
         Ok(Self {
             control,
@@ -513,6 +517,18 @@ mod tests {
         stream.flush().unwrap();
     }
 
+    // Send them a response to 'getblockhash' with the genesis block hash
+    fn complete_tip_init<'a>(server: &net::TcpListener) {
+        let net_resp = [
+            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f\"}\n".as_bytes(),
+        ]
+        .concat();
+        let (mut stream, _) = server.accept().unwrap();
+        read_til_json_end(&mut stream);
+        stream.write_all(&net_resp).unwrap();
+        stream.flush().unwrap();
+    }
+
     // Send them a response to 'getblockchaininfo' saying we are far from being synced
     fn complete_sync_check<'a>(server: &net::TcpListener) {
         let net_resp = [
@@ -598,6 +614,7 @@ mod tests {
         complete_network_check(&server);
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, desc_str);
+        complete_tip_init(&server);
         complete_sync_check(&server);
         daemon_thread.join().unwrap();
 
