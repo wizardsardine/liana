@@ -136,6 +136,24 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
                 .ok_or_else(|| Error::invalid_params("Missing 'psbt' parameter."))?;
             update_spend(control, params)?
         }
+        "gethistory" => match req.params {
+            Some(Params::Array(params)) => {
+                if params.len() != 3 {
+                    return Err(Error::invalid_params("command requires 3 parameters"));
+                }
+                if let (Some(start), Some(end), Some(limit)) = (
+                    serde_json::Value::as_u64(&params[0]),
+                    serde_json::Value::as_u64(&params[1]),
+                    serde_json::Value::as_u64(&params[2]),
+                ) {
+                    serde_json::json!(&control.gethistory(start as u32, end as u32, limit))
+                } else {
+                    return Err(Error::invalid_params("command requires 3 parameters"));
+                }
+            }
+            None => return Err(Error::invalid_params("command requires 3 parameters")),
+            _ => return Err(Error::invalid_params("invalid parameters")),
+        },
         _ => {
             return Err(Error::method_not_found());
         }

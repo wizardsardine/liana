@@ -54,3 +54,25 @@ pub fn change_index(psbt: &Psbt, db_conn: &mut Box<dyn DatabaseConnection>) -> O
 
     None
 }
+
+/// Serialize an amount option as sats
+pub fn ser_optional_amount<S: Serializer>(
+    amount: &Option<bitcoin::Amount>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    match amount {
+        Some(amount) => s.serialize_u64(amount.to_sat()),
+        None => s.serialize_none(),
+    }
+}
+
+/// Deserialize an amount option from sats
+pub fn deser_optional_amount_from_sats<'de, D>(
+    deserializer: D,
+) -> Result<Option<bitcoin::Amount>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let a = Option::<u64>::deserialize(deserializer)?;
+    Ok(a.map(bitcoin::Amount::from_sat))
+}

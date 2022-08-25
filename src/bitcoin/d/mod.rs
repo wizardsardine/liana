@@ -12,7 +12,11 @@ use jsonrpc::{
     client::Client,
     simple_http::{self, SimpleHttpTransport},
 };
-use miniscript::{bitcoin, descriptor};
+
+use miniscript::{
+    bitcoin::{self, hashes::hex::FromHex},
+    descriptor,
+};
 
 use serde_json::Value as Json;
 
@@ -1037,6 +1041,7 @@ pub struct GetTxRes {
     pub conflicting_txs: Vec<bitcoin::Txid>,
     pub block_height: Option<i32>,
     pub block_time: Option<u32>,
+    pub tx: bitcoin::Transaction,
 }
 
 impl From<Json> for GetTxRes {
@@ -1060,11 +1065,18 @@ impl From<Json> for GetTxRes {
                     })
                     .collect()
             });
-
+        let hex = json
+            .get("hex")
+            .and_then(Json::as_str)
+            .expect("Must be present in bitcoind response");
+        let bytes = Vec::from_hex(hex).expect("bitcoind returned a wrong transaction format");
+        let tx: bitcoin::Transaction = bitcoin::consensus::encode::deserialize(&bytes)
+            .expect("bitcoind returned a wrong transaction format");
         GetTxRes {
             conflicting_txs: conflicting_txs.unwrap_or_default(),
             block_height,
             block_time,
+            tx,
         }
     }
 }

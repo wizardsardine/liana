@@ -90,6 +90,10 @@ impl BitcoinInterface for DummyBitcoind {
     fn tip_time(&self) -> u32 {
         todo!()
     }
+
+    fn wallet_transaction(&self, _txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
+        None
+    }
 }
 
 pub struct DummyDb {
@@ -277,6 +281,45 @@ impl DatabaseConnection for DummyDbConn {
 
     fn complete_rescan(&mut self) {
         todo!()
+    }
+
+    fn list_updated_coins(&mut self, start: u32, end: u32, limit: u64) -> Vec<Coin> {
+        let mut txids_and_time = Vec::new();
+        let coins = &self.db.read().unwrap().coins;
+        // Get txid and block time of every transactions that happened between start and end
+        // timestamps.
+        for coin in coins.values() {
+            if let Some(time) = coin.block_time {
+                if time >= start && time <= end {
+                    let row = (coin.outpoint.txid, time);
+                    if !txids_and_time.contains(&row) {
+                        txids_and_time.push(row);
+                    }
+                }
+            }
+            if let Some(time) = coin.spend_block.map(|b| b.time) {
+                if time >= start && time <= end {
+                    let row = (coin.spend_txid.expect("spent_at is not none"), time);
+                    if !txids_and_time.contains(&row) {
+                        txids_and_time.push(row);
+                    }
+                }
+            }
+        }
+        // Apply order and limit
+        txids_and_time.sort_by(|(_, t1), (_, t2)| t2.cmp(t1));
+        txids_and_time.truncate(limit as usize);
+
+        // Collect all the coins updated by the transactions with the collected txids.
+        let mut updated_coins = Vec::new();
+        for coin in coins.values() {
+            for (txid, _) in txids_and_time.iter() {
+                if coin.outpoint.txid == *txid || coin.spend_txid == Some(*txid) {
+                    updated_coins.push(coin.clone());
+                }
+            }
+        }
+        updated_coins
     }
 }
 

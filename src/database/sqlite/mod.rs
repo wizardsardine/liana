@@ -487,6 +487,41 @@ impl SqliteConn {
         .expect("Db must not fail")
     }
 
+    /// Retrieves the coins that have a deposit or spend transaction in a block with a time between
+    /// start and end timestamps, beware that the limit is only applied on the txid list and not
+    /// the total list of coins retrieved.
+    pub fn db_list_updated_coins(&mut self, start: u32, end: u32, limit: u64) -> Vec<DbCoin> {
+        db_query(
+            &mut self.conn,
+            "WITH txids AS ( \
+            SELECT DISTINCT(txid) FROM ( \
+                SELECT * from ( \
+                    SELECT txid AS txid, blocktime AS date FROM coins \
+                    WHERE blocktime IS NOT NULL \
+                    AND blocktime >= (?1) \
+                    AND blocktime <= (?2) \
+                    ORDER BY blocktime DESC LIMIT (?3) \
+                ) \
+                UNION \
+                SELECT * FROM (
+                    SELECT spend_txid AS txid, spend_block_time AS date FROM coins \
+                    WHERE spend_block_time IS NOT NULL \
+                    AND spend_block_time >= (?1) \
+                    AND spend_block_time <= (?2) \
+                    ORDER BY spend_block_time DESC LIMIT (?3) \
+                ) \
+                ORDER BY date DESC LIMIT (?3)
+            ) \
+        ) \
+        SELECT * FROM coins \
+        WHERE txid IN txids \
+        OR spend_txid IN txids",
+            rusqlite::params![start, end, limit],
+            |row| row.try_into(),
+        )
+        .expect("Db must not fail")
+    }
+
     pub fn delete_spend(&mut self, txid: &bitcoin::Txid) {
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(

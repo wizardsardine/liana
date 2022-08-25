@@ -186,7 +186,6 @@ This command does not return anything for now.
 | Field          | Type      | Description                                          |
 | -------------- | --------- | ---------------------------------------------------- |
 
-
 ### `broadcastspend`
 
 #### Request
@@ -202,7 +201,6 @@ This command does not return anything for now.
 | Field          | Type      | Description                                          |
 | -------------- | --------- | ---------------------------------------------------- |
 
-
 ### `startrescan`
 
 #### Request
@@ -217,3 +215,36 @@ This command does not return anything for now.
 
 | Field          | Type      | Description                                          |
 | -------------- | --------- | ---------------------------------------------------- |
+
+### `gethistory`
+
+`gethistory` retrieves a paginated list of accounting events.
+
+Aiming at giving an accounting point of view, the amounts returned by this call are the total
+of inflows and outflows net of any change amount (that is technically a transaction output, but not a cash outflow).
+
+#### Request
+
+| Field         | Type         | Description                                                          |
+| ------------- | ------------ | -------------------------------------------------------------------- |
+| `start`       | int          | Timestamp of the beginning of the period to retrieve events for      |
+| `end`         | int          | Timestamp of the end of the period to retrieve events for            |
+| `limit`       | int          | Maximum number of events to retrieve                                 |
+
+#### Response
+
+| Field          | Type   | Description                                |
+| -------------- | ------ | ------------------------------------------ |
+| `events`       | array  | Array of [Event resource](#event-resource) |
+
+##### Event Resource
+
+| Field         | Type          | Description                                                                                                             |
+| ------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `blockheight` | int           | Blockheight of the event transaction                                                                                    |
+| `txid`        | string        | Hex string  of the event transaction id                                                                                 |
+| `kind`        | string        | Type of the event. Can be `receive`, `spend`                                                                            |
+| `date`        | int           | Timestamp of the event                                                                                                  |
+| `amount`      | int or `null` | Absolute amount in satoshis that is entering or exiting the wallet, `null` if the event is a `cancel` event             |
+| `miner_fee`   | int or `null` | Total of the miner fees caused by the operation, `null` if the event is a `receive` event                               |
+| `coins`       | string array  | List of outpoints of coins affected by the event excluding any change coin                                              |

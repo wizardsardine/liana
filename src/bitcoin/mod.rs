@@ -88,6 +88,9 @@ pub trait BitcoinInterface: Send {
     /// Get the last block chain tip with a timestamp below this. Timestamp must be a valid block
     /// timestamp.
     fn block_before_date(&self, timestamp: u32) -> Option<BlockChainTip>;
+
+    /// Get wallet Transaction retrieves the wallet transaction.
+    fn wallet_transaction(&self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction>;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -309,6 +312,10 @@ impl BitcoinInterface for d::BitcoinD {
         let tip = self.chain_tip();
         self.get_block_stats(tip.hash).time
     }
+
+    fn wallet_transaction(&self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
+        self.get_transaction(txid).map(|res| res.tx)
+    }
 }
 
 // FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
@@ -384,6 +391,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn tip_time(&self) -> u32 {
         self.lock().unwrap().tip_time()
+    }
+
+    fn wallet_transaction(&self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
+        self.lock().unwrap().wallet_transaction(txid)
     }
 }
 

@@ -9,10 +9,14 @@ use crate::{
     database::{Coin, DatabaseInterface},
     descriptors, DaemonControl, VERSION,
 };
-use utils::{change_index, deser_amount_from_sats, deser_psbt_base64, ser_amount, ser_base64};
+
+use utils::{
+    change_index, deser_amount_from_sats, deser_optional_amount_from_sats, deser_psbt_base64,
+    ser_amount, ser_base64, ser_optional_amount,
+};
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     convert::TryInto,
     fmt,
 };
@@ -530,6 +534,109 @@ impl DaemonControl {
 
         Ok(())
     }
+
+    /// gethistory retrieves a limited list of events which occured between two given dates.
+    pub fn gethistory(&self, start: u32, end: u32, limit: u64) -> Vec<HistoryEvent> {
+        let mut db_conn = self.db.connection();
+        let coins = db_conn.list_updated_coins(start, end, limit);
+
+        // All spend_txids event the spends out of bound,
+        // it is used for change detection when computing the deposit events.
+        let mut all_spend_txids: HashSet<bitcoin::Txid> = HashSet::with_capacity(coins.len());
+        // All the spends occuring in the bound.
+        let mut spends: HashMap<bitcoin::Txid, Vec<&Coin>> = HashMap::with_capacity(coins.len());
+
+        // Preparatory work to populate spends and all_spend_txids.
+        for coin in &coins {
+            if let Some(txid) = coin.spend_txid {
+                all_spend_txids.insert(txid);
+                let time = coin.spend_block.expect("Coin is spent").time;
+                if time >= start && time <= end {
+                    if let Some(coins) = spends.get_mut(&txid) {
+                        coins.push(coin);
+                    } else {
+                        spends.insert(txid, vec![coin]);
+                    }
+                }
+            }
+        }
+
+        // Collect the received events
+        let mut events = Vec::with_capacity(coins.len());
+        for coin in coins.iter() {
+            // remove unconfirmed coin or change coin
+            if !coin.is_confirmed() || all_spend_txids.contains(&coin.outpoint.txid) {
+                continue;
+            }
+
+            let received_at = coin.block_time.expect("Coin is confirmed");
+            if received_at >= start && received_at <= end {
+                events.push(HistoryEvent {
+                    kind: HistoryEventKind::Receive,
+                    amount: coin.amount,
+                    miner_fee: None,
+                    date: received_at,
+                    txid: coin.outpoint.txid,
+                    coins: vec![coin.outpoint],
+                });
+            }
+        }
+
+        for (txid, spent_coins) in spends {
+            let spend_tx = if let Some(tx) = self.bitcoin.wallet_transaction(&txid) {
+                tx
+            } else {
+                // transaction is unknown to bitcoind for the moment, so the event is skipped.
+                continue;
+            };
+
+            let mut recipients_amount: u64 = 0;
+            let mut change_amount: u64 = 0;
+            for (vout, txout) in spend_tx.output.iter().enumerate() {
+                if coins
+                    .iter()
+                    .any(|c| c.outpoint.txid == spend_tx.txid() && c.outpoint.vout as usize == vout)
+                {
+                    change_amount += txout.value;
+                } else {
+                    recipients_amount += txout.value;
+                }
+            }
+
+            // fees is the total of the deposits minus the total of the spend outputs.
+            // Fees include then the uncoining fees and the spend fees.
+            let fees = spent_coins
+                .iter()
+                .map(|vlt| vlt.amount.to_sat())
+                .sum::<u64>()
+                .checked_sub(recipients_amount + change_amount)
+                .expect("Funds moving include funds going back");
+
+            events.push(HistoryEvent {
+                date: spent_coins
+                    .first()
+                    .expect("Transaction spent coins")
+                    .spend_block
+                    .expect("Coin is spent")
+                    .time,
+                kind: HistoryEventKind::Spend,
+                amount: bitcoin::Amount::from_sat(recipients_amount),
+                miner_fee: Some(bitcoin::Amount::from_sat(fees)),
+                txid,
+                coins: spent_coins.iter().map(|coin| coin.outpoint).collect(),
+            })
+        }
+        // Because a coin represents a receive event and maybe a second event (spend),
+        // the two timestamp `block_time and `spent_at` must be taken in account. The list of coins
+        // can not considered as an ordered list of events. All events must be first filtered and
+        // stored in a list before being ordered.
+        events.sort_by(|evt1, evt2| evt2.date.cmp(&evt1.date));
+        // Because a spend transaction may consume multiple coin and still count as one event,
+        // and because the list of events must be first ordered by event date. The limit is enforced
+        // at the end. (A limit was applied in the sql query only on the number of txids in the given period)
+        events.truncate(limit as usize);
+        events
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -595,6 +702,42 @@ pub struct ListSpendEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListSpendResult {
     pub spend_txs: Vec<ListSpendEntry>,
+}
+/// The type of an event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HistoryEventKind {
+    #[serde(rename = "receive")]
+    Receive,
+    #[serde(rename = "spend")]
+    Spend,
+}
+
+impl std::fmt::Display for HistoryEventKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Receive => write!(f, "Receive"),
+            Self::Spend => write!(f, "Spend"),
+        }
+    }
+}
+
+/// An accounting event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryEvent {
+    pub kind: HistoryEventKind,
+    pub date: u32,
+    #[serde(
+        serialize_with = "ser_amount",
+        deserialize_with = "deser_amount_from_sats"
+    )]
+    pub amount: bitcoin::Amount,
+    #[serde(
+        serialize_with = "ser_optional_amount",
+        deserialize_with = "deser_optional_amount_from_sats"
+    )]
+    pub miner_fee: Option<bitcoin::Amount>,
+    pub txid: bitcoin::Txid,
+    pub coins: Vec<bitcoin::OutPoint>,
 }
 
 #[cfg(test)]
