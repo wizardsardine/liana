@@ -750,7 +750,7 @@ mod tests {
 
     #[test]
     fn getinfo() {
-        let ms = DummyMinisafe::new();
+        let ms = DummyMinisafe::new(DummyBitcoind::new(), DummyDatabase::new());
         // We can query getinfo
         ms.handle.control.get_info();
         ms.shutdown();
@@ -758,7 +758,7 @@ mod tests {
 
     #[test]
     fn getnewaddress() {
-        let ms = DummyMinisafe::new();
+        let ms = DummyMinisafe::new(DummyBitcoind::new(), DummyDatabase::new());
 
         let control = &ms.handle.control;
         // We can get an address
@@ -779,7 +779,7 @@ mod tests {
 
     #[test]
     fn create_spend() {
-        let ms = DummyMinisafe::new();
+        let ms = DummyMinisafe::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.handle.control;
 
         // Arguments sanity checking
@@ -895,7 +895,7 @@ mod tests {
 
     #[test]
     fn update_spend() {
-        let ms = DummyMinisafe::new();
+        let ms = DummyMinisafe::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.handle.control;
         let mut db_conn = control.db().lock().unwrap().connection();
 

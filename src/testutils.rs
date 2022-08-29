@@ -11,11 +11,24 @@ use miniscript::{
     bitcoin::{
         self, secp256k1,
         util::{bip32, psbt::PartiallySignedTransaction as Psbt},
+        Transaction, Txid,
     },
     descriptor,
 };
 
-pub struct DummyBitcoind {}
+pub struct DummyBitcoind {
+    pub txs: HashMap<Txid, Transaction>,
+}
+
+impl DummyBitcoind {}
+
+impl DummyBitcoind {
+    pub fn new() -> Self {
+        Self {
+            txs: HashMap::new(),
+        }
+    }
+}
 
 impl BitcoinInterface for DummyBitcoind {
     fn genesis_block(&self) -> BlockChainTip {
@@ -91,12 +104,12 @@ impl BitcoinInterface for DummyBitcoind {
         todo!()
     }
 
-    fn wallet_transaction(&self, _txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
-        None
+    fn wallet_transaction(&self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
+        self.txs.get(txid).map(|tx| tx.clone())
     }
 }
 
-pub struct DummyDb {
+struct DummyDbState {
     deposit_index: bip32::ChildNumber,
     change_index: bip32::ChildNumber,
     curr_tip: Option<BlockChainTip>,
@@ -104,35 +117,39 @@ pub struct DummyDb {
     spend_txs: HashMap<bitcoin::Txid, Psbt>,
 }
 
-impl DummyDb {
-    pub fn new() -> DummyDb {
-        DummyDb {
-            deposit_index: 0.into(),
-            change_index: 0.into(),
-            curr_tip: None,
-            coins: HashMap::new(),
-            spend_txs: HashMap::new(),
+pub struct DummyDatabase {
+    db: sync::Arc<sync::RwLock<DummyDbState>>,
+}
+
+impl DatabaseInterface for DummyDatabase {
+    fn connection(&self) -> Box<dyn DatabaseConnection> {
+        Box::new(DummyDatabase {
+            db: self.db.clone(),
+        })
+    }
+}
+
+impl DummyDatabase {
+    pub fn new() -> DummyDatabase {
+        DummyDatabase {
+            db: sync::Arc::new(sync::RwLock::new(DummyDbState {
+                deposit_index: 0.into(),
+                change_index: 0.into(),
+                curr_tip: None,
+                coins: HashMap::new(),
+                spend_txs: HashMap::new(),
+            })),
+        }
+    }
+
+    pub fn insert_coins(&mut self, coins: Vec<Coin>) {
+        for coin in coins {
+            self.db.write().unwrap().coins.insert(coin.outpoint, coin);
         }
     }
 }
 
-impl Default for DummyDb {
-    fn default() -> DummyDb {
-        DummyDb::new()
-    }
-}
-
-impl DatabaseInterface for sync::Arc<sync::RwLock<DummyDb>> {
-    fn connection(&self) -> Box<dyn DatabaseConnection> {
-        Box::new(DummyDbConn { db: self.clone() })
-    }
-}
-
-pub struct DummyDbConn {
-    db: sync::Arc<sync::RwLock<DummyDb>>,
-}
-
-impl DatabaseConnection for DummyDbConn {
+impl DatabaseConnection for DummyDatabase {
     fn network(&mut self) -> bitcoin::Network {
         bitcoin::Network::Bitcoin
     }
@@ -314,7 +331,9 @@ impl DatabaseConnection for DummyDbConn {
         let mut updated_coins = Vec::new();
         for coin in coins.values() {
             for (txid, _) in txids_and_time.iter() {
-                if coin.outpoint.txid == *txid || coin.spend_txid == Some(*txid) {
+                if !updated_coins.contains(coin)
+                    && (coin.outpoint.txid == *txid || coin.spend_txid == Some(*txid))
+                {
                     updated_coins.push(coin.clone());
                 }
             }
@@ -347,7 +366,11 @@ pub fn tmp_dir() -> path::PathBuf {
 }
 
 impl DummyMinisafe {
-    pub fn new() -> DummyMinisafe {
+    /// Creates a new DummyMinisafe interface
+    pub fn new(
+        bitcoin_interface: impl BitcoinInterface + 'static,
+        database: impl DatabaseInterface + 'static,
+    ) -> DummyMinisafe {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
         // Use a shorthand for 'datadir', to avoid overflowing SUN_LEN on MacOS.
@@ -373,8 +396,7 @@ impl DummyMinisafe {
             main_descriptor: desc,
         };
 
-        let db = sync::Arc::from(sync::RwLock::from(DummyDb::new()));
-        let handle = DaemonHandle::start(config, Some(DummyBitcoind {}), Some(db)).unwrap();
+        let handle = DaemonHandle::start(config, Some(bitcoin_interface), Some(database)).unwrap();
         DummyMinisafe { tmp_dir, handle }
     }
 
