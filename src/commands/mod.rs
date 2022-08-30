@@ -743,7 +743,12 @@ pub struct HistoryEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutils::*;
+    use crate::{database::SpendBlock, testutils::*};
+    use bitcoin::{
+        blockdata::transaction::{TxIn, TxOut},
+        util::bip32::ChildNumber,
+        OutPoint, PackedLockTime, Script, Sequence, Transaction, Txid, Witness,
+    };
     use std::str::FromStr;
 
     use bitcoin::util::bip32;
@@ -1003,6 +1008,156 @@ mod tests {
             control.update_spend(psbt_a),
             Err(CommandError::UnknownOutpoint(external_op))
         );
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn gethistory() {
+        let outpoint1 = OutPoint::new(
+            Txid::from_str("617eab1fc0b03ee7f82ba70166725291783461f1a0e7975eaf8b5f8f674234f4")
+                .unwrap(),
+            0,
+        );
+
+        let outpoint2 = OutPoint::new(
+            Txid::from_str("617eab1fc0b03ee7f82ba70166725291783461f1a0e7975eaf8b5f8f674234f3")
+                .unwrap(),
+            0,
+        );
+
+        let outpoint3 = OutPoint::new(
+            Txid::from_str("617eab1fc0b03ee7f82ba70166725291783461f1a0e7975eaf8b5f8f674234f2")
+                .unwrap(),
+            0,
+        );
+
+        let spend_tx: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: outpoint1,
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![
+                TxOut {
+                    script_pubkey: Script::new(),
+                    value: 4000,
+                },
+                TxOut {
+                    script_pubkey: Script::new(),
+                    value: 100_000_000 - 4000 - 1000,
+                },
+            ],
+        };
+
+        let mut db = DummyDatabase::new();
+        db.insert_coins(vec![
+            // Deposit 1
+            Coin {
+                is_change: false,
+                outpoint: outpoint1,
+                block_time: Some(1),
+                block_height: Some(1),
+                spend_block: Some(SpendBlock { time: 3, height: 3 }),
+                derivation_index: ChildNumber::from(0),
+                amount: bitcoin::Amount::from_sat(100_000_000),
+                spend_txid: Some(spend_tx.txid()),
+            },
+            // Deposit 2
+            Coin {
+                is_change: false,
+                outpoint: outpoint2,
+                block_time: Some(2),
+                block_height: Some(2),
+                spend_block: None,
+                derivation_index: ChildNumber::from(1),
+                amount: bitcoin::Amount::from_sat(2000),
+                spend_txid: None,
+            },
+            // This coin is a change output.
+            Coin {
+                is_change: true,
+                outpoint: OutPoint::new(spend_tx.txid(), 1),
+                block_time: Some(3),
+                block_height: Some(3),
+                spend_block: None,
+                derivation_index: ChildNumber::from(2),
+                amount: bitcoin::Amount::from_sat(100_000_000 - 4000 - 1000),
+                spend_txid: None,
+            },
+            // Deposit 3
+            Coin {
+                is_change: false,
+                outpoint: outpoint3,
+                block_time: Some(4),
+                block_height: Some(4),
+                spend_block: None,
+                derivation_index: ChildNumber::from(3),
+                amount: bitcoin::Amount::from_sat(3000),
+                spend_txid: None,
+            },
+        ]);
+
+        let mut btc = DummyBitcoind::new();
+        btc.txs.insert(spend_tx.txid(), spend_tx);
+
+        let ms = DummyMinisafe::new(btc, db);
+
+        let control = &ms.handle.control;
+
+        let events = control.gethistory(0, 4, 10);
+        assert_eq!(events.len(), 4);
+
+        assert_eq!(events[0].kind, HistoryEventKind::Receive);
+        assert_eq!(events[0].amount, bitcoin::Amount::from_sat(3000));
+        assert_eq!(events[0].miner_fee, None);
+        assert_eq!(events[0].date, 4);
+        assert_eq!(events[0].coins, vec![outpoint3]);
+
+        assert_eq!(events[1].kind, HistoryEventKind::Spend);
+        assert_eq!(events[1].amount, bitcoin::Amount::from_sat(4000));
+        assert_eq!(events[1].miner_fee, Some(bitcoin::Amount::from_sat(1000)));
+        assert_eq!(events[1].date, 3);
+        assert_eq!(events[1].coins, vec![outpoint1]);
+
+        assert_eq!(events[2].kind, HistoryEventKind::Receive);
+        assert_eq!(events[2].amount, bitcoin::Amount::from_sat(2000));
+        assert_eq!(events[2].miner_fee, None);
+        assert_eq!(events[2].date, 2);
+        assert_eq!(events[2].coins, vec![outpoint2]);
+
+        assert_eq!(events[3].kind, HistoryEventKind::Receive);
+        assert_eq!(events[3].amount, bitcoin::Amount::from_sat(100_000_000));
+        assert_eq!(events[3].miner_fee, None);
+        assert_eq!(events[3].date, 1);
+        assert_eq!(events[3].coins, vec![outpoint1]);
+
+        let events = control.gethistory(2, 3, 10);
+        assert_eq!(events.len(), 2);
+
+        assert_eq!(events[0].kind, HistoryEventKind::Spend);
+        assert_eq!(events[0].amount, bitcoin::Amount::from_sat(4000));
+        assert_eq!(events[0].miner_fee, Some(bitcoin::Amount::from_sat(1000)));
+        assert_eq!(events[0].date, 3);
+        assert_eq!(events[0].coins, vec![outpoint1]);
+
+        assert_eq!(events[1].kind, HistoryEventKind::Receive);
+        assert_eq!(events[1].amount, bitcoin::Amount::from_sat(2000));
+        assert_eq!(events[1].miner_fee, None);
+        assert_eq!(events[1].date, 2);
+        assert_eq!(events[1].coins, vec![outpoint2]);
+
+        let events = control.gethistory(2, 3, 1);
+        assert_eq!(events.len(), 1);
+
+        assert_eq!(events[0].kind, HistoryEventKind::Spend);
+        assert_eq!(events[0].amount, bitcoin::Amount::from_sat(4000));
+        assert_eq!(events[0].miner_fee, Some(bitcoin::Amount::from_sat(1000)));
+        assert_eq!(events[0].date, 3);
+        assert_eq!(events[0].coins, vec![outpoint1]);
 
         ms.shutdown();
     }

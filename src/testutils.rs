@@ -105,7 +105,7 @@ impl BitcoinInterface for DummyBitcoind {
     }
 
     fn wallet_transaction(&self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
-        self.txs.get(txid).map(|tx| tx.clone())
+        self.txs.get(txid).cloned()
     }
 }
 
@@ -334,7 +334,7 @@ impl DatabaseConnection for DummyDatabase {
                 if !updated_coins.contains(coin)
                     && (coin.outpoint.txid == *txid || coin.spend_txid == Some(*txid))
                 {
-                    updated_coins.push(coin.clone());
+                    updated_coins.push(*coin);
                 }
             }
         }
