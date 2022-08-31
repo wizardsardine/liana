@@ -62,6 +62,39 @@ pub trait DatabaseConnection {
 
     /// Mark a set of coins as being spent by a specified txid.
     fn spend_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]);
+
+    /// Get specific coins from the database.
+    fn coins_by_outpoints(
+        &mut self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, Coin>;
+}
+
+// FIXME: if possible, avoid reallocating.
+fn db_coins_into_coins(db_coins: Vec<DbCoin>) -> HashMap<bitcoin::OutPoint, Coin> {
+    db_coins
+        .into_iter()
+        .map(|db_coin| {
+            let DbCoin {
+                outpoint,
+                block_height,
+                amount,
+                derivation_index,
+                spend_txid,
+                ..
+            } = db_coin;
+            (
+                outpoint,
+                Coin {
+                    outpoint,
+                    block_height,
+                    amount,
+                    derivation_index,
+                    spend_txid,
+                },
+            )
+        })
+        .collect()
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -93,30 +126,7 @@ impl DatabaseConnection for SqliteConn {
     }
 
     fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
-        // FIXME: if possible, avoid reallocating.
-        self.unspent_coins()
-            .into_iter()
-            .map(|db_coin| {
-                let DbCoin {
-                    outpoint,
-                    block_height,
-                    amount,
-                    derivation_index,
-                    spend_txid,
-                    ..
-                } = db_coin;
-                (
-                    outpoint,
-                    Coin {
-                        outpoint,
-                        block_height,
-                        amount,
-                        derivation_index,
-                        spend_txid,
-                    },
-                )
-            })
-            .collect()
+        db_coins_into_coins(self.unspent_coins())
     }
 
     fn new_unspent_coins<'a>(&mut self, coins: &[Coin]) {
@@ -137,6 +147,13 @@ impl DatabaseConnection for SqliteConn {
     ) -> Option<bip32::ChildNumber> {
         self.db_address(address)
             .map(|db_addr| db_addr.derivation_index)
+    }
+
+    fn coins_by_outpoints(
+        &mut self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, Coin> {
+        db_coins_into_coins(self.db_coins(outpoints))
     }
 }
 

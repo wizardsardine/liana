@@ -137,6 +137,21 @@ impl DatabaseConnection for DummyDbConn {
     fn derivation_index_by_address(&mut self, _: &bitcoin::Address) -> Option<bip32::ChildNumber> {
         None
     }
+
+    fn coins_by_outpoints(
+        &mut self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, Coin> {
+        // Very inefficient but hey
+        self.db
+            .read()
+            .unwrap()
+            .coins
+            .clone()
+            .into_iter()
+            .filter(|(op, _)| outpoints.contains(&op))
+            .collect()
+    }
 }
 
 pub struct DummyMinisafe {
