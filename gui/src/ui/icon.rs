@@ -50,7 +50,7 @@ pub fn connected_device_icon() -> Text {
     icon('\u{F350}')
 }
 
-pub fn deposit_icon() -> Text {
+pub fn receive_icon() -> Text {
     icon('\u{F123}')
 }
 

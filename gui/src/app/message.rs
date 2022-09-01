@@ -10,4 +10,5 @@ pub enum Message {
     LoadDaemonConfig(Box<DaemonConfig>),
     DaemonConfigLoaded(Result<(), Error>),
     BlockHeight(Result<i32, Error>),
+    ReceiveAddress(Result<bitcoin::Address, Error>),
 }
