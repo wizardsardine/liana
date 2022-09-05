@@ -1,1 +1,1 @@
-pub use minisafe::commands::{GetAddressResult, GetInfoResult};
+pub use minisafe::commands::{GetAddressResult, GetInfoResult, ListCoinsResult};
