@@ -106,3 +106,43 @@ impl From<ReceivePanel> for Box<dyn State> {
         Box::new(s)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app::cache::Cache,
+        daemon::{
+            client::{Minisafed, Request},
+            model::*,
+        },
+        utils::{
+            mock::{fake_daemon_config, Daemon},
+            sandbox::Sandbox,
+        },
+    };
+
+    use bitcoin::Address;
+    use serde_json::json;
+    use std::str::FromStr;
+
+    #[tokio::test]
+    async fn test_receive_panel() {
+        let addr =
+            Address::from_str("tb1qkldgvljmjpxrjq2ev5qxe8dvhn0dph9q85pwtfkjeanmwdue2akqj4twxj")
+                .unwrap();
+        let daemon = Daemon::new(vec![(
+            Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
+            Ok(json!(GetAddressResult {
+                address: addr.clone()
+            })),
+        )]);
+
+        let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::default());
+        let client = Arc::new(Minisafed::new(daemon.run(), fake_daemon_config()));
+        let sandbox = sandbox.load(client, &Cache { blockheight: 0 }).await;
+
+        let panel = sandbox.state();
+        assert_eq!(panel.address, Some(addr));
+    }
+}
