@@ -42,7 +42,6 @@ pub enum Message {
     Synced(GetInfoResult, Arc<dyn Daemon + Sync + Send>),
     Started(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
-    DaemonStarted(EmbeddedDaemon),
     Failure(DaemonError),
 }
 
