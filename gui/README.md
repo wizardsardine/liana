@@ -1,6 +1,6 @@
 # minisafe-gui
 
-Revault GUI is an user graphical interface written in rust for the 
+Minisafe GUI is an user graphical interface written in rust for the 
 [Minisafe daemon](https://github.com/revault/minisafe).
 
 ## Dependencies

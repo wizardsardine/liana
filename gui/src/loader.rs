@@ -248,7 +248,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Config(e) => write!(f, "Config error: {}", e),
-            Self::Daemon(e) => write!(f, "RevaultD error: {}", e),
+            Self::Daemon(e) => write!(f, "Minisafed error: {}", e),
         }
     }
 }

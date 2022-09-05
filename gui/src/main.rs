@@ -97,9 +97,9 @@ impl Application for GUI {
 
     fn title(&self) -> String {
         match self.state {
-            State::Installer(_) => String::from("Revault Installer"),
-            State::App(_) => String::from("Revault GUI"),
-            State::Loader(..) => String::from("Revault"),
+            State::Installer(_) => String::from("Minisafe Installer"),
+            State::App(_) => String::from("Minisafe"),
+            State::Loader(..) => String::from("Minisafe"),
         }
     }
 
