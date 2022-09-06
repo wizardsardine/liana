@@ -69,8 +69,8 @@ pub struct GUI {
 }
 
 enum State {
-    Installer(Installer),
-    Loader(Loader),
+    Installer(Box<Installer>),
+    Loader(Box<Loader>),
     App(App),
 }
 
@@ -97,9 +97,9 @@ impl Application for GUI {
 
     fn title(&self) -> String {
         match self.state {
-            State::Installer(_) => String::from("Revault Installer"),
-            State::App(_) => String::from("Revault GUI"),
-            State::Loader(..) => String::from("Revault"),
+            State::Installer(_) => String::from("Minisafe Installer"),
+            State::App(_) => String::from("Minisafe"),
+            State::Loader(..) => String::from("Minisafe"),
         }
     }
 
@@ -109,7 +109,7 @@ impl Application for GUI {
                 let (install, command) = Installer::new(config_path, network);
                 (
                     Self {
-                        state: State::Installer(install),
+                        state: State::Installer(Box::new(install)),
                     },
                     Command::batch(vec![
                         command.map(|msg| Message::Install(Box::new(msg))),
@@ -123,7 +123,7 @@ impl Application for GUI {
                 let (loader, command) = Loader::new(cfg, daemon_cfg);
                 (
                     Self {
-                        state: State::Loader(loader),
+                        state: State::Loader(Box::new(loader)),
                     },
                     Command::batch(vec![
                         command.map(|msg| Message::Load(Box::new(msg))),
@@ -154,7 +154,7 @@ impl Application for GUI {
                     let daemon_cfg =
                         DaemonConfig::from_file(Some(cfg.minisafed_config_path.clone())).unwrap();
                     let (loader, command) = Loader::new(cfg, daemon_cfg);
-                    self.state = State::Loader(loader);
+                    self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
