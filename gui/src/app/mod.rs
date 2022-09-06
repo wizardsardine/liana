@@ -42,7 +42,7 @@ impl App {
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
     ) -> (App, Command<Message>) {
-        let state: Box<dyn State> = Home {}.into();
+        let state: Box<dyn State> = Home::new(&cache.coins).into();
         let cmd = state.load(daemon.clone());
         (
             Self {
@@ -62,7 +62,7 @@ impl App {
                 state::SettingsState::new(self.daemon.config().clone(), self.daemon.is_external())
                     .into()
             }
-            menu::Menu::Home => Home {}.into(),
+            menu::Menu::Home => Home::new(&self.cache.coins).into(),
             menu::Menu::Receive => ReceivePanel::default().into(),
         };
         self.state.load(self.daemon.clone())
@@ -95,6 +95,18 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
+        // Update cache when values are passing by.
+        // State will handle the error case.
+        match &message {
+            Message::Coins(Ok(coins)) => {
+                self.cache.coins = coins.clone();
+            }
+            Message::BlockHeight(Ok(blockheight)) => {
+                self.cache.blockheight = blockheight.clone();
+            }
+            _ => {}
+        };
+
         match message {
             Message::Tick => {
                 let daemon = self.daemon.clone();
@@ -107,12 +119,6 @@ impl App {
                     },
                     Message::BlockHeight,
                 )
-            }
-            Message::BlockHeight(res) => {
-                if let Ok(blockheight) = res {
-                    self.cache.blockheight = blockheight;
-                }
-                Command::none()
             }
             Message::LoadDaemonConfig(cfg) => {
                 let res = self.load_daemon_config(*cfg);
