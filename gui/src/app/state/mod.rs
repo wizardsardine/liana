@@ -2,14 +2,13 @@ mod settings;
 
 use std::sync::Arc;
 
+use bitcoin::Amount;
 use iced::pure::{column, Element};
 use iced::{widget::qr_code, Command, Subscription};
 
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view};
-
+use crate::daemon::{model::Coin, Daemon};
 pub use settings::SettingsState;
-
-use crate::daemon::Daemon;
 
 pub trait State {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;
@@ -27,12 +26,23 @@ pub trait State {
     }
 }
 
-pub struct Home {}
+pub struct Home {
+    balance: Amount,
+}
+
+impl Home {
+    pub fn new(coins: &Vec<Coin>) -> Self {
+        Self {
+            balance: Amount::from_sat(coins.iter().map(|coin| coin.amount.as_sat()).sum()),
+        }
+    }
+}
 
 impl State for Home {
-    fn view<'a>(&self, _cache: &'a Cache) -> Element<'a, view::Message> {
-        view::dashboard(&Menu::Home, None, column())
+    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
+        view::dashboard(&Menu::Home, None, view::home::home_view(&self.balance))
     }
+
     fn update(
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
@@ -40,6 +50,19 @@ impl State for Home {
         _message: Message,
     ) -> Command<Message> {
         Command::none()
+    }
+
+    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+        let daemon = daemon.clone();
+        Command::perform(
+            async move {
+                daemon
+                    .list_coins()
+                    .map(|res| res.coins)
+                    .map_err(|e| e.into())
+            },
+            Message::Coins,
+        )
     }
 }
 
@@ -140,7 +163,7 @@ mod tests {
 
         let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::default());
         let client = Arc::new(Minisafed::new(daemon.run(), fake_daemon_config()));
-        let sandbox = sandbox.load(client, &Cache { blockheight: 0 }).await;
+        let sandbox = sandbox.load(client, &Cache::default()).await;
 
         let panel = sandbox.state();
         assert_eq!(panel.address, Some(addr));

@@ -1,6 +1,7 @@
 mod message;
 mod warning;
 
+pub mod home;
 pub mod receive;
 pub mod settings;
 
