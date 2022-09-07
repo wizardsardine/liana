@@ -1,6 +1,8 @@
 mod message;
 mod warning;
 
+pub mod home;
+pub mod receive;
 pub mod settings;
 
 pub use message::*;
@@ -14,7 +16,7 @@ use iced::{
 use crate::ui::{
     color,
     component::{button, separation, text::*},
-    icon::{home_icon, settings_icon},
+    icon::{home_icon, receive_icon, settings_icon},
 };
 
 use crate::app::{error::Error, menu::Menu};
@@ -29,6 +31,17 @@ pub fn sidebar(menu: &Menu) -> widget::Container<Message> {
             .on_press(Message::Menu(Menu::Home))
             .width(iced::Length::Units(200))
     };
+
+    let receive_button = if *menu == Menu::Receive {
+        button::primary(Some(receive_icon()), "Receive")
+            .on_press(Message::Reload)
+            .width(iced::Length::Units(200))
+    } else {
+        button::transparent(Some(receive_icon()), "Receive")
+            .on_press(Message::Menu(Menu::Receive))
+            .width(iced::Length::Units(200))
+    };
+
     let settings_button = if *menu == Menu::Settings {
         button::primary(Some(settings_icon()), "Settings")
             .on_press(Message::Menu(Menu::Settings))
@@ -51,6 +64,7 @@ pub fn sidebar(menu: &Menu) -> widget::Container<Message> {
                             .spacing(10),
                     )
                     .push(home_button)
+                    .push(receive_button)
                     .spacing(20)
                     .height(Length::Fill),
             )

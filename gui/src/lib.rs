@@ -3,3 +3,4 @@ pub mod daemon;
 pub mod installer;
 pub mod loader;
 pub mod ui;
+pub mod utils;

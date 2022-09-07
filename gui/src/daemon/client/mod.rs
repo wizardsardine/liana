@@ -62,6 +62,14 @@ impl<C: Client + Debug> Daemon for Minisafed<C> {
     fn get_info(&self) -> Result<GetInfoResult, DaemonError> {
         self.call("getinfo", Option::<Request>::None)
     }
+
+    fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
+        self.call("getnewaddress", Option::<Request>::None)
+    }
+
+    fn list_coins(&self) -> Result<ListCoinsResult, DaemonError> {
+        self.call("listcoins", Option::<Request>::None)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

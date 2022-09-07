@@ -69,4 +69,26 @@ impl Daemon for EmbeddedDaemon {
             .control
             .get_info())
     }
+
+    fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
+        Ok(self
+            .handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .lock()
+            .unwrap()
+            .control
+            .get_new_address())
+    }
+
+    fn list_coins(&self) -> Result<ListCoinsResult, DaemonError> {
+        Ok(self
+            .handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .lock()
+            .unwrap()
+            .control
+            .list_coins())
+    }
 }
