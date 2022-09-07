@@ -536,7 +536,7 @@ impl DaemonControl {
     }
 
     /// gethistory retrieves a limited list of events which occured between two given dates.
-    pub fn gethistory(&self, start: u32, end: u32, limit: u64) -> Vec<HistoryEvent> {
+    pub fn gethistory(&self, start: u32, end: u32, limit: u64) -> GetHistoryResult {
         let mut db_conn = self.db.connection();
         let coins = db_conn.list_updated_coins(start, end, limit);
 
@@ -635,7 +635,7 @@ impl DaemonControl {
         // and because the list of events must be first ordered by event date. The limit is enforced
         // at the end. (A limit was applied in the sql query only on the number of txids in the given period)
         events.truncate(limit as usize);
-        events
+        GetHistoryResult { events }
     }
 }
 
@@ -703,6 +703,12 @@ pub struct ListSpendEntry {
 pub struct ListSpendResult {
     pub spend_txs: Vec<ListSpendEntry>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetHistoryResult {
+    pub events: Vec<HistoryEvent>,
+}
+
 /// The type of an event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HistoryEventKind {
@@ -1108,7 +1114,7 @@ mod tests {
 
         let control = &ms.handle.control;
 
-        let events = control.gethistory(0, 4, 10);
+        let events = control.gethistory(0, 4, 10).events;
         assert_eq!(events.len(), 4);
 
         assert_eq!(events[0].kind, HistoryEventKind::Receive);
@@ -1135,7 +1141,7 @@ mod tests {
         assert_eq!(events[3].date, 1);
         assert_eq!(events[3].coins, vec![outpoint1]);
 
-        let events = control.gethistory(2, 3, 10);
+        let events = control.gethistory(2, 3, 10).events;
         assert_eq!(events.len(), 2);
 
         assert_eq!(events[0].kind, HistoryEventKind::Spend);
@@ -1150,7 +1156,7 @@ mod tests {
         assert_eq!(events[1].date, 2);
         assert_eq!(events[1].coins, vec![outpoint2]);
 
-        let events = control.gethistory(2, 3, 1);
+        let events = control.gethistory(2, 3, 1).events;
         assert_eq!(events.len(), 1);
 
         assert_eq!(events[0].kind, HistoryEventKind::Spend);
