@@ -1390,7 +1390,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 [[package]]
 name = "minisafe"
 version = "0.0.1"
-source = "git+https://github.com/revault/minisafe?branch=master#b548451292f4f497a5a837244b6432e473e6cd55"
+source = "git+https://github.com/revault/minisafe?branch=master#4a802890634f60d77e4da5a56f9189024ef99500"
 dependencies = [
  "backtrace",
  "dirs",
