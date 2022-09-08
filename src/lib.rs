@@ -233,6 +233,12 @@ impl DaemonControl {
             secp,
         }
     }
+
+    // Useful for unit test to directly mess up with the DB
+    #[cfg(test)]
+    pub fn db(&self) -> sync::Arc<sync::Mutex<dyn DatabaseInterface>> {
+        self.db.clone()
+    }
 }
 
 pub struct DaemonHandle {
