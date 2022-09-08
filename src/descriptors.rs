@@ -11,7 +11,7 @@ use miniscript::{
     MiniscriptKey, ScriptContext, ToPublicKey, TranslatePk2,
 };
 
-use std::{error, fmt, io::Write, str, sync};
+use std::{collections::BTreeMap, error, fmt, io::Write, str, sync};
 
 use serde::{Deserialize, Serialize};
 
@@ -374,11 +374,55 @@ impl InheritanceDescriptor {
     }
 }
 
+/// Map of a raw public key to the xpub used to derive it and its derivation path
+pub type Bip32Deriv = BTreeMap<bitcoin::PublicKey, (bip32::Fingerprint, bip32::DerivationPath)>;
+
 impl DerivedInheritanceDescriptor {
     pub fn address(&self, network: bitcoin::Network) -> bitcoin::Address {
         self.0
             .address(network)
             .expect("A P2WSH always has an address")
+    }
+
+    pub fn script_pubkey(&self) -> bitcoin::Script {
+        self.0.script_pubkey()
+    }
+
+    pub fn witness_script(&self) -> bitcoin::Script {
+        self.0.explicit_script()
+    }
+
+    pub fn bip32_derivations(&self) -> Bip32Deriv {
+        let ms = match self.0 {
+            descriptor::Descriptor::Wsh(ref wsh) => match wsh.as_inner() {
+                descriptor::WshInner::Ms(ms) => ms,
+                descriptor::WshInner::SortedMulti(_) => {
+                    unreachable!("None of our descriptors is a sorted multi")
+                }
+            },
+            _ => unreachable!("All our descriptors are always P2WSH"),
+        };
+
+        // For DerivedPublicKey, Pk::Hash == Self.
+        ms.iter_pk_pkh()
+            .map(|pkpkh| match pkpkh {
+                PkPkh::PlainPubkey(pk) => pk,
+                PkPkh::HashedPubkey(pkh) => pkh,
+            })
+            .map(|k| {
+                (
+                    k.key,
+                    (k.origin.0, bip32::DerivationPath::from(&[k.origin.1][..])),
+                )
+            })
+            .collect()
+    }
+
+    /// Get the maximum size in WU of a satisfaction for this descriptor.
+    pub fn max_sat_weight(&self) -> usize {
+        self.0
+            .max_satisfaction_weight()
+            .expect("Cannot fail for P2WSH")
     }
 }
 
@@ -426,6 +470,12 @@ mod tests {
             "bc1qvjzcg25nsxmfccct0txjvljxjwn68htkrw57jqmjhfzvhyd2z4msc74w65",
             der_desc.address(bitcoin::Network::Bitcoin).to_string()
         );
+
+        // Sanity check we can call the methods on the derived desc
+        der_desc.script_pubkey();
+        der_desc.witness_script();
+        assert!(!der_desc.bip32_derivations().is_empty());
+        assert!(!der_desc.max_sat_weight() > 0);
     }
 
     #[test]
