@@ -1,7 +1,7 @@
 pub use minisafe::{
     commands::{
-        CreateSpendResult, GetAddressResult, GetInfoResult, ListCoinsEntry, ListCoinsResult,
-        ListSpendEntry, ListSpendResult,
+        CreateSpendResult, GetAddressResult, GetHistoryResult, GetInfoResult, HistoryEvent,
+        HistoryEventKind, ListCoinsEntry, ListCoinsResult, ListSpendEntry, ListSpendResult,
     },
     miniscript::bitcoin::{util::psbt::Psbt, Amount},
 };

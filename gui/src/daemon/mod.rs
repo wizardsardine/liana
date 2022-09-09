@@ -89,4 +89,10 @@ pub trait Daemon: Debug {
     fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
     fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
     fn start_rescan(&self, t: u32) -> Result<(), DaemonError>;
+    fn get_history(
+        &self,
+        _start: u32,
+        _end: u32,
+        _limit: u64,
+    ) -> Result<model::GetHistoryResult, DaemonError>;
 }

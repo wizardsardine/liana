@@ -108,6 +108,22 @@ impl Daemon for EmbeddedDaemon {
             .list_spend())
     }
 
+    fn get_history(
+        &self,
+        start: u32,
+        end: u32,
+        limit: u64,
+    ) -> Result<GetHistoryResult, DaemonError> {
+        Ok(self
+            .handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .read()
+            .unwrap()
+            .control
+            .gethistory(start, end, limit))
+    }
+
     fn create_spend_tx(
         &self,
         coins_outpoints: &[OutPoint],

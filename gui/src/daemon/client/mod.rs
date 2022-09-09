@@ -118,6 +118,18 @@ impl<C: Client + Debug> Daemon for Minisafed<C> {
         let _res: serde_json::value::Value = self.call("startrescan", Some(vec![t]))?;
         Ok(())
     }
+
+    fn get_history(
+        &self,
+        start: u32,
+        end: u32,
+        limit: u64,
+    ) -> Result<GetHistoryResult, DaemonError> {
+        self.call(
+            "gethistory",
+            Some(vec![json!(start), json!(end), json!(limit)]),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

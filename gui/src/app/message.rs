@@ -28,4 +28,5 @@ pub enum Message {
     Updated(Result<(), Error>),
     StartRescan(Result<(), Error>),
     ConnectedHardwareWallets(Vec<HardwareWallet>),
+    HistoryEvents(Result<Vec<HistoryEvent>, Error>),
 }
