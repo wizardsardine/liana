@@ -1,6 +1,8 @@
 mod api;
 pub mod server;
 
+use crate::commands;
+
 use std::{error, fmt};
 
 use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
@@ -11,6 +13,20 @@ use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
 pub enum Params {
     Array(Vec<serde_json::Value>),
     Map(serde_json::Map<String, serde_json::Value>),
+}
+
+impl Params {
+    /// Get the parameter supposed to be at a given index / of a given name.
+    pub fn get<Q>(&self, index: usize, name: &Q) -> Option<&serde_json::Value>
+    where
+        String: std::borrow::Borrow<Q>,
+        Q: ?Sized + Ord + Eq + std::hash::Hash,
+    {
+        match self {
+            Params::Array(vec) => vec.get(index),
+            Params::Map(map) => map.get(name),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -42,6 +58,8 @@ pub enum ErrorCode {
     MethodNotFound,
     /// Invalid method parameter(s).
     InvalidParams,
+    /// Internal error while handling the command.
+    InternalError,
     /// Reserved for implementation-defined server-errors.
     ServerError(i64),
 }
@@ -51,6 +69,7 @@ impl Into<i64> for &ErrorCode {
         match self {
             ErrorCode::MethodNotFound => -32601,
             ErrorCode::InvalidParams => -32602,
+            ErrorCode::InternalError => -32603,
             ErrorCode::ServerError(code) => *code,
         }
     }
@@ -108,7 +127,7 @@ impl Error {
         Error::new(ErrorCode::MethodNotFound, "Method not found")
     }
 
-    pub fn invalid_params<M>(message: impl Into<String>) -> Error {
+    pub fn invalid_params(message: impl Into<String>) -> Error {
         Error::new(
             ErrorCode::InvalidParams,
             format!("Invalid params: {}", message.into()),
@@ -124,6 +143,25 @@ impl fmt::Display for Error {
 }
 
 impl error::Error for Error {}
+
+impl From<commands::CommandError> for Error {
+    fn from(e: commands::CommandError) -> Error {
+        match e {
+            commands::CommandError::NoOutpoint
+            | commands::CommandError::NoDestination
+            | commands::CommandError::UnknownOutpoint(..)
+            | commands::CommandError::InvalidFeerate(..)
+            | commands::CommandError::AlreadySpent(..)
+            | commands::CommandError::InvalidOutputValue(..)
+            | commands::CommandError::InsufficientFunds(..) => {
+                Error::new(ErrorCode::InvalidParams, e.to_string())
+            }
+            commands::CommandError::SanityCheckFailure(_) => {
+                Error::new(ErrorCode::InternalError, e.to_string())
+            }
+        }
+    }
+}
 
 /// JSONRPC2 response. See https://www.jsonrpc.org/specification#response_object.
 #[derive(Clone, Debug, PartialEq, Serialize)]

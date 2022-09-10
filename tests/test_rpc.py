@@ -1,4 +1,5 @@
 from fixtures import *
+from test_framework.serializations import PSBT
 from test_framework.utils import wait_for, COIN
 
 
@@ -40,3 +41,55 @@ def test_listcoins(minisafed, bitcoind):
     wait_for(
         lambda: minisafed.rpc.listcoins()["coins"][0]["block_height"] == block_height
     )
+
+
+def test_jsonrpc_server(minisafed, bitcoind):
+    """Test passing parameters as a list or a mapping."""
+    addr = minisafed.rpc.getnewaddress()["address"]
+    bitcoind.rpc.sendtoaddress(addr, 1)
+    wait_for(lambda: len(minisafed.rpc.listcoins()["coins"]) == 1)
+    outpoints = [minisafed.rpc.listcoins()["coins"][0]["outpoint"]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 20_000,
+    }
+    res = minisafed.rpc.createspend(outpoints, destinations, 18)
+    assert "psbt" in res
+    res = minisafed.rpc.createspend(
+        outpoints=outpoints, destinations=destinations, feerate=18
+    )
+    assert "psbt" in res
+
+
+def test_create_spend(minisafed, bitcoind):
+    # Receive a number of coins in different blocks on different addresses, and
+    # one more on the same address.
+    for _ in range(15):
+        addr = minisafed.rpc.getnewaddress()["address"]
+        txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
+        bitcoind.generate_block(1, wait_for_mempool=txid)
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.3556)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+
+    # Stop the daemon, should be a no-op
+    minisafed.stop()
+    minisafed.start()
+
+    # Now create a transaction spending all those coins to a few addresses
+    outpoints = [c["outpoint"] for c in minisafed.rpc.listcoins()["coins"]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 200_000,
+        bitcoind.rpc.getnewaddress(): 400_000,
+        bitcoind.rpc.getnewaddress(): 1_000_000,
+    }
+    res = minisafed.rpc.createspend(outpoints, destinations, 18)
+    assert "psbt" in res
+
+    # The transaction must contain a change output.
+    spend_psbt = PSBT()
+    spend_psbt.deserialize(res["psbt"])
+    assert len(spend_psbt.outputs) == 4
+    assert len(spend_psbt.tx.vout) == 4
+
+    # We can sign it and broadcast it.
+    signed_tx_hex = minisafed.sign_psbt(spend_psbt)
+    bitcoind.rpc.sendrawtransaction(signed_tx_hex)
