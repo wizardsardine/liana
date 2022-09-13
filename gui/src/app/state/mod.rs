@@ -39,6 +39,7 @@ pub trait State {
 pub struct Home {
     balance: Amount,
     events: Vec<HistoryEvent>,
+    selected_event: Option<usize>,
     warning: Option<Error>,
 }
 
@@ -57,7 +58,7 @@ impl Home {
                     })
                     .sum(),
             ),
-
+            selected_event: None,
             events: Vec::new(),
             warning: None,
         }
@@ -66,6 +67,13 @@ impl Home {
 
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        if let Some(i) = self.selected_event {
+            return view::modal(
+                false,
+                self.warning.as_ref(),
+                view::home::event_view(&self.events[i]),
+            );
+        }
         view::dashboard(
             &Menu::Home,
             cache,
@@ -85,8 +93,18 @@ impl State for Home {
                 Err(e) => self.warning = Some(e),
                 Ok(coins) => {
                     self.warning = None;
-                    self.balance =
-                        Amount::from_sat(coins.iter().map(|coin| coin.amount.to_sat()).sum());
+                    self.balance = Amount::from_sat(
+                        coins
+                            .iter()
+                            .map(|coin| {
+                                if coin.spend_info.is_none() {
+                                    coin.amount.to_sat()
+                                } else {
+                                    0
+                                }
+                            })
+                            .sum(),
+                    );
                 }
             },
             Message::HistoryEvents(res) => match res {
@@ -94,16 +112,21 @@ impl State for Home {
                 Ok(events) => {
                     self.warning = None;
                     for event in events {
-                        if !self
-                            .events
-                            .iter()
-                            .any(|other| other.txid == event.txid && other.coins == event.coins)
-                        {
+                        if !self.events.iter().any(|other| {
+                            (event.outpoint.is_some() && other.outpoint == event.outpoint)
+                                || (event.tx.is_some() && other.tx == event.tx)
+                        }) {
                             self.events.push(event);
                         }
                     }
                 }
             },
+            Message::View(view::Message::Close) => {
+                self.selected_event = None;
+            }
+            Message::View(view::Message::Select(i)) => {
+                self.selected_event = Some(i);
+            }
             Message::View(view::Message::Next) => {
                 if let Some(last) = self.events.last() {
                     let daemon = daemon.clone();
@@ -112,7 +135,7 @@ impl State for Home {
                         async move {
                             let mut limit = view::home::HISTORY_EVENT_PAGE_SIZE;
                             let mut events =
-                                daemon.get_history(0 as u32, last_event_date, limit)?.events;
+                                daemon.get_history(0_u32, last_event_date, limit)?.events;
 
                             // because gethistory cursor is inclusive and use blocktime
                             // multiple events can occur in the same block.
