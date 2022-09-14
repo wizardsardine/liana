@@ -21,7 +21,7 @@ pub use minisafe::config::Config as DaemonConfig;
 pub use config::Config;
 pub use message::Message;
 
-use state::{Home, ReceivePanel, State};
+use state::{CoinsPanel, Home, ReceivePanel, State};
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu},
@@ -63,6 +63,7 @@ impl App {
                     .into()
             }
             menu::Menu::Home => Home::new(&self.cache.coins).into(),
+            menu::Menu::Coins => CoinsPanel::new(&self.cache.coins).into(),
             menu::Menu::Receive => ReceivePanel::default().into(),
         };
         self.state.load(self.daemon.clone())

@@ -3,4 +3,5 @@ pub enum Menu {
     Home,
     Receive,
     Settings,
+    Coins,
 }

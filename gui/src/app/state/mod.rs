@@ -1,3 +1,4 @@
+mod coins;
 mod settings;
 
 use std::sync::Arc;
@@ -8,6 +9,8 @@ use iced::{widget::qr_code, Command, Subscription};
 
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view};
 use crate::daemon::{model::Coin, Daemon};
+
+pub use coins::CoinsPanel;
 pub use settings::SettingsState;
 
 pub trait State {

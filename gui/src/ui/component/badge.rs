@@ -3,7 +3,7 @@ use iced::{
     Length,
 };
 
-use crate::ui::color;
+use crate::ui::{color, icon};
 
 pub enum Style {
     Standard,
@@ -67,4 +67,53 @@ impl<'a, Message: 'a, S: 'a + widget::container::StyleSheet> From<Badge<S>>
             .center_y()
             .into()
     }
+}
+
+pub struct ReceiveStyle;
+impl widget::container::StyleSheet for ReceiveStyle {
+    fn style(&self) -> widget::container::Style {
+        widget::container::Style {
+            border_radius: 40.0,
+            background: color::BACKGROUND.into(),
+            ..widget::container::Style::default()
+        }
+    }
+}
+
+pub fn receive<T>() -> widget::container::Container<'static, T> {
+    container(icon::receive_icon().width(Length::Units(20)))
+        .width(Length::Units(40))
+        .height(Length::Units(40))
+        .style(ReceiveStyle)
+        .center_x()
+        .center_y()
+}
+
+pub struct SpendStyle;
+impl widget::container::StyleSheet for SpendStyle {
+    fn style(&self) -> widget::container::Style {
+        widget::container::Style {
+            border_radius: 40.0,
+            background: color::BACKGROUND.into(),
+            ..widget::container::Style::default()
+        }
+    }
+}
+
+pub fn spend<T>() -> widget::container::Container<'static, T> {
+    container(icon::send_icon().width(Length::Units(20)))
+        .width(Length::Units(40))
+        .height(Length::Units(40))
+        .style(ReceiveStyle)
+        .center_x()
+        .center_y()
+}
+
+pub fn coin<T>() -> widget::container::Container<'static, T> {
+    container(icon::coin_icon().width(Length::Units(20)))
+        .width(Length::Units(40))
+        .height(Length::Units(40))
+        .style(ReceiveStyle)
+        .center_x()
+        .center_y()
 }

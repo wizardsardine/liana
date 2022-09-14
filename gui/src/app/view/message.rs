@@ -5,6 +5,8 @@ pub enum Message {
     Reload,
     Clipboard(String),
     Menu(Menu),
+    Close,
+    Select(usize),
     Settings(usize, SettingsMessage),
 }
 

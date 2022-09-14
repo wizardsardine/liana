@@ -66,6 +66,10 @@ pub fn vaults_icon() -> Text {
     icon('\u{F1C7}')
 }
 
+pub fn coin_icon() -> Text {
+    icon('\u{F567}')
+}
+
 pub fn settings_icon() -> Text {
     icon('\u{F3E5}')
 }
