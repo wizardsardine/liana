@@ -18,14 +18,12 @@ use crate::{
         },
         Coin,
     },
+    descriptors::InheritanceDescriptor,
 };
 
 use std::{convert::TryInto, fmt, io, path};
 
-use miniscript::{
-    bitcoin::{self, secp256k1},
-    Descriptor, DescriptorPublicKey, DescriptorTrait, TranslatePk2,
-};
+use miniscript::bitcoin::{self, secp256k1};
 
 const DB_VERSION: i64 = 0;
 
@@ -35,7 +33,7 @@ pub enum SqliteDbError {
     FileNotFound(path::PathBuf),
     UnsupportedVersion(i64),
     InvalidNetwork(bitcoin::Network),
-    DescriptorMismatch(Descriptor<DescriptorPublicKey>),
+    DescriptorMismatch(InheritanceDescriptor),
     Rusqlite(rusqlite::Error),
 }
 
@@ -79,7 +77,7 @@ impl From<rusqlite::Error> for SqliteDbError {
 #[derive(Debug, Clone)]
 pub struct FreshDbOptions {
     pub bitcoind_network: bitcoin::Network,
-    pub main_descriptor: Descriptor<DescriptorPublicKey>,
+    pub main_descriptor: InheritanceDescriptor,
 }
 
 #[derive(Debug, Clone)]
@@ -118,7 +116,7 @@ impl SqliteDb {
     pub fn sanity_check(
         &self,
         bitcoind_network: bitcoin::Network,
-        main_descriptor: &Descriptor<DescriptorPublicKey>,
+        main_descriptor: &InheritanceDescriptor,
     ) -> Result<(), SqliteDbError> {
         let mut conn = self.connection()?;
 
@@ -239,11 +237,8 @@ impl SqliteConn {
             let next_la_index = next_index + LOOK_AHEAD_LIMIT - 1;
             let next_la_address = db_wallet
                 .main_descriptor
-                .derive(next_la_index)
-                .translate_pk2(|xpk| xpk.derive_public_key(secp))
-                .expect("All pubkeys were derived, no wildcard.")
-                .address(network)
-                .expect("It's a wsh() descriptor");
+                .derive(next_la_index.into(), &secp)
+                .address(network);
             db_tx
                 .execute(
                     "INSERT INTO addresses (address, derivation_index) VALUES (?1, ?2)",
@@ -344,11 +339,10 @@ mod tests {
     use std::{collections::HashSet, fs, path, str::FromStr};
 
     use bitcoin::{hashes::Hash, util::bip32};
-    use miniscript::{DescriptorTrait, TranslatePk2};
 
     fn dummy_options() -> FreshDbOptions {
         let desc_str = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2d";
-        let main_descriptor = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
+        let main_descriptor = InheritanceDescriptor::from_str(desc_str).unwrap();
         FreshDbOptions {
             bitcoind_network: bitcoin::Network::Bitcoin,
             main_descriptor,
@@ -396,8 +390,8 @@ mod tests {
             .to_string()
             .contains("Database was created for network");
         fs::remove_file(&db_path).unwrap();
-        let other_desc_str = "wsh(andor(pk(037a27a76ebf33594c785e4fa41607860a960bb5aa3039654297b05bff57e4f9a9),older(10000),pk(0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce)))";
-        let other_desc = Descriptor::<DescriptorPublicKey>::from_str(other_desc_str).unwrap();
+        let other_desc_str = "wsh(andor(pk(tpubDExU4YLJkyQ9RRbVScQq2brFxWWha7WmAUByPWyaWYwmcTv3Shx8aHp6mVwuE5n4TeM4z5DTWGf2YhNPmXtfvyr8cUDVvA3txdrFnFgNdF7/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))";
+        let other_desc = InheritanceDescriptor::from_str(other_desc_str).unwrap();
         let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &other_desc)
             .unwrap_err()
@@ -522,33 +516,24 @@ mod tests {
             // There is the index for the first index
             let addr = options
                 .main_descriptor
-                .derive(0)
-                .translate_pk2(|xpk| xpk.derive_public_key(&secp))
-                .expect("All pubkeys were derived, no wildcard.")
-                .address(options.bitcoind_network)
-                .expect("Always a P2WSH address");
+                .derive(0.into(), &secp)
+                .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 0.into());
 
             // There is the index for the 199th index (look-ahead limit)
             let addr = options
                 .main_descriptor
-                .derive(199)
-                .translate_pk2(|xpk| xpk.derive_public_key(&secp))
-                .expect("All pubkeys were derived, no wildcard.")
-                .address(options.bitcoind_network)
-                .expect("Always a P2WSH address");
+                .derive(199.into(), &secp)
+                .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 199.into());
 
             // And not for the 200th one.
             let addr = options
                 .main_descriptor
-                .derive(200)
-                .translate_pk2(|xpk| xpk.derive_public_key(&secp))
-                .expect("All pubkeys were derived, no wildcard.")
-                .address(options.bitcoind_network)
-                .expect("Always a P2WSH address");
+                .derive(200.into(), &secp)
+                .address(options.bitcoind_network);
             assert!(conn.db_address(&addr).is_none());
 
             // But if we increment the deposit derivation index, the 200th one will be there.

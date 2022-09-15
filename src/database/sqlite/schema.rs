@@ -1,9 +1,8 @@
+use crate::descriptors::InheritanceDescriptor;
+
 use std::{convert::TryFrom, str::FromStr};
 
-use miniscript::{
-    bitcoin::{self, consensus::encode, util::bip32},
-    Descriptor, DescriptorPublicKey,
-};
+use miniscript::bitcoin::{self, consensus::encode, util::bip32};
 
 pub const SCHEMA: &str = "\
 CREATE TABLE version (
@@ -86,7 +85,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbTip {
 pub struct DbWallet {
     pub id: i64,
     pub timestamp: u32,
-    pub main_descriptor: Descriptor<DescriptorPublicKey>,
+    pub main_descriptor: InheritanceDescriptor,
     pub deposit_derivation_index: bip32::ChildNumber,
 }
 
@@ -98,7 +97,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
         let timestamp = row.get(1)?;
 
         let desc_str: String = row.get(2)?;
-        let main_descriptor = Descriptor::<DescriptorPublicKey>::from_str(&desc_str)
+        let main_descriptor = InheritanceDescriptor::from_str(&desc_str)
             .expect("Insane database: can't parse deposit descriptor");
 
         let der_idx: u32 = row.get(3)?;

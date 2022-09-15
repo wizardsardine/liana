@@ -1,7 +1,7 @@
 ///! Implementation of the Bitcoin interface using bitcoind.
 ///!
 ///! We use the RPC interface and a watchonly descriptor wallet.
-use crate::{bitcoin::BlockChainTip, config};
+use crate::{bitcoin::BlockChainTip, config, descriptors::InheritanceDescriptor};
 
 use std::{collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
 
@@ -10,7 +10,7 @@ use jsonrpc::{
     client::Client,
     simple_http::{self, SimpleHttpTransport},
 };
-use miniscript::{bitcoin, Descriptor, DescriptorPublicKey};
+use miniscript::bitcoin;
 
 use serde_json::Value as Json;
 
@@ -354,7 +354,7 @@ impl BitcoinD {
     }
 
     // TODO: rescan feature will probably need another timestamp than 'now'
-    fn import_descriptor(&self, descriptor: &Descriptor<DescriptorPublicKey>) -> Option<String> {
+    fn import_descriptor(&self, descriptor: &InheritanceDescriptor) -> Option<String> {
         let descriptors = vec![serde_json::json!({
             "desc": descriptor.to_string(),
             "timestamp": "now",
@@ -400,7 +400,7 @@ impl BitcoinD {
     /// Create the watchonly wallet on bitcoind, and import it the main descriptor.
     pub fn create_watchonly_wallet(
         &self,
-        main_descriptor: &Descriptor<DescriptorPublicKey>,
+        main_descriptor: &InheritanceDescriptor,
     ) -> Result<(), BitcoindError> {
         // Remove any leftover. This can happen if we delete the watchonly wallet but don't restart
         // bitcoind.
@@ -440,7 +440,7 @@ impl BitcoinD {
     /// Perform various sanity checks on the bitcoind instance.
     pub fn sanity_check(
         &self,
-        main_descriptor: &Descriptor<DescriptorPublicKey>,
+        main_descriptor: &InheritanceDescriptor,
         config_network: bitcoin::Network,
     ) -> Result<(), BitcoindError> {
         // Check the minimum supported bitcoind version

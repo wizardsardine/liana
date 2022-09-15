@@ -7,15 +7,11 @@ mod utils;
 use crate::{
     bitcoin::BitcoinInterface,
     database::{Coin, DatabaseInterface},
-    DaemonControl, VERSION,
+    descriptors, DaemonControl, VERSION,
 };
 use utils::{deser_amount_from_sats, ser_amount};
 
-use miniscript::{
-    bitcoin,
-    descriptor::{self, DescriptorTrait},
-    TranslatePk2,
-};
+use miniscript::bitcoin;
 use serde::{Deserialize, Serialize};
 
 impl DaemonControl {
@@ -37,17 +33,13 @@ impl DaemonControl {
     pub fn get_new_address(&self) -> GetAddressResult {
         let mut db_conn = self.db.connection();
         let index = db_conn.derivation_index();
-        // TODO: handle should we wrap around instead of failing?
+        // TODO: should we wrap around instead of failing?
         db_conn.increment_derivation_index(&self.secp);
         let address = self
             .config
             .main_descriptor
-            // TODO: have a descriptor newtype along with a derived descriptor one.
-            .derive(index.into())
-            .translate_pk2(|xpk| xpk.derive_public_key(&self.secp))
-            .expect("All pubkeys were derived, no wildcard.")
-            .address(self.config.bitcoin_config.network)
-            .expect("It's a wsh() descriptor");
+            .derive(index.into(), &self.secp)
+            .address(self.config.bitcoin_config.network);
         GetAddressResult { address }
     }
 
@@ -78,7 +70,7 @@ impl DaemonControl {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetInfoDescriptors {
-    pub main: descriptor::Descriptor<descriptor::DescriptorPublicKey>,
+    pub main: descriptors::InheritanceDescriptor,
 }
 
 /// Information about the daemon

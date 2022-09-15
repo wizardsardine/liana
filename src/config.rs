@@ -1,10 +1,8 @@
+use crate::descriptors::InheritanceDescriptor;
+
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
-use miniscript::{
-    bitcoin::Network,
-    descriptor::{Descriptor, DescriptorPublicKey},
-    ForEach, ForEachKey,
-};
+use miniscript::{bitcoin::Network, DescriptorPublicKey, ForEach, ForEachKey};
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -94,7 +92,7 @@ pub struct Config {
         deserialize_with = "deserialize_fromstr",
         serialize_with = "serialize_to_string"
     )]
-    pub main_descriptor: Descriptor<DescriptorPublicKey>,
+    pub main_descriptor: InheritanceDescriptor,
     /// Settings for the Bitcoin interface
     pub bitcoin_config: BitcoinConfig,
     /// Settings specific to bitcoind as the Bitcoin interface
@@ -115,7 +113,7 @@ pub enum ConfigError {
     DatadirNotFound,
     FileNotFound,
     ReadingFile(String),
-    UnexpectedDescriptor(Descriptor<DescriptorPublicKey>),
+    UnexpectedDescriptor(InheritanceDescriptor),
     Unexpected(String),
 }
 
@@ -205,7 +203,7 @@ impl Config {
             Network::Bitcoin => Network::Bitcoin,
             _ => Network::Testnet,
         };
-        let unexpected_net = self.main_descriptor.for_each_key(|pkpkh| {
+        let unexpected_net = self.main_descriptor.as_inner().for_each_key(|pkpkh| {
             let xpub = match pkpkh {
                 // For DescriptorPublicKey, Pk::Hash == Self.
                 ForEach::Key(xpub) => xpub,
@@ -242,7 +240,7 @@ mod tests {
             data_dir = "/home/wizardsardine/custom/folder/"
             daemon = false
             log_level = "debug"
-            main_descriptor = "wsh(andor(thresh(1,pk(xpub6BaZSKgpaVvibu2k78QsqeDWXp92xLHZxiu1WoqLB9hKhsBf3miBUDX7PJLgSPvkj66ThVHTqdnbXpeu8crXFmDUd4HeM4s4miQS2xsv3Qb/*)),and_v(v:multi(2,03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a,0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce),older(4)),thresh(2,pkh(xpub6AHA9hZDN11k2ijHMeS5QqHx2KP9aMBRhTDqANMnwVtdyw2TDYRmF8PjpvwUFcL1Et8Hj59S3gTSMcUQ5gAqTz3Wd8EsMTmF3DChhqPQBnU/*),a:pkh(xpub6AaffFGfH6WXfm6pwWzmUMuECQnoLeB3agMKaLyEBZ5ZVfwtnS5VJKqXBt8o5ooCWVy2H87GsZshp7DeKE25eWLyd1Ccuh2ZubQUkgpiVux/*))))#532k8uvf"
+            main_descriptor = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2d"
 
             [bitcoin_config]
             network = "bitcoin"
@@ -259,7 +257,7 @@ mod tests {
             data_dir = '/home/wizardsardine/custom/folder/'
             daemon = false
             log_level = 'TRACE'
-            main_descriptor = 'wsh(andor(thresh(1,pk(xpub6BaZSKgpaVvibu2k78QsqeDWXp92xLHZxiu1WoqLB9hKhsBf3miBUDX7PJLgSPvkj66ThVHTqdnbXpeu8crXFmDUd4HeM4s4miQS2xsv3Qb/*)),and_v(v:multi(2,03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a,0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce),older(4)),thresh(2,pkh(xpub6AHA9hZDN11k2ijHMeS5QqHx2KP9aMBRhTDqANMnwVtdyw2TDYRmF8PjpvwUFcL1Et8Hj59S3gTSMcUQ5gAqTz3Wd8EsMTmF3DChhqPQBnU/*),a:pkh(xpub6AaffFGfH6WXfm6pwWzmUMuECQnoLeB3agMKaLyEBZ5ZVfwtnS5VJKqXBt8o5ooCWVy2H87GsZshp7DeKE25eWLyd1Ccuh2ZubQUkgpiVux/*))))#532k8uvf'
+            main_descriptor = 'wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2d'
 
             [bitcoin_config]
             network = 'bitcoin'
@@ -280,8 +278,7 @@ mod tests {
             log_level = "trace"
             data_dir = "/home/wizardsardine/custom/folder/"
 
-            # The main descriptor semantics aren't checked, yet.
-            main_descriptor = "wsh(andor(thresh(1,pk(xpub6BaZSKgpaVvibu2k78QsqeDWXp92xLHZxiu1WoqLB9hKhsBf3miBUDX7PJLgSPvkj66ThVHTqdnbXpeu8crXFmDUd4HeM4s4miQS2xsv3Qb/*)),and_v(v:multi(2,03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a,0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce),older(4)),thresh(2,pkh(xpub6AHA9hZDN11k2ijHMeS5QqHx2KP9aMBRhTDqANMnwVtdyw2TDYRmF8PjpvwUFcL1Et8Hj59S3gTSMcUQ5gAqTz3Wd8EsMTmF3DChhqPQBnU/*),a:pkh(xpub6AaffFGfH6WXfm6pwWzmUMuECQnoLeB3agMKaLyEBZ5ZVfwtnS5VJKqXBt8o5ooCWVy2H87GsZshp7DeKE25eWLyd1Ccuh2ZubQUkgpiVux/*))))#532k88vf"
+            main_descriptor = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2e"
 
             [bitcoin_config]
             network = "bitcoin"
@@ -301,7 +298,7 @@ mod tests {
             data_dir = "/home/wizardsardine/custom/folder/"
 
             # The main descriptor semantics aren't checked, yet.
-            main_descriptor = "wsh(andor(thresh(1,pk(xpub6BaZSKgpaVvibu2k78QsqeDWXp92xLHZxiu1WoqLB9hKhsBf3miBUDX7PJLgSPvkj66ThVHTqdnbXpeu8crXFmDUd4HeM4s4miQS2xsv3Qb/*)),and_v(v:multi(2,03b506a1dbe57b4bf48c95e0c7d417b87dd3b4349d290d2e7e9ba72c912652d80a,0295e7f5d12a2061f1fd2286cefec592dff656a19f55f4f01305d6aa56630880ce),older(4)),thresh(2,pkh(xpub6AHA9hZDN11k2ijHMeS5QqHx2KP9aMBRhTDqANMnwVtdyw2TDYRmF8PjpvwUFcL1Et8Hj59S3gTSMcUQ5gAqTz3Wd8EsMTmF3DChhqPQBnU/*),a:pkh(xpub6AaffFGfH6WXfm6pwWzmUMuECQnoLeB3agMKaLyEBZ5ZVfwtnS5VJKqXBt8o5ooCWVy2H87GsZshp7DeKE25eWLyd1Ccuh2ZubQUkgpiVux/*))))#532k8uvf"
+            main_descriptor = ""
 
             [bitcoin_config]
             poll_interval_secs = 18
