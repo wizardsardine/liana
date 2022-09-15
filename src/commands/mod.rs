@@ -366,6 +366,58 @@ impl DaemonControl {
 
         Ok(CreateSpendResult { psbt })
     }
+
+    pub fn update_spend(&self, mut psbt: Psbt) -> Result<(), CommandError> {
+        let mut db_conn = self.db.connection();
+        let tx = &psbt.global.unsigned_tx;
+
+        // If the transaction already exists in DB, merge the signatures for each input on a best
+        // effort basis.
+        // We work on the newly provided PSBT, in case its content was updated.
+        let txid = tx.txid();
+        if let Some(db_psbt) = db_conn.spend_tx(&txid) {
+            let db_tx = db_psbt.global.unsigned_tx;
+            for i in 0..db_tx.input.len() {
+                if tx
+                    .input
+                    .get(i)
+                    .map(|tx_in| tx_in.previous_output == db_tx.input[i].previous_output)
+                    != Some(true)
+                {
+                    continue;
+                }
+                let psbtin = match psbt.inputs.get_mut(i) {
+                    Some(psbtin) => psbtin,
+                    None => continue,
+                };
+                let db_psbtin = match db_psbt.inputs.get(i) {
+                    Some(db_psbtin) => db_psbtin,
+                    None => continue,
+                };
+                psbtin
+                    .partial_sigs
+                    .extend(db_psbtin.partial_sigs.clone().into_iter());
+            }
+        } else {
+            // If the transaction doesn't exist in DB already, sanity check its inputs.
+            // FIXME: should we allow for external inputs?
+            let outpoints: Vec<bitcoin::OutPoint> =
+                tx.input.iter().map(|txin| txin.previous_output).collect();
+            let coins = db_conn.coins_by_outpoints(&outpoints);
+            if coins.len() != outpoints.len() {
+                for op in outpoints {
+                    if coins.get(&op).is_none() {
+                        return Err(CommandError::UnknownOutpoint(op));
+                    }
+                }
+            }
+        }
+
+        // Finally, insert (or update) the PSBT in database.
+        db_conn.store_spend(&psbt);
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -414,6 +466,7 @@ pub struct CreateSpendResult {
 mod tests {
     use super::*;
     use crate::testutils::*;
+    use bitcoin::hashes::hex::FromHex;
     use std::str::FromStr;
 
     #[test]
@@ -553,6 +606,109 @@ mod tests {
         assert_eq!(
             control.create_spend(&[dummy_op], &destinations, 1),
             Err(CommandError::AlreadySpent(dummy_op))
+        );
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn update_spend() {
+        let ms = DummyMinisafe::new();
+        let control = &ms.handle.control;
+        let mut db_conn = control.db().lock().unwrap().connection();
+
+        // Add two (unconfirmed) coins in DB
+        let dummy_op_a = bitcoin::OutPoint::from_str(
+            "3753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:0",
+        )
+        .unwrap();
+        let dummy_op_b = bitcoin::OutPoint::from_str(
+            "4753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:1",
+        )
+        .unwrap();
+        db_conn.new_unspent_coins(&[
+            Coin {
+                outpoint: dummy_op_a,
+                block_height: None,
+                amount: bitcoin::Amount::from_sat(100_000),
+                derivation_index: bip32::ChildNumber::from(13),
+                spend_txid: None,
+            },
+            Coin {
+                outpoint: dummy_op_b,
+                block_height: None,
+                amount: bitcoin::Amount::from_sat(115_680),
+                derivation_index: bip32::ChildNumber::from(34),
+                spend_txid: None,
+            },
+        ]);
+
+        // Now create three transactions spending those coins differently
+        let dummy_addr_a =
+            bitcoin::Address::from_str("bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv").unwrap();
+        let dummy_addr_b =
+            bitcoin::Address::from_str("bc1q39srgatmkp6k2ne3l52yhkjprdvunvspqydmkx").unwrap();
+        let dummy_value_a = 50_000;
+        let dummy_value_b = 60_000;
+        let destinations_a: HashMap<bitcoin::Address, u64> =
+            [(dummy_addr_a.clone(), dummy_value_a)]
+                .iter()
+                .cloned()
+                .collect();
+        let destinations_b: HashMap<bitcoin::Address, u64> =
+            [(dummy_addr_b.clone(), dummy_value_b)]
+                .iter()
+                .cloned()
+                .collect();
+        let destinations_c: HashMap<bitcoin::Address, u64> = [
+            (dummy_addr_a.clone(), dummy_value_a),
+            (dummy_addr_b.clone(), dummy_value_b),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+        let mut psbt_a = control
+            .create_spend(&[dummy_op_a], &destinations_a, 1)
+            .unwrap()
+            .psbt;
+        let txid_a = psbt_a.global.unsigned_tx.txid();
+        let psbt_b = control
+            .create_spend(&[dummy_op_b], &destinations_b, 10)
+            .unwrap()
+            .psbt;
+        let txid_b = psbt_b.global.unsigned_tx.txid();
+        let psbt_c = control
+            .create_spend(&[dummy_op_a, dummy_op_b], &destinations_c, 100)
+            .unwrap()
+            .psbt;
+        let txid_c = psbt_c.global.unsigned_tx.txid();
+
+        // We can store and query them all
+        control.update_spend(psbt_a.clone()).unwrap();
+        assert_eq!(db_conn.spend_tx(&txid_a).unwrap(), psbt_a);
+        control.update_spend(psbt_b.clone()).unwrap();
+        assert_eq!(db_conn.spend_tx(&txid_b).unwrap(), psbt_b);
+        control.update_spend(psbt_c.clone()).unwrap();
+        assert_eq!(db_conn.spend_tx(&txid_c).unwrap(), psbt_c);
+
+        // As well as update them, with or without new signatures
+        psbt_a.inputs[0].partial_sigs.insert(bitcoin::PublicKey::from_str("023a664c5617412f0b292665b1fd9d766456a7a3b1614c7e7c5f411200ff1958ef").unwrap(), Vec::<u8>::from_hex("304402204004fcdbb9c0d0cbf585f58cee34dccb012efbd8fc2b0d5e97760045ae35803802201a0bd7ec2383e0b93748abc9946c8e17a8312e314dab85982aeba650e738cbf401").unwrap());
+        control.update_spend(psbt_a.clone()).unwrap();
+        assert_eq!(db_conn.spend_tx(&txid_a).unwrap(), psbt_a);
+        control.update_spend(psbt_b.clone()).unwrap();
+        assert_eq!(db_conn.spend_tx(&txid_b).unwrap(), psbt_b);
+        control.update_spend(psbt_c.clone()).unwrap();
+        assert_eq!(db_conn.spend_tx(&txid_c).unwrap(), psbt_c);
+
+        // We can't store a PSBT spending an external coin
+        let external_op = bitcoin::OutPoint::from_str(
+            "8753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:2",
+        )
+        .unwrap();
+        psbt_a.global.unsigned_tx.input[0].previous_output = external_op;
+        assert_eq!(
+            control.update_spend(psbt_a),
+            Err(CommandError::UnknownOutpoint(external_op))
         );
 
         ms.shutdown();
