@@ -5,7 +5,7 @@ use crate::{
 
 use std::{collections::HashMap, convert::TryInto, str::FromStr};
 
-use miniscript::bitcoin;
+use miniscript::bitcoin::{self, consensus, util::psbt::PartiallySignedTransaction as Psbt};
 
 fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let outpoints = params
@@ -47,6 +47,19 @@ fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
     Ok(serde_json::json!(&res))
 }
 
+fn update_spend(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let psbt: Psbt = params
+        .get(0, "psbt")
+        .ok_or(Error::invalid_params("Missing 'psbt' parameter."))?
+        .as_str()
+        .and_then(|s| base64::decode(&s).ok())
+        .and_then(|bytes| consensus::deserialize(&bytes).ok())
+        .ok_or(Error::invalid_params("Invalid 'feerate' parameter."))?;
+    control.update_spend(psbt)?;
+
+    Ok(serde_json::json!({}))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -60,6 +73,12 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
         "getnewaddress" => serde_json::json!(&control.get_new_address()),
         "listcoins" => serde_json::json!(&control.list_coins()),
         "stop" => serde_json::json!({}),
+        "updatespend" => {
+            let params = req
+                .params
+                .ok_or(Error::invalid_params("Missing 'psbt' parameter."))?;
+            update_spend(control, params)?
+        }
         _ => {
             return Err(Error::method_not_found());
         }

@@ -109,3 +109,24 @@ This command will refuse to create any output worth less than 5k sats.
 | Field          | Type      | Description                                          |
 | -------------- | --------- | ---------------------------------------------------- |
 | `psbt`         | string    | PSBT of the spending transaction, encoded as base64. |
+
+
+### `updatespend`
+
+Store the PSBT of a Spend transaction in database, updating it if it already exists.
+
+Will merge the partial signatures for all inputs if a PSBT for a transaction with the same txid
+exists in DB.
+
+#### Request
+
+| Field     | Type   | Description                                 |
+| --------- | ------ | ------------------------------------------- |
+| `psbt`    | string | Base64-encoded PSBT of a Spend transaction. |
+
+#### Response
+
+This command does not return anything for now.
+
+| Field          | Type      | Description                                          |
+| -------------- | --------- | ---------------------------------------------------- |

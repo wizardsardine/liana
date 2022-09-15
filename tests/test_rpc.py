@@ -93,3 +93,22 @@ def test_create_spend(minisafed, bitcoind):
     # We can sign it and broadcast it.
     signed_tx_hex = minisafed.sign_psbt(spend_psbt)
     bitcoind.rpc.sendrawtransaction(signed_tx_hex)
+
+
+def test_update_spend(minisafed, bitcoind):
+    # Start by creating a Spend PSBT
+    addr = minisafed.rpc.getnewaddress()["address"]
+    bitcoind.rpc.sendtoaddress(addr, 0.2567)
+    wait_for(lambda: len(minisafed.rpc.listcoins()["coins"]) > 0)
+    outpoints = [c["outpoint"] for c in minisafed.rpc.listcoins()["coins"]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 200_000,
+    }
+    res = minisafed.rpc.createspend(outpoints, destinations, 6)
+    assert "psbt" in res
+
+    # Now update it
+    minisafed.rpc.updatespend(res["psbt"])
+
+    # TODO: check it's stored once we implement 'listspendtxs'
+    # TODO: check with added signatures once we implement 'listspendtxs'
