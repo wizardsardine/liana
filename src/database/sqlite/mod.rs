@@ -13,7 +13,7 @@ use crate::{
     bitcoin::BlockChainTip,
     database::{
         sqlite::{
-            schema::{DbAddress, DbCoin, DbTip, DbWallet},
+            schema::{DbAddress, DbCoin, DbSpendTransaction, DbTip, DbWallet},
             utils::{create_fresh_db, db_exec, db_query, db_tx_query, LOOK_AHEAD_LIMIT},
         },
         Coin,
@@ -23,7 +23,10 @@ use crate::{
 
 use std::{convert::TryInto, fmt, io, path};
 
-use miniscript::bitcoin::{self, hashes::hex::ToHex, secp256k1};
+use miniscript::bitcoin::{
+    self, consensus::encode, hashes::hex::ToHex, secp256k1,
+    util::psbt::PartiallySignedTransaction as Psbt,
+};
 
 const DB_VERSION: i64 = 0;
 
@@ -351,6 +354,33 @@ impl SqliteConn {
             row.try_into()
         })
         .expect("Db must not fail")
+    }
+
+    pub fn db_spend(&mut self, txid: &bitcoin::Txid) -> Option<DbSpendTransaction> {
+        db_query(
+            &mut self.conn,
+            "SELECT * FROM spend_transactions WHERE txid = ?1",
+            rusqlite::params![txid.to_vec()],
+            |row| row.try_into(),
+        )
+        .expect("Db must not fail")
+        .pop()
+    }
+
+    /// Insert a new Spend transaction or replace an existing one.
+    pub fn store_spend(&mut self, psbt: &Psbt) {
+        let txid = psbt.global.unsigned_tx.txid().to_vec();
+        let psbt = encode::serialize(psbt);
+
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT into spend_transactions (psbt, txid) VALUES (?1, ?2) \
+                 ON CONFLICT DO UPDATE SET psbt=excluded.psbt",
+                rusqlite::params![psbt, txid],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
     }
 }
 

@@ -2,7 +2,11 @@ use crate::descriptors::InheritanceDescriptor;
 
 use std::{convert::TryFrom, str::FromStr};
 
-use miniscript::bitcoin::{self, consensus::encode, util::bip32};
+use miniscript::bitcoin::{
+    self,
+    consensus::encode,
+    util::{bip32, psbt::PartiallySignedTransaction as Psbt},
+};
 
 pub const SCHEMA: &str = "\
 CREATE TABLE version (
@@ -48,6 +52,13 @@ CREATE TABLE coins (
 CREATE TABLE addresses (
     address TEXT NOT NULL UNIQUE,
     derivation_index INTEGER NOT NULL UNIQUE
+);
+
+/* Transactions we created that spend some of our coins. */
+CREATE TABLE spend_transactions (
+    id INTEGER PRIMARY KEY NOT NULL,
+    psbt BLOB UNIQUE NOT NULL,
+    txid BLOB UNIQUE NOT NULL
 );
 ";
 
@@ -184,5 +195,30 @@ impl TryFrom<&rusqlite::Row<'_>> for DbAddress {
             address,
             derivation_index,
         })
+    }
+}
+
+/// A row in the "spend_transactions" table
+#[derive(Debug, Clone, PartialEq)]
+pub struct DbSpendTransaction {
+    pub id: i64,
+    pub psbt: Psbt,
+    pub txid: bitcoin::Txid,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbSpendTransaction {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let id: i64 = row.get(0)?;
+
+        let psbt: Vec<u8> = row.get(1)?;
+        let psbt: Psbt = encode::deserialize(&psbt).expect("We only store valid PSBTs");
+
+        let txid: Vec<u8> = row.get(2)?;
+        let txid: bitcoin::Txid = encode::deserialize(&txid).expect("We only store valid txids");
+        assert_eq!(txid, psbt.global.unsigned_tx.txid());
+
+        Ok(DbSpendTransaction { id, psbt, txid })
     }
 }

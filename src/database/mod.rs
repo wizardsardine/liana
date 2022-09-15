@@ -13,7 +13,10 @@ use crate::{
 
 use std::{collections::HashMap, sync};
 
-use miniscript::bitcoin::{self, secp256k1, util::bip32};
+use miniscript::bitcoin::{
+    self, secp256k1,
+    util::{bip32, psbt::PartiallySignedTransaction as Psbt},
+};
 
 pub trait DatabaseInterface: Send {
     fn connection(&self) -> Box<dyn DatabaseConnection>;
@@ -68,6 +71,11 @@ pub trait DatabaseConnection {
         &mut self,
         outpoints: &[bitcoin::OutPoint],
     ) -> HashMap<bitcoin::OutPoint, Coin>;
+
+    fn spend_tx(&mut self, txid: &bitcoin::Txid) -> Option<Psbt>;
+
+    /// Insert a new Spend transaction or replace an existing one.
+    fn store_spend(&mut self, psbt: &Psbt);
 }
 
 // FIXME: if possible, avoid reallocating.
@@ -154,6 +162,14 @@ impl DatabaseConnection for SqliteConn {
         outpoints: &[bitcoin::OutPoint],
     ) -> HashMap<bitcoin::OutPoint, Coin> {
         db_coins_into_coins(self.db_coins(outpoints))
+    }
+
+    fn spend_tx(&mut self, txid: &bitcoin::Txid) -> Option<Psbt> {
+        self.db_spend(txid).map(|db_spend| db_spend.psbt)
+    }
+
+    fn store_spend(&mut self, psbt: &Psbt) {
+        self.store_spend(psbt)
     }
 }
 
