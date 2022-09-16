@@ -15,6 +15,7 @@ struct UpdatedCoins {
     pub received: Vec<Coin>,
     pub confirmed: Vec<(bitcoin::OutPoint, i32, u32)>,
     pub spending: Vec<(bitcoin::OutPoint, bitcoin::Txid)>,
+    pub spent: Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)>,
 }
 
 // Update the state of our coins. There may be new unspent, and existing ones may become confirmed
@@ -27,7 +28,7 @@ fn update_coins(
     previous_tip: &BlockChainTip,
 ) -> UpdatedCoins {
     // Start by fetching newly received coins.
-    let curr_coins = db_conn.unspent_coins();
+    let curr_coins = db_conn.list_unspent_coins();
     let mut received = Vec::new();
     for utxo in bit.received_coins(&previous_tip) {
         if let Some(derivation_index) = db_conn.derivation_index_by_address(&utxo.address) {
@@ -87,10 +88,21 @@ fn update_coins(
         .collect();
     let spending = bit.spending_coins(&to_be_spent);
 
+    // We need to confirm coins that are currently spending and which transactions are now in a
+    // block.
+    let mut spending_coins: Vec<(bitcoin::OutPoint, bitcoin::Txid)> = db_conn
+        .list_spending_coins()
+        .values()
+        .map(|coin| (coin.outpoint, coin.spend_txid.expect("Coin is spending")))
+        .collect();
+    spending_coins.extend(&spending);
+    let spent = bit.spent_coins(spending_coins.as_slice());
+
     UpdatedCoins {
         received,
         confirmed,
         spending,
+        spent,
     }
 }
 
@@ -139,6 +151,7 @@ fn updates(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
     db_conn.new_unspent_coins(&updated_coins.received);
     db_conn.confirm_coins(&updated_coins.confirmed);
     db_conn.spend_coins(&updated_coins.spending);
+    db_conn.confirm_spend(&updated_coins.spent);
     if let Some(tip) = new_tip {
         db_conn.update_tip(&tip);
     }

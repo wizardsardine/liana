@@ -6,6 +6,7 @@ pub mod poller;
 
 use d::LSBlockEntry;
 
+use std::collections::HashMap;
 use std::sync;
 
 use miniscript::bitcoin::{self, hashes::Hash};
@@ -45,6 +46,12 @@ pub trait BitcoinInterface: Send {
         &self,
         outpoints: &[bitcoin::OutPoint],
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)>;
+
+    /// Get all coins that are spent with the final spend tx txid and blocktime.
+    fn spent_coins(
+        &self,
+        outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)>;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -141,6 +148,39 @@ impl BitcoinInterface for d::BitcoinD {
 
         spent
     }
+
+    fn spent_coins(
+        &self,
+        outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
+        let mut spent = Vec::with_capacity(outpoints.len());
+
+        let mut cache: HashMap<bitcoin::Txid, Option<d::GetTxRes>> = HashMap::new();
+
+        for (op, txid) in outpoints {
+            let tx: Option<&d::GetTxRes> = match cache.get(txid) {
+                Some(tx) => tx.as_ref(),
+                None => {
+                    let tx = self.get_transaction(txid);
+                    cache.insert(*txid, tx);
+                    cache.get(txid).unwrap().as_ref()
+                }
+            };
+
+            if let Some(tx) = tx {
+                if let Some(block_height) = tx.block_height {
+                    if block_height > 1 {
+                        spent.push((*op, *txid, tx.block_time.expect("Spend is confirmed")))
+                    }
+                } else {
+                    // TODO: handle the case where new transaction which txid is not the
+                    // coin spending_txid, spent the coin.
+                }
+            }
+        }
+
+        spent
+    }
 }
 
 // FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
@@ -177,6 +217,13 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         outpoints: &[bitcoin::OutPoint],
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
         self.lock().unwrap().spending_coins(outpoints)
+    }
+
+    fn spent_coins(
+        &self,
+        outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
+        self.lock().unwrap().spent_coins(outpoints)
     }
 }
 

@@ -55,6 +55,13 @@ impl BitcoinInterface for DummyBitcoind {
     fn spending_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
         Vec::new()
     }
+
+    fn spent_coins(
+        &self,
+        _: &[(bitcoin::OutPoint, bitcoin::Txid)],
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
+        Vec::new()
+    }
 }
 
 pub struct DummyDb {
@@ -107,8 +114,18 @@ impl DatabaseConnection for DummyDbConn {
         self.db.write().unwrap().curr_index = next_index;
     }
 
-    fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
+    fn list_unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
         self.db.read().unwrap().coins.clone()
+    }
+
+    fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
+        let mut result = HashMap::new();
+        for (k, v) in self.db.read().unwrap().coins.iter() {
+            if !v.spend_txid.is_none() {
+                result.insert(k.clone(), v.clone());
+            }
+        }
+        result
     }
 
     fn new_unspent_coins<'a>(&mut self, coins: &[Coin]) {
