@@ -751,6 +751,7 @@ impl From<Json> for LSBlockRes {
 #[derive(Debug, Clone, Copy)]
 pub struct GetTxRes {
     pub block_height: Option<i32>,
+    pub block_time: Option<u32>,
 }
 
 impl From<Json> for GetTxRes {
@@ -759,6 +760,13 @@ impl From<Json> for GetTxRes {
             .get("blockheight")
             .and_then(Json::as_i64)
             .map(|bh| bh as i32);
-        GetTxRes { block_height }
+        let block_time = json
+            .get("blocktime")
+            .and_then(Json::as_u64)
+            .map(|bt| bt as u32);
+        GetTxRes {
+            block_height,
+            block_time,
+        }
     }
 }

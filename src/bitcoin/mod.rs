@@ -34,11 +34,14 @@ pub trait BitcoinInterface: Send {
     /// Get coins received since the specified tip.
     fn received_coins(&self, tip: &BlockChainTip) -> Vec<UTxO>;
 
-    /// Get all coins that were confirmed, and at what height.
-    fn confirmed_coins(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, i32)>;
+    /// Get all coins that were confirmed, and at what height and time.
+    fn confirmed_coins(
+        &self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> Vec<(bitcoin::OutPoint, i32, u32)>;
 
-    /// Get all coins that were spent, and the spending txid.
-    fn spent_coins(
+    /// Get all coins that are being spent, and the spending txid.
+    fn spending_coins(
         &self,
         outpoints: &[bitcoin::OutPoint],
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)>;
@@ -91,14 +94,19 @@ impl BitcoinInterface for d::BitcoinD {
             .collect()
     }
 
-    fn confirmed_coins(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, i32)> {
+    fn confirmed_coins(
+        &self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> Vec<(bitcoin::OutPoint, i32, u32)> {
         let mut confirmed = Vec::with_capacity(outpoints.len());
 
         for op in outpoints {
             // TODO: batch those calls to gettransaction
             if let Some(res) = self.get_transaction(&op.txid) {
                 if let Some(h) = res.block_height {
-                    confirmed.push((*op, h));
+                    if let Some(t) = res.block_time {
+                        confirmed.push((*op, h, t));
+                    }
                 }
             } else {
                 log::error!("Transaction not in wallet for coin '{}'.", op);
@@ -108,7 +116,7 @@ impl BitcoinInterface for d::BitcoinD {
         confirmed
     }
 
-    fn spent_coins(
+    fn spending_coins(
         &self,
         outpoints: &[bitcoin::OutPoint],
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
@@ -126,6 +134,7 @@ impl BitcoinInterface for d::BitcoinD {
                     );
                     bitcoin::Txid::from_slice(&[0; 32][..]).unwrap()
                 };
+
                 spent.push((*op, spending_txid));
             }
         }
@@ -156,15 +165,18 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock().unwrap().received_coins(tip)
     }
 
-    fn confirmed_coins(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, i32)> {
+    fn confirmed_coins(
+        &self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> Vec<(bitcoin::OutPoint, i32, u32)> {
         self.lock().unwrap().confirmed_coins(outpoints)
     }
 
-    fn spent_coins(
+    fn spending_coins(
         &self,
         outpoints: &[bitcoin::OutPoint],
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
-        self.lock().unwrap().spent_coins(outpoints)
+        self.lock().unwrap().spending_coins(outpoints)
     }
 }
 

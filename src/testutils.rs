@@ -48,11 +48,11 @@ impl BitcoinInterface for DummyBitcoind {
         Vec::new()
     }
 
-    fn confirmed_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, i32)> {
+    fn confirmed_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, i32, u32)> {
         Vec::new()
     }
 
-    fn spent_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
+    fn spending_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
         Vec::new()
     }
 }
@@ -121,21 +121,35 @@ impl DatabaseConnection for DummyDbConn {
         }
     }
 
-    fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32)]) {
-        for (op, height) in outpoints {
+    fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32, u32)]) {
+        for (op, height, time) in outpoints {
             let mut db = self.db.write().unwrap();
-            let h = &mut db.coins.get_mut(op).unwrap().block_height;
-            assert!(h.is_none());
-            *h = Some(*height);
+            let coin = &mut db.coins.get_mut(op).unwrap();
+            assert!(coin.block_height.is_none());
+            assert!(coin.block_time.is_none());
+            coin.block_height = Some(*height);
+            coin.block_time = Some(*time);
         }
     }
 
     fn spend_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]) {
         for (op, spend_txid) in outpoints {
             let mut db = self.db.write().unwrap();
-            let spender = &mut db.coins.get_mut(op).unwrap().spend_txid;
-            assert!(spender.is_none());
-            *spender = Some(*spend_txid);
+            let spent = &mut db.coins.get_mut(op).unwrap();
+            assert!(spent.spend_txid.is_none());
+            assert!(spent.spent_at.is_none());
+            spent.spend_txid = Some(*spend_txid);
+        }
+    }
+
+    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]) {
+        for (op, spend_txid, time) in outpoints {
+            let mut db = self.db.write().unwrap();
+            let spent = &mut db.coins.get_mut(op).unwrap();
+            assert!(!spent.spend_txid.is_none());
+            assert!(spent.spent_at.is_none());
+            spent.spend_txid = Some(*spend_txid);
+            spent.spent_at = Some(*time);
         }
     }
 

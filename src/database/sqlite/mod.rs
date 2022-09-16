@@ -290,13 +290,13 @@ impl SqliteConn {
     /// Mark a set of coins as confirmed.
     pub fn confirm_coins<'a>(
         &mut self,
-        outpoints: impl IntoIterator<Item = &'a (bitcoin::OutPoint, i32)>,
+        outpoints: impl IntoIterator<Item = &'a (bitcoin::OutPoint, i32, u32)>,
     ) {
         db_exec(&mut self.conn, |db_tx| {
-            for (outpoint, height) in outpoints {
+            for (outpoint, height, time) in outpoints {
                 db_tx.execute(
-                    "UPDATE coins SET blockheight = ?1 WHERE txid = ?2 AND vout = ?3",
-                    rusqlite::params![height, outpoint.txid.to_vec(), outpoint.vout,],
+                    "UPDATE coins SET blockheight = ?1, blocktime = ?2 WHERE txid = ?3 AND vout = ?4",
+                    rusqlite::params![height, time, outpoint.txid.to_vec(), outpoint.vout,],
                 )?;
             }
 
@@ -528,9 +528,11 @@ mod tests {
                 )
                 .unwrap(),
                 block_height: None,
+                block_time: None,
                 amount: bitcoin::Amount::from_sat(98765),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                 spend_txid: None,
+                spent_at: None,
             };
             conn.new_unspent_coins(&[coin_a.clone()]); // On 1.48, arrays aren't IntoIterator
             assert_eq!(conn.unspent_coins()[0].outpoint, coin_a.outpoint);
@@ -547,9 +549,11 @@ mod tests {
                 )
                 .unwrap(),
                 block_height: None,
+                block_time: None,
                 amount: bitcoin::Amount::from_sat(1111),
                 derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
                 spend_txid: None,
+                spent_at: None,
             };
             conn.new_unspent_coins(&[coin_b.clone()]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
@@ -580,10 +584,13 @@ mod tests {
 
             // Now if we confirm one, it'll be marked as such.
             let height = 174500;
-            conn.confirm_coins(&[(coin_a.outpoint, height)]);
+            let time = 174500;
+            conn.confirm_coins(&[(coin_a.outpoint, height, time)]);
             let coins = conn.unspent_coins();
             assert_eq!(coins[0].block_height, Some(height));
+            assert_eq!(coins[0].block_time, Some(time));
             assert!(coins[1].block_height.is_none());
+            assert!(coins[1].block_time.is_none());
 
             // Now if we spend one, we'll only get the other one.
             conn.spend_coins(&[(

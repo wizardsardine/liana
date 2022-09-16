@@ -13,8 +13,8 @@ use miniscript::bitcoin;
 #[derive(Debug, Clone)]
 struct UpdatedCoins {
     pub received: Vec<Coin>,
-    pub confirmed: Vec<(bitcoin::OutPoint, i32)>,
-    pub spent: Vec<(bitcoin::OutPoint, bitcoin::Txid)>,
+    pub confirmed: Vec<(bitcoin::OutPoint, i32, u32)>,
+    pub spending: Vec<(bitcoin::OutPoint, bitcoin::Txid)>,
 }
 
 // Update the state of our coins. There may be new unspent, and existing ones may become confirmed
@@ -40,7 +40,9 @@ fn update_coins(
                     amount,
                     derivation_index,
                     block_height: None,
+                    block_time: None,
                     spend_txid: None,
+                    spent_at: None,
                 };
                 received.push(coin);
             }
@@ -83,12 +85,12 @@ fn update_coins(
             }
         })
         .collect();
-    let spent = bit.spent_coins(&to_be_spent);
+    let spending = bit.spending_coins(&to_be_spent);
 
     UpdatedCoins {
         received,
         confirmed,
-        spent,
+        spending,
     }
 }
 
@@ -136,7 +138,7 @@ fn updates(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
     // updates up to this block. But not more.
     db_conn.new_unspent_coins(&updated_coins.received);
     db_conn.confirm_coins(&updated_coins.confirmed);
-    db_conn.spend_coins(&updated_coins.spent);
+    db_conn.spend_coins(&updated_coins.spending);
     if let Some(tip) = new_tip {
         db_conn.update_tip(&tip);
     }
