@@ -156,7 +156,6 @@ impl BitcoinInterface for d::BitcoinD {
         let mut spent = Vec::with_capacity(outpoints.len());
 
         let mut cache: HashMap<bitcoin::Txid, Option<d::GetTxRes>> = HashMap::new();
-
         for (op, txid) in outpoints {
             let tx: Option<&d::GetTxRes> = match cache.get(txid) {
                 Some(tx) => tx.as_ref(),
@@ -167,15 +166,42 @@ impl BitcoinInterface for d::BitcoinD {
                 }
             };
 
+            // There is an immutable borrow on the cache, these txs will be added once it is
+            // dropped.
+            let mut txs_to_cache: Vec<(bitcoin::Txid, Option<d::GetTxRes>)> = Vec::new();
+
             if let Some(tx) = tx {
                 if let Some(block_height) = tx.block_height {
                     if block_height > 1 {
                         spent.push((*op, *txid, tx.block_time.expect("Spend is confirmed")))
                     }
-                } else {
-                    // TODO: handle the case where new transaction which txid is not the
-                    // coin spending_txid, spent the coin.
+                } else if !tx.conflicting_txs.is_empty() {
+                    for txid in tx.conflicting_txs.clone() {
+                        let tx: Option<&d::GetTxRes> = match cache.get(&txid) {
+                            Some(tx) => tx.as_ref(),
+                            None => {
+                                let tx = self.get_transaction(&txid);
+                                txs_to_cache.push((txid, tx));
+                                txs_to_cache.last().unwrap().1.as_ref()
+                            }
+                        };
+                        if let Some(tx) = tx {
+                            if let Some(block_height) = tx.block_height {
+                                if block_height > 1 {
+                                    spent.push((
+                                        *op,
+                                        txid,
+                                        tx.block_time.expect("Spend is confirmed"),
+                                    ))
+                                }
+                            }
+                        }
+                    }
                 }
+            }
+
+            for (txid, res) in txs_to_cache {
+                cache.insert(txid, res);
             }
         }
 
