@@ -32,3 +32,27 @@ where
     let psbt = consensus::deserialize(&s).map_err(de::Error::custom)?;
     Ok(psbt)
 }
+
+// Utility to gather the index of a change output in a Psbt, if there is one.
+// FIXME: this is temporary! This is based on create_spend's behaviour that reuses the
+// first coin address and doesn't shuffle the outputs!
+pub fn change_index(psbt: &Psbt) -> Option<usize> {
+    // We always set the witness UTxO in the PSBTs we create.
+    let first_coin_spk = match psbt.inputs[0]
+        .witness_utxo
+        .as_ref()
+        .map(|o| &o.script_pubkey)
+    {
+        Some(spk) => spk,
+        None => return None,
+    };
+
+    let tx = &psbt.global.unsigned_tx;
+    for i in (0..tx.output.len()).rev() {
+        if &tx.output[i].script_pubkey == first_coin_spk {
+            return Some(i);
+        }
+    }
+
+    None
+}

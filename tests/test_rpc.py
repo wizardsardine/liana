@@ -96,23 +96,26 @@ def test_create_spend(minisafed, bitcoind):
 
 
 def test_list_spend(minisafed, bitcoind):
-    # Start by creating two conflicting Spend PSBTs
+    # Start by creating two conflicting Spend PSBTs. The first one will have a change
+    # output but not the second one.
     addr = minisafed.rpc.getnewaddress()["address"]
-    bitcoind.rpc.sendtoaddress(addr, 0.2567)
+    value_a = 0.2567
+    bitcoind.rpc.sendtoaddress(addr, value_a)
     wait_for(lambda: len(minisafed.rpc.listcoins()["coins"]) == 1)
     outpoints = [c["outpoint"] for c in minisafed.rpc.listcoins()["coins"]]
     destinations = {
-        bitcoind.rpc.getnewaddress(): 200_000,
+        bitcoind.rpc.getnewaddress(): int(value_a * COIN // 2),
     }
     res = minisafed.rpc.createspend(outpoints, destinations, 6)
     assert "psbt" in res
 
     addr = minisafed.rpc.getnewaddress()["address"]
-    bitcoind.rpc.sendtoaddress(addr, 0.0987)
+    value_b = 0.0987
+    bitcoind.rpc.sendtoaddress(addr, value_b)
     wait_for(lambda: len(minisafed.rpc.listcoins()["coins"]) == 2)
     outpoints = [c["outpoint"] for c in minisafed.rpc.listcoins()["coins"]]
     destinations = {
-        bitcoind.rpc.getnewaddress(): 400_000,
+        bitcoind.rpc.getnewaddress(): int((value_a + value_b) * COIN - 1_000),
     }
     res_b = minisafed.rpc.createspend(outpoints, destinations, 2)
     assert "psbt" in res_b
@@ -122,12 +125,14 @@ def test_list_spend(minisafed, bitcoind):
     minisafed.rpc.updatespend(res["psbt"])
     minisafed.rpc.updatespend(res_b["psbt"])
 
-    # Listing all Spend transactions will list them both.
+    # Listing all Spend transactions will list them both. It'll tell us which one has
+    # change and which one doesn't.
     list_res = minisafed.rpc.listspendtxs()["spend_txs"]
     assert len(list_res) == 2
-    all_psbts = [entry["psbt"] for entry in list_res]
-    assert res["psbt"] in all_psbts
-    assert res_b["psbt"] in all_psbts
+    first_psbt = next(entry for entry in list_res if entry["psbt"] == res["psbt"])
+    assert first_psbt["change_index"] == 1
+    second_psbt = next(entry for entry in list_res if entry["psbt"] == res_b["psbt"])
+    assert second_psbt["change_index"] is None
 
 
 def test_update_spend(minisafed, bitcoind):

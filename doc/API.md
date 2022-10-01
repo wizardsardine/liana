@@ -152,6 +152,7 @@ This command does not take any parameter for now.
 
 ##### Spend tx entry
 
-| Field         | Type              | Description                                                 |
-| ------------- | ----------------- | ----------------------------------------------------------- |
-| `psbt`        | string            | Base64-encoded PSBT of the Spend transaction.               |
+| Field          | Type              | Description                                                             |
+| -------------- | ----------------- | ----------------------------------------------------------------------- |
+| `psbt`         | string            | Base64-encoded PSBT of the Spend transaction.                           |
+| `change_index` | int or null       | Index of the change output in the transaction outputs, if there is one. |
