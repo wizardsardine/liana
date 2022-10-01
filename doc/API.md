@@ -11,6 +11,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`getinfo`](#getinfo)                                       | Get general information about the daemon             |
 | [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                          |
 | [`listspendtxs`](#listspendtxs)                             | List all stored Spend transactions                   |
+| [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                    |
 
 # Reference
 
@@ -156,3 +157,19 @@ This command does not take any parameter for now.
 | -------------- | ----------------- | ----------------------------------------------------------------------- |
 | `psbt`         | string            | Base64-encoded PSBT of the Spend transaction.                           |
 | `change_index` | int or null       | Index of the change output in the transaction outputs, if there is one. |
+
+
+### `delspendtx`
+
+#### Request
+
+| Field    | Type   | Description                                         |
+| -------- | ------ | --------------------------------------------------- |
+| `txid`   | string | Hex encoded txid of the Spend transaction to delete |
+
+#### Response
+
+This command does not return anything for now.
+
+| Field          | Type      | Description                                          |
+| -------------- | --------- | ---------------------------------------------------- |

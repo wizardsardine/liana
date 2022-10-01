@@ -431,6 +431,11 @@ impl DaemonControl {
             .collect();
         ListSpendResult { spend_txs }
     }
+
+    pub fn delete_spend(&self, txid: &bitcoin::Txid) {
+        let mut db_conn = self.db.connection();
+        db_conn.delete_spend(txid);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

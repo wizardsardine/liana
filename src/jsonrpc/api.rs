@@ -60,6 +60,18 @@ fn update_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
     Ok(serde_json::json!({}))
 }
 
+fn delete_spend(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let txid = params
+        .get(0, "txid")
+        .ok_or(Error::invalid_params("Missing 'txid' parameter."))?
+        .as_str()
+        .and_then(|s| bitcoin::Txid::from_str(&s).ok())
+        .ok_or(Error::invalid_params("Invalid 'feerate' parameter."))?;
+    control.delete_spend(&txid);
+
+    Ok(serde_json::json!({}))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -68,6 +80,12 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
                 "Missing 'outpoints', 'destinations' and 'feerate' parameters.",
             ))?;
             create_spend(control, params)?
+        }
+        "delspendtx" => {
+            let params = req
+                .params
+                .ok_or(Error::invalid_params("Missing 'txid' parameter."))?;
+            delete_spend(control, params)?
         }
         "getinfo" => serde_json::json!(&control.get_info()),
         "getnewaddress" => serde_json::json!(&control.get_new_address()),

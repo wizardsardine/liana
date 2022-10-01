@@ -180,6 +180,10 @@ impl DatabaseConnection for DummyDbConn {
             .cloned()
             .collect()
     }
+
+    fn delete_spend(&mut self, txid: &bitcoin::Txid) {
+        self.db.write().unwrap().spend_txs.remove(txid);
+    }
 }
 
 pub struct DummyMinisafe {

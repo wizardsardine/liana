@@ -551,6 +551,11 @@ class CTransaction(object):
             self.sha256 = uint256_from_str(hash256(self.serialize_without_witness()))
         self.hash = encode(hash256(self.serialize())[::-1], "hex_codec").decode("ascii")
 
+    def txid(self):
+        if self.sha256 is None:
+            self.calc_sha256()
+        return ser_uint256(self.sha256)[::-1]
+
     def is_valid(self):
         self.calc_sha256()
         for tout in self.vout:

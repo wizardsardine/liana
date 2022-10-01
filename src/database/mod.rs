@@ -79,6 +79,9 @@ pub trait DatabaseConnection {
 
     /// List all existing Spend transactions.
     fn list_spend(&mut self) -> Vec<Psbt>;
+
+    /// Delete a Spend transaction from database.
+    fn delete_spend(&mut self, txid: &bitcoin::Txid);
 }
 
 // FIXME: if possible, avoid reallocating.
@@ -180,6 +183,10 @@ impl DatabaseConnection for SqliteConn {
             .into_iter()
             .map(|db_spend| db_spend.psbt)
             .collect()
+    }
+
+    fn delete_spend(&mut self, txid: &bitcoin::Txid) {
+        self.delete_spend(txid)
     }
 }
 

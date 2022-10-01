@@ -134,6 +134,21 @@ def test_list_spend(minisafed, bitcoind):
     second_psbt = next(entry for entry in list_res if entry["psbt"] == res_b["psbt"])
     assert second_psbt["change_index"] is None
 
+    # If we delete the first one, we'll get only the second one.
+    first_psbt = PSBT()
+    first_psbt.deserialize(res["psbt"])
+    minisafed.rpc.delspendtx(first_psbt.tx.txid().hex())
+    list_res = minisafed.rpc.listspendtxs()["spend_txs"]
+    assert len(list_res) == 1
+    assert list_res[0]["psbt"] == res_b["psbt"]
+
+    # If we delete the second one, result will be empty.
+    second_psbt = PSBT()
+    second_psbt.deserialize(res_b["psbt"])
+    minisafed.rpc.delspendtx(second_psbt.tx.txid().hex())
+    list_res = minisafed.rpc.listspendtxs()["spend_txs"]
+    assert len(list_res) == 0
+
 
 def test_update_spend(minisafed, bitcoind):
     # Start by creating a Spend PSBT
