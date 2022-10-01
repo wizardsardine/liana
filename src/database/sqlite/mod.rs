@@ -382,6 +382,16 @@ impl SqliteConn {
         })
         .expect("Db must not fail");
     }
+
+    pub fn list_spend(&mut self) -> Vec<DbSpendTransaction> {
+        db_query(
+            &mut self.conn,
+            "SELECT * FROM spend_transactions",
+            rusqlite::params![],
+            |row| row.try_into(),
+        )
+        .expect("Db must not fail")
+    }
 }
 
 #[cfg(test)]

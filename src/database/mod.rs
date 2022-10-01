@@ -76,6 +76,9 @@ pub trait DatabaseConnection {
 
     /// Insert a new Spend transaction or replace an existing one.
     fn store_spend(&mut self, psbt: &Psbt);
+
+    /// List all existing Spend transactions.
+    fn list_spend(&mut self) -> Vec<Psbt>;
 }
 
 // FIXME: if possible, avoid reallocating.
@@ -170,6 +173,13 @@ impl DatabaseConnection for SqliteConn {
 
     fn store_spend(&mut self, psbt: &Psbt) {
         self.store_spend(psbt)
+    }
+
+    fn list_spend(&mut self) -> Vec<Psbt> {
+        self.list_spend()
+            .into_iter()
+            .map(|db_spend| db_spend.psbt)
+            .collect()
     }
 }
 

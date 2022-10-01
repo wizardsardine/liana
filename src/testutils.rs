@@ -170,6 +170,16 @@ impl DatabaseConnection for DummyDbConn {
     fn spend_tx(&mut self, txid: &bitcoin::Txid) -> Option<Psbt> {
         self.db.read().unwrap().spend_txs.get(txid).cloned()
     }
+
+    fn list_spend(&mut self) -> Vec<Psbt> {
+        self.db
+            .read()
+            .unwrap()
+            .spend_txs
+            .values()
+            .cloned()
+            .collect()
+    }
 }
 
 pub struct DummyMinisafe {

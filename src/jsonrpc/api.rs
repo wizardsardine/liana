@@ -72,6 +72,7 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
         "getinfo" => serde_json::json!(&control.get_info()),
         "getnewaddress" => serde_json::json!(&control.get_new_address()),
         "listcoins" => serde_json::json!(&control.list_coins()),
+        "listspendtxs" => serde_json::json!(&control.list_spend()),
         "stop" => serde_json::json!({}),
         "updatespend" => {
             let params = req

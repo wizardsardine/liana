@@ -418,6 +418,16 @@ impl DaemonControl {
 
         Ok(())
     }
+
+    pub fn list_spend(&self) -> ListSpendResult {
+        let mut db_conn = self.db.connection();
+        let spend_txs = db_conn
+            .list_spend()
+            .into_iter()
+            .map(|psbt| ListSpendEntry { psbt })
+            .collect();
+        ListSpendResult { spend_txs }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -460,6 +470,17 @@ pub struct ListCoinsResult {
 pub struct CreateSpendResult {
     #[serde(serialize_with = "ser_base64", deserialize_with = "deser_psbt_base64")]
     pub psbt: Psbt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListSpendEntry {
+    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_psbt_base64")]
+    pub psbt: Psbt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListSpendResult {
+    pub spend_txs: Vec<ListSpendEntry>,
 }
 
 #[cfg(test)]
