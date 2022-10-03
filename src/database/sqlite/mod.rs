@@ -13,7 +13,7 @@ use crate::{
     bitcoin::BlockChainTip,
     database::{
         sqlite::{
-            schema::{DbAddress, DbCoin, DbTip, DbWallet},
+            schema::{DbAddress, DbCoin, DbSpendTransaction, DbTip, DbWallet},
             utils::{create_fresh_db, db_exec, db_query, db_tx_query, LOOK_AHEAD_LIMIT},
         },
         Coin,
@@ -23,7 +23,10 @@ use crate::{
 
 use std::{convert::TryInto, fmt, io, path};
 
-use miniscript::bitcoin::{self, secp256k1};
+use miniscript::bitcoin::{
+    self, consensus::encode, hashes::hex::ToHex, secp256k1,
+    util::psbt::PartiallySignedTransaction as Psbt,
+};
 
 const DB_VERSION: i64 = 0;
 
@@ -330,6 +333,55 @@ impl SqliteConn {
         .expect("Db must not fail")
         .pop()
     }
+
+    pub fn db_coins(&mut self, outpoints: &[bitcoin::OutPoint]) -> Vec<DbCoin> {
+        // SELECT * FROM coins WHERE (txid, vout) IN ((txidA, voutA), (txidB, voutB));
+        let mut query = "SELECT * FROM coins WHERE (txid, vout) IN (VALUES ".to_string();
+        for (i, outpoint) in outpoints.iter().enumerate() {
+            // NOTE: the txid is not stored as little-endian. Convert it to vec first.
+            query += &format!(
+                "(x'{}', {})",
+                &outpoint.txid.to_vec().to_hex(),
+                outpoint.vout
+            );
+            if i != outpoints.len() - 1 {
+                query += ", ";
+            }
+        }
+        query += ")";
+
+        db_query(&mut self.conn, &query, rusqlite::params![], |row| {
+            row.try_into()
+        })
+        .expect("Db must not fail")
+    }
+
+    pub fn db_spend(&mut self, txid: &bitcoin::Txid) -> Option<DbSpendTransaction> {
+        db_query(
+            &mut self.conn,
+            "SELECT * FROM spend_transactions WHERE txid = ?1",
+            rusqlite::params![txid.to_vec()],
+            |row| row.try_into(),
+        )
+        .expect("Db must not fail")
+        .pop()
+    }
+
+    /// Insert a new Spend transaction or replace an existing one.
+    pub fn store_spend(&mut self, psbt: &Psbt) {
+        let txid = psbt.global.unsigned_tx.txid().to_vec();
+        let psbt = encode::serialize(psbt);
+
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT into spend_transactions (psbt, txid) VALUES (?1, ?2) \
+                 ON CONFLICT DO UPDATE SET psbt=excluded.psbt",
+                rusqlite::params![psbt, txid],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
 }
 
 #[cfg(test)]
@@ -462,6 +514,11 @@ mod tests {
             conn.new_unspent_coins(&[coin_a.clone()]); // On 1.48, arrays aren't IntoIterator
             assert_eq!(conn.unspent_coins()[0].outpoint, coin_a.outpoint);
 
+            // We can query it by its outpoint
+            let coins = conn.db_coins(&[coin_a.outpoint]);
+            assert_eq!(coins.len(), 1);
+            assert_eq!(coins[0].outpoint, coin_a.outpoint);
+
             // Add a second one, we'll get both.
             let coin_b = Coin {
                 outpoint: bitcoin::OutPoint::from_str(
@@ -482,6 +539,24 @@ mod tests {
             assert!(outpoints.contains(&coin_a.outpoint));
             assert!(outpoints.contains(&coin_b.outpoint));
 
+            // We can query both by their outpoints
+            let coins = conn.db_coins(&[coin_a.outpoint]);
+            assert_eq!(coins.len(), 1);
+            assert_eq!(coins[0].outpoint, coin_a.outpoint);
+            let coins = conn.db_coins(&[coin_b.outpoint]);
+            assert_eq!(coins.len(), 1);
+            assert_eq!(coins[0].outpoint, coin_b.outpoint);
+            let coins = conn.db_coins(&[coin_a.outpoint, coin_b.outpoint]);
+            assert_eq!(coins.len(), 2);
+            assert!(coins
+                .iter()
+                .find(|c| c.outpoint == coin_a.outpoint)
+                .is_some());
+            assert!(coins
+                .iter()
+                .find(|c| c.outpoint == coin_b.outpoint)
+                .is_some());
+
             // Now if we confirm one, it'll be marked as such.
             let height = 174500;
             conn.confirm_coins(&[(coin_a.outpoint, height)]);
@@ -501,6 +576,10 @@ mod tests {
                 .collect();
             assert!(!outpoints.contains(&coin_a.outpoint));
             assert!(outpoints.contains(&coin_b.outpoint));
+
+            // Both are still in DB
+            let coins = conn.db_coins(&[coin_a.outpoint, coin_b.outpoint]);
+            assert_eq!(coins.len(), 2);
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();

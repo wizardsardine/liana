@@ -8,7 +8,10 @@ use crate::{
 use std::{collections::HashMap, env, fs, io, path, process, str::FromStr, sync, thread, time};
 
 use miniscript::{
-    bitcoin::{self, secp256k1, util::bip32},
+    bitcoin::{
+        self, secp256k1,
+        util::{bip32, psbt::PartiallySignedTransaction as Psbt},
+    },
     descriptor,
 };
 
@@ -58,6 +61,7 @@ pub struct DummyDb {
     curr_index: bip32::ChildNumber,
     curr_tip: Option<BlockChainTip>,
     coins: HashMap<bitcoin::OutPoint, Coin>,
+    spend_txs: HashMap<bitcoin::Txid, Psbt>,
 }
 
 impl DummyDb {
@@ -66,6 +70,7 @@ impl DummyDb {
             curr_index: 0.into(),
             curr_tip: None,
             coins: HashMap::new(),
+            spend_txs: HashMap::new(),
         }
     }
 }
@@ -136,6 +141,34 @@ impl DatabaseConnection for DummyDbConn {
 
     fn derivation_index_by_address(&mut self, _: &bitcoin::Address) -> Option<bip32::ChildNumber> {
         None
+    }
+
+    fn coins_by_outpoints(
+        &mut self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, Coin> {
+        // Very inefficient but hey
+        self.db
+            .read()
+            .unwrap()
+            .coins
+            .clone()
+            .into_iter()
+            .filter(|(op, _)| outpoints.contains(&op))
+            .collect()
+    }
+
+    fn store_spend(&mut self, psbt: &Psbt) {
+        let txid = psbt.global.unsigned_tx.txid();
+        self.db
+            .write()
+            .unwrap()
+            .spend_txs
+            .insert(txid, psbt.clone());
+    }
+
+    fn spend_tx(&mut self, txid: &bitcoin::Txid) -> Option<Psbt> {
+        self.db.read().unwrap().spend_txs.get(txid).cloned()
     }
 }
 

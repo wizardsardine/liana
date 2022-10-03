@@ -53,3 +53,6 @@ jsonrpc = "0.12"
 
 # Used for daemonization
 libc = "0.2"
+
+# Used for PSBTs
+base64 = "0.13"

@@ -1,3 +1,5 @@
+from bip32 import BIP32
+from bip380.descriptors import Descriptor
 from concurrent import futures
 from ephemeral_port_reserve import reserve
 from test_framework.bitcoind import Bitcoind
@@ -117,10 +119,13 @@ def minisafed(bitcoind, directory):
     os.makedirs(datadir, exist_ok=True)
     bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
 
-    main_desc = "wsh(or_d(pk(tpubD9vQiBdDxYzU1V5D5UUmMTXF9FZC13PuQDs4aiv6rF7UCKQFvtVKZguYakX12C2bt8736ksioxu9Y9Nmp18gj4jDeNJEEqrBPEZXAxe5YcQ/*),and_v(v:pkh(tpubD9vQiBdDxYzU4cVFtApWj4devZrvcfWaPXX1zHdDc7GPfUsDKqGnbhraccfm7BAXgRgUbVQUV2v2o4NitjGEk7hpbuP85kvBrD4ahFDtNBJ/*),older(65000))))"
+    owner_hd = BIP32.from_seed(os.urandom(32), network="test")
+    owner_xpub = owner_hd.get_xpub()
+    main_desc = Descriptor.from_str(f"wsh(or_d(pk({owner_xpub}/*),and_v(v:pkh(tpubD9vQiBdDxYzU4cVFtApWj4devZrvcfWaPXX1zHdDc7GPfUsDKqGnbhraccfm7BAXgRgUbVQUV2v2o4NitjGEk7hpbuP85kvBrD4ahFDtNBJ/*),older(65000))))")
 
     minisafed = Minisafed(
         datadir,
+        owner_hd,
         main_desc,
         bitcoind.rpcport,
         bitcoind_cookie,

@@ -84,3 +84,49 @@ This command does not take any parameter for now.
 | `amount`       | int           | Value of the UTxO in satoshis                                    |
 | `outpoint`     | string        | Transaction id and output index of this coin                     |
 | `block_height` | int or null   | Blockheight the transaction was confirmed at, or `null`          |
+
+
+### `createspend`
+
+Create a transaction spending one or more of our coins. All coins must exist and not be spent.
+
+Will error if the given coins are not sufficient to cover the transaction cost at 90% (or more) of
+the given feerate. If on the contrary the transaction is more than sufficiently funded, it will
+create a change output when economically rationale to do so.
+
+This command will refuse to create any output worth less than 5k sats.
+
+#### Request
+
+| Field          | Type              | Description                                                       |
+| -------------- | ----------------- | ----------------------------------------------------------------- |
+| `outpoints`    | list of string    | List of the coins to be spent, as `txid:vout`.                    |
+| `destinations` | object            | Map from Bitcoin address to value                                 |
+| `feerate`      | integer           | Target feerate for the transaction, in satoshis per virtual byte. |
+
+#### Response
+
+| Field          | Type      | Description                                          |
+| -------------- | --------- | ---------------------------------------------------- |
+| `psbt`         | string    | PSBT of the spending transaction, encoded as base64. |
+
+
+### `updatespend`
+
+Store the PSBT of a Spend transaction in database, updating it if it already exists.
+
+Will merge the partial signatures for all inputs if a PSBT for a transaction with the same txid
+exists in DB.
+
+#### Request
+
+| Field     | Type   | Description                                 |
+| --------- | ------ | ------------------------------------------- |
+| `psbt`    | string | Base64-encoded PSBT of a Spend transaction. |
+
+#### Response
+
+This command does not return anything for now.
+
+| Field          | Type      | Description                                          |
+| -------------- | --------- | ---------------------------------------------------- |

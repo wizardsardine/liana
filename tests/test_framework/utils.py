@@ -152,14 +152,12 @@ class UnixDomainSocketRpc(object):
         We might still want to define the actual methods in the subclasses for
         documentation purposes.
         """
-        name = name.replace("_", "-")
-
         def wrapper(*args, **kwargs):
             if len(args) != 0 and len(kwargs) != 0:
                 raise RpcError(
                     name, {}, "Cannot mix positional and non-positional arguments"
                 )
-            return self.call(name, params=kwargs)
+            return self.call(name, params=args or kwargs)
 
         return wrapper
 
