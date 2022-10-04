@@ -382,6 +382,27 @@ impl SqliteConn {
         })
         .expect("Db must not fail");
     }
+
+    pub fn list_spend(&mut self) -> Vec<DbSpendTransaction> {
+        db_query(
+            &mut self.conn,
+            "SELECT * FROM spend_transactions",
+            rusqlite::params![],
+            |row| row.try_into(),
+        )
+        .expect("Db must not fail")
+    }
+
+    pub fn delete_spend(&mut self, txid: &bitcoin::Txid) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "DELETE FROM spend_transactions WHERE txid = ?1",
+                rusqlite::params![txid.to_vec()],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
 }
 
 #[cfg(test)]

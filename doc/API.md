@@ -10,6 +10,8 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`stop`](#stop)                                             | Stops the minisafe daemon                            |
 | [`getinfo`](#getinfo)                                       | Get general information about the daemon             |
 | [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                          |
+| [`listspendtxs`](#listspendtxs)                             | List all stored Spend transactions                   |
+| [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                    |
 
 # Reference
 
@@ -123,6 +125,47 @@ exists in DB.
 | Field     | Type   | Description                                 |
 | --------- | ------ | ------------------------------------------- |
 | `psbt`    | string | Base64-encoded PSBT of a Spend transaction. |
+
+#### Response
+
+This command does not return anything for now.
+
+| Field          | Type      | Description                                          |
+| -------------- | --------- | ---------------------------------------------------- |
+
+
+### `listspendtxs`
+
+List stored Spend transactions.
+
+#### Request
+
+This command does not take any parameter for now.
+
+| Field         | Type              | Description                                                 |
+| ------------- | ----------------- | ----------------------------------------------------------- |
+
+#### Response
+
+| Field          | Type          | Description                                                      |
+| -------------- | ------------- | ---------------------------------------------------------------- |
+| `spend_txs`    | array         | Array of Spend tx entries                                        |
+
+##### Spend tx entry
+
+| Field          | Type              | Description                                                             |
+| -------------- | ----------------- | ----------------------------------------------------------------------- |
+| `psbt`         | string            | Base64-encoded PSBT of the Spend transaction.                           |
+| `change_index` | int or null       | Index of the change output in the transaction outputs, if there is one. |
+
+
+### `delspendtx`
+
+#### Request
+
+| Field    | Type   | Description                                         |
+| -------- | ------ | --------------------------------------------------- |
+| `txid`   | string | Hex encoded txid of the Spend transaction to delete |
 
 #### Response
 

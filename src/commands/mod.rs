@@ -9,7 +9,7 @@ use crate::{
     database::{Coin, DatabaseInterface},
     descriptors, DaemonControl, VERSION,
 };
-use utils::{deser_amount_from_sats, deser_psbt_base64, ser_amount, ser_base64};
+use utils::{change_index, deser_amount_from_sats, deser_psbt_base64, ser_amount, ser_base64};
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -287,7 +287,7 @@ impl DaemonControl {
                 script_pubkey: address.script_pubkey(),
             });
             // TODO: if it's an address of ours, signal it as change to signing devices by adding
-            // the BIP32 derivation path to the PSBT input.
+            // the BIP32 derivation path to the PSBT output.
             psbt_outs.push(PsbtOut::default());
         }
 
@@ -418,6 +418,24 @@ impl DaemonControl {
 
         Ok(())
     }
+
+    pub fn list_spend(&self) -> ListSpendResult {
+        let mut db_conn = self.db.connection();
+        let spend_txs = db_conn
+            .list_spend()
+            .into_iter()
+            .map(|psbt| {
+                let change_index = change_index(&psbt).map(|i| i.try_into().expect("insane usize"));
+                ListSpendEntry { psbt, change_index }
+            })
+            .collect();
+        ListSpendResult { spend_txs }
+    }
+
+    pub fn delete_spend(&self, txid: &bitcoin::Txid) {
+        let mut db_conn = self.db.connection();
+        db_conn.delete_spend(txid);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -460,6 +478,18 @@ pub struct ListCoinsResult {
 pub struct CreateSpendResult {
     #[serde(serialize_with = "ser_base64", deserialize_with = "deser_psbt_base64")]
     pub psbt: Psbt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListSpendEntry {
+    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_psbt_base64")]
+    pub psbt: Psbt,
+    pub change_index: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListSpendResult {
+    pub spend_txs: Vec<ListSpendEntry>,
 }
 
 #[cfg(test)]
