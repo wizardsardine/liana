@@ -767,8 +767,7 @@ impl From<Json> for GetTxRes {
             .map(|bt| bt as u32);
         let conflicting_txs = json
             .get("walletconflicts")
-            .map(|v| Json::as_array(&v))
-            .flatten()
+            .and_then(Json::as_array)
             .map(|array| {
                 array
                     .into_iter()
