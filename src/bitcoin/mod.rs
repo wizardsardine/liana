@@ -171,10 +171,10 @@ impl BitcoinInterface for d::BitcoinD {
             let mut txs_to_cache: Vec<(bitcoin::Txid, Option<d::GetTxRes>)> = Vec::new();
 
             if let Some(tx) = tx {
-                if let Some(block_height) = tx.block_height {
-                    if block_height > 1 {
-                        spent.push((*op, *txid, tx.block_time.expect("Spend is confirmed")))
-                    }
+                if let Some(block_time) = tx.block_time {
+                    // TODO: make both block time and height under the same Option.
+                    assert!(tx.block_height.is_some());
+                    spent.push((*op, *txid, block_time))
                 } else if !tx.conflicting_txs.is_empty() {
                     for txid in tx.conflicting_txs.clone() {
                         let tx: Option<&d::GetTxRes> = match cache.get(&txid) {
