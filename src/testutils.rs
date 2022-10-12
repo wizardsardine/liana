@@ -114,7 +114,7 @@ impl DatabaseConnection for DummyDbConn {
         self.db.write().unwrap().curr_index = next_index;
     }
 
-    fn list_unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
+    fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
         self.db.read().unwrap().coins.clone()
     }
 

@@ -253,7 +253,7 @@ impl SqliteConn {
     }
 
     /// Get all UTxOs.
-    pub fn list_unspent_coins(&mut self) -> Vec<DbCoin> {
+    pub fn unspent_coins(&mut self) -> Vec<DbCoin> {
         db_query(
             &mut self.conn,
             "SELECT * FROM coins WHERE spend_txid is NULL",
@@ -553,7 +553,7 @@ mod tests {
             let mut conn = db.connection().unwrap();
 
             // Necessarily empty at first.
-            assert!(conn.list_unspent_coins().is_empty());
+            assert!(conn.unspent_coins().is_empty());
 
             // Add one, we'll get it.
             let coin_a = Coin {
@@ -569,7 +569,7 @@ mod tests {
                 spent_at: None,
             };
             conn.new_unspent_coins(&[coin_a.clone()]); // On 1.48, arrays aren't IntoIterator
-            assert_eq!(conn.list_unspent_coins()[0].outpoint, coin_a.outpoint);
+            assert_eq!(conn.unspent_coins()[0].outpoint, coin_a.outpoint);
 
             // We can query it by its outpoint
             let coins = conn.db_coins(&[coin_a.outpoint]);
@@ -591,7 +591,7 @@ mod tests {
             };
             conn.new_unspent_coins(&[coin_b.clone()]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
-                .list_unspent_coins()
+                .unspent_coins()
                 .into_iter()
                 .map(|c| c.outpoint)
                 .collect();
@@ -620,7 +620,7 @@ mod tests {
             let height = 174500;
             let time = 174500;
             conn.confirm_coins(&[(coin_a.outpoint, height, time)]);
-            let coins = conn.list_unspent_coins();
+            let coins = conn.unspent_coins();
             assert_eq!(coins[0].block_height, Some(height));
             assert_eq!(coins[0].block_time, Some(time));
             assert!(coins[1].block_height.is_none());
@@ -632,7 +632,7 @@ mod tests {
                 bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
             )]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
-                .list_unspent_coins()
+                .unspent_coins()
                 .into_iter()
                 .map(|c| c.outpoint)
                 .collect();

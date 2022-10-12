@@ -197,7 +197,7 @@ impl DaemonControl {
     pub fn list_coins(&self) -> ListCoinsResult {
         let mut db_conn = self.db.connection();
         let coins: Vec<ListCoinsEntry> = db_conn
-            .list_unspent_coins()
+            .unspent_coins()
             // Can't use into_values as of Rust 1.48
             .into_iter()
             .map(|(_, coin)| {
