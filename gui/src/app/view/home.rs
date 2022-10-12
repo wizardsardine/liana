@@ -7,7 +7,7 @@ use crate::ui::component::text::*;
 
 use super::message::Message;
 
-pub fn home_view<'a>(balance: &'a bitcoin::Amount) -> Element<'a, Message> {
+pub fn home_view(balance: &bitcoin::Amount) -> Element<Message> {
     column()
         .push(column().padding(40))
         .push(text(&format!("{} BTC", balance.as_btc())).bold().size(50))

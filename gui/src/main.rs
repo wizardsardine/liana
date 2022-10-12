@@ -306,9 +306,9 @@ mod tests {
 
     #[test]
     fn test_parse_args() {
-        assert_eq!(true, parse_args(vec!["--meth".into()]).is_err());
-        assert_eq!(true, parse_args(vec!["--datadir".into()]).is_err());
-        assert_eq!(true, parse_args(vec!["--conf".into()]).is_err());
+        assert!(parse_args(vec!["--meth".into()]).is_err());
+        assert!(parse_args(vec!["--datadir".into()]).is_err());
+        assert!(parse_args(vec!["--conf".into()]).is_err());
         assert_eq!(
             Some(vec![
                 Arg::DatadirPath(PathBuf::from(".")),
@@ -316,7 +316,7 @@ mod tests {
             ]),
             parse_args(
                 "--datadir . --conf hello.toml"
-                    .split(" ")
+                    .split(' ')
                     .map(|a| a.to_string())
                     .collect()
             )
@@ -333,7 +333,7 @@ mod tests {
             ]),
             parse_args(
                 "--datadir hello --testnet"
-                    .split(" ")
+                    .split(' ')
                     .map(|a| a.to_string())
                     .collect()
             )
@@ -346,7 +346,7 @@ mod tests {
             ]),
             parse_args(
                 "--testnet --datadir hello"
-                    .split(" ")
+                    .split(' ')
                     .map(|a| a.to_string())
                     .collect()
             )

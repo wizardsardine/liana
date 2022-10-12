@@ -13,7 +13,7 @@ pub struct Sandbox<S: State> {
 
 impl<S: State + Send + 'static> Sandbox<S> {
     pub fn new(state: S) -> Self {
-        return Self { state };
+        Self { state }
     }
 
     pub fn state(&self) -> &S {
