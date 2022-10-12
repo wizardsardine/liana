@@ -113,7 +113,7 @@ pub enum ConfigError {
     DatadirNotFound,
     FileNotFound,
     ReadingFile(String),
-    UnexpectedDescriptor(InheritanceDescriptor),
+    UnexpectedDescriptor(Box<InheritanceDescriptor>),
     Unexpected(String),
 }
 
@@ -187,7 +187,7 @@ impl Config {
     /// futile duplication.
     pub fn from_file(custom_path: Option<PathBuf>) -> Result<Config, ConfigError> {
         let config_file =
-            custom_path.unwrap_or(config_file_path().ok_or_else(|| ConfigError::DatadirNotFound)?);
+            custom_path.unwrap_or(config_file_path().ok_or(ConfigError::DatadirNotFound)?);
 
         let config = toml::from_slice::<Config>(&std::fs::read(&config_file)?)
             .map_err(|e| ConfigError::ReadingFile(format!("Parsing configuration file: {}", e)))?;

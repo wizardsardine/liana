@@ -106,7 +106,7 @@ impl str::FromStr for DerivedPublicKey {
             return Err(DescCreationError::DerivedKeyParsing);
         }
 
-        let key = bitcoin::PublicKey::from_str(&key_str)
+        let key = bitcoin::PublicKey::from_str(key_str)
             .map_err(|_| DescCreationError::DerivedKeyParsing)?;
 
         Ok(DerivedPublicKey {
@@ -434,31 +434,31 @@ mod tests {
 
     #[test]
     fn inheritance_descriptor_creation() {
-        let owner_key = descriptor::DescriptorPublicKey::from_str(&"xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/*").unwrap();
-        let heir_key = descriptor::DescriptorPublicKey::from_str(&"xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/*").unwrap();
+        let owner_key = descriptor::DescriptorPublicKey::from_str("xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/*").unwrap();
+        let heir_key = descriptor::DescriptorPublicKey::from_str("xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/*").unwrap();
         let timelock = 52560;
         assert_eq!(InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), timelock).unwrap().to_string(), "wsh(or_d(pk(xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/*),and_v(v:pkh(xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/*),older(52560))))#eeyujkt7");
 
         // We prevent footguns with timelocks
         InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), 0x00_01_0f_00).unwrap_err();
         InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), (1 << 31) + 1).unwrap_err();
-        InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), (1 << 22) + 1).unwrap_err();
+        InheritanceDescriptor::new(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
 
-        let owner_key = descriptor::DescriptorPublicKey::from_str(&"[aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/*").unwrap();
-        let heir_key = descriptor::DescriptorPublicKey::from_str(&"xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/*").unwrap();
+        let owner_key = descriptor::DescriptorPublicKey::from_str("[aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/*").unwrap();
+        let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/*").unwrap();
         let timelock = 57600;
         assert_eq!(InheritanceDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap().to_string(), "wsh(or_d(pk([aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/*),and_v(v:pkh(xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/*),older(57600))))#8kamh6y8");
 
         // We can't pass a raw key, an xpub that is not deriveable, or only hardened derivable
-        let heir_key = descriptor::DescriptorPublicKey::from_str(&"xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/354").unwrap();
+        let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/354").unwrap();
         InheritanceDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
-        let heir_key = descriptor::DescriptorPublicKey::from_str(&"xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/*'").unwrap();
+        let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/*'").unwrap();
         InheritanceDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
         let heir_key = descriptor::DescriptorPublicKey::from_str(
-            &"02e24913be26dbcfdf8e8e94870b28725cdae09b448b6c127767bf0154e3a3c8e5",
+            "02e24913be26dbcfdf8e8e94870b28725cdae09b448b6c127767bf0154e3a3c8e5",
         )
         .unwrap();
-        InheritanceDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
+        InheritanceDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
     }
 
     #[test]

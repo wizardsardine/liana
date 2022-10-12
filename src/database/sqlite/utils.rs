@@ -28,13 +28,9 @@ where
     P::Item: rusqlite::ToSql,
     F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
 {
-    // rustc says 'borrowed value does not live long enough'
-    let x = tx
-        .prepare(stmt_str)?
+    tx.prepare(stmt_str)?
         .query_map(params, f)?
-        .collect::<rusqlite::Result<Vec<T>>>();
-
-    x
+        .collect::<rusqlite::Result<Vec<T>>>()
 }
 
 /// Internal helper for queries boilerplate
@@ -49,13 +45,9 @@ where
     P::Item: rusqlite::ToSql,
     F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
 {
-    // rustc says 'borrowed value does not live long enough'
-    let x = conn
-        .prepare(stmt_str)?
+    conn.prepare(stmt_str)?
         .query_map(params, f)?
-        .collect::<rusqlite::Result<Vec<T>>>();
-
-    x
+        .collect::<rusqlite::Result<Vec<T>>>()
 }
 
 // Sqlite supports up to i64, thus rusqlite prevents us from inserting u64's.

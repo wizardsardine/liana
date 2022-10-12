@@ -497,7 +497,7 @@ mod tests {
     }
 
     // Send them a response to 'listwallets' with the watchonly wallet path
-    fn complete_wallet_check<'a>(server: &net::TcpListener, watchonly_wallet_path: &'a str) {
+    fn complete_wallet_check(server: &net::TcpListener, watchonly_wallet_path: &str) {
         let net_resp = [
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[\"".as_bytes(),
             watchonly_wallet_path.as_bytes(),
@@ -511,7 +511,7 @@ mod tests {
     }
 
     // Send them a response to 'listdescriptors' with the main descriptor
-    fn complete_desc_check<'a>(server: &net::TcpListener, desc: &'a str) {
+    fn complete_desc_check(server: &net::TcpListener, desc: &str) {
         let net_resp = [
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"descriptors\":[{\"desc\":\"".as_bytes(),
             desc.as_bytes(),
@@ -525,7 +525,7 @@ mod tests {
     }
 
     // Send them a response to 'getblockhash' with the genesis block hash
-    fn complete_tip_init<'a>(server: &net::TcpListener) {
+    fn complete_tip_init(server: &net::TcpListener) {
         let net_resp = [
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f\"}\n".as_bytes(),
         ]
@@ -537,7 +537,7 @@ mod tests {
     }
 
     // Send them a response to 'getblockchaininfo' saying we are far from being synced
-    fn complete_sync_check<'a>(server: &net::TcpListener) {
+    fn complete_sync_check(server: &net::TcpListener) {
         let net_resp = [
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"verificationprogress\":0.1}}\n".as_bytes(),
         ]
@@ -590,7 +590,7 @@ mod tests {
         };
         let bitcoind_config = BitcoindConfig {
             addr,
-            cookie_path: cookie.clone(),
+            cookie_path: cookie,
         };
 
         // Create a dummy config with this bitcoind
@@ -599,7 +599,7 @@ mod tests {
         let config = Config {
             bitcoin_config,
             bitcoind_config: Some(bitcoind_config),
-            data_dir: Some(data_dir.clone()),
+            data_dir: Some(data_dir),
             #[cfg(unix)]
             daemon: false,
             log_level: log::LevelFilter::Debug,

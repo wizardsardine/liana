@@ -61,16 +61,16 @@ pub trait DatabaseConnection {
     fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
 
     /// Store new UTxOs. Coins must not already be in database.
-    fn new_unspent_coins<'a>(&mut self, coins: &[Coin]);
+    fn new_unspent_coins(&mut self, coins: &[Coin]);
 
     /// Mark a set of coins as being confirmed at a specified height and block time.
-    fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32, u32)]);
+    fn confirm_coins(&mut self, outpoints: &[(bitcoin::OutPoint, i32, u32)]);
 
     /// Mark a set of coins as being spent by a specified txid of a pending transaction.
-    fn spend_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]);
+    fn spend_coins(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]);
 
     /// Mark a set of coins as spent by a specified txid at a specified block time.
-    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]);
+    fn confirm_spend(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]);
 
     /// Get specific coins from the database.
     fn coins_by_outpoints(
@@ -107,7 +107,7 @@ impl DatabaseConnection for SqliteConn {
     }
 
     fn update_tip(&mut self, tip: &BlockChainTip) {
-        self.update_tip(&tip)
+        self.update_tip(tip)
     }
 
     fn derivation_index(&mut self) -> bip32::ChildNumber {
@@ -186,7 +186,7 @@ impl DatabaseConnection for SqliteConn {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Coin {
     pub outpoint: bitcoin::OutPoint,
     pub block_height: Option<i32>,
@@ -218,12 +218,6 @@ impl std::convert::From<DbCoin> for Coin {
             spend_txid,
             spent_at,
         }
-    }
-}
-
-impl std::hash::Hash for Coin {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        self.outpoint.hash(h)
     }
 }
 

@@ -196,7 +196,9 @@ pub fn rpcserver_setup(socket_path: &path::Path) -> Result<net::UnixListener, io
     // Create the socket with RW permissions only for the user
     #[cfg(not(test))]
     let old_umask = unsafe { libc::umask(0o177) };
-    let listener = bind(&socket_path);
+    #[allow(clippy::all)]
+    let listener = bind(socket_path);
+
     #[cfg(not(test))]
     unsafe {
         libc::umask(old_umask);
@@ -249,7 +251,7 @@ mod tests {
     fn write_messages(socket_path: &path::Path, messages: &[&[u8]]) {
         let mut client = net::UnixStream::connect(&socket_path).unwrap();
         for mess in messages {
-            client.write_all(&mess).unwrap();
+            client.write_all(mess).unwrap();
             // Simulate throttling, this mimics real conditions and actually triggered a crash.
             thread::sleep(time::Duration::from_millis(50));
         }
@@ -305,7 +307,7 @@ mod tests {
         let t = read_one_command(&socket_path);
         let req = br#"{"jsonrpc": "2.0", "id": 0, "method": "test", "params": ["a", 10]}"#;
         let parsed_req: Request = serde_json::from_slice(req).unwrap();
-        let tmp: Vec<Vec<u8>> = req.into_iter().map(|c| vec![*c]).collect();
+        let tmp: Vec<Vec<u8>> = req.iter().map(|c| vec![*c]).collect();
         let mut to_send: Vec<&[u8]> = tmp.iter().map(|v| v.as_slice()).collect();
         to_send.push(b"\n");
         write_messages(&socket_path, &to_send);

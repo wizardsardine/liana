@@ -109,7 +109,7 @@ fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
         value_in += psbtin
             .witness_utxo
             .as_ref()
-            .ok_or(CommandError::SanityCheckFailure(psbt.clone()))?
+            .ok_or_else(|| CommandError::SanityCheckFailure(psbt.clone()))?
             .value;
     }
 
@@ -117,17 +117,17 @@ fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
     let value_out: u64 = tx.output.iter().map(|o| o.value).sum();
     let abs_fee = value_in
         .checked_sub(value_out)
-        .ok_or(CommandError::SanityCheckFailure(psbt.clone()))?;
+        .ok_or_else(|| CommandError::SanityCheckFailure(psbt.clone()))?;
     if abs_fee > MAX_FEE {
         return Err(CommandError::SanityCheckFailure(psbt.clone()));
     }
 
     // Check the feerate isn't insane.
-    let tx_vb: u64 = tx_vbytes(&tx);
+    let tx_vb: u64 = tx_vbytes(tx);
     let feerate_sats_vb = abs_fee
         .checked_div(tx_vb)
-        .ok_or(CommandError::SanityCheckFailure(psbt.clone()))?;
-    if feerate_sats_vb > MAX_FEERATE || feerate_sats_vb < 1 {
+        .ok_or_else(|| CommandError::SanityCheckFailure(psbt.clone()))?;
+    if !(1..=MAX_FEERATE).contains(&feerate_sats_vb) {
         return Err(CommandError::SanityCheckFailure(psbt.clone()));
     }
 
@@ -188,7 +188,7 @@ impl DaemonControl {
         let address = self
             .config
             .main_descriptor
-            .derive(index.into(), &self.secp)
+            .derive(index, &self.secp)
             .address(self.config.bitcoin_config.network);
         GetAddressResult { address }
     }
@@ -320,7 +320,7 @@ impl DaemonControl {
             // Get the change address to create a dummy change txo.
             // TODO: decent change management
             let first_coin = coins
-                .get(&coins_outpoints.get(0).expect("We checked it wasn't empty"))
+                .get(coins_outpoints.get(0).expect("We checked it wasn't empty"))
                 .expect("We checked they were all present");
             let coin_desc = self.derived_desc(first_coin.derivation_index);
             let mut change_txo = bitcoin::TxOut {
@@ -696,13 +696,11 @@ mod tests {
                 .iter()
                 .cloned()
                 .collect();
-        let destinations_c: HashMap<bitcoin::Address, u64> = [
-            (dummy_addr_a.clone(), dummy_value_a),
-            (dummy_addr_b.clone(), dummy_value_b),
-        ]
-        .iter()
-        .cloned()
-        .collect();
+        let destinations_c: HashMap<bitcoin::Address, u64> =
+            [(dummy_addr_a, dummy_value_a), (dummy_addr_b, dummy_value_b)]
+                .iter()
+                .cloned()
+                .collect();
         let mut psbt_a = control
             .create_spend(&[dummy_op_a], &destinations_a, 1)
             .unwrap()

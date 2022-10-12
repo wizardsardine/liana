@@ -36,7 +36,7 @@ pub enum SqliteDbError {
     FileNotFound(path::PathBuf),
     UnsupportedVersion(i64),
     InvalidNetwork(bitcoin::Network),
-    DescriptorMismatch(InheritanceDescriptor),
+    DescriptorMismatch(Box<InheritanceDescriptor>),
     Rusqlite(rusqlite::Error),
 }
 
@@ -102,7 +102,7 @@ impl SqliteDb {
             log::info!("Created a fresh database at {}.", db_path.display());
         }
         if !db_path.exists() {
-            return Err(SqliteDbError::FileNotFound(db_path.to_path_buf()));
+            return Err(SqliteDbError::FileNotFound(db_path));
         }
 
         Ok(SqliteDb { db_path })
@@ -139,7 +139,9 @@ impl SqliteDb {
         // The config and db descriptors must match!
         let db_wallet = conn.db_wallet();
         if &db_wallet.main_descriptor != main_descriptor {
-            return Err(SqliteDbError::DescriptorMismatch(db_wallet.main_descriptor));
+            return Err(SqliteDbError::DescriptorMismatch(
+                db_wallet.main_descriptor.into(),
+            ));
         }
 
         Ok(())
@@ -215,15 +217,13 @@ impl SqliteConn {
         let network = self.db_tip().network;
 
         db_exec(&mut self.conn, |db_tx| {
-            let db_wallet: DbWallet = db_tx_query(
-                &db_tx,
-                "SELECT * FROM wallets",
-                rusqlite::params![],
-                |row| row.try_into(),
-            )
-            .expect("Db must not fail")
-            .pop()
-            .expect("There is always a row in the wallet table");
+            let db_wallet: DbWallet =
+                db_tx_query(db_tx, "SELECT * FROM wallets", rusqlite::params![], |row| {
+                    row.try_into()
+                })
+                .expect("Db must not fail")
+                .pop()
+                .expect("There is always a row in the wallet table");
             let next_index: u32 = db_wallet
                 .deposit_derivation_index
                 .increment()
@@ -240,7 +240,7 @@ impl SqliteConn {
             let next_la_index = next_index + LOOK_AHEAD_LIMIT - 1;
             let next_la_address = db_wallet
                 .main_descriptor
-                .derive(next_la_index.into(), &secp)
+                .derive(next_la_index.into(), secp)
                 .address(network);
             db_tx
                 .execute(
@@ -470,7 +470,7 @@ mod tests {
             .iter()
             .collect();
         let options = dummy_options();
-        let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
+        let db = SqliteDb::new(db_path, Some(options.clone()), &secp).unwrap();
 
         (tmp_dir, options, secp, db)
     }
@@ -510,7 +510,7 @@ mod tests {
         let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
             .unwrap();
-        let db = SqliteDb::new(db_path.clone(), None, &secp).unwrap();
+        let db = SqliteDb::new(db_path, None, &secp).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
             .unwrap();
 
@@ -607,14 +607,8 @@ mod tests {
             assert_eq!(coins[0].outpoint, coin_b.outpoint);
             let coins = conn.db_coins(&[coin_a.outpoint, coin_b.outpoint]);
             assert_eq!(coins.len(), 2);
-            assert!(coins
-                .iter()
-                .find(|c| c.outpoint == coin_a.outpoint)
-                .is_some());
-            assert!(coins
-                .iter()
-                .find(|c| c.outpoint == coin_b.outpoint)
-                .is_some());
+            assert!(coins.iter().any(|c| c.outpoint == coin_a.outpoint));
+            assert!(coins.iter().any(|c| c.outpoint == coin_b.outpoint));
 
             // Now if we confirm one, it'll be marked as such.
             let height = 174500;

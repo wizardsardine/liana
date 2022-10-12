@@ -30,7 +30,7 @@ fn update_coins(
     // Start by fetching newly received coins.
     let curr_coins = db_conn.unspent_coins();
     let mut received = Vec::new();
-    for utxo in bit.received_coins(&previous_tip) {
+    for utxo in bit.received_coins(previous_tip) {
         if let Some(derivation_index) = db_conn.derivation_index_by_address(&utxo.address) {
             if !curr_coins.contains_key(&utxo.outpoint) {
                 let UTxO {
@@ -119,7 +119,7 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> Option<B
 
     if bitcoin_tip.height > current_tip.height {
         // Make sure we are on the same chain.
-        if bit.is_in_chain(&current_tip) {
+        if bit.is_in_chain(current_tip) {
             // All good, we just moved forward.
             return Some(bitcoin_tip);
         }

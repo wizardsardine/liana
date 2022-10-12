@@ -7,7 +7,7 @@ use std::{error, fmt};
 
 use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
 pub enum Params {
@@ -29,7 +29,7 @@ impl Params {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
 pub enum ReqId {
@@ -38,7 +38,7 @@ pub enum ReqId {
 }
 
 /// A JSONRPC2 request. See https://www.jsonrpc.org/specification#request_object.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
     /// Version. Must be "2.0".
@@ -52,7 +52,7 @@ pub struct Request {
 }
 
 /// JSONRPC2 error codes. See https://www.jsonrpc.org/specification#error_object.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ErrorCode {
     /// The method does not exist / is not available.
     MethodNotFound,
@@ -64,9 +64,9 @@ pub enum ErrorCode {
     ServerError(i64),
 }
 
-impl Into<i64> for &ErrorCode {
-    fn into(self) -> i64 {
-        match self {
+impl From<&ErrorCode> for i64 {
+    fn from(code: &ErrorCode) -> i64 {
+        match code {
             ErrorCode::MethodNotFound => -32601,
             ErrorCode::InvalidParams => -32602,
             ErrorCode::InternalError => -32603,
@@ -105,7 +105,7 @@ impl Serialize for ErrorCode {
 }
 
 /// JSONRPC2 error response. See https://www.jsonrpc.org/specification#error_object.
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Error {
     pub code: ErrorCode,
@@ -164,7 +164,7 @@ impl From<commands::CommandError> for Error {
 }
 
 /// JSONRPC2 response. See https://www.jsonrpc.org/specification#response_object.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Response {
     /// Version. Must be "2.0".
