@@ -568,9 +568,11 @@ mod tests {
         db_conn.new_unspent_coins(&[Coin {
             outpoint: dummy_op,
             block_height: None,
+            block_time: None,
             amount: bitcoin::Amount::from_sat(100_000),
             derivation_index: bip32::ChildNumber::from(13),
             spend_txid: None,
+            spent_at: None,
         }]);
         let res = control.create_spend(&[dummy_op], &destinations, 1).unwrap();
         let tx = res.psbt.global.unsigned_tx;
@@ -660,16 +662,20 @@ mod tests {
             Coin {
                 outpoint: dummy_op_a,
                 block_height: None,
+                block_time: None,
                 amount: bitcoin::Amount::from_sat(100_000),
                 derivation_index: bip32::ChildNumber::from(13),
                 spend_txid: None,
+                spent_at: None,
             },
             Coin {
                 outpoint: dummy_op_b,
                 block_height: None,
+                block_time: None,
                 amount: bitcoin::Amount::from_sat(115_680),
                 derivation_index: bip32::ChildNumber::from(34),
                 spend_txid: None,
+                spent_at: None,
             },
         ]);
 

@@ -13,8 +13,9 @@ use miniscript::bitcoin;
 #[derive(Debug, Clone)]
 struct UpdatedCoins {
     pub received: Vec<Coin>,
-    pub confirmed: Vec<(bitcoin::OutPoint, i32)>,
-    pub spent: Vec<(bitcoin::OutPoint, bitcoin::Txid)>,
+    pub confirmed: Vec<(bitcoin::OutPoint, i32, u32)>,
+    pub spending: Vec<(bitcoin::OutPoint, bitcoin::Txid)>,
+    pub spent: Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)>,
 }
 
 // Update the state of our coins. There may be new unspent, and existing ones may become confirmed
@@ -40,7 +41,9 @@ fn update_coins(
                     amount,
                     derivation_index,
                     block_height: None,
+                    block_time: None,
                     spend_txid: None,
+                    spent_at: None,
                 };
                 received.push(coin);
             }
@@ -83,11 +86,24 @@ fn update_coins(
             }
         })
         .collect();
-    let spent = bit.spent_coins(&to_be_spent);
+    let spending = bit.spending_coins(&to_be_spent);
+
+    // Mark coins in a spending state whose Spend transaction was confirmed as such. Note we
+    // need to take into account the freshly marked as spending coins as well, as their spend
+    // may have been confirmed within the previous tip and the current one, and we may not poll
+    // this chunk of the chain anymore.
+    let spending_coins: Vec<(bitcoin::OutPoint, bitcoin::Txid)> = db_conn
+        .list_spending_coins()
+        .values()
+        .map(|coin| (coin.outpoint, coin.spend_txid.expect("Coin is spending")))
+        .chain(spending.iter().cloned())
+        .collect();
+    let spent = bit.spent_coins(spending_coins.as_slice());
 
     UpdatedCoins {
         received,
         confirmed,
+        spending,
         spent,
     }
 }
@@ -136,7 +152,8 @@ fn updates(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
     // updates up to this block. But not more.
     db_conn.new_unspent_coins(&updated_coins.received);
     db_conn.confirm_coins(&updated_coins.confirmed);
-    db_conn.spend_coins(&updated_coins.spent);
+    db_conn.spend_coins(&updated_coins.spending);
+    db_conn.confirm_spend(&updated_coins.spent);
     if let Some(tip) = new_tip {
         db_conn.update_tip(&tip);
     }

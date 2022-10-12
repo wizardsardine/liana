@@ -35,11 +35,14 @@ CREATE TABLE coins (
     id INTEGER PRIMARY KEY NOT NULL,
     wallet_id INTEGER NOT NULL,
     blockheight INTEGER,
+    blocktime INTEGER,
     txid BLOB NOT NULL,
     vout INTEGER NOT NULL,
     amount_sat INTEGER NOT NULL,
     derivation_index INTEGER NOT NULL,
     spend_txid BLOB,
+    /* Time of the block containing the transaction spending the coin, NULL if not confirmed */
+    spent_at INTEGER,
     UNIQUE (txid, vout),
     FOREIGN KEY (wallet_id) REFERENCES wallets (id)
         ON UPDATE RESTRICT
@@ -129,9 +132,11 @@ pub struct DbCoin {
     pub wallet_id: i64,
     pub outpoint: bitcoin::OutPoint,
     pub block_height: Option<i32>,
+    pub block_time: Option<u32>,
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub spend_txid: Option<bitcoin::Txid>,
+    pub spent_at: Option<u32>,
 }
 
 impl std::hash::Hash for DbCoin {
@@ -148,28 +153,32 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         let wallet_id = row.get(1)?;
 
         let block_height = row.get(2)?;
-        let txid: Vec<u8> = row.get(3)?;
+        let block_time = row.get(3)?;
+        let txid: Vec<u8> = row.get(4)?;
         let txid: bitcoin::Txid = encode::deserialize(&txid).expect("We only store valid txids");
-        let vout = row.get(4)?;
+        let vout = row.get(5)?;
         let outpoint = bitcoin::OutPoint { txid, vout };
 
-        let amount = row.get(5)?;
+        let amount = row.get(6)?;
         let amount = bitcoin::Amount::from_sat(amount);
-        let der_idx: u32 = row.get(6)?;
+        let der_idx: u32 = row.get(7)?;
         let derivation_index = bip32::ChildNumber::from(der_idx);
 
-        let spend_txid: Option<Vec<u8>> = row.get(7)?;
+        let spend_txid: Option<Vec<u8>> = row.get(8)?;
         let spend_txid =
             spend_txid.map(|txid| encode::deserialize(&txid).expect("We only store valid txids"));
+        let spent_at = row.get(9)?;
 
         Ok(DbCoin {
             id,
             wallet_id,
             outpoint,
             block_height,
+            block_time,
             amount,
             derivation_index,
             spend_txid,
+            spent_at,
         })
     }
 }

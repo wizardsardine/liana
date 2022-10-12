@@ -748,9 +748,11 @@ impl From<Json> for LSBlockRes {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct GetTxRes {
+    pub conflicting_txs: Vec<bitcoin::Txid>,
     pub block_height: Option<i32>,
+    pub block_time: Option<u32>,
 }
 
 impl From<Json> for GetTxRes {
@@ -759,6 +761,26 @@ impl From<Json> for GetTxRes {
             .get("blockheight")
             .and_then(Json::as_i64)
             .map(|bh| bh as i32);
-        GetTxRes { block_height }
+        let block_time = json
+            .get("blocktime")
+            .and_then(Json::as_u64)
+            .map(|bt| bt as u32);
+        let conflicting_txs = json
+            .get("walletconflicts")
+            .and_then(Json::as_array)
+            .map(|array| {
+                array
+                    .into_iter()
+                    .map(|v| {
+                        bitcoin::Txid::from_str(v.as_str().expect("wrong json format")).unwrap()
+                    })
+                    .collect()
+            });
+
+        GetTxRes {
+            conflicting_txs: conflicting_txs.unwrap_or_default(),
+            block_height,
+            block_time,
+        }
     }
 }

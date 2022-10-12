@@ -57,14 +57,20 @@ pub trait DatabaseConnection {
     /// Get all UTxOs.
     fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
 
+    /// List coins that are being spent and whose spending transaction is still unconfirmed.
+    fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
+
     /// Store new UTxOs. Coins must not already be in database.
     fn new_unspent_coins<'a>(&mut self, coins: &[Coin]);
 
-    /// Mark a set of coins as being confirmed at a specified height.
-    fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32)]);
+    /// Mark a set of coins as being confirmed at a specified height and block time.
+    fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32, u32)]);
 
-    /// Mark a set of coins as being spent by a specified txid.
+    /// Mark a set of coins as being spent by a specified txid of a pending transaction.
     fn spend_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]);
+
+    /// Mark a set of coins as spent by a specified txid at a specified block time.
+    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]);
 
     /// Get specific coins from the database.
     fn coins_by_outpoints(
@@ -82,33 +88,6 @@ pub trait DatabaseConnection {
 
     /// Delete a Spend transaction from database.
     fn delete_spend(&mut self, txid: &bitcoin::Txid);
-}
-
-// FIXME: if possible, avoid reallocating.
-fn db_coins_into_coins(db_coins: Vec<DbCoin>) -> HashMap<bitcoin::OutPoint, Coin> {
-    db_coins
-        .into_iter()
-        .map(|db_coin| {
-            let DbCoin {
-                outpoint,
-                block_height,
-                amount,
-                derivation_index,
-                spend_txid,
-                ..
-            } = db_coin;
-            (
-                outpoint,
-                Coin {
-                    outpoint,
-                    block_height,
-                    amount,
-                    derivation_index,
-                    spend_txid,
-                },
-            )
-        })
-        .collect()
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -140,19 +119,33 @@ impl DatabaseConnection for SqliteConn {
     }
 
     fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
-        db_coins_into_coins(self.unspent_coins())
+        self.unspent_coins()
+            .into_iter()
+            .map(|db_coin| (db_coin.outpoint, db_coin.into()))
+            .collect()
+    }
+
+    fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
+        self.list_spending_coins()
+            .into_iter()
+            .map(|db_coin| (db_coin.outpoint, db_coin.into()))
+            .collect()
     }
 
     fn new_unspent_coins<'a>(&mut self, coins: &[Coin]) {
         self.new_unspent_coins(coins)
     }
 
-    fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32)]) {
+    fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32, u32)]) {
         self.confirm_coins(outpoints)
     }
 
     fn spend_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]) {
         self.spend_coins(outpoints)
+    }
+
+    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]) {
+        self.confirm_spend(outpoints)
     }
 
     fn derivation_index_by_address(
@@ -167,7 +160,10 @@ impl DatabaseConnection for SqliteConn {
         &mut self,
         outpoints: &[bitcoin::OutPoint],
     ) -> HashMap<bitcoin::OutPoint, Coin> {
-        db_coins_into_coins(self.db_coins(outpoints))
+        self.db_coins(outpoints)
+            .into_iter()
+            .map(|db_coin| (db_coin.outpoint, db_coin.into()))
+            .collect()
     }
 
     fn spend_tx(&mut self, txid: &bitcoin::Txid) -> Option<Psbt> {
@@ -194,9 +190,35 @@ impl DatabaseConnection for SqliteConn {
 pub struct Coin {
     pub outpoint: bitcoin::OutPoint,
     pub block_height: Option<i32>,
+    pub block_time: Option<u32>,
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub spend_txid: Option<bitcoin::Txid>,
+    pub spent_at: Option<u32>,
+}
+
+impl std::convert::From<DbCoin> for Coin {
+    fn from(db_coin: DbCoin) -> Coin {
+        let DbCoin {
+            outpoint,
+            block_height,
+            block_time,
+            amount,
+            derivation_index,
+            spend_txid,
+            spent_at,
+            ..
+        } = db_coin;
+        Coin {
+            outpoint,
+            block_height,
+            block_time,
+            amount,
+            derivation_index,
+            spend_txid,
+            spent_at,
+        }
+    }
 }
 
 impl std::hash::Hash for Coin {
