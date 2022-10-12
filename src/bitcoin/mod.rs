@@ -176,12 +176,12 @@ impl BitcoinInterface for d::BitcoinD {
                     assert!(tx.block_height.is_some());
                     spent.push((*op, *txid, block_time))
                 } else if !tx.conflicting_txs.is_empty() {
-                    for txid in tx.conflicting_txs.clone() {
-                        let tx: Option<&d::GetTxRes> = match cache.get(&txid) {
+                    for txid in &tx.conflicting_txs {
+                        let tx: Option<&d::GetTxRes> = match cache.get(txid) {
                             Some(tx) => tx.as_ref(),
                             None => {
                                 let tx = self.get_transaction(&txid);
-                                txs_to_cache.push((txid, tx));
+                                txs_to_cache.push((*txid, tx));
                                 txs_to_cache.last().unwrap().1.as_ref()
                             }
                         };
@@ -190,7 +190,7 @@ impl BitcoinInterface for d::BitcoinD {
                                 if block_height > 1 {
                                     spent.push((
                                         *op,
-                                        txid,
+                                        *txid,
                                         tx.block_time.expect("Spend is confirmed"),
                                     ))
                                 }
