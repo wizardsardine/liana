@@ -88,14 +88,16 @@ fn update_coins(
         .collect();
     let spending = bit.spending_coins(&to_be_spent);
 
-    // We need to confirm coins that are currently spending and which transactions are now in a
-    // block.
-    let mut spending_coins: Vec<(bitcoin::OutPoint, bitcoin::Txid)> = db_conn
+    // Mark coins in a spending state whose Spend transaction was confirmed as such. Note we
+    // need to take into account the freshly marked as spending coins as well, as their spend
+    // may have been confirmed within the previous tip and the current one, and we may not poll
+    // this chunk of the chain anymore.
+    let spending_coins: Vec<(bitcoin::OutPoint, bitcoin::Txid)> = db_conn
         .list_spending_coins()
         .values()
         .map(|coin| (coin.outpoint, coin.spend_txid.expect("Coin is spending")))
+        .chain(spending.iter().cloned())
         .collect();
-    spending_coins.extend(&spending);
     let spent = bit.spent_coins(spending_coins.as_slice());
 
     UpdatedCoins {
