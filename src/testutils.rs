@@ -62,6 +62,10 @@ impl BitcoinInterface for DummyBitcoind {
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
         Vec::new()
     }
+
+    fn common_ancestor(&self, _: &BlockChainTip) -> BlockChainTip {
+        todo!()
+    }
 }
 
 pub struct DummyDb {

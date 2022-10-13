@@ -52,6 +52,9 @@ pub trait BitcoinInterface: Send {
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)>;
+
+    /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
+    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -207,6 +210,21 @@ impl BitcoinInterface for d::BitcoinD {
 
         spent
     }
+
+    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip {
+        let mut stats = self.get_block_stats(tip.hash);
+        let mut ancestor = *tip;
+
+        while stats.confirmations == -1 {
+            stats = self.get_block_stats(stats.previous_blockhash);
+            ancestor = BlockChainTip {
+                hash: stats.blockhash,
+                height: stats.height,
+            };
+        }
+
+        ancestor
+    }
 }
 
 // FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
@@ -250,6 +268,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
         self.lock().unwrap().spent_coins(outpoints)
+    }
+
+    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip {
+        self.lock().unwrap().common_ancestor(tip)
     }
 }
 
