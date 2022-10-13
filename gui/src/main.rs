@@ -316,7 +316,7 @@ mod tests {
             ]),
             parse_args(
                 "--datadir . --conf hello.toml"
-                    .split(" ")
+                    .split(' ')
                     .map(|a| a.to_string())
                     .collect()
             )
@@ -333,7 +333,7 @@ mod tests {
             ]),
             parse_args(
                 "--datadir hello --testnet"
-                    .split(" ")
+                    .split(' ')
                     .map(|a| a.to_string())
                     .collect()
             )
@@ -346,7 +346,7 @@ mod tests {
             ]),
             parse_args(
                 "--testnet --datadir hello"
-                    .split(" ")
+                    .split(' ')
                     .map(|a| a.to_string())
                     .collect()
             )

@@ -102,7 +102,7 @@ impl App {
                 self.cache.coins = coins.clone();
             }
             Message::BlockHeight(Ok(blockheight)) => {
-                self.cache.blockheight = blockheight.clone();
+                self.cache.blockheight = *blockheight;
             }
             _ => {}
         };
