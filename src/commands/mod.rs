@@ -193,11 +193,11 @@ impl DaemonControl {
         GetAddressResult { address }
     }
 
-    /// Get a list of all currently unspent coins.
+    /// Get a list of all known coins.
     pub fn list_coins(&self) -> ListCoinsResult {
         let mut db_conn = self.db.connection();
         let coins: Vec<ListCoinsEntry> = db_conn
-            .unspent_coins()
+            .coins()
             // Can't use into_values as of Rust 1.48
             .into_iter()
             .map(|(_, coin)| {

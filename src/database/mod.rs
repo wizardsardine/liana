@@ -54,8 +54,8 @@ pub trait DatabaseConnection {
         address: &bitcoin::Address,
     ) -> Option<bip32::ChildNumber>;
 
-    /// Get all UTxOs.
-    fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
+    /// Get all our coins, past or present, spent or not.
+    fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
 
     /// List coins that are being spent and whose spending transaction is still unconfirmed.
     fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
@@ -121,8 +121,8 @@ impl DatabaseConnection for SqliteConn {
         self.increment_derivation_index(secp)
     }
 
-    fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
-        self.unspent_coins()
+    fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
+        self.coins()
             .into_iter()
             .map(|db_coin| (db_coin.outpoint, db_coin.into()))
             .collect()

@@ -28,7 +28,7 @@ fn update_coins(
     previous_tip: &BlockChainTip,
 ) -> UpdatedCoins {
     // Start by fetching newly received coins.
-    let curr_coins = db_conn.unspent_coins();
+    let curr_coins = db_conn.coins();
     let mut received = Vec::new();
     for utxo in bit.received_coins(previous_tip) {
         if let Some(derivation_index) = db_conn.derivation_index_by_address(&utxo.address) {

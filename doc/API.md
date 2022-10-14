@@ -70,7 +70,7 @@ This command does not take any parameter for now.
 
 ### `listcoins`
 
-List our current Unspent Transaction Outputs.
+List all our transaction outputs, regardless of their state (unspent or not).
 
 #### Request
 
@@ -83,7 +83,7 @@ This command does not take any parameter for now.
 
 | Field          | Type          | Description                                                      |
 | -------------- | ------------- | ---------------------------------------------------------------- |
-| `amount`       | int           | Value of the UTxO in satoshis                                    |
+| `amount`       | int           | Value of the TxO in satoshis                                     |
 | `outpoint`     | string        | Transaction id and output index of this coin                     |
 | `block_height` | int or null   | Blockheight the transaction was confirmed at, or `null`          |
 

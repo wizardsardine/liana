@@ -252,11 +252,11 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
-    /// Get all UTxOs.
-    pub fn unspent_coins(&mut self) -> Vec<DbCoin> {
+    /// Get all the coins from DB.
+    pub fn coins(&mut self) -> Vec<DbCoin> {
         db_query(
             &mut self.conn,
-            "SELECT * FROM coins WHERE spend_txid is NULL",
+            "SELECT * FROM coins",
             rusqlite::params![],
             |row| row.try_into(),
         )
@@ -589,7 +589,7 @@ mod tests {
             let mut conn = db.connection().unwrap();
 
             // Necessarily empty at first.
-            assert!(conn.unspent_coins().is_empty());
+            assert!(conn.coins().is_empty());
 
             // Add one, we'll get it.
             let coin_a = Coin {
@@ -605,7 +605,7 @@ mod tests {
                 spend_block: None,
             };
             conn.new_unspent_coins(&[coin_a]);
-            assert_eq!(conn.unspent_coins()[0].outpoint, coin_a.outpoint);
+            assert_eq!(conn.coins()[0].outpoint, coin_a.outpoint);
 
             // We can query it by its outpoint
             let coins = conn.db_coins(&[coin_a.outpoint]);
@@ -626,11 +626,8 @@ mod tests {
                 spend_block: None,
             };
             conn.new_unspent_coins(&[coin_b]);
-            let outpoints: HashSet<bitcoin::OutPoint> = conn
-                .unspent_coins()
-                .into_iter()
-                .map(|c| c.outpoint)
-                .collect();
+            let outpoints: HashSet<bitcoin::OutPoint> =
+                conn.coins().into_iter().map(|c| c.outpoint).collect();
             assert!(outpoints.contains(&coin_a.outpoint));
             assert!(outpoints.contains(&coin_b.outpoint));
 
@@ -650,24 +647,24 @@ mod tests {
             let height = 174500;
             let time = 174500;
             conn.confirm_coins(&[(coin_a.outpoint, height, time)]);
-            let coins = conn.unspent_coins();
+            let coins = conn.coins();
             assert_eq!(coins[0].block_height, Some(height));
             assert_eq!(coins[0].block_time, Some(time));
             assert!(coins[1].block_height.is_none());
             assert!(coins[1].block_time.is_none());
 
-            // Now if we spend one, we'll only get the other one.
+            // Now if we spend one, it'll be marked as such.
             conn.spend_coins(&[(
                 coin_a.outpoint,
                 bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
             )]);
-            let outpoints: HashSet<bitcoin::OutPoint> = conn
-                .unspent_coins()
-                .into_iter()
-                .map(|c| c.outpoint)
-                .collect();
-            assert!(!outpoints.contains(&coin_a.outpoint));
-            assert!(outpoints.contains(&coin_b.outpoint));
+            let coins_map: HashMap<bitcoin::OutPoint, DbCoin> =
+                conn.coins().into_iter().map(|c| (c.outpoint, c)).collect();
+            assert!(coins_map
+                .get(&coin_a.outpoint)
+                .unwrap()
+                .spend_txid
+                .is_some());
 
             let outpoints: HashSet<bitcoin::OutPoint> = conn
                 .list_spending_coins()
