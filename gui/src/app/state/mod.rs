@@ -31,7 +31,7 @@ pub struct Home {
 }
 
 impl Home {
-    pub fn new(coins: &Vec<Coin>) -> Self {
+    pub fn new(coins: &[Coin]) -> Self {
         Self {
             balance: Amount::from_sat(coins.iter().map(|coin| coin.amount.as_sat()).sum()),
         }

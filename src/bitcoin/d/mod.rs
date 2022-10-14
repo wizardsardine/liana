@@ -183,7 +183,7 @@ impl BitcoinD {
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
-                .cookie_auth(cookie_string.clone())
+                .cookie_auth(cookie_string)
                 .build(),
         );
 
@@ -249,7 +249,7 @@ impl BitcoinD {
                     let res = resp.result().map_err(BitcoindError::Server)?;
                     log::trace!("Got from bitcoind: {:#?}", res);
 
-                    return Ok(res);
+                    Ok(res)
                 }
                 Err(e) => Err(BitcoindError::Server(e)),
             }
@@ -289,16 +289,14 @@ impl BitcoinD {
     fn get_bitcoind_version(&self) -> u64 {
         self.make_node_request("getnetworkinfo", &[])
             .get("version")
-            .map(Json::as_u64)
-            .flatten()
+            .and_then(Json::as_u64)
             .expect("Missing or invalid 'version' in 'getnetworkinfo' result?")
     }
 
     fn get_network_bip70(&self) -> String {
         self.make_node_request("getblockchaininfo", &[])
             .get("chain")
-            .map(Json::as_str)
-            .flatten()
+            .and_then(Json::as_str)
             .expect("Missing or invalid 'chain' in 'getblockchaininfo' result?")
             .to_string()
     }
@@ -341,7 +339,7 @@ impl BitcoinD {
             ),
         );
 
-        if let Some(warning) = res.get("warning").map(Json::as_str).flatten() {
+        if let Some(warning) = res.get("warning").and_then(Json::as_str) {
             if !warning.is_empty() {
                 return Some(warning.to_string());
             }
@@ -365,12 +363,9 @@ impl BitcoinD {
         let all_succeeded = res
             .as_array()
             .map(|results| {
-                results.iter().all(|res| {
-                    res.get("success")
-                        .map(Json::as_bool)
-                        .flatten()
-                        .unwrap_or(false)
-                })
+                results
+                    .iter()
+                    .all(|res| res.get("success").and_then(Json::as_bool).unwrap_or(false))
             })
             .unwrap_or(false);
         if all_succeeded {
@@ -615,7 +610,7 @@ impl BitcoinD {
                 .get("txid")
                 .and_then(Json::as_str)
                 .expect("A valid txid must be present");
-            if visited_txs.contains(&spending_txid) || &spent_txid == spending_txid {
+            if visited_txs.contains(&spending_txid) || spent_txid == spending_txid {
                 continue;
             } else {
                 visited_txs.insert(spending_txid);
@@ -729,7 +724,7 @@ impl From<Json> for LSBlockRes {
             .get("transactions")
             .and_then(Json::as_array)
             .expect("Array must be present")
-            .into_iter()
+            .iter()
             .filter_map(|j| {
                 if j.get("category")
                     .and_then(Json::as_str)
@@ -770,7 +765,7 @@ impl From<Json> for GetTxRes {
             .and_then(Json::as_array)
             .map(|array| {
                 array
-                    .into_iter()
+                    .iter()
                     .map(|v| {
                         bitcoin::Txid::from_str(v.as_str().expect("wrong json format")).unwrap()
                     })

@@ -113,7 +113,7 @@ impl JsonRPCClient {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 /// A JSONRPC request object
 pub struct Request<'f, T: Serialize> {
     /// The name of the RPC call
@@ -126,7 +126,7 @@ pub struct Request<'f, T: Serialize> {
     pub jsonrpc: &'f str,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 /// A JSONRPC response object
 pub struct Response<T> {
     /// A result if there is one, or null
@@ -243,7 +243,7 @@ impl From<Error> for super::DaemonError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 /// A JSONRPC error object
 pub struct RpcError {
     /// The integer identifier of the error

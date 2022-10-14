@@ -82,6 +82,12 @@ impl DummyDb {
     }
 }
 
+impl Default for DummyDb {
+    fn default() -> DummyDb {
+        DummyDb::new()
+    }
+}
+
 impl DatabaseInterface for sync::Arc<sync::RwLock<DummyDb>> {
     fn connection(&self) -> Box<dyn DatabaseConnection> {
         Box::new(DummyDbConn { db: self.clone() })
@@ -121,8 +127,8 @@ impl DatabaseConnection for DummyDbConn {
     fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
         let mut result = HashMap::new();
         for (k, v) in self.db.read().unwrap().coins.iter() {
-            if !v.spend_txid.is_none() {
-                result.insert(k.clone(), v.clone());
+            if v.spend_txid.is_some() {
+                result.insert(*k, v.clone());
             }
         }
         result
@@ -163,7 +169,7 @@ impl DatabaseConnection for DummyDbConn {
         for (op, spend_txid, time) in outpoints {
             let mut db = self.db.write().unwrap();
             let spent = &mut db.coins.get_mut(op).unwrap();
-            assert!(!spent.spend_txid.is_none());
+            assert!(spent.spend_txid.is_some());
             assert!(spent.spent_at.is_none());
             spent.spend_txid = Some(*spend_txid);
             spent.spent_at = Some(*time);
@@ -185,7 +191,7 @@ impl DatabaseConnection for DummyDbConn {
             .coins
             .clone()
             .into_iter()
-            .filter(|(op, _)| outpoints.contains(&op))
+            .filter(|(op, _)| outpoints.contains(op))
             .collect()
     }
 
@@ -260,7 +266,7 @@ impl DummyMinisafe {
         let config = Config {
             bitcoin_config,
             bitcoind_config: None,
-            data_dir: Some(data_dir.clone()),
+            data_dir: Some(data_dir),
             #[cfg(unix)]
             daemon: false,
             log_level: log::LevelFilter::Debug,

@@ -48,11 +48,7 @@ pub fn change_index(psbt: &Psbt) -> Option<usize> {
     };
 
     let tx = &psbt.global.unsigned_tx;
-    for i in (0..tx.output.len()).rev() {
-        if &tx.output[i].script_pubkey == first_coin_spk {
-            return Some(i);
-        }
-    }
-
-    None
+    (0..tx.output.len())
+        .rev()
+        .find(|&i| &tx.output[i].script_pubkey == first_coin_spk)
 }

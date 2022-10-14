@@ -9,9 +9,11 @@ use std::sync::{
 };
 use std::thread;
 
+type TransportReceiver = Receiver<Result<Value, DaemonError>>;
+
 #[derive(Debug)]
 pub struct DaemonClient {
-    transport: Mutex<(Sender<Value>, Receiver<Result<Value, DaemonError>>)>,
+    transport: Mutex<(Sender<Value>, TransportReceiver)>,
 }
 
 impl Client for DaemonClient {

@@ -92,7 +92,7 @@ impl error::Error for Error {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 /// A JSONRPC error object
 pub struct RpcError {
     /// The integer identifier of the error

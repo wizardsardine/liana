@@ -126,7 +126,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DbCoin {
     pub id: i64,
     pub wallet_id: i64,
@@ -137,12 +137,6 @@ pub struct DbCoin {
     pub derivation_index: bip32::ChildNumber,
     pub spend_txid: Option<bitcoin::Txid>,
     pub spent_at: Option<u32>,
-}
-
-impl std::hash::Hash for DbCoin {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        self.outpoint.hash(h)
-    }
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbCoin {

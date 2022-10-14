@@ -130,8 +130,8 @@ impl BitcoinInterface for d::BitcoinD {
         let mut spent = Vec::with_capacity(outpoints.len());
 
         for op in outpoints {
-            if self.is_spent(&op) {
-                let spending_txid = if let Some(txid) = self.get_spender_txid(&op) {
+            if self.is_spent(op) {
+                let spending_txid = if let Some(txid) = self.get_spender_txid(op) {
                     txid
                 } else {
                     // TODO: better handling of this edge case.
@@ -180,7 +180,7 @@ impl BitcoinInterface for d::BitcoinD {
                         let tx: Option<&d::GetTxRes> = match cache.get(txid) {
                             Some(tx) => tx.as_ref(),
                             None => {
-                                let tx = self.get_transaction(&txid);
+                                let tx = self.get_transaction(txid);
                                 txs_to_cache.push((*txid, tx));
                                 txs_to_cache.last().unwrap().1.as_ref()
                             }

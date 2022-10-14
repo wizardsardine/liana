@@ -10,10 +10,12 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
             toolchain: stable
-            components: rustfmt
+            components: rustfmt, clippy
             override: true
       - name: rustfmt
         run: cargo fmt -- --check
+      - name: clippy
+        run: cargo clippy --all-features --all-targets -- -D warnings
 
   unit_tests:
     needs: linter
@@ -54,6 +56,8 @@ jobs:
             override: true
       - name: rustfmt
         run: cd gui && cargo fmt -- --check
+      - name: clippy
+        run: cargo clippy --all-features --all-targets -- -D warnings
 
   unit_tests_gui:
     needs: linter_gui
