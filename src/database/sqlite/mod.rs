@@ -267,7 +267,7 @@ impl SqliteConn {
     pub fn list_spending_coins(&mut self) -> Vec<DbCoin> {
         db_query(
             &mut self.conn,
-            "SELECT * FROM coins WHERE spend_txid IS NOT NULL AND spent_at IS NULL",
+            "SELECT * FROM coins WHERE spend_txid IS NOT NULL AND spend_block_time IS NULL",
             rusqlite::params![],
             |row| row.try_into(),
         )
@@ -342,7 +342,7 @@ impl SqliteConn {
         db_exec(&mut self.conn, |db_tx| {
             for (outpoint, spend_txid, time) in outpoints {
                 db_tx.execute(
-                    "UPDATE coins SET spend_txid = ?1, spent_at = ?2 WHERE txid = ?3 AND vout = ?4",
+                    "UPDATE coins SET spend_txid = ?1, spend_block_time = ?2 WHERE txid = ?3 AND vout = ?4",
                     rusqlite::params![
                         spend_txid.to_vec(),
                         time,
@@ -566,7 +566,7 @@ mod tests {
                 amount: bitcoin::Amount::from_sat(98765),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                 spend_txid: None,
-                spent_at: None,
+                spend_block_time: None,
             };
             conn.new_unspent_coins(&[coin_a.clone()]); // On 1.48, arrays aren't IntoIterator
             assert_eq!(conn.unspent_coins()[0].outpoint, coin_a.outpoint);
@@ -587,7 +587,7 @@ mod tests {
                 amount: bitcoin::Amount::from_sat(1111),
                 derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
                 spend_txid: None,
-                spent_at: None,
+                spend_block_time: None,
             };
             conn.new_unspent_coins(&[coin_b.clone()]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn

@@ -42,7 +42,7 @@ CREATE TABLE coins (
     derivation_index INTEGER NOT NULL,
     spend_txid BLOB,
     /* Time of the block containing the transaction spending the coin, NULL if not confirmed */
-    spent_at INTEGER,
+    spend_block_time INTEGER,
     UNIQUE (txid, vout),
     FOREIGN KEY (wallet_id) REFERENCES wallets (id)
         ON UPDATE RESTRICT
@@ -136,7 +136,7 @@ pub struct DbCoin {
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub spend_txid: Option<bitcoin::Txid>,
-    pub spent_at: Option<u32>,
+    pub spend_block_time: Option<u32>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
@@ -161,7 +161,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         let spend_txid: Option<Vec<u8>> = row.get(8)?;
         let spend_txid =
             spend_txid.map(|txid| encode::deserialize(&txid).expect("We only store valid txids"));
-        let spent_at = row.get(9)?;
+        let spend_block_time = row.get(9)?;
 
         Ok(DbCoin {
             id,
@@ -172,7 +172,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             amount,
             derivation_index,
             spend_txid,
-            spent_at,
+            spend_block_time,
         })
     }
 }

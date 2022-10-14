@@ -43,7 +43,7 @@ fn update_coins(
                     block_height: None,
                     block_time: None,
                     spend_txid: None,
-                    spent_at: None,
+                    spend_block_time: None,
                 };
                 received.push(coin);
             }

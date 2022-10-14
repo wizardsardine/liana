@@ -194,7 +194,7 @@ pub struct Coin {
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub spend_txid: Option<bitcoin::Txid>,
-    pub spent_at: Option<u32>,
+    pub spend_block_time: Option<u32>,
 }
 
 impl std::convert::From<DbCoin> for Coin {
@@ -206,7 +206,7 @@ impl std::convert::From<DbCoin> for Coin {
             amount,
             derivation_index,
             spend_txid,
-            spent_at,
+            spend_block_time,
             ..
         } = db_coin;
         Coin {
@@ -216,7 +216,7 @@ impl std::convert::From<DbCoin> for Coin {
             amount,
             derivation_index,
             spend_txid,
-            spent_at,
+            spend_block_time,
         }
     }
 }

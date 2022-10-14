@@ -164,7 +164,7 @@ impl DatabaseConnection for DummyDbConn {
             let mut db = self.db.write().unwrap();
             let spent = &mut db.coins.get_mut(op).unwrap();
             assert!(spent.spend_txid.is_none());
-            assert!(spent.spent_at.is_none());
+            assert!(spent.spend_block_time.is_none());
             spent.spend_txid = Some(*spend_txid);
         }
     }
@@ -174,9 +174,9 @@ impl DatabaseConnection for DummyDbConn {
             let mut db = self.db.write().unwrap();
             let spent = &mut db.coins.get_mut(op).unwrap();
             assert!(spent.spend_txid.is_some());
-            assert!(spent.spent_at.is_none());
+            assert!(spent.spend_block_time.is_none());
             spent.spend_txid = Some(*spend_txid);
-            spent.spent_at = Some(*time);
+            spent.spend_block_time = Some(*time);
         }
     }
 
