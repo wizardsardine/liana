@@ -130,13 +130,13 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DbSpendBlock {
     pub height: i32,
     pub time: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DbCoin {
     pub id: i64,
     pub wallet_id: i64,

@@ -439,13 +439,47 @@ impl SqliteConn {
         })
         .expect("Db must not fail");
     }
+
+    /// Unconfirm all data that was marked as being confirmed *after* the given chain
+    /// tip, and set it as our new best block seen.
+    ///
+    /// This includes:
+    /// - Coins
+    /// - Spending transactions confirmation
+    /// - Tip
+    ///
+    /// This will have to be updated if we are to add new fields based on block data
+    /// in the database eventually.
+    pub fn rollback_tip(&mut self, new_tip: &BlockChainTip) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "UPDATE coins SET blockheight = NULL, blocktime = NULL, spend_block_height = NULL, spend_block_time = NULL WHERE blockheight > ?1",
+                rusqlite::params![new_tip.height],
+            )?;
+            db_tx.execute(
+                "UPDATE coins SET spend_block_height = NULL, spend_block_time = NULL WHERE spend_block_height > ?1",
+                rusqlite::params![new_tip.height],
+            )?;
+            db_tx.execute(
+                "UPDATE tip SET blockheight = (?1), blockhash = (?2)",
+                rusqlite::params![new_tip.height, new_tip.hash.to_vec()],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::SpendBlock;
     use crate::testutils::*;
-    use std::{collections::HashSet, fs, path, str::FromStr};
+    use std::{
+        collections::{HashMap, HashSet},
+        fs, path,
+        str::FromStr,
+    };
 
     use bitcoin::{hashes::Hash, util::bip32};
 
@@ -570,7 +604,7 @@ mod tests {
                 spend_txid: None,
                 spend_block: None,
             };
-            conn.new_unspent_coins(&[coin_a.clone()]); // On 1.48, arrays aren't IntoIterator
+            conn.new_unspent_coins(&[coin_a]);
             assert_eq!(conn.unspent_coins()[0].outpoint, coin_a.outpoint);
 
             // We can query it by its outpoint
@@ -591,7 +625,7 @@ mod tests {
                 spend_txid: None,
                 spend_block: None,
             };
-            conn.new_unspent_coins(&[coin_b.clone()]);
+            conn.new_unspent_coins(&[coin_b]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
                 .unspent_coins()
                 .into_iter()
@@ -707,6 +741,189 @@ mod tests {
             conn.increment_derivation_index(&secp);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 200.into());
+        }
+
+        fs::remove_dir_all(&tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_tip_rollback() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        {
+            let mut conn = db.connection().unwrap();
+
+            let old_tip = BlockChainTip {
+                hash: bitcoin::BlockHash::from_str(
+                    "00000000000000000004f43b5e743757939082170673d27a5a5130e0eb238832",
+                )
+                .unwrap(),
+                height: 200_000,
+            };
+            conn.update_tip(&old_tip);
+
+            // 5 coins:
+            // - One unconfirmed
+            // - One confirmed before the rollback height
+            // - One confirmed before the rollback height but spent after
+            // - One confirmed after the rollback height
+            // - One spent after the rollback height
+            let coins = [
+                Coin {
+                    outpoint: bitcoin::OutPoint::from_str(
+                        "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
+                    )
+                    .unwrap(),
+                    block_height: None,
+                    block_time: None,
+                    amount: bitcoin::Amount::from_sat(98765),
+                    derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                    spend_txid: None,
+                    spend_block: None,
+                },
+                Coin {
+                    outpoint: bitcoin::OutPoint::from_str(
+                        "c449539458c60bee6c0d8905ba1dadb20b9187b82045d306a408b894cea492b0:2",
+                    )
+                    .unwrap(),
+                    block_height: Some(101_095),
+                    block_time: Some(1_111_899),
+                    amount: bitcoin::Amount::from_sat(98765),
+                    derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
+                    spend_txid: None,
+                    spend_block: None,
+                },
+                Coin {
+                    outpoint: bitcoin::OutPoint::from_str(
+                        "f0801fd9ca8bca0624c230ab422b2e2c4c8dc995e4e1dbc6412510959cce1e4f:3",
+                    )
+                    .unwrap(),
+                    block_height: Some(101_099),
+                    block_time: Some(1_121_899),
+                    amount: bitcoin::Amount::from_sat(98765),
+                    derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
+                    spend_txid: Some(
+                        bitcoin::Txid::from_str(
+                            "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7",
+                        )
+                        .unwrap(),
+                    ),
+                    spend_block: Some(SpendBlock {
+                        height: 101_199,
+                        time: 1_231_678,
+                    }),
+                },
+                Coin {
+                    outpoint: bitcoin::OutPoint::from_str(
+                        "19f56e65069f0a7a3bfb00c6a7085cc0669e03e91befeca1ee9891c9e737b2fb:4",
+                    )
+                    .unwrap(),
+                    block_height: Some(101_100),
+                    block_time: Some(1_131_899),
+                    amount: bitcoin::Amount::from_sat(98765),
+                    derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
+                    spend_txid: None,
+                    spend_block: None,
+                },
+                Coin {
+                    outpoint: bitcoin::OutPoint::from_str(
+                        "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:5",
+                    )
+                    .unwrap(),
+                    block_height: Some(101_102),
+                    block_time: Some(1_134_899),
+                    amount: bitcoin::Amount::from_sat(98765),
+                    derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
+                    spend_txid: Some(
+                        bitcoin::Txid::from_str(
+                            "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6",
+                        )
+                        .unwrap(),
+                    ),
+                    spend_block: Some(SpendBlock {
+                        height: 101_105,
+                        time: 1_201_678,
+                    }),
+                },
+            ];
+            conn.new_unspent_coins(&coins);
+            conn.confirm_coins(
+                &coins
+                    .iter()
+                    .filter_map(|c| {
+                        c.block_height
+                            .map(|b| (c.outpoint, b, c.block_time.unwrap()))
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            conn.confirm_spend(
+                &coins
+                    .iter()
+                    .filter_map(|c| {
+                        c.spend_block
+                            .as_ref()
+                            .map(|b| (c.outpoint, c.spend_txid.unwrap(), b.height, b.time))
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let mut db_coins = conn
+                .db_coins(
+                    &coins
+                        .iter()
+                        .map(|c| c.outpoint)
+                        .collect::<Vec<bitcoin::OutPoint>>(),
+                )
+                .into_iter()
+                .map(Coin::from)
+                .collect::<Vec<_>>();
+            db_coins.sort_by(|c1, c2| c1.outpoint.vout.cmp(&c2.outpoint.vout));
+            assert_eq!(&db_coins[..], &coins[..]);
+
+            // Now that everything is settled, reorg to a previous height.
+            let new_tip = BlockChainTip {
+                hash: bitcoin::BlockHash::from_str(
+                    "000000000000000000016440c591da27679abfa53ef44d45b016640dbd04e126",
+                )
+                .unwrap(),
+                height: 101_099,
+            };
+            conn.rollback_tip(&new_tip);
+
+            // The tip got updated
+            let new_db_tip = conn.db_tip();
+            assert_eq!(new_db_tip.block_height.unwrap(), new_tip.height);
+            assert_eq!(new_db_tip.block_hash.unwrap(), new_tip.hash);
+
+            // And so were the coins
+            let db_coins = conn
+                .db_coins(
+                    &coins
+                        .iter()
+                        .map(|c| c.outpoint)
+                        .collect::<Vec<bitcoin::OutPoint>>(),
+                )
+                .into_iter()
+                .map(|c| (c.outpoint, Coin::from(c)))
+                .collect::<HashMap<_, _>>();
+            // The first coin is unchanged
+            assert_eq!(db_coins[&coins[0].outpoint], coins[0]);
+            // Same for the second one
+            assert_eq!(db_coins[&coins[1].outpoint], coins[1]);
+            // The third one got its spend confirmation info wiped, but only that
+            let mut coin = coins[2];
+            coin.spend_block = None;
+            assert_eq!(db_coins[&coins[2].outpoint], coin);
+            // The fourth one got its own confirmation info wiped
+            let mut coin = coins[3];
+            coin.block_height = None;
+            coin.block_time = None;
+            assert_eq!(db_coins[&coins[3].outpoint], coin);
+            // The fourth one got both is own confirmation and spend confirmation info wiped
+            let mut coin = coins[4];
+            coin.block_height = None;
+            coin.block_time = None;
+            coin.spend_block = None;
+            assert_eq!(db_coins[&coins[4].outpoint], coin);
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();

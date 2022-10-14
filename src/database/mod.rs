@@ -88,6 +88,9 @@ pub trait DatabaseConnection {
 
     /// Delete a Spend transaction from database.
     fn delete_spend(&mut self, txid: &bitcoin::Txid);
+
+    /// Mark the given tip as the new best seen block. Update stored data accordingly.
+    fn rollback_tip(&mut self, new_tip: &BlockChainTip);
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -184,9 +187,13 @@ impl DatabaseConnection for SqliteConn {
     fn delete_spend(&mut self, txid: &bitcoin::Txid) {
         self.delete_spend(txid)
     }
+
+    fn rollback_tip(&mut self, new_tip: &BlockChainTip) {
+        self.rollback_tip(new_tip)
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SpendBlock {
     pub height: i32,
     pub time: u32,
@@ -201,7 +208,7 @@ impl From<DbSpendBlock> for SpendBlock {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Coin {
     pub outpoint: bitcoin::OutPoint,
     pub block_height: Option<i32>,

@@ -132,7 +132,7 @@ impl DatabaseConnection for DummyDbConn {
         let mut result = HashMap::new();
         for (k, v) in self.db.read().unwrap().coins.iter() {
             if v.spend_txid.is_some() {
-                result.insert(*k, v.clone());
+                result.insert(*k, *v);
             }
         }
         result
@@ -140,11 +140,7 @@ impl DatabaseConnection for DummyDbConn {
 
     fn new_unspent_coins<'a>(&mut self, coins: &[Coin]) {
         for coin in coins {
-            self.db
-                .write()
-                .unwrap()
-                .coins
-                .insert(coin.outpoint, coin.clone());
+            self.db.write().unwrap().coins.insert(coin.outpoint, *coin);
         }
     }
 
@@ -227,6 +223,10 @@ impl DatabaseConnection for DummyDbConn {
 
     fn delete_spend(&mut self, txid: &bitcoin::Txid) {
         self.db.write().unwrap().spend_txs.remove(txid);
+    }
+
+    fn rollback_tip(&mut self, _: &BlockChainTip) {
+        todo!()
     }
 }
 
