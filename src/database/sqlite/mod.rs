@@ -334,17 +334,19 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
-    /// Mark a set of coins as spent.
+    /// Mark the Spend transaction of a given set of coins as being confirmed at a given
+    /// block.
     pub fn confirm_spend<'a>(
         &mut self,
-        outpoints: impl IntoIterator<Item = &'a (bitcoin::OutPoint, bitcoin::Txid, u32)>,
+        outpoints: impl IntoIterator<Item = &'a (bitcoin::OutPoint, bitcoin::Txid, i32, u32)>,
     ) {
         db_exec(&mut self.conn, |db_tx| {
-            for (outpoint, spend_txid, time) in outpoints {
+            for (outpoint, spend_txid, height, time) in outpoints {
                 db_tx.execute(
-                    "UPDATE coins SET spend_txid = ?1, spend_block_time = ?2 WHERE txid = ?3 AND vout = ?4",
+                    "UPDATE coins SET spend_txid = ?1, spend_block_height = ?2, spend_block_time = ?3 WHERE txid = ?4 AND vout = ?5",
                     rusqlite::params![
                         spend_txid.to_vec(),
+                        height,
                         time,
                         outpoint.txid.to_vec(),
                         outpoint.vout,
@@ -566,7 +568,7 @@ mod tests {
                 amount: bitcoin::Amount::from_sat(98765),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                 spend_txid: None,
-                spend_block_time: None,
+                spend_block: None,
             };
             conn.new_unspent_coins(&[coin_a.clone()]); // On 1.48, arrays aren't IntoIterator
             assert_eq!(conn.unspent_coins()[0].outpoint, coin_a.outpoint);
@@ -587,7 +589,7 @@ mod tests {
                 amount: bitcoin::Amount::from_sat(1111),
                 derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
                 spend_txid: None,
-                spend_block_time: None,
+                spend_block: None,
             };
             conn.new_unspent_coins(&[coin_b.clone()]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
@@ -641,10 +643,13 @@ mod tests {
             assert!(outpoints.contains(&coin_a.outpoint));
 
             // Now if we confirm the spend.
+            let height = 128_097;
+            let time = 3_000_000;
             conn.confirm_spend(&[(
                 coin_a.outpoint,
                 bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
-                3,
+                height,
+                time,
             )]);
             // the coin is not in a spending state.
             let outpoints: HashSet<bitcoin::OutPoint> = conn
@@ -657,6 +662,12 @@ mod tests {
             // Both are still in DB
             let coins = conn.db_coins(&[coin_a.outpoint, coin_b.outpoint]);
             assert_eq!(coins.len(), 2);
+
+            // The confirmed one contains the right time and block height
+            let coin = conn.db_coins(&[coin_a.outpoint]).pop().unwrap();
+            assert!(coin.spend_block.is_some());
+            assert_eq!(coin.spend_block.as_ref().unwrap().time, time);
+            assert_eq!(coin.spend_block.unwrap().height, height);
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();

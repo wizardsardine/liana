@@ -1,7 +1,7 @@
 use crate::{
     bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
-    database::{Coin, DatabaseConnection, DatabaseInterface},
+    database::{Coin, DatabaseConnection, DatabaseInterface, SpendBlock},
     DaemonHandle,
 };
 
@@ -59,7 +59,7 @@ impl BitcoinInterface for DummyBitcoind {
     fn spent_coins(
         &self,
         _: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)> {
         Vec::new()
     }
 
@@ -164,19 +164,22 @@ impl DatabaseConnection for DummyDbConn {
             let mut db = self.db.write().unwrap();
             let spent = &mut db.coins.get_mut(op).unwrap();
             assert!(spent.spend_txid.is_none());
-            assert!(spent.spend_block_time.is_none());
+            assert!(spent.spend_block.is_none());
             spent.spend_txid = Some(*spend_txid);
         }
     }
 
-    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]) {
-        for (op, spend_txid, time) in outpoints {
+    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, i32, u32)]) {
+        for (op, spend_txid, height, time) in outpoints {
             let mut db = self.db.write().unwrap();
             let spent = &mut db.coins.get_mut(op).unwrap();
             assert!(spent.spend_txid.is_some());
-            assert!(spent.spend_block_time.is_none());
+            assert!(spent.spend_block.is_none());
             spent.spend_txid = Some(*spend_txid);
-            spent.spend_block_time = Some(*time);
+            spent.spend_block = Some(SpendBlock {
+                height: *height,
+                time: *time,
+            });
         }
     }
 

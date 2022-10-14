@@ -6,7 +6,7 @@ pub mod sqlite;
 use crate::{
     bitcoin::BlockChainTip,
     database::sqlite::{
-        schema::{DbCoin, DbTip},
+        schema::{DbCoin, DbSpendBlock, DbTip},
         SqliteConn, SqliteDb,
     },
 };
@@ -70,7 +70,7 @@ pub trait DatabaseConnection {
     fn spend_coins(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]);
 
     /// Mark a set of coins as spent by a specified txid at a specified block time.
-    fn confirm_spend(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]);
+    fn confirm_spend(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, i32, u32)]);
 
     /// Get specific coins from the database.
     fn coins_by_outpoints(
@@ -144,7 +144,7 @@ impl DatabaseConnection for SqliteConn {
         self.spend_coins(outpoints)
     }
 
-    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]) {
+    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, i32, u32)]) {
         self.confirm_spend(outpoints)
     }
 
@@ -187,6 +187,21 @@ impl DatabaseConnection for SqliteConn {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SpendBlock {
+    pub height: i32,
+    pub time: u32,
+}
+
+impl From<DbSpendBlock> for SpendBlock {
+    fn from(b: DbSpendBlock) -> SpendBlock {
+        SpendBlock {
+            height: b.height,
+            time: b.time,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Coin {
     pub outpoint: bitcoin::OutPoint,
     pub block_height: Option<i32>,
@@ -194,7 +209,7 @@ pub struct Coin {
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub spend_txid: Option<bitcoin::Txid>,
-    pub spend_block_time: Option<u32>,
+    pub spend_block: Option<SpendBlock>,
 }
 
 impl std::convert::From<DbCoin> for Coin {
@@ -206,7 +221,7 @@ impl std::convert::From<DbCoin> for Coin {
             amount,
             derivation_index,
             spend_txid,
-            spend_block_time,
+            spend_block,
             ..
         } = db_coin;
         Coin {
@@ -216,7 +231,7 @@ impl std::convert::From<DbCoin> for Coin {
             amount,
             derivation_index,
             spend_txid,
-            spend_block_time,
+            spend_block: spend_block.map(SpendBlock::from),
         }
     }
 }

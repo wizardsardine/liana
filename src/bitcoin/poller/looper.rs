@@ -15,7 +15,7 @@ struct UpdatedCoins {
     pub received: Vec<Coin>,
     pub confirmed: Vec<(bitcoin::OutPoint, i32, u32)>,
     pub spending: Vec<(bitcoin::OutPoint, bitcoin::Txid)>,
-    pub spent: Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)>,
+    pub spent: Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)>,
 }
 
 // Update the state of our coins. There may be new unspent, and existing ones may become confirmed
@@ -43,7 +43,7 @@ fn update_coins(
                     block_height: None,
                     block_time: None,
                     spend_txid: None,
-                    spend_block_time: None,
+                    spend_block: None,
                 };
                 received.push(coin);
             }

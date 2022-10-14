@@ -51,7 +51,7 @@ pub trait BitcoinInterface: Send {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)>;
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)>;
 
     /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
     fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip;
@@ -155,7 +155,7 @@ impl BitcoinInterface for d::BitcoinD {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)> {
         let mut spent = Vec::with_capacity(outpoints.len());
 
         let mut cache: HashMap<bitcoin::Txid, Option<d::GetTxRes>> = HashMap::new();
@@ -174,10 +174,15 @@ impl BitcoinInterface for d::BitcoinD {
             let mut txs_to_cache: Vec<(bitcoin::Txid, Option<d::GetTxRes>)> = Vec::new();
 
             if let Some(tx) = tx {
-                if let Some(block_time) = tx.block_time {
+                if let Some(block_height) = tx.block_height {
                     // TODO: make both block time and height under the same Option.
                     assert!(tx.block_height.is_some());
-                    spent.push((*op, *txid, block_time))
+                    spent.push((
+                        *op,
+                        *txid,
+                        block_height,
+                        tx.block_time.expect("Confirmed tx."),
+                    ));
                 } else if !tx.conflicting_txs.is_empty() {
                     for txid in &tx.conflicting_txs {
                         let tx: Option<&d::GetTxRes> = match cache.get(txid) {
@@ -190,13 +195,12 @@ impl BitcoinInterface for d::BitcoinD {
                         };
                         if let Some(tx) = tx {
                             if let Some(block_height) = tx.block_height {
-                                if block_height > 1 {
-                                    spent.push((
-                                        *op,
-                                        *txid,
-                                        tx.block_time.expect("Spend is confirmed"),
-                                    ))
-                                }
+                                spent.push((
+                                    *op,
+                                    *txid,
+                                    block_height,
+                                    tx.block_time.expect("Spend is confirmed"),
+                                ))
                             }
                         }
                     }
@@ -266,7 +270,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)> {
         self.lock().unwrap().spent_coins(outpoints)
     }
 
