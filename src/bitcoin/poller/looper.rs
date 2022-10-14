@@ -27,8 +27,10 @@ fn update_coins(
     db_conn: &mut Box<dyn DatabaseConnection>,
     previous_tip: &BlockChainTip,
 ) -> UpdatedCoins {
-    // Start by fetching newly received coins.
     let curr_coins = db_conn.coins();
+    log::debug!("Current coins: {:?}", curr_coins);
+
+    // Start by fetching newly received coins.
     let mut received = Vec::new();
     for utxo in bit.received_coins(previous_tip) {
         if let Some(derivation_index) = db_conn.derivation_index_by_address(&utxo.address) {
@@ -55,6 +57,7 @@ fn update_coins(
             );
         }
     }
+    log::debug!("Newly received coins: {:?}", received);
 
     // We need to take the newly received ones into account as well, as they may have been
     // confirmed within the previous tip and the current one, and we may not poll this chunk of the
@@ -71,6 +74,7 @@ fn update_coins(
         })
         .collect();
     let confirmed = bit.confirmed_coins(&to_be_confirmed);
+    log::debug!("Newly confirmed coins: {:?}", confirmed);
 
     // We need to take the newly received ones into account as well, as they may have been
     // spent within the previous tip and the current one, and we may not poll this chunk of the
@@ -87,6 +91,7 @@ fn update_coins(
         })
         .collect();
     let spending = bit.spending_coins(&to_be_spent);
+    log::debug!("Newly spending coins: {:?}", spending);
 
     // Mark coins in a spending state whose Spend transaction was confirmed as such. Note we
     // need to take into account the freshly marked as spending coins as well, as their spend
@@ -99,6 +104,7 @@ fn update_coins(
         .chain(spending.iter().cloned())
         .collect();
     let spent = bit.spent_coins(spending_coins.as_slice());
+    log::debug!("Newly spent coins: {:?}", spent);
 
     UpdatedCoins {
         received,
@@ -108,25 +114,44 @@ fn update_coins(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum TipUpdate {
+    // The best block is still the same as in the previous poll.
+    Same,
+    // There is a new best block that extends the same chain.
+    Progress(BlockChainTip),
+    // There is a new best block that extends a chain which does not contain our former tip.
+    Reorged(BlockChainTip),
+}
+
 // Returns the new block chain tip, if it changed.
-fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> Option<BlockChainTip> {
+fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdate {
     let bitcoin_tip = bit.chain_tip();
 
     // If the tip didn't change, there is nothing to update.
     if current_tip == &bitcoin_tip {
-        return None;
+        return TipUpdate::Same;
     }
 
     if bitcoin_tip.height > current_tip.height {
         // Make sure we are on the same chain.
         if bit.is_in_chain(current_tip) {
             // All good, we just moved forward.
-            return Some(bitcoin_tip);
+            return TipUpdate::Progress(bitcoin_tip);
         }
     }
 
-    // TODO: reorg handling.
-    None
+    // Either the new height is lower or the same but the block hash differs. There was a
+    // block chain re-organisation. Find the common ancestor between our current chain and
+    // the new chain and return that. The caller will take care of rewinding our state.
+    log::info!("Block chain reorganization detected. Looking for common ancestor.");
+    let common_ancestor = bit.common_ancestor(current_tip);
+    log::info!(
+        "Common ancestor found: '{}'. Starting rescan from there. Old tip was '{}'.",
+        common_ancestor,
+        current_tip
+    );
+    TipUpdate::Reorged(common_ancestor)
 }
 
 fn updates(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
@@ -134,8 +159,17 @@ fn updates(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
 
     // Check if there was a new block before updating ourselves.
     let current_tip = db_conn.chain_tip().expect("Always set at first startup");
-    let new_tip = new_tip(bit, &current_tip);
-    let latest_tip = new_tip.unwrap_or(current_tip);
+    let latest_tip = match new_tip(bit, &current_tip) {
+        TipUpdate::Same => current_tip,
+        TipUpdate::Progress(new_tip) => new_tip,
+        TipUpdate::Reorged(new_tip) => {
+            // The block chain was reorganized. Rollback our state down to the common ancestor
+            // between our former chain and the new one, then restart fresh.
+            db_conn.rollback_tip(&new_tip);
+            log::info!("Tip was rolled back to '{}'.", new_tip);
+            return updates(bit, db);
+        }
+    };
 
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
     // we may have unconfirmed transactions.
@@ -154,9 +188,12 @@ fn updates(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
     db_conn.confirm_coins(&updated_coins.confirmed);
     db_conn.spend_coins(&updated_coins.spending);
     db_conn.confirm_spend(&updated_coins.spent);
-    if let Some(tip) = new_tip {
-        db_conn.update_tip(&tip);
+    if latest_tip != current_tip {
+        db_conn.update_tip(&latest_tip);
+        log::debug!("New tip: '{}'", latest_tip);
     }
+
+    log::debug!("Updates done.");
 }
 
 // If the database chain tip is NULL (first startup), initialize it.

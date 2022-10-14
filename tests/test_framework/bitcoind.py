@@ -126,6 +126,12 @@ class Bitcoind(TailableProc):
         for _ in range(n):
             self.rpc.generateblock(addr, [])
 
+    def invalidate_remine(self, height):
+        delta = self.rpc.getblockcount() - height + 1
+        h = self.rpc.getblockhash(height)
+        self.rpc.invalidateblock(h)
+        self.generate_empty_blocks(delta)
+
     def simple_reorg(self, height, shift=0):
         """
         Reorganize chain by creating a fork at height={height} and:

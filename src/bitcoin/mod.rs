@@ -6,8 +6,7 @@ pub mod poller;
 
 use d::LSBlockEntry;
 
-use std::collections::HashMap;
-use std::sync;
+use std::{collections::HashMap, fmt, sync};
 
 use miniscript::bitcoin;
 
@@ -16,6 +15,12 @@ use miniscript::bitcoin;
 pub struct BlockChainTip {
     pub hash: bitcoin::BlockHash,
     pub height: i32,
+}
+
+impl fmt::Display for BlockChainTip {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({},{})", self.height, self.hash)
+    }
 }
 
 /// Our Bitcoin backend.
