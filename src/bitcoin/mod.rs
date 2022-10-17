@@ -9,7 +9,7 @@ use d::LSBlockEntry;
 use std::collections::HashMap;
 use std::sync;
 
-use miniscript::bitcoin::{self, hashes::Hash};
+use miniscript::bitcoin;
 
 /// Information about the best block in the chain
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
@@ -139,10 +139,10 @@ impl BitcoinInterface for d::BitcoinD {
                 } else {
                     // TODO: better handling of this edge case.
                     log::error!(
-                        "Could not get spender of '{}'. Using a dummy spending txid.",
+                        "Could not get spender of '{}'. Not reporting it as spending.",
                         op
                     );
-                    bitcoin::Txid::from_slice(&[0; 32][..]).unwrap()
+                    continue;
                 };
 
                 spent.push((*op, spending_txid));
