@@ -8,6 +8,9 @@ import subprocess
 import threading
 import time
 
+from io import BytesIO
+from .serializations import CTransaction, PSBT
+
 TIMEOUT = int(os.getenv("TIMEOUT", 20))
 EXECUTOR_WORKERS = int(os.getenv("EXECUTOR_WORKERS", 20))
 VERBOSE = os.getenv("VERBOSE", "0") == "1"
@@ -41,6 +44,35 @@ def wait_for(success, timeout=TIMEOUT, debug_fn=None):
             interval = 5
     if time.time() > start_time + timeout:
         raise ValueError("Error waiting for {}", success)
+
+
+def get_txid(hex_tx):
+    """Get the txid (as hex) of the given (as hex) transaction."""
+    tx = CTransaction()
+    tx.deserialize(BytesIO(bytes.fromhex(hex_tx)))
+    return tx.txid().hex()
+
+
+def spend_coins(minisafed, bitcoind, coins):
+    """Spend these coins, no matter how.
+    This will create a single transaction spending them all at once at the minimum
+    feerate. This will broadcast but not confirm the transaction.
+
+    :param coins: a list of dict as returned by listcoins. The coins must all exist.
+    :returns: the broadcasted transaction, as hex.
+    """
+    total_value = sum(c["amount"] for c in coins)
+    destinations = {
+        bitcoind.rpc.getnewaddress(): total_value - 11 - 31 - 300 * len(coins)
+    }
+    res = minisafed.rpc.createspend([c["outpoint"] for c in coins], destinations, 1)
+
+    psbt = PSBT()
+    psbt.deserialize(res["psbt"])
+    tx = minisafed.sign_psbt(psbt)
+    bitcoind.rpc.sendrawtransaction(tx)
+
+    return tx
 
 
 class RpcError(ValueError):

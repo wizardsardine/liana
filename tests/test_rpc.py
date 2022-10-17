@@ -1,6 +1,6 @@
 from fixtures import *
 from test_framework.serializations import PSBT
-from test_framework.utils import wait_for, COIN
+from test_framework.utils import wait_for, COIN, get_txid, spend_coins
 
 
 def test_getinfo(minisafed):
@@ -34,6 +34,7 @@ def test_listcoins(minisafed, bitcoind):
     assert txid == res[0]["outpoint"][:64]
     assert res[0]["amount"] == 1 * COIN
     assert res[0]["block_height"] is None
+    assert res[0]["spend_info"] is None
 
     # If the coin gets confirmed, it'll be marked as such.
     bitcoind.generate_block(1, wait_for_mempool=txid)
@@ -41,6 +42,22 @@ def test_listcoins(minisafed, bitcoind):
     wait_for(
         lambda: minisafed.rpc.listcoins()["coins"][0]["block_height"] == block_height
     )
+
+    # Same if the coin gets spent.
+    spend_tx = spend_coins(minisafed, bitcoind, (res[0],))
+    spend_txid = get_txid(spend_tx)
+    wait_for(lambda: minisafed.rpc.listcoins()["coins"][0]["spend_info"] is not None)
+    spend_info = minisafed.rpc.listcoins()["coins"][0]["spend_info"]
+    assert spend_info["txid"] == spend_txid
+    assert spend_info["height"] is None
+
+    # And if this spending tx gets confirmed.
+    bitcoind.generate_block(1, wait_for_mempool=spend_txid)
+    curr_height = bitcoind.rpc.getblockcount()
+    wait_for(lambda: minisafed.rpc.getinfo()["blockheight"] == curr_height)
+    spend_info = minisafed.rpc.listcoins()["coins"][0]["spend_info"]
+    assert spend_info["txid"] == spend_txid
+    assert spend_info["height"] == curr_height
 
 
 def test_jsonrpc_server(minisafed, bitcoind):

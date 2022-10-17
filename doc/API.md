@@ -81,11 +81,20 @@ This command does not take any parameter for now.
 
 #### Response
 
-| Field          | Type          | Description                                                      |
-| -------------- | ------------- | ---------------------------------------------------------------- |
-| `amount`       | int           | Value of the TxO in satoshis                                     |
-| `outpoint`     | string        | Transaction id and output index of this coin                     |
-| `block_height` | int or null   | Blockheight the transaction was confirmed at, or `null`          |
+| Field          | Type          | Description                                                                                                        |
+| -------------- | ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `amount`       | int           | Value of the TxO in satoshis.                                                                                      |
+| `outpoint`     | string        | Transaction id and output index of this coin.                                                                      |
+| `block_height` | int or null   | Blockheight the transaction was confirmed at, or `null`.                                                           |
+| `spend_info`   | object        | Information about the transaction spending this coin. See [Spending transaction info](#spending_transaction_info). |
+
+
+##### Spending transaction info
+
+| Field      | Type        | Description                                                    |
+| ---------- | ----------- | -------------------------------------------------------------- |
+| `txid`     | str         | Spending transaction's id.                                     |
+| `height`   | int or null | Block height the spending tx was included at, if confirmed.    |
 
 
 ### `createspend`

@@ -169,10 +169,7 @@ impl DaemonControl {
     pub fn get_info(&self) -> GetInfoResult {
         let mut db_conn = self.db.connection();
 
-        let blockheight = db_conn
-            .chain_tip()
-            .map(|tip| tip.height)
-            .unwrap_or(0);
+        let blockheight = db_conn.chain_tip().map(|tip| tip.height).unwrap_or(0);
         GetInfoResult {
             version: VERSION.to_string(),
             network: self.config.bitcoin_config.network,
@@ -211,12 +208,19 @@ impl DaemonControl {
                     amount,
                     outpoint,
                     block_height,
+                    spend_txid,
+                    spend_block,
                     ..
                 } = coin;
+                let spend_info = spend_txid.map(|txid| LCSpendInfo {
+                    txid,
+                    height: spend_block.map(|b| b.height),
+                });
                 ListCoinsEntry {
                     amount,
                     outpoint,
                     block_height,
+                    spend_info,
                 }
             })
             .collect();
@@ -464,7 +468,14 @@ pub struct GetAddressResult {
     pub address: bitcoin::Address,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct LCSpendInfo {
+    pub txid: bitcoin::Txid,
+    /// The block height this spending transaction was confirmed at.
+    pub height: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ListCoinsEntry {
     #[serde(
         serialize_with = "ser_amount",
@@ -473,6 +484,8 @@ pub struct ListCoinsEntry {
     pub amount: bitcoin::Amount,
     pub outpoint: bitcoin::OutPoint,
     pub block_height: Option<i32>,
+    /// Information about the transaction spending this coin.
+    pub spend_info: Option<LCSpendInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
