@@ -57,15 +57,14 @@ class Minisafed(TailableProc):
 
     def sign_psbt(self, psbt):
         """Sign a transaction using the owner's key.
-        This creates a valid witness for all inputs in the transaction using the
-        information contained in the PSBT.
+        This will fill the 'partial_sigs' field of all inputs.
 
         :param psbt: PSBT of the transaction to be signed.
-        :returns: the serialized valid transaction, as hex.
+        :returns: PSBT with a signature in each input for the owner's key.
         """
         assert isinstance(psbt, PSBT)
 
-        # Create a witness for each input of the transaction.
+        # Sign each input.
         for i, psbt_in in enumerate(psbt.inputs):
             # First, gather the needed information from the PSBT input.
             # 'hd_keypaths' is of the form {pubkey: (fingerprint, derivation index)}
@@ -82,13 +81,31 @@ class Minisafed(TailableProc):
             assert pubkey in psbt_in.hd_keypaths.keys()
             sig = privkey.sign(sighash, hasher=None) + b"\x01"
             logging.debug(f"Adding signature {sig.hex()} for pubkey {pubkey.hex()}")
+            psbt_in.partial_sigs[pubkey] = sig
+
+        return psbt
+
+    def finalize_psbt(self, psbt):
+        """Create a valid witness for all inputs in the PSBT.
+        This will fail if the PSBT input does not contain enough material.
+
+        :param psbt: PSBT of the transaction to be finalized.
+        :returns: PSBT with finalized inputs.
+        """
+        assert isinstance(psbt, PSBT)
+
+        # Create a witness for each input of the transaction.
+        for i, psbt_in in enumerate(psbt.inputs):
+            # First, gather the needed information from the PSBT input.
+            # 'hd_keypaths' is of the form {pubkey: (fingerprint, derivation index)}
+            der_index = next(iter(psbt_in.hd_keypaths.values()))[1]
 
             # Create a copy of the descriptor to derive it at the index used in this input.
             # Then create a satisfaction for it using the signature we just created.
             desc = Descriptor.from_str(str(self.main_desc))
             desc.derive(der_index)
             sat_material = SatisfactionMaterial(
-                signatures={pubkey: sig},
+                signatures=psbt_in.partial_sigs,
             )
             stack = desc.satisfy(sat_material)
             logging.debug(f"Satisfaction for {desc} is {[e.hex() for e in stack]}")
@@ -98,9 +115,7 @@ class Minisafed(TailableProc):
             psbt_in.final_script_witness = CTxInWitness(CScriptWitness(stack))
             psbt.tx.wit.vtxinwit.append(psbt_in.final_script_witness)
 
-        tx = psbt.tx.serialize_with_witness().hex()
-        logging.debug(f"Final transaction: {tx}")
-        return tx
+        return psbt
 
     def start(self):
         TailableProc.start(self)

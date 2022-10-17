@@ -69,7 +69,9 @@ def spend_coins(minisafed, bitcoind, coins):
 
     psbt = PSBT()
     psbt.deserialize(res["psbt"])
-    tx = minisafed.sign_psbt(psbt)
+    signed_psbt = minisafed.sign_psbt(psbt)
+    finalized_psbt = minisafed.finalize_psbt(signed_psbt)
+    tx = finalized_psbt.tx.serialize_with_witness().hex()
     bitcoind.rpc.sendrawtransaction(tx)
 
     return tx
@@ -184,6 +186,7 @@ class UnixDomainSocketRpc(object):
         We might still want to define the actual methods in the subclasses for
         documentation purposes.
         """
+
         def wrapper(*args, **kwargs):
             if len(args) != 0 and len(kwargs) != 0:
                 raise RpcError(

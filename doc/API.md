@@ -12,6 +12,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                          |
 | [`listspendtxs`](#listspendtxs)                             | List all stored Spend transactions                   |
 | [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                    |
+| [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it       |
 
 # Reference
 
@@ -175,6 +176,22 @@ This command does not take any parameter for now.
 | Field    | Type   | Description                                         |
 | -------- | ------ | --------------------------------------------------- |
 | `txid`   | string | Hex encoded txid of the Spend transaction to delete |
+
+#### Response
+
+This command does not return anything for now.
+
+| Field          | Type      | Description                                          |
+| -------------- | --------- | ---------------------------------------------------- |
+
+
+### `broadcastspend`
+
+#### Request
+
+| Field    | Type   | Description                                            |
+| -------- | ------ | ------------------------------------------------------ |
+| `txid`   | string | Hex encoded txid of the Spend transaction to broadcast |
 
 #### Response
 

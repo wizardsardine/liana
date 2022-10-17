@@ -1,6 +1,8 @@
+import pytest
+
 from fixtures import *
 from test_framework.serializations import PSBT
-from test_framework.utils import wait_for, COIN, get_txid, spend_coins
+from test_framework.utils import wait_for, COIN, RpcError, get_txid, spend_coins
 
 
 def test_getinfo(minisafed):
@@ -108,8 +110,10 @@ def test_create_spend(minisafed, bitcoind):
     assert len(spend_psbt.tx.vout) == 4
 
     # We can sign it and broadcast it.
-    signed_tx_hex = minisafed.sign_psbt(spend_psbt)
-    bitcoind.rpc.sendrawtransaction(signed_tx_hex)
+    signed_psbt = minisafed.sign_psbt(spend_psbt)
+    finalized_psbt = minisafed.finalize_psbt(signed_psbt)
+    tx = finalized_psbt.tx.serialize_with_witness().hex()
+    bitcoind.rpc.sendrawtransaction(tx)
 
 
 def test_list_spend(minisafed, bitcoind):
@@ -229,3 +233,33 @@ def test_update_spend(minisafed, bitcoind):
     assert len(psbt_merged.inputs[0].partial_sigs) == 2
     assert psbt_merged.inputs[0].partial_sigs[dummy_pk_a] == dummy_sig_a
     assert psbt_merged.inputs[0].partial_sigs[dummy_pk_b] == dummy_sig_b
+
+
+def test_broadcast_spend(minisafed, bitcoind):
+    # Create a new coin and a spending tx for it.
+    addr = minisafed.rpc.getnewaddress()["address"]
+    bitcoind.rpc.sendtoaddress(addr, 0.2567)
+    wait_for(lambda: len(minisafed.rpc.listcoins()["coins"]) > 0)
+    outpoints = [c["outpoint"] for c in minisafed.rpc.listcoins()["coins"]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 200_000,
+    }
+    res = minisafed.rpc.createspend(outpoints, destinations, 6)
+    psbt = PSBT()
+    psbt.deserialize(res["psbt"])
+    txid = psbt.tx.txid().hex()
+
+    # We can't broadcast an unknown Spend
+    with pytest.raises(RpcError, match="Unknown spend transaction.*"):
+        minisafed.rpc.broadcastspend(txid)
+    minisafed.rpc.updatespend(res["psbt"])
+
+    # We can't broadcast an unsigned transaction
+    with pytest.raises(RpcError, match="Failed to finalize the spend transaction.*"):
+        minisafed.rpc.broadcastspend(txid)
+    signed_psbt = minisafed.sign_psbt(psbt)
+    minisafed.rpc.updatespend(signed_psbt.serialize())
+
+    # Now we've signed and stored it, the daemon will take care of finalizing
+    # the PSBT before broadcasting the transaction.
+    minisafed.rpc.broadcastspend(txid)
