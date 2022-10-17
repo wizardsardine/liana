@@ -167,10 +167,16 @@ impl DaemonControl {
 impl DaemonControl {
     /// Get information about the current state of the daemon
     pub fn get_info(&self) -> GetInfoResult {
+        let mut db_conn = self.db.connection();
+
+        let blockheight = db_conn
+            .chain_tip()
+            .map(|tip| tip.height)
+            .unwrap_or(0);
         GetInfoResult {
             version: VERSION.to_string(),
             network: self.config.bitcoin_config.network,
-            blockheight: self.bitcoin.chain_tip().height,
+            blockheight,
             sync: self.bitcoin.sync_progress(),
             descriptors: GetInfoDescriptors {
                 main: self.config.main_descriptor.clone(),

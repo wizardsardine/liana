@@ -45,7 +45,7 @@ This command does not take any parameter for now.
 | -------------------- | ------- | -------------------------------------------------------------------------------------------- |
 | `version`            | string  | Version following the [SimVer](http://www.simver.org/) format                                |
 | `network`            | string  | Answer can be `mainnet`, `testnet`, `regtest`                                                |
-| `blockheight`        | integer | Current block height                                                                         |
+| `blockheight`        | integer | The block height we are synced at.                                                           |
 | `sync`               | float   | The synchronization progress as percentage (`0 < sync < 1`)                                  |
 | `descriptors`        | object  | Object with the name of the descriptor as key and the descriptor string as value             |
 
