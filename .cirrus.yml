@@ -16,6 +16,9 @@ task:
     - name: 'RPC functional tests'
       env:
         TEST_GROUP: tests/test_rpc.py
+    - name: 'Chain functional tests'
+      env:
+        TEST_GROUP: tests/test_chain.py
 
   cargo_registry_cache:
     folders: $CARGO_HOME/registry

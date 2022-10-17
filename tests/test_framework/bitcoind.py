@@ -137,7 +137,6 @@ class Bitcoind(TailableProc):
         Reorganize chain by creating a fork at height={height} and:
             - If shift >=0:
                 - re-mine all mempool transactions into {height} + shift
-                  (with shift floored at 1)
             - Else:
                 - don't re-mine the mempool transactions
 
