@@ -679,6 +679,14 @@ impl BitcoinD {
             blockhash,
         }
     }
+
+    pub fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoindError> {
+        self.make_fallible_node_request(
+            "sendrawtransaction",
+            &params!(bitcoin::consensus::encode::serialize_hex(tx)),
+        )?;
+        Ok(())
+    }
 }
 // Bitcoind uses a guess for the value of verificationprogress. It will eventually get to
 // be 1, and we want to be less conservative.
