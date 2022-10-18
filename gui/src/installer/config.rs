@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use bitcoin::Network;
 use minisafe::{
     config::{BitcoinConfig, BitcoindConfig, Config as MinisafeConfig},
-    miniscript::{Descriptor, DescriptorPublicKey},
+    descriptors::InheritanceDescriptor,
 };
 
 use serde::Serialize;
@@ -14,7 +14,7 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 #[derive(Debug, Clone, Serialize)]
 pub struct Config {
     #[serde(serialize_with = "serialize_option_to_string")]
-    pub main_descriptor: Option<Descriptor<DescriptorPublicKey>>,
+    pub main_descriptor: Option<InheritanceDescriptor>,
     pub bitcoin_config: BitcoinConfig,
     /// Everything we need to know to talk to bitcoind
     pub bitcoind_config: BitcoindConfig,
