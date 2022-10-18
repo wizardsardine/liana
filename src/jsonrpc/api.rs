@@ -54,7 +54,7 @@ fn update_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
         .as_str()
         .and_then(|s| base64::decode(&s).ok())
         .and_then(|bytes| consensus::deserialize(&bytes).ok())
-        .ok_or_else(|| Error::invalid_params("Invalid 'feerate' parameter."))?;
+        .ok_or_else(|| Error::invalid_params("Invalid 'psbt' parameter."))?;
     control.update_spend(psbt)?;
 
     Ok(serde_json::json!({}))
@@ -66,7 +66,7 @@ fn delete_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
         .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?
         .as_str()
         .and_then(|s| bitcoin::Txid::from_str(s).ok())
-        .ok_or_else(|| Error::invalid_params("Invalid 'feerate' parameter."))?;
+        .ok_or_else(|| Error::invalid_params("Invalid 'txid' parameter."))?;
     control.delete_spend(&txid);
 
     Ok(serde_json::json!({}))

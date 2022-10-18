@@ -30,7 +30,11 @@ CREATE TABLE wallets (
     deposit_derivation_index INTEGER NOT NULL
 );
 
-/* Our (U)TxOs. */
+/* Our (U)TxOs.
+ *
+ * The 'spend_block_height' and 'spend_block.time' are only present if the spending
+ * transaction for this coin exists and was confirmed.
+ */
 CREATE TABLE coins (
     id INTEGER PRIMARY KEY NOT NULL,
     wallet_id INTEGER NOT NULL,
@@ -41,8 +45,8 @@ CREATE TABLE coins (
     amount_sat INTEGER NOT NULL,
     derivation_index INTEGER NOT NULL,
     spend_txid BLOB,
-    /* Time of the block containing the transaction spending the coin, NULL if not confirmed */
-    spent_at INTEGER,
+    spend_block_height INTEGER,
+    spend_block_time INTEGER,
     UNIQUE (txid, vout),
     FOREIGN KEY (wallet_id) REFERENCES wallets (id)
         ON UPDATE RESTRICT
@@ -126,7 +130,13 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DbSpendBlock {
+    pub height: i32,
+    pub time: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DbCoin {
     pub id: i64,
     pub wallet_id: i64,
@@ -136,7 +146,7 @@ pub struct DbCoin {
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub spend_txid: Option<bitcoin::Txid>,
-    pub spent_at: Option<u32>,
+    pub spend_block: Option<DbSpendBlock>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
@@ -161,7 +171,13 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         let spend_txid: Option<Vec<u8>> = row.get(8)?;
         let spend_txid =
             spend_txid.map(|txid| encode::deserialize(&txid).expect("We only store valid txids"));
-        let spent_at = row.get(9)?;
+        let spend_height: Option<i32> = row.get(9)?;
+        let spend_time: Option<u32> = row.get(10)?;
+        assert_eq!(spend_height.is_none(), spend_time.is_none());
+        let spend_block = spend_height.map(|height| DbSpendBlock {
+            height,
+            time: spend_time.expect("Must be there if height is"),
+        });
 
         Ok(DbCoin {
             id,
@@ -172,7 +188,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             amount,
             derivation_index,
             spend_txid,
-            spent_at,
+            spend_block,
         })
     }
 }

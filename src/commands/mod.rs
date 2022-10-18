@@ -167,10 +167,13 @@ impl DaemonControl {
 impl DaemonControl {
     /// Get information about the current state of the daemon
     pub fn get_info(&self) -> GetInfoResult {
+        let mut db_conn = self.db.connection();
+
+        let blockheight = db_conn.chain_tip().map(|tip| tip.height).unwrap_or(0);
         GetInfoResult {
             version: VERSION.to_string(),
             network: self.config.bitcoin_config.network,
-            blockheight: self.bitcoin.chain_tip().height,
+            blockheight,
             sync: self.bitcoin.sync_progress(),
             descriptors: GetInfoDescriptors {
                 main: self.config.main_descriptor.clone(),
@@ -193,11 +196,11 @@ impl DaemonControl {
         GetAddressResult { address }
     }
 
-    /// Get a list of all currently unspent coins.
+    /// Get a list of all known coins.
     pub fn list_coins(&self) -> ListCoinsResult {
         let mut db_conn = self.db.connection();
         let coins: Vec<ListCoinsEntry> = db_conn
-            .unspent_coins()
+            .coins()
             // Can't use into_values as of Rust 1.48
             .into_iter()
             .map(|(_, coin)| {
@@ -205,12 +208,19 @@ impl DaemonControl {
                     amount,
                     outpoint,
                     block_height,
+                    spend_txid,
+                    spend_block,
                     ..
                 } = coin;
+                let spend_info = spend_txid.map(|txid| LCSpendInfo {
+                    txid,
+                    height: spend_block.map(|b| b.height),
+                });
                 ListCoinsEntry {
                     amount,
                     outpoint,
                     block_height,
+                    spend_info,
                 }
             })
             .collect();
@@ -458,7 +468,14 @@ pub struct GetAddressResult {
     pub address: bitcoin::Address,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct LCSpendInfo {
+    pub txid: bitcoin::Txid,
+    /// The block height this spending transaction was confirmed at.
+    pub height: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ListCoinsEntry {
     #[serde(
         serialize_with = "ser_amount",
@@ -467,6 +484,8 @@ pub struct ListCoinsEntry {
     pub amount: bitcoin::Amount,
     pub outpoint: bitcoin::OutPoint,
     pub block_height: Option<i32>,
+    /// Information about the transaction spending this coin.
+    pub spend_info: Option<LCSpendInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -572,7 +591,7 @@ mod tests {
             amount: bitcoin::Amount::from_sat(100_000),
             derivation_index: bip32::ChildNumber::from(13),
             spend_txid: None,
-            spent_at: None,
+            spend_block: None,
         }]);
         let res = control.create_spend(&[dummy_op], &destinations, 1).unwrap();
         let tx = res.psbt.global.unsigned_tx;
@@ -666,7 +685,7 @@ mod tests {
                 amount: bitcoin::Amount::from_sat(100_000),
                 derivation_index: bip32::ChildNumber::from(13),
                 spend_txid: None,
-                spent_at: None,
+                spend_block: None,
             },
             Coin {
                 outpoint: dummy_op_b,
@@ -675,7 +694,7 @@ mod tests {
                 amount: bitcoin::Amount::from_sat(115_680),
                 derivation_index: bip32::ChildNumber::from(34),
                 spend_txid: None,
-                spent_at: None,
+                spend_block: None,
             },
         ]);
 

@@ -6,16 +6,21 @@ pub mod poller;
 
 use d::LSBlockEntry;
 
-use std::collections::HashMap;
-use std::sync;
+use std::{collections::HashMap, fmt, sync};
 
-use miniscript::bitcoin::{self, hashes::Hash};
+use miniscript::bitcoin;
 
 /// Information about the best block in the chain
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub struct BlockChainTip {
     pub hash: bitcoin::BlockHash,
     pub height: i32,
+}
+
+impl fmt::Display for BlockChainTip {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({},{})", self.height, self.hash)
+    }
 }
 
 /// Our Bitcoin backend.
@@ -51,7 +56,10 @@ pub trait BitcoinInterface: Send {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)>;
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)>;
+
+    /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
+    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -136,10 +144,10 @@ impl BitcoinInterface for d::BitcoinD {
                 } else {
                     // TODO: better handling of this edge case.
                     log::error!(
-                        "Could not get spender of '{}'. Using a dummy spending txid.",
+                        "Could not get spender of '{}'. Not reporting it as spending.",
                         op
                     );
-                    bitcoin::Txid::from_slice(&[0; 32][..]).unwrap()
+                    continue;
                 };
 
                 spent.push((*op, spending_txid));
@@ -152,7 +160,7 @@ impl BitcoinInterface for d::BitcoinD {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)> {
         let mut spent = Vec::with_capacity(outpoints.len());
 
         let mut cache: HashMap<bitcoin::Txid, Option<d::GetTxRes>> = HashMap::new();
@@ -171,10 +179,15 @@ impl BitcoinInterface for d::BitcoinD {
             let mut txs_to_cache: Vec<(bitcoin::Txid, Option<d::GetTxRes>)> = Vec::new();
 
             if let Some(tx) = tx {
-                if let Some(block_time) = tx.block_time {
+                if let Some(block_height) = tx.block_height {
                     // TODO: make both block time and height under the same Option.
                     assert!(tx.block_height.is_some());
-                    spent.push((*op, *txid, block_time))
+                    spent.push((
+                        *op,
+                        *txid,
+                        block_height,
+                        tx.block_time.expect("Confirmed tx."),
+                    ));
                 } else if !tx.conflicting_txs.is_empty() {
                     for txid in &tx.conflicting_txs {
                         let tx: Option<&d::GetTxRes> = match cache.get(txid) {
@@ -187,13 +200,12 @@ impl BitcoinInterface for d::BitcoinD {
                         };
                         if let Some(tx) = tx {
                             if let Some(block_height) = tx.block_height {
-                                if block_height > 1 {
-                                    spent.push((
-                                        *op,
-                                        *txid,
-                                        tx.block_time.expect("Spend is confirmed"),
-                                    ))
-                                }
+                                spent.push((
+                                    *op,
+                                    *txid,
+                                    block_height,
+                                    tx.block_time.expect("Spend is confirmed"),
+                                ))
                             }
                         }
                     }
@@ -206,6 +218,21 @@ impl BitcoinInterface for d::BitcoinD {
         }
 
         spent
+    }
+
+    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip {
+        let mut stats = self.get_block_stats(tip.hash);
+        let mut ancestor = *tip;
+
+        while stats.confirmations == -1 {
+            stats = self.get_block_stats(stats.previous_blockhash);
+            ancestor = BlockChainTip {
+                hash: stats.blockhash,
+                height: stats.height,
+            };
+        }
+
+        ancestor
     }
 }
 
@@ -248,8 +275,12 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)> {
         self.lock().unwrap().spent_coins(outpoints)
+    }
+
+    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip {
+        self.lock().unwrap().common_ancestor(tip)
     }
 }
 

@@ -651,6 +651,34 @@ impl BitcoinD {
 
         None
     }
+
+    pub fn get_block_stats(&self, blockhash: bitcoin::BlockHash) -> BlockStats {
+        let res = self.make_node_request(
+            "getblockheader",
+            &params!(Json::String(blockhash.to_string()),),
+        );
+        let confirmations = res
+            .get("confirmations")
+            .and_then(Json::as_i64)
+            .expect("Invalid confirmations in `getblockheader` response: not an i64")
+            as i32;
+        let previous_blockhash = res
+            .get("previousblockhash")
+            .and_then(Json::as_str)
+            .and_then(|s| bitcoin::BlockHash::from_str(s).ok())
+            .expect("Invalid previousblockhash in `getblockheader` response");
+        let height = res
+            .get("height")
+            .and_then(Json::as_i64)
+            .expect("Invalid height in `getblockheader` response: not an u32")
+            as i32;
+        BlockStats {
+            confirmations,
+            previous_blockhash,
+            height,
+            blockhash,
+        }
+    }
 }
 // Bitcoind uses a guess for the value of verificationprogress. It will eventually get to
 // be 1, and we want to be less conservative.
@@ -778,4 +806,12 @@ impl From<Json> for GetTxRes {
             block_time,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockStats {
+    pub confirmations: i32,
+    pub previous_blockhash: bitcoin::BlockHash,
+    pub blockhash: bitcoin::BlockHash,
+    pub height: i32,
 }

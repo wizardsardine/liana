@@ -1,7 +1,7 @@
 use crate::{
     bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
-    database::{Coin, DatabaseConnection, DatabaseInterface},
+    database::{Coin, DatabaseConnection, DatabaseInterface, SpendBlock},
     DaemonHandle,
 };
 
@@ -59,8 +59,12 @@ impl BitcoinInterface for DummyBitcoind {
     fn spent_coins(
         &self,
         _: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, u32)> {
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)> {
         Vec::new()
+    }
+
+    fn common_ancestor(&self, _: &BlockChainTip) -> BlockChainTip {
+        todo!()
     }
 }
 
@@ -120,7 +124,7 @@ impl DatabaseConnection for DummyDbConn {
         self.db.write().unwrap().curr_index = next_index;
     }
 
-    fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
+    fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
         self.db.read().unwrap().coins.clone()
     }
 
@@ -128,7 +132,7 @@ impl DatabaseConnection for DummyDbConn {
         let mut result = HashMap::new();
         for (k, v) in self.db.read().unwrap().coins.iter() {
             if v.spend_txid.is_some() {
-                result.insert(*k, v.clone());
+                result.insert(*k, *v);
             }
         }
         result
@@ -136,11 +140,7 @@ impl DatabaseConnection for DummyDbConn {
 
     fn new_unspent_coins<'a>(&mut self, coins: &[Coin]) {
         for coin in coins {
-            self.db
-                .write()
-                .unwrap()
-                .coins
-                .insert(coin.outpoint, coin.clone());
+            self.db.write().unwrap().coins.insert(coin.outpoint, *coin);
         }
     }
 
@@ -160,19 +160,22 @@ impl DatabaseConnection for DummyDbConn {
             let mut db = self.db.write().unwrap();
             let spent = &mut db.coins.get_mut(op).unwrap();
             assert!(spent.spend_txid.is_none());
-            assert!(spent.spent_at.is_none());
+            assert!(spent.spend_block.is_none());
             spent.spend_txid = Some(*spend_txid);
         }
     }
 
-    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]) {
-        for (op, spend_txid, time) in outpoints {
+    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, i32, u32)]) {
+        for (op, spend_txid, height, time) in outpoints {
             let mut db = self.db.write().unwrap();
             let spent = &mut db.coins.get_mut(op).unwrap();
             assert!(spent.spend_txid.is_some());
-            assert!(spent.spent_at.is_none());
+            assert!(spent.spend_block.is_none());
             spent.spend_txid = Some(*spend_txid);
-            spent.spent_at = Some(*time);
+            spent.spend_block = Some(SpendBlock {
+                height: *height,
+                time: *time,
+            });
         }
     }
 
@@ -220,6 +223,10 @@ impl DatabaseConnection for DummyDbConn {
 
     fn delete_spend(&mut self, txid: &bitcoin::Txid) {
         self.db.write().unwrap().spend_txs.remove(txid);
+    }
+
+    fn rollback_tip(&mut self, _: &BlockChainTip) {
+        todo!()
     }
 }
 

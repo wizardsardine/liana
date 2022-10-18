@@ -45,7 +45,7 @@ This command does not take any parameter for now.
 | -------------------- | ------- | -------------------------------------------------------------------------------------------- |
 | `version`            | string  | Version following the [SimVer](http://www.simver.org/) format                                |
 | `network`            | string  | Answer can be `mainnet`, `testnet`, `regtest`                                                |
-| `blockheight`        | integer | Current block height                                                                         |
+| `blockheight`        | integer | The block height we are synced at.                                                           |
 | `sync`               | float   | The synchronization progress as percentage (`0 < sync < 1`)                                  |
 | `descriptors`        | object  | Object with the name of the descriptor as key and the descriptor string as value             |
 
@@ -70,7 +70,7 @@ This command does not take any parameter for now.
 
 ### `listcoins`
 
-List our current Unspent Transaction Outputs.
+List all our transaction outputs, regardless of their state (unspent or not).
 
 #### Request
 
@@ -81,11 +81,20 @@ This command does not take any parameter for now.
 
 #### Response
 
-| Field          | Type          | Description                                                      |
-| -------------- | ------------- | ---------------------------------------------------------------- |
-| `amount`       | int           | Value of the UTxO in satoshis                                    |
-| `outpoint`     | string        | Transaction id and output index of this coin                     |
-| `block_height` | int or null   | Blockheight the transaction was confirmed at, or `null`          |
+| Field          | Type          | Description                                                                                                        |
+| -------------- | ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `amount`       | int           | Value of the TxO in satoshis.                                                                                      |
+| `outpoint`     | string        | Transaction id and output index of this coin.                                                                      |
+| `block_height` | int or null   | Blockheight the transaction was confirmed at, or `null`.                                                           |
+| `spend_info`   | object        | Information about the transaction spending this coin. See [Spending transaction info](#spending_transaction_info). |
+
+
+##### Spending transaction info
+
+| Field      | Type        | Description                                                    |
+| ---------- | ----------- | -------------------------------------------------------------- |
+| `txid`     | str         | Spending transaction's id.                                     |
+| `height`   | int or null | Block height the spending tx was included at, if confirmed.    |
 
 
 ### `createspend`

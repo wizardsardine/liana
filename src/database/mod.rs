@@ -6,7 +6,7 @@ pub mod sqlite;
 use crate::{
     bitcoin::BlockChainTip,
     database::sqlite::{
-        schema::{DbCoin, DbTip},
+        schema::{DbCoin, DbSpendBlock, DbTip},
         SqliteConn, SqliteDb,
     },
 };
@@ -54,8 +54,8 @@ pub trait DatabaseConnection {
         address: &bitcoin::Address,
     ) -> Option<bip32::ChildNumber>;
 
-    /// Get all UTxOs.
-    fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
+    /// Get all our coins, past or present, spent or not.
+    fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
 
     /// List coins that are being spent and whose spending transaction is still unconfirmed.
     fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
@@ -70,7 +70,7 @@ pub trait DatabaseConnection {
     fn spend_coins(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]);
 
     /// Mark a set of coins as spent by a specified txid at a specified block time.
-    fn confirm_spend(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]);
+    fn confirm_spend(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, i32, u32)]);
 
     /// Get specific coins from the database.
     fn coins_by_outpoints(
@@ -88,6 +88,9 @@ pub trait DatabaseConnection {
 
     /// Delete a Spend transaction from database.
     fn delete_spend(&mut self, txid: &bitcoin::Txid);
+
+    /// Mark the given tip as the new best seen block. Update stored data accordingly.
+    fn rollback_tip(&mut self, new_tip: &BlockChainTip);
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -118,8 +121,8 @@ impl DatabaseConnection for SqliteConn {
         self.increment_derivation_index(secp)
     }
 
-    fn unspent_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
-        self.unspent_coins()
+    fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
+        self.coins()
             .into_iter()
             .map(|db_coin| (db_coin.outpoint, db_coin.into()))
             .collect()
@@ -144,7 +147,7 @@ impl DatabaseConnection for SqliteConn {
         self.spend_coins(outpoints)
     }
 
-    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, u32)]) {
+    fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, i32, u32)]) {
         self.confirm_spend(outpoints)
     }
 
@@ -184,9 +187,28 @@ impl DatabaseConnection for SqliteConn {
     fn delete_spend(&mut self, txid: &bitcoin::Txid) {
         self.delete_spend(txid)
     }
+
+    fn rollback_tip(&mut self, new_tip: &BlockChainTip) {
+        self.rollback_tip(new_tip)
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SpendBlock {
+    pub height: i32,
+    pub time: u32,
+}
+
+impl From<DbSpendBlock> for SpendBlock {
+    fn from(b: DbSpendBlock) -> SpendBlock {
+        SpendBlock {
+            height: b.height,
+            time: b.time,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Coin {
     pub outpoint: bitcoin::OutPoint,
     pub block_height: Option<i32>,
@@ -194,7 +216,7 @@ pub struct Coin {
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub spend_txid: Option<bitcoin::Txid>,
-    pub spent_at: Option<u32>,
+    pub spend_block: Option<SpendBlock>,
 }
 
 impl std::convert::From<DbCoin> for Coin {
@@ -206,7 +228,7 @@ impl std::convert::From<DbCoin> for Coin {
             amount,
             derivation_index,
             spend_txid,
-            spent_at,
+            spend_block,
             ..
         } = db_coin;
         Coin {
@@ -216,7 +238,7 @@ impl std::convert::From<DbCoin> for Coin {
             amount,
             derivation_index,
             spend_txid,
-            spent_at,
+            spend_block: spend_block.map(SpendBlock::from),
         }
     }
 }
