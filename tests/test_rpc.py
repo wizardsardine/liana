@@ -187,9 +187,6 @@ def test_update_spend(minisafed, bitcoind):
     assert len(list_res) == 1
     assert list_res[0]["psbt"] == res["psbt"]
 
-    # Keep a copy for later.
-    psbt_no_sig = PSBT.from_base64(res["psbt"])
-
     # We can add a signature and update it
     psbt_sig_a = PSBT.from_base64(res["psbt"])
     dummy_pk_a = bytes.fromhex(
