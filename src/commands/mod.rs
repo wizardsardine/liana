@@ -5,7 +5,7 @@
 mod utils;
 
 use crate::{
-    bitcoin::BitcoinInterface,
+    bitcoin::{BitcoinError, BitcoinInterface},
     database::{Coin, DatabaseInterface},
     descriptors, DaemonControl, VERSION,
 };
@@ -50,6 +50,10 @@ pub enum CommandError {
         /* target feerate */ u64,
     ),
     SanityCheckFailure(Psbt),
+    UnknownSpend(bitcoin::Txid),
+    // FIXME: when upgrading Miniscript put the actual error there
+    SpendFinalization(String),
+    TxBroadcast(String),
 }
 
 impl fmt::Display for CommandError {
@@ -71,6 +75,11 @@ impl fmt::Display for CommandError {
                 "BUG! Please report this. Failed sanity checks for PSBT '{:?}'.",
                 psbt
             ),
+            Self::UnknownSpend(txid) => write!(f, "Unknown spend transaction '{}'.", txid),
+            Self::SpendFinalization(e) => {
+                write!(f, "Failed to finalize the spend transaction PSBT: '{}'.", e)
+            }
+            Self::TxBroadcast(e) => write!(f, "Failed to broadcast transaction: '{}'.", e),
         }
     }
 }
@@ -445,6 +454,28 @@ impl DaemonControl {
     pub fn delete_spend(&self, txid: &bitcoin::Txid) {
         let mut db_conn = self.db.connection();
         db_conn.delete_spend(txid);
+    }
+
+    /// Finalize and broadcast this stored Spend transaction.
+    pub fn broadcast_spend(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
+        let mut db_conn = self.db.connection();
+
+        // First, try to finalize the spending transaction with the elements contained
+        // in the PSBT.
+        let mut spend_psbt = db_conn
+            .spend_tx(txid)
+            .ok_or(CommandError::UnknownSpend(*txid))?;
+        log::debug!("B");
+        miniscript::psbt::finalize(&mut spend_psbt, &self.secp)
+            .map_err(|e| CommandError::SpendFinalization(e.to_string()))?;
+
+        // Then, broadcast it (or try to, we never know if we are not going to hit an
+        // error at broadcast time).
+        let final_tx = spend_psbt.extract_tx();
+        match self.bitcoin.broadcast_tx(&final_tx) {
+            Ok(()) => Ok(()),
+            Err(BitcoinError::Broadcast(e)) => Err(CommandError::TxBroadcast(e)),
+        }
     }
 }
 

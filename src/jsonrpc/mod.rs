@@ -51,6 +51,9 @@ pub struct Request {
     pub id: ReqId,
 }
 
+/// A failure to broadcast a transaction to the P2P network.
+const BROADCAST_ERROR: i64 = 1_000;
+
 /// JSONRPC2 error codes. See https://www.jsonrpc.org/specification#error_object.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ErrorCode {
@@ -80,6 +83,7 @@ impl From<i64> for ErrorCode {
         match code {
             -32601 => ErrorCode::MethodNotFound,
             -32602 => ErrorCode::InvalidParams,
+            -32603 => ErrorCode::InternalError,
             code => ErrorCode::ServerError(code),
         }
     }
@@ -153,11 +157,16 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::InvalidFeerate(..)
             | commands::CommandError::AlreadySpent(..)
             | commands::CommandError::InvalidOutputValue(..)
-            | commands::CommandError::InsufficientFunds(..) => {
+            | commands::CommandError::InsufficientFunds(..)
+            | commands::CommandError::UnknownSpend(..)
+            | commands::CommandError::SpendFinalization(..) => {
                 Error::new(ErrorCode::InvalidParams, e.to_string())
             }
             commands::CommandError::SanityCheckFailure(_) => {
                 Error::new(ErrorCode::InternalError, e.to_string())
+            }
+            commands::CommandError::TxBroadcast(_) => {
+                Error::new(ErrorCode::ServerError(BROADCAST_ERROR), e.to_string())
             }
         }
     }

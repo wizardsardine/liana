@@ -1,5 +1,5 @@
 use crate::{
-    bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
+    bitcoin::{BitcoinError, BitcoinInterface, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
     database::{Coin, DatabaseConnection, DatabaseInterface, SpendBlock},
     DaemonHandle,
@@ -64,6 +64,10 @@ impl BitcoinInterface for DummyBitcoind {
     }
 
     fn common_ancestor(&self, _: &BlockChainTip) -> BlockChainTip {
+        todo!()
+    }
+
+    fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), BitcoinError> {
         todo!()
     }
 }

@@ -4,11 +4,29 @@
 pub mod d;
 pub mod poller;
 
-use d::LSBlockEntry;
+use d::{BitcoindError, LSBlockEntry};
 
-use std::{collections::HashMap, fmt, sync};
+use std::{collections::HashMap, error, fmt, sync};
 
 use miniscript::bitcoin;
+
+/// Error occuring when querying our Bitcoin backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BitcoinError {
+    Broadcast(String),
+}
+
+impl fmt::Display for BitcoinError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BitcoinError::Broadcast(reason) => {
+                write!(f, "Failed to broadcast transaction: '{}'", reason)
+            }
+        }
+    }
+}
+
+impl error::Error for BitcoinError {}
 
 /// Information about the best block in the chain
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
@@ -60,6 +78,9 @@ pub trait BitcoinInterface: Send {
 
     /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
     fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip;
+
+    /// Broadcast this transaction to the Bitcoin P2P network
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError>;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -234,6 +255,18 @@ impl BitcoinInterface for d::BitcoinD {
 
         ancestor
     }
+
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
+        match self.broadcast_tx(tx) {
+            Ok(()) => Ok(()),
+            Err(BitcoindError::Server(e)) => Err(BitcoinError::Broadcast(e.to_string())),
+            // We assume the Bitcoin backend doesn't fail, so it must be a JSONRPC error.
+            Err(e) => panic!(
+                "Unexpected Bitcoin error when broadcast transaction: '{}'.",
+                e
+            ),
+        }
+    }
 }
 
 // FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
@@ -281,6 +314,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip {
         self.lock().unwrap().common_ancestor(tip)
+    }
+
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
+        self.lock().unwrap().broadcast_tx(tx)
     }
 }
 

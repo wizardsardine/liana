@@ -72,9 +72,27 @@ fn delete_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
     Ok(serde_json::json!({}))
 }
 
+fn broadcast_spend(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let txid = params
+        .get(0, "txid")
+        .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?
+        .as_str()
+        .and_then(|s| bitcoin::Txid::from_str(s).ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'txid' parameter."))?;
+    control.broadcast_spend(&txid)?;
+
+    Ok(serde_json::json!({}))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
+        "broadcastspend" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?;
+            broadcast_spend(control, params)?
+        }
         "createspend" => {
             let params = req.params.ok_or_else(|| {
                 Error::invalid_params(
