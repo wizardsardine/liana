@@ -60,7 +60,7 @@ impl button::StyleSheet for Style {
                 border_radius: 10.0,
                 border_width: 0.0,
                 border_color: Color::TRANSPARENT,
-                text_color: color::DARK_GREY,
+                text_color: Color::BLACK,
             },
         }
     }
@@ -77,18 +77,18 @@ impl button::StyleSheet for Style {
             },
             Style::Transparent => button::Style {
                 shadow_offset: Vector::default(),
-                background: color::FOREGROUND.into(),
+                background: color::BACKGROUND.into(),
                 border_radius: 10.0,
                 border_width: 0.0,
                 border_color: Color::TRANSPARENT,
-                text_color: color::DARK_GREY,
+                text_color: Color::BLACK,
             },
             Style::TransparentBorder => button::Style {
                 shadow_offset: Vector::default(),
                 background: Color::TRANSPARENT.into(),
                 border_radius: 10.0,
-                border_width: 2.0,
-                border_color: Color::TRANSPARENT,
+                border_width: 1.0,
+                border_color: Color::BLACK,
                 text_color: Color::BLACK,
             },
         }

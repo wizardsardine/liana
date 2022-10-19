@@ -1,6 +1,7 @@
 mod message;
 mod warning;
 
+pub mod coins;
 pub mod home;
 pub mod receive;
 pub mod settings;
@@ -16,7 +17,7 @@ use iced::{
 use crate::ui::{
     color,
     component::{button, separation, text::*},
-    icon::{home_icon, receive_icon, settings_icon},
+    icon::{coin_icon, home_icon, receive_icon, settings_icon},
 };
 
 use crate::app::{error::Error, menu::Menu};
@@ -29,6 +30,16 @@ pub fn sidebar(menu: &Menu) -> widget::Container<Message> {
     } else {
         button::transparent(Some(home_icon()), "Home")
             .on_press(Message::Menu(Menu::Home))
+            .width(iced::Length::Units(200))
+    };
+
+    let coins_button = if *menu == Menu::Coins {
+        button::primary(Some(coin_icon()), "Coins")
+            .on_press(Message::Reload)
+            .width(iced::Length::Units(200))
+    } else {
+        button::transparent(Some(coin_icon()), "Coins")
+            .on_press(Message::Menu(Menu::Coins))
             .width(iced::Length::Units(200))
     };
 
@@ -64,8 +75,9 @@ pub fn sidebar(menu: &Menu) -> widget::Container<Message> {
                             .spacing(10),
                     )
                     .push(home_button)
+                    .push(coins_button)
                     .push(receive_button)
-                    .spacing(20)
+                    .spacing(15)
                     .height(Length::Fill),
             )
             .push(container(settings_button).height(Length::Shrink)),

@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use iced::pure::Element;
 use minisafe::{
-    descriptors::inheritance_descriptor,
+    descriptors::InheritanceDescriptor,
     miniscript::descriptor::{Descriptor, DescriptorPublicKey},
 };
 
@@ -153,9 +153,7 @@ impl Step for DefineDescriptor {
             }
             false
         } else if !self.imported_descriptor.value.is_empty() {
-            if let Ok(desc) =
-                Descriptor::<DescriptorPublicKey>::from_str(&self.imported_descriptor.value)
-            {
+            if let Ok(desc) = InheritanceDescriptor::from_str(&self.imported_descriptor.value) {
                 config.main_descriptor = Some(desc);
                 true
             } else {
@@ -176,7 +174,11 @@ impl Step for DefineDescriptor {
                 return false;
             }
 
-            match inheritance_descriptor(user_key.unwrap(), heir_key.unwrap(), sequence.unwrap()) {
+            match InheritanceDescriptor::new(
+                user_key.unwrap(),
+                heir_key.unwrap(),
+                sequence.unwrap(),
+            ) {
                 Ok(desc) => {
                     config.main_descriptor = Some(desc);
                     true
