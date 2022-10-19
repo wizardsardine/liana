@@ -1,7 +1,7 @@
 import pytest
 
 from fixtures import *
-from test_framework.serializations import PSBT
+from test_framework.serializations import PSBT, PSBT_IN_PARTIAL_SIG
 from test_framework.utils import wait_for, COIN, RpcError, get_txid, spend_coins
 
 
@@ -104,13 +104,12 @@ def test_create_spend(minisafed, bitcoind):
     assert "psbt" in res
 
     # The transaction must contain a change output.
-    spend_psbt = PSBT()
-    spend_psbt.deserialize(res["psbt"])
-    assert len(spend_psbt.outputs) == 4
+    spend_psbt = PSBT.from_base64(res["psbt"])
+    assert len(spend_psbt.o) == 4
     assert len(spend_psbt.tx.vout) == 4
 
     # We can sign it and broadcast it.
-    signed_psbt = minisafed.sign_psbt(spend_psbt)
+    signed_psbt = minisafed.sign_psbt(PSBT.from_base64(res["psbt"]))
     finalized_psbt = minisafed.finalize_psbt(signed_psbt)
     tx = finalized_psbt.tx.serialize_with_witness().hex()
     bitcoind.rpc.sendrawtransaction(tx)
@@ -156,16 +155,14 @@ def test_list_spend(minisafed, bitcoind):
     assert second_psbt["change_index"] is None
 
     # If we delete the first one, we'll get only the second one.
-    first_psbt = PSBT()
-    first_psbt.deserialize(res["psbt"])
+    first_psbt = PSBT.from_base64(res["psbt"])
     minisafed.rpc.delspendtx(first_psbt.tx.txid().hex())
     list_res = minisafed.rpc.listspendtxs()["spend_txs"]
     assert len(list_res) == 1
     assert list_res[0]["psbt"] == res_b["psbt"]
 
     # If we delete the second one, result will be empty.
-    second_psbt = PSBT()
-    second_psbt.deserialize(res_b["psbt"])
+    second_psbt = PSBT.from_base64(res_b["psbt"])
     minisafed.rpc.delspendtx(second_psbt.tx.txid().hex())
     list_res = minisafed.rpc.listspendtxs()["spend_txs"]
     assert len(list_res) == 0
@@ -191,20 +188,18 @@ def test_update_spend(minisafed, bitcoind):
     assert list_res[0]["psbt"] == res["psbt"]
 
     # Keep a copy for later.
-    psbt_no_sig = PSBT()
-    psbt_no_sig.deserialize(res["psbt"])
+    psbt_no_sig = PSBT.from_base64(res["psbt"])
 
     # We can add a signature and update it
-    psbt_sig_a = PSBT()
-    psbt_sig_a.deserialize(res["psbt"])
+    psbt_sig_a = PSBT.from_base64(res["psbt"])
     dummy_pk_a = bytes.fromhex(
         "0375e00eb72e29da82b89367947f29ef34afb75e8654f6ea368e0acdfd92976b7c"
     )
     dummy_sig_a = bytes.fromhex(
         "304402202b925395cfeaa0171a7a92982bb4891acc4a312cbe7691d8375d36796d5b570a0220378a8ab42832848e15d1aedded5fb360fedbdd6c39226144e527f0f1e19d5398"
     )
-    psbt_sig_a.inputs[0].partial_sigs[dummy_pk_a] = dummy_sig_a
-    psbt_sig_a_ser = psbt_sig_a.serialize()
+    psbt_sig_a.i[0].map[PSBT_IN_PARTIAL_SIG] = {dummy_pk_a: dummy_sig_a}
+    psbt_sig_a_ser = psbt_sig_a.to_base64()
     minisafed.rpc.updatespend(psbt_sig_a_ser)
 
     # We'll get it when querying
@@ -213,26 +208,24 @@ def test_update_spend(minisafed, bitcoind):
     assert list_res[0]["psbt"] == psbt_sig_a_ser
 
     # We can add another signature to the empty PSBT and update it again
-    psbt_sig_b = PSBT()
-    psbt_sig_b.deserialize(res["psbt"])
+    psbt_sig_b = PSBT.from_base64(res["psbt"])
     dummy_pk_b = bytes.fromhex(
         "03a1b26313f430c4b15bb1fdce663207659d8cac749a0e53d70eff01874496feff"
     )
     dummy_sig_b = bytes.fromhex(
         "3044022005aebcd649fb8965f0591710fb3704931c3e8118ee60dd44917479f63ceba6d4022018b212900e5a80e9452366894de37f0d02fb9c89f1e94f34fb6ed7fd71c15c41"
     )
-    psbt_sig_b.inputs[0].partial_sigs[dummy_pk_b] = dummy_sig_b
-    psbt_sig_b_ser = psbt_sig_b.serialize()
+    psbt_sig_b.i[0].map[PSBT_IN_PARTIAL_SIG] = {dummy_pk_b: dummy_sig_b}
+    psbt_sig_b_ser = psbt_sig_b.to_base64()
     minisafed.rpc.updatespend(psbt_sig_b_ser)
 
     # It will have merged both.
     list_res = minisafed.rpc.listspendtxs()["spend_txs"]
     assert len(list_res) == 1
-    psbt_merged = PSBT()
-    psbt_merged.deserialize(list_res[0]["psbt"])
-    assert len(psbt_merged.inputs[0].partial_sigs) == 2
-    assert psbt_merged.inputs[0].partial_sigs[dummy_pk_a] == dummy_sig_a
-    assert psbt_merged.inputs[0].partial_sigs[dummy_pk_b] == dummy_sig_b
+    psbt_merged = PSBT.from_base64(list_res[0]["psbt"])
+    assert len(psbt_merged.i[0].map[PSBT_IN_PARTIAL_SIG]) == 2
+    assert psbt_merged.i[0].map[PSBT_IN_PARTIAL_SIG][dummy_pk_a] == dummy_sig_a
+    assert psbt_merged.i[0].map[PSBT_IN_PARTIAL_SIG][dummy_pk_b] == dummy_sig_b
 
 
 def test_broadcast_spend(minisafed, bitcoind):
@@ -245,8 +238,7 @@ def test_broadcast_spend(minisafed, bitcoind):
         bitcoind.rpc.getnewaddress(): 200_000,
     }
     res = minisafed.rpc.createspend(outpoints, destinations, 6)
-    psbt = PSBT()
-    psbt.deserialize(res["psbt"])
+    psbt = PSBT.from_base64(res["psbt"])
     txid = psbt.tx.txid().hex()
 
     # We can't broadcast an unknown Spend
@@ -257,8 +249,8 @@ def test_broadcast_spend(minisafed, bitcoind):
     # We can't broadcast an unsigned transaction
     with pytest.raises(RpcError, match="Failed to finalize the spend transaction.*"):
         minisafed.rpc.broadcastspend(txid)
-    signed_psbt = minisafed.sign_psbt(psbt)
-    minisafed.rpc.updatespend(signed_psbt.serialize())
+    signed_psbt = minisafed.sign_psbt(PSBT.from_base64(res["psbt"]))
+    minisafed.rpc.updatespend(signed_psbt.to_base64())
 
     # Now we've signed and stored it, the daemon will take care of finalizing
     # the PSBT before broadcasting the transaction.

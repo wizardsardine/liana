@@ -16,6 +16,10 @@ from test_framework.serializations import (
     sighash_all_witness,
     CTxInWitness,
     CScriptWitness,
+    PSBT_IN_BIP32_DERIVATION,
+    PSBT_IN_WITNESS_SCRIPT,
+    PSBT_IN_PARTIAL_SIG,
+    PSBT_IN_FINAL_SCRIPTWITNESS,
 )
 
 
@@ -65,11 +69,12 @@ class Minisafed(TailableProc):
         assert isinstance(psbt, PSBT)
 
         # Sign each input.
-        for i, psbt_in in enumerate(psbt.inputs):
+        for i, psbt_in in enumerate(psbt.i):
             # First, gather the needed information from the PSBT input.
-            # 'hd_keypaths' is of the form {pubkey: (fingerprint, derivation index)}
-            der_index = next(iter(psbt_in.hd_keypaths.values()))[1]
-            script_code = psbt_in.witness_script
+            # 'hd_keypaths' is of the form {pubkey: (fingerprint (4 bytes), derivation index (4 bytes))}
+            fing_der = next(iter(psbt_in.map[PSBT_IN_BIP32_DERIVATION].values()))
+            der_index = int.from_bytes(fing_der[4:], byteorder="little", signed=True)
+            script_code = psbt_in.map[PSBT_IN_WITNESS_SCRIPT]
 
             # Now sign the transaction with the key of the "owner" (the participant that
             # can sign immediately without a timelock)
@@ -78,10 +83,14 @@ class Minisafed(TailableProc):
                 self.owner_hd.get_privkey_from_path([der_index])
             )
             pubkey = privkey.public_key.format()
-            assert pubkey in psbt_in.hd_keypaths.keys()
+            assert pubkey in psbt_in.map[PSBT_IN_BIP32_DERIVATION].keys(), (
+                pubkey,
+                psbt_in.map[PSBT_IN_BIP32_DERIVATION].keys(),
+            )
             sig = privkey.sign(sighash, hasher=None) + b"\x01"
             logging.debug(f"Adding signature {sig.hex()} for pubkey {pubkey.hex()}")
-            psbt_in.partial_sigs[pubkey] = sig
+            assert PSBT_IN_PARTIAL_SIG not in psbt_in.map
+            psbt_in.map[PSBT_IN_PARTIAL_SIG] = {pubkey: sig}
 
         return psbt
 
@@ -95,25 +104,28 @@ class Minisafed(TailableProc):
         assert isinstance(psbt, PSBT)
 
         # Create a witness for each input of the transaction.
-        for i, psbt_in in enumerate(psbt.inputs):
+        for i, psbt_in in enumerate(psbt.i):
             # First, gather the needed information from the PSBT input.
             # 'hd_keypaths' is of the form {pubkey: (fingerprint, derivation index)}
-            der_index = next(iter(psbt_in.hd_keypaths.values()))[1]
+            fing_der = next(iter(psbt_in.map[PSBT_IN_BIP32_DERIVATION].values()))
+            der_index = int.from_bytes(fing_der[4:], byteorder="little", signed=True)
 
             # Create a copy of the descriptor to derive it at the index used in this input.
             # Then create a satisfaction for it using the signature we just created.
             desc = Descriptor.from_str(str(self.main_desc))
             desc.derive(der_index)
             sat_material = SatisfactionMaterial(
-                signatures=psbt_in.partial_sigs,
+                signatures=psbt_in.map[PSBT_IN_PARTIAL_SIG],
             )
             stack = desc.satisfy(sat_material)
             logging.debug(f"Satisfaction for {desc} is {[e.hex() for e in stack]}")
 
             # Update the transaction inside the PSBT directly.
             assert stack is not None
-            psbt_in.final_script_witness = CTxInWitness(CScriptWitness(stack))
-            psbt.tx.wit.vtxinwit.append(psbt_in.final_script_witness)
+            psbt_in.map[PSBT_IN_FINAL_SCRIPTWITNESS] = CTxInWitness(
+                CScriptWitness(stack)
+            )
+            psbt.tx.wit.vtxinwit.append(psbt_in.map[PSBT_IN_FINAL_SCRIPTWITNESS])
 
         return psbt
 
