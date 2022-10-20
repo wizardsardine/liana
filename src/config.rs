@@ -2,7 +2,7 @@ use crate::descriptors::InheritanceDescriptor;
 
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
-use miniscript::{bitcoin::Network, DescriptorPublicKey, ForEach, ForEachKey};
+use miniscript::{bitcoin::Network, DescriptorPublicKey, ForEachKey};
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -203,12 +203,7 @@ impl Config {
             Network::Bitcoin => Network::Bitcoin,
             _ => Network::Testnet,
         };
-        let unexpected_net = self.main_descriptor.as_inner().for_each_key(|pkpkh| {
-            let xpub = match pkpkh {
-                // For DescriptorPublicKey, Pk::Hash == Self.
-                ForEach::Key(xpub) => xpub,
-                ForEach::Hash(xpub) => xpub,
-            };
+        let unexpected_net = self.main_descriptor.as_inner().for_each_key(|xpub| {
             if let DescriptorPublicKey::XPub(xpub) = xpub {
                 xpub.xkey.network != expected_network
             } else {

@@ -203,7 +203,7 @@ impl DatabaseConnection for DummyDbConn {
     }
 
     fn store_spend(&mut self, psbt: &Psbt) {
-        let txid = psbt.global.unsigned_tx.txid();
+        let txid = psbt.unsigned_tx.txid();
         self.db
             .write()
             .unwrap()

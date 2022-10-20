@@ -288,7 +288,7 @@ impl SqliteConn {
                         WALLET_ID,
                         coin.outpoint.txid.to_vec(),
                         coin.outpoint.vout,
-                        coin.amount.as_sat(),
+                        coin.amount.to_sat(),
                         deriv_index,
                     ],
                 )?;
@@ -405,7 +405,7 @@ impl SqliteConn {
 
     /// Insert a new Spend transaction or replace an existing one.
     pub fn store_spend(&mut self, psbt: &Psbt) {
-        let txid = psbt.global.unsigned_tx.txid().to_vec();
+        let txid = psbt.unsigned_tx.txid().to_vec();
         let psbt = encode::serialize(psbt);
 
         db_exec(&mut self.conn, |db_tx| {
