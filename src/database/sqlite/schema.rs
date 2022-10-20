@@ -218,7 +218,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbAddress {
 }
 
 /// A row in the "spend_transactions" table
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbSpendTransaction {
     pub id: i64,
     pub psbt: Psbt,
@@ -236,7 +236,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbSpendTransaction {
 
         let txid: Vec<u8> = row.get(2)?;
         let txid: bitcoin::Txid = encode::deserialize(&txid).expect("We only store valid txids");
-        assert_eq!(txid, psbt.global.unsigned_tx.txid());
+        assert_eq!(txid, psbt.unsigned_tx.txid());
 
         Ok(DbSpendTransaction { id, psbt, txid })
     }

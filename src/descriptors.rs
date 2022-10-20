@@ -1,24 +1,20 @@
 use miniscript::{
-    bitcoin::{self, hashes::hash160, hashes::Hash, secp256k1, util::bip32},
-    descriptor::{self, DescriptorTrait},
-    miniscript::{
-        decode::Terminal,
-        iter::PkPkh,
-        limits::{SEQUENCE_LOCKTIME_DISABLE_FLAG, SEQUENCE_LOCKTIME_TYPE_FLAG},
-        Miniscript,
+    bitcoin::{
+        self,
+        blockdata::transaction::Sequence,
+        hashes::{hash160, ripemd160, sha256},
+        secp256k1,
+        util::bip32,
     },
+    descriptor, hash256,
+    miniscript::{decode::Terminal, Miniscript},
     policy::{Liftable, Semantic as SemanticPolicy},
-    MiniscriptKey, ScriptContext, ToPublicKey, TranslatePk2,
+    translate_hash_clone, MiniscriptKey, ScriptContext, ToPublicKey, TranslatePk, Translator,
 };
 
-use std::{collections::BTreeMap, error, fmt, io::Write, str, sync};
+use std::{collections::BTreeMap, convert::TryFrom, error, fmt, str, sync};
 
 use serde::{Deserialize, Serialize};
-
-// Flag applied to the nSequence and CSV value before comparing them.
-//
-// <https://github.com/bitcoin/bitcoin/blob/4a540683ec40393d6369da1a9e02e45614db936d/src/primitives/transaction.h#L87-L89>
-pub const SEQUENCE_LOCKTIME_MASK: u32 = 0x00_00_ff_ff;
 
 #[derive(Debug)]
 pub enum DescCreationError {
@@ -50,20 +46,20 @@ impl error::Error for DescCreationError {}
 pub struct DerivedPublicKey {
     /// Fingerprint of the master xpub and the derivation index used. We don't use a path
     /// since we never derive at more than one depth.
-    pub origin: (bip32::Fingerprint, bip32::ChildNumber),
+    pub origin: (bip32::Fingerprint, bip32::DerivationPath),
     /// The actual key
     pub key: bitcoin::PublicKey,
 }
 
 impl fmt::Display for DerivedPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (fingerprint, deriv_index) = &self.origin;
+        let (fingerprint, deriv_path) = &self.origin;
 
         write!(f, "[")?;
         for byte in fingerprint.as_bytes().iter() {
             write!(f, "{:02x}", byte)?;
         }
-        write!(f, "/{}", deriv_index)?;
+        write!(f, "/{}", deriv_path)?;
         write!(f, "]{}", self.key)
     }
 }
@@ -100,9 +96,9 @@ impl str::FromStr for DerivedPublicKey {
         }
         let fingerprint = bip32::Fingerprint::from_str(&fg_deriv[..8])
             .map_err(|_| DescCreationError::DerivedKeyParsing)?;
-        let deriv_index = bip32::ChildNumber::from_str(&fg_deriv[9..])
+        let deriv_path = bip32::DerivationPath::from_str(&fg_deriv[9..])
             .map_err(|_| DescCreationError::DerivedKeyParsing)?;
-        if deriv_index.is_hardened() {
+        if deriv_path.into_iter().any(bip32::ChildNumber::is_hardened) {
             return Err(DescCreationError::DerivedKeyParsing);
         }
 
@@ -111,21 +107,23 @@ impl str::FromStr for DerivedPublicKey {
 
         Ok(DerivedPublicKey {
             key,
-            origin: (fingerprint, deriv_index),
+            origin: (fingerprint, deriv_path),
         })
     }
 }
 
 impl MiniscriptKey for DerivedPublicKey {
-    // This allows us to be able to derive keys and key source even for PkH s
-    type Hash = Self;
+    type Sha256 = sha256::Hash;
+    type Hash256 = hash256::Hash;
+    type Ripemd160 = ripemd160::Hash;
+    type Hash160 = hash160::Hash;
 
     fn is_uncompressed(&self) -> bool {
         self.key.is_uncompressed()
     }
 
-    fn to_pubkeyhash(&self) -> Self::Hash {
-        self.clone()
+    fn is_x_only_key(&self) -> bool {
+        false
     }
 }
 
@@ -134,12 +132,20 @@ impl ToPublicKey for DerivedPublicKey {
         self.key
     }
 
-    fn hash_to_hash160(derived_key: &Self) -> hash160::Hash {
-        let mut engine = hash160::Hash::engine();
-        engine
-            .write_all(&derived_key.key.key.serialize())
-            .expect("engines don't error");
-        hash160::Hash::from_engine(engine)
+    fn to_sha256(hash: &sha256::Hash) -> sha256::Hash {
+        *hash
+    }
+
+    fn to_hash256(hash: &hash256::Hash) -> hash256::Hash {
+        *hash
+    }
+
+    fn to_ripemd160(hash: &ripemd160::Hash) -> ripemd160::Hash {
+        *hash
+    }
+
+    fn to_hash160(hash: &hash160::Hash) -> hash160::Hash {
+        *hash
     }
 }
 
@@ -147,20 +153,18 @@ impl ToPublicKey for DerivedPublicKey {
 //  - not be disabled
 //  - be in number of blocks
 //  - be 'clean' / minimal, ie all bits without consensus meaning should be 0
-fn csv_check(csv: u32) -> Result<(), DescCreationError> {
-    if (csv & SEQUENCE_LOCKTIME_DISABLE_FLAG) == 0
-        && (csv & SEQUENCE_LOCKTIME_TYPE_FLAG) == 0
-        && (csv & SEQUENCE_LOCKTIME_MASK) == csv
-    {
-        Ok(())
-    } else {
-        Err(DescCreationError::InsaneTimelock(csv))
-    }
+//
+// All this is achieved simply through asking for a 16-bit integer, since all the
+// above are signaled in leftmost bits.
+fn csv_check(csv_value: u32) -> Result<(), DescCreationError> {
+    u16::try_from(csv_value)
+        .map(|_| ())
+        .map_err(|_| DescCreationError::InsaneTimelock(csv_value))
 }
 
 fn is_unhardened_deriv(key: &descriptor::DescriptorPublicKey) -> bool {
     match *key {
-        descriptor::DescriptorPublicKey::SinglePub(..) => false,
+        descriptor::DescriptorPublicKey::Single(..) => false,
         descriptor::DescriptorPublicKey::XPub(ref xpub) => {
             xpub.wildcard == descriptor::Wildcard::Unhardened
         }
@@ -192,11 +196,7 @@ impl str::FromStr for InheritanceDescriptor {
             descriptor::WshInner::Ms(ms) => ms,
             _ => return Err(DescCreationError::IncompatibleDesc),
         };
-        let invalid_key = ms.iter_pk_pkh().find_map(|pk_pkh| {
-            let pk = match pk_pkh {
-                PkPkh::PlainPubkey(pk) => pk,
-                PkPkh::HashedPubkey(pk) => pk,
-            };
+        let invalid_key = ms.iter_pk().find_map(|pk| {
             if is_unhardened_deriv(&pk) {
                 None
             } else {
@@ -224,7 +224,7 @@ impl str::FromStr for InheritanceDescriptor {
 
         // Owner branch
         subs.iter()
-            .find(|s| matches!(s, SemanticPolicy::KeyHash(_)))
+            .find(|s| matches!(s, SemanticPolicy::Key(_)))
             .ok_or(DescCreationError::IncompatibleDesc)?;
 
         // Heir branch
@@ -239,18 +239,18 @@ impl str::FromStr for InheritanceDescriptor {
             return Err(DescCreationError::IncompatibleDesc);
         }
         // Must be timelocked
-        let csv = heir_subs
+        let csv_value = heir_subs
             .iter()
             .find_map(|s| match s {
                 SemanticPolicy::Older(csv) => Some(csv),
                 _ => None,
             })
             .ok_or(DescCreationError::IncompatibleDesc)?;
-        csv_check(*csv)?;
+        csv_check(csv_value.to_consensus_u32())?;
         // And key locked
         heir_subs
             .iter()
-            .find(|s| matches!(s, SemanticPolicy::KeyHash(_)))
+            .find(|s| matches!(s, SemanticPolicy::Key(_)))
             .ok_or(DescCreationError::IncompatibleDesc)?;
 
         Ok(InheritanceDescriptor(descriptor::Descriptor::Wsh(wsh_desc)))
@@ -261,9 +261,15 @@ impl InheritanceDescriptor {
     pub fn new(
         owner_key: descriptor::DescriptorPublicKey,
         heir_key: descriptor::DescriptorPublicKey,
-        timelock: u32,
+        timelock: u16,
     ) -> Result<InheritanceDescriptor, DescCreationError> {
-        csv_check(timelock)?;
+        // We require the locktime to:
+        //  - not be disabled
+        //  - be in number of blocks
+        //  - be 'clean' / minimal, ie all bits without consensus meaning should be 0
+        //
+        // All this is achieved through asking for a 16-bit integer.
+        let timelock = Sequence::from_height(timelock);
 
         if let Some(key) = vec![&owner_key, &heir_key]
             .iter()
@@ -309,30 +315,52 @@ impl InheritanceDescriptor {
     }
 
     /// Derive this descriptor at a given index.
+    ///
+    /// # Panics
+    /// - If the given index is hardened.
     pub fn derive(
         &self,
         index: bip32::ChildNumber,
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
     ) -> DerivedInheritanceDescriptor {
         assert!(index.is_normal());
+
+        // Unfortunately we can't just use `self.0.at_derivation_index().derived_descriptor()`
+        // since it would return a raw public key, but we need the origin too.
+        // TODO: upstream our DerivedPublicKey stuff to rust-miniscript.
+        //
+        // So we roll our own translation.
+        struct Derivator<'a, C: secp256k1::Verification>(u32, &'a secp256k1::Secp256k1<C>);
+        impl<'a, C: secp256k1::Verification>
+            Translator<
+                descriptor::DescriptorPublicKey,
+                DerivedPublicKey,
+                descriptor::ConversionError,
+            > for Derivator<'a, C>
+        {
+            fn pk(
+                &mut self,
+                pk: &descriptor::DescriptorPublicKey,
+            ) -> Result<DerivedPublicKey, descriptor::ConversionError> {
+                let definite_key = pk.clone().at_derivation_index(self.0);
+                let origin = (
+                    definite_key.master_fingerprint(),
+                    definite_key.full_derivation_path(),
+                );
+                let key = definite_key.derive_public_key(self.1)?;
+                Ok(DerivedPublicKey { origin, key })
+            }
+            translate_hash_clone!(
+                descriptor::DescriptorPublicKey,
+                DerivedPublicKey,
+                descriptor::ConversionError
+            );
+        }
+
         let desc = self
             .0
-            .derive(index.into())
-            .translate_pk2(|xpk| {
-                xpk.derive_public_key(secp).map(|key| {
-                    // FIXME: rust-miniscript will panic if we call
-                    // xpk.master_fingerprint() on a key without origin
-                    let origin = match xpk {
-                        descriptor::DescriptorPublicKey::XPub(..) => {
-                            (xpk.master_fingerprint(), index)
-                        }
-                        _ => unreachable!("All keys are always xpubs"),
-                    };
-
-                    DerivedPublicKey { key, origin }
-                })
-            })
-            .expect("All pubkeys are derived, no wildcard.");
+            .translate_pk(&mut Derivator(index.into(), secp))
+            .expect("May only fail on hardened derivation indexes, but we ruled out this case.");
         DerivedInheritanceDescriptor(desc)
     }
 
@@ -370,12 +398,13 @@ impl InheritanceDescriptor {
             })
             .expect("Always present");
 
-        *csv
+        assert!(csv.is_height_locked());
+        csv.to_consensus_u32()
     }
 }
 
 /// Map of a raw public key to the xpub used to derive it and its derivation path
-pub type Bip32Deriv = BTreeMap<bitcoin::PublicKey, (bip32::Fingerprint, bip32::DerivationPath)>;
+pub type Bip32Deriv = BTreeMap<secp256k1::PublicKey, (bip32::Fingerprint, bip32::DerivationPath)>;
 
 impl DerivedInheritanceDescriptor {
     pub fn address(&self, network: bitcoin::Network) -> bitcoin::Address {
@@ -389,7 +418,7 @@ impl DerivedInheritanceDescriptor {
     }
 
     pub fn witness_script(&self) -> bitcoin::Script {
-        self.0.explicit_script()
+        self.0.explicit_script().expect("Not a Taproot descriptor")
     }
 
     pub fn bip32_derivations(&self) -> Bip32Deriv {
@@ -404,17 +433,8 @@ impl DerivedInheritanceDescriptor {
         };
 
         // For DerivedPublicKey, Pk::Hash == Self.
-        ms.iter_pk_pkh()
-            .map(|pkpkh| match pkpkh {
-                PkPkh::PlainPubkey(pk) => pk,
-                PkPkh::HashedPubkey(pkh) => pkh,
-            })
-            .map(|k| {
-                (
-                    k.key,
-                    (k.origin.0, bip32::DerivationPath::from(&[k.origin.1][..])),
-                )
-            })
+        ms.iter_pk()
+            .map(|k| (k.key.inner, (k.origin.0, k.origin.1)))
             .collect()
     }
 
@@ -437,12 +457,13 @@ mod tests {
         let owner_key = descriptor::DescriptorPublicKey::from_str("xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/*").unwrap();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/*").unwrap();
         let timelock = 52560;
-        assert_eq!(InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), timelock).unwrap().to_string(), "wsh(or_d(pk(xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/*),and_v(v:pkh(xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/*),older(52560))))#eeyujkt7");
+        assert_eq!(InheritanceDescriptor::new(owner_key, heir_key, timelock).unwrap().to_string(), "wsh(or_d(pk(xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/*),and_v(v:pkh(xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/*),older(52560))))#eeyujkt7");
 
-        // We prevent footguns with timelocks
-        InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), 0x00_01_0f_00).unwrap_err();
-        InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), (1 << 31) + 1).unwrap_err();
-        InheritanceDescriptor::new(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
+        // We prevent footguns with timelocks by requiring a u16. Note how the following wouldn't
+        // compile:
+        //InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), 0x00_01_0f_00).unwrap_err();
+        //InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), (1 << 31) + 1).unwrap_err();
+        //InheritanceDescriptor::new(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
 
         let owner_key = descriptor::DescriptorPublicKey::from_str("[aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/*").unwrap();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/*").unwrap();

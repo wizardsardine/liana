@@ -17,10 +17,13 @@ use std::{
     fmt,
 };
 
-use miniscript::bitcoin::{
-    self,
-    util::bip32,
-    util::psbt::{self, Input as PsbtIn, Output as PsbtOut, PartiallySignedTransaction as Psbt},
+use miniscript::{
+    bitcoin::{
+        self,
+        util::bip32,
+        util::psbt::{Input as PsbtIn, Output as PsbtOut, PartiallySignedTransaction as Psbt},
+    },
+    psbt::PsbtExt,
 };
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +39,7 @@ const MAX_FEE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
 // Assume that paying more than 1000sat/vb in feerate is a bug.
 const MAX_FEERATE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     NoOutpoint,
     NoDestination,
@@ -89,8 +92,8 @@ impl std::error::Error for CommandError {}
 // Sanity check the value of a transaction output.
 fn check_output_value(value: bitcoin::Amount) -> Result<(), CommandError> {
     // NOTE: the network parameter isn't used upstream
-    if value.as_sat() > bitcoin::blockdata::constants::max_money(bitcoin::Network::Bitcoin)
-        || value.as_sat() < DUST_OUTPUT_SATS
+    if value.to_sat() > bitcoin::blockdata::constants::max_money(bitcoin::Network::Bitcoin)
+        || value.to_sat() < DUST_OUTPUT_SATS
     {
         Err(CommandError::InvalidOutputValue(value))
     } else {
@@ -101,7 +104,7 @@ fn check_output_value(value: bitcoin::Amount) -> Result<(), CommandError> {
 // Apply some sanity checks on a created transaction's PSBT.
 // TODO: add more sanity checks from revault_tx
 fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
 
     // Must have as many in/out in the PSBT and Bitcoin tx.
     if psbt.inputs.len() != tx.input.len() || psbt.outputs.len() != tx.output.len() {
@@ -154,7 +157,7 @@ fn desc_sat_vb(desc: &descriptors::DerivedInheritanceDescriptor) -> u64 {
 
 // Get the virtual size of this transaction
 fn tx_vbytes(tx: &bitcoin::Transaction) -> u64 {
-    tx.get_weight()
+    tx.weight()
         .checked_div(WITNESS_FACTOR)
         .unwrap()
         .try_into()
@@ -279,7 +282,7 @@ impl DaemonControl {
             sat_vb += desc_sat_vb(&coin_desc);
             let witness_script = Some(coin_desc.witness_script());
             let witness_utxo = Some(bitcoin::TxOut {
-                value: coin.amount.as_sat(),
+                value: coin.amount.to_sat(),
                 script_pubkey: coin_desc.script_pubkey(),
             });
             let bip32_derivation = coin_desc.bip32_derivations();
@@ -302,7 +305,7 @@ impl DaemonControl {
             out_value = out_value.checked_add(amount).unwrap();
 
             txouts.push(bitcoin::TxOut {
-                value: amount.as_sat(),
+                value: amount.to_sat(),
                 script_pubkey: address.script_pubkey(),
             });
             // TODO: if it's an address of ours, signal it as change to signing devices by adding
@@ -314,7 +317,7 @@ impl DaemonControl {
         // isn't much less than what was asked (and obviously that fees aren't negative).
         let mut tx = bitcoin::Transaction {
             version: 2,
-            lock_time: 0, // TODO: randomized anti fee sniping
+            lock_time: bitcoin::PackedLockTime(0), // TODO: randomized anti fee sniping
             input: txins,
             output: txouts,
         };
@@ -325,7 +328,7 @@ impl DaemonControl {
                 .ok_or(CommandError::InsufficientFunds(
                     in_value, out_value, feerate_vb,
                 ))?;
-        let nochange_feerate_vb = absolute_fee.as_sat().checked_div(nochange_vb).unwrap();
+        let nochange_feerate_vb = absolute_fee.to_sat().checked_div(nochange_vb).unwrap();
         if nochange_feerate_vb.checked_mul(10).unwrap() < feerate_vb.checked_mul(9).unwrap() {
             return Err(CommandError::InsufficientFunds(
                 in_value, out_value, feerate_vb,
@@ -351,18 +354,18 @@ impl DaemonControl {
             // We assume the added output does not increase the size of the varint for
             // the output count.
             let with_change_vb = nochange_vb.checked_add(change_vb).unwrap();
-            let with_change_feerate_vb = absolute_fee.as_sat().checked_div(with_change_vb).unwrap();
+            let with_change_feerate_vb = absolute_fee.to_sat().checked_div(with_change_vb).unwrap();
 
             if with_change_feerate_vb > feerate_vb {
                 let target_fee = with_change_vb.checked_mul(feerate_vb).unwrap();
                 let change_amount = absolute_fee
                     .checked_sub(bitcoin::Amount::from_sat(target_fee))
                     .unwrap();
-                if change_amount.as_sat() >= DUST_OUTPUT_SATS {
+                if change_amount.to_sat() >= DUST_OUTPUT_SATS {
                     check_output_value(change_amount)?;
 
                     // TODO: shuffle once we have Taproot
-                    change_txo.value = change_amount.as_sat();
+                    change_txo.value = change_amount.to_sat();
                     tx.output.push(change_txo);
                     psbt_outs.push(PsbtOut::default());
                 }
@@ -370,13 +373,11 @@ impl DaemonControl {
         }
 
         let psbt = Psbt {
-            global: psbt::Global {
-                unsigned_tx: tx,
-                version: 0,
-                xpub: BTreeMap::new(),
-                proprietary: BTreeMap::new(),
-                unknown: BTreeMap::new(),
-            },
+            unsigned_tx: tx,
+            version: 0,
+            xpub: BTreeMap::new(),
+            proprietary: BTreeMap::new(),
+            unknown: BTreeMap::new(),
             inputs: psbt_ins,
             outputs: psbt_outs,
         };
@@ -388,14 +389,14 @@ impl DaemonControl {
 
     pub fn update_spend(&self, mut psbt: Psbt) -> Result<(), CommandError> {
         let mut db_conn = self.db.connection();
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
 
         // If the transaction already exists in DB, merge the signatures for each input on a best
         // effort basis.
         // We work on the newly provided PSBT, in case its content was updated.
         let txid = tx.txid();
         if let Some(db_psbt) = db_conn.spend_tx(&txid) {
-            let db_tx = db_psbt.global.unsigned_tx;
+            let db_tx = db_psbt.unsigned_tx;
             for i in 0..db_tx.input.len() {
                 if tx
                     .input
@@ -465,9 +466,14 @@ impl DaemonControl {
         let mut spend_psbt = db_conn
             .spend_tx(txid)
             .ok_or(CommandError::UnknownSpend(*txid))?;
-        log::debug!("B");
-        miniscript::psbt::finalize(&mut spend_psbt, &self.secp)
-            .map_err(|e| CommandError::SpendFinalization(e.to_string()))?;
+        spend_psbt.finalize_mut(&self.secp).map_err(|e| {
+            CommandError::SpendFinalization(
+                e.into_iter()
+                    .next()
+                    .map(|e| e.to_string())
+                    .unwrap_or_default(),
+            )
+        })?;
 
         // Then, broadcast it (or try to, we never know if we are not going to hit an
         // error at broadcast time).
@@ -524,7 +530,7 @@ pub struct ListCoinsResult {
     pub coins: Vec<ListCoinsEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateSpendResult {
     #[serde(serialize_with = "ser_base64", deserialize_with = "deser_psbt_base64")]
     pub psbt: Psbt,
@@ -546,7 +552,6 @@ pub struct ListSpendResult {
 mod tests {
     use super::*;
     use crate::testutils::*;
-    use bitcoin::hashes::hex::FromHex;
     use std::str::FromStr;
 
     #[test]
@@ -625,7 +630,7 @@ mod tests {
             spend_block: None,
         }]);
         let res = control.create_spend(&[dummy_op], &destinations, 1).unwrap();
-        let tx = res.psbt.global.unsigned_tx;
+        let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
         assert_eq!(tx.output.len(), 2);
@@ -636,7 +641,7 @@ mod tests {
         // At 2sats/vb, it's twice that.
         assert_eq!(tx.output[1].value, 89_830);
         let res = control.create_spend(&[dummy_op], &destinations, 2).unwrap();
-        let tx = res.psbt.global.unsigned_tx;
+        let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.output[1].value, 89_660);
 
         // If we ask for a too high feerate, or a too large/too small output, it'll fail.
@@ -669,7 +674,7 @@ mod tests {
         // won't create an output lower than 5k sats.
         *destinations.get_mut(&dummy_addr).unwrap() = 95_000;
         let res = control.create_spend(&[dummy_op], &destinations, 1).unwrap();
-        let tx = res.psbt.global.unsigned_tx;
+        let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
         assert_eq!(tx.output.len(), 1);
@@ -755,17 +760,17 @@ mod tests {
             .create_spend(&[dummy_op_a], &destinations_a, 1)
             .unwrap()
             .psbt;
-        let txid_a = psbt_a.global.unsigned_tx.txid();
+        let txid_a = psbt_a.unsigned_tx.txid();
         let psbt_b = control
             .create_spend(&[dummy_op_b], &destinations_b, 10)
             .unwrap()
             .psbt;
-        let txid_b = psbt_b.global.unsigned_tx.txid();
+        let txid_b = psbt_b.unsigned_tx.txid();
         let psbt_c = control
             .create_spend(&[dummy_op_a, dummy_op_b], &destinations_c, 100)
             .unwrap()
             .psbt;
-        let txid_c = psbt_c.global.unsigned_tx.txid();
+        let txid_c = psbt_c.unsigned_tx.txid();
 
         // We can store and query them all
         control.update_spend(psbt_a.clone()).unwrap();
@@ -776,7 +781,14 @@ mod tests {
         assert_eq!(db_conn.spend_tx(&txid_c).unwrap(), psbt_c);
 
         // As well as update them, with or without new signatures
-        psbt_a.inputs[0].partial_sigs.insert(bitcoin::PublicKey::from_str("023a664c5617412f0b292665b1fd9d766456a7a3b1614c7e7c5f411200ff1958ef").unwrap(), Vec::<u8>::from_hex("304402204004fcdbb9c0d0cbf585f58cee34dccb012efbd8fc2b0d5e97760045ae35803802201a0bd7ec2383e0b93748abc9946c8e17a8312e314dab85982aeba650e738cbf401").unwrap());
+        let sig = bitcoin::EcdsaSig::from_str("304402204004fcdbb9c0d0cbf585f58cee34dccb012efbd8fc2b0d5e97760045ae35803802201a0bd7ec2383e0b93748abc9946c8e17a8312e314dab85982aeba650e738cbf401").unwrap();
+        psbt_a.inputs[0].partial_sigs.insert(
+            bitcoin::PublicKey::from_str(
+                "023a664c5617412f0b292665b1fd9d766456a7a3b1614c7e7c5f411200ff1958ef",
+            )
+            .unwrap(),
+            sig,
+        );
         control.update_spend(psbt_a.clone()).unwrap();
         assert_eq!(db_conn.spend_tx(&txid_a).unwrap(), psbt_a);
         control.update_spend(psbt_b.clone()).unwrap();
@@ -789,7 +801,7 @@ mod tests {
             "8753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:2",
         )
         .unwrap();
-        psbt_a.global.unsigned_tx.input[0].previous_output = external_op;
+        psbt_a.unsigned_tx.input[0].previous_output = external_op;
         assert_eq!(
             control.update_spend(psbt_a),
             Err(CommandError::UnknownOutpoint(external_op))

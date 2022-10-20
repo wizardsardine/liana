@@ -26,7 +26,8 @@ jobs:
           - nightly
         os:
           - ubuntu-latest
-          - macOS-latest
+          # See issue https://github.com/revault/minisafe/issues/69
+          #- macOS-latest
           - windows-latest
     runs-on: ${{ matrix.os }}
     steps:

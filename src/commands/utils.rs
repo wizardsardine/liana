@@ -3,7 +3,7 @@ use serde::{de, Deserialize, Deserializer, Serializer};
 
 /// Serialize an amount as sats
 pub fn ser_amount<S: Serializer>(amount: &bitcoin::Amount, s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_u64(amount.as_sat())
+    s.serialize_u64(amount.to_sat())
 }
 
 /// Deserialize an amount from sats
@@ -47,7 +47,7 @@ pub fn change_index(psbt: &Psbt) -> Option<usize> {
         None => return None,
     };
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     (0..tx.output.len())
         .rev()
         .find(|&i| &tx.output[i].script_pubkey == first_coin_spk)
