@@ -125,6 +125,10 @@ impl MiniscriptKey for DerivedPublicKey {
     fn is_x_only_key(&self) -> bool {
         false
     }
+
+    fn num_der_paths(&self) -> usize {
+        0
+    }
 }
 
 impl ToPublicKey for DerivedPublicKey {
@@ -164,7 +168,8 @@ fn csv_check(csv_value: u32) -> Result<(), DescCreationError> {
 
 fn is_unhardened_deriv(key: &descriptor::DescriptorPublicKey) -> bool {
     match *key {
-        descriptor::DescriptorPublicKey::Single(..) => false,
+        descriptor::DescriptorPublicKey::Single(..)
+        | descriptor::DescriptorPublicKey::MultiXPub(..) => false,
         descriptor::DescriptorPublicKey::XPub(ref xpub) => {
             xpub.wildcard == descriptor::Wildcard::Unhardened
         }
@@ -342,10 +347,15 @@ impl InheritanceDescriptor {
                 &mut self,
                 pk: &descriptor::DescriptorPublicKey,
             ) -> Result<DerivedPublicKey, descriptor::ConversionError> {
-                let definite_key = pk.clone().at_derivation_index(self.0);
+                let definite_key = pk
+                    .clone()
+                    .at_derivation_index(self.0)
+                    .expect("We disallow multipath keys.");
                 let origin = (
                     definite_key.master_fingerprint(),
-                    definite_key.full_derivation_path(),
+                    definite_key
+                        .full_derivation_path()
+                        .expect("We disallow multipath keys."),
                 );
                 let key = definite_key.derive_public_key(self.1)?;
                 Ok(DerivedPublicKey { origin, key })
