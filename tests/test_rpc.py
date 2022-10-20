@@ -193,7 +193,7 @@ def test_update_spend(minisafed, bitcoind):
         "0375e00eb72e29da82b89367947f29ef34afb75e8654f6ea368e0acdfd92976b7c"
     )
     dummy_sig_a = bytes.fromhex(
-        "304402202b925395cfeaa0171a7a92982bb4891acc4a312cbe7691d8375d36796d5b570a0220378a8ab42832848e15d1aedded5fb360fedbdd6c39226144e527f0f1e19d5398"
+        "304402202b925395cfeaa0171a7a92982bb4891acc4a312cbe7691d8375d36796d5b570a0220378a8ab42832848e15d1aedded5fb360fedbdd6c39226144e527f0f1e19d539801"
     )
     psbt_sig_a.i[0].map[PSBT_IN_PARTIAL_SIG] = {dummy_pk_a: dummy_sig_a}
     psbt_sig_a_ser = psbt_sig_a.to_base64()
@@ -210,7 +210,7 @@ def test_update_spend(minisafed, bitcoind):
         "03a1b26313f430c4b15bb1fdce663207659d8cac749a0e53d70eff01874496feff"
     )
     dummy_sig_b = bytes.fromhex(
-        "3044022005aebcd649fb8965f0591710fb3704931c3e8118ee60dd44917479f63ceba6d4022018b212900e5a80e9452366894de37f0d02fb9c89f1e94f34fb6ed7fd71c15c41"
+        "3044022005aebcd649fb8965f0591710fb3704931c3e8118ee60dd44917479f63ceba6d4022018b212900e5a80e9452366894de37f0d02fb9c89f1e94f34fb6ed7fd71c15c4101"
     )
     psbt_sig_b.i[0].map[PSBT_IN_PARTIAL_SIG] = {dummy_pk_b: dummy_sig_b}
     psbt_sig_b_ser = psbt_sig_b.to_base64()
