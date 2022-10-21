@@ -100,32 +100,32 @@ impl Installer {
                         .expect("There is always a step");
                     current_step.load_context(&self.context);
                 }
+                Command::none()
             }
             Message::Previous => {
                 self.previous();
+                Command::none()
             }
             Message::Install => {
                 self.steps
                     .get_mut(self.current)
                     .expect("There is always a step")
                     .update(message);
-                return Command::perform(
+                Command::perform(
                     install(self.context.clone(), self.config.clone()),
                     Message::Installed,
-                );
+                )
             }
             Message::Event(Event::Window(window::Event::CloseRequested)) => {
                 self.stop();
-                return Command::none();
+                Command::none()
             }
-            _ => {
-                self.steps
-                    .get_mut(self.current)
-                    .expect("There is always a step")
-                    .update(message);
-            }
-        };
-        Command::none()
+            _ => self
+                .steps
+                .get_mut(self.current)
+                .expect("There is always a step")
+                .update(message),
+        }
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -196,6 +196,13 @@ pub enum Error {
     CannotCreateFile(String),
     CannotWriteToFile(String),
     Unexpected(String),
+    HardwareWallet(async_hwi::Error),
+}
+
+impl From<async_hwi::Error> for Error {
+    fn from(error: async_hwi::Error) -> Self {
+        Error::HardwareWallet(error)
+    }
 }
 
 impl std::fmt::Display for Error {
@@ -205,6 +212,7 @@ impl std::fmt::Display for Error {
             Self::CannotWriteToFile(e) => write!(f, "Failed to write to file: {}", e),
             Self::CannotCreateFile(e) => write!(f, "Failed to create file: {}", e),
             Self::Unexpected(e) => write!(f, "Unexpected: {}", e),
+            Self::HardwareWallet(e) => write!(f, "Hardware Wallet: {}", e),
         }
     }
 }

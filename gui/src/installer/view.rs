@@ -1,17 +1,24 @@
-use iced::pure::{column, container, pick_list, row, scrollable, Element};
+use iced::pure::{column, container, pick_list, row, scrollable, widget, Element};
 use iced::{Alignment, Length};
 
 use minisafe::miniscript::bitcoin;
 
-use crate::ui::{
-    component::{
-        button, form,
-        text::{text, Text},
+use crate::{
+    hw::HardwareWallet,
+    installer::{
+        message::{self, Message},
+        Error,
     },
-    util::Collection,
+    ui::{
+        color,
+        component::{
+            button, card, form,
+            text::{text, Text},
+        },
+        icon,
+        util::Collection,
+    },
 };
-
-use crate::installer::message::{self, Message};
 
 const NETWORKS: [bitcoin::Network; 4] = [
     bitcoin::Network::Bitcoin,
@@ -66,36 +73,55 @@ pub fn define_descriptor<'a>(
     let col_user_xpub = column()
         .push(text("Your xpub:").bold())
         .push(
-            form::Form::new("Xpub", user_xpub, |msg| {
-                Message::DefineDescriptor(message::DefineDescriptor::UserXpubEdited(msg))
-            })
-            .warning("Please enter correct xpub")
-            .size(20)
-            .padding(10),
+            row()
+                .push(
+                    form::Form::new("Xpub", user_xpub, |msg| {
+                        Message::DefineDescriptor(message::DefineDescriptor::UserXpubEdited(msg))
+                    })
+                    .warning("Please enter correct xpub")
+                    .size(20)
+                    .padding(10),
+                )
+                .push(button::primary(Some(icon::chip_icon()), "Import").on_press(
+                    Message::DefineDescriptor(message::DefineDescriptor::ImportUserHWXpub),
+                ))
+                .spacing(5)
+                .align_items(Alignment::Center),
         )
         .spacing(10);
 
     let col_heir_xpub = column()
         .push(text("Heir xpub:").bold())
         .push(
-            form::Form::new("Xpub", heir_xpub, |msg| {
-                Message::DefineDescriptor(message::DefineDescriptor::HeirXpubEdited(msg))
-            })
-            .warning("Please enter correct xpub")
-            .size(20)
-            .padding(10),
+            row()
+                .push(
+                    form::Form::new("Xpub", heir_xpub, |msg| {
+                        Message::DefineDescriptor(message::DefineDescriptor::HeirXpubEdited(msg))
+                    })
+                    .warning("Please enter correct xpub")
+                    .size(20)
+                    .padding(10),
+                )
+                .push(button::primary(Some(icon::chip_icon()), "Import").on_press(
+                    Message::DefineDescriptor(message::DefineDescriptor::ImportHeirHWXpub),
+                ))
+                .spacing(5)
+                .align_items(Alignment::Center),
         )
         .spacing(10);
 
     let col_sequence = column()
-        .push(text("Number of block").bold())
+        .push(text("Number of block:").bold())
         .push(
-            form::Form::new("Number of block", sequence, |msg| {
-                Message::DefineDescriptor(message::DefineDescriptor::SequenceEdited(msg))
-            })
-            .warning("Please enter correct block number")
-            .size(20)
-            .padding(10),
+            container(
+                form::Form::new("Number of block", sequence, |msg| {
+                    Message::DefineDescriptor(message::DefineDescriptor::SequenceEdited(msg))
+                })
+                .warning("Please enter correct block number")
+                .size(20)
+                .padding(10),
+            )
+            .width(Length::Units(150)),
         )
         .spacing(10);
 
@@ -105,12 +131,8 @@ pub fn define_descriptor<'a>(
             .push(
                 column()
                     .push(col_user_xpub)
-                    .push(
-                        row()
-                            .push(col_sequence.width(Length::FillPortion(1)))
-                            .push(col_heir_xpub.width(Length::FillPortion(4)))
-                            .spacing(20),
-                    )
+                    .push(col_sequence)
+                    .push(col_heir_xpub)
                     .spacing(20),
             )
             .push(text("or import it").bold().size(25))
@@ -128,7 +150,7 @@ pub fn define_descriptor<'a>(
                         .on_press(Message::Next)
                 },
             )
-            .push_maybe(error.map(|e| text(e).size(15)))
+            .push_maybe(error.map(|e| card::error("Failed to create descriptor", e)))
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)
@@ -233,6 +255,92 @@ pub fn install<'a>(
     layout(col)
 }
 
+pub fn hardware_wallet_xpubs_modal<'a>(
+    is_heir: bool,
+    hws: &[HardwareWallet],
+    error: Option<&Error>,
+    processing: bool,
+    chosen_hw: Option<usize>,
+) -> Element<'a, Message> {
+    modal(
+        column()
+            .push(
+                text(if is_heir {
+                    "Import the Heir xpub"
+                } else {
+                    "Import the user xpub"
+                })
+                .bold()
+                .size(50),
+            )
+            .push_maybe(error.map(|e| card::error("Failed to import xpub", &e.to_string())))
+            .push(if !hws.is_empty() {
+                column()
+                    .push(text(&format!("{} hardware wallets connected", hws.len())).bold())
+                    .spacing(10)
+                    .push(
+                        hws.iter()
+                            .enumerate()
+                            .fold(column().spacing(10), |col, (i, hw)| {
+                                col.push(hw_list_view(i, hw, Some(i) == chosen_hw, processing))
+                            }),
+                    )
+                    .width(Length::Fill)
+            } else {
+                column().push(card::simple(
+                    column()
+                        .spacing(10)
+                        .push("Please connect a hardware wallet")
+                        .push(button::primary(None, "Refresh").on_press(Message::Reload))
+                        .align_items(Alignment::Center),
+                ))
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(100)
+            .spacing(50)
+            .align_items(Alignment::Center),
+    )
+}
+
+fn hw_list_view<'a>(
+    i: usize,
+    hw: &HardwareWallet,
+    chosen: bool,
+    processing: bool,
+) -> Element<'a, Message> {
+    let mut bttn = iced::pure::button(
+        row()
+            .push(
+                column()
+                    .push(text(&format!("{}", hw.kind)).bold())
+                    .push(text(&format!("fingerprint: {}", hw.fingerprint)).small())
+                    .spacing(5)
+                    .width(Length::Fill),
+            )
+            .push_maybe(if chosen && processing {
+                Some(
+                    column()
+                        .push(text("Processing..."))
+                        .push(text("Please check your device").small()),
+                )
+            } else {
+                None
+            })
+            .width(Length::Fill),
+    )
+    .padding(10)
+    .style(button::Style::TransparentBorder)
+    .width(Length::Fill);
+    if !processing {
+        bttn = bttn.on_press(Message::Select(i));
+    }
+    container(bttn)
+        .width(Length::Fill)
+        .style(card::SimpleCardStyle)
+        .into()
+}
+
 fn layout<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(scrollable(
         column()
@@ -246,4 +354,34 @@ fn layout<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> 
     .height(Length::Fill)
     .width(Length::Fill)
     .into()
+}
+
+fn modal<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(scrollable(
+        column()
+            .push(
+                row().push(column().width(Length::Fill)).push(
+                    container(
+                        button::primary(Some(icon::cross_icon()), "Close").on_press(Message::Close),
+                    )
+                    .padding(10),
+                ),
+            )
+            .push(container(content).width(Length::Fill).center_x()),
+    ))
+    .center_x()
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .style(ModalStyle)
+    .into()
+}
+
+pub struct ModalStyle;
+impl widget::container::StyleSheet for ModalStyle {
+    fn style(&self) -> widget::container::Style {
+        widget::container::Style {
+            background: color::BACKGROUND.into(),
+            ..widget::container::Style::default()
+        }
+    }
 }

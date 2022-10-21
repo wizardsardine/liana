@@ -134,6 +134,10 @@ pub fn warning_icon() -> Text {
     icon('\u{F33B}')
 }
 
+pub fn chip_icon() -> Text {
+    icon('\u{F2D6}')
+}
+
 pub fn trash_icon() -> Text {
     icon('\u{F5DE}')
 }

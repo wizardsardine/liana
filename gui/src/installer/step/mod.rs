@@ -1,14 +1,11 @@
+mod descriptor;
+pub use descriptor::DefineDescriptor;
+
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use iced::pure::Element;
-use minisafe::{
-    descriptors::InheritanceDescriptor,
-    miniscript::{
-        bitcoin,
-        descriptor::{Descriptor, DescriptorPublicKey},
-    },
-};
+use iced::{pure::Element, Command};
+use minisafe::miniscript::bitcoin;
 
 use crate::ui::component::form;
 
@@ -19,7 +16,9 @@ use crate::installer::{
 };
 
 pub trait Step {
-    fn update(&mut self, message: Message);
+    fn update(&mut self, _message: Message) -> Command<Message> {
+        Command::none()
+    }
     fn view(&self) -> Element<Message>;
     fn load_context(&mut self, _ctx: &Context) {}
     fn skip(&self, _ctx: &Context) -> bool {
@@ -58,10 +57,11 @@ impl Welcome {
 }
 
 impl Step for Welcome {
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Command<Message> {
         if let message::Message::Network(network) = message {
             self.network = network;
         }
+        Command::none()
     }
     fn apply(&mut self, ctx: &mut Context, config: &mut config::Config) -> bool {
         ctx.network = self.network;
@@ -81,138 +81,6 @@ impl Default for Welcome {
 
 impl From<Welcome> for Box<dyn Step> {
     fn from(s: Welcome) -> Box<dyn Step> {
-        Box::new(s)
-    }
-}
-
-pub struct DefineDescriptor {
-    imported_descriptor: form::Value<String>,
-    user_xpub: form::Value<String>,
-    heir_xpub: form::Value<String>,
-    sequence: form::Value<String>,
-    error: Option<String>,
-}
-
-impl DefineDescriptor {
-    pub fn new() -> Self {
-        Self {
-            imported_descriptor: form::Value::default(),
-            user_xpub: form::Value::default(),
-            heir_xpub: form::Value::default(),
-            sequence: form::Value::default(),
-            error: None,
-        }
-    }
-}
-
-impl Step for DefineDescriptor {
-    // form value is set as valid each time it is edited.
-    // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, message: Message) {
-        if let Message::DefineDescriptor(msg) = message {
-            match msg {
-                message::DefineDescriptor::ImportDescriptor(desc) => {
-                    self.imported_descriptor.value = desc;
-                    self.imported_descriptor.valid = true;
-                }
-                message::DefineDescriptor::UserXpubEdited(xpub) => {
-                    self.user_xpub.value = xpub;
-                    self.user_xpub.valid = true;
-                }
-                message::DefineDescriptor::HeirXpubEdited(xpub) => {
-                    self.heir_xpub.value = xpub;
-                    self.heir_xpub.valid = true;
-                }
-                message::DefineDescriptor::SequenceEdited(seq) => {
-                    self.sequence.valid = true;
-                    if seq.is_empty() || seq.parse::<u16>().is_ok() {
-                        self.sequence.value = seq;
-                    }
-                }
-            };
-        };
-    }
-
-    fn apply(&mut self, _ctx: &mut Context, config: &mut config::Config) -> bool {
-        // descriptor forms for import or creation cannot be both empty or filled.
-        if self.imported_descriptor.value.is_empty()
-            == (self.user_xpub.value.is_empty()
-                || self.heir_xpub.value.is_empty()
-                || self.sequence.value.is_empty())
-        {
-            if !self.user_xpub.value.is_empty() {
-                self.user_xpub.valid = DescriptorPublicKey::from_str(&self.user_xpub.value).is_ok();
-            }
-            if !self.heir_xpub.value.is_empty() {
-                self.heir_xpub.valid = DescriptorPublicKey::from_str(&self.heir_xpub.value).is_ok();
-            }
-            if !self.sequence.value.is_empty() {
-                self.sequence.valid = self.sequence.value.parse::<u32>().is_ok();
-            }
-            if !self.imported_descriptor.value.is_empty() {
-                self.imported_descriptor.valid =
-                    Descriptor::<DescriptorPublicKey>::from_str(&self.imported_descriptor.value)
-                        .is_ok();
-            }
-            false
-        } else if !self.imported_descriptor.value.is_empty() {
-            if let Ok(desc) = InheritanceDescriptor::from_str(&self.imported_descriptor.value) {
-                config.main_descriptor = Some(desc);
-                true
-            } else {
-                self.imported_descriptor.valid = false;
-                false
-            }
-        } else {
-            let user_key = DescriptorPublicKey::from_str(&self.user_xpub.value);
-            self.user_xpub.valid = user_key.is_ok();
-
-            let heir_key = DescriptorPublicKey::from_str(&self.heir_xpub.value);
-            self.user_xpub.valid = user_key.is_ok();
-
-            let sequence = self.sequence.value.parse::<u16>();
-            self.sequence.valid = sequence.is_ok();
-
-            if !self.user_xpub.valid || !self.heir_xpub.valid || !self.sequence.valid {
-                return false;
-            }
-
-            match InheritanceDescriptor::new(
-                user_key.unwrap(),
-                heir_key.unwrap(),
-                sequence.unwrap(),
-            ) {
-                Ok(desc) => {
-                    config.main_descriptor = Some(desc);
-                    true
-                }
-                Err(e) => {
-                    self.error = Some(e.to_string());
-                    false
-                }
-            }
-        }
-    }
-
-    fn view(&self) -> Element<Message> {
-        view::define_descriptor(
-            &self.imported_descriptor,
-            &self.user_xpub,
-            &self.heir_xpub,
-            &self.sequence,
-            self.error.as_ref(),
-        )
-    }
-}
-
-impl Default for DefineDescriptor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl From<DefineDescriptor> for Box<dyn Step> {
-    fn from(s: DefineDescriptor) -> Box<dyn Step> {
         Box::new(s)
     }
 }
@@ -283,7 +151,7 @@ impl Step for DefineBitcoind {
             self.address.value = bitcoind_default_address(&ctx.network);
         }
     }
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Command<Message> {
         if let Message::DefineBitcoind(msg) = message {
             match msg {
                 message::DefineBitcoind::AddressEdited(address) => {
@@ -296,6 +164,7 @@ impl Step for DefineBitcoind {
                 }
             };
         };
+        Command::none()
     }
 
     fn apply(&mut self, _ctx: &mut Context, config: &mut config::Config) -> bool {
@@ -358,7 +227,7 @@ impl Final {
 }
 
 impl Step for Final {
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Installed(res) => {
                 self.generating = false;
@@ -377,6 +246,7 @@ impl Step for Final {
             }
             _ => {}
         };
+        Command::none()
     }
 
     fn view(&self) -> Element<Message> {
