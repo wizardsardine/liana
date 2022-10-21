@@ -4,6 +4,8 @@ use iced::{
     Alignment, Length,
 };
 
+use minisafe::miniscript::bitcoin;
+
 use super::{
     dashboard,
     message::{Message, SettingsMessage},

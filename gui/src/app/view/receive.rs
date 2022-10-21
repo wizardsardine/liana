@@ -4,6 +4,8 @@ use iced::{
     Alignment,
 };
 
+use minisafe::miniscript::bitcoin;
+
 use crate::ui::{
     component::{button, card, text::*},
     icon,

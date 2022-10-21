@@ -1,3 +1,4 @@
+use minisafe::miniscript::bitcoin;
 use std::path::PathBuf;
 
 use super::Error;

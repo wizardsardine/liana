@@ -1,6 +1,8 @@
 use iced::pure::{column, container, pick_list, row, scrollable, Element};
 use iced::{Alignment, Length};
 
+use minisafe::miniscript::bitcoin;
+
 use crate::ui::{
     component::{
         button, form,

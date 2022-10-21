@@ -4,7 +4,10 @@ use std::str::FromStr;
 use iced::pure::Element;
 use minisafe::{
     descriptors::InheritanceDescriptor,
-    miniscript::descriptor::{Descriptor, DescriptorPublicKey},
+    miniscript::{
+        bitcoin,
+        descriptor::{Descriptor, DescriptorPublicKey},
+    },
 };
 
 use crate::ui::component::form;
@@ -122,7 +125,7 @@ impl Step for DefineDescriptor {
                 }
                 message::DefineDescriptor::SequenceEdited(seq) => {
                     self.sequence.valid = true;
-                    if seq.is_empty() || seq.parse::<u32>().is_ok() {
+                    if seq.is_empty() || seq.parse::<u16>().is_ok() {
                         self.sequence.value = seq;
                     }
                 }
@@ -167,7 +170,7 @@ impl Step for DefineDescriptor {
             let heir_key = DescriptorPublicKey::from_str(&self.heir_xpub.value);
             self.user_xpub.valid = user_key.is_ok();
 
-            let sequence = self.sequence.value.parse::<u32>();
+            let sequence = self.sequence.value.parse::<u16>();
             self.sequence.valid = sequence.is_ok();
 
             if !self.user_xpub.valid || !self.heir_xpub.valid || !self.sequence.valid {
