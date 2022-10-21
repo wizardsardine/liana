@@ -6,6 +6,7 @@ mod view;
 use iced::pure::Element;
 use iced::{Command, Subscription};
 use iced_native::{window, Event};
+use minisafe::miniscript::bitcoin;
 
 use std::convert::TryInto;
 use std::io::Write;

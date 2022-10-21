@@ -5,7 +5,7 @@ use iced::{executor, Command, Settings, Subscription};
 extern crate serde;
 extern crate serde_json;
 
-use minisafe::config::Config as DaemonConfig;
+use minisafe::{config::Config as DaemonConfig, miniscript::bitcoin};
 
 use minisafe_gui::{
     app::{

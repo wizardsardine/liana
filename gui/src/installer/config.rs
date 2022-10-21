@@ -1,9 +1,9 @@
 use std::convert::TryFrom;
 
-use bitcoin::Network;
 use minisafe::{
     config::{BitcoinConfig, BitcoindConfig, Config as MinisafeConfig},
     descriptors::InheritanceDescriptor,
+    miniscript::bitcoin::Network,
 };
 
 use serde::Serialize;

@@ -45,7 +45,7 @@ fn coin_list_view<'a>(i: usize, coin: &Coin) -> Element<'a, Message> {
                         .width(Length::Fill),
                 )
                 .push(
-                    text(&format!("{} BTC", coin.amount.as_btc()))
+                    text(&format!("{} BTC", coin.amount.to_btc()))
                         .bold()
                         .width(Length::Shrink),
                 )

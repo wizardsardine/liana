@@ -3,9 +3,9 @@ mod settings;
 
 use std::sync::Arc;
 
-use bitcoin::Amount;
 use iced::pure::{column, Element};
 use iced::{widget::qr_code, Command, Subscription};
+use minisafe::miniscript::bitcoin::{Address, Amount};
 
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view};
 use crate::daemon::{model::Coin, Daemon};
@@ -36,7 +36,7 @@ pub struct Home {
 impl Home {
     pub fn new(coins: &[Coin]) -> Self {
         Self {
-            balance: Amount::from_sat(coins.iter().map(|coin| coin.amount.as_sat()).sum()),
+            balance: Amount::from_sat(coins.iter().map(|coin| coin.amount.to_sat()).sum()),
         }
     }
 }
@@ -77,7 +77,7 @@ impl From<Home> for Box<dyn State> {
 
 #[derive(Default)]
 pub struct ReceivePanel {
-    address: Option<bitcoin::Address>,
+    address: Option<Address>,
     qr_code: Option<qr_code::State>,
     warning: Option<Error>,
 }
@@ -148,7 +148,7 @@ mod tests {
         },
     };
 
-    use bitcoin::Address;
+    use minisafe::miniscript::bitcoin::Address;
     use serde_json::json;
     use std::str::FromStr;
 

@@ -14,7 +14,6 @@ name = "minisafe-gui"
 path = "src/main.rs"
 
 [dependencies]
-bitcoin = { version = "0.27", features = ["base64", "use-serde"] }
 minisafe = { git = "https://github.com/revault/minisafe", branch = "master", default-features = false}
 backtrace = "0.3"
 

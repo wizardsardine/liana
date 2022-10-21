@@ -1,4 +1,4 @@
-use minisafe::config::Config as DaemonConfig;
+use minisafe::{config::Config as DaemonConfig, miniscript::bitcoin::Address};
 
 use crate::{
     app::{error::Error, view},
@@ -13,6 +13,6 @@ pub enum Message {
     LoadDaemonConfig(Box<DaemonConfig>),
     DaemonConfigLoaded(Result<(), Error>),
     BlockHeight(Result<i32, Error>),
-    ReceiveAddress(Result<bitcoin::Address, Error>),
+    ReceiveAddress(Result<Address, Error>),
     Coins(Result<Vec<Coin>, Error>),
 }

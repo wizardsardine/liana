@@ -8,7 +8,10 @@ use iced::{Alignment, Command, Subscription};
 use iced_native::{window, Event};
 use log::{debug, info};
 
-use minisafe::config::{Config, ConfigError};
+use minisafe::{
+    config::{Config, ConfigError},
+    miniscript::bitcoin,
+};
 
 use crate::{
     app::config::{default_datadir, Config as GUIConfig},
