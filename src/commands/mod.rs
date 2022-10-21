@@ -172,7 +172,9 @@ fn serializable_size<T: bitcoin::consensus::Encodable + ?Sized>(t: &T) -> u64 {
 impl DaemonControl {
     // Get the descriptor at this derivation index
     fn derived_desc(&self, index: bip32::ChildNumber) -> descriptors::DerivedInheritanceDescriptor {
-        self.config.main_descriptor.derive(index, &self.secp)
+        self.config
+            .main_descriptor
+            .derive_receive(index, &self.secp)
     }
 }
 
@@ -201,9 +203,7 @@ impl DaemonControl {
         // TODO: should we wrap around instead of failing?
         db_conn.increment_derivation_index(&self.secp);
         let address = self
-            .config
-            .main_descriptor
-            .derive(index, &self.secp)
+            .derived_desc(index)
             .address(self.config.bitcoin_config.network);
         GetAddressResult { address }
     }

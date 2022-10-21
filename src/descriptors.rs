@@ -327,11 +327,11 @@ impl InheritanceDescriptor {
         })
     }
 
-    /// Derive this descriptor at a given index.
+    /// Derive this descriptor at a given index for a receiving address.
     ///
     /// # Panics
     /// - If the given index is hardened.
-    pub fn derive(
+    pub fn derive_receive(
         &self,
         index: bip32::ChildNumber,
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
@@ -504,7 +504,7 @@ mod tests {
     fn inheritance_descriptor_derivation() {
         let secp = secp256k1::Secp256k1::verification_only();
         let desc = InheritanceDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2d").unwrap();
-        let der_desc = desc.derive(11.into(), &secp);
+        let der_desc = desc.derive_receive(11.into(), &secp);
         assert_eq!(
             "bc1qvjzcg25nsxmfccct0txjvljxjwn68htkrw57jqmjhfzvhyd2z4msc74w65",
             der_desc.address(bitcoin::Network::Bitcoin).to_string()

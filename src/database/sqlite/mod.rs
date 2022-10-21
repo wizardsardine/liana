@@ -240,7 +240,7 @@ impl SqliteConn {
             let next_la_index = next_index + LOOK_AHEAD_LIMIT - 1;
             let next_la_address = db_wallet
                 .main_descriptor
-                .derive(next_la_index.into(), secp)
+                .derive_receive(next_la_index.into(), secp)
                 .address(network);
             db_tx
                 .execute(
@@ -714,7 +714,7 @@ mod tests {
             // There is the index for the first index
             let addr = options
                 .main_descriptor
-                .derive(0.into(), &secp)
+                .derive_receive(0.into(), &secp)
                 .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 0.into());
@@ -722,7 +722,7 @@ mod tests {
             // There is the index for the 199th index (look-ahead limit)
             let addr = options
                 .main_descriptor
-                .derive(199.into(), &secp)
+                .derive_receive(199.into(), &secp)
                 .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 199.into());
@@ -730,7 +730,7 @@ mod tests {
             // And not for the 200th one.
             let addr = options
                 .main_descriptor
-                .derive(200.into(), &secp)
+                .derive_receive(200.into(), &secp)
                 .address(options.bitcoind_network);
             assert!(conn.db_address(&addr).is_none());
 

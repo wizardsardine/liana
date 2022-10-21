@@ -98,7 +98,7 @@ pub fn create_fresh_db(
         // TODO: have this as a helper in descriptors.rs
         let address = options
             .main_descriptor
-            .derive(index.into(), secp)
+            .derive_receive(index.into(), secp)
             .address(options.bitcoind_network);
         query += &format!(
             "INSERT INTO addresses (address, derivation_index) VALUES (\"{}\", {});\n",
