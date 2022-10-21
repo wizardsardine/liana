@@ -9,7 +9,8 @@ use miniscript::{
     descriptor, hash256,
     miniscript::{decode::Terminal, Miniscript},
     policy::{Liftable, Semantic as SemanticPolicy},
-    translate_hash_clone, MiniscriptKey, ScriptContext, ToPublicKey, TranslatePk, Translator,
+    translate_hash_clone, ForEachKey, MiniscriptKey, ScriptContext, ToPublicKey, TranslatePk,
+    Translator,
 };
 
 use std::{collections::BTreeMap, convert::TryFrom, error, fmt, str, sync};
@@ -315,8 +316,15 @@ impl InheritanceDescriptor {
         )))
     }
 
-    pub fn as_inner(&self) -> &descriptor::Descriptor<descriptor::DescriptorPublicKey> {
-        &self.0
+    /// Whether all xpubs contained in this descriptor are for the passed expected network.
+    pub fn all_xpubs_net_is(&self, expected_net: bitcoin::Network) -> bool {
+        self.0.for_each_key(|xpub| {
+            if let descriptor::DescriptorPublicKey::XPub(xpub) = xpub {
+                xpub.xkey.network == expected_net
+            } else {
+                false
+            }
+        })
     }
 
     /// Derive this descriptor at a given index.

@@ -2,7 +2,7 @@ use crate::descriptors::InheritanceDescriptor;
 
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
-use miniscript::{bitcoin::Network, DescriptorPublicKey, ForEachKey};
+use miniscript::bitcoin::Network;
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -203,14 +203,7 @@ impl Config {
             Network::Bitcoin => Network::Bitcoin,
             _ => Network::Testnet,
         };
-        let unexpected_net = self.main_descriptor.as_inner().for_each_key(|xpub| {
-            if let DescriptorPublicKey::XPub(xpub) = xpub {
-                xpub.xkey.network != expected_network
-            } else {
-                false
-            }
-        });
-        if unexpected_net {
+        if !self.main_descriptor.all_xpubs_net_is(expected_network) {
             return Err(ConfigError::Unexpected(format!(
                 "Our bitcoin network is {} but one xpub is not for network {}",
                 self.bitcoin_config.network, expected_network
