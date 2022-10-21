@@ -263,6 +263,12 @@ impl str::FromStr for InheritanceDescriptor {
     }
 }
 
+impl PartialEq<descriptor::Descriptor<descriptor::DescriptorPublicKey>> for InheritanceDescriptor {
+    fn eq(&self, other: &descriptor::Descriptor<descriptor::DescriptorPublicKey>) -> bool {
+        self.0.eq(other)
+    }
+}
+
 impl InheritanceDescriptor {
     pub fn new(
         owner_key: descriptor::DescriptorPublicKey,

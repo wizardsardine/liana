@@ -4,7 +4,10 @@
 pub mod d;
 pub mod poller;
 
-use d::{BitcoindError, LSBlockEntry};
+use crate::{
+    bitcoin::d::{BitcoindError, LSBlockEntry},
+    descriptors,
+};
 
 use std::{collections::HashMap, error, fmt, sync};
 
@@ -56,7 +59,11 @@ pub trait BitcoinInterface: Send {
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool;
 
     /// Get coins received since the specified tip.
-    fn received_coins(&self, tip: &BlockChainTip) -> Vec<UTxO>;
+    fn received_coins(
+        &self,
+        tip: &BlockChainTip,
+        desc: &descriptors::InheritanceDescriptor,
+    ) -> Vec<UTxO>;
 
     /// Get all coins that were confirmed, and at what height and time.
     fn confirmed_coins(
@@ -106,25 +113,34 @@ impl BitcoinInterface for d::BitcoinD {
             .unwrap_or(false)
     }
 
-    fn received_coins(&self, tip: &BlockChainTip) -> Vec<UTxO> {
+    fn received_coins(
+        &self,
+        tip: &BlockChainTip,
+        desc: &descriptors::InheritanceDescriptor,
+    ) -> Vec<UTxO> {
         // TODO: don't assume only a single descriptor is loaded on the wo wallet
         let lsb_res = self.list_since_block(&tip.hash);
 
         lsb_res
             .received_coins
             .into_iter()
-            .map(|entry| {
+            .filter_map(|entry| {
                 let LSBlockEntry {
                     outpoint,
                     amount,
                     block_height,
                     address,
+                    parent_descs,
                 } = entry;
-                UTxO {
-                    outpoint,
-                    amount,
-                    block_height,
-                    address,
+                if parent_descs.iter().any(|parent_desc| desc == parent_desc) {
+                    Some(UTxO {
+                        outpoint,
+                        amount,
+                        block_height,
+                        address,
+                    })
+                } else {
+                    None
                 }
             })
             .collect()
@@ -287,8 +303,12 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock().unwrap().is_in_chain(tip)
     }
 
-    fn received_coins(&self, tip: &BlockChainTip) -> Vec<UTxO> {
-        self.lock().unwrap().received_coins(tip)
+    fn received_coins(
+        &self,
+        tip: &BlockChainTip,
+        desc: &descriptors::InheritanceDescriptor,
+    ) -> Vec<UTxO> {
+        self.lock().unwrap().received_coins(tip, desc)
     }
 
     fn confirmed_coins(

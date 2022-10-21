@@ -10,7 +10,7 @@ use jsonrpc::{
     client::Client,
     simple_http::{self, SimpleHttpTransport},
 };
-use miniscript::bitcoin;
+use miniscript::{bitcoin, descriptor};
 
 use serde_json::Value as Json;
 
@@ -532,8 +532,8 @@ impl BitcoinD {
                 Json::String(block_hash.to_string()),
                 Json::Number(1.into()), // Default for min_confirmations for the returned
                 Json::Bool(true),       // Whether to include watchonly
-                Json::Bool(false),      // Whether to include an array of txs that were removed in reorgs
-                Json::Bool(true)        // Whether to include UTxOs treated as change.
+                Json::Bool(false), // Whether to include an array of txs that were removed in reorgs
+                Json::Bool(true)   // Whether to include UTxOs treated as change.
             ),
         )
         .into()
@@ -714,6 +714,7 @@ pub struct LSBlockEntry {
     pub amount: bitcoin::Amount,
     pub block_height: Option<i32>,
     pub address: bitcoin::Address,
+    pub parent_descs: Vec<descriptor::Descriptor<descriptor::DescriptorPublicKey>>,
 }
 
 impl From<&Json> for LSBlockEntry {
@@ -745,12 +746,26 @@ impl From<&Json> for LSBlockEntry {
             .and_then(Json::as_str)
             .and_then(|s| bitcoin::Address::from_str(s).ok())
             .expect("bitcoind can't give a bad address");
+        let parent_descs = json
+            .get("parent_descs")
+            .and_then(Json::as_array)
+            .and_then(|descs| {
+                descs
+                    .iter()
+                    .map(|desc| {
+                        desc.as_str()
+                            .and_then(|s| descriptor::Descriptor::<_>::from_str(s).ok())
+                    })
+                    .collect::<Option<Vec<_>>>()
+            })
+            .expect("bitcoind can't give invalid descriptors");
 
         LSBlockEntry {
             outpoint,
             amount,
             block_height,
             address,
+            parent_descs,
         }
     }
 }

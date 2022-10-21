@@ -317,6 +317,7 @@ impl DaemonHandle {
             bit.clone(),
             db.clone(),
             config.bitcoin_config.poll_interval_secs,
+            config.main_descriptor.clone(),
         );
 
         // Finally, set up the API.

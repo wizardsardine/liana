@@ -2,7 +2,7 @@ use crate::{
     bitcoin::{BitcoinError, BitcoinInterface, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
     database::{Coin, DatabaseConnection, DatabaseInterface, SpendBlock},
-    DaemonHandle,
+    descriptors, DaemonHandle,
 };
 
 use std::{collections::HashMap, env, fs, io, path, process, str::FromStr, sync, thread, time};
@@ -44,7 +44,11 @@ impl BitcoinInterface for DummyBitcoind {
         true
     }
 
-    fn received_coins(&self, _: &BlockChainTip) -> Vec<UTxO> {
+    fn received_coins(
+        &self,
+        _: &BlockChainTip,
+        _: &descriptors::InheritanceDescriptor,
+    ) -> Vec<UTxO> {
         Vec::new()
     }
 
