@@ -528,7 +528,13 @@ impl BitcoinD {
     pub fn list_since_block(&self, block_hash: &bitcoin::BlockHash) -> LSBlockRes {
         self.make_wallet_request(
             "listsinceblock",
-            &params!(Json::String(block_hash.to_string()),),
+            &params!(
+                Json::String(block_hash.to_string()),
+                Json::Number(1.into()), // Default for min_confirmations for the returned
+                Json::Bool(true),       // Whether to include watchonly
+                Json::Bool(false),      // Whether to include an array of txs that were removed in reorgs
+                Json::Bool(true)        // Whether to include UTxOs treated as change.
+            ),
         )
         .into()
     }
