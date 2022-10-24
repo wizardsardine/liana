@@ -85,5 +85,8 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: cd gui && cargo test --verbose --no-default-features
       - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
-        if: matrix.os != 'windows-latest'
+        if: matrix.os == 'macOS-latest'
         run: cd gui && cargo test --verbose --color always -- --nocapture
+      - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update & sudo apt-get install --allow-downgrades libudev1=245.4-4ubuntu3 libudev-dev=245.4-4ubuntu3 pkg-config libxkbcommon-dev libvulkan-dev && cd gui && cargo test --verbose --color always -- --nocapture
