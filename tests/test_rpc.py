@@ -88,6 +88,7 @@ def test_create_spend(minisafed, bitcoind):
         bitcoind.generate_block(1, wait_for_mempool=txid)
     txid = bitcoind.rpc.sendtoaddress(addr, 0.3556)
     bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(minisafed.rpc.listcoins()["coins"]) == 16)
 
     # Stop the daemon, should be a no-op
     minisafed.stop()
