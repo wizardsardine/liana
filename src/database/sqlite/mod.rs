@@ -18,7 +18,7 @@ use crate::{
         },
         Coin,
     },
-    descriptors::InheritanceDescriptor,
+    descriptors::MultipathDescriptor,
 };
 
 use std::{convert::TryInto, fmt, io, path};
@@ -36,7 +36,7 @@ pub enum SqliteDbError {
     FileNotFound(path::PathBuf),
     UnsupportedVersion(i64),
     InvalidNetwork(bitcoin::Network),
-    DescriptorMismatch(Box<InheritanceDescriptor>),
+    DescriptorMismatch(Box<MultipathDescriptor>),
     Rusqlite(rusqlite::Error),
 }
 
@@ -80,7 +80,7 @@ impl From<rusqlite::Error> for SqliteDbError {
 #[derive(Debug, Clone)]
 pub struct FreshDbOptions {
     pub bitcoind_network: bitcoin::Network,
-    pub main_descriptor: InheritanceDescriptor,
+    pub main_descriptor: MultipathDescriptor,
 }
 
 #[derive(Debug, Clone)]
@@ -119,7 +119,7 @@ impl SqliteDb {
     pub fn sanity_check(
         &self,
         bitcoind_network: bitcoin::Network,
-        main_descriptor: &InheritanceDescriptor,
+        main_descriptor: &MultipathDescriptor,
     ) -> Result<(), SqliteDbError> {
         let mut conn = self.connection()?;
 
@@ -240,7 +240,8 @@ impl SqliteConn {
             let next_la_index = next_index + LOOK_AHEAD_LIMIT - 1;
             let next_la_address = db_wallet
                 .main_descriptor
-                .derive_receive(next_la_index.into(), secp)
+                .receive_descriptor()
+                .derive(next_la_index.into(), secp)
                 .address(network);
             db_tx
                 .execute(
@@ -485,7 +486,7 @@ mod tests {
 
     fn dummy_options() -> FreshDbOptions {
         let desc_str = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#5f6qd0d9";
-        let main_descriptor = InheritanceDescriptor::from_str(desc_str).unwrap();
+        let main_descriptor = MultipathDescriptor::from_str(desc_str).unwrap();
         FreshDbOptions {
             bitcoind_network: bitcoin::Network::Bitcoin,
             main_descriptor,
@@ -534,7 +535,7 @@ mod tests {
             .contains("Database was created for network");
         fs::remove_file(&db_path).unwrap();
         let other_desc_str = "wsh(andor(pk(tpubDExU4YLJkyQ9RRbVScQq2brFxWWha7WmAUByPWyaWYwmcTv3Shx8aHp6mVwuE5n4TeM4z5DTWGf2YhNPmXtfvyr8cUDVvA3txdrFnFgNdF7/<0;1>/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))";
-        let other_desc = InheritanceDescriptor::from_str(other_desc_str).unwrap();
+        let other_desc = MultipathDescriptor::from_str(other_desc_str).unwrap();
         let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &other_desc)
             .unwrap_err()
@@ -714,7 +715,8 @@ mod tests {
             // There is the index for the first index
             let addr = options
                 .main_descriptor
-                .derive_receive(0.into(), &secp)
+                .receive_descriptor()
+                .derive(0.into(), &secp)
                 .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 0.into());
@@ -722,7 +724,8 @@ mod tests {
             // There is the index for the 199th index (look-ahead limit)
             let addr = options
                 .main_descriptor
-                .derive_receive(199.into(), &secp)
+                .receive_descriptor()
+                .derive(199.into(), &secp)
                 .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 199.into());
@@ -730,7 +733,8 @@ mod tests {
             // And not for the 200th one.
             let addr = options
                 .main_descriptor
-                .derive_receive(200.into(), &secp)
+                .receive_descriptor()
+                .derive(200.into(), &secp)
                 .address(options.bitcoind_network);
             assert!(conn.db_address(&addr).is_none());
 

@@ -191,8 +191,13 @@ fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
     }
 }
 
+/// An [InheritanceDescriptor] that contains multipath keys for (and only for) the receive keychain
+/// and the change keychain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MultipathDescriptor(descriptor::Descriptor<descriptor::DescriptorPublicKey>);
+
 /// A Miniscript descriptor with a main, unencombered, branch (the main owner of the coins)
-/// and a timelocked branch (the heir).
+/// and a timelocked branch (the heir). All keys in this descriptor are singlepath.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InheritanceDescriptor(descriptor::Descriptor<descriptor::DescriptorPublicKey>);
 
@@ -200,16 +205,16 @@ pub struct InheritanceDescriptor(descriptor::Descriptor<descriptor::DescriptorPu
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerivedInheritanceDescriptor(descriptor::Descriptor<DerivedPublicKey>);
 
-impl fmt::Display for InheritanceDescriptor {
+impl fmt::Display for MultipathDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl str::FromStr for InheritanceDescriptor {
+impl str::FromStr for MultipathDescriptor {
     type Err = DescCreationError;
 
-    fn from_str(s: &str) -> Result<InheritanceDescriptor, Self::Err> {
+    fn from_str(s: &str) -> Result<MultipathDescriptor, Self::Err> {
         let wsh_desc = descriptor::Wsh::<descriptor::DescriptorPublicKey>::from_str(s)
             .map_err(DescCreationError::Miniscript)?;
         let ms = match wsh_desc.as_inner() {
@@ -273,7 +278,13 @@ impl str::FromStr for InheritanceDescriptor {
             .find(|s| matches!(s, SemanticPolicy::Key(_)))
             .ok_or(DescCreationError::IncompatibleDesc)?;
 
-        Ok(InheritanceDescriptor(descriptor::Descriptor::Wsh(wsh_desc)))
+        Ok(MultipathDescriptor(descriptor::Descriptor::Wsh(wsh_desc)))
+    }
+}
+
+impl fmt::Display for InheritanceDescriptor {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -283,59 +294,12 @@ impl PartialEq<descriptor::Descriptor<descriptor::DescriptorPublicKey>> for Inhe
     }
 }
 
-// Derive a **single-path** descriptor at a **unhardened** derivation index. Will panic if either
-// of these isn't true.
-fn derive_desc(
-    desc: &descriptor::Descriptor<descriptor::DescriptorPublicKey>,
-    index: bip32::ChildNumber,
-    secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
-) -> descriptor::Descriptor<DerivedPublicKey> {
-    assert!(index.is_normal());
-
-    // Unfortunately we can't just use `self.0.at_derivation_index().derived_descriptor()`
-    // since it would return a raw public key, but we need the origin too.
-    // TODO: upstream our DerivedPublicKey stuff to rust-miniscript.
-    //
-    // So we roll our own translation.
-    struct Derivator<'a, C: secp256k1::Verification>(u32, &'a secp256k1::Secp256k1<C>);
-    impl<'a, C: secp256k1::Verification>
-        Translator<descriptor::DescriptorPublicKey, DerivedPublicKey, descriptor::ConversionError>
-        for Derivator<'a, C>
-    {
-        fn pk(
-            &mut self,
-            pk: &descriptor::DescriptorPublicKey,
-        ) -> Result<DerivedPublicKey, descriptor::ConversionError> {
-            let definite_key = pk
-                .clone()
-                .at_derivation_index(self.0)
-                .expect("We disallow multipath keys.");
-            let origin = (
-                definite_key.master_fingerprint(),
-                definite_key
-                    .full_derivation_path()
-                    .expect("We disallow multipath keys."),
-            );
-            let key = definite_key.derive_public_key(self.1)?;
-            Ok(DerivedPublicKey { origin, key })
-        }
-        translate_hash_clone!(
-            descriptor::DescriptorPublicKey,
-            DerivedPublicKey,
-            descriptor::ConversionError
-        );
-    }
-
-    desc.translate_pk(&mut Derivator(index.into(), secp))
-        .expect("May only fail on hardened derivation indexes, but we ruled out this case.")
-}
-
-impl InheritanceDescriptor {
+impl MultipathDescriptor {
     pub fn new(
         owner_key: descriptor::DescriptorPublicKey,
         heir_key: descriptor::DescriptorPublicKey,
         timelock: u16,
-    ) -> Result<InheritanceDescriptor, DescCreationError> {
+    ) -> Result<MultipathDescriptor, DescCreationError> {
         // We require the locktime to:
         //  - not be disabled
         //  - be in number of blocks
@@ -378,7 +342,7 @@ impl InheritanceDescriptor {
         miniscript::Segwitv0::check_local_validity(&tl_miniscript)
             .expect("Miniscript must be sane");
 
-        Ok(InheritanceDescriptor(descriptor::Descriptor::Wsh(
+        Ok(MultipathDescriptor(descriptor::Descriptor::Wsh(
             descriptor::Wsh::new(tl_miniscript).expect("Must pass sanity checks"),
         )))
     }
@@ -394,9 +358,9 @@ impl InheritanceDescriptor {
         })
     }
 
-    // TODO: Use a newtype to differentiate single and multi path descriptors.
     // TODO: Cache it inside the struct, it's very inefficient to use into_single_descriptors() for
     // every single derivation.
+    /// Get the descriptor for receiving addresses.
     pub fn receive_descriptor(&self) -> InheritanceDescriptor {
         let singlepath_descs = self
             .0
@@ -415,6 +379,9 @@ impl InheritanceDescriptor {
         )
     }
 
+    // TODO: Cache it inside the struct, it's very inefficient to use into_single_descriptors() for
+    // every single derivation.
+    /// Get the descriptor for change addresses.
     pub fn change_descriptor(&self) -> InheritanceDescriptor {
         let singlepath_descs = self
             .0
@@ -432,20 +399,6 @@ impl InheritanceDescriptor {
                 .next()
                 .expect("Just checked the length"),
         )
-    }
-
-    /// Derive this descriptor at a given index for a receiving address.
-    ///
-    /// # Panics
-    /// - If the given index is hardened.
-    pub fn derive_receive(
-        &self,
-        index: bip32::ChildNumber,
-        secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
-    ) -> DerivedInheritanceDescriptor {
-        assert!(index.is_normal());
-
-        DerivedInheritanceDescriptor(derive_desc(&self.receive_descriptor().0, index, secp))
     }
 
     /// Get the value (in blocks) of the relative timelock for the heir's spending path.
@@ -484,6 +437,65 @@ impl InheritanceDescriptor {
 
         assert!(csv.is_height_locked());
         csv.to_consensus_u32()
+    }
+}
+
+impl InheritanceDescriptor {
+    /// Derive this descriptor at a given index for a receiving address.
+    ///
+    /// # Panics
+    /// - If the given index is hardened.
+    pub fn derive(
+        &self,
+        index: bip32::ChildNumber,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
+    ) -> DerivedInheritanceDescriptor {
+        assert!(index.is_normal());
+
+        // Unfortunately we can't just use `self.0.at_derivation_index().derived_descriptor()`
+        // since it would return a raw public key, but we need the origin too.
+        // TODO: upstream our DerivedPublicKey stuff to rust-miniscript.
+        //
+        // So we roll our own translation.
+        struct Derivator<'a, C: secp256k1::Verification>(u32, &'a secp256k1::Secp256k1<C>);
+        impl<'a, C: secp256k1::Verification>
+            Translator<
+                descriptor::DescriptorPublicKey,
+                DerivedPublicKey,
+                descriptor::ConversionError,
+            > for Derivator<'a, C>
+        {
+            fn pk(
+                &mut self,
+                pk: &descriptor::DescriptorPublicKey,
+            ) -> Result<DerivedPublicKey, descriptor::ConversionError> {
+                let definite_key = pk
+                    .clone()
+                    .at_derivation_index(self.0)
+                    .expect("We disallow multipath keys.");
+                let origin = (
+                    definite_key.master_fingerprint(),
+                    definite_key
+                        .full_derivation_path()
+                        .expect("We disallow multipath keys."),
+                );
+                let key = definite_key.derive_public_key(self.1)?;
+                Ok(DerivedPublicKey { origin, key })
+            }
+            translate_hash_clone!(
+                descriptor::DescriptorPublicKey,
+                DerivedPublicKey,
+                descriptor::ConversionError
+            );
+        }
+
+        DerivedInheritanceDescriptor(
+            self.0
+                .translate_pk(&mut Derivator(index.into(), secp))
+                .expect(
+                    "May only fail on hardened derivation indexes, but we ruled out this case.",
+                ),
+        )
     }
 }
 
@@ -541,42 +553,42 @@ mod tests {
         let owner_key = descriptor::DescriptorPublicKey::from_str("xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*").unwrap();
         let timelock = 52560;
-        assert_eq!(InheritanceDescriptor::new(owner_key, heir_key, timelock).unwrap().to_string(), "wsh(or_d(pk(xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh(xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#8n2ydpkt");
+        assert_eq!(MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap().to_string(), "wsh(or_d(pk(xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh(xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#8n2ydpkt");
 
         // We prevent footguns with timelocks by requiring a u16. Note how the following wouldn't
         // compile:
-        //InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), 0x00_01_0f_00).unwrap_err();
-        //InheritanceDescriptor::new(owner_key.clone(), heir_key.clone(), (1 << 31) + 1).unwrap_err();
-        //InheritanceDescriptor::new(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
+        //MultipathDescriptor::new(owner_key.clone(), heir_key.clone(), 0x00_01_0f_00).unwrap_err();
+        //MultipathDescriptor::new(owner_key.clone(), heir_key.clone(), (1 << 31) + 1).unwrap_err();
+        //MultipathDescriptor::new(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
 
         let owner_key = descriptor::DescriptorPublicKey::from_str("[aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*").unwrap();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*").unwrap();
         let timelock = 57600;
-        assert_eq!(InheritanceDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap().to_string(), "wsh(or_d(pk([aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*),and_v(v:pkh(xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*),older(57600))))#l6dlpc2l");
+        assert_eq!(MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap().to_string(), "wsh(or_d(pk([aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*),and_v(v:pkh(xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*),older(57600))))#l6dlpc2l");
 
         // We can't pass a raw key, an xpub that is not deriveable, only hardened derivable,
         // without both the change and receive derivation paths, or with more than 2 different
         // derivation paths.
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/<0;1>/354").unwrap();
-        InheritanceDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
+        MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/<0;1>/*'").unwrap();
-        InheritanceDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
+        MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
         let heir_key = descriptor::DescriptorPublicKey::from_str(
             "02e24913be26dbcfdf8e8e94870b28725cdae09b448b6c127767bf0154e3a3c8e5",
         )
         .unwrap();
-        InheritanceDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
+        MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/*'").unwrap();
-        InheritanceDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
+        MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/<0;1;2>/*'").unwrap();
-        InheritanceDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
+        MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
     }
 
     #[test]
     fn inheritance_descriptor_derivation() {
         let secp = secp256k1::Secp256k1::verification_only();
-        let desc = InheritanceDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#5f6qd0d9").unwrap();
-        let der_desc = desc.derive_receive(11.into(), &secp);
+        let desc = MultipathDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#5f6qd0d9").unwrap();
+        let der_desc = desc.receive_descriptor().derive(11.into(), &secp);
         assert_eq!(
             "bc1q26gtczlz03u6juf5cxppapk4sr4fyz53s3g4zs2cgactcahqv6yqc2t8e6",
             der_desc.address(bitcoin::Network::Bitcoin).to_string()
@@ -591,13 +603,13 @@ mod tests {
 
     #[test]
     fn inheritance_descriptor_tl_value() {
-        let desc = InheritanceDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(1),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
+        let desc = MultipathDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(1),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
         assert_eq!(desc.timelock_value(), 1);
 
-        let desc = InheritanceDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(42000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
+        let desc = MultipathDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(42000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
         assert_eq!(desc.timelock_value(), 42000);
 
-        let desc = InheritanceDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(65535),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
+        let desc = MultipathDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(65535),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
         assert_eq!(desc.timelock_value(), 0xffff);
     }
 

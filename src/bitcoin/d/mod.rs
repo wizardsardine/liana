@@ -1,7 +1,7 @@
 ///! Implementation of the Bitcoin interface using bitcoind.
 ///!
 ///! We use the RPC interface and a watchonly descriptor wallet.
-use crate::{bitcoin::BlockChainTip, config, descriptors::InheritanceDescriptor};
+use crate::{bitcoin::BlockChainTip, config, descriptors::MultipathDescriptor};
 
 use std::{collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
 
@@ -352,7 +352,7 @@ impl BitcoinD {
     }
 
     // Import the receive and change descriptors from the multipath descriptor to bitcoind.
-    fn import_descriptor(&self, desc: &InheritanceDescriptor) -> Option<String> {
+    fn import_descriptor(&self, desc: &MultipathDescriptor) -> Option<String> {
         let descriptors = [desc.receive_descriptor(), desc.change_descriptor()]
             .iter()
             .map(|desc| {
@@ -401,7 +401,7 @@ impl BitcoinD {
     /// Create the watchonly wallet on bitcoind, and import it the main descriptor.
     pub fn create_watchonly_wallet(
         &self,
-        main_descriptor: &InheritanceDescriptor,
+        main_descriptor: &MultipathDescriptor,
     ) -> Result<(), BitcoindError> {
         // Remove any leftover. This can happen if we delete the watchonly wallet but don't restart
         // bitcoind.
@@ -441,7 +441,7 @@ impl BitcoinD {
     /// Perform various sanity checks on the bitcoind instance.
     pub fn sanity_check(
         &self,
-        main_descriptor: &InheritanceDescriptor,
+        main_descriptor: &MultipathDescriptor,
         config_network: bitcoin::Network,
     ) -> Result<(), BitcoindError> {
         // Check the minimum supported bitcoind version

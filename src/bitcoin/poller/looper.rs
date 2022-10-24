@@ -219,7 +219,7 @@ pub fn looper(
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     shutdown: sync::Arc<atomic::AtomicBool>,
     poll_interval: time::Duration,
-    desc: descriptors::InheritanceDescriptor,
+    desc: descriptors::MultipathDescriptor,
 ) {
     let mut last_poll = None;
     let mut synced = false;

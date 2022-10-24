@@ -174,7 +174,8 @@ impl DaemonControl {
     fn derived_desc(&self, index: bip32::ChildNumber) -> descriptors::DerivedInheritanceDescriptor {
         self.config
             .main_descriptor
-            .derive_receive(index, &self.secp)
+            .receive_descriptor()
+            .derive(index, &self.secp)
     }
 }
 
@@ -487,7 +488,7 @@ impl DaemonControl {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetInfoDescriptors {
-    pub main: descriptors::InheritanceDescriptor,
+    pub main: descriptors::MultipathDescriptor,
 }
 
 /// Information about the daemon

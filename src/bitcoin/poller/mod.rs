@@ -22,7 +22,7 @@ impl Poller {
         bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         poll_interval: time::Duration,
-        desc: descriptors::InheritanceDescriptor,
+        desc: descriptors::MultipathDescriptor,
     ) -> Poller {
         let shutdown = sync::Arc::from(atomic::AtomicBool::from(false));
         let handle = thread::Builder::new()
