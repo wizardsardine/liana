@@ -351,13 +351,19 @@ impl BitcoinD {
         None
     }
 
-    // TODO: rescan feature will probably need another timestamp than 'now'
-    fn import_descriptor(&self, descriptor: &InheritanceDescriptor) -> Option<String> {
-        let descriptors = vec![serde_json::json!({
-            "desc": descriptor.to_string(),
-            "timestamp": "now",
-            "active": false,
-        })];
+    // Import the receive and change descriptors from the multipath descriptor to bitcoind.
+    fn import_descriptor(&self, desc: &InheritanceDescriptor) -> Option<String> {
+        let descriptors = [desc.receive_descriptor(), desc.change_descriptor()]
+            .iter()
+            .map(|desc| {
+                // TODO: rescan feature will probably need another timestamp than 'now'
+                serde_json::json!({
+                    "desc": desc.to_string(),
+                    "timestamp": "now",
+                    "active": false,
+                })
+            })
+            .collect();
 
         let res = self.make_wallet_request("importdescriptors", &params!(Json::Array(descriptors)));
         let all_succeeded = res
@@ -471,9 +477,11 @@ impl BitcoinD {
         }
 
         // Check our main descriptor is imported in this wallet.
-        if !self
-            .list_descriptors()
-            .contains(&main_descriptor.to_string())
+        let receive_desc = main_descriptor.receive_descriptor();
+        let change_desc = main_descriptor.change_descriptor();
+        let desc_list = self.list_descriptors();
+        if !desc_list.contains(&receive_desc.to_string())
+            || !desc_list.contains(&change_desc.to_string())
         {
             return Err(BitcoindError::MissingDescriptor);
         }

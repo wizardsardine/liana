@@ -121,7 +121,7 @@ def minisafed(bitcoind, directory):
 
     owner_hd = BIP32.from_seed(os.urandom(32), network="test")
     owner_xpub = owner_hd.get_xpub()
-    main_desc = Descriptor.from_str(f"wsh(or_d(pk({owner_xpub}/*),and_v(v:pkh(tpubD9vQiBdDxYzU4cVFtApWj4devZrvcfWaPXX1zHdDc7GPfUsDKqGnbhraccfm7BAXgRgUbVQUV2v2o4NitjGEk7hpbuP85kvBrD4ahFDtNBJ/*),older(65000))))")
+    main_desc = Descriptor.from_str(f"wsh(or_d(pk({owner_xpub}/<0;1>/*),and_v(v:pkh(tpubD9vQiBdDxYzU4cVFtApWj4devZrvcfWaPXX1zHdDc7GPfUsDKqGnbhraccfm7BAXgRgUbVQUV2v2o4NitjGEk7hpbuP85kvBrD4ahFDtNBJ/<0;1>/*),older(65000))))")
 
     minisafed = Minisafed(
         datadir,

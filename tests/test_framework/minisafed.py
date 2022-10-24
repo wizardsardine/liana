@@ -28,7 +28,7 @@ class Minisafed(TailableProc):
         self,
         datadir,
         owner_hd,
-        main_desc,
+        multi_desc,
         bitcoind_rpc_port,
         bitcoind_cookie_path,
     ):
@@ -37,7 +37,8 @@ class Minisafed(TailableProc):
         self.prefix = os.path.split(datadir)[-1]
 
         self.owner_hd = owner_hd
-        self.main_desc = main_desc
+        self.multi_desc = multi_desc
+        self.receive_desc, self.change_desc = multi_desc.singlepath_descriptors()
 
         self.conf_file = os.path.join(datadir, "config.toml")
         self.cmd_line = [MINISAFED_PATH, "--conf", f"{self.conf_file}"]
@@ -49,7 +50,7 @@ class Minisafed(TailableProc):
             f.write("daemon = false\n")
             f.write(f"log_level = '{LOG_LEVEL}'\n")
 
-            f.write(f'main_descriptor = "{main_desc}"\n')
+            f.write(f'main_descriptor = "{multi_desc}"\n')
 
             f.write("[bitcoin_config]\n")
             f.write('network = "regtest"\n')
@@ -71,24 +72,32 @@ class Minisafed(TailableProc):
         # Sign each input.
         for i, psbt_in in enumerate(psbt.i):
             # First, gather the needed information from the PSBT input.
-            # 'hd_keypaths' is of the form {pubkey: (fingerprint (4 bytes), derivation index (4 bytes))}
+            # 'hd_keypaths' is of the form {pubkey: (fingerprint (4 bytes), derivation path (n * 4 bytes))}
             fing_der = next(iter(psbt_in.map[PSBT_IN_BIP32_DERIVATION].values()))
-            der_index = int.from_bytes(fing_der[4:], byteorder="little", signed=True)
+            raw_der_path = fing_der[4:]
+            der_path = [
+                int.from_bytes(raw_der_path[i : i + 4], byteorder="little", signed=True)
+                for i in range(0, len(raw_der_path), 4)
+            ]
             script_code = psbt_in.map[PSBT_IN_WITNESS_SCRIPT]
 
             # Now sign the transaction with the key of the "owner" (the participant that
             # can sign immediately without a timelock)
             sighash = sighash_all_witness(script_code, psbt, i)
             privkey = coincurve.PrivateKey(
-                self.owner_hd.get_privkey_from_path([der_index])
+                self.owner_hd.get_privkey_from_path(der_path)
             )
             pubkey = privkey.public_key.format()
             assert pubkey in psbt_in.map[PSBT_IN_BIP32_DERIVATION].keys(), (
+                der_path,
+                fing_der,
                 pubkey,
                 psbt_in.map[PSBT_IN_BIP32_DERIVATION].keys(),
             )
             sig = privkey.sign(sighash, hasher=None) + b"\x01"
-            logging.debug(f"Adding signature {sig.hex()} for pubkey {pubkey.hex()}")
+            logging.debug(
+                f"Adding signature {sig.hex()} for pubkey {pubkey.hex()} (path {der_path})"
+            )
             assert PSBT_IN_PARTIAL_SIG not in psbt_in.map
             psbt_in.map[PSBT_IN_PARTIAL_SIG] = {pubkey: sig}
 
@@ -108,12 +117,19 @@ class Minisafed(TailableProc):
             # First, gather the needed information from the PSBT input.
             # 'hd_keypaths' is of the form {pubkey: (fingerprint, derivation index)}
             fing_der = next(iter(psbt_in.map[PSBT_IN_BIP32_DERIVATION].values()))
-            der_index = int.from_bytes(fing_der[4:], byteorder="little", signed=True)
+            raw_der_path = fing_der[4:]
+            der_path = [
+                int.from_bytes(raw_der_path[i : i + 4], byteorder="little", signed=True)
+                for i in range(0, len(raw_der_path), 4)
+            ]
+            assert len(der_path) == 2
 
             # Create a copy of the descriptor to derive it at the index used in this input.
             # Then create a satisfaction for it using the signature we just created.
-            desc = Descriptor.from_str(str(self.main_desc))
-            desc.derive(der_index)
+            desc = Descriptor.from_str(
+                str(self.receive_desc if der_path[0] == 0 else self.change_desc)
+            )
+            desc.derive(der_path[1])
             sat_material = SatisfactionMaterial(
                 signatures=psbt_in.map[PSBT_IN_PARTIAL_SIG],
             )

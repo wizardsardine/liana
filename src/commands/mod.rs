@@ -572,7 +572,7 @@ mod tests {
         assert_eq!(
             addr,
             bitcoin::Address::from_str(
-                "bc1qgudekhcrejgtlx3yhlvdul7t4q76e5lhm0vtcsndxs6aslh4r9jsqkqhwu"
+                "bc1q9ksrc647hx8zp2cewl8p5f487dgux3777yees8rjcx46t4daqzzqt7yga8"
             )
             .unwrap()
         );

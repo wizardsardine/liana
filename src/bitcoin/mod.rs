@@ -62,7 +62,7 @@ pub trait BitcoinInterface: Send {
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        desc: &descriptors::InheritanceDescriptor,
+        descs: &[descriptors::InheritanceDescriptor],
     ) -> Vec<UTxO>;
 
     /// Get all coins that were confirmed, and at what height and time.
@@ -116,7 +116,7 @@ impl BitcoinInterface for d::BitcoinD {
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        desc: &descriptors::InheritanceDescriptor,
+        descs: &[descriptors::InheritanceDescriptor],
     ) -> Vec<UTxO> {
         // TODO: don't assume only a single descriptor is loaded on the wo wallet
         let lsb_res = self.list_since_block(&tip.hash);
@@ -132,7 +132,10 @@ impl BitcoinInterface for d::BitcoinD {
                     address,
                     parent_descs,
                 } = entry;
-                if parent_descs.iter().any(|parent_desc| desc == parent_desc) {
+                if parent_descs
+                    .iter()
+                    .any(|parent_desc| descs.iter().any(|desc| desc == parent_desc))
+                {
                     Some(UTxO {
                         outpoint,
                         amount,
@@ -306,9 +309,9 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        desc: &descriptors::InheritanceDescriptor,
+        descs: &[descriptors::InheritanceDescriptor],
     ) -> Vec<UTxO> {
-        self.lock().unwrap().received_coins(tip, desc)
+        self.lock().unwrap().received_coins(tip, descs)
     }
 
     fn confirmed_coins(

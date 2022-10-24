@@ -511,11 +511,14 @@ mod tests {
         stream.flush().unwrap();
     }
 
-    // Send them a response to 'listdescriptors' with the main descriptor
-    fn complete_desc_check(server: &net::TcpListener, desc: &str) {
+    // Send them a response to 'listdescriptors' with the receive and change descriptors
+    fn complete_desc_check(server: &net::TcpListener, receive_desc: &str, change_desc: &str) {
         let net_resp = [
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"descriptors\":[{\"desc\":\"".as_bytes(),
-            desc.as_bytes(),
+            receive_desc.as_bytes(),
+            "\"},".as_bytes(),
+            "{\"desc\":\"".as_bytes(),
+            change_desc.as_bytes(),
             "\"}]}}\n".as_bytes(),
         ]
         .concat();
@@ -595,8 +598,10 @@ mod tests {
         };
 
         // Create a dummy config with this bitcoind
-        let desc_str = "wsh(andor(pk(xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/*),older(10000),pk(xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/*)))#tk6wzexy";
+        let desc_str = "wsh(andor(pk(xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/<0;1>/*),older(10000),pk(xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*)))#yudtr0k5";
         let desc = InheritanceDescriptor::from_str(desc_str).unwrap();
+        let receive_desc = desc.receive_descriptor();
+        let change_desc = desc.change_descriptor();
         let config = Config {
             bitcoin_config,
             bitcoind_config: Some(bitcoind_config),
@@ -621,7 +626,7 @@ mod tests {
         complete_version_check(&server);
         complete_network_check(&server);
         complete_wallet_check(&server, &wo_path);
-        complete_desc_check(&server, desc_str);
+        complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
         complete_tip_init(&server);
         complete_sync_check(&server);
         daemon_thread.join().unwrap();
@@ -636,7 +641,7 @@ mod tests {
         complete_version_check(&server);
         complete_network_check(&server);
         complete_wallet_check(&server, &wo_path);
-        complete_desc_check(&server, desc_str);
+        complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
         complete_sync_check(&server);
         daemon_thread.join().unwrap();
 
