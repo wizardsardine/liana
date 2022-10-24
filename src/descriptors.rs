@@ -194,7 +194,11 @@ fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
 /// An [InheritanceDescriptor] that contains multipath keys for (and only for) the receive keychain
 /// and the change keychain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MultipathDescriptor(descriptor::Descriptor<descriptor::DescriptorPublicKey>);
+pub struct MultipathDescriptor {
+    multi_desc: descriptor::Descriptor<descriptor::DescriptorPublicKey>,
+    receive_desc: InheritanceDescriptor,
+    change_desc: InheritanceDescriptor,
+}
 
 /// A Miniscript descriptor with a main, unencombered, branch (the main owner of the coins)
 /// and a timelocked branch (the heir). All keys in this descriptor are singlepath.
@@ -207,7 +211,7 @@ pub struct DerivedInheritanceDescriptor(descriptor::Descriptor<DerivedPublicKey>
 
 impl fmt::Display for MultipathDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.multi_desc)
     }
 }
 
@@ -277,8 +281,26 @@ impl str::FromStr for MultipathDescriptor {
             .iter()
             .find(|s| matches!(s, SemanticPolicy::Key(_)))
             .ok_or(DescCreationError::IncompatibleDesc)?;
+        let multi_desc = descriptor::Descriptor::Wsh(wsh_desc);
 
-        Ok(MultipathDescriptor(descriptor::Descriptor::Wsh(wsh_desc)))
+        // Compute the receive and change "sub" descriptors right away. According to our pubkey
+        // check above, there must be only two of those, 0 and 1.
+        // We use /0/* for receiving and /1/* for change.
+        // FIXME: don't rely on into_single_descs()'s ordering.
+        let mut singlepath_descs = multi_desc
+            .clone()
+            .into_single_descriptors()
+            .expect("Can't error, all paths have the same length")
+            .into_iter();
+        assert_eq!(singlepath_descs.len(), 2);
+        let receive_desc = InheritanceDescriptor(singlepath_descs.next().expect("First of 2"));
+        let change_desc = InheritanceDescriptor(singlepath_descs.next().expect("Second of 2"));
+
+        Ok(MultipathDescriptor {
+            multi_desc,
+            receive_desc,
+            change_desc,
+        })
     }
 }
 
@@ -341,15 +363,33 @@ impl MultipathDescriptor {
                 .expect("Well typed");
         miniscript::Segwitv0::check_local_validity(&tl_miniscript)
             .expect("Miniscript must be sane");
-
-        Ok(MultipathDescriptor(descriptor::Descriptor::Wsh(
+        let multi_desc = descriptor::Descriptor::Wsh(
             descriptor::Wsh::new(tl_miniscript).expect("Must pass sanity checks"),
-        )))
+        );
+
+        // Compute the receive and change "sub" descriptors right away. According to our pubkey
+        // check above, there must be only two of those, 0 and 1.
+        // We use /0/* for receiving and /1/* for change.
+        // FIXME: don't rely on into_single_descs()'s ordering.
+        let mut singlepath_descs = multi_desc
+            .clone()
+            .into_single_descriptors()
+            .expect("Can't error, all paths have the same length")
+            .into_iter();
+        assert_eq!(singlepath_descs.len(), 2);
+        let receive_desc = InheritanceDescriptor(singlepath_descs.next().expect("First of 2"));
+        let change_desc = InheritanceDescriptor(singlepath_descs.next().expect("Second of 2"));
+
+        Ok(MultipathDescriptor {
+            multi_desc,
+            receive_desc,
+            change_desc,
+        })
     }
 
     /// Whether all xpubs contained in this descriptor are for the passed expected network.
     pub fn all_xpubs_net_is(&self, expected_net: bitcoin::Network) -> bool {
-        self.0.for_each_key(|xpub| {
+        self.multi_desc.for_each_key(|xpub| {
             if let descriptor::DescriptorPublicKey::MultiXPub(xpub) = xpub {
                 xpub.xkey.network == expected_net
             } else {
@@ -358,52 +398,19 @@ impl MultipathDescriptor {
         })
     }
 
-    // TODO: Cache it inside the struct, it's very inefficient to use into_single_descriptors() for
-    // every single derivation.
     /// Get the descriptor for receiving addresses.
-    pub fn receive_descriptor(&self) -> InheritanceDescriptor {
-        let singlepath_descs = self
-            .0
-            .clone()
-            .into_single_descriptors()
-            .expect("Can't error, all paths have the same length");
-        assert_eq!(singlepath_descs.len(), 2);
-
-        // We use /0/* for receiving, so it's the first descriptor between <0;1>.
-        // FIXME: don't rely on ordering.
-        InheritanceDescriptor(
-            singlepath_descs
-                .into_iter()
-                .next()
-                .expect("Just checked the length"),
-        )
+    pub fn receive_descriptor(&self) -> &InheritanceDescriptor {
+        &self.receive_desc
     }
 
-    // TODO: Cache it inside the struct, it's very inefficient to use into_single_descriptors() for
-    // every single derivation.
     /// Get the descriptor for change addresses.
-    pub fn change_descriptor(&self) -> InheritanceDescriptor {
-        let singlepath_descs = self
-            .0
-            .clone()
-            .into_single_descriptors()
-            .expect("Can't error, all paths have the same length");
-        assert_eq!(singlepath_descs.len(), 2);
-
-        // We use /1/* for change, so it's the second descriptor between <0;1>.
-        // FIXME: don't rely on ordering.
-        InheritanceDescriptor(
-            singlepath_descs
-                .into_iter()
-                .rev()
-                .next()
-                .expect("Just checked the length"),
-        )
+    pub fn change_descriptor(&self) -> &InheritanceDescriptor {
+        &self.change_desc
     }
 
     /// Get the value (in blocks) of the relative timelock for the heir's spending path.
     pub fn timelock_value(&self) -> u32 {
-        let wsh_desc = match &self.0 {
+        let wsh_desc = match &self.multi_desc {
             descriptor::Descriptor::Wsh(desc) => desc,
             _ => unreachable!(),
         };

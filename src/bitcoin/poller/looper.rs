@@ -223,7 +223,10 @@ pub fn looper(
 ) {
     let mut last_poll = None;
     let mut synced = false;
-    let descs = [desc.receive_descriptor(), desc.change_descriptor()];
+    let descs = [
+        desc.receive_descriptor().clone(),
+        desc.change_descriptor().clone(),
+    ];
 
     maybe_initialize_tip(&bit, &db);
 
