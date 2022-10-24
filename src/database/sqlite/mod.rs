@@ -288,14 +288,15 @@ impl SqliteConn {
             for coin in coins {
                 let deriv_index: u32 = coin.derivation_index.into();
                 db_tx.execute(
-                    "INSERT INTO coins (wallet_id, txid, vout, amount_sat, derivation_index) \
-                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO coins (wallet_id, txid, vout, amount_sat, derivation_index, is_change) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     rusqlite::params![
                         WALLET_ID,
                         coin.outpoint.txid.to_vec(),
                         coin.outpoint.vout,
                         coin.amount.to_sat(),
                         deriv_index,
+                        coin.is_change,
                     ],
                 )?;
             }
@@ -607,6 +608,7 @@ mod tests {
                 block_time: None,
                 amount: bitcoin::Amount::from_sat(98765),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                is_change: false,
                 spend_txid: None,
                 spend_block: None,
             };
@@ -618,7 +620,7 @@ mod tests {
             assert_eq!(coins.len(), 1);
             assert_eq!(coins[0].outpoint, coin_a.outpoint);
 
-            // Add a second one, we'll get both.
+            // Add a second one (this one is change), we'll get both.
             let coin_b = Coin {
                 outpoint: bitcoin::OutPoint::from_str(
                     "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571936f:12",
@@ -628,6 +630,7 @@ mod tests {
                 block_time: None,
                 amount: bitcoin::Amount::from_sat(1111),
                 derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
+                is_change: true,
                 spend_txid: None,
                 spend_block: None,
             };
@@ -802,6 +805,7 @@ mod tests {
                     block_time: None,
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                    is_change: false,
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -814,6 +818,7 @@ mod tests {
                     block_time: Some(1_111_899),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
+                    is_change: false,
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -826,6 +831,7 @@ mod tests {
                     block_time: Some(1_121_899),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
+                    is_change: false,
                     spend_txid: Some(
                         bitcoin::Txid::from_str(
                             "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7",
@@ -846,6 +852,7 @@ mod tests {
                     block_time: Some(1_131_899),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
+                    is_change: false,
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -858,6 +865,7 @@ mod tests {
                     block_time: Some(1_134_899),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
+                    is_change: false,
                     spend_txid: Some(
                         bitcoin::Txid::from_str(
                             "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6",

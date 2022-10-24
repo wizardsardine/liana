@@ -627,6 +627,7 @@ mod tests {
             block_time: None,
             amount: bitcoin::Amount::from_sat(100_000),
             derivation_index: bip32::ChildNumber::from(13),
+            is_change: false,
             spend_txid: None,
             spend_block: None,
         }]);
@@ -721,6 +722,7 @@ mod tests {
                 block_time: None,
                 amount: bitcoin::Amount::from_sat(100_000),
                 derivation_index: bip32::ChildNumber::from(13),
+                is_change: false,
                 spend_txid: None,
                 spend_block: None,
             },
@@ -730,6 +732,7 @@ mod tests {
                 block_time: None,
                 amount: bitcoin::Amount::from_sat(115_680),
                 derivation_index: bip32::ChildNumber::from(34),
+                is_change: false,
                 spend_txid: None,
                 spend_block: None,
             },

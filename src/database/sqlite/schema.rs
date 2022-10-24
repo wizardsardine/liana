@@ -44,6 +44,7 @@ CREATE TABLE coins (
     vout INTEGER NOT NULL,
     amount_sat INTEGER NOT NULL,
     derivation_index INTEGER NOT NULL,
+    is_change BOOLEAN NOT NULL CHECK (is_change IN (0,1)),
     spend_txid BLOB,
     spend_block_height INTEGER,
     spend_block_time INTEGER,
@@ -146,6 +147,7 @@ pub struct DbCoin {
     pub block_time: Option<u32>,
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
+    pub is_change: bool,
     pub spend_txid: Option<bitcoin::Txid>,
     pub spend_block: Option<DbSpendBlock>,
 }
@@ -168,12 +170,13 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         let amount = bitcoin::Amount::from_sat(amount);
         let der_idx: u32 = row.get(7)?;
         let derivation_index = bip32::ChildNumber::from(der_idx);
+        let is_change: bool = row.get(8)?;
 
-        let spend_txid: Option<Vec<u8>> = row.get(8)?;
+        let spend_txid: Option<Vec<u8>> = row.get(9)?;
         let spend_txid =
             spend_txid.map(|txid| encode::deserialize(&txid).expect("We only store valid txids"));
-        let spend_height: Option<i32> = row.get(9)?;
-        let spend_time: Option<u32> = row.get(10)?;
+        let spend_height: Option<i32> = row.get(10)?;
+        let spend_time: Option<u32> = row.get(11)?;
         assert_eq!(spend_height.is_none(), spend_time.is_none());
         let spend_block = spend_height.map(|height| DbSpendBlock {
             height,
@@ -188,6 +191,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             block_time,
             amount,
             derivation_index,
+            is_change,
             spend_txid,
             spend_block,
         })

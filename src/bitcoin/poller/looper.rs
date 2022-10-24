@@ -35,7 +35,9 @@ fn update_coins(
     // Start by fetching newly received coins.
     let mut received = Vec::new();
     for utxo in bit.received_coins(previous_tip, descs) {
-        if let Some(derivation_index) = db_conn.derivation_index_by_address(&utxo.address) {
+        if let Some((derivation_index, is_change)) =
+            db_conn.derivation_index_by_address(&utxo.address)
+        {
             if !curr_coins.contains_key(&utxo.outpoint) {
                 let UTxO {
                     outpoint, amount, ..
@@ -44,6 +46,7 @@ fn update_coins(
                     outpoint,
                     amount,
                     derivation_index,
+                    is_change,
                     block_height: None,
                     block_time: None,
                     spend_txid: None,

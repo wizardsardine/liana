@@ -187,7 +187,10 @@ impl DatabaseConnection for DummyDbConn {
         }
     }
 
-    fn derivation_index_by_address(&mut self, _: &bitcoin::Address) -> Option<bip32::ChildNumber> {
+    fn derivation_index_by_address(
+        &mut self,
+        _: &bitcoin::Address,
+    ) -> Option<(bip32::ChildNumber, bool)> {
         None
     }
 

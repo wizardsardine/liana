@@ -49,10 +49,11 @@ pub trait DatabaseConnection {
 
     fn increment_derivation_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>);
 
+    /// Get the derivation index for this address, as well as whether this address is change.
     fn derivation_index_by_address(
         &mut self,
         address: &bitcoin::Address,
-    ) -> Option<bip32::ChildNumber>;
+    ) -> Option<(bip32::ChildNumber, bool)>;
 
     /// Get all our coins, past or present, spent or not.
     fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
@@ -154,9 +155,9 @@ impl DatabaseConnection for SqliteConn {
     fn derivation_index_by_address(
         &mut self,
         address: &bitcoin::Address,
-    ) -> Option<bip32::ChildNumber> {
+    ) -> Option<(bip32::ChildNumber, bool)> {
         self.db_address(address)
-            .map(|db_addr| db_addr.derivation_index)
+            .map(|db_addr| (db_addr.derivation_index, address == &db_addr.change_address))
     }
 
     fn coins_by_outpoints(
@@ -215,6 +216,7 @@ pub struct Coin {
     pub block_time: Option<u32>,
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
+    pub is_change: bool,
     pub spend_txid: Option<bitcoin::Txid>,
     pub spend_block: Option<SpendBlock>,
 }
@@ -227,6 +229,7 @@ impl std::convert::From<DbCoin> for Coin {
             block_time,
             amount,
             derivation_index,
+            is_change,
             spend_txid,
             spend_block,
             ..
@@ -237,6 +240,7 @@ impl std::convert::From<DbCoin> for Coin {
             block_time,
             amount,
             derivation_index,
+            is_change,
             spend_txid,
             spend_block: spend_block.map(SpendBlock::from),
         }
