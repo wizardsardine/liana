@@ -200,9 +200,9 @@ impl DaemonControl {
     /// whether it was actually used.
     pub fn get_new_address(&self) -> GetAddressResult {
         let mut db_conn = self.db.connection();
-        let index = db_conn.derivation_index();
+        let index = db_conn.receive_index();
         // TODO: should we wrap around instead of failing?
-        db_conn.increment_derivation_index(&self.secp);
+        db_conn.increment_receive_index(&self.secp);
         let address = self
             .derived_desc(index)
             .address(self.config.bitcoin_config.network);

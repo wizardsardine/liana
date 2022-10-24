@@ -45,9 +45,13 @@ pub trait DatabaseConnection {
     /// Update our best chain seen.
     fn update_tip(&mut self, tip: &BlockChainTip);
 
-    fn derivation_index(&mut self) -> bip32::ChildNumber;
+    fn receive_index(&mut self) -> bip32::ChildNumber;
 
-    fn increment_derivation_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>);
+    fn change_index(&mut self) -> bip32::ChildNumber;
+
+    fn increment_receive_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>);
+
+    fn increment_change_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>);
 
     /// Get the derivation index for this address, as well as whether this address is change.
     fn derivation_index_by_address(
@@ -114,12 +118,20 @@ impl DatabaseConnection for SqliteConn {
         self.update_tip(tip)
     }
 
-    fn derivation_index(&mut self) -> bip32::ChildNumber {
+    fn receive_index(&mut self) -> bip32::ChildNumber {
         self.db_wallet().deposit_derivation_index
     }
 
-    fn increment_derivation_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
-        self.increment_derivation_index(secp)
+    fn change_index(&mut self) -> bip32::ChildNumber {
+        self.db_wallet().change_derivation_index
+    }
+
+    fn increment_receive_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        self.increment_deposit_index(secp)
+    }
+
+    fn increment_change_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        self.increment_change_index(secp)
     }
 
     fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {

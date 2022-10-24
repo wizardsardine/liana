@@ -14,7 +14,7 @@ use crate::{
     database::{
         sqlite::{
             schema::{DbAddress, DbCoin, DbSpendTransaction, DbTip, DbWallet},
-            utils::{create_fresh_db, db_exec, db_query, db_tx_query, LOOK_AHEAD_LIMIT},
+            utils::{create_fresh_db, db_exec, db_query, db_tx_query, populate_address_mapping},
         },
         Coin,
     },
@@ -210,10 +210,7 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
-    pub fn increment_derivation_index(
-        &mut self,
-        secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-    ) {
+    pub fn increment_deposit_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
         let network = self.db_tip().network;
 
         db_exec(&mut self.conn, |db_tx| {
@@ -235,23 +232,40 @@ impl SqliteConn {
                 rusqlite::params![next_index],
             )?;
 
-            // Update the address to derivation index mapping.
-            // TODO: have this as a helper in descriptors.rs
-            let next_la_index = next_index + LOOK_AHEAD_LIMIT - 1;
-            let next_receive_address = db_wallet
-                .main_descriptor
-                .receive_descriptor()
-                .derive(next_la_index.into(), secp)
-                .address(network);
-            let next_change_address = db_wallet
-                .main_descriptor
-                .change_descriptor()
-                .derive(next_la_index.into(), secp)
-                .address(network);
+            if next_index > db_wallet.change_derivation_index.into() {
+                populate_address_mapping(db_tx, &db_wallet, next_index, network, secp)?;
+            }
+
+            Ok(())
+        })
+        .expect("Database must be available")
+    }
+
+    pub fn increment_change_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        let network = self.db_tip().network;
+
+        db_exec(&mut self.conn, |db_tx| {
+            let db_wallet: DbWallet =
+                db_tx_query(db_tx, "SELECT * FROM wallets", rusqlite::params![], |row| {
+                    row.try_into()
+                })
+                .expect("Db must not fail")
+                .pop()
+                .expect("There is always a row in the wallet table");
+            let next_index: u32 = db_wallet
+                .change_derivation_index
+                .increment()
+                .expect("Must not get in hardened territory")
+                .into();
+            // NOTE: should be updated if we ever have multi-wallet support
             db_tx.execute(
-                "INSERT INTO addresses (receive_address, change_address, derivation_index) VALUES (?1, ?2, ?3)",
-                rusqlite::params![next_receive_address.to_string(), next_change_address.to_string(), next_la_index],
+                "UPDATE wallets SET change_derivation_index = (?1)",
+                rusqlite::params![next_index],
             )?;
+
+            if next_index > db_wallet.deposit_derivation_index.into() {
+                populate_address_mapping(db_tx, &db_wallet, next_index, network, secp)?;
+            }
 
             Ok(())
         })
@@ -756,11 +770,11 @@ mod tests {
             assert!(conn.db_address(&addr).is_none());
 
             // But if we increment the deposit derivation index, the 200th one will be there.
-            conn.increment_derivation_index(&secp);
+            conn.increment_deposit_index(&secp);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 200.into());
 
-            // Same for the change descriptor.
+            // It will also be there for the change descriptor.
             let addr = options
                 .main_descriptor
                 .change_descriptor()
@@ -768,6 +782,30 @@ mod tests {
                 .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 200.into());
+
+            // But not for the 201th.
+            let addr = options
+                .main_descriptor
+                .change_descriptor()
+                .derive(201.into(), &secp)
+                .address(options.bitcoind_network);
+            assert!(conn.db_address(&addr).is_none());
+
+            // If we increment the *change* derivation index to 1, it will still not be there.
+            conn.increment_change_index(&secp);
+            assert!(conn.db_address(&addr).is_none());
+
+            // But doing it once again it will be there for both change and receive.
+            conn.increment_change_index(&secp);
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 201.into());
+            let addr = options
+                .main_descriptor
+                .receive_descriptor()
+                .derive(201.into(), &secp)
+                .address(options.bitcoind_network);
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 201.into());
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();

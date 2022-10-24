@@ -27,7 +27,8 @@ CREATE TABLE wallets (
     id INTEGER PRIMARY KEY NOT NULL,
     timestamp INTEGER NOT NULL,
     main_descriptor TEXT NOT NULL,
-    deposit_derivation_index INTEGER NOT NULL
+    deposit_derivation_index INTEGER NOT NULL,
+    change_derivation_index INTEGER NOT NULL
 );
 
 /* Our (U)TxOs.
@@ -107,6 +108,7 @@ pub struct DbWallet {
     pub timestamp: u32,
     pub main_descriptor: MultipathDescriptor,
     pub deposit_derivation_index: bip32::ChildNumber,
+    pub change_derivation_index: bip32::ChildNumber,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
@@ -122,12 +124,15 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
 
         let der_idx: u32 = row.get(3)?;
         let deposit_derivation_index = bip32::ChildNumber::from(der_idx);
+        let der_idx: u32 = row.get(4)?;
+        let change_derivation_index = bip32::ChildNumber::from(der_idx);
 
         Ok(DbWallet {
             id,
             timestamp,
             main_descriptor,
             deposit_derivation_index,
+            change_derivation_index,
         })
     }
 }

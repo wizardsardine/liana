@@ -77,7 +77,8 @@ impl BitcoinInterface for DummyBitcoind {
 }
 
 pub struct DummyDb {
-    curr_index: bip32::ChildNumber,
+    deposit_index: bip32::ChildNumber,
+    change_index: bip32::ChildNumber,
     curr_tip: Option<BlockChainTip>,
     coins: HashMap<bitcoin::OutPoint, Coin>,
     spend_txs: HashMap<bitcoin::Txid, Psbt>,
@@ -86,7 +87,8 @@ pub struct DummyDb {
 impl DummyDb {
     pub fn new() -> DummyDb {
         DummyDb {
-            curr_index: 0.into(),
+            deposit_index: 0.into(),
+            change_index: 0.into(),
             curr_tip: None,
             coins: HashMap::new(),
             spend_txs: HashMap::new(),
@@ -123,13 +125,22 @@ impl DatabaseConnection for DummyDbConn {
         self.db.write().unwrap().curr_tip = Some(*tip);
     }
 
-    fn derivation_index(&mut self) -> bip32::ChildNumber {
-        self.db.read().unwrap().curr_index
+    fn receive_index(&mut self) -> bip32::ChildNumber {
+        self.db.read().unwrap().deposit_index
     }
 
-    fn increment_derivation_index(&mut self, _: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
-        let next_index = self.db.write().unwrap().curr_index.increment().unwrap();
-        self.db.write().unwrap().curr_index = next_index;
+    fn change_index(&mut self) -> bip32::ChildNumber {
+        self.db.read().unwrap().deposit_index
+    }
+
+    fn increment_receive_index(&mut self, _: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        let next_index = self.db.write().unwrap().deposit_index.increment().unwrap();
+        self.db.write().unwrap().deposit_index = next_index;
+    }
+
+    fn increment_change_index(&mut self, _: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        let next_index = self.db.write().unwrap().change_index.increment().unwrap();
+        self.db.write().unwrap().change_index = next_index;
     }
 
     fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
