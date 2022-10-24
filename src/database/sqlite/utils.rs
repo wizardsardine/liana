@@ -95,15 +95,19 @@ pub fn create_fresh_db(
     // necessarily 0.
     let mut query = String::with_capacity(100 * LOOK_AHEAD_LIMIT as usize);
     for index in 0..LOOK_AHEAD_LIMIT {
-        // TODO: have this as a helper in descriptors.rs
-        let address = options
+        let receive_address = options
             .main_descriptor
             .receive_descriptor()
             .derive(index.into(), secp)
             .address(options.bitcoind_network);
+        let change_address = options
+            .main_descriptor
+            .change_descriptor()
+            .derive(index.into(), secp)
+            .address(options.bitcoind_network);
         query += &format!(
-            "INSERT INTO addresses (address, derivation_index) VALUES (\"{}\", {});\n",
-            address, index
+            "INSERT INTO addresses (receive_address, change_address, derivation_index) VALUES (\"{}\", \"{}\", {});\n",
+            receive_address, change_address, index
         );
     }
 

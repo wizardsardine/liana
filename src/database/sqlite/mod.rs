@@ -238,17 +238,22 @@ impl SqliteConn {
             // Update the address to derivation index mapping.
             // TODO: have this as a helper in descriptors.rs
             let next_la_index = next_index + LOOK_AHEAD_LIMIT - 1;
-            let next_la_address = db_wallet
+            let next_receive_address = db_wallet
                 .main_descriptor
                 .receive_descriptor()
                 .derive(next_la_index.into(), secp)
                 .address(network);
-            db_tx
-                .execute(
-                    "INSERT INTO addresses (address, derivation_index) VALUES (?1, ?2)",
-                    rusqlite::params![next_la_address.to_string(), next_la_index],
-                )
-                .map(|_| ())
+            let next_change_address = db_wallet
+                .main_descriptor
+                .change_descriptor()
+                .derive(next_la_index.into(), secp)
+                .address(network);
+            db_tx.execute(
+                "INSERT INTO addresses (receive_address, change_address, derivation_index) VALUES (?1, ?2, ?3)",
+                rusqlite::params![next_receive_address.to_string(), next_change_address.to_string(), next_la_index],
+            )?;
+
+            Ok(())
         })
         .expect("Database must be available")
     }
@@ -363,7 +368,7 @@ impl SqliteConn {
     pub fn db_address(&mut self, address: &bitcoin::Address) -> Option<DbAddress> {
         db_query(
             &mut self.conn,
-            "SELECT * FROM addresses WHERE address = ?1",
+            "SELECT * FROM addresses WHERE receive_address = ?1 OR change_address = ?1",
             rusqlite::params![address.to_string()],
             |row| row.try_into(),
         )
@@ -721,6 +726,15 @@ mod tests {
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 0.into());
 
+            // And also for the change address
+            let addr = options
+                .main_descriptor
+                .change_descriptor()
+                .derive(0.into(), &secp)
+                .address(options.bitcoind_network);
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 0.into());
+
             // There is the index for the 199th index (look-ahead limit)
             let addr = options
                 .main_descriptor
@@ -740,6 +754,15 @@ mod tests {
 
             // But if we increment the deposit derivation index, the 200th one will be there.
             conn.increment_derivation_index(&secp);
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 200.into());
+
+            // Same for the change descriptor.
+            let addr = options
+                .main_descriptor
+                .change_descriptor()
+                .derive(200.into(), &secp)
+                .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 200.into());
         }

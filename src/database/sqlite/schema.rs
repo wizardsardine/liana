@@ -57,7 +57,8 @@ CREATE TABLE coins (
  * we can get the derivation index from the parent descriptor from bitcoind.
  */
 CREATE TABLE addresses (
-    address TEXT NOT NULL UNIQUE,
+    receive_address TEXT NOT NULL UNIQUE,
+    change_address TEXT NOT NULL UNIQUE,
     derivation_index INTEGER NOT NULL UNIQUE
 );
 
@@ -195,7 +196,8 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbAddress {
-    pub address: bitcoin::Address,
+    pub receive_address: bitcoin::Address,
+    pub change_address: bitcoin::Address,
     pub derivation_index: bip32::ChildNumber,
 }
 
@@ -203,15 +205,21 @@ impl TryFrom<&rusqlite::Row<'_>> for DbAddress {
     type Error = rusqlite::Error;
 
     fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
-        let address: String = row.get(0)?;
-        let address = bitcoin::Address::from_str(&address).expect("We only store valid addresses");
+        let receive_address: String = row.get(0)?;
+        let receive_address =
+            bitcoin::Address::from_str(&receive_address).expect("We only store valid addresses");
 
-        let derivation_index: u32 = row.get(1)?;
+        let change_address: String = row.get(1)?;
+        let change_address =
+            bitcoin::Address::from_str(&change_address).expect("We only store valid addresses");
+
+        let derivation_index: u32 = row.get(2)?;
         let derivation_index = bip32::ChildNumber::from(derivation_index);
         assert!(derivation_index.is_normal());
 
         Ok(DbAddress {
-            address,
+            receive_address,
+            change_address,
             derivation_index,
         })
     }
