@@ -12,7 +12,6 @@ use minisafe::{
 use crate::{
     hw::{list_hardware_wallets, HardwareWallet},
     installer::{
-        config,
         message::{self, Message},
         step::{Context, Step},
         view, Error,
@@ -101,7 +100,7 @@ impl Step for DefineDescriptor {
         Command::none()
     }
 
-    fn apply(&mut self, _ctx: &mut Context, config: &mut config::Config) -> bool {
+    fn apply(&mut self, ctx: &mut Context) -> bool {
         // descriptor forms for import or creation cannot be both empty or filled.
         if self.imported_descriptor.value.is_empty()
             == (self.user_xpub.value.is_empty()
@@ -125,7 +124,7 @@ impl Step for DefineDescriptor {
             false
         } else if !self.imported_descriptor.value.is_empty() {
             if let Ok(desc) = InheritanceDescriptor::from_str(&self.imported_descriptor.value) {
-                config.main_descriptor = Some(desc);
+                ctx.descriptor = Some(desc);
                 true
             } else {
                 self.imported_descriptor.valid = false;
@@ -145,20 +144,20 @@ impl Step for DefineDescriptor {
                 return false;
             }
 
-            match InheritanceDescriptor::new(
+            let desc = match InheritanceDescriptor::new(
                 user_key.unwrap(),
                 heir_key.unwrap(),
                 sequence.unwrap(),
             ) {
-                Ok(desc) => {
-                    config.main_descriptor = Some(desc);
-                    true
-                }
+                Ok(desc) => desc,
                 Err(e) => {
                     self.error = Some(e.to_string());
-                    false
+                    return false;
                 }
-            }
+            };
+
+            ctx.descriptor = Some(desc);
+            true
         }
     }
 

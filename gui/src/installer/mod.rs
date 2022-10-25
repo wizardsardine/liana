@@ -12,7 +12,7 @@ use std::convert::TryInto;
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::{app::config as gui_config, installer::config::Config as DaemonConfig};
+use crate::{app::config as gui_config, installer::config::DEFAULT_FILE_NAME};
 
 pub use message::Message;
 use step::{Context, DefineBitcoind, DefineDescriptor, Final, Step, Welcome};
@@ -24,7 +24,6 @@ pub struct Installer {
 
     /// Context is data passed through each step.
     context: Context,
-    config: DaemonConfig,
 }
 
 impl Installer {
@@ -44,12 +43,9 @@ impl Installer {
         destination_path: PathBuf,
         network: bitcoin::Network,
     ) -> (Installer, Command<Message>) {
-        let mut config = DaemonConfig::new();
-        config.data_dir = Some(destination_path);
         (
             Installer {
                 should_exit: false,
-                config,
                 current: 0,
                 steps: vec![
                     Welcome::new(network).into(),
@@ -57,7 +53,7 @@ impl Installer {
                     DefineBitcoind::new().into(),
                     Final::new().into(),
                 ],
-                context: Context::new(network),
+                context: Context::new(network, Some(destination_path)),
             },
             Command::none(),
         )
@@ -82,7 +78,7 @@ impl Installer {
                     .steps
                     .get_mut(self.current)
                     .expect("There is always a step");
-                if current_step.apply(&mut self.context, &mut self.config) {
+                if current_step.apply(&mut self.context) {
                     self.next();
                     // skip the step according to the current context.
                     while self
@@ -111,10 +107,7 @@ impl Installer {
                     .get_mut(self.current)
                     .expect("There is always a step")
                     .update(message);
-                Command::perform(
-                    install(self.context.clone(), self.config.clone()),
-                    Message::Installed,
-                )
+                Command::perform(install(self.context.clone()), Message::Installed)
             }
             Message::Event(Event::Window(window::Event::CloseRequested)) => {
                 self.stop();
@@ -136,12 +129,14 @@ impl Installer {
     }
 }
 
-pub async fn install(_ctx: Context, mut cfg: DaemonConfig) -> Result<PathBuf, Error> {
+pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
+    let mut cfg: minisafe::config::Config = ctx
+        .try_into()
+        .expect("Everything should be checked at this point");
     // Start Daemon to check correctness of installation
-    let daemon =
-        minisafe::DaemonHandle::start_default(cfg.clone().try_into().unwrap()).map_err(|e| {
-            Error::Unexpected(format!("Failed to start daemon with entered config: {}", e))
-        })?;
+    let daemon = minisafe::DaemonHandle::start_default(cfg.clone()).map_err(|e| {
+        Error::Unexpected(format!("Failed to start daemon with entered config: {}", e))
+    })?;
     daemon.shutdown();
 
     cfg.data_dir =
@@ -154,7 +149,7 @@ pub async fn install(_ctx: Context, mut cfg: DaemonConfig) -> Result<PathBuf, Er
 
     // create minisafed configuration file
     let mut minisafed_config_path = datadir_path.clone();
-    minisafed_config_path.push(DaemonConfig::DEFAULT_FILE_NAME);
+    minisafed_config_path.push(DEFAULT_FILE_NAME);
     let mut minisafed_config_file = std::fs::File::create(&minisafed_config_path)
         .map_err(|e| Error::CannotCreateFile(e.to_string()))?;
 

@@ -3,14 +3,18 @@ pub use descriptor::DefineDescriptor;
 
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
 use iced::{pure::Element, Command};
-use minisafe::miniscript::bitcoin;
+use minisafe::{
+    config::{BitcoinConfig, BitcoindConfig},
+    descriptors::InheritanceDescriptor,
+    miniscript::bitcoin,
+};
 
 use crate::ui::component::form;
 
 use crate::installer::{
-    config,
     message::{self, Message},
     view,
 };
@@ -24,25 +28,30 @@ pub trait Step {
     fn skip(&self, _ctx: &Context) -> bool {
         false
     }
-    fn apply(&mut self, _ctx: &mut Context, _config: &mut config::Config) -> bool {
+    fn apply(&mut self, _ctx: &mut Context) -> bool {
         true
     }
 }
 
 #[derive(Clone)]
 pub struct Context {
-    pub network: bitcoin::Network,
+    pub bitcoin_config: BitcoinConfig,
+    pub bitcoind_config: Option<BitcoindConfig>,
+    pub descriptor: Option<InheritanceDescriptor>,
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Context {
-    pub fn new(network: bitcoin::Network) -> Self {
-        Self { network }
-    }
-}
-
-impl Default for Context {
-    fn default() -> Self {
-        Self::new(bitcoin::Network::Bitcoin)
+    pub fn new(network: bitcoin::Network, data_dir: Option<PathBuf>) -> Self {
+        Self {
+            bitcoin_config: BitcoinConfig {
+                network,
+                poll_interval_secs: Duration::from_secs(30),
+            },
+            bitcoind_config: None,
+            descriptor: None,
+            data_dir,
+        }
     }
 }
 
@@ -63,9 +72,8 @@ impl Step for Welcome {
         }
         Command::none()
     }
-    fn apply(&mut self, ctx: &mut Context, config: &mut config::Config) -> bool {
-        ctx.network = self.network;
-        config.bitcoin_config.network = self.network;
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        ctx.bitcoin_config.network = self.network;
         true
     }
     fn view(&self) -> Element<Message> {
@@ -145,10 +153,11 @@ impl DefineBitcoind {
 impl Step for DefineBitcoind {
     fn load_context(&mut self, ctx: &Context) {
         if self.cookie_path.value.is_empty() {
-            self.cookie_path.value = bitcoind_default_cookie_path(&ctx.network).unwrap_or_default()
+            self.cookie_path.value =
+                bitcoind_default_cookie_path(&ctx.bitcoin_config.network).unwrap_or_default()
         }
         if self.address.value.is_empty() {
-            self.address.value = bitcoind_default_address(&ctx.network);
+            self.address.value = bitcoind_default_address(&ctx.bitcoin_config.network);
         }
     }
     fn update(&mut self, message: Message) -> Command<Message> {
@@ -167,7 +176,7 @@ impl Step for DefineBitcoind {
         Command::none()
     }
 
-    fn apply(&mut self, _ctx: &mut Context, config: &mut config::Config) -> bool {
+    fn apply(&mut self, ctx: &mut Context) -> bool {
         match (
             PathBuf::from_str(&self.cookie_path.value),
             std::net::SocketAddr::from_str(&self.address.value),
@@ -186,8 +195,10 @@ impl Step for DefineBitcoind {
                 false
             }
             (Ok(path), Ok(addr)) => {
-                config.bitcoind_config.cookie_path = path;
-                config.bitcoind_config.addr = addr;
+                ctx.bitcoind_config = Some(BitcoindConfig {
+                    cookie_path: path,
+                    addr,
+                });
                 true
             }
         }
