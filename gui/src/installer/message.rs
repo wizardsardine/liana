@@ -1,4 +1,4 @@
-use minisafe::miniscript::bitcoin;
+use minisafe::miniscript::bitcoin::{util::bip32::Fingerprint, Network};
 use std::path::PathBuf;
 
 use super::Error;
@@ -15,10 +15,11 @@ pub enum Message {
     Reload,
     Select(usize),
     Installed(Result<PathBuf, Error>),
-    Network(bitcoin::Network),
+    Network(Network),
     DefineBitcoind(DefineBitcoind),
     DefineDescriptor(DefineDescriptor),
     ConnectedHardwareWallets(Vec<HardwareWallet>),
+    WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
 }
 
 #[derive(Debug, Clone)]

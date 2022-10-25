@@ -283,3 +283,103 @@ async fn get_extended_pubkey(
         wildcard: Wildcard::Unhardened,
     }))
 }
+
+#[derive(Default)]
+pub struct RegisterDescriptor {
+    descriptor: Option<InheritanceDescriptor>,
+    processing: bool,
+    chosen_hw: Option<usize>,
+    hws: Vec<(HardwareWallet, Option<[u8; 32]>)>,
+    error: Option<Error>,
+}
+
+impl Step for RegisterDescriptor {
+    fn load_context(&mut self, ctx: &Context) {
+        self.descriptor = ctx.descriptor.clone();
+    }
+    fn update(&mut self, message: Message) -> Command<Message> {
+        match message {
+            Message::Select(i) => {
+                if let Some((hw, hmac)) = self.hws.get(i) {
+                    if hmac.is_none() {
+                        let device = hw.device.clone();
+                        let descriptor = self.descriptor.as_ref().unwrap().to_string();
+                        self.chosen_hw = Some(i);
+                        self.processing = true;
+                        self.error = None;
+                        return Command::perform(
+                            register_wallet(device, hw.fingerprint, descriptor),
+                            Message::WalletRegistered,
+                        );
+                    }
+                }
+            }
+            Message::WalletRegistered(res) => {
+                self.processing = false;
+                self.chosen_hw = None;
+                match res {
+                    Ok((fingerprint, hmac)) => {
+                        if let Some(hw_h) = self
+                            .hws
+                            .iter_mut()
+                            .find(|hw_h| hw_h.0.fingerprint == fingerprint)
+                        {
+                            hw_h.1 = Some(hmac.unwrap_or([0x00; 32]));
+                        }
+                    }
+                    Err(e) => self.error = Some(e),
+                }
+            }
+            Message::ConnectedHardwareWallets(hws) => {
+                for hw in hws {
+                    if !self
+                        .hws
+                        .iter()
+                        .any(|(h, _)| h.fingerprint == hw.fingerprint)
+                    {
+                        self.hws.push((hw, None));
+                    }
+                }
+            }
+            Message::Reload => {
+                return self.load();
+            }
+            _ => {}
+        };
+        Command::none()
+    }
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        true
+    }
+    fn load(&self) -> Command<Message> {
+        Command::perform(list_hardware_wallets(), Message::ConnectedHardwareWallets)
+    }
+    fn view(&self) -> Element<Message> {
+        let desc = self.descriptor.as_ref().unwrap();
+        view::register_descriptor(
+            &desc.to_string(),
+            &self.hws,
+            self.error.as_ref(),
+            self.processing,
+            self.chosen_hw,
+        )
+    }
+}
+
+async fn register_wallet(
+    hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
+    fingerprint: Fingerprint,
+    descriptor: String,
+) -> Result<(Fingerprint, Option<[u8; 32]>), Error> {
+    let hmac = hw
+        .register_wallet("Minisafe", &descriptor)
+        .await
+        .map_err(Error::from)?;
+    Ok((fingerprint, hmac))
+}
+
+impl From<RegisterDescriptor> for Box<dyn Step> {
+    fn from(s: RegisterDescriptor) -> Box<dyn Step> {
+        Box::new(s)
+    }
+}

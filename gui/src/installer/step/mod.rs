@@ -1,5 +1,5 @@
 mod descriptor;
-pub use descriptor::DefineDescriptor;
+pub use descriptor::{DefineDescriptor, RegisterDescriptor};
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -25,6 +25,9 @@ pub trait Step {
     }
     fn view(&self) -> Element<Message>;
     fn load_context(&mut self, _ctx: &Context) {}
+    fn load(&self) -> Command<Message> {
+        Command::none()
+    }
     fn skip(&self, _ctx: &Context) -> bool {
         false
     }

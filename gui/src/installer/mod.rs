@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use crate::{app::config as gui_config, installer::config::DEFAULT_FILE_NAME};
 
 pub use message::Message;
-use step::{Context, DefineBitcoind, DefineDescriptor, Final, Step, Welcome};
+use step::{Context, DefineBitcoind, DefineDescriptor, Final, RegisterDescriptor, Step, Welcome};
 
 pub struct Installer {
     should_exit: bool,
@@ -50,6 +50,7 @@ impl Installer {
                 steps: vec![
                     Welcome::new(network).into(),
                     DefineDescriptor::new().into(),
+                    RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
                     Final::new().into(),
                 ],
@@ -95,6 +96,7 @@ impl Installer {
                         .get_mut(self.current)
                         .expect("There is always a step");
                     current_step.load_context(&self.context);
+                    return current_step.load();
                 }
                 Command::none()
             }

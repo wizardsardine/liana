@@ -159,6 +159,59 @@ pub fn define_descriptor<'a>(
     )
 }
 
+pub fn register_descriptor<'a>(
+    descriptor: &str,
+    hws: &[(HardwareWallet, Option<[u8; 32]>)],
+    error: Option<&Error>,
+    processing: bool,
+    chosen_hw: Option<usize>,
+) -> Element<'a, Message> {
+    layout(
+        column()
+            .push(text("Register descriptor").bold().size(50))
+            .push(text(descriptor).small())
+            .push_maybe(error.map(|e| card::error("Failed to import xpub", &e.to_string())))
+            .push(if !hws.is_empty() {
+                column()
+                    .push(text(&format!("{} hardware wallets connected", hws.len())).bold())
+                    .spacing(10)
+                    .push(
+                        hws.iter()
+                            .enumerate()
+                            .fold(column().spacing(10), |col, (i, hw)| {
+                                col.push(hw_list_view(
+                                    i,
+                                    &hw.0,
+                                    Some(i) == chosen_hw,
+                                    processing,
+                                    hw.1.is_some(),
+                                ))
+                            }),
+                    )
+                    .width(Length::Fill)
+            } else {
+                column().push(card::simple(
+                    column()
+                        .spacing(20)
+                        .push("No hardware wallet connected")
+                        .push(button::primary(None, "Refresh").on_press(Message::Reload))
+                        .align_items(Alignment::Center)
+                        .width(Length::Fill),
+                ))
+            })
+            .push(
+                button::primary(None, "Next")
+                    .on_press(Message::Next)
+                    .width(Length::Units(200)),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(100)
+            .spacing(50)
+            .align_items(Alignment::Center),
+    )
+}
+
 pub fn define_bitcoin<'a>(
     address: &form::Value<String>,
     cookie_path: &form::Value<String>,
@@ -282,18 +335,30 @@ pub fn hardware_wallet_xpubs_modal<'a>(
                         hws.iter()
                             .enumerate()
                             .fold(column().spacing(10), |col, (i, hw)| {
-                                col.push(hw_list_view(i, hw, Some(i) == chosen_hw, processing))
+                                col.push(hw_list_view(
+                                    i,
+                                    hw,
+                                    Some(i) == chosen_hw,
+                                    processing,
+                                    false,
+                                ))
                             }),
                     )
                     .width(Length::Fill)
             } else {
-                column().push(card::simple(
-                    column()
-                        .spacing(10)
-                        .push("Please connect a hardware wallet")
-                        .push(button::primary(None, "Refresh").on_press(Message::Reload))
-                        .align_items(Alignment::Center),
-                ))
+                column()
+                    .push(
+                        card::simple(
+                            column()
+                                .spacing(20)
+                                .width(Length::Fill)
+                                .push("Please connect a hardware wallet")
+                                .push(button::primary(None, "Refresh").on_press(Message::Reload))
+                                .align_items(Alignment::Center),
+                        )
+                        .width(Length::Fill),
+                    )
+                    .width(Length::Fill)
             })
             .width(Length::Fill)
             .height(Length::Fill)
@@ -308,6 +373,7 @@ fn hw_list_view<'a>(
     hw: &HardwareWallet,
     chosen: bool,
     processing: bool,
+    registered: bool,
 ) -> Element<'a, Message> {
     let mut bttn = iced::pure::button(
         row()
@@ -327,6 +393,12 @@ fn hw_list_view<'a>(
             } else {
                 None
             })
+            .push_maybe(if registered {
+                Some(column().push(icon::circle_check_icon().color(color::SUCCESS)))
+            } else {
+                None
+            })
+            .align_items(Alignment::Center)
             .width(Length::Fill),
     )
     .padding(10)
@@ -353,6 +425,7 @@ fn layout<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> 
     .center_x()
     .height(Length::Fill)
     .width(Length::Fill)
+    .style(BackgroundStyle)
     .into()
 }
 
@@ -372,12 +445,12 @@ fn modal<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     .center_x()
     .height(Length::Fill)
     .width(Length::Fill)
-    .style(ModalStyle)
+    .style(BackgroundStyle)
     .into()
 }
 
-pub struct ModalStyle;
-impl widget::container::StyleSheet for ModalStyle {
+pub struct BackgroundStyle;
+impl widget::container::StyleSheet for BackgroundStyle {
     fn style(&self) -> widget::container::Style {
         widget::container::Style {
             background: color::BACKGROUND.into(),
