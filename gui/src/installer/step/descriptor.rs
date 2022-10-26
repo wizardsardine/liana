@@ -348,7 +348,7 @@ impl Step for RegisterDescriptor {
         };
         Command::none()
     }
-    fn apply(&mut self, ctx: &mut Context) -> bool {
+    fn apply(&mut self, _ctx: &mut Context) -> bool {
         true
     }
     fn load(&self) -> Command<Message> {

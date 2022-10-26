@@ -4,7 +4,7 @@ mod step;
 mod view;
 
 use iced::pure::Element;
-use iced::{Command, Subscription};
+use iced::{clipboard, Command, Subscription};
 use iced_native::{window, Event};
 use minisafe::miniscript::bitcoin;
 
@@ -74,6 +74,7 @@ impl Installer {
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
+            Message::Clibpboard(s) => clipboard::write(s),
             Message::Next => {
                 let current_step = self
                     .steps

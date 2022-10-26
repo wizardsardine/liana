@@ -169,7 +169,16 @@ pub fn register_descriptor<'a>(
     layout(
         column()
             .push(text("Register descriptor").bold().size(50))
-            .push(text(descriptor).small())
+            .push(
+                column()
+                    .push(text(descriptor).small())
+                    .push(
+                        button::transparent_border(Some(icon::clipboard_icon()), "Copy")
+                            .on_press(Message::Clibpboard(descriptor.to_string())),
+                    )
+                    .spacing(10)
+                    .align_items(Alignment::Center),
+            )
             .push_maybe(error.map(|e| card::error("Failed to import xpub", &e.to_string())))
             .push(if !hws.is_empty() {
                 column()

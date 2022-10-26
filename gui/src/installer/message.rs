@@ -8,6 +8,7 @@ use crate::hw::HardwareWallet;
 pub enum Message {
     Event(iced_native::Event),
     Exit(PathBuf),
+    Clibpboard(String),
     Next,
     Previous,
     Install,
