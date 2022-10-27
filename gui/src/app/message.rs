@@ -15,4 +15,5 @@ pub enum Message {
     BlockHeight(Result<i32, Error>),
     ReceiveAddress(Result<Address, Error>),
     Coins(Result<Vec<Coin>, Error>),
+    SpendTxs(Result<Vec<SpendTx>, Error>),
 }

@@ -5,6 +5,7 @@ pub mod coins;
 pub mod home;
 pub mod receive;
 pub mod settings;
+pub mod spend;
 
 pub use message::*;
 use warning::warn;
@@ -131,7 +132,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                 row()
                     .push(
                         row()
-                            .push(coin_icon())
+                            .push(send_icon())
                             .push(text("Send"))
                             .spacing(10)
                             .width(iced::Length::Fill)

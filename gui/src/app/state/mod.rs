@@ -1,5 +1,6 @@
 mod coins;
 mod settings;
+mod spend;
 
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use crate::daemon::{model::Coin, Daemon};
 
 pub use coins::CoinsPanel;
 pub use settings::SettingsState;
+pub use spend::SpendPanel;
 
 pub trait State {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;
