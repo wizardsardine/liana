@@ -13,7 +13,7 @@ use crate::daemon::{model::Coin, Daemon};
 
 pub use coins::CoinsPanel;
 pub use settings::SettingsState;
-pub use spend::SpendPanel;
+pub use spend::{CreateSpendPanel, SpendPanel};
 
 pub trait State {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;
@@ -139,6 +139,13 @@ impl From<ReceivePanel> for Box<dyn State> {
     fn from(s: ReceivePanel) -> Box<dyn State> {
         Box::new(s)
     }
+}
+
+/// redirect to another state with a message menu
+pub fn redirect(menu: Menu) -> Command<Message> {
+    Command::perform(async { menu }, |menu| {
+        Message::View(view::Message::Menu(menu))
+    })
 }
 
 #[cfg(test)]

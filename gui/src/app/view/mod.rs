@@ -18,7 +18,7 @@ use iced::{
 use crate::ui::{
     color,
     component::{badge, button, separation, text::*},
-    icon::{coin_icon, home_icon, receive_icon, send_icon, settings_icon},
+    icon::{coin_icon, cross_icon, home_icon, receive_icon, send_icon, settings_icon},
     util::Collection,
 };
 
@@ -253,6 +253,54 @@ fn main_section<'a, T: 'a>(menu: widget::Container<'a, T>) -> widget::Container<
 
 pub struct MainSectionStyle;
 impl widget::container::StyleSheet for MainSectionStyle {
+    fn style(&self) -> widget::container::Style {
+        widget::container::Style {
+            background: color::BACKGROUND.into(),
+            ..widget::container::Style::default()
+        }
+    }
+}
+
+pub fn modal<'a, T: Into<Element<'a, Message>>>(
+    is_previous: bool,
+    warning: Option<&Error>,
+    content: T,
+) -> Element<'a, Message> {
+    column()
+        .push(warn(warning))
+        .push(
+            container(
+                row()
+                    .push(if is_previous {
+                        column()
+                            .push(button::transparent(None, "< Previous"))
+                            .width(Length::Fill)
+                    } else {
+                        column().width(Length::Fill)
+                    })
+                    .align_items(iced::Alignment::Center)
+                    .push(button::primary(Some(cross_icon()), "Close").on_press(Message::Close)),
+            )
+            .padding(10)
+            .style(ModalSectionStyle),
+        )
+        .push(modal_section(container(scrollable(content))))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn modal_section<'a, T: 'a>(menu: widget::Container<'a, T>) -> widget::Container<'a, T> {
+    container(menu.max_width(1500))
+        .padding(20)
+        .style(ModalSectionStyle)
+        .center_x()
+        .width(Length::Fill)
+        .height(Length::Fill)
+}
+
+pub struct ModalSectionStyle;
+impl widget::container::StyleSheet for ModalSectionStyle {
     fn style(&self) -> widget::container::Style {
         widget::container::Style {
             background: color::BACKGROUND.into(),

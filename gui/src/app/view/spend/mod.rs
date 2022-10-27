@@ -1,17 +1,29 @@
+pub mod step;
+
 use iced::{
     pure::{button, column, container, row, Element},
     Alignment, Length,
 };
 
 use crate::{
+    app::menu::Menu,
     daemon::model::SpendTx,
-    ui::component::{badge, button::Style, card, text::*},
+    ui::{
+        component::{badge, button, card, text::*},
+        icon,
+    },
 };
 
 use super::message::Message;
 
 pub fn spend_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
     column()
+        .push(
+            row().push(column().width(Length::Fill)).push(
+                button::primary(Some(icon::plus_icon()), "Create a new transaction")
+                    .on_press(Message::Menu(Menu::CreateSpendTx)),
+            ),
+        )
         .push(
             container(
                 row()
@@ -52,7 +64,7 @@ fn spend_tx_list_view<'a>(i: usize, _tx: &SpendTx) -> Element<'a, Message> {
         )
         .padding(10)
         .on_press(Message::Select(i))
-        .style(Style::TransparentBorder),
+        .style(button::Style::TransparentBorder),
     )
     .style(card::SimpleCardStyle)
     .into()

@@ -5,4 +5,5 @@ pub enum Menu {
     Spend,
     Settings,
     Coins,
+    CreateSpendTx,
 }

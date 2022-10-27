@@ -8,6 +8,19 @@ pub enum Message {
     Close,
     Select(usize),
     Settings(usize, SettingsMessage),
+    CreateSpend(CreateSpendMessage),
+    Next,
+}
+
+#[derive(Debug, Clone)]
+pub enum CreateSpendMessage {
+    AddRecipient,
+    DeleteRecipient(usize),
+    SelectInput(usize),
+    RecipientEdited(usize, &'static str, String),
+    FeerateEdited(String),
+    Generate,
+    Save,
 }
 
 #[derive(Debug, Clone)]
