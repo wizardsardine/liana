@@ -70,6 +70,10 @@ impl<C: Client + Debug> Daemon for Minisafed<C> {
     fn list_coins(&self) -> Result<ListCoinsResult, DaemonError> {
         self.call("listcoins", Option::<Request>::None)
     }
+
+    fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
+        self.call("listspend", Option::<Request>::None)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

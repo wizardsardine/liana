@@ -16,13 +16,14 @@ use iced::{
 
 use crate::ui::{
     color,
-    component::{button, separation, text::*},
-    icon::{coin_icon, home_icon, receive_icon, settings_icon},
+    component::{badge, button, separation, text::*},
+    icon::{coin_icon, home_icon, receive_icon, send_icon, settings_icon},
+    util::Collection,
 };
 
-use crate::app::{error::Error, menu::Menu};
+use crate::app::{cache::Cache, error::Error, menu::Menu};
 
-pub fn sidebar(menu: &Menu) -> widget::Container<Message> {
+pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Message> {
     let home_button = if *menu == Menu::Home {
         button::primary(Some(home_icon()), "Home")
             .on_press(Message::Reload)
@@ -34,13 +35,131 @@ pub fn sidebar(menu: &Menu) -> widget::Container<Message> {
     };
 
     let coins_button = if *menu == Menu::Coins {
-        button::primary(Some(coin_icon()), "Coins")
-            .on_press(Message::Reload)
-            .width(iced::Length::Units(200))
+        iced::pure::widget::button::Button::new(
+            container(
+                row()
+                    .push(
+                        row()
+                            .push(coin_icon())
+                            .push(text("Coins"))
+                            .spacing(10)
+                            .width(iced::Length::Fill)
+                            .align_items(iced::Alignment::Center),
+                    )
+                    .push(
+                        container(text(&format!("  {}  ", cache.coins.len())).small().bold())
+                            .style(badge::PillStyle::InversePrimary),
+                    )
+                    .spacing(10)
+                    .width(iced::Length::Fill)
+                    .align_items(iced::Alignment::Center),
+            )
+            .width(iced::Length::Fill)
+            .padding(5)
+            .center_x(),
+        )
+        .style(button::Style::Primary)
+        .on_press(Message::Reload)
+        .width(iced::Length::Units(200))
     } else {
-        button::transparent(Some(coin_icon()), "Coins")
-            .on_press(Message::Menu(Menu::Coins))
-            .width(iced::Length::Units(200))
+        iced::pure::widget::button::Button::new(
+            container(
+                row()
+                    .push(
+                        row()
+                            .push(coin_icon())
+                            .push(text("Coins"))
+                            .spacing(10)
+                            .width(iced::Length::Fill)
+                            .align_items(iced::Alignment::Center),
+                    )
+                    .push(
+                        container(text(&format!("  {}  ", cache.coins.len())).small().bold())
+                            .style(badge::PillStyle::Primary),
+                    )
+                    .spacing(10)
+                    .width(iced::Length::Fill)
+                    .align_items(iced::Alignment::Center),
+            )
+            .width(iced::Length::Fill)
+            .padding(5)
+            .center_x(),
+        )
+        .style(button::Style::Transparent)
+        .on_press(Message::Menu(Menu::Coins))
+        .width(iced::Length::Units(200))
+    };
+
+    let spend_button = if *menu == Menu::Spend {
+        iced::pure::widget::button::Button::new(
+            container(
+                row()
+                    .push(
+                        row()
+                            .push(send_icon())
+                            .push(text("Send"))
+                            .spacing(10)
+                            .width(iced::Length::Fill)
+                            .align_items(iced::Alignment::Center),
+                    )
+                    .push_maybe(if cache.spend_txs.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            container(
+                                text(&format!("  {}  ", cache.spend_txs.len()))
+                                    .small()
+                                    .bold(),
+                            )
+                            .style(badge::PillStyle::InversePrimary),
+                        )
+                    })
+                    .spacing(10)
+                    .width(iced::Length::Fill)
+                    .align_items(iced::Alignment::Center),
+            )
+            .width(iced::Length::Fill)
+            .padding(5)
+            .center_x(),
+        )
+        .style(button::Style::Primary)
+        .on_press(Message::Reload)
+        .width(iced::Length::Units(200))
+    } else {
+        iced::pure::widget::button::Button::new(
+            container(
+                row()
+                    .push(
+                        row()
+                            .push(coin_icon())
+                            .push(text("Send"))
+                            .spacing(10)
+                            .width(iced::Length::Fill)
+                            .align_items(iced::Alignment::Center),
+                    )
+                    .push_maybe(if cache.spend_txs.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            container(
+                                text(&format!("  {}  ", cache.spend_txs.len()))
+                                    .small()
+                                    .bold(),
+                            )
+                            .style(badge::PillStyle::Primary),
+                        )
+                    })
+                    .spacing(10)
+                    .width(iced::Length::Fill)
+                    .align_items(iced::Alignment::Center),
+            )
+            .width(iced::Length::Fill)
+            .padding(5)
+            .center_x(),
+        )
+        .style(button::Style::Transparent)
+        .on_press(Message::Menu(Menu::Spend))
+        .width(iced::Length::Units(200))
     };
 
     let receive_button = if *menu == Menu::Receive {
@@ -76,6 +195,7 @@ pub fn sidebar(menu: &Menu) -> widget::Container<Message> {
                     )
                     .push(home_button)
                     .push(coins_button)
+                    .push(spend_button)
                     .push(receive_button)
                     .spacing(15)
                     .height(Length::Fill),
@@ -99,11 +219,16 @@ impl widget::container::StyleSheet for SidebarStyle {
 
 pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     menu: &'a Menu,
+    cache: &'a Cache,
     warning: Option<&Error>,
     content: T,
 ) -> Element<'a, Message> {
     row()
-        .push(sidebar(menu).width(Length::Shrink).height(Length::Fill))
+        .push(
+            sidebar(menu, cache)
+                .width(Length::Shrink)
+                .height(Length::Fill),
+        )
         .push(
             column().push(warn(warning)).push(
                 main_section(container(scrollable(content)))

@@ -42,7 +42,12 @@ enum Step {
 pub enum Message {
     Event(iced_native::Event),
     Syncing(Result<GetInfoResult, DaemonError>),
-    Synced(GetInfoResult, Vec<Coin>, Arc<dyn Daemon + Sync + Send>),
+    Synced(
+        GetInfoResult,
+        Vec<Coin>,
+        Vec<SpendTx>,
+        Arc<dyn Daemon + Sync + Send>,
+    ),
     Started(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     Failure(DaemonError),
@@ -127,9 +132,13 @@ impl Loader {
                                         .list_coins()
                                         .map(|res| res.coins)
                                         .unwrap_or_else(|_| Vec::new());
-                                    (info, coins, daemon)
+                                    let spend_txs = daemon
+                                        .list_spend_txs()
+                                        .map(|res| res.spend_txs)
+                                        .unwrap_or_else(|_| Vec::new());
+                                    (info, coins, spend_txs, daemon)
                                 },
-                                |res| Message::Synced(res.0, res.1, res.2),
+                                |res| Message::Synced(res.0, res.1, res.2, res.3),
                             );
                         } else {
                             *progress = info.sync

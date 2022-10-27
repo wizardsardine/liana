@@ -161,10 +161,11 @@ impl Application for GUI {
                 }
             }
             (State::Loader(loader), Message::Load(msg)) => {
-                if let loader::Message::Synced(info, coins, minisafed) = *msg {
+                if let loader::Message::Synced(info, coins, spend_txs, minisafed) = *msg {
                     let cache = Cache {
                         blockheight: info.blockheight,
                         coins,
+                        spend_txs,
                     };
 
                     let (app, command) = App::new(cache, loader.gui_config.clone(), minisafed);

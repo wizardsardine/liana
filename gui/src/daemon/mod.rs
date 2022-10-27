@@ -49,4 +49,6 @@ pub trait Daemon: Debug {
     fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;
 
     fn list_coins(&self) -> Result<model::ListCoinsResult, DaemonError>;
+
+    fn list_spend_txs(&self) -> Result<model::ListSpendResult, DaemonError>;
 }

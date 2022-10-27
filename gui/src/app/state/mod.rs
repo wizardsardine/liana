@@ -42,8 +42,13 @@ impl Home {
 }
 
 impl State for Home {
-    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
-        view::dashboard(&Menu::Home, None, view::home::home_view(&self.balance))
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        view::dashboard(
+            &Menu::Home,
+            cache,
+            None,
+            view::home::home_view(&self.balance),
+        )
     }
 
     fn update(
@@ -83,15 +88,16 @@ pub struct ReceivePanel {
 }
 
 impl State for ReceivePanel {
-    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(address) = &self.address {
             view::dashboard(
                 &Menu::Receive,
+                cache,
                 self.warning.as_ref(),
                 view::receive::receive(address, self.qr_code.as_ref().unwrap()),
             )
         } else {
-            view::dashboard(&Menu::Receive, self.warning.as_ref(), column())
+            view::dashboard(&Menu::Receive, cache, self.warning.as_ref(), column())
         }
     }
     fn update(

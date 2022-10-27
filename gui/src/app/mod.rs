@@ -65,6 +65,7 @@ impl App {
             menu::Menu::Home => Home::new(&self.cache.coins).into(),
             menu::Menu::Coins => CoinsPanel::new(&self.cache.coins).into(),
             menu::Menu::Receive => ReceivePanel::default().into(),
+            menu::Menu::Spend => ReceivePanel::default().into(),
         };
         self.state.load(self.daemon.clone())
     }

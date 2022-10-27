@@ -91,4 +91,15 @@ impl Daemon for EmbeddedDaemon {
             .control
             .list_coins())
     }
+
+    fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
+        Ok(self
+            .handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .lock()
+            .unwrap()
+            .control
+            .list_spend())
+    }
 }

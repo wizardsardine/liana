@@ -117,3 +117,27 @@ pub fn coin<T>() -> widget::container::Container<'static, T> {
         .center_x()
         .center_y()
 }
+
+pub enum PillStyle {
+    InversePrimary,
+    Primary,
+}
+
+impl widget::container::StyleSheet for PillStyle {
+    fn style(&self) -> widget::container::Style {
+        match self {
+            Self::Primary => widget::container::Style {
+                background: color::PRIMARY.into(),
+                border_radius: 10.0,
+                text_color: iced::Color::WHITE.into(),
+                ..widget::container::Style::default()
+            },
+            Self::InversePrimary => widget::container::Style {
+                background: color::FOREGROUND.into(),
+                border_radius: 10.0,
+                text_color: color::PRIMARY.into(),
+                ..widget::container::Style::default()
+            },
+        }
+    }
+}
