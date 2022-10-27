@@ -162,3 +162,45 @@ impl Recipient {
         view::spend::step::recipient_view(i, &self.address, &self.amount)
     }
 }
+
+#[derive(Default)]
+pub struct ChooseFeerate {
+    feerate: form::Value<String>,
+}
+
+impl Step for ChooseFeerate {
+    fn update(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        message: Message,
+    ) -> Command<Message> {
+        if let Message::View(view::Message::CreateSpend(view::CreateSpendMessage::FeerateEdited(
+            s,
+        ))) = message
+        {
+            if s.parse::<u64>().is_ok() {
+                self.feerate.value = s;
+                self.feerate.valid = true;
+            } else if s.is_empty() {
+                self.feerate.value = "".to_string();
+                self.feerate.valid = true;
+            } else {
+                self.feerate.valid = false;
+            }
+        }
+
+        Command::none()
+    }
+
+    fn apply(&self, draft: &mut TransactionDraft) {
+        draft.feerate = self.feerate.value.parse::<u64>().expect("Checked before");
+    }
+
+    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
+        view::spend::step::choose_feerate_view(
+            &self.feerate,
+            self.feerate.valid && !self.feerate.value.is_empty(),
+        )
+    }
+}

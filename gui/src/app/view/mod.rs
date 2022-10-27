@@ -273,7 +273,9 @@ pub fn modal<'a, T: Into<Element<'a, Message>>>(
                 row()
                     .push(if is_previous {
                         column()
-                            .push(button::transparent(None, "< Previous"))
+                            .push(
+                                button::transparent(None, "< Previous").on_press(Message::Previous),
+                            )
                             .width(Length::Fill)
                     } else {
                         column().width(Length::Fill)

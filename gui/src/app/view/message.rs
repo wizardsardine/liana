@@ -10,6 +10,7 @@ pub enum Message {
     Settings(usize, SettingsMessage),
     CreateSpend(CreateSpendMessage),
     Next,
+    Previous,
 }
 
 #[derive(Debug, Clone)]

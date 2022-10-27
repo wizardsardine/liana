@@ -83,3 +83,37 @@ pub fn recipient_view<'a>(
         .width(Length::Fill)
         .into()
 }
+
+pub fn choose_feerate_view<'a>(
+    feerate: &form::Value<String>,
+    is_valid: bool,
+) -> Element<'a, Message> {
+    modal(
+        true,
+        None,
+        column()
+            .push(text("Choose feerate").bold().size(50))
+            .push(
+                container(
+                    form::Form::new("Feerate", feerate, move |msg| {
+                        Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
+                    })
+                    .warning("Please enter correct feerate")
+                    .size(20)
+                    .padding(10),
+                )
+                .width(Length::Units(250)),
+            )
+            .push_maybe(if is_valid {
+                Some(
+                    button::primary(None, "Next")
+                        .on_press(Message::Next)
+                        .width(Length::Units(100)),
+                )
+            } else {
+                None
+            })
+            .spacing(20)
+            .align_items(Alignment::Center),
+    )
+}

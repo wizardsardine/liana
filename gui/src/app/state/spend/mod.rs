@@ -81,19 +81,20 @@ impl From<SpendPanel> for Box<dyn State> {
 }
 
 pub struct CreateSpendPanel {
-    coins: Vec<Coin>,
     draft: step::TransactionDraft,
     current: usize,
     steps: Vec<Box<dyn step::Step>>,
 }
 
 impl CreateSpendPanel {
-    pub fn new(coins: &[Coin]) -> Self {
+    pub fn new(_coins: &[Coin]) -> Self {
         Self {
-            coins: coins.to_vec(),
             draft: step::TransactionDraft::default(),
             current: 0,
-            steps: vec![Box::new(step::ChooseRecipients::default())],
+            steps: vec![
+                Box::new(step::ChooseRecipients::default()),
+                Box::new(step::ChooseFeerate::default()),
+            ],
         }
     }
 }
@@ -111,6 +112,18 @@ impl State for CreateSpendPanel {
     ) -> Command<Message> {
         if matches!(message, Message::View(view::Message::Close)) {
             return redirect(Menu::Spend);
+        }
+
+        if matches!(message, Message::View(view::Message::Next)) {
+            if self.steps.get(self.current + 1).is_some() {
+                self.current += 1;
+            }
+        }
+
+        if matches!(message, Message::View(view::Message::Previous)) {
+            if self.steps.get(self.current - 1).is_some() {
+                self.current -= 1;
+            }
         }
 
         if let Some(step) = self.steps.get_mut(self.current) {
