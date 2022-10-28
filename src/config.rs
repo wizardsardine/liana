@@ -1,8 +1,8 @@
-use crate::descriptors::InheritanceDescriptor;
+use crate::descriptors::MultipathDescriptor;
 
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
-use miniscript::{bitcoin::Network, DescriptorPublicKey, ForEachKey};
+use miniscript::bitcoin::Network;
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -92,7 +92,7 @@ pub struct Config {
         deserialize_with = "deserialize_fromstr",
         serialize_with = "serialize_to_string"
     )]
-    pub main_descriptor: InheritanceDescriptor,
+    pub main_descriptor: MultipathDescriptor,
     /// Settings for the Bitcoin interface
     pub bitcoin_config: BitcoinConfig,
     /// Settings specific to bitcoind as the Bitcoin interface
@@ -113,7 +113,7 @@ pub enum ConfigError {
     DatadirNotFound,
     FileNotFound,
     ReadingFile(String),
-    UnexpectedDescriptor(Box<InheritanceDescriptor>),
+    UnexpectedDescriptor(Box<MultipathDescriptor>),
     Unexpected(String),
 }
 
@@ -203,14 +203,7 @@ impl Config {
             Network::Bitcoin => Network::Bitcoin,
             _ => Network::Testnet,
         };
-        let unexpected_net = self.main_descriptor.as_inner().for_each_key(|xpub| {
-            if let DescriptorPublicKey::XPub(xpub) = xpub {
-                xpub.xkey.network != expected_network
-            } else {
-                false
-            }
-        });
-        if unexpected_net {
+        if !self.main_descriptor.all_xpubs_net_is(expected_network) {
             return Err(ConfigError::Unexpected(format!(
                 "Our bitcoin network is {} but one xpub is not for network {}",
                 self.bitcoin_config.network, expected_network
@@ -235,7 +228,7 @@ mod tests {
             data_dir = "/home/wizardsardine/custom/folder/"
             daemon = false
             log_level = "debug"
-            main_descriptor = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2d"
+            main_descriptor = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#5f6qd0d9"
 
             [bitcoin_config]
             network = "bitcoin"
@@ -252,7 +245,7 @@ mod tests {
             data_dir = '/home/wizardsardine/custom/folder/'
             daemon = false
             log_level = 'TRACE'
-            main_descriptor = 'wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2d'
+            main_descriptor = 'wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#5f6qd0d9'
 
             [bitcoin_config]
             network = 'bitcoin'
@@ -273,7 +266,7 @@ mod tests {
             log_level = "trace"
             data_dir = "/home/wizardsardine/custom/folder/"
 
-            main_descriptor = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2e"
+            main_descriptor = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#y5wcna2e"
 
             [bitcoin_config]
             network = "bitcoin"

@@ -2,7 +2,7 @@ use crate::{
     bitcoin::{BitcoinError, BitcoinInterface, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
     database::{Coin, DatabaseConnection, DatabaseInterface, SpendBlock},
-    DaemonHandle,
+    descriptors, DaemonHandle,
 };
 
 use std::{collections::HashMap, env, fs, io, path, process, str::FromStr, sync, thread, time};
@@ -44,7 +44,11 @@ impl BitcoinInterface for DummyBitcoind {
         true
     }
 
-    fn received_coins(&self, _: &BlockChainTip) -> Vec<UTxO> {
+    fn received_coins(
+        &self,
+        _: &BlockChainTip,
+        _: &[descriptors::InheritanceDescriptor],
+    ) -> Vec<UTxO> {
         Vec::new()
     }
 
@@ -73,7 +77,8 @@ impl BitcoinInterface for DummyBitcoind {
 }
 
 pub struct DummyDb {
-    curr_index: bip32::ChildNumber,
+    deposit_index: bip32::ChildNumber,
+    change_index: bip32::ChildNumber,
     curr_tip: Option<BlockChainTip>,
     coins: HashMap<bitcoin::OutPoint, Coin>,
     spend_txs: HashMap<bitcoin::Txid, Psbt>,
@@ -82,7 +87,8 @@ pub struct DummyDb {
 impl DummyDb {
     pub fn new() -> DummyDb {
         DummyDb {
-            curr_index: 0.into(),
+            deposit_index: 0.into(),
+            change_index: 0.into(),
             curr_tip: None,
             coins: HashMap::new(),
             spend_txs: HashMap::new(),
@@ -119,13 +125,22 @@ impl DatabaseConnection for DummyDbConn {
         self.db.write().unwrap().curr_tip = Some(*tip);
     }
 
-    fn derivation_index(&mut self) -> bip32::ChildNumber {
-        self.db.read().unwrap().curr_index
+    fn receive_index(&mut self) -> bip32::ChildNumber {
+        self.db.read().unwrap().deposit_index
     }
 
-    fn increment_derivation_index(&mut self, _: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
-        let next_index = self.db.write().unwrap().curr_index.increment().unwrap();
-        self.db.write().unwrap().curr_index = next_index;
+    fn change_index(&mut self) -> bip32::ChildNumber {
+        self.db.read().unwrap().deposit_index
+    }
+
+    fn increment_receive_index(&mut self, _: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        let next_index = self.db.write().unwrap().deposit_index.increment().unwrap();
+        self.db.write().unwrap().deposit_index = next_index;
+    }
+
+    fn increment_change_index(&mut self, _: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        let next_index = self.db.write().unwrap().change_index.increment().unwrap();
+        self.db.write().unwrap().change_index = next_index;
     }
 
     fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
@@ -183,7 +198,10 @@ impl DatabaseConnection for DummyDbConn {
         }
     }
 
-    fn derivation_index_by_address(&mut self, _: &bitcoin::Address) -> Option<bip32::ChildNumber> {
+    fn derivation_index_by_address(
+        &mut self,
+        _: &bitcoin::Address,
+    ) -> Option<(bip32::ChildNumber, bool)> {
         None
     }
 
@@ -270,10 +288,10 @@ impl DummyMinisafe {
             poll_interval_secs: time::Duration::from_secs(2),
         };
 
-        let owner_key = descriptor::DescriptorPublicKey::from_str("xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/*").unwrap();
-        let heir_key = descriptor::DescriptorPublicKey::from_str("xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/*").unwrap();
+        let owner_key = descriptor::DescriptorPublicKey::from_str("xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/<0;1>/*").unwrap();
+        let heir_key = descriptor::DescriptorPublicKey::from_str("xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*").unwrap();
         let desc =
-            crate::descriptors::InheritanceDescriptor::new(owner_key, heir_key, 10_000).unwrap();
+            crate::descriptors::MultipathDescriptor::new(owner_key, heir_key, 10_000).unwrap();
         let config = Config {
             bitcoin_config,
             bitcoind_config: None,

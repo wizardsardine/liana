@@ -14,11 +14,11 @@ use crate::{
     database::{
         sqlite::{
             schema::{DbAddress, DbCoin, DbSpendTransaction, DbTip, DbWallet},
-            utils::{create_fresh_db, db_exec, db_query, db_tx_query, LOOK_AHEAD_LIMIT},
+            utils::{create_fresh_db, db_exec, db_query, db_tx_query, populate_address_mapping},
         },
         Coin,
     },
-    descriptors::InheritanceDescriptor,
+    descriptors::MultipathDescriptor,
 };
 
 use std::{convert::TryInto, fmt, io, path};
@@ -36,7 +36,7 @@ pub enum SqliteDbError {
     FileNotFound(path::PathBuf),
     UnsupportedVersion(i64),
     InvalidNetwork(bitcoin::Network),
-    DescriptorMismatch(Box<InheritanceDescriptor>),
+    DescriptorMismatch(Box<MultipathDescriptor>),
     Rusqlite(rusqlite::Error),
 }
 
@@ -80,7 +80,7 @@ impl From<rusqlite::Error> for SqliteDbError {
 #[derive(Debug, Clone)]
 pub struct FreshDbOptions {
     pub bitcoind_network: bitcoin::Network,
-    pub main_descriptor: InheritanceDescriptor,
+    pub main_descriptor: MultipathDescriptor,
 }
 
 #[derive(Debug, Clone)]
@@ -119,7 +119,7 @@ impl SqliteDb {
     pub fn sanity_check(
         &self,
         bitcoind_network: bitcoin::Network,
-        main_descriptor: &InheritanceDescriptor,
+        main_descriptor: &MultipathDescriptor,
     ) -> Result<(), SqliteDbError> {
         let mut conn = self.connection()?;
 
@@ -210,10 +210,7 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
-    pub fn increment_derivation_index(
-        &mut self,
-        secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-    ) {
+    pub fn increment_deposit_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
         let network = self.db_tip().network;
 
         db_exec(&mut self.conn, |db_tx| {
@@ -235,19 +232,42 @@ impl SqliteConn {
                 rusqlite::params![next_index],
             )?;
 
-            // Update the address to derivation index mapping.
-            // TODO: have this as a helper in descriptors.rs
-            let next_la_index = next_index + LOOK_AHEAD_LIMIT - 1;
-            let next_la_address = db_wallet
-                .main_descriptor
-                .derive(next_la_index.into(), secp)
-                .address(network);
-            db_tx
-                .execute(
-                    "INSERT INTO addresses (address, derivation_index) VALUES (?1, ?2)",
-                    rusqlite::params![next_la_address.to_string(), next_la_index],
-                )
-                .map(|_| ())
+            if next_index > db_wallet.change_derivation_index.into() {
+                populate_address_mapping(db_tx, &db_wallet, next_index, network, secp)?;
+            }
+
+            Ok(())
+        })
+        .expect("Database must be available")
+    }
+
+    pub fn increment_change_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+        let network = self.db_tip().network;
+
+        db_exec(&mut self.conn, |db_tx| {
+            let db_wallet: DbWallet =
+                db_tx_query(db_tx, "SELECT * FROM wallets", rusqlite::params![], |row| {
+                    row.try_into()
+                })
+                .expect("Db must not fail")
+                .pop()
+                .expect("There is always a row in the wallet table");
+            let next_index: u32 = db_wallet
+                .change_derivation_index
+                .increment()
+                .expect("Must not get in hardened territory")
+                .into();
+            // NOTE: should be updated if we ever have multi-wallet support
+            db_tx.execute(
+                "UPDATE wallets SET change_derivation_index = (?1)",
+                rusqlite::params![next_index],
+            )?;
+
+            if next_index > db_wallet.deposit_derivation_index.into() {
+                populate_address_mapping(db_tx, &db_wallet, next_index, network, secp)?;
+            }
+
+            Ok(())
         })
         .expect("Database must be available")
     }
@@ -282,14 +302,15 @@ impl SqliteConn {
             for coin in coins {
                 let deriv_index: u32 = coin.derivation_index.into();
                 db_tx.execute(
-                    "INSERT INTO coins (wallet_id, txid, vout, amount_sat, derivation_index) \
-                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO coins (wallet_id, txid, vout, amount_sat, derivation_index, is_change) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     rusqlite::params![
                         WALLET_ID,
                         coin.outpoint.txid.to_vec(),
                         coin.outpoint.vout,
                         coin.amount.to_sat(),
                         deriv_index,
+                        coin.is_change,
                     ],
                 )?;
             }
@@ -362,7 +383,7 @@ impl SqliteConn {
     pub fn db_address(&mut self, address: &bitcoin::Address) -> Option<DbAddress> {
         db_query(
             &mut self.conn,
-            "SELECT * FROM addresses WHERE address = ?1",
+            "SELECT * FROM addresses WHERE receive_address = ?1 OR change_address = ?1",
             rusqlite::params![address.to_string()],
             |row| row.try_into(),
         )
@@ -484,8 +505,8 @@ mod tests {
     use bitcoin::{hashes::Hash, util::bip32};
 
     fn dummy_options() -> FreshDbOptions {
-        let desc_str = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))#y5wcna2d";
-        let main_descriptor = InheritanceDescriptor::from_str(desc_str).unwrap();
+        let desc_str = "wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#5f6qd0d9";
+        let main_descriptor = MultipathDescriptor::from_str(desc_str).unwrap();
         FreshDbOptions {
             bitcoind_network: bitcoin::Network::Bitcoin,
             main_descriptor,
@@ -533,8 +554,8 @@ mod tests {
             .to_string()
             .contains("Database was created for network");
         fs::remove_file(&db_path).unwrap();
-        let other_desc_str = "wsh(andor(pk(tpubDExU4YLJkyQ9RRbVScQq2brFxWWha7WmAUByPWyaWYwmcTv3Shx8aHp6mVwuE5n4TeM4z5DTWGf2YhNPmXtfvyr8cUDVvA3txdrFnFgNdF7/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/*)))";
-        let other_desc = InheritanceDescriptor::from_str(other_desc_str).unwrap();
+        let other_desc_str = "wsh(andor(pk(tpubDExU4YLJkyQ9RRbVScQq2brFxWWha7WmAUByPWyaWYwmcTv3Shx8aHp6mVwuE5n4TeM4z5DTWGf2YhNPmXtfvyr8cUDVvA3txdrFnFgNdF7/<0;1>/*),older(10000),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))";
+        let other_desc = MultipathDescriptor::from_str(other_desc_str).unwrap();
         let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &other_desc)
             .unwrap_err()
@@ -601,6 +622,7 @@ mod tests {
                 block_time: None,
                 amount: bitcoin::Amount::from_sat(98765),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                is_change: false,
                 spend_txid: None,
                 spend_block: None,
             };
@@ -612,7 +634,7 @@ mod tests {
             assert_eq!(coins.len(), 1);
             assert_eq!(coins[0].outpoint, coin_a.outpoint);
 
-            // Add a second one, we'll get both.
+            // Add a second one (this one is change), we'll get both.
             let coin_b = Coin {
                 outpoint: bitcoin::OutPoint::from_str(
                     "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571936f:12",
@@ -622,6 +644,7 @@ mod tests {
                 block_time: None,
                 amount: bitcoin::Amount::from_sat(1111),
                 derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
+                is_change: true,
                 spend_txid: None,
                 spend_block: None,
             };
@@ -714,6 +737,16 @@ mod tests {
             // There is the index for the first index
             let addr = options
                 .main_descriptor
+                .receive_descriptor()
+                .derive(0.into(), &secp)
+                .address(options.bitcoind_network);
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 0.into());
+
+            // And also for the change address
+            let addr = options
+                .main_descriptor
+                .change_descriptor()
                 .derive(0.into(), &secp)
                 .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
@@ -722,6 +755,7 @@ mod tests {
             // There is the index for the 199th index (look-ahead limit)
             let addr = options
                 .main_descriptor
+                .receive_descriptor()
                 .derive(199.into(), &secp)
                 .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
@@ -730,14 +764,48 @@ mod tests {
             // And not for the 200th one.
             let addr = options
                 .main_descriptor
+                .receive_descriptor()
                 .derive(200.into(), &secp)
                 .address(options.bitcoind_network);
             assert!(conn.db_address(&addr).is_none());
 
             // But if we increment the deposit derivation index, the 200th one will be there.
-            conn.increment_derivation_index(&secp);
+            conn.increment_deposit_index(&secp);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 200.into());
+
+            // It will also be there for the change descriptor.
+            let addr = options
+                .main_descriptor
+                .change_descriptor()
+                .derive(200.into(), &secp)
+                .address(options.bitcoind_network);
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 200.into());
+
+            // But not for the 201th.
+            let addr = options
+                .main_descriptor
+                .change_descriptor()
+                .derive(201.into(), &secp)
+                .address(options.bitcoind_network);
+            assert!(conn.db_address(&addr).is_none());
+
+            // If we increment the *change* derivation index to 1, it will still not be there.
+            conn.increment_change_index(&secp);
+            assert!(conn.db_address(&addr).is_none());
+
+            // But doing it once again it will be there for both change and receive.
+            conn.increment_change_index(&secp);
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 201.into());
+            let addr = options
+                .main_descriptor
+                .receive_descriptor()
+                .derive(201.into(), &secp)
+                .address(options.bitcoind_network);
+            let db_addr = conn.db_address(&addr).unwrap();
+            assert_eq!(db_addr.derivation_index, 201.into());
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();
@@ -775,6 +843,7 @@ mod tests {
                     block_time: None,
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                    is_change: false,
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -787,6 +856,7 @@ mod tests {
                     block_time: Some(1_111_899),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
+                    is_change: false,
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -799,6 +869,7 @@ mod tests {
                     block_time: Some(1_121_899),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
+                    is_change: false,
                     spend_txid: Some(
                         bitcoin::Txid::from_str(
                             "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7",
@@ -819,6 +890,7 @@ mod tests {
                     block_time: Some(1_131_899),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
+                    is_change: false,
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -831,6 +903,7 @@ mod tests {
                     block_time: Some(1_134_899),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
+                    is_change: false,
                     spend_txid: Some(
                         bitcoin::Txid::from_str(
                             "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6",

@@ -20,7 +20,6 @@ use std::{
 use miniscript::{
     bitcoin::{
         self,
-        util::bip32,
         util::psbt::{Input as PsbtIn, Output as PsbtOut, PartiallySignedTransaction as Psbt},
     },
     psbt::PsbtExt,
@@ -170,9 +169,14 @@ fn serializable_size<T: bitcoin::consensus::Encodable + ?Sized>(t: &T) -> u64 {
 }
 
 impl DaemonControl {
-    // Get the descriptor at this derivation index
-    fn derived_desc(&self, index: bip32::ChildNumber) -> descriptors::DerivedInheritanceDescriptor {
-        self.config.main_descriptor.derive(index, &self.secp)
+    // Get the derived descriptor for this coin
+    fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedInheritanceDescriptor {
+        let desc = if coin.is_change {
+            self.config.main_descriptor.change_descriptor()
+        } else {
+            self.config.main_descriptor.receive_descriptor()
+        };
+        desc.derive(coin.derivation_index, &self.secp)
     }
 }
 
@@ -197,12 +201,13 @@ impl DaemonControl {
     /// whether it was actually used.
     pub fn get_new_address(&self) -> GetAddressResult {
         let mut db_conn = self.db.connection();
-        let index = db_conn.derivation_index();
+        let index = db_conn.receive_index();
         // TODO: should we wrap around instead of failing?
-        db_conn.increment_derivation_index(&self.secp);
+        db_conn.increment_receive_index(&self.secp);
         let address = self
             .config
             .main_descriptor
+            .receive_descriptor()
             .derive(index, &self.secp)
             .address(self.config.bitcoin_config.network);
         GetAddressResult { address }
@@ -278,7 +283,7 @@ impl DaemonControl {
                 ..bitcoin::TxIn::default()
             });
 
-            let coin_desc = self.derived_desc(coin.derivation_index);
+            let coin_desc = self.derived_desc(coin);
             sat_vb += desc_sat_vb(&coin_desc);
             let witness_script = Some(coin_desc.witness_script());
             let witness_utxo = Some(bitcoin::TxOut {
@@ -340,14 +345,15 @@ impl DaemonControl {
         // an added output* (for the change).
         if nochange_feerate_vb > feerate_vb {
             // Get the change address to create a dummy change txo.
-            // TODO: decent change management
-            let first_coin = coins
-                .get(coins_outpoints.get(0).expect("We checked it wasn't empty"))
-                .expect("We checked they were all present");
-            let coin_desc = self.derived_desc(first_coin.derivation_index);
+            let change_desc = self
+                .config
+                .main_descriptor
+                .receive_descriptor()
+                .derive(db_conn.change_index(), &self.secp);
+            db_conn.increment_change_index(&self.secp);
             let mut change_txo = bitcoin::TxOut {
                 value: std::u64::MAX,
-                script_pubkey: coin_desc.script_pubkey(),
+                script_pubkey: change_desc.script_pubkey(),
             };
             // Serialized size is equal to the virtual size for an output.
             let change_vb: u64 = serializable_size(&change_txo);
@@ -487,7 +493,7 @@ impl DaemonControl {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetInfoDescriptors {
-    pub main: descriptors::InheritanceDescriptor,
+    pub main: descriptors::MultipathDescriptor,
 }
 
 /// Information about the daemon
@@ -554,6 +560,8 @@ mod tests {
     use crate::testutils::*;
     use std::str::FromStr;
 
+    use bitcoin::util::bip32;
+
     #[test]
     fn getinfo() {
         let ms = DummyMinisafe::new();
@@ -572,7 +580,7 @@ mod tests {
         assert_eq!(
             addr,
             bitcoin::Address::from_str(
-                "bc1qgudekhcrejgtlx3yhlvdul7t4q76e5lhm0vtcsndxs6aslh4r9jsqkqhwu"
+                "bc1q9ksrc647hx8zp2cewl8p5f487dgux3777yees8rjcx46t4daqzzqt7yga8"
             )
             .unwrap()
         );
@@ -626,6 +634,7 @@ mod tests {
             block_time: None,
             amount: bitcoin::Amount::from_sat(100_000),
             derivation_index: bip32::ChildNumber::from(13),
+            is_change: false,
             spend_txid: None,
             spend_block: None,
         }]);
@@ -720,6 +729,7 @@ mod tests {
                 block_time: None,
                 amount: bitcoin::Amount::from_sat(100_000),
                 derivation_index: bip32::ChildNumber::from(13),
+                is_change: false,
                 spend_txid: None,
                 spend_block: None,
             },
@@ -729,6 +739,7 @@ mod tests {
                 block_time: None,
                 amount: bitcoin::Amount::from_sat(115_680),
                 derivation_index: bip32::ChildNumber::from(34),
+                is_change: false,
                 spend_txid: None,
                 spend_block: None,
             },

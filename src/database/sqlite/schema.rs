@@ -1,4 +1,4 @@
-use crate::descriptors::InheritanceDescriptor;
+use crate::descriptors::MultipathDescriptor;
 
 use std::{convert::TryFrom, str::FromStr};
 
@@ -27,7 +27,8 @@ CREATE TABLE wallets (
     id INTEGER PRIMARY KEY NOT NULL,
     timestamp INTEGER NOT NULL,
     main_descriptor TEXT NOT NULL,
-    deposit_derivation_index INTEGER NOT NULL
+    deposit_derivation_index INTEGER NOT NULL,
+    change_derivation_index INTEGER NOT NULL
 );
 
 /* Our (U)TxOs.
@@ -44,6 +45,7 @@ CREATE TABLE coins (
     vout INTEGER NOT NULL,
     amount_sat INTEGER NOT NULL,
     derivation_index INTEGER NOT NULL,
+    is_change BOOLEAN NOT NULL CHECK (is_change IN (0,1)),
     spend_txid BLOB,
     spend_block_height INTEGER,
     spend_block_time INTEGER,
@@ -57,7 +59,8 @@ CREATE TABLE coins (
  * we can get the derivation index from the parent descriptor from bitcoind.
  */
 CREATE TABLE addresses (
-    address TEXT NOT NULL UNIQUE,
+    receive_address TEXT NOT NULL UNIQUE,
+    change_address TEXT NOT NULL UNIQUE,
     derivation_index INTEGER NOT NULL UNIQUE
 );
 
@@ -103,8 +106,9 @@ impl TryFrom<&rusqlite::Row<'_>> for DbTip {
 pub struct DbWallet {
     pub id: i64,
     pub timestamp: u32,
-    pub main_descriptor: InheritanceDescriptor,
+    pub main_descriptor: MultipathDescriptor,
     pub deposit_derivation_index: bip32::ChildNumber,
+    pub change_derivation_index: bip32::ChildNumber,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
@@ -115,17 +119,20 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
         let timestamp = row.get(1)?;
 
         let desc_str: String = row.get(2)?;
-        let main_descriptor = InheritanceDescriptor::from_str(&desc_str)
+        let main_descriptor = MultipathDescriptor::from_str(&desc_str)
             .expect("Insane database: can't parse deposit descriptor");
 
         let der_idx: u32 = row.get(3)?;
         let deposit_derivation_index = bip32::ChildNumber::from(der_idx);
+        let der_idx: u32 = row.get(4)?;
+        let change_derivation_index = bip32::ChildNumber::from(der_idx);
 
         Ok(DbWallet {
             id,
             timestamp,
             main_descriptor,
             deposit_derivation_index,
+            change_derivation_index,
         })
     }
 }
@@ -145,6 +152,7 @@ pub struct DbCoin {
     pub block_time: Option<u32>,
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
+    pub is_change: bool,
     pub spend_txid: Option<bitcoin::Txid>,
     pub spend_block: Option<DbSpendBlock>,
 }
@@ -167,12 +175,13 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         let amount = bitcoin::Amount::from_sat(amount);
         let der_idx: u32 = row.get(7)?;
         let derivation_index = bip32::ChildNumber::from(der_idx);
+        let is_change: bool = row.get(8)?;
 
-        let spend_txid: Option<Vec<u8>> = row.get(8)?;
+        let spend_txid: Option<Vec<u8>> = row.get(9)?;
         let spend_txid =
             spend_txid.map(|txid| encode::deserialize(&txid).expect("We only store valid txids"));
-        let spend_height: Option<i32> = row.get(9)?;
-        let spend_time: Option<u32> = row.get(10)?;
+        let spend_height: Option<i32> = row.get(10)?;
+        let spend_time: Option<u32> = row.get(11)?;
         assert_eq!(spend_height.is_none(), spend_time.is_none());
         let spend_block = spend_height.map(|height| DbSpendBlock {
             height,
@@ -187,6 +196,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             block_time,
             amount,
             derivation_index,
+            is_change,
             spend_txid,
             spend_block,
         })
@@ -195,7 +205,8 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbAddress {
-    pub address: bitcoin::Address,
+    pub receive_address: bitcoin::Address,
+    pub change_address: bitcoin::Address,
     pub derivation_index: bip32::ChildNumber,
 }
 
@@ -203,15 +214,21 @@ impl TryFrom<&rusqlite::Row<'_>> for DbAddress {
     type Error = rusqlite::Error;
 
     fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
-        let address: String = row.get(0)?;
-        let address = bitcoin::Address::from_str(&address).expect("We only store valid addresses");
+        let receive_address: String = row.get(0)?;
+        let receive_address =
+            bitcoin::Address::from_str(&receive_address).expect("We only store valid addresses");
 
-        let derivation_index: u32 = row.get(1)?;
+        let change_address: String = row.get(1)?;
+        let change_address =
+            bitcoin::Address::from_str(&change_address).expect("We only store valid addresses");
+
+        let derivation_index: u32 = row.get(2)?;
         let derivation_index = bip32::ChildNumber::from(derivation_index);
         assert!(derivation_index.is_normal());
 
         Ok(DbAddress {
-            address,
+            receive_address,
+            change_address,
             derivation_index,
         })
     }

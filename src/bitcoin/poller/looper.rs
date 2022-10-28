@@ -1,6 +1,7 @@
 use crate::{
     bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
     database::{Coin, DatabaseConnection, DatabaseInterface},
+    descriptors,
 };
 
 use std::{
@@ -26,14 +27,17 @@ fn update_coins(
     bit: &impl BitcoinInterface,
     db_conn: &mut Box<dyn DatabaseConnection>,
     previous_tip: &BlockChainTip,
+    descs: &[descriptors::InheritanceDescriptor],
 ) -> UpdatedCoins {
     let curr_coins = db_conn.coins();
     log::debug!("Current coins: {:?}", curr_coins);
 
     // Start by fetching newly received coins.
     let mut received = Vec::new();
-    for utxo in bit.received_coins(previous_tip) {
-        if let Some(derivation_index) = db_conn.derivation_index_by_address(&utxo.address) {
+    for utxo in bit.received_coins(previous_tip, descs) {
+        if let Some((derivation_index, is_change)) =
+            db_conn.derivation_index_by_address(&utxo.address)
+        {
             if !curr_coins.contains_key(&utxo.outpoint) {
                 let UTxO {
                     outpoint, amount, ..
@@ -42,6 +46,7 @@ fn update_coins(
                     outpoint,
                     amount,
                     derivation_index,
+                    is_change,
                     block_height: None,
                     block_time: None,
                     spend_txid: None,
@@ -154,7 +159,11 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
     TipUpdate::Reorged(common_ancestor)
 }
 
-fn updates(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
+fn updates(
+    bit: &impl BitcoinInterface,
+    db: &impl DatabaseInterface,
+    descs: &[descriptors::InheritanceDescriptor],
+) {
     let mut db_conn = db.connection();
 
     // Check if there was a new block before updating ourselves.
@@ -167,18 +176,18 @@ fn updates(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
             // between our former chain and the new one, then restart fresh.
             db_conn.rollback_tip(&new_tip);
             log::info!("Tip was rolled back to '{}'.", new_tip);
-            return updates(bit, db);
+            return updates(bit, db, descs);
         }
     };
 
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
     // we may have unconfirmed transactions.
-    let updated_coins = update_coins(bit, &mut db_conn, &current_tip);
+    let updated_coins = update_coins(bit, &mut db_conn, &current_tip, descs);
 
     // If the tip changed while we were polling our Bitcoin interface, start over.
     if bit.chain_tip() != latest_tip {
         log::info!("Chain tip changed while we were updating our state. Starting over.");
-        return updates(bit, db);
+        return updates(bit, db, descs);
     }
 
     // The chain tip did not change since we started our updates. Record them and the latest tip.
@@ -213,9 +222,14 @@ pub fn looper(
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     shutdown: sync::Arc<atomic::AtomicBool>,
     poll_interval: time::Duration,
+    desc: descriptors::MultipathDescriptor,
 ) {
     let mut last_poll = None;
     let mut synced = false;
+    let descs = [
+        desc.receive_descriptor().clone(),
+        desc.change_descriptor().clone(),
+    ];
 
     maybe_initialize_tip(&bit, &db);
 
@@ -247,6 +261,6 @@ pub fn looper(
             }
         }
 
-        updates(&bit, &db);
+        updates(&bit, &db, &descs);
     }
 }

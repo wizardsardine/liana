@@ -1,8 +1,11 @@
-use crate::database::sqlite::{schema::SCHEMA, FreshDbOptions, SqliteDbError, DB_VERSION};
+use crate::database::sqlite::{
+    schema::{DbWallet, SCHEMA},
+    FreshDbOptions, SqliteDbError, DB_VERSION,
+};
 
 use std::{convert::TryInto, fs, path, time};
 
-use miniscript::bitcoin::secp256k1;
+use miniscript::bitcoin::{self, secp256k1};
 
 pub const LOOK_AHEAD_LIMIT: u32 = 200;
 
@@ -95,14 +98,19 @@ pub fn create_fresh_db(
     // necessarily 0.
     let mut query = String::with_capacity(100 * LOOK_AHEAD_LIMIT as usize);
     for index in 0..LOOK_AHEAD_LIMIT {
-        // TODO: have this as a helper in descriptors.rs
-        let address = options
+        let receive_address = options
             .main_descriptor
+            .receive_descriptor()
+            .derive(index.into(), secp)
+            .address(options.bitcoind_network);
+        let change_address = options
+            .main_descriptor
+            .change_descriptor()
             .derive(index.into(), secp)
             .address(options.bitcoind_network);
         query += &format!(
-            "INSERT INTO addresses (address, derivation_index) VALUES (\"{}\", {});\n",
-            address, index
+            "INSERT INTO addresses (receive_address, change_address, derivation_index) VALUES (\"{}\", \"{}\", {});\n",
+            receive_address, change_address, index
         );
     }
 
@@ -118,14 +126,42 @@ pub fn create_fresh_db(
             rusqlite::params![options.bitcoind_network.to_string()],
         )?;
         tx.execute(
-            "INSERT INTO wallets (timestamp, main_descriptor, deposit_derivation_index) \
-                     VALUES (?1, ?2, ?3)",
-            rusqlite::params![timestamp, options.main_descriptor.to_string(), 0,],
+            "INSERT INTO wallets (timestamp, main_descriptor, deposit_derivation_index, change_derivation_index) \
+                     VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![timestamp, options.main_descriptor.to_string(), 0, 0],
         )?;
         tx.execute_batch(&query)?;
 
         Ok(())
     })?;
+
+    Ok(())
+}
+
+/// Insert the deposit and change addresses for this index in the address->index mapping table
+pub fn populate_address_mapping(
+    db_tx: &rusqlite::Transaction,
+    db_wallet: &DbWallet,
+    next_index: u32,
+    network: bitcoin::Network,
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+) -> rusqlite::Result<()> {
+    // Update the address to derivation index mapping.
+    let next_la_index = next_index + LOOK_AHEAD_LIMIT - 1;
+    let next_receive_address = db_wallet
+        .main_descriptor
+        .receive_descriptor()
+        .derive(next_la_index.into(), secp)
+        .address(network);
+    let next_change_address = db_wallet
+        .main_descriptor
+        .change_descriptor()
+        .derive(next_la_index.into(), secp)
+        .address(network);
+    db_tx.execute(
+            "INSERT INTO addresses (receive_address, change_address, derivation_index) VALUES (?1, ?2, ?3)",
+            rusqlite::params![next_receive_address.to_string(), next_change_address.to_string(), next_la_index],
+        )?;
 
     Ok(())
 }

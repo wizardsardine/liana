@@ -3,6 +3,7 @@ mod looper;
 use crate::{
     bitcoin::{poller::looper::looper, BitcoinInterface},
     database::DatabaseInterface,
+    descriptors,
 };
 
 use std::{
@@ -21,13 +22,14 @@ impl Poller {
         bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         poll_interval: time::Duration,
+        desc: descriptors::MultipathDescriptor,
     ) -> Poller {
         let shutdown = sync::Arc::from(atomic::AtomicBool::from(false));
         let handle = thread::Builder::new()
             .name("Bitcoin poller".to_string())
             .spawn({
                 let shutdown = shutdown.clone();
-                move || looper(bit, db, shutdown, poll_interval)
+                move || looper(bit, db, shutdown, poll_interval, desc)
             })
             .expect("Must not fail");
 

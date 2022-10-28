@@ -1,7 +1,7 @@
 ///! Implementation of the Bitcoin interface using bitcoind.
 ///!
 ///! We use the RPC interface and a watchonly descriptor wallet.
-use crate::{bitcoin::BlockChainTip, config, descriptors::InheritanceDescriptor};
+use crate::{bitcoin::BlockChainTip, config, descriptors::MultipathDescriptor};
 
 use std::{collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
 
@@ -10,7 +10,7 @@ use jsonrpc::{
     client::Client,
     simple_http::{self, SimpleHttpTransport},
 };
-use miniscript::bitcoin;
+use miniscript::{bitcoin, descriptor};
 
 use serde_json::Value as Json;
 
@@ -351,13 +351,19 @@ impl BitcoinD {
         None
     }
 
-    // TODO: rescan feature will probably need another timestamp than 'now'
-    fn import_descriptor(&self, descriptor: &InheritanceDescriptor) -> Option<String> {
-        let descriptors = vec![serde_json::json!({
-            "desc": descriptor.to_string(),
-            "timestamp": "now",
-            "active": false,
-        })];
+    // Import the receive and change descriptors from the multipath descriptor to bitcoind.
+    fn import_descriptor(&self, desc: &MultipathDescriptor) -> Option<String> {
+        let descriptors = [desc.receive_descriptor(), desc.change_descriptor()]
+            .iter()
+            .map(|desc| {
+                // TODO: rescan feature will probably need another timestamp than 'now'
+                serde_json::json!({
+                    "desc": desc.to_string(),
+                    "timestamp": "now",
+                    "active": false,
+                })
+            })
+            .collect();
 
         let res = self.make_wallet_request("importdescriptors", &params!(Json::Array(descriptors)));
         let all_succeeded = res
@@ -395,7 +401,7 @@ impl BitcoinD {
     /// Create the watchonly wallet on bitcoind, and import it the main descriptor.
     pub fn create_watchonly_wallet(
         &self,
-        main_descriptor: &InheritanceDescriptor,
+        main_descriptor: &MultipathDescriptor,
     ) -> Result<(), BitcoindError> {
         // Remove any leftover. This can happen if we delete the watchonly wallet but don't restart
         // bitcoind.
@@ -435,7 +441,7 @@ impl BitcoinD {
     /// Perform various sanity checks on the bitcoind instance.
     pub fn sanity_check(
         &self,
-        main_descriptor: &InheritanceDescriptor,
+        main_descriptor: &MultipathDescriptor,
         config_network: bitcoin::Network,
     ) -> Result<(), BitcoindError> {
         // Check the minimum supported bitcoind version
@@ -471,9 +477,11 @@ impl BitcoinD {
         }
 
         // Check our main descriptor is imported in this wallet.
-        if !self
-            .list_descriptors()
-            .contains(&main_descriptor.to_string())
+        let receive_desc = main_descriptor.receive_descriptor();
+        let change_desc = main_descriptor.change_descriptor();
+        let desc_list = self.list_descriptors();
+        if !desc_list.contains(&receive_desc.to_string())
+            || !desc_list.contains(&change_desc.to_string())
         {
             return Err(BitcoindError::MissingDescriptor);
         }
@@ -528,7 +536,13 @@ impl BitcoinD {
     pub fn list_since_block(&self, block_hash: &bitcoin::BlockHash) -> LSBlockRes {
         self.make_wallet_request(
             "listsinceblock",
-            &params!(Json::String(block_hash.to_string()),),
+            &params!(
+                Json::String(block_hash.to_string()),
+                Json::Number(1.into()), // Default for min_confirmations for the returned
+                Json::Bool(true),       // Whether to include watchonly
+                Json::Bool(false), // Whether to include an array of txs that were removed in reorgs
+                Json::Bool(true)   // Whether to include UTxOs treated as change.
+            ),
         )
         .into()
     }
@@ -708,6 +722,7 @@ pub struct LSBlockEntry {
     pub amount: bitcoin::Amount,
     pub block_height: Option<i32>,
     pub address: bitcoin::Address,
+    pub parent_descs: Vec<descriptor::Descriptor<descriptor::DescriptorPublicKey>>,
 }
 
 impl From<&Json> for LSBlockEntry {
@@ -739,12 +754,26 @@ impl From<&Json> for LSBlockEntry {
             .and_then(Json::as_str)
             .and_then(|s| bitcoin::Address::from_str(s).ok())
             .expect("bitcoind can't give a bad address");
+        let parent_descs = json
+            .get("parent_descs")
+            .and_then(Json::as_array)
+            .and_then(|descs| {
+                descs
+                    .iter()
+                    .map(|desc| {
+                        desc.as_str()
+                            .and_then(|s| descriptor::Descriptor::<_>::from_str(s).ok())
+                    })
+                    .collect::<Option<Vec<_>>>()
+            })
+            .expect("bitcoind can't give invalid descriptors");
 
         LSBlockEntry {
             outpoint,
             amount,
             block_height,
             address,
+            parent_descs,
         }
     }
 }
