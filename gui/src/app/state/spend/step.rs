@@ -26,6 +26,7 @@ pub trait Step {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
+        draft: &TransactionDraft,
         message: Message,
     ) -> Command<Message>;
 
@@ -49,6 +50,7 @@ impl Step for ChooseRecipients {
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
+        _draft: &TransactionDraft,
         message: Message,
     ) -> Command<Message> {
         match message {
@@ -173,6 +175,7 @@ impl Step for ChooseFeerate {
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
+        _draft: &TransactionDraft,
         message: Message,
     ) -> Command<Message> {
         if let Message::View(view::Message::CreateSpend(view::CreateSpendMessage::FeerateEdited(
@@ -202,5 +205,69 @@ impl Step for ChooseFeerate {
             &self.feerate,
             self.feerate.valid && !self.feerate.value.is_empty(),
         )
+    }
+}
+
+#[derive(Default)]
+pub struct ChooseCoins {
+    coins: Vec<(Coin, bool)>,
+    /// draft output amount must be superior to total input amount.
+    is_valid: bool,
+    total_needed: Option<Amount>,
+}
+
+impl ChooseCoins {
+    pub fn new(coins: Vec<Coin>) -> Self {
+        Self {
+            coins: coins.into_iter().map(|c| (c, false)).collect(),
+            is_valid: false,
+            total_needed: None,
+        }
+    }
+}
+
+impl Step for ChooseCoins {
+    fn update(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        draft: &TransactionDraft,
+        message: Message,
+    ) -> Command<Message> {
+        if let Message::View(view::Message::CreateSpend(view::CreateSpendMessage::SelectCoin(i))) =
+            message
+        {
+            if let Some(coin) = self.coins.get_mut(i) {
+                coin.1 = !coin.1;
+            }
+
+            let total_needed = draft
+                .outputs
+                .values()
+                .fold(Amount::from_sat(0), |acc, a| acc + *a);
+
+            self.is_valid = self
+                .coins
+                .iter()
+                .filter_map(|(coin, selected)| if *selected { Some(coin.amount) } else { None })
+                .sum::<Amount>()
+                > total_needed;
+
+            self.total_needed = Some(total_needed);
+        }
+
+        Command::none()
+    }
+
+    fn apply(&self, draft: &mut TransactionDraft) {
+        draft.inputs = self
+            .coins
+            .iter()
+            .filter_map(|(coin, selected)| if *selected { Some(coin.outpoint) } else { None })
+            .collect();
+    }
+
+    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
+        view::spend::step::choose_coins_view(&self.coins, self.total_needed.as_ref(), self.is_valid)
     }
 }

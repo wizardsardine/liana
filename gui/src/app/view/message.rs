@@ -17,7 +17,7 @@ pub enum Message {
 pub enum CreateSpendMessage {
     AddRecipient,
     DeleteRecipient(usize),
-    SelectInput(usize),
+    SelectCoin(usize),
     RecipientEdited(usize, &'static str, String),
     FeerateEdited(String),
     Generate,

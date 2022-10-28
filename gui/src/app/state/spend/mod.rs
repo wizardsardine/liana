@@ -87,12 +87,13 @@ pub struct CreateSpendPanel {
 }
 
 impl CreateSpendPanel {
-    pub fn new(_coins: &[Coin]) -> Self {
+    pub fn new(coins: &[Coin]) -> Self {
         Self {
             draft: step::TransactionDraft::default(),
             current: 0,
             steps: vec![
                 Box::new(step::ChooseRecipients::default()),
+                Box::new(step::ChooseCoins::new(coins.to_vec())),
                 Box::new(step::ChooseFeerate::default()),
             ],
         }
@@ -115,6 +116,10 @@ impl State for CreateSpendPanel {
         }
 
         if matches!(message, Message::View(view::Message::Next)) {
+            if let Some(step) = self.steps.get(self.current) {
+                step.apply(&mut self.draft);
+            }
+
             if self.steps.get(self.current + 1).is_some() {
                 self.current += 1;
             }
@@ -127,7 +132,7 @@ impl State for CreateSpendPanel {
         }
 
         if let Some(step) = self.steps.get_mut(self.current) {
-            return step.update(daemon, cache, message);
+            return step.update(daemon, cache, &self.draft, message);
         }
 
         Command::none()

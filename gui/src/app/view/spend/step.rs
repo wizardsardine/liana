@@ -3,11 +3,14 @@ use iced::{
     Alignment, Length,
 };
 
+use minisafe::miniscript::bitcoin::Amount;
+
 use crate::{
     app::view::{message::*, modal},
+    daemon::model::Coin,
     ui::{
         component::{
-            button, form,
+            badge, button, card, form,
             text::{text, Text},
         },
         icon,
@@ -116,4 +119,76 @@ pub fn choose_feerate_view<'a>(
             .spacing(20)
             .align_items(Alignment::Center),
     )
+}
+
+pub fn choose_coins_view<'a>(
+    coins: &[(Coin, bool)],
+    total_needed: Option<&Amount>,
+    is_valid: bool,
+) -> Element<'a, Message> {
+    modal(
+        true,
+        None,
+        column()
+            .push(text("Choose coins").bold().size(50))
+            .push(
+                column().spacing(10).push(
+                    coins
+                        .iter()
+                        .enumerate()
+                        .fold(column().spacing(10), |col, (i, (coin, selected))| {
+                            col.push(coin_list_view(i, coin, *selected))
+                        }),
+                ),
+            )
+            .push_maybe(if is_valid {
+                Some(container(
+                    button::primary(None, "Next")
+                        .on_press(Message::Next)
+                        .width(Length::Units(100)),
+                ))
+            } else if total_needed.is_some() {
+                Some(container(card::warning(&format!(
+                    "Total amount must be superior to {}",
+                    total_needed.unwrap().to_btc(),
+                ))))
+            } else {
+                None
+            })
+            .spacing(20)
+            .align_items(Alignment::Center),
+    )
+}
+
+fn coin_list_view<'a>(i: usize, coin: &Coin, selected: bool) -> Element<'a, Message> {
+    container(
+        iced::pure::button(
+            row()
+                .push(
+                    row()
+                        .push(if selected {
+                            icon::square_check_icon()
+                        } else {
+                            icon::square_icon()
+                        })
+                        .push(badge::coin())
+                        .push(text(&format!("block: {}", coin.block_height.unwrap_or(0))).small())
+                        .spacing(10)
+                        .align_items(Alignment::Center)
+                        .width(Length::Fill),
+                )
+                .push(
+                    text(&format!("{} BTC", coin.amount.to_btc()))
+                        .bold()
+                        .width(Length::Shrink),
+                )
+                .align_items(Alignment::Center)
+                .spacing(20),
+        )
+        .padding(10)
+        .on_press(Message::CreateSpend(CreateSpendMessage::SelectCoin(i)))
+        .style(button::Style::TransparentBorder),
+    )
+    .style(card::SimpleCardStyle)
+    .into()
 }
