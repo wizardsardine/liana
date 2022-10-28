@@ -38,7 +38,18 @@ pub struct Home {
 impl Home {
     pub fn new(coins: &[Coin]) -> Self {
         Self {
-            balance: Amount::from_sat(coins.iter().map(|coin| coin.amount.to_sat()).sum()),
+            balance: Amount::from_sat(
+                coins
+                    .iter()
+                    .map(|coin| {
+                        if coin.spend_info.is_none() {
+                            coin.amount.to_sat()
+                        } else {
+                            0
+                        }
+                    })
+                    .sum(),
+            ),
         }
     }
 }

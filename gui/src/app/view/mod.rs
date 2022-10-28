@@ -48,8 +48,20 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                             .align_items(iced::Alignment::Center),
                     )
                     .push(
-                        container(text(&format!("  {}  ", cache.coins.len())).small().bold())
-                            .style(badge::PillStyle::InversePrimary),
+                        container(
+                            text(&format!(
+                                "  {}  ",
+                                cache
+                                    .coins
+                                    .iter()
+                                    // TODO: Remove when cache contains only current coins.
+                                    .filter(|coin| coin.spend_info.is_none())
+                                    .count()
+                            ))
+                            .small()
+                            .bold(),
+                        )
+                        .style(badge::PillStyle::InversePrimary),
                     )
                     .spacing(10)
                     .width(iced::Length::Fill)
@@ -75,8 +87,20 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                             .align_items(iced::Alignment::Center),
                     )
                     .push(
-                        container(text(&format!("  {}  ", cache.coins.len())).small().bold())
-                            .style(badge::PillStyle::Primary),
+                        container(
+                            text(&format!(
+                                "  {}  ",
+                                cache
+                                    .coins
+                                    .iter()
+                                    // TODO: Remove when cache contains only current coins.
+                                    .filter(|coin| coin.spend_info.is_none())
+                                    .count()
+                            ))
+                            .small()
+                            .bold(),
+                        )
+                        .style(badge::PillStyle::Primary),
                     )
                     .spacing(10)
                     .width(iced::Length::Fill)

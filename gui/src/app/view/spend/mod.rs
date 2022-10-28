@@ -1,3 +1,4 @@
+pub mod detail;
 pub mod step;
 
 use iced::{
@@ -7,10 +8,11 @@ use iced::{
 
 use crate::{
     app::menu::Menu,
-    daemon::model::SpendTx,
+    daemon::model::{SpendStatus, SpendTx},
     ui::{
         component::{badge, button, card, text::*},
         icon,
+        util::Collection,
     },
 };
 
@@ -47,18 +49,36 @@ pub fn spend_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
         .into()
 }
 
-fn spend_tx_list_view<'a>(i: usize, _tx: &SpendTx) -> Element<'a, Message> {
+fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
     container(
         button(
             row()
                 .push(
                     row()
                         .push(badge::spend())
+                        .push_maybe(match tx.status {
+                            SpendStatus::Deprecated => Some(
+                                container(text("  Deprecated  ").small())
+                                    .padding(3)
+                                    .style(badge::PillStyle::Simple),
+                            ),
+                            SpendStatus::Broadcasted => Some(
+                                container(text("  Broadcasted  ").small())
+                                    .padding(3)
+                                    .style(badge::PillStyle::Success),
+                            ),
+                            _ => None,
+                        })
                         .spacing(10)
                         .align_items(Alignment::Center)
                         .width(Length::Fill),
                 )
-                .push(text(&format!("{} BTC", 0)).bold().width(Length::Shrink))
+                .push(
+                    column()
+                        .push(text(&format!("{} BTC", tx.spend_amount.to_btc())).bold())
+                        .push(text(&format!("fee: {}", tx.fee_amount.to_btc())).small())
+                        .width(Length::Shrink),
+                )
                 .align_items(Alignment::Center)
                 .spacing(20),
         )

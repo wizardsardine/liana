@@ -8,6 +8,7 @@ pub enum Error {
     Config(String),
     Daemon(DaemonError),
     Unexpected(String),
+    HardwareWallet(async_hwi::Error),
 }
 
 impl std::fmt::Display for Error {
@@ -35,6 +36,7 @@ impl std::fmt::Display for Error {
                 }
             },
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
+            Self::HardwareWallet(e) => write!(f, "{}", e),
         }
     }
 }
@@ -48,5 +50,11 @@ impl From<ConfigError> for Error {
 impl From<DaemonError> for Error {
     fn from(error: DaemonError) -> Self {
         Error::Daemon(error)
+    }
+}
+
+impl From<async_hwi::Error> for Error {
+    fn from(error: async_hwi::Error) -> Self {
+        Error::HardwareWallet(error)
     }
 }

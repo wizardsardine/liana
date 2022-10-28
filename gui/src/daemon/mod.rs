@@ -2,10 +2,14 @@ pub mod client;
 pub mod embedded;
 pub mod model;
 
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::ErrorKind;
 
-use minisafe::config::Config;
+use minisafe::{
+    config::Config,
+    miniscript::bitcoin::{util::psbt::Psbt, Address, OutPoint, Txid},
+};
 
 #[derive(Debug, Clone)]
 pub enum DaemonError {
@@ -51,4 +55,37 @@ pub trait Daemon: Debug {
     fn list_coins(&self) -> Result<model::ListCoinsResult, DaemonError>;
 
     fn list_spend_txs(&self) -> Result<model::ListSpendResult, DaemonError>;
+
+    fn list_spend_transactions(&self) -> Result<Vec<model::SpendTx>, DaemonError> {
+        let coins = self.list_coins()?.coins;
+        let spend_txs = self.list_spend_txs()?.spend_txs;
+        Ok(spend_txs
+            .into_iter()
+            .map(|tx| {
+                let coins = coins
+                    .iter()
+                    .filter(|coin| {
+                        tx.psbt
+                            .unsigned_tx
+                            .input
+                            .iter()
+                            .any(|input| input.previous_output == coin.outpoint)
+                    })
+                    .map(|c| c.clone())
+                    .collect();
+                model::SpendTx::new(tx.psbt, tx.change_index.map(|i| i as usize), coins)
+            })
+            .collect())
+    }
+
+    fn create_spend_tx(
+        &self,
+        coins_outpoints: &[OutPoint],
+        destinations: &HashMap<Address, u64>,
+        feerate_vb: u64,
+    ) -> Result<model::CreateSpendResult, DaemonError>;
+
+    fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError>;
+    fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
+    fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
 }

@@ -17,6 +17,7 @@ path = "src/main.rs"
 async-hwi = { git = "https://github.com/revault/async-hwi", branch = "master" }
 minisafe = { git = "https://github.com/revault/minisafe", branch = "master", default-features = false }
 backtrace = "0.3"
+base64 = "0.13"
 
 iced = { version = "0.4", default-features= false, features = ["tokio", "wgpu", "svg", "qr_code", "pure"] }
 iced_native = "0.5"

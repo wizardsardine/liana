@@ -3,7 +3,10 @@ use iced::{
     Alignment, Length,
 };
 
-use crate::ui::component::{badge, button::Style, card, text::*};
+use crate::ui::{
+    component::{badge, button::Style, card, text::*},
+    util::Collection,
+};
 
 use crate::{app::view::message::Message, daemon::model::Coin};
 
@@ -39,7 +42,11 @@ fn coin_list_view<'a>(i: usize, coin: &Coin) -> Element<'a, Message> {
                 .push(
                     row()
                         .push(badge::coin())
-                        .push(text(&format!("block: {}", coin.block_height.unwrap_or(0))).small())
+                        .push_maybe(coin.spend_info.map(|_| {
+                            container(text("  Spent  ").small())
+                                .padding(3)
+                                .style(badge::PillStyle::Success)
+                        }))
                         .spacing(10)
                         .align_items(Alignment::Center)
                         .width(Length::Fill),

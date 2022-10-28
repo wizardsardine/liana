@@ -65,8 +65,10 @@ impl App {
             menu::Menu::Home => Home::new(&self.cache.coins).into(),
             menu::Menu::Coins => CoinsPanel::new(&self.cache.coins).into(),
             menu::Menu::Receive => ReceivePanel::default().into(),
-            menu::Menu::Spend => SpendPanel::new(&self.cache.coins, &self.cache.spend_txs).into(),
-            menu::Menu::CreateSpendTx => CreateSpendPanel::new(&self.cache.coins).into(),
+            menu::Menu::Spend => SpendPanel::new(self.config.clone(), &self.cache.spend_txs).into(),
+            menu::Menu::CreateSpendTx => {
+                CreateSpendPanel::new(self.config.clone(), &self.cache.coins).into()
+            }
         };
         self.state.load(self.daemon.clone())
     }

@@ -2,20 +2,27 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use iced::pure::{column, Element};
+use iced::pure::Element;
 use iced::Command;
-use minisafe::miniscript::bitcoin::{util::psbt::Psbt, Address, Amount, Denomination, OutPoint};
+use minisafe::miniscript::bitcoin::{
+    util::psbt::Psbt, Address, Amount, Denomination, OutPoint, Script,
+};
 
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu, message::Message, view},
-    daemon::{model::Coin, Daemon},
+    app::{
+        cache::Cache, config::Config, error::Error, message::Message, state::spend::detail, view,
+    },
+    daemon::{
+        model::{Coin, SpendTx},
+        Daemon,
+    },
     ui::component::form,
 };
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TransactionDraft {
-    inputs: Vec<OutPoint>,
-    outputs: HashMap<Address, Amount>,
+    inputs: Vec<Coin>,
+    outputs: HashMap<Address, u64>,
     feerate: u64,
     generated: Option<Psbt>,
 }
@@ -29,8 +36,8 @@ pub trait Step {
         draft: &TransactionDraft,
         message: Message,
     ) -> Command<Message>;
-
-    fn apply(&self, draft: &mut TransactionDraft);
+    fn apply(&self, _draft: &mut TransactionDraft) {}
+    fn load(&mut self, _draft: &TransactionDraft) {}
 }
 
 pub struct ChooseRecipients {
@@ -72,11 +79,11 @@ impl Step for ChooseRecipients {
     }
 
     fn apply(&self, draft: &mut TransactionDraft) {
-        let mut outputs: HashMap<Address, Amount> = HashMap::new();
+        let mut outputs: HashMap<Address, u64> = HashMap::new();
         for recipient in &self.recipients {
             outputs.insert(
                 Address::from_str(&recipient.address.value).expect("Checked before"),
-                Amount::from_sat(recipient.amount().expect("Checked before")),
+                recipient.amount().expect("Checked before"),
             );
         }
         draft.outputs = outputs;
@@ -168,29 +175,56 @@ impl Recipient {
 #[derive(Default)]
 pub struct ChooseFeerate {
     feerate: form::Value<String>,
+    generated: Option<Psbt>,
+    warning: Option<Error>,
 }
 
 impl Step for ChooseFeerate {
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
-        _draft: &TransactionDraft,
+        draft: &TransactionDraft,
         message: Message,
     ) -> Command<Message> {
-        if let Message::View(view::Message::CreateSpend(view::CreateSpendMessage::FeerateEdited(
-            s,
-        ))) = message
-        {
-            if s.parse::<u64>().is_ok() {
-                self.feerate.value = s;
-                self.feerate.valid = true;
-            } else if s.is_empty() {
-                self.feerate.value = "".to_string();
-                self.feerate.valid = true;
-            } else {
-                self.feerate.valid = false;
+        match message {
+            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::FeerateEdited(
+                s,
+            ))) => {
+                if s.parse::<u64>().is_ok() {
+                    self.feerate.value = s;
+                    self.feerate.valid = true;
+                } else if s.is_empty() {
+                    self.feerate.value = "".to_string();
+                    self.feerate.valid = true;
+                } else {
+                    self.feerate.valid = false;
+                }
+                self.warning = None;
             }
+            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::Generate)) => {
+                let inputs: Vec<OutPoint> = draft.inputs.iter().map(|c| c.outpoint).collect();
+                let outputs = draft.outputs.clone();
+                let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
+                self.warning = None;
+                return Command::perform(
+                    async move {
+                        daemon
+                            .create_spend_tx(&inputs, &outputs, feerate_vb)
+                            .map(|res| res.psbt)
+                            .map_err(|e| e.into())
+                    },
+                    Message::Psbt,
+                );
+            }
+            Message::Psbt(res) => match res {
+                Ok(psbt) => {
+                    self.generated = Some(psbt);
+                    return Command::perform(async {}, |_| Message::View(view::Message::Next));
+                }
+                Err(e) => self.warning = Some(e),
+            },
+            _ => {}
         }
 
         Command::none()
@@ -198,12 +232,14 @@ impl Step for ChooseFeerate {
 
     fn apply(&self, draft: &mut TransactionDraft) {
         draft.feerate = self.feerate.value.parse::<u64>().expect("Checked before");
+        draft.generated = self.generated.clone();
     }
 
     fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
         view::spend::step::choose_feerate_view(
             &self.feerate,
             self.feerate.valid && !self.feerate.value.is_empty(),
+            self.warning.as_ref(),
         )
     }
 }
@@ -219,7 +255,16 @@ pub struct ChooseCoins {
 impl ChooseCoins {
     pub fn new(coins: Vec<Coin>) -> Self {
         Self {
-            coins: coins.into_iter().map(|c| (c, false)).collect(),
+            coins: coins
+                .into_iter()
+                .filter_map(|c| {
+                    if c.spend_info.is_none() {
+                        Some((c, false))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
             is_valid: false,
             total_needed: None,
         }
@@ -227,11 +272,17 @@ impl ChooseCoins {
 }
 
 impl Step for ChooseCoins {
+    fn load(&mut self, draft: &TransactionDraft) {
+        self.total_needed = Some(Amount::from_sat(
+            draft.outputs.values().fold(0, |acc, a| acc + *a),
+        ));
+    }
+
     fn update(
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
-        draft: &TransactionDraft,
+        _draft: &TransactionDraft,
         message: Message,
     ) -> Command<Message> {
         if let Message::View(view::Message::CreateSpend(view::CreateSpendMessage::SelectCoin(i))) =
@@ -241,19 +292,18 @@ impl Step for ChooseCoins {
                 coin.1 = !coin.1;
             }
 
-            let total_needed = draft
-                .outputs
-                .values()
-                .fold(Amount::from_sat(0), |acc, a| acc + *a);
-
             self.is_valid = self
                 .coins
                 .iter()
-                .filter_map(|(coin, selected)| if *selected { Some(coin.amount) } else { None })
-                .sum::<Amount>()
-                > total_needed;
-
-            self.total_needed = Some(total_needed);
+                .filter_map(|(coin, selected)| {
+                    if *selected {
+                        Some(coin.amount.to_sat())
+                    } else {
+                        None
+                    }
+                })
+                .sum::<u64>()
+                > self.total_needed.map(|a| a.to_sat()).unwrap_or(0);
         }
 
         Command::none()
@@ -263,11 +313,70 @@ impl Step for ChooseCoins {
         draft.inputs = self
             .coins
             .iter()
-            .filter_map(|(coin, selected)| if *selected { Some(coin.outpoint) } else { None })
+            .filter_map(|(coin, selected)| if *selected { Some(*coin) } else { None })
             .collect();
     }
 
     fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
         view::spend::step::choose_coins_view(&self.coins, self.total_needed.as_ref(), self.is_valid)
+    }
+}
+
+pub struct SaveSpend {
+    config: Config,
+    spend: Option<detail::SpendTxState>,
+}
+
+impl SaveSpend {
+    pub fn new(config: Config) -> Self {
+        Self {
+            config,
+            spend: None,
+        }
+    }
+}
+
+impl Step for SaveSpend {
+    fn load(&mut self, draft: &TransactionDraft) {
+        let outputs_script_pubkeys: Vec<Script> = draft
+            .outputs
+            .keys()
+            .map(|addr| addr.script_pubkey())
+            .collect();
+        let index = if let Some(psbt) = &draft.generated {
+            psbt.unsigned_tx
+                .output
+                .iter()
+                .position(|output| outputs_script_pubkeys.contains(&output.script_pubkey))
+        } else {
+            None
+        };
+        self.spend = Some(detail::SpendTxState::new(
+            self.config.clone(),
+            SpendTx::new(
+                draft.generated.clone().unwrap(),
+                index,
+                draft.inputs.clone(),
+            ),
+            false,
+        ));
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        _draft: &TransactionDraft,
+        message: Message,
+    ) -> Command<Message> {
+        if let Some(spend) = &mut self.spend {
+            spend.update(daemon, cache, message)
+        } else {
+            Command::none()
+        }
+    }
+
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        self.spend.as_ref().unwrap().view(cache)
     }
 }

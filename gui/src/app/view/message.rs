@@ -9,6 +9,7 @@ pub enum Message {
     Select(usize),
     Settings(usize, SettingsMessage),
     CreateSpend(CreateSpendMessage),
+    Spend(SpendTxMessage),
     Next,
     Previous,
 }
@@ -21,7 +22,14 @@ pub enum CreateSpendMessage {
     RecipientEdited(usize, &'static str, String),
     FeerateEdited(String),
     Generate,
-    Save,
+}
+
+#[derive(Debug, Clone)]
+pub enum SpendTxMessage {
+    Delete,
+    Confirm,
+    Cancel,
+    SelectHardwareWallet(usize),
 }
 
 #[derive(Debug, Clone)]

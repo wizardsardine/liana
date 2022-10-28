@@ -1,7 +1,12 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use super::{model::*, Daemon, DaemonError};
-use minisafe::{config::Config, DaemonHandle};
+use minisafe::{
+    config::Config,
+    miniscript::bitcoin::{util::psbt::Psbt, Address, OutPoint, Txid},
+    DaemonHandle,
+};
 
 pub struct EmbeddedDaemon {
     config: Config,
@@ -101,5 +106,54 @@ impl Daemon for EmbeddedDaemon {
             .unwrap()
             .control
             .list_spend())
+    }
+
+    fn create_spend_tx(
+        &self,
+        coins_outpoints: &[OutPoint],
+        destinations: &HashMap<Address, u64>,
+        feerate_vb: u64,
+    ) -> Result<CreateSpendResult, DaemonError> {
+        self.handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .lock()
+            .unwrap()
+            .control
+            .create_spend(coins_outpoints, destinations, feerate_vb)
+            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+    }
+
+    fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
+        self.handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .lock()
+            .unwrap()
+            .control
+            .update_spend(psbt.clone())
+            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+    }
+
+    fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
+        Ok(self
+            .handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .lock()
+            .unwrap()
+            .control
+            .delete_spend(txid))
+    }
+
+    fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
+        self.handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .lock()
+            .unwrap()
+            .control
+            .broadcast_spend(txid)
+            .map_err(|e| DaemonError::Unexpected(e.to_string()))
     }
 }

@@ -121,6 +121,8 @@ pub fn coin<T>() -> widget::container::Container<'static, T> {
 pub enum PillStyle {
     InversePrimary,
     Primary,
+    Success,
+    Simple,
 }
 
 impl widget::container::StyleSheet for PillStyle {
@@ -136,6 +138,18 @@ impl widget::container::StyleSheet for PillStyle {
                 background: color::FOREGROUND.into(),
                 border_radius: 10.0,
                 text_color: color::PRIMARY.into(),
+                ..widget::container::Style::default()
+            },
+            Self::Success => widget::container::Style {
+                background: color::SUCCESS.into(),
+                border_radius: 10.0,
+                text_color: iced::Color::WHITE.into(),
+                ..widget::container::Style::default()
+            },
+            Self::Simple => widget::container::Style {
+                background: color::BACKGROUND.into(),
+                border_radius: 10.0,
+                text_color: iced::Color::BLACK.into(),
                 ..widget::container::Style::default()
             },
         }

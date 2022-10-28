@@ -133,8 +133,7 @@ impl Loader {
                                         .map(|res| res.coins)
                                         .unwrap_or_else(|_| Vec::new());
                                     let spend_txs = daemon
-                                        .list_spend_txs()
-                                        .map(|res| res.spend_txs)
+                                        .list_spend_transactions()
                                         .unwrap_or_else(|_| Vec::new());
                                     (info, coins, spend_txs, daemon)
                                 },

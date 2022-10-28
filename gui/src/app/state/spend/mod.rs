@@ -1,3 +1,4 @@
+mod detail;
 mod step;
 use std::sync::Arc;
 
@@ -5,7 +6,7 @@ use iced::{pure::Element, Command};
 
 use super::{redirect, State};
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu, message::Message, view},
+    app::{cache::Cache, config::Config, error::Error, menu::Menu, message::Message, view},
     daemon::{
         model::{Coin, SpendTx},
         Daemon,
@@ -13,14 +14,16 @@ use crate::{
 };
 
 pub struct SpendPanel {
-    selected_tx: Option<usize>,
+    config: Config,
+    selected_tx: Option<detail::SpendTxState>,
     spend_txs: Vec<SpendTx>,
     warning: Option<Error>,
 }
 
 impl SpendPanel {
-    pub fn new(_coins: &[Coin], spend_txs: &[SpendTx]) -> Self {
+    pub fn new(config: Config, spend_txs: &[SpendTx]) -> Self {
         Self {
+            config,
             spend_txs: spend_txs.to_vec(),
             warning: None,
             selected_tx: None,
@@ -30,18 +33,22 @@ impl SpendPanel {
 
 impl State for SpendPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::dashboard(
-            &Menu::Spend,
-            cache,
-            self.warning.as_ref(),
-            view::spend::spend_view(&self.spend_txs),
-        )
+        if let Some(tx) = &self.selected_tx {
+            tx.view(cache)
+        } else {
+            view::dashboard(
+                &Menu::Spend,
+                cache,
+                self.warning.as_ref(),
+                view::spend::spend_view(&self.spend_txs),
+            )
+        }
     }
 
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
         message: Message,
     ) -> Command<Message> {
         match message {
@@ -52,10 +59,25 @@ impl State for SpendPanel {
                     self.spend_txs = txs;
                 }
             },
-            Message::View(view::Message::Select(i)) => {
-                self.selected_tx = Some(i);
+            Message::View(view::Message::Close) => {
+                if self.selected_tx.is_some() {
+                    self.selected_tx = None;
+                    return self.load(daemon);
+                }
             }
-            _ => {}
+            Message::View(view::Message::Select(i)) => {
+                if let Some(tx) = self.spend_txs.get(i) {
+                    let tx = detail::SpendTxState::new(self.config.clone(), tx.clone(), true);
+                    let cmd = tx.load(daemon);
+                    self.selected_tx = Some(tx);
+                    return cmd;
+                }
+            }
+            _ => {
+                if let Some(tx) = &mut self.selected_tx {
+                    return tx.update(daemon, cache, message);
+                }
+            }
         }
         Command::none()
     }
@@ -63,12 +85,7 @@ impl State for SpendPanel {
     fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         let daemon = daemon.clone();
         Command::perform(
-            async move {
-                daemon
-                    .list_spend_txs()
-                    .map(|res| res.spend_txs)
-                    .map_err(|e| e.into())
-            },
+            async move { daemon.list_spend_transactions().map_err(|e| e.into()) },
             Message::SpendTxs,
         )
     }
@@ -87,7 +104,7 @@ pub struct CreateSpendPanel {
 }
 
 impl CreateSpendPanel {
-    pub fn new(coins: &[Coin]) -> Self {
+    pub fn new(config: Config, coins: &[Coin]) -> Self {
         Self {
             draft: step::TransactionDraft::default(),
             current: 0,
@@ -95,6 +112,7 @@ impl CreateSpendPanel {
                 Box::new(step::ChooseRecipients::default()),
                 Box::new(step::ChooseCoins::new(coins.to_vec())),
                 Box::new(step::ChooseFeerate::default()),
+                Box::new(step::SaveSpend::new(config)),
             ],
         }
     }
@@ -120,8 +138,9 @@ impl State for CreateSpendPanel {
                 step.apply(&mut self.draft);
             }
 
-            if self.steps.get(self.current + 1).is_some() {
+            if let Some(step) = self.steps.get_mut(self.current + 1) {
                 self.current += 1;
+                step.load(&self.draft);
             }
         }
 

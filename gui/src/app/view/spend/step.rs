@@ -6,7 +6,10 @@ use iced::{
 use minisafe::miniscript::bitcoin::Amount;
 
 use crate::{
-    app::view::{message::*, modal},
+    app::{
+        error::Error,
+        view::{message::*, modal},
+    },
     daemon::model::Coin,
     ui::{
         component::{
@@ -82,7 +85,6 @@ pub fn recipient_view<'a>(
                 .on_press(CreateSpendMessage::DeleteRecipient(index))
                 .width(Length::Shrink),
         )
-        .align_items(Alignment::Center)
         .width(Length::Fill)
         .into()
 }
@@ -90,6 +92,7 @@ pub fn recipient_view<'a>(
 pub fn choose_feerate_view<'a>(
     feerate: &form::Value<String>,
     is_valid: bool,
+    error: Option<&Error>,
 ) -> Element<'a, Message> {
     modal(
         true,
@@ -107,10 +110,11 @@ pub fn choose_feerate_view<'a>(
                 )
                 .width(Length::Units(250)),
             )
+            .push_maybe(error.map(|e| card::error("Failed to create spend", &e.to_string())))
             .push_maybe(if is_valid {
                 Some(
                     button::primary(None, "Next")
-                        .on_press(Message::Next)
+                        .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
                         .width(Length::Units(100)),
                 )
             } else {
