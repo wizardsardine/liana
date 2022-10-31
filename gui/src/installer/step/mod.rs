@@ -5,10 +5,11 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
+use async_hwi::DeviceKind;
 use iced::{pure::Element, Command};
 use minisafe::{
     config::{BitcoinConfig, BitcoindConfig},
-    descriptors::InheritanceDescriptor,
+    descriptors::MultipathDescriptor,
     miniscript::bitcoin,
 };
 
@@ -40,7 +41,8 @@ pub trait Step {
 pub struct Context {
     pub bitcoin_config: BitcoinConfig,
     pub bitcoind_config: Option<BitcoindConfig>,
-    pub descriptor: Option<InheritanceDescriptor>,
+    pub descriptor: Option<MultipathDescriptor>,
+    pub hw_tokens: Vec<(DeviceKind, bitcoin::util::bip32::Fingerprint, [u8; 32])>,
     pub data_dir: Option<PathBuf>,
 }
 
@@ -51,6 +53,7 @@ impl Context {
                 network,
                 poll_interval_secs: Duration::from_secs(30),
             },
+            hw_tokens: Vec::new(),
             bitcoind_config: None,
             descriptor: None,
             data_dir,

@@ -125,7 +125,7 @@ dependencies = [
 [[package]]
 name = "async-hwi"
 version = "0.0.1"
-source = "git+https://github.com/revault/async-hwi?branch=add-ledger#de5615ba2e2e2d3ded6a058f0193f8787d3873dc"
+source = "git+https://github.com/revault/async-hwi?branch=master#14b29f820910132d9b8f799d030bfed69ac67239"
 dependencies = [
  "async-trait",
  "base64",
@@ -1380,7 +1380,7 @@ dependencies = [
 [[package]]
 name = "ledger_bitcoin_client"
 version = "0.1.0"
-source = "git+https://github.com/edouardparis/app-bitcoin-new/?branch=bitcoin_client_rs#95ec68b546d49a77eee274880d2450fdb08f840c"
+source = "git+https://github.com/edouardparis/app-bitcoin-new/?branch=bitcoin_client_rs#efe26ed9fcfe0676c33141ad4777fd3786f7d539"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -1597,7 +1597,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 [[package]]
 name = "minisafe"
 version = "0.0.1"
-source = "git+https://github.com/revault/minisafe?branch=master#790d283e77063c019f54690eb1c483562e12338c"
+source = "git+https://github.com/revault/minisafe?branch=master#8b129fe3e51ac41a78c282a018e70bd86e2ab24f"
 dependencies = [
  "backtrace",
  "base64",
@@ -1636,8 +1636,7 @@ dependencies = [
 [[package]]
 name = "miniscript"
 version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f4975078076f0b7b914a3044ad7432d2a7fcec38edb855afdc672e24ca35b69"
+source = "git+https://github.com/darosior/rust-miniscript?branch=multipath_descriptors_on_8.0#a63d5a263a9006b4d29342012133a3bc919765ba"
 dependencies = [
  "bitcoin",
  "serde",

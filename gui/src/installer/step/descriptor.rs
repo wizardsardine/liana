@@ -2,10 +2,10 @@ use std::str::FromStr;
 
 use iced::{pure::Element, Command};
 use minisafe::{
-    descriptors::InheritanceDescriptor,
+    descriptors::MultipathDescriptor,
     miniscript::{
         bitcoin::util::bip32::{DerivationPath, Fingerprint},
-        descriptor::{Descriptor, DescriptorPublicKey, DescriptorXKey, Wildcard},
+        descriptor::{Descriptor, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
     },
 };
 
@@ -123,7 +123,7 @@ impl Step for DefineDescriptor {
             }
             false
         } else if !self.imported_descriptor.value.is_empty() {
-            if let Ok(desc) = InheritanceDescriptor::from_str(&self.imported_descriptor.value) {
+            if let Ok(desc) = MultipathDescriptor::from_str(&self.imported_descriptor.value) {
                 ctx.descriptor = Some(desc);
                 true
             } else {
@@ -144,7 +144,7 @@ impl Step for DefineDescriptor {
                 return false;
             }
 
-            let desc = match InheritanceDescriptor::new(
+            let desc = match MultipathDescriptor::new(
                 user_key.unwrap(),
                 heir_key.unwrap(),
                 sequence.unwrap(),
@@ -207,7 +207,10 @@ impl GetHardwareWalletXpubModal {
         }
     }
     fn load(&self) -> Command<Message> {
-        Command::perform(list_hardware_wallets(), Message::ConnectedHardwareWallets)
+        Command::perform(
+            list_hardware_wallets(&[], None),
+            Message::ConnectedHardwareWallets,
+        )
     }
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
@@ -276,9 +279,12 @@ async fn get_extended_pubkey(
         .get_extended_pubkey(&derivation_path, true)
         .await
         .map_err(Error::from)?;
-    Ok(DescriptorPublicKey::XPub(DescriptorXKey {
+    Ok(DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
         origin: Some((fingerprint, derivation_path)),
-        derivation_path: DerivationPath::master(),
+        derivation_paths: vec![
+            DerivationPath::from_str("m/0").unwrap(),
+            DerivationPath::from_str("m/1").unwrap(),
+        ],
         xkey,
         wildcard: Wildcard::Unhardened,
     }))
@@ -286,7 +292,7 @@ async fn get_extended_pubkey(
 
 #[derive(Default)]
 pub struct RegisterDescriptor {
-    descriptor: Option<InheritanceDescriptor>,
+    descriptor: Option<MultipathDescriptor>,
     processing: bool,
     chosen_hw: Option<usize>,
     hws: Vec<(HardwareWallet, Option<[u8; 32]>)>,
@@ -348,11 +354,21 @@ impl Step for RegisterDescriptor {
         };
         Command::none()
     }
-    fn apply(&mut self, _ctx: &mut Context) -> bool {
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        for (hw, token) in &self.hws {
+            if let Some(token) = token {
+                if *token != [0x00; 32] {
+                    ctx.hw_tokens.push((hw.kind, hw.fingerprint, *token));
+                }
+            }
+        }
         true
     }
     fn load(&self) -> Command<Message> {
-        Command::perform(list_hardware_wallets(), Message::ConnectedHardwareWallets)
+        Command::perform(
+            list_hardware_wallets(&[], None),
+            Message::ConnectedHardwareWallets,
+        )
     }
     fn view(&self) -> Element<Message> {
         let desc = self.descriptor.as_ref().unwrap();

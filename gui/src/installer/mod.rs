@@ -12,7 +12,9 @@ use std::convert::TryInto;
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::{app::config as gui_config, installer::config::DEFAULT_FILE_NAME};
+use crate::{
+    app::config as gui_config, hw::HardwareWalletConfig, installer::config::DEFAULT_FILE_NAME,
+};
 
 pub use message::Message;
 use step::{Context, DefineBitcoind, DefineDescriptor, Final, RegisterDescriptor, Step, Welcome};
@@ -133,6 +135,12 @@ impl Installer {
 }
 
 pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
+    let hardware_wallets = ctx
+        .hw_tokens
+        .iter()
+        .map(|(kind, fingerprint, token)| HardwareWalletConfig::new(kind, fingerprint, token))
+        .collect();
+
     let mut cfg: minisafe::config::Config = ctx
         .try_into()
         .expect("Everything should be checked at this point");
@@ -179,6 +187,7 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
                         e
                     ))
                 })?,
+                hardware_wallets,
             ))
             .unwrap()
             .as_bytes(),
