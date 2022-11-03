@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "miniscript"
 version = "8.0.0"
-source = "git+https://github.com/darosior/rust-miniscript?branch=multipath_descriptors_on_8.0#7d756f2ab066d85d299f711f953ebda15f14e832"
+source = "git+https://github.com/darosior/rust-miniscript?branch=multipath_descriptors_on_8.0#a63d5a263a9006b4d29342012133a3bc919765ba"
 dependencies = [
  "bitcoin",
  "serde",

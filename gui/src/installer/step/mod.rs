@@ -1,49 +1,63 @@
+mod descriptor;
+pub use descriptor::{DefineDescriptor, RegisterDescriptor};
+
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
-use iced::pure::Element;
+use async_hwi::DeviceKind;
+use iced::{pure::Element, Command};
 use minisafe::{
-    descriptors::InheritanceDescriptor,
-    miniscript::{
-        bitcoin,
-        descriptor::{Descriptor, DescriptorPublicKey},
-    },
+    config::{BitcoinConfig, BitcoindConfig},
+    descriptors::MultipathDescriptor,
+    miniscript::bitcoin,
 };
 
 use crate::ui::component::form;
 
 use crate::installer::{
-    config,
     message::{self, Message},
     view,
 };
 
 pub trait Step {
-    fn update(&mut self, message: Message);
+    fn update(&mut self, _message: Message) -> Command<Message> {
+        Command::none()
+    }
     fn view(&self) -> Element<Message>;
     fn load_context(&mut self, _ctx: &Context) {}
+    fn load(&self) -> Command<Message> {
+        Command::none()
+    }
     fn skip(&self, _ctx: &Context) -> bool {
         false
     }
-    fn apply(&mut self, _ctx: &mut Context, _config: &mut config::Config) -> bool {
+    fn apply(&mut self, _ctx: &mut Context) -> bool {
         true
     }
 }
 
 #[derive(Clone)]
 pub struct Context {
-    pub network: bitcoin::Network,
+    pub bitcoin_config: BitcoinConfig,
+    pub bitcoind_config: Option<BitcoindConfig>,
+    pub descriptor: Option<MultipathDescriptor>,
+    pub hw_tokens: Vec<(DeviceKind, bitcoin::util::bip32::Fingerprint, [u8; 32])>,
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Context {
-    pub fn new(network: bitcoin::Network) -> Self {
-        Self { network }
-    }
-}
-
-impl Default for Context {
-    fn default() -> Self {
-        Self::new(bitcoin::Network::Bitcoin)
+    pub fn new(network: bitcoin::Network, data_dir: Option<PathBuf>) -> Self {
+        Self {
+            bitcoin_config: BitcoinConfig {
+                network,
+                poll_interval_secs: Duration::from_secs(30),
+            },
+            hw_tokens: Vec::new(),
+            bitcoind_config: None,
+            descriptor: None,
+            data_dir,
+        }
     }
 }
 
@@ -58,14 +72,14 @@ impl Welcome {
 }
 
 impl Step for Welcome {
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Command<Message> {
         if let message::Message::Network(network) = message {
             self.network = network;
         }
+        Command::none()
     }
-    fn apply(&mut self, ctx: &mut Context, config: &mut config::Config) -> bool {
-        ctx.network = self.network;
-        config.bitcoin_config.network = self.network;
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        ctx.bitcoin_config.network = self.network;
         true
     }
     fn view(&self) -> Element<Message> {
@@ -81,138 +95,6 @@ impl Default for Welcome {
 
 impl From<Welcome> for Box<dyn Step> {
     fn from(s: Welcome) -> Box<dyn Step> {
-        Box::new(s)
-    }
-}
-
-pub struct DefineDescriptor {
-    imported_descriptor: form::Value<String>,
-    user_xpub: form::Value<String>,
-    heir_xpub: form::Value<String>,
-    sequence: form::Value<String>,
-    error: Option<String>,
-}
-
-impl DefineDescriptor {
-    pub fn new() -> Self {
-        Self {
-            imported_descriptor: form::Value::default(),
-            user_xpub: form::Value::default(),
-            heir_xpub: form::Value::default(),
-            sequence: form::Value::default(),
-            error: None,
-        }
-    }
-}
-
-impl Step for DefineDescriptor {
-    // form value is set as valid each time it is edited.
-    // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, message: Message) {
-        if let Message::DefineDescriptor(msg) = message {
-            match msg {
-                message::DefineDescriptor::ImportDescriptor(desc) => {
-                    self.imported_descriptor.value = desc;
-                    self.imported_descriptor.valid = true;
-                }
-                message::DefineDescriptor::UserXpubEdited(xpub) => {
-                    self.user_xpub.value = xpub;
-                    self.user_xpub.valid = true;
-                }
-                message::DefineDescriptor::HeirXpubEdited(xpub) => {
-                    self.heir_xpub.value = xpub;
-                    self.heir_xpub.valid = true;
-                }
-                message::DefineDescriptor::SequenceEdited(seq) => {
-                    self.sequence.valid = true;
-                    if seq.is_empty() || seq.parse::<u16>().is_ok() {
-                        self.sequence.value = seq;
-                    }
-                }
-            };
-        };
-    }
-
-    fn apply(&mut self, _ctx: &mut Context, config: &mut config::Config) -> bool {
-        // descriptor forms for import or creation cannot be both empty or filled.
-        if self.imported_descriptor.value.is_empty()
-            == (self.user_xpub.value.is_empty()
-                || self.heir_xpub.value.is_empty()
-                || self.sequence.value.is_empty())
-        {
-            if !self.user_xpub.value.is_empty() {
-                self.user_xpub.valid = DescriptorPublicKey::from_str(&self.user_xpub.value).is_ok();
-            }
-            if !self.heir_xpub.value.is_empty() {
-                self.heir_xpub.valid = DescriptorPublicKey::from_str(&self.heir_xpub.value).is_ok();
-            }
-            if !self.sequence.value.is_empty() {
-                self.sequence.valid = self.sequence.value.parse::<u32>().is_ok();
-            }
-            if !self.imported_descriptor.value.is_empty() {
-                self.imported_descriptor.valid =
-                    Descriptor::<DescriptorPublicKey>::from_str(&self.imported_descriptor.value)
-                        .is_ok();
-            }
-            false
-        } else if !self.imported_descriptor.value.is_empty() {
-            if let Ok(desc) = InheritanceDescriptor::from_str(&self.imported_descriptor.value) {
-                config.main_descriptor = Some(desc);
-                true
-            } else {
-                self.imported_descriptor.valid = false;
-                false
-            }
-        } else {
-            let user_key = DescriptorPublicKey::from_str(&self.user_xpub.value);
-            self.user_xpub.valid = user_key.is_ok();
-
-            let heir_key = DescriptorPublicKey::from_str(&self.heir_xpub.value);
-            self.user_xpub.valid = user_key.is_ok();
-
-            let sequence = self.sequence.value.parse::<u16>();
-            self.sequence.valid = sequence.is_ok();
-
-            if !self.user_xpub.valid || !self.heir_xpub.valid || !self.sequence.valid {
-                return false;
-            }
-
-            match InheritanceDescriptor::new(
-                user_key.unwrap(),
-                heir_key.unwrap(),
-                sequence.unwrap(),
-            ) {
-                Ok(desc) => {
-                    config.main_descriptor = Some(desc);
-                    true
-                }
-                Err(e) => {
-                    self.error = Some(e.to_string());
-                    false
-                }
-            }
-        }
-    }
-
-    fn view(&self) -> Element<Message> {
-        view::define_descriptor(
-            &self.imported_descriptor,
-            &self.user_xpub,
-            &self.heir_xpub,
-            &self.sequence,
-            self.error.as_ref(),
-        )
-    }
-}
-
-impl Default for DefineDescriptor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl From<DefineDescriptor> for Box<dyn Step> {
-    fn from(s: DefineDescriptor) -> Box<dyn Step> {
         Box::new(s)
     }
 }
@@ -277,13 +159,14 @@ impl DefineBitcoind {
 impl Step for DefineBitcoind {
     fn load_context(&mut self, ctx: &Context) {
         if self.cookie_path.value.is_empty() {
-            self.cookie_path.value = bitcoind_default_cookie_path(&ctx.network).unwrap_or_default()
+            self.cookie_path.value =
+                bitcoind_default_cookie_path(&ctx.bitcoin_config.network).unwrap_or_default()
         }
         if self.address.value.is_empty() {
-            self.address.value = bitcoind_default_address(&ctx.network);
+            self.address.value = bitcoind_default_address(&ctx.bitcoin_config.network);
         }
     }
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Command<Message> {
         if let Message::DefineBitcoind(msg) = message {
             match msg {
                 message::DefineBitcoind::AddressEdited(address) => {
@@ -296,9 +179,10 @@ impl Step for DefineBitcoind {
                 }
             };
         };
+        Command::none()
     }
 
-    fn apply(&mut self, _ctx: &mut Context, config: &mut config::Config) -> bool {
+    fn apply(&mut self, ctx: &mut Context) -> bool {
         match (
             PathBuf::from_str(&self.cookie_path.value),
             std::net::SocketAddr::from_str(&self.address.value),
@@ -317,8 +201,10 @@ impl Step for DefineBitcoind {
                 false
             }
             (Ok(path), Ok(addr)) => {
-                config.bitcoind_config.cookie_path = path;
-                config.bitcoind_config.addr = addr;
+                ctx.bitcoind_config = Some(BitcoindConfig {
+                    cookie_path: path,
+                    addr,
+                });
                 true
             }
         }
@@ -358,7 +244,7 @@ impl Final {
 }
 
 impl Step for Final {
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Installed(res) => {
                 self.generating = false;
@@ -377,6 +263,7 @@ impl Step for Final {
             }
             _ => {}
         };
+        Command::none()
     }
 
     fn view(&self) -> Element<Message> {

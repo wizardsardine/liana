@@ -1,3 +1,4 @@
+use crate::hw::HardwareWalletConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -9,16 +10,23 @@ pub struct Config {
     pub log_level: Option<String>,
     /// Use iced debug feature if true.
     pub debug: Option<bool>,
+    /// hardware wallets config.
+    #[serde(default)]
+    pub hardware_wallets: Vec<HardwareWalletConfig>,
 }
 
 pub const DEFAULT_FILE_NAME: &str = "gui.toml";
 
 impl Config {
-    pub fn new(minisafed_config_path: PathBuf) -> Self {
+    pub fn new(
+        minisafed_config_path: PathBuf,
+        hardware_wallets: Vec<HardwareWalletConfig>,
+    ) -> Self {
         Self {
             minisafed_config_path,
             log_level: None,
             debug: None,
+            hardware_wallets,
         }
     }
 
