@@ -91,12 +91,13 @@ impl SpendTxState {
         }
     }
 
-    pub fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
+    pub fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         detail::spend_view(
             self.action.warning(),
             &self.tx,
             self.action.view(),
             self.saved,
+            cache.network,
         )
     }
 }

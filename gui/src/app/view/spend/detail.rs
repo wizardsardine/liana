@@ -3,14 +3,17 @@ use iced::{
     Alignment, Length,
 };
 
-use minisafe::miniscript::bitcoin::util::bip32::Fingerprint;
+use minisafe::miniscript::bitcoin::{
+    util::{bip32::Fingerprint, psbt::Psbt},
+    Address, Amount, Network,
+};
 
 use crate::{
     app::{
         error::Error,
         view::{message::*, modal_section, warning::warn, ModalSectionStyle},
     },
-    daemon::model::{SpendStatus, SpendTx},
+    daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
     ui::{
         color,
@@ -28,6 +31,7 @@ pub fn spend_view<'a, T: Into<Element<'a, Message>>>(
     tx: &SpendTx,
     action: T,
     show_delete: bool,
+    network: Network,
 ) -> Element<'a, Message> {
     spend_modal(
         show_delete,
@@ -35,7 +39,13 @@ pub fn spend_view<'a, T: Into<Element<'a, Message>>>(
         column()
             .spacing(20)
             .push(spend_overview_view(tx))
-            .push(action),
+            .push(action)
+            .push(inputs_and_outputs_view(
+                &tx.coins,
+                &tx.psbt,
+                network,
+                tx.change_index,
+            )),
     )
 }
 
@@ -222,6 +232,82 @@ fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
                 )
                 .spacing(20),
         ))
+        .into()
+}
+
+fn inputs_and_outputs_view<'a>(
+    coins: &[Coin],
+    psbt: &Psbt,
+    network: Network,
+    change_index: Option<usize>,
+) -> Element<'a, Message> {
+    column()
+        .push(
+            row()
+                .spacing(10)
+                .push(
+                    column()
+                        .spacing(10)
+                        .push(text("Spent coins:").bold())
+                        .push(coins.iter().fold(column().spacing(10), |col, coin| {
+                            col.push(
+                                card::simple(
+                                    column()
+                                        .width(Length::Fill)
+                                        .push(text(&format!("{} BTC", coin.amount.to_btc())).bold())
+                                        .push(text(&format!("{}", coin.outpoint)).small()),
+                                )
+                                .width(Length::Fill),
+                            )
+                        }))
+                        .width(Length::FillPortion(1)),
+                )
+                .push(
+                    column()
+                        .spacing(10)
+                        .push(text("Recipients:").bold())
+                        .push(psbt.unsigned_tx.output.iter().enumerate().fold(
+                            column().spacing(10),
+                            |col, (i, output)| {
+                                col.push(
+                                    card::simple(
+                                        column()
+                                            .width(Length::Fill)
+                                            .push(
+                                                text(&format!(
+                                                    "{} BTC",
+                                                    Amount::from_sat(output.value).to_btc()
+                                                ))
+                                                .bold(),
+                                            )
+                                            .push(
+                                                text(&format!(
+                                                    "{}",
+                                                    Address::from_script(
+                                                        &output.script_pubkey,
+                                                        network
+                                                    )
+                                                    .unwrap()
+                                                ))
+                                                .small(),
+                                            )
+                                            .push_maybe(if Some(i) == change_index {
+                                                Some(
+                                                    container(text("Change"))
+                                                        .padding(5)
+                                                        .style(badge::PillStyle::Success),
+                                                )
+                                            } else {
+                                                None
+                                            }),
+                                    )
+                                    .width(Length::Fill),
+                                )
+                            },
+                        ))
+                        .width(Length::FillPortion(1)),
+                ),
+        )
         .into()
 }
 
