@@ -37,7 +37,6 @@ pub fn spend_view<'a, T: Into<Element<'a, Message>>>(
             .push(spend_overview_view(tx))
             .push(action),
     )
-    .into()
 }
 
 pub fn save_action<'a>(saved: bool) -> Element<'a, Message> {

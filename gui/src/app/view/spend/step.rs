@@ -21,10 +21,10 @@ use crate::{
     },
 };
 
-pub fn choose_recipients_view<'a>(
-    recipients: Vec<Element<'a, Message>>,
+pub fn choose_recipients_view(
+    recipients: Vec<Element<Message>>,
     is_valid: bool,
-) -> Element<'a, Message> {
+) -> Element<Message> {
     modal(
         false,
         None,

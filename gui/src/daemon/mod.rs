@@ -71,7 +71,7 @@ pub trait Daemon: Debug {
                             .iter()
                             .any(|input| input.previous_output == coin.outpoint)
                     })
-                    .map(|c| c.clone())
+                    .copied()
                     .collect();
                 model::SpendTx::new(tx.psbt, tx.change_index.map(|i| i as usize), coins)
             })

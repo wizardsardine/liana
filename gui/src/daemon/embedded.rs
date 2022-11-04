@@ -136,14 +136,14 @@ impl Daemon for EmbeddedDaemon {
     }
 
     fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
-        Ok(self
-            .handle
+        self.handle
             .as_ref()
             .ok_or(DaemonError::NoAnswer)?
             .lock()
             .unwrap()
             .control
-            .delete_spend(txid))
+            .delete_spend(txid);
+        Ok(())
     }
 
     fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {

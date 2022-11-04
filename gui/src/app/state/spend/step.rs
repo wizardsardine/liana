@@ -60,8 +60,8 @@ impl Step for ChooseRecipients {
         _draft: &TransactionDraft,
         message: Message,
     ) -> Command<Message> {
-        match message {
-            Message::View(view::Message::CreateSpend(msg)) => match &msg {
+        if let Message::View(view::Message::CreateSpend(msg)) = message {
+            match &msg {
                 view::CreateSpendMessage::AddRecipient => {
                     self.recipients.push(Recipient::default());
                 }
@@ -72,8 +72,7 @@ impl Step for ChooseRecipients {
                     self.recipients.get_mut(*i).unwrap().update(msg);
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
         Command::none()
     }
