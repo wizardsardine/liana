@@ -5,7 +5,7 @@ use iced::pure::{
 };
 use iced::Length;
 
-use crate::ui::{color, component::text::text};
+use crate::ui::{color, component::text::*};
 
 #[derive(Debug, Clone)]
 pub struct Value<T> {
@@ -75,7 +75,7 @@ impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
                 return container(
                     column()
                         .push(form.input.style(InvalidFormStyle))
-                        .push(text(message).color(color::ALERT))
+                        .push(text(message).color(color::ALERT).small())
                         .width(Length::Fill)
                         .spacing(5),
                 )

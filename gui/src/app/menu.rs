@@ -2,6 +2,8 @@
 pub enum Menu {
     Home,
     Receive,
+    Spend,
     Settings,
     Coins,
+    CreateSpendTx,
 }

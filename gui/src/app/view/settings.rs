@@ -12,7 +12,7 @@ use super::{
 };
 
 use crate::{
-    app::{error::Error, menu::Menu},
+    app::{cache::Cache, error::Error, menu::Menu},
     ui::{
         color,
         component::{badge, button, card, form, separation, text::*},
@@ -21,11 +21,13 @@ use crate::{
 };
 
 pub fn list<'a>(
+    cache: &'a Cache,
     warning: Option<&Error>,
     settings: Vec<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::Settings,
+        cache,
         warning,
         widget::Column::with_children(settings).spacing(20),
     )

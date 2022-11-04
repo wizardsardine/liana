@@ -1,13 +1,18 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 use log::{error, info};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 pub mod error;
 pub mod jsonrpc;
 
-use minisafe::config::Config;
+use minisafe::{
+    config::Config,
+    miniscript::bitcoin::{consensus, util::psbt::Psbt, Address, OutPoint, Txid},
+};
 
 use super::{model::*, Daemon, DaemonError};
 
@@ -69,6 +74,44 @@ impl<C: Client + Debug> Daemon for Minisafed<C> {
 
     fn list_coins(&self) -> Result<ListCoinsResult, DaemonError> {
         self.call("listcoins", Option::<Request>::None)
+    }
+
+    fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
+        self.call("listspend", Option::<Request>::None)
+    }
+
+    fn create_spend_tx(
+        &self,
+        coins_outpoints: &[OutPoint],
+        destinations: &HashMap<Address, u64>,
+        feerate_vb: u64,
+    ) -> Result<CreateSpendResult, DaemonError> {
+        self.call(
+            "createspend",
+            Some(vec![
+                json!(coins_outpoints),
+                json!(destinations),
+                json!(feerate_vb),
+            ]),
+        )
+    }
+
+    fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
+        let spend_tx = base64::encode(&consensus::serialize(psbt));
+        let _res: serde_json::value::Value = self.call("updatespend", Some(vec![spend_tx]))?;
+        Ok(())
+    }
+
+    fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
+        let _res: serde_json::value::Value =
+            self.call("deletespend", Some(vec![txid.to_string()]))?;
+        Ok(())
+    }
+
+    fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
+        let _res: serde_json::value::Value =
+            self.call("broadcastspend", Some(vec![txid.to_string()]))?;
+        Ok(())
     }
 }
 

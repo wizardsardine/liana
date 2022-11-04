@@ -103,6 +103,7 @@ impl State for SettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let can_edit = self.current.is_none() && !self.daemon_is_external;
         view::settings::list(
+            cache,
             self.warning.as_ref(),
             self.settings
                 .iter()

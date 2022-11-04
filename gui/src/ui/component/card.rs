@@ -18,6 +18,32 @@ impl widget::container::StyleSheet for SimpleCardStyle {
 }
 
 /// display an error card with the message and the error in a tooltip.
+pub fn warning<'a, T: 'a>(message: &str) -> widget::Container<'a, T> {
+    container(
+        row()
+            .spacing(20)
+            .align_items(iced::Alignment::Center)
+            .push(icon::warning_octagon_icon().color(color::WARNING))
+            .push(text(message).color(color::WARNING)),
+    )
+    .padding(15)
+    .style(WarningCardStyle)
+}
+
+pub struct WarningCardStyle;
+impl widget::container::StyleSheet for WarningCardStyle {
+    fn style(&self) -> widget::container::Style {
+        widget::container::Style {
+            border_radius: 10.0,
+            border_color: color::WARNING,
+            border_width: 1.5,
+            background: color::FOREGROUND.into(),
+            ..widget::container::Style::default()
+        }
+    }
+}
+
+/// display an error card with the message and the error in a tooltip.
 pub fn error<'a, T: 'a>(message: &str, error: &str) -> widget::Container<'a, T> {
     container(
         tooltip(
