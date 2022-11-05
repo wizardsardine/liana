@@ -249,7 +249,7 @@ mod tests {
     }
 
     fn write_messages(socket_path: &path::Path, messages: &[&[u8]]) {
-        let mut client = net::UnixStream::connect(&socket_path).unwrap();
+        let mut client = net::UnixStream::connect(socket_path).unwrap();
         for mess in messages {
             client.write_all(mess).unwrap();
             // Simulate throttling, this mimics real conditions and actually triggered a crash.

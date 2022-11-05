@@ -52,7 +52,7 @@ fn update_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
         .get(0, "psbt")
         .ok_or_else(|| Error::invalid_params("Missing 'psbt' parameter."))?
         .as_str()
-        .and_then(|s| base64::decode(&s).ok())
+        .and_then(|s| base64::decode(s).ok())
         .and_then(|bytes| consensus::deserialize(&bytes).ok())
         .ok_or_else(|| Error::invalid_params("Invalid 'psbt' parameter."))?;
     control.update_spend(psbt)?;
