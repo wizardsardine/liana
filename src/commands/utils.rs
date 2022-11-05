@@ -1,3 +1,5 @@
+use crate::database::DatabaseConnection;
+
 use miniscript::bitcoin::{self, consensus, util::psbt::PartiallySignedTransaction as Psbt};
 use serde::{de, Deserialize, Deserializer, Serializer};
 
@@ -34,21 +36,21 @@ where
 }
 
 // Utility to gather the index of a change output in a Psbt, if there is one.
-// FIXME: this is temporary! This is based on create_spend's behaviour that reuses the
-// first coin address and doesn't shuffle the outputs!
-pub fn change_index(psbt: &Psbt) -> Option<usize> {
-    // We always set the witness UTxO in the PSBTs we create.
-    let first_coin_spk = match psbt.inputs[0]
-        .witness_utxo
-        .as_ref()
-        .map(|o| &o.script_pubkey)
-    {
-        Some(spk) => spk,
-        None => return None,
-    };
+pub fn change_index(psbt: &Psbt, db_conn: &mut Box<dyn DatabaseConnection>) -> Option<usize> {
+    let network = db_conn.network();
 
-    let tx = &psbt.unsigned_tx;
-    (0..tx.output.len())
-        .rev()
-        .find(|&i| &tx.output[i].script_pubkey == first_coin_spk)
+    for (i, txo) in psbt.unsigned_tx.output.iter().enumerate() {
+        // Small optimization. TODO: adapt once we have Taproot support.
+        if !txo.script_pubkey.is_v0_p2wsh() {
+            continue;
+        }
+
+        if let Ok(address) = bitcoin::Address::from_script(&txo.script_pubkey, network) {
+            if let Some((_, true)) = db_conn.derivation_index_by_address(&address) {
+                return Some(i);
+            }
+        }
+    }
+
+    None
 }

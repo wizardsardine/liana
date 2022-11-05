@@ -348,7 +348,7 @@ impl DaemonControl {
             let change_desc = self
                 .config
                 .main_descriptor
-                .receive_descriptor()
+                .change_descriptor()
                 .derive(db_conn.change_index(), &self.secp);
             db_conn.increment_change_index(&self.secp);
             let mut change_txo = bitcoin::TxOut {
@@ -451,7 +451,8 @@ impl DaemonControl {
             .list_spend()
             .into_iter()
             .map(|psbt| {
-                let change_index = change_index(&psbt).map(|i| i.try_into().expect("insane usize"));
+                let change_index =
+                    change_index(&psbt, &mut db_conn).map(|i| i.try_into().expect("insane usize"));
                 ListSpendEntry { psbt, change_index }
             })
             .collect();
