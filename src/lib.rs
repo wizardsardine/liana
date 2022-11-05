@@ -583,10 +583,10 @@ mod tests {
         ]
         .iter()
         .collect();
-        fs::write(&cookie, &[0; 32]).unwrap(); // Will overwrite should it exist already
+        fs::write(&cookie, [0; 32]).unwrap(); // Will overwrite should it exist already
         let addr: net::SocketAddr =
             net::SocketAddrV4::new(net::Ipv4Addr::new(127, 0, 0, 1), 0).into();
-        let server = net::TcpListener::bind(&addr).unwrap();
+        let server = net::TcpListener::bind(addr).unwrap();
         let addr = server.local_addr().unwrap();
         let bitcoin_config = BitcoinConfig {
             network,

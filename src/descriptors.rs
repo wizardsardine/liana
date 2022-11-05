@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug)]
 pub enum DescCreationError {
     InsaneTimelock(u32),
-    InvalidKey(descriptor::DescriptorPublicKey),
+    InvalidKey(Box<descriptor::DescriptorPublicKey>),
     Miniscript(miniscript::Error),
     IncompatibleDesc,
     DerivedKeyParsing,
@@ -233,7 +233,7 @@ impl str::FromStr for MultipathDescriptor {
             }
         });
         if let Some(key) = invalid_key {
-            return Err(DescCreationError::InvalidKey(key));
+            return Err(DescCreationError::InvalidKey(key.into()));
         }
 
         // Semantic of the Miniscript must be either the owner now, or the heir after
@@ -334,7 +334,7 @@ impl MultipathDescriptor {
             .iter()
             .find(|k| !is_valid_desc_key(k))
         {
-            return Err(DescCreationError::InvalidKey((**key).clone()));
+            return Err(DescCreationError::InvalidKey((**key).clone().into()));
         }
 
         let owner_pk = Miniscript::from_ast(Terminal::Check(sync::Arc::from(
