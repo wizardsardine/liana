@@ -27,17 +27,21 @@ const NETWORKS: [bitcoin::Network; 4] = [
     bitcoin::Network::Regtest,
 ];
 
-pub fn welcome(network: &bitcoin::Network) -> Element<Message> {
+pub fn welcome(network: &bitcoin::Network, valid: bool) -> Element<Message> {
     container(container(
         column()
             .push(container(
                 pick_list(&NETWORKS[..], Some(*network), message::Message::Network).padding(10),
             ))
-            .push(
-                button::primary(None, "Install")
-                    .on_press(Message::Next)
-                    .width(Length::Units(200)),
-            )
+            .push(if valid {
+                container(
+                    button::primary(None, "Start the install")
+                        .on_press(Message::Next)
+                        .width(Length::Units(200)),
+                )
+            } else {
+                card::warning("A data directory already exists for this network")
+            })
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)

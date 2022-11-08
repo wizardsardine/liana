@@ -63,11 +63,18 @@ impl Context {
 
 pub struct Welcome {
     network: bitcoin::Network,
+    data_dir: PathBuf,
 }
 
 impl Welcome {
-    pub fn new(network: bitcoin::Network) -> Self {
-        Self { network }
+    pub fn new(network: bitcoin::Network, data_dir: PathBuf) -> Self {
+        Self { network, data_dir }
+    }
+
+    fn valid(&self) -> bool {
+        let mut network_datadir = self.data_dir.clone();
+        network_datadir.push(self.network.to_string());
+        !network_datadir.exists()
     }
 }
 
@@ -83,13 +90,7 @@ impl Step for Welcome {
         true
     }
     fn view(&self) -> Element<Message> {
-        view::welcome(&self.network)
-    }
-}
-
-impl Default for Welcome {
-    fn default() -> Self {
-        Self::new(bitcoin::Network::Bitcoin)
+        view::welcome(&self.network, self.valid())
     }
 }
 
