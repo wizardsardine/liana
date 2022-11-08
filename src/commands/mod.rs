@@ -16,7 +16,7 @@ use utils::{
 };
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     convert::TryInto,
     fmt,
 };
@@ -540,16 +540,12 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         let coins = db_conn.list_updated_coins(start, end, limit);
 
-        // All spend_txids event the spends out of bound,
-        // it is used for change detection when computing the deposit events.
-        let mut all_spend_txids: HashSet<bitcoin::Txid> = HashSet::with_capacity(coins.len());
         // All the spends occuring in the bound.
         let mut spends: HashMap<bitcoin::Txid, Vec<&Coin>> = HashMap::with_capacity(coins.len());
 
         // Preparatory work to populate spends and all_spend_txids.
         for coin in &coins {
             if let Some(txid) = coin.spend_txid {
-                all_spend_txids.insert(txid);
                 let time = coin.spend_block.expect("Coin is spent").time;
                 if time >= start && time <= end {
                     if let Some(coins) = spends.get_mut(&txid) {
@@ -565,7 +561,7 @@ impl DaemonControl {
         let mut events = Vec::with_capacity(coins.len());
         for coin in coins.iter() {
             // remove unconfirmed coin or change coin
-            if !coin.is_confirmed() || all_spend_txids.contains(&coin.outpoint.txid) {
+            if !coin.is_confirmed() || coin.is_change {
                 continue;
             }
 
