@@ -219,8 +219,10 @@ impl BitcoinD {
                             Some(simple_http::Error::Timeout)
                             | Some(simple_http::Error::SocketError(_))
                             | Some(simple_http::Error::HttpErrorCode(503)) => {
-                                std::thread::sleep(Duration::from_secs(1));
-                                log::debug!("Retrying RPC request to bitcoind: attempt #{}", i);
+                                if i <= self.retries {
+                                    std::thread::sleep(Duration::from_secs(1));
+                                    log::debug!("Retrying RPC request to bitcoind: attempt #{}", i);
+                                }
                                 error = Some(e);
                             }
                             _ => return Err(e),
