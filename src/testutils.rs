@@ -67,7 +67,7 @@ impl BitcoinInterface for DummyBitcoind {
         Vec::new()
     }
 
-    fn common_ancestor(&self, _: &BlockChainTip) -> BlockChainTip {
+    fn common_ancestor(&self, _: &BlockChainTip) -> Option<BlockChainTip> {
         todo!()
     }
 

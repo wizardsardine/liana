@@ -679,12 +679,14 @@ impl BitcoinD {
         let previous_blockhash = res
             .get("previousblockhash")
             .and_then(Json::as_str)
-            .and_then(|s| bitcoin::BlockHash::from_str(s).ok())
-            .expect("Invalid previousblockhash in `getblockheader` response");
+            .map(|s| {
+                bitcoin::BlockHash::from_str(s)
+                    .expect("Invalid previousblockhash in `getblockheader` response")
+            });
         let height = res
             .get("height")
             .and_then(Json::as_i64)
-            .expect("Invalid height in `getblockheader` response: not an u32")
+            .expect("Invalid height in `getblockheader` response: not an i64")
             as i32;
         BlockStats {
             confirmations,
@@ -848,7 +850,7 @@ impl From<Json> for GetTxRes {
 #[derive(Debug, Clone)]
 pub struct BlockStats {
     pub confirmations: i32,
-    pub previous_blockhash: bitcoin::BlockHash,
+    pub previous_blockhash: Option<bitcoin::BlockHash>,
     pub blockhash: bitcoin::BlockHash,
     pub height: i32,
 }

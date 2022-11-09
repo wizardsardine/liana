@@ -150,13 +150,20 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
     // block chain re-organisation. Find the common ancestor between our current chain and
     // the new chain and return that. The caller will take care of rewinding our state.
     log::info!("Block chain reorganization detected. Looking for common ancestor.");
-    let common_ancestor = bit.common_ancestor(current_tip);
-    log::info!(
-        "Common ancestor found: '{}'. Starting rescan from there. Old tip was '{}'.",
-        common_ancestor,
-        current_tip
-    );
-    TipUpdate::Reorged(common_ancestor)
+    if let Some(common_ancestor) = bit.common_ancestor(current_tip) {
+        log::info!(
+            "Common ancestor found: '{}'. Starting rescan from there. Old tip was '{}'.",
+            common_ancestor,
+            current_tip
+        );
+        TipUpdate::Reorged(common_ancestor)
+    } else {
+        log::error!(
+            "Failed to get common ancestor for tip '{}'. Starting over.",
+            current_tip
+        );
+        new_tip(bit, current_tip)
+    }
 }
 
 fn updates(

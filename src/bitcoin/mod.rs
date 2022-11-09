@@ -84,7 +84,7 @@ pub trait BitcoinInterface: Send {
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)>;
 
     /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
-    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip;
+    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip>;
 
     /// Broadcast this transaction to the Bitcoin P2P network
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError>;
@@ -260,19 +260,19 @@ impl BitcoinInterface for d::BitcoinD {
         spent
     }
 
-    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip {
+    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
         let mut stats = self.get_block_stats(tip.hash);
         let mut ancestor = *tip;
 
         while stats.confirmations == -1 {
-            stats = self.get_block_stats(stats.previous_blockhash);
+            stats = self.get_block_stats(stats.previous_blockhash?);
             ancestor = BlockChainTip {
                 hash: stats.blockhash,
                 height: stats.height,
             };
         }
 
-        ancestor
+        Some(ancestor)
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
@@ -335,7 +335,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock().unwrap().spent_coins(outpoints)
     }
 
-    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip {
+    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
         self.lock().unwrap().common_ancestor(tip)
     }
 
