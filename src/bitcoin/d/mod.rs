@@ -54,6 +54,20 @@ impl BitcoindError {
             _ => false,
         }
     }
+
+    /// Is it a timeout of any kind?
+    pub fn is_timeout(&self) -> bool {
+        match self {
+            BitcoindError::Server(jsonrpc::Error::Transport(ref e)) => {
+                match e.downcast_ref::<simple_http::Error>() {
+                    Some(simple_http::Error::Timeout) => true,
+                    Some(simple_http::Error::SocketError(e)) => e.kind() == io::ErrorKind::TimedOut,
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Display for BitcoindError {
@@ -116,7 +130,11 @@ impl From<simple_http::Error> for BitcoindError {
 }
 
 pub struct BitcoinD {
+    /// Client for generalistic calls.
     node_client: Client,
+    /// A client that will disregard responses to the queries it makes.
+    sendonly_client: Client,
+    /// A client for calls related to the wallet.
     watchonly_client: Client,
     watchonly_wallet_path: String,
     /// How many times we'll retry upon failure to send a request.
@@ -183,12 +201,21 @@ impl BitcoinD {
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
+                .cookie_auth(cookie_string.clone())
+                .build(),
+        );
+        let sendonly_client = Client::with_transport(
+            SimpleHttpTransport::builder()
+                .url(&watchonly_url)
+                .map_err(BitcoindError::from)?
+                .timeout(Duration::from_secs(1))
                 .cookie_auth(cookie_string)
                 .build(),
         );
 
         Ok(BitcoinD {
             node_client,
+            sendonly_client,
             watchonly_client,
             watchonly_wallet_path,
             retries: 0,
@@ -258,9 +285,14 @@ impl BitcoinD {
         })
     }
 
-    fn make_node_request(&self, method: &str, params: &[Box<serde_json::value::RawValue>]) -> Json {
-        self.make_request(&self.node_client, method, params)
-            .expect("We must not fail to make a request for more than a minute")
+    // Make a request for which you don't expect a response. This is achieved by setting a very low
+    // timeout on the connection, and will panic on any other error than a timeout.
+    fn make_noreply_request(&self, method: &str, params: &[Box<serde_json::value::RawValue>]) {
+        if let Err(e) = self.make_request(&self.sendonly_client, method, params) {
+            if !e.is_timeout() {
+                panic!("{}", e);
+            }
+        }
     }
 
     fn make_fallible_node_request(
@@ -269,6 +301,11 @@ impl BitcoinD {
         params: &[Box<serde_json::value::RawValue>],
     ) -> Result<Json, BitcoindError> {
         self.make_request(&self.node_client, method, params)
+    }
+
+    fn make_node_request(&self, method: &str, params: &[Box<serde_json::value::RawValue>]) -> Json {
+        self.make_request(&self.sendonly_client, method, params)
+            .expect("We must not fail to make a request for more than a minute")
     }
 
     fn make_wallet_request(
