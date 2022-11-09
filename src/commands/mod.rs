@@ -196,6 +196,9 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
 
         let blockheight = db_conn.chain_tip().map(|tip| tip.height).unwrap_or(0);
+        let rescan_progress = db_conn
+            .rescan_timestamp()
+            .map(|_| self.bitcoin.rescan_progress().unwrap_or(1.0));
         GetInfoResult {
             version: VERSION.to_string(),
             network: self.config.bitcoin_config.network,
@@ -204,6 +207,7 @@ impl DaemonControl {
             descriptors: GetInfoDescriptors {
                 main: self.config.main_descriptor.clone(),
             },
+            rescan_progress,
         }
     }
 
@@ -535,6 +539,8 @@ pub struct GetInfoResult {
     pub blockheight: i32,
     pub sync: f64,
     pub descriptors: GetInfoDescriptors,
+    /// The progress as a percentage (between 0 and 1) of an ongoing rescan if there is any
+    pub rescan_progress: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
