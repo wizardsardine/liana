@@ -1,7 +1,9 @@
 ///! Implementation of the Bitcoin interface using bitcoind.
 ///!
 ///! We use the RPC interface and a watchonly descriptor wallet.
+mod utils;
 use crate::{bitcoin::BlockChainTip, config, descriptors::MultipathDescriptor};
+use utils::block_before_date;
 
 use std::{collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
 
@@ -391,18 +393,33 @@ impl BitcoinD {
     }
 
     // Import the receive and change descriptors from the multipath descriptor to bitcoind.
-    fn import_descriptor(&self, desc: &MultipathDescriptor) -> Option<String> {
+    // An optional timestamp may be given to rescan the chain from this date for this descriptor.
+    fn import_descriptor(
+        &self,
+        desc: &MultipathDescriptor,
+        timestamp: Option<u32>,
+    ) -> Option<String> {
         let descriptors = [desc.receive_descriptor(), desc.change_descriptor()]
             .iter()
             .map(|desc| {
-                // TODO: rescan feature will probably need another timestamp than 'now'
                 serde_json::json!({
                     "desc": desc.to_string(),
-                    "timestamp": "now",
+                    "timestamp": timestamp.map(Json::from).unwrap_or_else(|| "now".into()),
                     "active": false,
                 })
             })
             .collect();
+
+        // If this will trigger a rescan, do not wait for the response.
+        if timestamp.is_some() {
+            // TODO: should we check there was not timeout when writing the request on the
+            // TcpStream in the SimpleHttpTransport implem?
+            // NOTE: if the rescan gets aborted through the 'abortrescan' RPC we won't see the
+            // error and bitcoind will keep the new timestamps for the descriptors as if it had
+            // successfully rescanned them.
+            self.make_noreply_request("importdescriptors", &params!(Json::Array(descriptors)));
+            return None;
+        }
 
         let res = self.make_wallet_request("importdescriptors", &params!(Json::Array(descriptors)));
         let all_succeeded = res
@@ -459,7 +476,7 @@ impl BitcoinD {
         if let Some(err) = self.create_wallet(self.watchonly_wallet_path.clone()) {
             return Err(BitcoindError::WalletCreation(err));
         }
-        if let Some(err) = self.import_descriptor(main_descriptor) {
+        if let Some(err) = self.import_descriptor(main_descriptor, None) {
             return Err(BitcoindError::DescriptorImport(err));
         }
 
@@ -753,6 +770,30 @@ impl BitcoinD {
             &params!(bitcoin::consensus::encode::serialize_hex(tx)),
         )?;
         Ok(())
+    }
+
+    pub fn start_rescan(&self, desc: &MultipathDescriptor, timestamp: u32) {
+        self.import_descriptor(desc, Some(timestamp));
+    }
+
+    /// Get the progress of the ongoing rescan, if there is any.
+    pub fn rescan_progress(&self) -> Option<f64> {
+        self.make_wallet_request("getwalletinfo", &[])
+            .get("scanning")
+            // If no rescan is ongoing, it will fail cause it would be 'false'
+            .and_then(Json::as_object)
+            .and_then(|map| map.get("progress"))
+            .and_then(Json::as_f64)
+    }
+
+    /// Get the height and hash of the last block with a timestamp below the given one.
+    pub fn tip_before_timestamp(&self, timestamp: u32) -> Option<BlockChainTip> {
+        block_before_date(
+            timestamp,
+            self.chain_tip(),
+            |h| self.get_block_hash(h),
+            |h| self.get_block_stats(h),
+        )
     }
 }
 // Bitcoind uses a guess for the value of verificationprogress. It will eventually get to

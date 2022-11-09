@@ -55,6 +55,9 @@ pub trait BitcoinInterface: Send {
     /// Get the best block info.
     fn chain_tip(&self) -> BlockChainTip;
 
+    /// Get the timestamp set in the best block's header.
+    fn tip_time(&self) -> u32;
+
     /// Check whether this former tip is part of the current best chain.
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool;
 
@@ -88,6 +91,17 @@ pub trait BitcoinInterface: Send {
 
     /// Broadcast this transaction to the Bitcoin P2P network
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError>;
+
+    /// Trigger a rescan of the block chain for transactions related to this descriptor since
+    /// the given date.
+    fn start_rescan(&self, desc: &descriptors::MultipathDescriptor, timestamp: u32);
+
+    /// Rescan progress percentage. Between 0 and 1.
+    fn rescan_progress(&self) -> Option<f64>;
+
+    /// Get the last block chain tip with a timestamp below this. Timestamp must be a valid block
+    /// timestamp.
+    fn block_before_date(&self, timestamp: u32) -> Option<BlockChainTip>;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -286,6 +300,24 @@ impl BitcoinInterface for d::BitcoinD {
             ),
         }
     }
+
+    fn start_rescan(&self, desc: &descriptors::MultipathDescriptor, timestamp: u32) {
+        // FIXME: in theory i think this could potentially fail to actually start the rescan.
+        self.start_rescan(desc, timestamp);
+    }
+
+    fn rescan_progress(&self) -> Option<f64> {
+        self.rescan_progress()
+    }
+
+    fn block_before_date(&self, timestamp: u32) -> Option<BlockChainTip> {
+        self.tip_before_timestamp(timestamp)
+    }
+
+    fn tip_time(&self) -> u32 {
+        let tip = self.chain_tip();
+        self.get_block_stats(tip.hash).time
+    }
 }
 
 // FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
@@ -341,6 +373,22 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
         self.lock().unwrap().broadcast_tx(tx)
+    }
+
+    fn start_rescan(&self, desc: &descriptors::MultipathDescriptor, timestamp: u32) {
+        self.lock().unwrap().start_rescan(desc, timestamp)
+    }
+
+    fn rescan_progress(&self) -> Option<f64> {
+        self.lock().unwrap().rescan_progress()
+    }
+
+    fn block_before_date(&self, timestamp: u32) -> Option<BlockChainTip> {
+        self.lock().unwrap().block_before_date(timestamp)
+    }
+
+    fn tip_time(&self) -> u32 {
+        self.lock().unwrap().tip_time()
     }
 }
 

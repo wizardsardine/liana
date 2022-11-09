@@ -74,6 +74,22 @@ impl BitcoinInterface for DummyBitcoind {
     fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), BitcoinError> {
         todo!()
     }
+
+    fn start_rescan(&self, _: &descriptors::MultipathDescriptor, _: u32) {
+        todo!()
+    }
+
+    fn rescan_progress(&self) -> Option<f64> {
+        None
+    }
+
+    fn block_before_date(&self, _: u32) -> Option<BlockChainTip> {
+        todo!()
+    }
+
+    fn tip_time(&self) -> u32 {
+        todo!()
+    }
 }
 
 pub struct DummyDb {
