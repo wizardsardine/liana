@@ -38,6 +38,9 @@ const MAX_FEE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
 // Assume that paying more than 1000sat/vb in feerate is a bug.
 const MAX_FEERATE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
 
+// Timestamp in the header of the genesis block. Used for sanity checks.
+const MAINNET_GENESIS_TIME: u32 = 1231006505;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     NoOutpoint,
@@ -56,6 +59,8 @@ pub enum CommandError {
     // FIXME: when upgrading Miniscript put the actual error there
     SpendFinalization(String),
     TxBroadcast(String),
+    AlreadyRescanning,
+    InsaneRescanTimestamp(u32),
 }
 
 impl fmt::Display for CommandError {
@@ -82,6 +87,11 @@ impl fmt::Display for CommandError {
                 write!(f, "Failed to finalize the spend transaction PSBT: '{}'.", e)
             }
             Self::TxBroadcast(e) => write!(f, "Failed to broadcast transaction: '{}'.", e),
+            Self::AlreadyRescanning => write!(
+                f,
+                "There is already a rescan ongoing. Please wait for it to complete first."
+            ),
+            Self::InsaneRescanTimestamp(t) => write!(f, "Insane timestamp '{}'.", t),
         }
     }
 }
@@ -489,6 +499,26 @@ impl DaemonControl {
             Ok(()) => Ok(()),
             Err(BitcoinError::Broadcast(e)) => Err(CommandError::TxBroadcast(e)),
         }
+    }
+
+    /// Trigger a rescan of the block chain for transactions involving our main descriptor between
+    /// the given date and the current tip.
+    /// The date must be after the genesis block time and before the current tip blocktime.
+    pub fn start_rescan(&self, timestamp: u32) -> Result<(), CommandError> {
+        let mut db_conn = self.db.connection();
+
+        if db_conn.rescan_timestamp().is_some() {
+            return Err(CommandError::AlreadyRescanning);
+        }
+        if timestamp < MAINNET_GENESIS_TIME || timestamp >= self.bitcoin.tip_time() {
+            return Err(CommandError::InsaneRescanTimestamp(timestamp));
+        }
+
+        self.bitcoin
+            .start_rescan(&self.config.main_descriptor, timestamp);
+        db_conn.set_rescan(timestamp);
+
+        Ok(())
     }
 }
 

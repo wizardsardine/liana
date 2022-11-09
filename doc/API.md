@@ -13,6 +13,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`listspendtxs`](#listspendtxs)                             | List all stored Spend transactions                   |
 | [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                    |
 | [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it       |
+| [`startrescan`](#startrescan)                               | Start rescanning the block chain from a given date   |
 
 # Reference
 
@@ -192,6 +193,22 @@ This command does not return anything for now.
 | Field    | Type   | Description                                            |
 | -------- | ------ | ------------------------------------------------------ |
 | `txid`   | string | Hex encoded txid of the Spend transaction to broadcast |
+
+#### Response
+
+This command does not return anything for now.
+
+| Field          | Type      | Description                                          |
+| -------------- | --------- | ---------------------------------------------------- |
+
+
+### `startrescan`
+
+#### Request
+
+| Field        | Type   | Description                                            |
+| ------------ | ------ | ------------------------------------------------------ |
+| `timestamp`  | int    | Date to start rescanning from, as a UNIX timestamp     |
 
 #### Response
 
