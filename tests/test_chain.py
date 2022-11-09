@@ -1,3 +1,5 @@
+import time
+
 from fixtures import *
 from test_framework.utils import wait_for, get_txid, spend_coins
 
@@ -166,3 +168,91 @@ def test_reorg_status_recovery(minisafed, bitcoind):
     new_coin_b = get_coin(minisafed, coin_b["outpoint"])
     coin_b["spend_info"]["height"] = initial_height
     assert new_coin_b == coin_b
+
+
+def test_rescan_edge_cases(minisafed, bitcoind):
+    """Test some specific cases that could arise when rescanning the chain."""
+    initial_tip = bitcoind.rpc.getblockheader(bitcoind.rpc.getbestblockhash())
+
+    # Some helpers
+    list_coins = lambda: minisafed.rpc.listcoins()["coins"]
+    sorted_coins = lambda: sorted(list_coins(), key=lambda c: c["outpoint"])
+    wait_synced = lambda: wait_for(
+        lambda: minisafed.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
+    )
+
+    def reorg_shift(height, txs):
+        """Remine the chain from given height, shifting the txs by one block."""
+        delta = bitcoind.rpc.getblockcount() - height + 1
+        assert delta > 2
+        h = bitcoind.rpc.getblockhash(initial_tip["height"])
+        bitcoind.rpc.invalidateblock(h)
+        bitcoind.generate_block(1)
+        for tx in txs:
+            bitcoind.rpc.sendrawtransaction(tx)
+        bitcoind.generate_block(delta - 1, wait_for_mempool=len(txs))
+
+    # Create 3 coins and spend 2 of them. Keep the transactions in memory to
+    # rebroadcast them on reorgs.
+    txs = []
+    for _ in range(3):
+        addr = minisafed.rpc.getnewaddress()["address"]
+        amount = 0.356
+        txid = bitcoind.rpc.sendtoaddress(addr, amount)
+        txs.append(bitcoind.rpc.gettransaction(txid)["hex"])
+    wait_for(lambda: len(list_coins()) == 3)
+    txs.append(spend_coins(minisafed, bitcoind, list_coins()[:2]))
+    bitcoind.generate_block(1, wait_for_mempool=4)
+    wait_synced()
+
+    # Advance the blocktime by >2h in the future for the importdescriptors rescan
+    added_time = 60 * 60 * 3
+    bitcoind.rpc.setmocktime(initial_tip["time"] + added_time)
+    bitcoind.generate_block(12)
+
+    # Lose our state
+    coins_before = sorted_coins()
+    outpoints_before = set(c["outpoint"] for c in coins_before)
+    bitcoind.generate_block(1)
+    minisafed.restart_fresh(bitcoind)
+    assert len(list_coins()) == 0
+
+    # We can be stopped while we are rescanning
+    minisafed.rpc.startrescan(initial_tip["time"])
+    minisafed.stop()
+    minisafed.start()
+    wait_for(lambda: minisafed.rpc.getinfo()["rescan_progress"] is None)
+    assert coins_before == sorted_coins()
+
+    # Lose our state again
+    bitcoind.generate_block(1)
+    minisafed.restart_fresh(bitcoind)
+    wait_for(lambda: minisafed.rpc.getinfo()["rescan_progress"] is None)
+    assert len(list_coins()) == 0
+
+    # There can be a reorg when we start rescanning
+    reorg_shift(initial_tip["height"], txs)
+    minisafed.rpc.startrescan(initial_tip["time"])
+    wait_synced()
+    wait_for(lambda: minisafed.rpc.getinfo()["rescan_progress"] is None)
+    assert len(sorted_coins()) == len(coins_before)
+    assert all(c["outpoint"] in outpoints_before for c in list_coins())
+
+    # Advance the blocktime again
+    bitcoind.rpc.setmocktime(initial_tip["time"] + added_time * 2)
+    bitcoind.generate_block(12)
+
+    # Lose our state again
+    bitcoind.generate_block(1)
+    minisafed.restart_fresh(bitcoind)
+    wait_synced()
+    wait_for(lambda: minisafed.rpc.getinfo()["rescan_progress"] is None)
+    assert len(list_coins()) == 0
+
+    # We can be rescanning when a reorg happens
+    minisafed.rpc.startrescan(initial_tip["time"])
+    reorg_shift(initial_tip["height"] + 1, txs)
+    wait_synced()
+    wait_for(lambda: minisafed.rpc.getinfo()["rescan_progress"] is None)
+    assert len(sorted_coins()) == len(coins_before)
+    assert all(c["outpoint"] in outpoints_before for c in list_coins())

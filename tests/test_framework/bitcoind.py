@@ -8,19 +8,19 @@ from test_framework.utils import TailableProc, wait_for, TIMEOUT, BITCOIND_PATH,
 
 
 class BitcoindRpcInterface:
-    def __init__(self, data_dir, network, rpc_port):
+    def __init__(self, data_dir, network, rpc_port, wallet=None):
         self.cookie_path = os.path.join(data_dir, network, ".cookie")
         self.rpc_port = rpc_port
-        self.wallet_name = "minisafed-tests"
+        self.wallet_name = wallet
 
     def __getattr__(self, name):
         assert not (name.startswith("__") and name.endswith("__")), "Python internals"
 
         with open(self.cookie_path) as fd:
             authpair = fd.read()
-        service_url = (
-            f"http://{authpair}@localhost:{self.rpc_port}/wallet/{self.wallet_name}"
-        )
+        service_url = f"http://{authpair}@localhost:{self.rpc_port}"
+        if self.wallet_name is not None:
+            service_url += f"/wallet/{self.wallet_name}"
         proxy = AuthServiceProxy(service_url, name)
 
         def f(*args):
@@ -68,7 +68,12 @@ class Bitcoind(TailableProc):
             for k, v in bitcoind_conf.items():
                 f.write(f"{k}={v}\n")
 
-        self.rpc = BitcoindRpcInterface(bitcoin_dir, "regtest", rpcport)
+        # An RPC interface with our internal wallet, and an RPC interface with no
+        # wallet to be able to call 'unloadwallet' on any wallet.
+        self.rpc = BitcoindRpcInterface(
+            bitcoin_dir, "regtest", rpcport, wallet="minisafed-tests"
+        )
+        self.node_rpc = BitcoindRpcInterface(bitcoin_dir, "regtest", rpcport)
 
     def start(self):
         TailableProc.start(self)
