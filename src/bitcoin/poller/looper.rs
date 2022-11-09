@@ -212,6 +212,54 @@ fn updates(
     log::debug!("Updates done.");
 }
 
+// Check if there is any rescan of the backend ongoing or one that just finished.
+fn rescan_check(
+    bit: &impl BitcoinInterface,
+    db: &impl DatabaseInterface,
+    descs: &[descriptors::InheritanceDescriptor],
+) {
+    log::debug!("Checking the state of an ongoing rescan if there is any");
+    let mut db_conn = db.connection();
+
+    // Check if there is an ongoing rescan. If there isn't and we previously asked for a rescan of
+    // the backend, we treat it as completed.
+    // Upon completion of the rescan from the given timestamp on the backend, we rollback our state
+    // down to the height before this timestamp to rescan everything that happened since then.
+    let rescan_timestamp = db_conn.rescan_timestamp();
+    if let Some(progress) = bit.rescan_progress() {
+        log::info!("Rescan progress: {:.2}%.", progress * 100.0);
+        if rescan_timestamp.is_none() {
+            log::warn!("Backend is rescanning but we didn't ask for it.");
+        }
+    } else if let Some(timestamp) = rescan_timestamp {
+        log::info!("Rescan completed on the backend.");
+        // TODO: we could check if the timestamp of the descriptors in the Bitcoin backend are
+        // truly at the rescan timestamp, and trigger a rescan otherwise. Note however it would be
+        // no use for the bitcoind implementation of the backend, since bitcoind will always set
+        // the timestamp of the descriptors in the wallet first (and therefore consider it as
+        // rescanned from this height even if it aborts the rescan by being stopped).
+        let rescan_tip = match bit.block_before_date(timestamp) {
+            Some(block) => block,
+            None => {
+                log::error!(
+                    "Could not retrieve block height for timestamp '{}'",
+                    timestamp
+                );
+                return;
+            }
+        };
+        db_conn.rollback_tip(&rescan_tip);
+        db_conn.complete_rescan();
+        log::info!(
+            "Rolling back our internal tip to '{}' to update our internal state with past transactions.",
+            rescan_tip
+        );
+        updates(bit, db, descs)
+    } else {
+        log::debug!("No ongoing rescan.");
+    }
+}
+
 // If the database chain tip is NULL (first startup), initialize it.
 fn maybe_initialize_tip(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
     let mut db_conn = db.connection();
@@ -269,5 +317,6 @@ pub fn looper(
         }
 
         updates(&bit, &db, &descs);
+        rescan_check(&bit, &db, &descs);
     }
 }
