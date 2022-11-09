@@ -688,11 +688,23 @@ impl BitcoinD {
             .and_then(Json::as_i64)
             .expect("Invalid height in `getblockheader` response: not an i64")
             as i32;
+        let time = res
+            .get("time")
+            .and_then(Json::as_u64)
+            .expect("Invalid timestamp in `getblockheader` response: not an u64")
+            as u32;
+        let median_time_past = res
+            .get("mediantime")
+            .and_then(Json::as_u64)
+            .expect("Invalid median timestamp in `getblockheader` response: not an u64")
+            as u32;
         BlockStats {
             confirmations,
             previous_blockhash,
             height,
             blockhash,
+            time,
+            median_time_past,
         }
     }
 
@@ -853,4 +865,6 @@ pub struct BlockStats {
     pub previous_blockhash: Option<bitcoin::BlockHash>,
     pub blockhash: bitcoin::BlockHash,
     pub height: i32,
+    pub time: u32,
+    pub median_time_past: u32,
 }
