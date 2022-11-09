@@ -53,6 +53,15 @@ pub trait DatabaseConnection {
 
     fn increment_change_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>);
 
+    /// Get the timestamp at which to start rescaning from, if any.
+    fn rescan_timestamp(&mut self) -> Option<u32>;
+
+    /// Set a timestamp at which to start rescaning the block chain from.
+    fn set_rescan(&mut self, timestamp: u32);
+
+    /// Mark the rescan as complete.
+    fn complete_rescan(&mut self);
+
     /// Get the derivation index for this address, as well as whether this address is change.
     fn derivation_index_by_address(
         &mut self,
@@ -132,6 +141,18 @@ impl DatabaseConnection for SqliteConn {
 
     fn increment_change_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
         self.increment_change_index(secp)
+    }
+
+    fn rescan_timestamp(&mut self) -> Option<u32> {
+        self.db_wallet().rescan_timestamp
+    }
+
+    fn set_rescan(&mut self, timestamp: u32) {
+        self.set_wallet_rescan_timestamp(timestamp)
+    }
+
+    fn complete_rescan(&mut self) {
+        self.complete_wallet_rescan()
     }
 
     fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {

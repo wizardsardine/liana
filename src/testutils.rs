@@ -266,6 +266,18 @@ impl DatabaseConnection for DummyDbConn {
     fn rollback_tip(&mut self, _: &BlockChainTip) {
         todo!()
     }
+
+    fn rescan_timestamp(&mut self) -> Option<u32> {
+        None
+    }
+
+    fn set_rescan(&mut self, _: u32) {
+        todo!()
+    }
+
+    fn complete_rescan(&mut self) {
+        todo!()
+    }
 }
 
 pub struct DummyMinisafe {
