@@ -114,6 +114,18 @@ impl Installer {
                     .update(message);
                 Command::perform(install(self.context.clone()), Message::Installed)
             }
+            Message::Installed(Err(e)) => {
+                let mut data_dir = self.context.data_dir.clone().unwrap();
+                data_dir.push(self.context.bitcoin_config.network.to_string());
+                // In case of failure during install, block the thread to
+                // deleted the data_dir/network directory in order to start clean again.
+                std::fs::remove_dir_all(data_dir).expect("Correctly deleted");
+                self.steps
+                    .get_mut(self.current)
+                    .expect("There is always a step")
+                    .update(Message::Installed(Err(e)));
+                Command::none()
+            }
             Message::Event(Event::Window(window::Event::CloseRequested)) => {
                 self.stop();
                 Command::none()
