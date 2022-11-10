@@ -50,7 +50,7 @@ impl Installer {
                 should_exit: false,
                 current: 0,
                 steps: vec![
-                    Welcome::new(network).into(),
+                    Welcome::new(network, destination_path.clone()).into(),
                     DefineDescriptor::new().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
