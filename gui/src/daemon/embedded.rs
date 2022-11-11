@@ -156,4 +156,15 @@ impl Daemon for EmbeddedDaemon {
             .broadcast_spend(txid)
             .map_err(|e| DaemonError::Unexpected(e.to_string()))
     }
+
+    fn start_rescan(&self, t: u32) -> Result<(), DaemonError> {
+        self.handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .lock()
+            .unwrap()
+            .control
+            .start_rescan(t)
+            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+    }
 }
