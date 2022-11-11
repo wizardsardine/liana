@@ -56,6 +56,7 @@ pub fn welcome(network: &bitcoin::Network, valid: bool) -> Element<Message> {
 }
 
 pub fn define_descriptor<'a>(
+    network: bitcoin::Network,
     imported_descriptor: &form::Value<String>,
     user_xpub: &form::Value<String>,
     heir_xpub: &form::Value<String>,
@@ -82,7 +83,11 @@ pub fn define_descriptor<'a>(
                     form::Form::new("Xpub", user_xpub, |msg| {
                         Message::DefineDescriptor(message::DefineDescriptor::UserXpubEdited(msg))
                     })
-                    .warning("Please enter correct xpub")
+                    .warning(if network == bitcoin::Network::Bitcoin {
+                        "Please enter correct xpub"
+                    } else {
+                        "Please enter correct tpub"
+                    })
                     .size(20)
                     .padding(10),
                 )
@@ -102,7 +107,11 @@ pub fn define_descriptor<'a>(
                     form::Form::new("Xpub", heir_xpub, |msg| {
                         Message::DefineDescriptor(message::DefineDescriptor::HeirXpubEdited(msg))
                     })
-                    .warning("Please enter correct xpub")
+                    .warning(if network == bitcoin::Network::Bitcoin {
+                        "Please enter correct xpub"
+                    } else {
+                        "Please enter correct tpub"
+                    })
                     .size(20)
                     .padding(10),
                 )
