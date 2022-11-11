@@ -167,6 +167,7 @@ impl Application for GUI {
                         blockheight: info.blockheight,
                         coins,
                         spend_txs,
+                        ..Default::default()
                     };
 
                     let (app, command) = App::new(cache, loader.gui_config.clone(), minisafed);

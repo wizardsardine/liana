@@ -58,10 +58,12 @@ impl App {
 
     fn load_state(&mut self, menu: &Menu) -> Command<Message> {
         self.state = match menu {
-            menu::Menu::Settings => {
-                state::SettingsState::new(self.daemon.config().clone(), self.daemon.is_external())
-                    .into()
-            }
+            menu::Menu::Settings => state::SettingsState::new(
+                self.daemon.config().clone(),
+                &self.cache,
+                self.daemon.is_external(),
+            )
+            .into(),
             menu::Menu::Home => Home::new(&self.cache.coins).into(),
             menu::Menu::Coins => CoinsPanel::new(&self.cache.coins).into(),
             menu::Menu::Receive => ReceivePanel::default().into(),
@@ -76,7 +78,7 @@ impl App {
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
             iced_native::subscription::events().map(Message::Event),
-            time::every(Duration::from_secs(30)).map(|_| Message::Tick),
+            time::every(Duration::from_secs(5)).map(|_| Message::Tick),
             self.state.subscription(),
         ])
     }
@@ -109,8 +111,12 @@ impl App {
             Message::SpendTxs(Ok(txs)) => {
                 self.cache.spend_txs = txs.clone();
             }
-            Message::BlockHeight(Ok(blockheight)) => {
-                self.cache.blockheight = *blockheight;
+            Message::Info(Ok(info)) => {
+                self.cache.blockheight = info.blockheight;
+                self.cache.rescan_progress = info.rescan_progress;
+            }
+            Message::StartRescan(Ok(())) => {
+                self.cache.rescan_progress = Some(0.0);
             }
             _ => {}
         };
@@ -119,13 +125,8 @@ impl App {
             Message::Tick => {
                 let daemon = self.daemon.clone();
                 Command::perform(
-                    async move {
-                        daemon
-                            .get_info()
-                            .map(|res| res.blockheight)
-                            .map_err(|e| e.into())
-                    },
-                    Message::BlockHeight,
+                    async move { daemon.get_info().map_err(|e| e.into()) },
+                    Message::Info,
                 )
             }
             Message::LoadDaemonConfig(cfg) => {

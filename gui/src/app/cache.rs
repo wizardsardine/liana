@@ -6,6 +6,7 @@ pub struct Cache {
     pub blockheight: i32,
     pub coins: Vec<Coin>,
     pub spend_txs: Vec<SpendTx>,
+    pub rescan_progress: Option<f64>,
 }
 
 impl std::default::Default for Cache {
@@ -15,6 +16,7 @@ impl std::default::Default for Cache {
             blockheight: 0,
             coins: Vec::new(),
             spend_txs: Vec::new(),
+            rescan_progress: None,
         }
     }
 }
