@@ -511,13 +511,16 @@ impl DaemonControl {
     pub fn start_rescan(&self, timestamp: u32) -> Result<(), CommandError> {
         let mut db_conn = self.db.connection();
 
-        if db_conn.rescan_timestamp().is_some() {
-            return Err(CommandError::AlreadyRescanning);
-        }
         if timestamp < MAINNET_GENESIS_TIME || timestamp >= self.bitcoin.tip_time() {
             return Err(CommandError::InsaneRescanTimestamp(timestamp));
         }
+        if db_conn.rescan_timestamp().is_some() || self.bitcoin.rescan_progress().is_some() {
+            return Err(CommandError::AlreadyRescanning);
+        }
 
+        // TODO: there is a race with the above check for whether the backend is already
+        // rescanning. This could make us crash with the bitcoind backend if someone triggered a
+        // rescan of the wallet just after we checked above and did now.
         self.bitcoin
             .start_rescan(&self.config.main_descriptor, timestamp);
         db_conn.set_rescan(timestamp);
