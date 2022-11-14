@@ -5,7 +5,7 @@
 mod utils;
 
 use crate::{
-    bitcoin::{BitcoinError, BitcoinInterface},
+    bitcoin::BitcoinInterface,
     database::{Coin, DatabaseInterface},
     descriptors, DaemonControl, VERSION,
 };
@@ -499,10 +499,9 @@ impl DaemonControl {
         // Then, broadcast it (or try to, we never know if we are not going to hit an
         // error at broadcast time).
         let final_tx = spend_psbt.extract_tx();
-        match self.bitcoin.broadcast_tx(&final_tx) {
-            Ok(()) => Ok(()),
-            Err(BitcoinError::Broadcast(e)) => Err(CommandError::TxBroadcast(e)),
-        }
+        self.bitcoin
+            .broadcast_tx(&final_tx)
+            .map_err(CommandError::TxBroadcast)
     }
 
     /// Trigger a rescan of the block chain for transactions involving our main descriptor between
