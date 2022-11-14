@@ -13,7 +13,8 @@ def test_getinfo(minisafed):
     res = minisafed.rpc.getinfo()
     assert res["version"] == "0.1"
     assert res["network"] == "regtest"
-    wait_for(lambda: res["blockheight"] == 101)
+    wait_for(lambda: minisafed.rpc.getinfo()["blockheight"] == 101)
+    res = minisafed.rpc.getinfo()
     assert res["sync"] == 1.0
     assert "main" in res["descriptors"]
     assert res["rescan_progress"] is None
