@@ -42,7 +42,7 @@ pub enum BitcoindError {
     InvalidVersion(u64),
     NetworkMismatch(String /*config*/, String /*bitcoind*/),
     MissingDescriptor,
-    AlreadyRescanning,
+    StartRescan,
 }
 
 impl BitcoindError {
@@ -114,8 +114,11 @@ impl std::fmt::Display for BitcoindError {
             BitcoindError::MissingDescriptor => {
                 write!(f, "The watchonly wallet loaded on bitcoind does not have the main descriptor imported.")
             }
-            BitcoindError::AlreadyRescanning => {
-                write!(f, "A rescan is already ongoing for the watchonly wallet.")
+            BitcoindError::StartRescan => {
+                write!(
+                    f,
+                    "Error while triggering the rescan for the bitcoind watchonly wallet."
+                )
             }
         }
     }
@@ -810,16 +813,30 @@ impl BitcoinD {
         Ok(())
     }
 
+    // For the given descriptor strings check if they are imported at this timestamp in the
+    // watchonly wallet.
+    fn check_descs_timestamp(&self, descs: &[String], timestamp: u32) -> bool {
+        let current_descs = self.list_descriptors();
+
+        for desc in descs {
+            let present = current_descs
+                .iter()
+                .find(|entry| &entry.desc == desc)
+                .map(|entry| entry.timestamp == timestamp)
+                .unwrap_or(false);
+            if !present {
+                return false;
+            }
+        }
+
+        true
+    }
+
     pub fn start_rescan(
         &self,
         desc: &MultipathDescriptor,
         timestamp: u32,
     ) -> Result<(), BitcoindError> {
-        // The wallet must not be already rescanning
-        if self.rescan_progress().is_some() {
-            return Err(BitcoindError::AlreadyRescanning);
-        }
-
         // Re-import the receive and change descriptors to the watchonly wallet for the purpose of
         // rescanning.
         // The range of the newly imported descriptors supposed to update the existing ones must
@@ -832,11 +849,15 @@ impl BitcoinD {
             .fold(1_000, |range, entry| {
                 cmp::max(range, entry.range.map(|r| r[1]).unwrap_or(0))
             });
-        let descriptors = [desc.receive_descriptor(), desc.change_descriptor()]
+        let desc_str = [
+            desc.receive_descriptor().to_string(),
+            desc.change_descriptor().to_string(),
+        ];
+        let desc_json: Vec<Json> = desc_str
             .iter()
-            .map(|desc| {
+            .map(|desc_str| {
                 serde_json::json!({
-                    "desc": desc.to_string(),
+                    "desc": desc_str,
                     "timestamp": timestamp,
                     "active": false,
                     "range": max_range,
@@ -844,24 +865,35 @@ impl BitcoinD {
             })
             .collect();
 
-        // TODO: should we check there was not timeout when writing the request on the
-        // TcpStream in the SimpleHttpTransport implem?
+        // Since we don't wait for a response (which would make us block for the entire duration of
+        // the rescan), we can't know for sure whether it was started successfully. So what we do
+        // here is retrying a few times (since the noreply_request disables our generalistic retry
+        // logic) until we notice the descriptors are successfully imported at this timestamp on
+        // the watchonly wallet.
         // NOTE: if the rescan gets aborted through the 'abortrescan' RPC we won't see the
         // error and bitcoind will keep the new timestamps for the descriptors as if it had
         // successfully rescanned them.
-        match self.make_noreply_request("importdescriptors", &params!(Json::Array(descriptors))) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                // We checked at the beginning it was not already rescanning. If we get an error
-                // because of that it's just a spurious error from calling it multiple times in the
-                // retry logic.
-                if !e.to_string().contains("is currently rescanning.") {
-                    // However, if it's not an error because we triggered it twice due to a
-                    // flickering connection fail as it shouldn't happen.
-                    Err(e)
-                } else {
-                    Ok(())
-                }
+        const NUM_RETRIES: usize = 10;
+        let mut i = 0;
+        loop {
+            if let Err(e) = self.make_noreply_request(
+                "importdescriptors",
+                &params!(Json::Array(desc_json.clone())),
+            ) {
+                log::error!(
+                    "Error when calling 'importdescriptors' for rescanning: {}",
+                    e
+                );
+            }
+
+            i += 1;
+            if self.check_descs_timestamp(&desc_str, timestamp) {
+                return Ok(());
+            } else if i >= NUM_RETRIES {
+                return Err(BitcoindError::StartRescan);
+            } else {
+                log::debug!("Sleeping a second before retrying to trigger the rescan");
+                std::thread::sleep(Duration::from_secs(1));
             }
         }
     }
