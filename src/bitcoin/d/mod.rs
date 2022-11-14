@@ -5,7 +5,7 @@ mod utils;
 use crate::{bitcoin::BlockChainTip, config, descriptors::MultipathDescriptor};
 use utils::block_before_date;
 
-use std::{collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
+use std::{cmp, collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
 
 use jsonrpc::{
     arg,
@@ -288,11 +288,21 @@ impl BitcoinD {
     }
 
     // Make a request for which you don't expect a response. This is achieved by setting a very low
-    // timeout on the connection, and will panic on any other error than a timeout.
-    fn make_noreply_request(&self, method: &str, params: &[Box<serde_json::value::RawValue>]) {
-        if let Err(e) = self.make_request(&self.sendonly_client, method, params) {
-            if !e.is_timeout() {
-                panic!("{}", e);
+    // timeout on the connection.
+    fn make_noreply_request(
+        &self,
+        method: &str,
+        params: &[Box<serde_json::value::RawValue>],
+    ) -> Result<(), BitcoindError> {
+        match self.make_request(&self.sendonly_client, method, params) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // A timeout error is expected, as that's our workaround to avoid blocking
+                if e.is_timeout() {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
             }
         }
     }
@@ -393,33 +403,17 @@ impl BitcoinD {
     }
 
     // Import the receive and change descriptors from the multipath descriptor to bitcoind.
-    // An optional timestamp may be given to rescan the chain from this date for this descriptor.
-    fn import_descriptor(
-        &self,
-        desc: &MultipathDescriptor,
-        timestamp: Option<u32>,
-    ) -> Option<String> {
+    fn import_descriptor(&self, desc: &MultipathDescriptor) -> Option<String> {
         let descriptors = [desc.receive_descriptor(), desc.change_descriptor()]
             .iter()
             .map(|desc| {
                 serde_json::json!({
                     "desc": desc.to_string(),
-                    "timestamp": timestamp.map(Json::from).unwrap_or_else(|| "now".into()),
+                    "timestamp": "now",
                     "active": false,
                 })
             })
             .collect();
-
-        // If this will trigger a rescan, do not wait for the response.
-        if timestamp.is_some() {
-            // TODO: should we check there was not timeout when writing the request on the
-            // TcpStream in the SimpleHttpTransport implem?
-            // NOTE: if the rescan gets aborted through the 'abortrescan' RPC we won't see the
-            // error and bitcoind will keep the new timestamps for the descriptors as if it had
-            // successfully rescanned them.
-            self.make_noreply_request("importdescriptors", &params!(Json::Array(descriptors)));
-            return None;
-        }
 
         let res = self.make_wallet_request("importdescriptors", &params!(Json::Array(descriptors)));
         let all_succeeded = res
@@ -486,7 +480,7 @@ impl BitcoinD {
         if let Some(err) = self.create_wallet(self.watchonly_wallet_path.clone()) {
             return Err(BitcoindError::WalletCreation(err));
         }
-        if let Some(err) = self.import_descriptor(main_descriptor, None) {
+        if let Some(err) = self.import_descriptor(main_descriptor) {
             return Err(BitcoindError::DescriptorImport(err));
         }
 
@@ -787,7 +781,57 @@ impl BitcoinD {
     }
 
     pub fn start_rescan(&self, desc: &MultipathDescriptor, timestamp: u32) {
-        self.import_descriptor(desc, Some(timestamp));
+        // The wallet must not be already rescanning
+        // FIXME: don't assert, propagate an error instead.
+        assert!(self.rescan_progress().is_none());
+
+        // Re-import the receive and change descriptors to the watchonly wallet for the purpose of
+        // rescanning.
+        // The range of the newly imported descriptors supposed to update the existing ones must
+        // have a range inclusive of the existing ones. We always use 0 as the initial index so
+        // this is just determining the maximum index to use.
+        let max_range = self
+            .list_descriptors()
+            .into_iter()
+            // 1_000 is bitcoind's default and what we use at initial import.
+            .fold(1_000, |range, entry| {
+                cmp::max(range, entry.range.map(|r| r[1]).unwrap_or(0))
+            });
+        let descriptors = [desc.receive_descriptor(), desc.change_descriptor()]
+            .iter()
+            .map(|desc| {
+                serde_json::json!({
+                    "desc": desc.to_string(),
+                    "timestamp": timestamp,
+                    "active": false,
+                    "range": max_range,
+                })
+            })
+            .collect();
+
+        // TODO: should we check there was not timeout when writing the request on the
+        // TcpStream in the SimpleHttpTransport implem?
+        // NOTE: if the rescan gets aborted through the 'abortrescan' RPC we won't see the
+        // error and bitcoind will keep the new timestamps for the descriptors as if it had
+        // successfully rescanned them.
+        match self.make_noreply_request("importdescriptors", &params!(Json::Array(descriptors))) {
+            Ok(()) => {}
+            Err(e) => {
+                // We checked at the beginning it was not already rescanning. If we get an error
+                // because of that it's just a spurious error from calling it multiple times in the
+                // retry logic.
+                if !e.to_string().contains("is currently rescanning.") {
+                    // However, if it's not an error because we triggered it twice due to a
+                    // flickering connection fail as it shouldn't happen.
+                    // TODO: propagate the error back to the RPC command. There are too many
+                    // reasons this could fail that we shouldn't be crashing for that.
+                    panic!(
+                        "Unexpected error when starting rescan on bitcoind wallet: {}",
+                        e
+                    );
+                }
+            }
+        }
     }
 
     /// Get the progress of the ongoing rescan, if there is any.
