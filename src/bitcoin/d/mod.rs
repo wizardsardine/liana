@@ -437,21 +437,31 @@ impl BitcoinD {
         }
     }
 
-    fn list_descriptors(&self) -> Vec<String> {
+    fn list_descriptors(&self) -> Vec<ListDescEntry> {
         self.make_wallet_request("listdescriptors", &[])
             .get("descriptors")
             .and_then(Json::as_array)
             .expect("Missing or invalid 'descriptors' field in 'listdescriptors' response")
             .iter()
             .map(|elem| {
-                elem.get("desc")
+                let desc = elem
+                    .get("desc")
                     .and_then(Json::as_str)
                     .expect(
                         "Missing or invalid 'desc' field in 'listdescriptors' response's entries",
                     )
-                    .to_string()
+                    .to_string();
+                let range = elem.get("range").and_then(Json::as_array).map(|a| {
+                    a.iter()
+                        .map(|e| e.as_u64().expect("Invalid range index") as u32)
+                        .collect::<Vec<_>>()
+                        .try_into()
+                        .expect("Range is always an array of size 2")
+                });
+
+                ListDescEntry { desc, range }
             })
-            .collect::<Vec<String>>()
+            .collect()
     }
 
     /// Create the watchonly wallet on bitcoind, and import it the main descriptor.
@@ -535,7 +545,11 @@ impl BitcoinD {
         // Check our main descriptor is imported in this wallet.
         let receive_desc = main_descriptor.receive_descriptor();
         let change_desc = main_descriptor.change_descriptor();
-        let desc_list = self.list_descriptors();
+        let desc_list: Vec<String> = self
+            .list_descriptors()
+            .into_iter()
+            .map(|entry| entry.desc)
+            .collect();
         if !desc_list.contains(&receive_desc.to_string())
             || !desc_list.contains(&change_desc.to_string())
         {
@@ -807,6 +821,13 @@ fn roundup_progress(progress: f64) -> f64 {
     } else {
         (progress_rounded as f64 / precision) as f64
     }
+}
+
+/// An entry in the 'listdescriptors' result.
+#[derive(Debug, Clone)]
+pub struct ListDescEntry {
+    pub desc: String,
+    pub range: Option<[u32; 2]>,
 }
 
 /// A 'received' entry in the 'listsinceblock' result.
