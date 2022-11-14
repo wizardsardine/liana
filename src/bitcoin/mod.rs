@@ -76,7 +76,11 @@ pub trait BitcoinInterface: Send {
 
     /// Trigger a rescan of the block chain for transactions related to this descriptor since
     /// the given date.
-    fn start_rescan(&self, desc: &descriptors::MultipathDescriptor, timestamp: u32);
+    fn start_rescan(
+        &self,
+        desc: &descriptors::MultipathDescriptor,
+        timestamp: u32,
+    ) -> Result<(), String>;
 
     /// Rescan progress percentage. Between 0 and 1.
     fn rescan_progress(&self) -> Option<f64>;
@@ -283,9 +287,14 @@ impl BitcoinInterface for d::BitcoinD {
         }
     }
 
-    fn start_rescan(&self, desc: &descriptors::MultipathDescriptor, timestamp: u32) {
+    fn start_rescan(
+        &self,
+        desc: &descriptors::MultipathDescriptor,
+        timestamp: u32,
+    ) -> Result<(), String> {
         // FIXME: in theory i think this could potentially fail to actually start the rescan.
-        self.start_rescan(desc, timestamp);
+        self.start_rescan(desc, timestamp)
+            .map_err(|e| e.to_string())
     }
 
     fn rescan_progress(&self) -> Option<f64> {
@@ -357,7 +366,11 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock().unwrap().broadcast_tx(tx)
     }
 
-    fn start_rescan(&self, desc: &descriptors::MultipathDescriptor, timestamp: u32) {
+    fn start_rescan(
+        &self,
+        desc: &descriptors::MultipathDescriptor,
+        timestamp: u32,
+    ) -> Result<(), String> {
         self.lock().unwrap().start_rescan(desc, timestamp)
     }
 

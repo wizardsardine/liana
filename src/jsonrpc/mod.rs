@@ -164,7 +164,8 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::AlreadyRescanning => {
                 Error::new(ErrorCode::InvalidParams, e.to_string())
             }
-            commands::CommandError::SanityCheckFailure(_) => {
+            commands::CommandError::SanityCheckFailure(_)
+            | commands::CommandError::RescanTrigger(..) => {
                 Error::new(ErrorCode::InternalError, e.to_string())
             }
             commands::CommandError::TxBroadcast(_) => {

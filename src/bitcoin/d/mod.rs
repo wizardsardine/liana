@@ -42,6 +42,7 @@ pub enum BitcoindError {
     InvalidVersion(u64),
     NetworkMismatch(String /*config*/, String /*bitcoind*/),
     MissingDescriptor,
+    AlreadyRescanning,
 }
 
 impl BitcoindError {
@@ -112,6 +113,9 @@ impl std::fmt::Display for BitcoindError {
             }
             BitcoindError::MissingDescriptor => {
                 write!(f, "The watchonly wallet loaded on bitcoind does not have the main descriptor imported.")
+            }
+            BitcoindError::AlreadyRescanning => {
+                write!(f, "A rescan is already ongoing for the watchonly wallet.")
             }
         }
     }
@@ -780,10 +784,15 @@ impl BitcoinD {
         Ok(())
     }
 
-    pub fn start_rescan(&self, desc: &MultipathDescriptor, timestamp: u32) {
+    pub fn start_rescan(
+        &self,
+        desc: &MultipathDescriptor,
+        timestamp: u32,
+    ) -> Result<(), BitcoindError> {
         // The wallet must not be already rescanning
-        // FIXME: don't assert, propagate an error instead.
-        assert!(self.rescan_progress().is_none());
+        if self.rescan_progress().is_some() {
+            return Err(BitcoindError::AlreadyRescanning);
+        }
 
         // Re-import the receive and change descriptors to the watchonly wallet for the purpose of
         // rescanning.
@@ -815,7 +824,7 @@ impl BitcoinD {
         // error and bitcoind will keep the new timestamps for the descriptors as if it had
         // successfully rescanned them.
         match self.make_noreply_request("importdescriptors", &params!(Json::Array(descriptors))) {
-            Ok(()) => {}
+            Ok(()) => Ok(()),
             Err(e) => {
                 // We checked at the beginning it was not already rescanning. If we get an error
                 // because of that it's just a spurious error from calling it multiple times in the
@@ -823,12 +832,9 @@ impl BitcoinD {
                 if !e.to_string().contains("is currently rescanning.") {
                     // However, if it's not an error because we triggered it twice due to a
                     // flickering connection fail as it shouldn't happen.
-                    // TODO: propagate the error back to the RPC command. There are too many
-                    // reasons this could fail that we shouldn't be crashing for that.
-                    panic!(
-                        "Unexpected error when starting rescan on bitcoind wallet: {}",
-                        e
-                    );
+                    Err(e)
+                } else {
+                    Ok(())
                 }
             }
         }

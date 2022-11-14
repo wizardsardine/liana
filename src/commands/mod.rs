@@ -61,6 +61,8 @@ pub enum CommandError {
     TxBroadcast(String),
     AlreadyRescanning,
     InsaneRescanTimestamp(u32),
+    /// An error that might occur in the racy rescan triggering logic.
+    RescanTrigger(String),
 }
 
 impl fmt::Display for CommandError {
@@ -92,6 +94,7 @@ impl fmt::Display for CommandError {
                 "There is already a rescan ongoing. Please wait for it to complete first."
             ),
             Self::InsaneRescanTimestamp(t) => write!(f, "Insane timestamp '{}'.", t),
+            Self::RescanTrigger(s) => write!(f, "Error while starting rescan: '{}'", s),
         }
     }
 }
@@ -521,7 +524,8 @@ impl DaemonControl {
         // rescanning. This could make us crash with the bitcoind backend if someone triggered a
         // rescan of the wallet just after we checked above and did now.
         self.bitcoin
-            .start_rescan(&self.config.main_descriptor, timestamp);
+            .start_rescan(&self.config.main_descriptor, timestamp)
+            .map_err(CommandError::RescanTrigger)?;
         db_conn.set_rescan(timestamp);
 
         Ok(())

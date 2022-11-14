@@ -75,7 +75,7 @@ impl BitcoinInterface for DummyBitcoind {
         todo!()
     }
 
-    fn start_rescan(&self, _: &descriptors::MultipathDescriptor, _: u32) {
+    fn start_rescan(&self, _: &descriptors::MultipathDescriptor, _: u32) -> Result<(), String> {
         todo!()
     }
 
