@@ -516,10 +516,10 @@ mod tests {
         let net_resp = [
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"descriptors\":[{\"desc\":\"".as_bytes(),
             receive_desc.as_bytes(),
-            "\"},".as_bytes(),
+            "\",\"timestamp\":0},".as_bytes(),
             "{\"desc\":\"".as_bytes(),
             change_desc.as_bytes(),
-            "\"}]}}\n".as_bytes(),
+            "\",\"timestamp\":1}]}}\n".as_bytes(),
         ]
         .concat();
         let (mut stream, _) = server.accept().unwrap();

@@ -472,8 +472,18 @@ impl BitcoinD {
                         .try_into()
                         .expect("Range is always an array of size 2")
                 });
+                let timestamp = elem
+                    .get("timestamp")
+                    .and_then(Json::as_u64)
+                    .expect("A valid timestamp is always present")
+                    .try_into()
+                    .expect("timestamp must fit");
 
-                ListDescEntry { desc, range }
+                ListDescEntry {
+                    desc,
+                    range,
+                    timestamp,
+                }
             })
             .collect()
     }
@@ -894,6 +904,7 @@ fn roundup_progress(progress: f64) -> f64 {
 pub struct ListDescEntry {
     pub desc: String,
     pub range: Option<[u32; 2]>,
+    pub timestamp: u32,
 }
 
 /// A 'received' entry in the 'listsinceblock' result.
