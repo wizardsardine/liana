@@ -270,25 +270,41 @@ impl BitcoinD {
         Err(error.expect("Always set if we reach this point"))
     }
 
+    fn try_request(&self, client: &Client, req: jsonrpc::Request) -> Result<Json, BitcoindError> {
+        log::trace!("Sending to bitcoind: {:#?}", req);
+        match client.send_request(req) {
+            Ok(resp) => {
+                let res = resp.result().map_err(BitcoindError::Server)?;
+                log::trace!("Got from bitcoind: {:#?}", res);
+
+                Ok(res)
+            }
+            Err(e) => Err(BitcoindError::Server(e)),
+        }
+    }
+
+    fn make_request_inner<'a, 'b>(
+        &self,
+        client: &Client,
+        method: &'a str,
+        params: &'b [Box<serde_json::value::RawValue>],
+        retry: bool,
+    ) -> Result<Json, BitcoindError> {
+        let req = client.build_request(method, params);
+        if retry {
+            self.retry(|| self.try_request(client, req.clone()))
+        } else {
+            self.try_request(client, req)
+        }
+    }
+
     fn make_request<'a, 'b>(
         &self,
         client: &Client,
         method: &'a str,
         params: &'b [Box<serde_json::value::RawValue>],
     ) -> Result<Json, BitcoindError> {
-        self.retry(|| {
-            let req = client.build_request(method, params);
-            log::trace!("Sending to bitcoind: {:#?}", req);
-            match client.send_request(req) {
-                Ok(resp) => {
-                    let res = resp.result().map_err(BitcoindError::Server)?;
-                    log::trace!("Got from bitcoind: {:#?}", res);
-
-                    Ok(res)
-                }
-                Err(e) => Err(BitcoindError::Server(e)),
-            }
-        })
+        self.make_request_inner(client, method, params, true)
     }
 
     // Make a request for which you don't expect a response. This is achieved by setting a very low
@@ -298,7 +314,7 @@ impl BitcoinD {
         method: &str,
         params: &[Box<serde_json::value::RawValue>],
     ) -> Result<(), BitcoindError> {
-        match self.make_request(&self.sendonly_client, method, params) {
+        match self.make_request_inner(&self.sendonly_client, method, params, false) {
             Ok(_) => Ok(()),
             Err(e) => {
                 // A timeout error is expected, as that's our workaround to avoid blocking
