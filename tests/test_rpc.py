@@ -343,3 +343,62 @@ def test_start_rescan(minisafed, bitcoind):
         lambda: minisafed.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
     )
     assert coins_before == sorted_coins()
+
+
+def test_gethistory(minisafed, bitcoind):
+    h = bitcoind.rpc.getblockhash(bitcoind.rpc.getblockcount())
+    t1 = bitcoind.rpc.getblockheader(h)["time"]
+
+    # Receive a coin on a receive address
+    addr = minisafed.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
+    bitcoind.generate_block(12, wait_for_mempool=txid)
+    wait_for(lambda: len(minisafed.rpc.listcoins()["coins"]) == 1)
+
+    # Create a transaction that will spend this coin
+    outpoints = [c["outpoint"] for c in minisafed.rpc.listcoins()["coins"]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 100_000,
+    }
+    res = minisafed.rpc.createspend(outpoints, destinations, 2)
+    assert "psbt" in res
+    spend_psbt = PSBT.from_base64(res["psbt"])
+
+    # Sign and broadcast the Spend transaction.
+    signed_psbt = minisafed.sign_psbt(spend_psbt)
+    minisafed.rpc.updatespend(signed_psbt.to_base64())
+    spend_txid = signed_psbt.tx.txid().hex()
+    minisafed.rpc.broadcastspend(spend_txid)
+
+    # Until tx is not confirmed events do not contain spend
+    h = bitcoind.rpc.getblockhash(bitcoind.rpc.getblockcount())
+    t2 = bitcoind.rpc.getblockheader(h)["time"]
+    print(t2)
+    events = minisafed.rpc.gethistory(t1, t2, 10)["events"]
+    assert len(events) == 1
+    assert events[0]["kind"] == "receive"
+    assert events[0]["outpoint"] == outpoints[0]
+    assert events[0]["amount"] == 1000000
+    assert events[0]["miner_fee"] is None
+    assert events[0]["tx"] is None
+
+    # The spend is now confirmed
+    bitcoind.generate_block(12, wait_for_mempool=spend_txid)
+    wait_for(lambda: len(minisafed.rpc.listcoins()["coins"]) == 2)
+
+    h = bitcoind.rpc.getblockhash(bitcoind.rpc.getblockcount())
+    t3 = bitcoind.rpc.getblockheader(h)["time"]
+    print(t3)
+    events = minisafed.rpc.gethistory(t1, t3, 10)["events"]
+    assert len(events) == 2
+    assert events[0]["kind"] == "spend"
+    assert events[0]["amount"] == 100_000
+    assert events[0]["tx"] is not None
+    assert events[0]["miner_fee"] is not None
+    assert events[0]["outpoint"] is None
+
+    assert events[1]["kind"] == "receive"
+    assert events[1]["outpoint"] == outpoints[0]
+    assert events[1]["amount"] == 1000000
+    assert events[1]["miner_fee"] is None
+    assert events[1]["tx"] is None
