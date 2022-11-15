@@ -546,12 +546,13 @@ impl DaemonControl {
         // Preparatory work to populate spends and all_spend_txids.
         for coin in &coins {
             if let Some(txid) = coin.spend_txid {
-                let time = coin.spend_block.expect("Coin is spent").time;
-                if time >= start && time <= end {
-                    if let Some(coins) = spends.get_mut(&txid) {
-                        coins.push(coin);
-                    } else {
-                        spends.insert(txid, vec![coin]);
+                if let Some(time) = coin.spend_block.map(|c| c.time) {
+                    if time >= start && time <= end {
+                        if let Some(coins) = spends.get_mut(&txid) {
+                            coins.push(coin);
+                        } else {
+                            spends.insert(txid, vec![coin]);
+                        }
                     }
                 }
             }
@@ -589,10 +590,11 @@ impl DaemonControl {
             let mut recipients_amount: u64 = 0;
             let mut change_amount: u64 = 0;
             for (vout, txout) in spend_tx.output.iter().enumerate() {
-                if coins
-                    .iter()
-                    .any(|c| c.outpoint.txid == spend_tx.txid() && c.outpoint.vout as usize == vout)
-                {
+                if coins.iter().any(|c| {
+                    c.outpoint.txid == spend_tx.txid()
+                        && c.outpoint.vout as usize == vout
+                        && c.is_change
+                }) {
                     change_amount += txout.value;
                 } else {
                     recipients_amount += txout.value;
