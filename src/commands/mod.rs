@@ -573,8 +573,8 @@ impl DaemonControl {
                     amount: coin.amount,
                     miner_fee: None,
                     date: received_at,
-                    txid: coin.outpoint.txid,
-                    coins: vec![coin.outpoint],
+                    outpoint: Some(coin.outpoint),
+                    tx: None,
                 });
             }
         }
@@ -620,8 +620,8 @@ impl DaemonControl {
                 kind: HistoryEventKind::Spend,
                 amount: bitcoin::Amount::from_sat(recipients_amount),
                 miner_fee: Some(bitcoin::Amount::from_sat(fees)),
-                txid,
-                coins: spent_coins.iter().map(|coin| coin.outpoint).collect(),
+                outpoint: None,
+                tx: Some(spend_tx),
             })
         }
         // Because a coin represents a receive event and maybe a second event (spend),
@@ -740,8 +740,10 @@ pub struct HistoryEvent {
         deserialize_with = "deser_optional_amount_from_sats"
     )]
     pub miner_fee: Option<bitcoin::Amount>,
-    pub txid: bitcoin::Txid,
-    pub coins: Vec<bitcoin::OutPoint>,
+    /// If the event is a receive event
+    pub outpoint: Option<bitcoin::OutPoint>,
+    /// If the event is a spend event
+    pub tx: Option<bitcoin::Transaction>,
 }
 
 #[cfg(test)]
@@ -1106,7 +1108,7 @@ mod tests {
         ]);
 
         let mut btc = DummyBitcoind::new();
-        btc.txs.insert(spend_tx.txid(), spend_tx);
+        btc.txs.insert(spend_tx.txid(), spend_tx.clone());
 
         let ms = DummyMinisafe::new(btc, db);
 
@@ -1119,25 +1121,29 @@ mod tests {
         assert_eq!(events[0].amount, bitcoin::Amount::from_sat(3000));
         assert_eq!(events[0].miner_fee, None);
         assert_eq!(events[0].date, 4);
-        assert_eq!(events[0].coins, vec![outpoint3]);
+        assert_eq!(events[0].outpoint, Some(outpoint3));
+        assert_eq!(events[0].tx, None);
 
         assert_eq!(events[1].kind, HistoryEventKind::Spend);
         assert_eq!(events[1].amount, bitcoin::Amount::from_sat(4000));
         assert_eq!(events[1].miner_fee, Some(bitcoin::Amount::from_sat(1000)));
         assert_eq!(events[1].date, 3);
-        assert_eq!(events[1].coins, vec![outpoint1]);
+        assert_eq!(events[1].outpoint, None);
+        assert_eq!(events[1].tx, Some(spend_tx.clone()));
 
         assert_eq!(events[2].kind, HistoryEventKind::Receive);
         assert_eq!(events[2].amount, bitcoin::Amount::from_sat(2000));
         assert_eq!(events[2].miner_fee, None);
         assert_eq!(events[2].date, 2);
-        assert_eq!(events[2].coins, vec![outpoint2]);
+        assert_eq!(events[2].outpoint, Some(outpoint2));
+        assert_eq!(events[2].tx, None);
 
         assert_eq!(events[3].kind, HistoryEventKind::Receive);
         assert_eq!(events[3].amount, bitcoin::Amount::from_sat(100_000_000));
         assert_eq!(events[3].miner_fee, None);
         assert_eq!(events[3].date, 1);
-        assert_eq!(events[3].coins, vec![outpoint1]);
+        assert_eq!(events[3].outpoint, Some(outpoint1));
+        assert_eq!(events[3].tx, None);
 
         let events = control.gethistory(2, 3, 10).events;
         assert_eq!(events.len(), 2);
@@ -1146,13 +1152,14 @@ mod tests {
         assert_eq!(events[0].amount, bitcoin::Amount::from_sat(4000));
         assert_eq!(events[0].miner_fee, Some(bitcoin::Amount::from_sat(1000)));
         assert_eq!(events[0].date, 3);
-        assert_eq!(events[0].coins, vec![outpoint1]);
+        assert_eq!(events[0].outpoint, None);
 
         assert_eq!(events[1].kind, HistoryEventKind::Receive);
         assert_eq!(events[1].amount, bitcoin::Amount::from_sat(2000));
         assert_eq!(events[1].miner_fee, None);
         assert_eq!(events[1].date, 2);
-        assert_eq!(events[1].coins, vec![outpoint2]);
+        assert_eq!(events[1].outpoint, Some(outpoint2));
+        assert_eq!(events[1].tx, None);
 
         let events = control.gethistory(2, 3, 1).events;
         assert_eq!(events.len(), 1);
@@ -1161,7 +1168,8 @@ mod tests {
         assert_eq!(events[0].amount, bitcoin::Amount::from_sat(4000));
         assert_eq!(events[0].miner_fee, Some(bitcoin::Amount::from_sat(1000)));
         assert_eq!(events[0].date, 3);
-        assert_eq!(events[0].coins, vec![outpoint1]);
+        assert_eq!(events[0].outpoint, None);
+        assert_eq!(events[0].tx, Some(spend_tx));
 
         ms.shutdown();
     }

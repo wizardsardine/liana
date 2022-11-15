@@ -14,6 +14,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                    |
 | [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it       |
 | [`startrescan`](#startrescan)                               | Start rescanning the block chain from a given date   |
+| [`gethistory`](#gethistory)                                 | List of incoming and outgoing movements of funds     |
 
 # Reference
 
@@ -242,9 +243,9 @@ of inflows and outflows net of any change amount (that is technically a transact
 | Field         | Type          | Description                                                                                                             |
 | ------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `blockheight` | int           | Blockheight of the event transaction                                                                                    |
-| `txid`        | string        | Hex string  of the event transaction id                                                                                 |
 | `kind`        | string        | Type of the event. Can be `receive`, `spend`                                                                            |
 | `date`        | int           | Timestamp of the event                                                                                                  |
-| `amount`      | int or `null` | Absolute amount in satoshis that is entering or exiting the wallet, `null` if the event is a `cancel` event             |
+| `amount`      | int           | Absolute amount in satoshis that is entering or exiting the wallet                                                      |
 | `miner_fee`   | int or `null` | Total of the miner fees caused by the operation, `null` if the event is a `receive` event                               |
-| `coins`       | string array  | List of outpoints of coins affected by the event excluding any change coin                                              |
+| `tx`          | string        | bitcoin transaction of the spend, `null` if the event is a `receive` event                                              |
+| `outpoint`    | string        | Hex string of the output created by this `receive` event, `null` if the event is a `spend` event                        |
