@@ -121,7 +121,7 @@ impl Step for DefineDescriptor {
                 self.user_xpub.valid = key.is_ok();
                 // Check the Network
                 if let Ok(key) = &key {
-                    self.user_xpub.valid = check_key_network(&key, ctx.bitcoin_config.network);
+                    self.user_xpub.valid = check_key_network(key, ctx.bitcoin_config.network);
                 }
             }
 
@@ -130,7 +130,7 @@ impl Step for DefineDescriptor {
                 self.heir_xpub.valid = key.is_ok();
                 // Check the Network
                 if let Ok(key) = &key {
-                    self.heir_xpub.valid = check_key_network(&key, ctx.bitcoin_config.network);
+                    self.heir_xpub.valid = check_key_network(key, ctx.bitcoin_config.network);
                 }
             }
 
@@ -158,13 +158,13 @@ impl Step for DefineDescriptor {
             let user_key = DescriptorPublicKey::from_str(&self.user_xpub.value);
             self.user_xpub.valid = user_key.is_ok();
             if let Ok(key) = &user_key {
-                self.user_xpub.valid = check_key_network(&key, ctx.bitcoin_config.network);
+                self.user_xpub.valid = check_key_network(key, ctx.bitcoin_config.network);
             }
 
             let heir_key = DescriptorPublicKey::from_str(&self.heir_xpub.value);
             self.heir_xpub.valid = heir_key.is_ok();
             if let Ok(key) = &heir_key {
-                self.heir_xpub.valid = check_key_network(&key, ctx.bitcoin_config.network);
+                self.heir_xpub.valid = check_key_network(key, ctx.bitcoin_config.network);
             }
 
             let sequence = self.sequence.value.parse::<u16>();

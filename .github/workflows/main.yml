@@ -59,10 +59,10 @@ jobs:
         run: cd gui && cargo fmt -- --check
       - name: clippy
         run: |
-          sudo apt-get update
-          && sudo apt-get install --allow-downgrades libudev1=245.4-4ubuntu3 libudev-dev=245.4-4ubuntu3 pkg-config libxkbcommon-dev libvulkan-dev
-          && cd gui
-          && cargo clippy --all-features --all-targets -- -D warnings
+          sudo apt-get update &
+          sudo apt-get install --allow-downgrades libudev1=245.4-4ubuntu3 libudev-dev=245.4-4ubuntu3 pkg-config libxkbcommon-dev libvulkan-dev &&
+          cd gui &&
+          cargo clippy --all-features --all-targets -- -D warnings
 
   unit_tests_gui:
     needs: linter_gui
@@ -94,7 +94,7 @@ jobs:
       - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          sudo apt-get update 
-          && sudo apt-get install --allow-downgrades libudev1=245.4-4ubuntu3 libudev-dev=245.4-4ubuntu3 pkg-config libxkbcommon-dev libvulkan-dev
-          && cd gui
-          && cargo test --verbose --color always -- --nocapture
+          sudo apt-get update &
+          sudo apt-get install --allow-downgrades libudev1=245.4-4ubuntu3 libudev-dev=245.4-4ubuntu3 pkg-config libxkbcommon-dev libvulkan-dev &&
+          cd gui &&
+          cargo test --verbose --color always -- --nocapture
