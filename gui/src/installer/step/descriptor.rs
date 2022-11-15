@@ -4,7 +4,10 @@ use iced::{pure::Element, Command};
 use minisafe::{
     descriptors::MultipathDescriptor,
     miniscript::{
-        bitcoin::util::bip32::{DerivationPath, Fingerprint},
+        bitcoin::{
+            util::bip32::{DerivationPath, Fingerprint},
+            Network,
+        },
         descriptor::{Descriptor, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
     },
 };
@@ -20,6 +23,7 @@ use crate::{
 };
 
 pub struct DefineDescriptor {
+    network: Network,
     imported_descriptor: form::Value<String>,
     user_xpub: form::Value<String>,
     heir_xpub: form::Value<String>,
@@ -32,6 +36,7 @@ pub struct DefineDescriptor {
 impl DefineDescriptor {
     pub fn new() -> Self {
         Self {
+            network: Network::Bitcoin,
             imported_descriptor: form::Value::default(),
             user_xpub: form::Value::default(),
             heir_xpub: form::Value::default(),
@@ -100,6 +105,10 @@ impl Step for DefineDescriptor {
         Command::none()
     }
 
+    fn load_context(&mut self, ctx: &Context) {
+        self.network = ctx.bitcoin_config.network;
+    }
+
     fn apply(&mut self, ctx: &mut Context) -> bool {
         // descriptor forms for import or creation cannot be both empty or filled.
         if self.imported_descriptor.value.is_empty()
@@ -108,14 +117,29 @@ impl Step for DefineDescriptor {
                 || self.sequence.value.is_empty())
         {
             if !self.user_xpub.value.is_empty() {
-                self.user_xpub.valid = DescriptorPublicKey::from_str(&self.user_xpub.value).is_ok();
+                let key = DescriptorPublicKey::from_str(&self.user_xpub.value);
+                self.user_xpub.valid = key.is_ok();
+                // Check the Network
+                if let Ok(key) = &key {
+                    self.user_xpub.valid = check_key_network(&key, ctx.bitcoin_config.network);
+                }
             }
+
             if !self.heir_xpub.value.is_empty() {
-                self.heir_xpub.valid = DescriptorPublicKey::from_str(&self.heir_xpub.value).is_ok();
+                let key = DescriptorPublicKey::from_str(&self.heir_xpub.value);
+                self.heir_xpub.valid = key.is_ok();
+                // Check the Network
+                if let Ok(key) = &key {
+                    self.heir_xpub.valid = check_key_network(&key, ctx.bitcoin_config.network);
+                }
             }
+
             if !self.sequence.value.is_empty() {
                 self.sequence.valid = self.sequence.value.parse::<u32>().is_ok();
+            } else {
+                self.sequence.valid = false;
             }
+
             if !self.imported_descriptor.value.is_empty() {
                 self.imported_descriptor.valid =
                     Descriptor::<DescriptorPublicKey>::from_str(&self.imported_descriptor.value)
@@ -133,9 +157,15 @@ impl Step for DefineDescriptor {
         } else {
             let user_key = DescriptorPublicKey::from_str(&self.user_xpub.value);
             self.user_xpub.valid = user_key.is_ok();
+            if let Ok(key) = &user_key {
+                self.user_xpub.valid = check_key_network(&key, ctx.bitcoin_config.network);
+            }
 
             let heir_key = DescriptorPublicKey::from_str(&self.heir_xpub.value);
-            self.user_xpub.valid = user_key.is_ok();
+            self.heir_xpub.valid = heir_key.is_ok();
+            if let Ok(key) = &heir_key {
+                self.heir_xpub.valid = check_key_network(&key, ctx.bitcoin_config.network);
+            }
 
             let sequence = self.sequence.value.parse::<u16>();
             self.sequence.valid = sequence.is_ok();
@@ -166,6 +196,7 @@ impl Step for DefineDescriptor {
             modal.view()
         } else {
             view::define_descriptor(
+                self.network,
                 &self.imported_descriptor,
                 &self.user_xpub,
                 &self.heir_xpub,
@@ -173,6 +204,26 @@ impl Step for DefineDescriptor {
                 self.error.as_ref(),
             )
         }
+    }
+}
+
+fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
+    match key {
+        DescriptorPublicKey::XPub(key) => {
+            if network == Network::Bitcoin {
+                key.xkey.network == Network::Bitcoin
+            } else {
+                key.xkey.network == Network::Testnet
+            }
+        }
+        DescriptorPublicKey::MultiXPub(key) => {
+            if network == Network::Bitcoin {
+                key.xkey.network == Network::Bitcoin
+            } else {
+                key.xkey.network == Network::Testnet
+            }
+        }
+        _ => true,
     }
 }
 
