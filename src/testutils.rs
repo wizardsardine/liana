@@ -1,5 +1,5 @@
 use crate::{
-    bitcoin::{BitcoinError, BitcoinInterface, BlockChainTip, UTxO},
+    bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
     database::{Coin, DatabaseConnection, DatabaseInterface, SpendBlock},
     descriptors, DaemonHandle,
@@ -67,11 +67,27 @@ impl BitcoinInterface for DummyBitcoind {
         Vec::new()
     }
 
-    fn common_ancestor(&self, _: &BlockChainTip) -> BlockChainTip {
+    fn common_ancestor(&self, _: &BlockChainTip) -> Option<BlockChainTip> {
         todo!()
     }
 
-    fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), BitcoinError> {
+    fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), String> {
+        todo!()
+    }
+
+    fn start_rescan(&self, _: &descriptors::MultipathDescriptor, _: u32) -> Result<(), String> {
+        todo!()
+    }
+
+    fn rescan_progress(&self) -> Option<f64> {
+        None
+    }
+
+    fn block_before_date(&self, _: u32) -> Option<BlockChainTip> {
+        todo!()
+    }
+
+    fn tip_time(&self) -> u32 {
         todo!()
     }
 }
@@ -248,6 +264,18 @@ impl DatabaseConnection for DummyDbConn {
     }
 
     fn rollback_tip(&mut self, _: &BlockChainTip) {
+        todo!()
+    }
+
+    fn rescan_timestamp(&mut self) -> Option<u32> {
+        None
+    }
+
+    fn set_rescan(&mut self, _: u32) {
+        todo!()
+    }
+
+    fn complete_rescan(&mut self) {
         todo!()
     }
 }

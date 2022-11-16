@@ -22,13 +22,19 @@ CREATE TABLE tip (
 
 /* This stores metadata about our wallet. We only support single wallet for
  * now (and the foreseeable future).
+ *
+ * The 'timestamp' field is the creation date of the wallet. We guarantee to have seen all
+ * information related to our descriptor(s) that occured after this date.
+ * The optional 'rescan_timestamp' field is a the timestamp we need to rescan the chain
+ * for events related to our descriptor(s) from.
  */
 CREATE TABLE wallets (
     id INTEGER PRIMARY KEY NOT NULL,
     timestamp INTEGER NOT NULL,
     main_descriptor TEXT NOT NULL,
     deposit_derivation_index INTEGER NOT NULL,
-    change_derivation_index INTEGER NOT NULL
+    change_derivation_index INTEGER NOT NULL,
+    rescan_timestamp INTEGER
 );
 
 /* Our (U)TxOs.
@@ -109,6 +115,7 @@ pub struct DbWallet {
     pub main_descriptor: MultipathDescriptor,
     pub deposit_derivation_index: bip32::ChildNumber,
     pub change_derivation_index: bip32::ChildNumber,
+    pub rescan_timestamp: Option<u32>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
@@ -127,12 +134,15 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
         let der_idx: u32 = row.get(4)?;
         let change_derivation_index = bip32::ChildNumber::from(der_idx);
 
+        let rescan_timestamp = row.get(5)?;
+
         Ok(DbWallet {
             id,
             timestamp,
             main_descriptor,
             deposit_derivation_index,
             change_derivation_index,
+            rescan_timestamp,
         })
     }
 }

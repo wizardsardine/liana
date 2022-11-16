@@ -84,6 +84,18 @@ fn broadcast_spend(control: &DaemonControl, params: Params) -> Result<serde_json
     Ok(serde_json::json!({}))
 }
 
+fn start_rescan(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let timestamp: u32 = params
+        .get(0, "timestamp")
+        .ok_or_else(|| Error::invalid_params("Missing 'timestamp' parameter."))?
+        .as_u64()
+        .and_then(|t| t.try_into().ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'timestamp' parameter."))?;
+    control.start_rescan(timestamp)?;
+
+    Ok(serde_json::json!({}))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -111,6 +123,12 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
         "getnewaddress" => serde_json::json!(&control.get_new_address()),
         "listcoins" => serde_json::json!(&control.list_coins()),
         "listspendtxs" => serde_json::json!(&control.list_spend()),
+        "startrescan" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'timestamp' parameter."))?;
+            start_rescan(control, params)?
+        }
         "stop" => serde_json::json!({}),
         "updatespend" => {
             let params = req

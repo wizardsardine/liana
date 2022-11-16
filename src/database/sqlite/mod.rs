@@ -21,7 +21,7 @@ use crate::{
     descriptors::MultipathDescriptor,
 };
 
-use std::{convert::TryInto, fmt, io, path};
+use std::{cmp, convert::TryInto, fmt, io, path};
 
 use miniscript::bitcoin::{
     self, consensus::encode, hashes::hex::ToHex, secp256k1,
@@ -270,6 +270,43 @@ impl SqliteConn {
             Ok(())
         })
         .expect("Database must be available")
+    }
+
+    pub fn set_wallet_rescan_timestamp(&mut self, timestamp: u32) {
+        db_exec(&mut self.conn, |db_tx| {
+            // NOTE: this will need to be updated if we ever implement multi-wallet support
+            db_tx
+                .execute(
+                    "UPDATE wallets SET rescan_timestamp = (?1)",
+                    rusqlite::params![timestamp],
+                )
+                .map(|_| ())
+        })
+        .expect("Database must be available")
+    }
+
+    /// Drop the rescan timestamp, and set it as the wallet creation timestamp if it
+    /// predates it.
+    ///
+    /// # Panics
+    /// - If called while rescan_timestamp is not set
+    pub fn complete_wallet_rescan(&mut self) {
+        let db_wallet = self.db_wallet();
+        let new_timestamp = cmp::min(
+            db_wallet.rescan_timestamp.expect("Must be set"),
+            db_wallet.timestamp,
+        );
+
+        db_exec(&mut self.conn, |db_tx| {
+            // NOTE: this will need to be updated if we ever implement multi-wallet support
+            db_tx
+                .execute(
+                    "UPDATE wallets SET timestamp = (?1), rescan_timestamp = NULL",
+                    rusqlite::params![new_timestamp],
+                )
+                .map(|_| ())
+        })
+        .expect("Database must be available");
     }
 
     /// Get all the coins from DB.
@@ -994,6 +1031,44 @@ mod tests {
             coin.block_time = None;
             coin.spend_block = None;
             assert_eq!(db_coins[&coins[4].outpoint], coin);
+        }
+
+        fs::remove_dir_all(&tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn db_rescan() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        {
+            let mut conn = db.connection().unwrap();
+
+            // At first no rescan is ongoing
+            let dummy_timestamp = 1_001;
+            let db_wallet = conn.db_wallet();
+            assert!(db_wallet.rescan_timestamp.is_none());
+            assert!(db_wallet.timestamp > dummy_timestamp);
+
+            // But if we set one there'll be
+            conn.set_wallet_rescan_timestamp(dummy_timestamp);
+            assert_eq!(conn.db_wallet().rescan_timestamp, Some(dummy_timestamp));
+
+            // Once it's done the rescan timestamp will be erased, and the
+            // wallet timestamp will be set to the dummy timestamp since it's
+            // lower.
+            conn.complete_wallet_rescan();
+            let db_wallet = conn.db_wallet();
+            assert!(db_wallet.rescan_timestamp.is_none());
+            assert_eq!(db_wallet.timestamp, dummy_timestamp);
+
+            // If we rescan from a later timestamp, we'll keep the existing
+            // wallet timestamp afterward.
+            conn.set_wallet_rescan_timestamp(dummy_timestamp + 1);
+            assert_eq!(conn.db_wallet().rescan_timestamp, Some(dummy_timestamp + 1));
+            conn.complete_wallet_rescan();
+            let db_wallet = conn.db_wallet();
+            assert!(db_wallet.rescan_timestamp.is_none());
+            assert_eq!(db_wallet.timestamp, dummy_timestamp);
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();

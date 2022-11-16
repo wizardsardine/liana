@@ -5,7 +5,7 @@
 mod utils;
 
 use crate::{
-    bitcoin::{BitcoinError, BitcoinInterface},
+    bitcoin::BitcoinInterface,
     database::{Coin, DatabaseInterface},
     descriptors, DaemonControl, VERSION,
 };
@@ -38,6 +38,9 @@ const MAX_FEE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
 // Assume that paying more than 1000sat/vb in feerate is a bug.
 const MAX_FEERATE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
 
+// Timestamp in the header of the genesis block. Used for sanity checks.
+const MAINNET_GENESIS_TIME: u32 = 1231006505;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     NoOutpoint,
@@ -56,6 +59,10 @@ pub enum CommandError {
     // FIXME: when upgrading Miniscript put the actual error there
     SpendFinalization(String),
     TxBroadcast(String),
+    AlreadyRescanning,
+    InsaneRescanTimestamp(u32),
+    /// An error that might occur in the racy rescan triggering logic.
+    RescanTrigger(String),
 }
 
 impl fmt::Display for CommandError {
@@ -82,6 +89,12 @@ impl fmt::Display for CommandError {
                 write!(f, "Failed to finalize the spend transaction PSBT: '{}'.", e)
             }
             Self::TxBroadcast(e) => write!(f, "Failed to broadcast transaction: '{}'.", e),
+            Self::AlreadyRescanning => write!(
+                f,
+                "There is already a rescan ongoing. Please wait for it to complete first."
+            ),
+            Self::InsaneRescanTimestamp(t) => write!(f, "Insane timestamp '{}'.", t),
+            Self::RescanTrigger(s) => write!(f, "Error while starting rescan: '{}'", s),
         }
     }
 }
@@ -186,6 +199,9 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
 
         let blockheight = db_conn.chain_tip().map(|tip| tip.height).unwrap_or(0);
+        let rescan_progress = db_conn
+            .rescan_timestamp()
+            .map(|_| self.bitcoin.rescan_progress().unwrap_or(1.0));
         GetInfoResult {
             version: VERSION.to_string(),
             network: self.config.bitcoin_config.network,
@@ -194,6 +210,7 @@ impl DaemonControl {
             descriptors: GetInfoDescriptors {
                 main: self.config.main_descriptor.clone(),
             },
+            rescan_progress,
         }
     }
 
@@ -485,10 +502,33 @@ impl DaemonControl {
         // Then, broadcast it (or try to, we never know if we are not going to hit an
         // error at broadcast time).
         let final_tx = spend_psbt.extract_tx();
-        match self.bitcoin.broadcast_tx(&final_tx) {
-            Ok(()) => Ok(()),
-            Err(BitcoinError::Broadcast(e)) => Err(CommandError::TxBroadcast(e)),
+        self.bitcoin
+            .broadcast_tx(&final_tx)
+            .map_err(CommandError::TxBroadcast)
+    }
+
+    /// Trigger a rescan of the block chain for transactions involving our main descriptor between
+    /// the given date and the current tip.
+    /// The date must be after the genesis block time and before the current tip blocktime.
+    pub fn start_rescan(&self, timestamp: u32) -> Result<(), CommandError> {
+        let mut db_conn = self.db.connection();
+
+        if timestamp < MAINNET_GENESIS_TIME || timestamp >= self.bitcoin.tip_time() {
+            return Err(CommandError::InsaneRescanTimestamp(timestamp));
         }
+        if db_conn.rescan_timestamp().is_some() || self.bitcoin.rescan_progress().is_some() {
+            return Err(CommandError::AlreadyRescanning);
+        }
+
+        // TODO: there is a race with the above check for whether the backend is already
+        // rescanning. This could make us crash with the bitcoind backend if someone triggered a
+        // rescan of the wallet just after we checked above and did now.
+        self.bitcoin
+            .start_rescan(&self.config.main_descriptor, timestamp)
+            .map_err(CommandError::RescanTrigger)?;
+        db_conn.set_rescan(timestamp);
+
+        Ok(())
     }
 }
 
@@ -505,6 +545,8 @@ pub struct GetInfoResult {
     pub blockheight: i32,
     pub sync: f64,
     pub descriptors: GetInfoDescriptors,
+    /// The progress as a percentage (between 0 and 1) of an ongoing rescan if there is any
+    pub rescan_progress: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

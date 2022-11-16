@@ -9,27 +9,9 @@ use crate::{
     descriptors,
 };
 
-use std::{collections::HashMap, error, fmt, sync};
+use std::{collections::HashMap, fmt, sync};
 
 use miniscript::bitcoin;
-
-/// Error occuring when querying our Bitcoin backend.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BitcoinError {
-    Broadcast(String),
-}
-
-impl fmt::Display for BitcoinError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            BitcoinError::Broadcast(reason) => {
-                write!(f, "Failed to broadcast transaction: '{}'", reason)
-            }
-        }
-    }
-}
-
-impl error::Error for BitcoinError {}
 
 /// Information about the best block in the chain
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
@@ -54,6 +36,9 @@ pub trait BitcoinInterface: Send {
 
     /// Get the best block info.
     fn chain_tip(&self) -> BlockChainTip;
+
+    /// Get the timestamp set in the best block's header.
+    fn tip_time(&self) -> u32;
 
     /// Check whether this former tip is part of the current best chain.
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool;
@@ -84,10 +69,25 @@ pub trait BitcoinInterface: Send {
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)>;
 
     /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
-    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip;
+    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip>;
 
     /// Broadcast this transaction to the Bitcoin P2P network
-    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError>;
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String>;
+
+    /// Trigger a rescan of the block chain for transactions related to this descriptor since
+    /// the given date.
+    fn start_rescan(
+        &self,
+        desc: &descriptors::MultipathDescriptor,
+        timestamp: u32,
+    ) -> Result<(), String>;
+
+    /// Rescan progress percentage. Between 0 and 1.
+    fn rescan_progress(&self) -> Option<f64>;
+
+    /// Get the last block chain tip with a timestamp below this. Timestamp must be a valid block
+    /// timestamp.
+    fn block_before_date(&self, timestamp: u32) -> Option<BlockChainTip>;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -260,31 +260,54 @@ impl BitcoinInterface for d::BitcoinD {
         spent
     }
 
-    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip {
+    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
         let mut stats = self.get_block_stats(tip.hash);
         let mut ancestor = *tip;
 
         while stats.confirmations == -1 {
-            stats = self.get_block_stats(stats.previous_blockhash);
+            stats = self.get_block_stats(stats.previous_blockhash?);
             ancestor = BlockChainTip {
                 hash: stats.blockhash,
                 height: stats.height,
             };
         }
 
-        ancestor
+        Some(ancestor)
     }
 
-    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
         match self.broadcast_tx(tx) {
             Ok(()) => Ok(()),
-            Err(BitcoindError::Server(e)) => Err(BitcoinError::Broadcast(e.to_string())),
+            Err(BitcoindError::Server(e)) => Err(e.to_string()),
             // We assume the Bitcoin backend doesn't fail, so it must be a JSONRPC error.
             Err(e) => panic!(
                 "Unexpected Bitcoin error when broadcast transaction: '{}'.",
                 e
             ),
         }
+    }
+
+    fn start_rescan(
+        &self,
+        desc: &descriptors::MultipathDescriptor,
+        timestamp: u32,
+    ) -> Result<(), String> {
+        // FIXME: in theory i think this could potentially fail to actually start the rescan.
+        self.start_rescan(desc, timestamp)
+            .map_err(|e| e.to_string())
+    }
+
+    fn rescan_progress(&self) -> Option<f64> {
+        self.rescan_progress()
+    }
+
+    fn block_before_date(&self, timestamp: u32) -> Option<BlockChainTip> {
+        self.tip_before_timestamp(timestamp)
+    }
+
+    fn tip_time(&self) -> u32 {
+        let tip = self.chain_tip();
+        self.get_block_stats(tip.hash).time
     }
 }
 
@@ -335,12 +358,32 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock().unwrap().spent_coins(outpoints)
     }
 
-    fn common_ancestor(&self, tip: &BlockChainTip) -> BlockChainTip {
+    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
         self.lock().unwrap().common_ancestor(tip)
     }
 
-    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
         self.lock().unwrap().broadcast_tx(tx)
+    }
+
+    fn start_rescan(
+        &self,
+        desc: &descriptors::MultipathDescriptor,
+        timestamp: u32,
+    ) -> Result<(), String> {
+        self.lock().unwrap().start_rescan(desc, timestamp)
+    }
+
+    fn rescan_progress(&self) -> Option<f64> {
+        self.lock().unwrap().rescan_progress()
+    }
+
+    fn block_before_date(&self, timestamp: u32) -> Option<BlockChainTip> {
+        self.lock().unwrap().block_before_date(timestamp)
+    }
+
+    fn tip_time(&self) -> u32 {
+        self.lock().unwrap().tip_time()
     }
 }
 

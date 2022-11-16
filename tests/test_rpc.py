@@ -1,4 +1,8 @@
+import os
 import pytest
+import random
+import shutil
+import time
 
 from fixtures import *
 from test_framework.serializations import PSBT, PSBT_IN_PARTIAL_SIG
@@ -9,9 +13,11 @@ def test_getinfo(minisafed):
     res = minisafed.rpc.getinfo()
     assert res["version"] == "0.1"
     assert res["network"] == "regtest"
-    wait_for(lambda: res["blockheight"] == 101)
+    wait_for(lambda: minisafed.rpc.getinfo()["blockheight"] == 101)
+    res = minisafed.rpc.getinfo()
     assert res["sync"] == 1.0
     assert "main" in res["descriptors"]
+    assert res["rescan_progress"] is None
 
 
 def test_getaddress(minisafed):
@@ -253,3 +259,87 @@ def test_broadcast_spend(minisafed, bitcoind):
     # Now we've signed and stored it, the daemon will take care of finalizing
     # the PSBT before broadcasting the transaction.
     minisafed.rpc.broadcastspend(txid)
+
+
+def test_start_rescan(minisafed, bitcoind):
+    """Test we successfully retrieve all our transactions after losing state by rescanning."""
+    initial_timestamp = int(time.time())
+
+    # Some utility functions to DRY
+    list_coins = lambda: minisafed.rpc.listcoins()["coins"]
+    unspent_coins = lambda: (
+        c for c in minisafed.rpc.listcoins()["coins"] if c["spend_info"] is None
+    )
+    sorted_coins = lambda: sorted(list_coins(), key=lambda c: c["outpoint"])
+
+    def all_spent(coins):
+        unspent = set(c["outpoint"] for c in unspent_coins())
+        for c in coins:
+            if c["outpoint"] in unspent:
+                return False
+        return True
+
+    # We can rescan from one second before the tip timestamp, that's almost a no-op.
+    tip_timestamp = bitcoind.rpc.getblockheader(bitcoind.rpc.getbestblockhash())["time"]
+    minisafed.rpc.startrescan(tip_timestamp - 1)
+    wait_for(lambda: minisafed.rpc.getinfo()["rescan_progress"] is None)
+    # We can't rescan from an insane timestamp though.
+    with pytest.raises(RpcError, match="Insane timestamp.*"):
+        minisafed.rpc.startrescan(tip_timestamp)
+    assert minisafed.rpc.getinfo()["rescan_progress"] is None
+    future_timestamp = tip_timestamp + 60 * 60
+    with pytest.raises(RpcError, match="Insane timestamp.*"):
+        minisafed.rpc.startrescan(future_timestamp)
+    assert minisafed.rpc.getinfo()["rescan_progress"] is None
+    prebitcoin_timestamp = 1231006505 - 1
+    with pytest.raises(RpcError, match="Insane timestamp."):
+        minisafed.rpc.startrescan(prebitcoin_timestamp)
+    assert minisafed.rpc.getinfo()["rescan_progress"] is None
+
+    # First, get some coins
+    for _ in range(10):
+        addr = minisafed.rpc.getnewaddress()["address"]
+        amount = random.randint(1, COIN * 10) / COIN
+        txid = bitcoind.rpc.sendtoaddress(addr, amount)
+        bitcoind.generate_block(random.randint(1, 10), wait_for_mempool=txid)
+    wait_for(lambda: len(list_coins()) == 10)
+
+    # Then simulate some regular activity (spend and receive)
+    # TODO: instead of having randomness we should lay down all different cases (with or
+    # without change, single or multiple inputs, sending externally or to self).
+    for _ in range(5):
+        addr = minisafed.rpc.getnewaddress()["address"]
+        amount = random.randint(1, COIN * 10) / COIN
+        txid = bitcoind.rpc.sendtoaddress(addr, amount)
+        avail = list(unspent_coins())
+        to_spend = random.sample(avail, random.randint(1, len(avail)))
+        spend_coins(minisafed, bitcoind, to_spend)
+        bitcoind.generate_block(random.randint(1, 5), wait_for_mempool=2)
+        wait_for(lambda: all_spent(to_spend))
+    wait_for(
+        lambda: minisafed.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
+    )
+
+    # Move time forward one day as bitcoind will rescan the last 2 hours of block upon
+    # importing a descriptor.
+    now = int(time.time())
+    added_time = 60 * 60 * 24
+    bitcoind.rpc.setmocktime(now + added_time)
+    bitcoind.generate_block(10)
+
+    # Now delete the wallet state. When starting up we'll re-create a fresh database
+    # and watchonly wallet. Those won't be aware of past coins for the configured
+    # descriptor.
+    coins_before = sorted_coins()
+    minisafed.restart_fresh(bitcoind)
+    assert len(list_coins()) == 0
+
+    # Once the rescan is done, we must have detected all previous transactions.
+    minisafed.rpc.startrescan(initial_timestamp)
+    rescan_progress = minisafed.rpc.getinfo()["rescan_progress"]
+    assert rescan_progress is None or 0 <= rescan_progress <= 1
+    wait_for(lambda: minisafed.rpc.getinfo()["rescan_progress"] is None)
+    wait_for(
+        lambda: minisafed.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
+    )
+    assert coins_before == sorted_coins()

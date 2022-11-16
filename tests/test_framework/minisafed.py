@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 
 from bip32.utils import coincurve
 from bip380.descriptors import Descriptor
@@ -10,6 +11,7 @@ from test_framework.utils import (
     VERBOSE,
     LOG_LEVEL,
     MINISAFED_PATH,
+    wait_for,
 )
 from test_framework.serializations import (
     PSBT,
@@ -34,6 +36,7 @@ class Minisafed(TailableProc):
     ):
         TailableProc.__init__(self, datadir, verbose=VERBOSE)
 
+        self.datadir = datadir
         self.prefix = os.path.split(datadir)[-1]
 
         self.owner_hd = owner_hd
@@ -144,6 +147,18 @@ class Minisafed(TailableProc):
             psbt.tx.wit.vtxinwit.append(psbt_in.map[PSBT_IN_FINAL_SCRIPTWITNESS])
 
         return psbt
+
+    def restart_fresh(self, bitcoind):
+        """Delete the internal state of the wallet and restart."""
+        self.stop()
+        dir_path = os.path.join(self.datadir, "regtest")
+        shutil.rmtree(dir_path)
+        wallet_path = os.path.join(dir_path, "minisafed_watchonly_wallet")
+        bitcoind.node_rpc.unloadwallet(wallet_path)
+        self.start()
+        wait_for(
+            lambda: self.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
+        )
 
     def start(self):
         TailableProc.start(self)

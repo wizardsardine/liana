@@ -1,9 +1,11 @@
 ///! Implementation of the Bitcoin interface using bitcoind.
 ///!
 ///! We use the RPC interface and a watchonly descriptor wallet.
+mod utils;
 use crate::{bitcoin::BlockChainTip, config, descriptors::MultipathDescriptor};
+use utils::block_before_date;
 
-use std::{collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
+use std::{cmp, collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
 
 use jsonrpc::{
     arg,
@@ -40,6 +42,7 @@ pub enum BitcoindError {
     InvalidVersion(u64),
     NetworkMismatch(String /*config*/, String /*bitcoind*/),
     MissingDescriptor,
+    StartRescan,
 }
 
 impl BitcoindError {
@@ -51,6 +54,20 @@ impl BitcoindError {
                 code,
                 ..
             })) => *code == -28,
+            _ => false,
+        }
+    }
+
+    /// Is it a timeout of any kind?
+    pub fn is_timeout(&self) -> bool {
+        match self {
+            BitcoindError::Server(jsonrpc::Error::Transport(ref e)) => {
+                match e.downcast_ref::<simple_http::Error>() {
+                    Some(simple_http::Error::Timeout) => true,
+                    Some(simple_http::Error::SocketError(e)) => e.kind() == io::ErrorKind::TimedOut,
+                    _ => false,
+                }
+            }
             _ => false,
         }
     }
@@ -97,6 +114,12 @@ impl std::fmt::Display for BitcoindError {
             BitcoindError::MissingDescriptor => {
                 write!(f, "The watchonly wallet loaded on bitcoind does not have the main descriptor imported.")
             }
+            BitcoindError::StartRescan => {
+                write!(
+                    f,
+                    "Error while triggering the rescan for the bitcoind watchonly wallet."
+                )
+            }
         }
     }
 }
@@ -116,7 +139,11 @@ impl From<simple_http::Error> for BitcoindError {
 }
 
 pub struct BitcoinD {
+    /// Client for generalistic calls.
     node_client: Client,
+    /// A client that will disregard responses to the queries it makes.
+    sendonly_client: Client,
+    /// A client for calls related to the wallet.
     watchonly_client: Client,
     watchonly_wallet_path: String,
     /// How many times we'll retry upon failure to send a request.
@@ -183,12 +210,21 @@ impl BitcoinD {
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
+                .cookie_auth(cookie_string.clone())
+                .build(),
+        );
+        let sendonly_client = Client::with_transport(
+            SimpleHttpTransport::builder()
+                .url(&watchonly_url)
+                .map_err(BitcoindError::from)?
+                .timeout(Duration::from_secs(1))
                 .cookie_auth(cookie_string)
                 .build(),
         );
 
         Ok(BitcoinD {
             node_client,
+            sendonly_client,
             watchonly_client,
             watchonly_wallet_path,
             retries: 0,
@@ -219,8 +255,10 @@ impl BitcoinD {
                             Some(simple_http::Error::Timeout)
                             | Some(simple_http::Error::SocketError(_))
                             | Some(simple_http::Error::HttpErrorCode(503)) => {
-                                std::thread::sleep(Duration::from_secs(1));
-                                log::debug!("Retrying RPC request to bitcoind: attempt #{}", i);
+                                if i <= self.retries {
+                                    std::thread::sleep(Duration::from_secs(1));
+                                    log::debug!("Retrying RPC request to bitcoind: attempt #{}", i);
+                                }
                                 error = Some(e);
                             }
                             _ => return Err(e),
@@ -235,30 +273,61 @@ impl BitcoinD {
         Err(error.expect("Always set if we reach this point"))
     }
 
+    fn try_request(&self, client: &Client, req: jsonrpc::Request) -> Result<Json, BitcoindError> {
+        log::trace!("Sending to bitcoind: {:#?}", req);
+        match client.send_request(req) {
+            Ok(resp) => {
+                let res = resp.result().map_err(BitcoindError::Server)?;
+                log::trace!("Got from bitcoind: {:#?}", res);
+
+                Ok(res)
+            }
+            Err(e) => Err(BitcoindError::Server(e)),
+        }
+    }
+
+    fn make_request_inner<'a, 'b>(
+        &self,
+        client: &Client,
+        method: &'a str,
+        params: &'b [Box<serde_json::value::RawValue>],
+        retry: bool,
+    ) -> Result<Json, BitcoindError> {
+        let req = client.build_request(method, params);
+        if retry {
+            self.retry(|| self.try_request(client, req.clone()))
+        } else {
+            self.try_request(client, req)
+        }
+    }
+
     fn make_request<'a, 'b>(
         &self,
         client: &Client,
         method: &'a str,
         params: &'b [Box<serde_json::value::RawValue>],
     ) -> Result<Json, BitcoindError> {
-        self.retry(|| {
-            let req = client.build_request(method, params);
-            log::trace!("Sending to bitcoind: {:#?}", req);
-            match client.send_request(req) {
-                Ok(resp) => {
-                    let res = resp.result().map_err(BitcoindError::Server)?;
-                    log::trace!("Got from bitcoind: {:#?}", res);
-
-                    Ok(res)
-                }
-                Err(e) => Err(BitcoindError::Server(e)),
-            }
-        })
+        self.make_request_inner(client, method, params, true)
     }
 
-    fn make_node_request(&self, method: &str, params: &[Box<serde_json::value::RawValue>]) -> Json {
-        self.make_request(&self.node_client, method, params)
-            .expect("We must not fail to make a request for more than a minute")
+    // Make a request for which you don't expect a response. This is achieved by setting a very low
+    // timeout on the connection.
+    fn make_noreply_request(
+        &self,
+        method: &str,
+        params: &[Box<serde_json::value::RawValue>],
+    ) -> Result<(), BitcoindError> {
+        match self.make_request_inner(&self.sendonly_client, method, params, false) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // A timeout error is expected, as that's our workaround to avoid blocking
+                if e.is_timeout() {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     fn make_fallible_node_request(
@@ -267,6 +336,11 @@ impl BitcoinD {
         params: &[Box<serde_json::value::RawValue>],
     ) -> Result<Json, BitcoindError> {
         self.make_request(&self.node_client, method, params)
+    }
+
+    fn make_node_request(&self, method: &str, params: &[Box<serde_json::value::RawValue>]) -> Json {
+        self.make_request(&self.sendonly_client, method, params)
+            .expect("We must not fail to make a request for more than a minute")
     }
 
     fn make_wallet_request(
@@ -356,7 +430,6 @@ impl BitcoinD {
         let descriptors = [desc.receive_descriptor(), desc.change_descriptor()]
             .iter()
             .map(|desc| {
-                // TODO: rescan feature will probably need another timestamp than 'now'
                 serde_json::json!({
                     "desc": desc.to_string(),
                     "timestamp": "now",
@@ -381,21 +454,41 @@ impl BitcoinD {
         }
     }
 
-    fn list_descriptors(&self) -> Vec<String> {
+    fn list_descriptors(&self) -> Vec<ListDescEntry> {
         self.make_wallet_request("listdescriptors", &[])
             .get("descriptors")
             .and_then(Json::as_array)
             .expect("Missing or invalid 'descriptors' field in 'listdescriptors' response")
             .iter()
             .map(|elem| {
-                elem.get("desc")
+                let desc = elem
+                    .get("desc")
                     .and_then(Json::as_str)
                     .expect(
                         "Missing or invalid 'desc' field in 'listdescriptors' response's entries",
                     )
-                    .to_string()
+                    .to_string();
+                let range = elem.get("range").and_then(Json::as_array).map(|a| {
+                    a.iter()
+                        .map(|e| e.as_u64().expect("Invalid range index") as u32)
+                        .collect::<Vec<_>>()
+                        .try_into()
+                        .expect("Range is always an array of size 2")
+                });
+                let timestamp = elem
+                    .get("timestamp")
+                    .and_then(Json::as_u64)
+                    .expect("A valid timestamp is always present")
+                    .try_into()
+                    .expect("timestamp must fit");
+
+                ListDescEntry {
+                    desc,
+                    range,
+                    timestamp,
+                }
             })
-            .collect::<Vec<String>>()
+            .collect()
     }
 
     /// Create the watchonly wallet on bitcoind, and import it the main descriptor.
@@ -479,7 +572,11 @@ impl BitcoinD {
         // Check our main descriptor is imported in this wallet.
         let receive_desc = main_descriptor.receive_descriptor();
         let change_desc = main_descriptor.change_descriptor();
-        let desc_list = self.list_descriptors();
+        let desc_list: Vec<String> = self
+            .list_descriptors()
+            .into_iter()
+            .map(|entry| entry.desc)
+            .collect();
         if !desc_list.contains(&receive_desc.to_string())
             || !desc_list.contains(&change_desc.to_string())
         {
@@ -679,18 +776,32 @@ impl BitcoinD {
         let previous_blockhash = res
             .get("previousblockhash")
             .and_then(Json::as_str)
-            .and_then(|s| bitcoin::BlockHash::from_str(s).ok())
-            .expect("Invalid previousblockhash in `getblockheader` response");
+            .map(|s| {
+                bitcoin::BlockHash::from_str(s)
+                    .expect("Invalid previousblockhash in `getblockheader` response")
+            });
         let height = res
             .get("height")
             .and_then(Json::as_i64)
-            .expect("Invalid height in `getblockheader` response: not an u32")
+            .expect("Invalid height in `getblockheader` response: not an i64")
             as i32;
+        let time = res
+            .get("time")
+            .and_then(Json::as_u64)
+            .expect("Invalid timestamp in `getblockheader` response: not an u64")
+            as u32;
+        let median_time_past = res
+            .get("mediantime")
+            .and_then(Json::as_u64)
+            .expect("Invalid median timestamp in `getblockheader` response: not an u64")
+            as u32;
         BlockStats {
             confirmations,
             previous_blockhash,
             height,
             blockhash,
+            time,
+            median_time_past,
         }
     }
 
@@ -700,6 +811,111 @@ impl BitcoinD {
             &params!(bitcoin::consensus::encode::serialize_hex(tx)),
         )?;
         Ok(())
+    }
+
+    // For the given descriptor strings check if they are imported at this timestamp in the
+    // watchonly wallet.
+    fn check_descs_timestamp(&self, descs: &[String], timestamp: u32) -> bool {
+        let current_descs = self.list_descriptors();
+
+        for desc in descs {
+            let present = current_descs
+                .iter()
+                .find(|entry| &entry.desc == desc)
+                .map(|entry| entry.timestamp == timestamp)
+                .unwrap_or(false);
+            if !present {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn start_rescan(
+        &self,
+        desc: &MultipathDescriptor,
+        timestamp: u32,
+    ) -> Result<(), BitcoindError> {
+        // Re-import the receive and change descriptors to the watchonly wallet for the purpose of
+        // rescanning.
+        // The range of the newly imported descriptors supposed to update the existing ones must
+        // have a range inclusive of the existing ones. We always use 0 as the initial index so
+        // this is just determining the maximum index to use.
+        let max_range = self
+            .list_descriptors()
+            .into_iter()
+            // 1_000 is bitcoind's default and what we use at initial import.
+            .fold(1_000, |range, entry| {
+                cmp::max(range, entry.range.map(|r| r[1]).unwrap_or(0))
+            });
+        let desc_str = [
+            desc.receive_descriptor().to_string(),
+            desc.change_descriptor().to_string(),
+        ];
+        let desc_json: Vec<Json> = desc_str
+            .iter()
+            .map(|desc_str| {
+                serde_json::json!({
+                    "desc": desc_str,
+                    "timestamp": timestamp,
+                    "active": false,
+                    "range": max_range,
+                })
+            })
+            .collect();
+
+        // Since we don't wait for a response (which would make us block for the entire duration of
+        // the rescan), we can't know for sure whether it was started successfully. So what we do
+        // here is retrying a few times (since the noreply_request disables our generalistic retry
+        // logic) until we notice the descriptors are successfully imported at this timestamp on
+        // the watchonly wallet.
+        // NOTE: if the rescan gets aborted through the 'abortrescan' RPC we won't see the
+        // error and bitcoind will keep the new timestamps for the descriptors as if it had
+        // successfully rescanned them.
+        const NUM_RETRIES: usize = 10;
+        let mut i = 0;
+        loop {
+            if let Err(e) = self.make_noreply_request(
+                "importdescriptors",
+                &params!(Json::Array(desc_json.clone())),
+            ) {
+                log::error!(
+                    "Error when calling 'importdescriptors' for rescanning: {}",
+                    e
+                );
+            }
+
+            i += 1;
+            if self.check_descs_timestamp(&desc_str, timestamp) {
+                return Ok(());
+            } else if i >= NUM_RETRIES {
+                return Err(BitcoindError::StartRescan);
+            } else {
+                log::debug!("Sleeping a second before retrying to trigger the rescan");
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        }
+    }
+
+    /// Get the progress of the ongoing rescan, if there is any.
+    pub fn rescan_progress(&self) -> Option<f64> {
+        self.make_wallet_request("getwalletinfo", &[])
+            .get("scanning")
+            // If no rescan is ongoing, it will fail cause it would be 'false'
+            .and_then(Json::as_object)
+            .and_then(|map| map.get("progress"))
+            .and_then(Json::as_f64)
+    }
+
+    /// Get the height and hash of the last block with a timestamp below the given one.
+    pub fn tip_before_timestamp(&self, timestamp: u32) -> Option<BlockChainTip> {
+        block_before_date(
+            timestamp,
+            self.chain_tip(),
+            |h| self.get_block_hash(h),
+            |h| self.get_block_stats(h),
+        )
     }
 }
 // Bitcoind uses a guess for the value of verificationprogress. It will eventually get to
@@ -713,6 +929,14 @@ fn roundup_progress(progress: f64) -> f64 {
     } else {
         (progress_rounded as f64 / precision) as f64
     }
+}
+
+/// An entry in the 'listdescriptors' result.
+#[derive(Debug, Clone)]
+pub struct ListDescEntry {
+    pub desc: String,
+    pub range: Option<[u32; 2]>,
+    pub timestamp: u32,
 }
 
 /// A 'received' entry in the 'listsinceblock' result.
@@ -848,7 +1072,9 @@ impl From<Json> for GetTxRes {
 #[derive(Debug, Clone)]
 pub struct BlockStats {
     pub confirmations: i32,
-    pub previous_blockhash: bitcoin::BlockHash,
+    pub previous_blockhash: Option<bitcoin::BlockHash>,
     pub blockhash: bitcoin::BlockHash,
     pub height: i32,
+    pub time: u32,
+    pub median_time_past: u32,
 }
