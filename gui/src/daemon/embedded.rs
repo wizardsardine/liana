@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 use super::{model::*, Daemon, DaemonError};
 use minisafe::{
@@ -10,7 +10,7 @@ use minisafe::{
 
 pub struct EmbeddedDaemon {
     config: Config,
-    handle: Option<Mutex<DaemonHandle>>,
+    handle: Option<RwLock<DaemonHandle>>,
 }
 
 impl EmbeddedDaemon {
@@ -24,7 +24,7 @@ impl EmbeddedDaemon {
     pub fn start(&mut self) -> Result<(), DaemonError> {
         let handle = DaemonHandle::start_default(self.config.clone())
             .map_err(|e| DaemonError::Start(e.to_string()))?;
-        self.handle = Some(Mutex::new(handle));
+        self.handle = Some(RwLock::new(handle));
         Ok(())
     }
 }
@@ -48,7 +48,7 @@ impl Daemon for EmbeddedDaemon {
         let next =
             DaemonHandle::start_default(cfg).map_err(|e| DaemonError::Start(e.to_string()))?;
         self.handle.take().unwrap().into_inner().unwrap().shutdown();
-        self.handle = Some(Mutex::new(next));
+        self.handle = Some(RwLock::new(next));
         Ok(())
     }
 
@@ -69,7 +69,7 @@ impl Daemon for EmbeddedDaemon {
             .handle
             .as_ref()
             .ok_or(DaemonError::NoAnswer)?
-            .lock()
+            .read()
             .unwrap()
             .control
             .get_info())
@@ -80,7 +80,7 @@ impl Daemon for EmbeddedDaemon {
             .handle
             .as_ref()
             .ok_or(DaemonError::NoAnswer)?
-            .lock()
+            .read()
             .unwrap()
             .control
             .get_new_address())
@@ -91,7 +91,7 @@ impl Daemon for EmbeddedDaemon {
             .handle
             .as_ref()
             .ok_or(DaemonError::NoAnswer)?
-            .lock()
+            .read()
             .unwrap()
             .control
             .list_coins())
@@ -102,7 +102,7 @@ impl Daemon for EmbeddedDaemon {
             .handle
             .as_ref()
             .ok_or(DaemonError::NoAnswer)?
-            .lock()
+            .read()
             .unwrap()
             .control
             .list_spend())
@@ -117,7 +117,7 @@ impl Daemon for EmbeddedDaemon {
         self.handle
             .as_ref()
             .ok_or(DaemonError::NoAnswer)?
-            .lock()
+            .read()
             .unwrap()
             .control
             .create_spend(coins_outpoints, destinations, feerate_vb)
@@ -128,7 +128,7 @@ impl Daemon for EmbeddedDaemon {
         self.handle
             .as_ref()
             .ok_or(DaemonError::NoAnswer)?
-            .lock()
+            .read()
             .unwrap()
             .control
             .update_spend(psbt.clone())
@@ -139,7 +139,7 @@ impl Daemon for EmbeddedDaemon {
         self.handle
             .as_ref()
             .ok_or(DaemonError::NoAnswer)?
-            .lock()
+            .read()
             .unwrap()
             .control
             .delete_spend(txid);
@@ -150,10 +150,21 @@ impl Daemon for EmbeddedDaemon {
         self.handle
             .as_ref()
             .ok_or(DaemonError::NoAnswer)?
-            .lock()
+            .read()
             .unwrap()
             .control
             .broadcast_spend(txid)
+            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+    }
+
+    fn start_rescan(&self, t: u32) -> Result<(), DaemonError> {
+        self.handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .read()
+            .unwrap()
+            .control
+            .start_rescan(t)
             .map_err(|e| DaemonError::Unexpected(e.to_string()))
     }
 }

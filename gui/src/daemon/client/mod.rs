@@ -113,6 +113,11 @@ impl<C: Client + Debug> Daemon for Minisafed<C> {
             self.call("broadcastspend", Some(vec![txid.to_string()]))?;
         Ok(())
     }
+
+    fn start_rescan(&self, t: u32) -> Result<(), DaemonError> {
+        let _res: serde_json::value::Value = self.call("startrescan", Some(vec![t]))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

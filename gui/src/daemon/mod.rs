@@ -88,4 +88,5 @@ pub trait Daemon: Debug {
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError>;
     fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
     fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
+    fn start_rescan(&self, t: u32) -> Result<(), DaemonError>;
 }

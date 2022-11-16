@@ -225,7 +225,19 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                     .spacing(15)
                     .height(Length::Fill),
             )
-            .push(container(settings_button).height(Length::Shrink)),
+            .push(
+                container(
+                    column()
+                        .spacing(10)
+                        .push_maybe(cache.rescan_progress.map(|p| {
+                            container(text(&format!("  Rescan...{:.2}%  ", p * 100.0)))
+                                .padding(5)
+                                .style(badge::PillStyle::Simple)
+                        }))
+                        .push(settings_button),
+                )
+                .height(Length::Shrink),
+            ),
     )
     .style(SidebarStyle)
 }

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use chrono::prelude::*;
 use iced::{pure::Element, Command};
 
 use minisafe::config::Config;
@@ -42,8 +43,11 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
-    pub fn new(config: Config, daemon_is_external: bool) -> Self {
-        let settings = vec![BitcoindSettings::new(&config).into()];
+    pub fn new(config: Config, cache: &Cache, daemon_is_external: bool) -> Self {
+        let settings = vec![
+            BitcoindSettings::new(&config).into(),
+            RescanSetting::new(cache.rescan_progress).into(),
+        ];
 
         SettingsState {
             daemon_is_external,
@@ -51,7 +55,8 @@ impl SettingsState {
             config_updated: false,
             config,
             settings,
-            current: None,
+            // If a scan is running, the current setting edited is the Rescan panel.
+            current: cache.rescan_progress.map(|_| 1),
         }
     }
 }
@@ -82,6 +87,14 @@ impl State for SettingsState {
                         if let Some(setting) = self.settings.get_mut(current) {
                             setting.edited(false);
                         }
+                    }
+                }
+            },
+            Message::Info(res) => match res {
+                Err(e) => self.warning = Some(e),
+                Ok(info) => {
+                    if info.rescan_progress == Some(1.0) {
+                        self.settings[1].edited(true);
                     }
                 }
             },
@@ -235,5 +248,100 @@ impl Setting for BitcoindSettings {
                 can_edit,
             )
         }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct RescanSetting {
+    edit: bool,
+    processing: bool,
+    success: bool,
+    year: form::Value<String>,
+    month: form::Value<String>,
+    day: form::Value<String>,
+}
+
+impl From<RescanSetting> for Box<dyn Setting> {
+    fn from(s: RescanSetting) -> Box<dyn Setting> {
+        Box::new(s)
+    }
+}
+
+impl RescanSetting {
+    pub fn new(rescan_progress: Option<f64>) -> Self {
+        Self {
+            processing: rescan_progress.is_some(),
+            ..Default::default()
+        }
+    }
+}
+
+impl Setting for RescanSetting {
+    fn edited(&mut self, success: bool) {
+        self.processing = false;
+        self.success = success;
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        message: view::SettingsMessage,
+    ) -> Command<Message> {
+        match message {
+            view::SettingsMessage::Edit => {
+                if !self.processing {
+                    self.edit = true;
+                }
+            }
+            view::SettingsMessage::CancelEdit => {
+                if !self.processing {
+                    self.edit = false;
+                }
+            }
+            view::SettingsMessage::FieldEdited(field, value) => {
+                if !self.processing && (value.is_empty() || u32::from_str(&value).is_ok()) {
+                    match field {
+                        "rescan_year" => self.year.value = value,
+                        "rescan_month" => self.month.value = value,
+                        "rescan_day" => self.day.value = value,
+                        _ => {}
+                    }
+                }
+            }
+            view::SettingsMessage::ConfirmEdit => {
+                let date_time = NaiveDate::from_ymd(
+                    i32::from_str(&self.year.value).unwrap_or(1),
+                    u32::from_str(&self.month.value).unwrap_or(1),
+                    u32::from_str(&self.day.value).unwrap_or(1),
+                )
+                .and_hms(0, 0, 0);
+                let t = date_time.timestamp() as u32;
+                self.processing = true;
+                log::info!("Asking deamon to rescan with timestamp: {}", t);
+                return Command::perform(
+                    async move { daemon.start_rescan(t).map_err(|e| e.into()) },
+                    Message::StartRescan,
+                );
+            }
+        };
+        Command::none()
+    }
+
+    fn view<'a>(
+        &self,
+        _config: &'a Config,
+        cache: &'a Cache,
+        can_edit: bool,
+    ) -> Element<'a, view::SettingsMessage> {
+        view::settings::rescan(
+            &self.year,
+            &self.month,
+            &self.day,
+            cache.rescan_progress,
+            self.success,
+            self.processing,
+            can_edit,
+        )
     }
 }
