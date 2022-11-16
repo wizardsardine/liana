@@ -14,7 +14,7 @@ use crate::{
     database::{
         sqlite::{
             schema::{DbAddress, DbCoin, DbSpendTransaction, DbTip, DbWallet},
-            utils::{create_fresh_db, db_exec, db_query, db_tx_query, populate_address_mapping},
+            utils::{create_fresh_db, db_exec, db_query, db_tx_query, LOOK_AHEAD_LIMIT},
         },
         Coin,
     },
@@ -24,8 +24,11 @@ use crate::{
 use std::{cmp, convert::TryInto, fmt, io, path};
 
 use miniscript::bitcoin::{
-    self, consensus::encode, hashes::hex::ToHex, secp256k1,
-    util::psbt::PartiallySignedTransaction as Psbt,
+    self,
+    consensus::encode,
+    hashes::hex::ToHex,
+    secp256k1,
+    util::{bip32, psbt::PartiallySignedTransaction as Psbt},
 };
 
 const DB_VERSION: i64 = 0;
@@ -210,61 +213,61 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
-    pub fn increment_deposit_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
+    /// Set the derivation index for receiving or change addresses.
+    ///
+    /// This will populate the address->deriv_index mapping with all the new entries between the
+    /// former and new gap limit indexes.
+    pub fn set_derivation_index(
+        &mut self,
+        index: bip32::ChildNumber,
+        change: bool,
+        secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    ) {
         let network = self.db_tip().network;
 
         db_exec(&mut self.conn, |db_tx| {
             let db_wallet: DbWallet =
                 db_tx_query(db_tx, "SELECT * FROM wallets", rusqlite::params![], |row| {
                     row.try_into()
-                })
-                .expect("Db must not fail")
+                })?
                 .pop()
                 .expect("There is always a row in the wallet table");
-            let next_index: u32 = db_wallet
-                .deposit_derivation_index
-                .increment()
-                .expect("Must not get in hardened territory")
-                .into();
-            // NOTE: should be updated if we ever have multi-wallet support
-            db_tx.execute(
-                "UPDATE wallets SET deposit_derivation_index = (?1)",
-                rusqlite::params![next_index],
-            )?;
 
-            if next_index > db_wallet.change_derivation_index.into() {
-                populate_address_mapping(db_tx, &db_wallet, next_index, network, secp)?;
+            // First of all set the derivation index
+            let index_u32: u32 = index.into();
+            if change {
+                db_tx.execute(
+                    "UPDATE wallets SET change_derivation_index = (?1)",
+                    rusqlite::params![index_u32],
+                )?;
+            } else {
+                db_tx.execute(
+                    "UPDATE wallets SET deposit_derivation_index = (?1)",
+                    rusqlite::params![index_u32],
+                )?;
             }
 
-            Ok(())
-        })
-        .expect("Database must be available")
-    }
+            // Now if this new index is higher than the highest of our current derivation indexes,
+            // populate the addresses mapping for derivation indexes between our previous "gap
+            // limit index" and the new one.
+            let curr_highest_index = cmp::max(
+                db_wallet.deposit_derivation_index,
+                db_wallet.change_derivation_index,
+            ).into();
+            if index_u32 > curr_highest_index {
+                let receive_desc = db_wallet.main_descriptor.receive_descriptor();
+                let change_desc = db_wallet.main_descriptor.change_descriptor();
 
-    pub fn increment_change_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
-        let network = self.db_tip().network;
+                for index in curr_highest_index + 1..=index_u32 {
+                    let la_index = index + LOOK_AHEAD_LIMIT - 1;
+                    let receive_addr = receive_desc.derive(la_index.into(), secp).address(network);
+                    let change_addr = change_desc.derive(la_index.into(), secp).address(network);
+                    db_tx.execute(
+                        "INSERT INTO addresses (receive_address, change_address, derivation_index) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![receive_addr.to_string(), change_addr.to_string(), la_index],
+                    )?;
+                }
 
-        db_exec(&mut self.conn, |db_tx| {
-            let db_wallet: DbWallet =
-                db_tx_query(db_tx, "SELECT * FROM wallets", rusqlite::params![], |row| {
-                    row.try_into()
-                })
-                .expect("Db must not fail")
-                .pop()
-                .expect("There is always a row in the wallet table");
-            let next_index: u32 = db_wallet
-                .change_derivation_index
-                .increment()
-                .expect("Must not get in hardened territory")
-                .into();
-            // NOTE: should be updated if we ever have multi-wallet support
-            db_tx.execute(
-                "UPDATE wallets SET change_derivation_index = (?1)",
-                rusqlite::params![next_index],
-            )?;
-
-            if next_index > db_wallet.deposit_derivation_index.into() {
-                populate_address_mapping(db_tx, &db_wallet, next_index, network, secp)?;
             }
 
             Ok(())
@@ -807,7 +810,7 @@ mod tests {
             assert!(conn.db_address(&addr).is_none());
 
             // But if we increment the deposit derivation index, the 200th one will be there.
-            conn.increment_deposit_index(&secp);
+            conn.set_derivation_index(1.into(), false, &secp);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 200.into());
 
@@ -829,11 +832,11 @@ mod tests {
             assert!(conn.db_address(&addr).is_none());
 
             // If we increment the *change* derivation index to 1, it will still not be there.
-            conn.increment_change_index(&secp);
+            conn.set_derivation_index(1.into(), true, &secp);
             assert!(conn.db_address(&addr).is_none());
 
-            // But doing it once again it will be there for both change and receive.
-            conn.increment_change_index(&secp);
+            // But incrementing it once again it will be there for both change and receive.
+            conn.set_derivation_index(2.into(), true, &secp);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 201.into());
             let addr = options
@@ -843,6 +846,19 @@ mod tests {
                 .address(options.bitcoind_network);
             let db_addr = conn.db_address(&addr).unwrap();
             assert_eq!(db_addr.derivation_index, 201.into());
+
+            // Now setting it to a much higher will fill all the addresses within the gap
+            conn.set_derivation_index(52.into(), true, &secp);
+            for index in 2..52 {
+                let look_ahead_index = 200 + index;
+                let addr = options
+                    .main_descriptor
+                    .receive_descriptor()
+                    .derive(look_ahead_index.into(), &secp)
+                    .address(options.bitcoind_network);
+                let db_addr = conn.db_address(&addr).unwrap();
+                assert_eq!(db_addr.derivation_index, look_ahead_index.into());
+            }
         }
 
         fs::remove_dir_all(&tmp_dir).unwrap();
