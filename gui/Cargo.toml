@@ -21,6 +21,8 @@ base64 = "0.13"
 
 iced = { version = "0.4", default-features= false, features = ["tokio", "wgpu", "svg", "qr_code", "pure"] }
 iced_native = "0.5"
+iced_lazy = { version = "0.1.1", features = ["pure"] }
+iced_pure = "0.2.2"
 
 tokio = {version = "1.21.0", features = ["signal"]}
 serde = { version = "1.0", features = ["derive"] }

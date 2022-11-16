@@ -14,6 +14,14 @@ fn icon(unicode: char) -> Text {
         .size(20)
 }
 
+pub fn hourglass_icon() -> Text {
+    icon('\u{F41F}')
+}
+
+pub fn hourglass_done_icon() -> Text {
+    icon('\u{F41E}')
+}
+
 pub fn vault_icon() -> Text {
     icon('\u{F65A}')
 }
