@@ -298,6 +298,7 @@ impl DaemonControl {
             in_value += coin.amount;
             txins.push(bitcoin::TxIn {
                 previous_output: *op,
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
                 // TODO: once we move to Taproot, anti-fee-sniping using nSequence
                 ..bitcoin::TxIn::default()
             });
