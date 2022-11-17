@@ -1,4 +1,4 @@
-use minisafe::config::{config_folder_path, Config};
+use liana::config::{config_folder_path, Config};
 
 use std::{
     env,
@@ -14,7 +14,7 @@ use std::os::unix::net::UnixStream;
 // Exits with error
 fn show_usage() {
     eprintln!("Usage:");
-    eprintln!(" minisafe-cli [--conf conf_path] [--raw] <command> [<param 1> <param 2> ...]");
+    eprintln!(" liana-cli [--conf conf_path] [--raw] <command> [<param 1> <param 2> ...]");
     process::exit(1);
 }
 
@@ -73,7 +73,7 @@ fn rpc_request(method: String, params: Vec<String>) -> Json {
     object.insert("jsonrpc".to_string(), Json::String("2.0".to_string()));
     object.insert(
         "id".to_string(),
-        Json::String(format!("minisafe-cli-{}", process::id())),
+        Json::String(format!("liana-cli-{}", process::id())),
     );
     object.insert("method".to_string(), method);
     object.insert("params".to_string(), params);
@@ -94,7 +94,7 @@ fn socket_file(conf_file: Option<PathBuf>) -> PathBuf {
     [
         data_dir,
         config.bitcoin_config.network.to_string().as_str(),
-        "minisafed_rpc",
+        "lianad_rpc",
     ]
     .iter()
     .collect()
@@ -160,7 +160,7 @@ fn main() {
                         println!("{:#}", serde_json::json!({ "error": e }));
                     } else {
                         log::warn!(
-                            "minisafed response doesn't contain result or error: '{}'",
+                            "lianad response doesn't contain result or error: '{}'",
                             response
                         );
                         println!("{:#}", response);

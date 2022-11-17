@@ -1,4 +1,4 @@
-///! Database interface for Minisafe.
+///! Database interface for Liana.
 ///!
 ///! Record wallet metadata, spent and unspent coins, ongoing transactions.
 pub mod sqlite;

@@ -563,7 +563,7 @@ mod tests {
         fs::create_dir_all(&tmp_dir).unwrap();
         let secp = secp256k1::Secp256k1::verification_only();
 
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("minisafed.sqlite3")]
+        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad.sqlite3")]
             .iter()
             .collect();
         let options = dummy_options();
@@ -578,7 +578,7 @@ mod tests {
         fs::create_dir_all(&tmp_dir).unwrap();
         let secp = secp256k1::Secp256k1::verification_only();
 
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("minisafed.sqlite3")]
+        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad.sqlite3")]
             .iter()
             .collect();
         assert!(SqliteDb::new(db_path.clone(), None, &secp)

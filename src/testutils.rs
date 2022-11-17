@@ -286,7 +286,7 @@ impl DatabaseConnection for DummyDbConn {
     }
 }
 
-pub struct DummyMinisafe {
+pub struct DummyLiana {
     pub tmp_dir: path::PathBuf,
     pub handle: DaemonHandle,
 }
@@ -302,15 +302,15 @@ fn uid() -> usize {
 
 pub fn tmp_dir() -> path::PathBuf {
     env::temp_dir().join(format!(
-        "minisafed-{}-{:?}-{}",
+        "lianad-{}-{:?}-{}",
         process::id(),
         thread::current().id(),
         uid(),
     ))
 }
 
-impl DummyMinisafe {
-    pub fn new() -> DummyMinisafe {
+impl DummyLiana {
+    pub fn new() -> DummyLiana {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
         // Use a shorthand for 'datadir', to avoid overflowing SUN_LEN on MacOS.
@@ -338,7 +338,7 @@ impl DummyMinisafe {
 
         let db = sync::Arc::from(sync::RwLock::from(DummyDb::new()));
         let handle = DaemonHandle::start(config, Some(DummyBitcoind {}), Some(db)).unwrap();
-        DummyMinisafe { tmp_dir, handle }
+        DummyLiana { tmp_dir, handle }
     }
 
     #[cfg(feature = "jsonrpc_server")]

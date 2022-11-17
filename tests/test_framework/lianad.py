@@ -10,7 +10,7 @@ from test_framework.utils import (
     TailableProc,
     VERBOSE,
     LOG_LEVEL,
-    MINISAFED_PATH,
+    LIANAD_PATH,
     wait_for,
 )
 from test_framework.serializations import (
@@ -25,7 +25,7 @@ from test_framework.serializations import (
 )
 
 
-class Minisafed(TailableProc):
+class Lianad(TailableProc):
     def __init__(
         self,
         datadir,
@@ -44,8 +44,8 @@ class Minisafed(TailableProc):
         self.receive_desc, self.change_desc = multi_desc.singlepath_descriptors()
 
         self.conf_file = os.path.join(datadir, "config.toml")
-        self.cmd_line = [MINISAFED_PATH, "--conf", f"{self.conf_file}"]
-        socket_path = os.path.join(os.path.join(datadir, "regtest"), "minisafed_rpc")
+        self.cmd_line = [LIANAD_PATH, "--conf", f"{self.conf_file}"]
+        socket_path = os.path.join(os.path.join(datadir, "regtest"), "lianad_rpc")
         self.rpc = UnixDomainSocketRpc(socket_path)
 
         with open(self.conf_file, "w") as f:
@@ -153,7 +153,7 @@ class Minisafed(TailableProc):
         self.stop()
         dir_path = os.path.join(self.datadir, "regtest")
         shutil.rmtree(dir_path)
-        wallet_path = os.path.join(dir_path, "minisafed_watchonly_wallet")
+        wallet_path = os.path.join(dir_path, "lianad_watchonly_wallet")
         bitcoind.node_rpc.unloadwallet(wallet_path)
         self.start()
         wait_for(
@@ -174,7 +174,7 @@ class Minisafed(TailableProc):
         try:
             self.rpc.stop()
             self.wait_for_log(
-                "Stopping the minisafe daemon.",
+                "Stopping the liana daemon.",
             )
             self.proc.wait(timeout)
         except Exception as e:

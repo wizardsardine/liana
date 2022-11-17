@@ -1,5 +1,5 @@
 from fixtures import *
 
 
-def test_startup(minisafed):
+def test_startup(lianad):
     pass
