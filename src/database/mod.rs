@@ -45,13 +45,25 @@ pub trait DatabaseConnection {
     /// Update our best chain seen.
     fn update_tip(&mut self, tip: &BlockChainTip);
 
+    /// Get the derivation index for the next receiving address
     fn receive_index(&mut self) -> bip32::ChildNumber;
 
+    /// Set the derivation index for the next receiving address
+    fn set_receive_index(
+        &mut self,
+        index: bip32::ChildNumber,
+        secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    );
+
+    /// Get the derivation index for the next change address
     fn change_index(&mut self) -> bip32::ChildNumber;
 
-    fn increment_receive_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>);
-
-    fn increment_change_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>);
+    /// Set the derivation index for the next change address
+    fn set_change_index(
+        &mut self,
+        index: bip32::ChildNumber,
+        secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    );
 
     /// Get the timestamp at which to start rescaning from, if any.
     fn rescan_timestamp(&mut self) -> Option<u32>;
@@ -131,16 +143,24 @@ impl DatabaseConnection for SqliteConn {
         self.db_wallet().deposit_derivation_index
     }
 
+    fn set_receive_index(
+        &mut self,
+        index: bip32::ChildNumber,
+        secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    ) {
+        self.set_derivation_index(index, false, secp)
+    }
+
     fn change_index(&mut self) -> bip32::ChildNumber {
         self.db_wallet().change_derivation_index
     }
 
-    fn increment_receive_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
-        self.increment_deposit_index(secp)
-    }
-
-    fn increment_change_index(&mut self, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) {
-        self.increment_change_index(secp)
+    fn set_change_index(
+        &mut self,
+        index: bip32::ChildNumber,
+        secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    ) {
+        self.set_derivation_index(index, true, secp)
     }
 
     fn rescan_timestamp(&mut self) -> Option<u32> {

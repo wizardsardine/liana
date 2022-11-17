@@ -264,6 +264,8 @@ def test_broadcast_spend(minisafed, bitcoind):
 def test_start_rescan(minisafed, bitcoind):
     """Test we successfully retrieve all our transactions after losing state by rescanning."""
     initial_timestamp = int(time.time())
+    first_address = minisafed.rpc.getnewaddress()
+    second_address = minisafed.rpc.getnewaddress()
 
     # Some utility functions to DRY
     list_coins = lambda: minisafed.rpc.listcoins()["coins"]
@@ -320,6 +322,9 @@ def test_start_rescan(minisafed, bitcoind):
         lambda: minisafed.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
     )
 
+    # Receiving addresses are derived at much higher indexes now.
+    assert minisafed.rpc.getnewaddress() not in (first_address, second_address)
+
     # Move time forward one day as bitcoind will rescan the last 2 hours of block upon
     # importing a descriptor.
     now = int(time.time())
@@ -334,6 +339,10 @@ def test_start_rescan(minisafed, bitcoind):
     minisafed.restart_fresh(bitcoind)
     assert len(list_coins()) == 0
 
+    # The wallet isn't aware what derivation indexes were used. Necessarily it'll start
+    # from 0.
+    assert minisafed.rpc.getnewaddress() == first_address
+
     # Once the rescan is done, we must have detected all previous transactions.
     minisafed.rpc.startrescan(initial_timestamp)
     rescan_progress = minisafed.rpc.getinfo()["rescan_progress"]
@@ -343,3 +352,7 @@ def test_start_rescan(minisafed, bitcoind):
         lambda: minisafed.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
     )
     assert coins_before == sorted_coins()
+
+    # Now that it caught up it noticed which one were used onchain, so it won't reuse
+    # this derivation indexes anymore.
+    assert minisafed.rpc.getnewaddress() not in (first_address, second_address)

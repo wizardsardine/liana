@@ -9,7 +9,7 @@ use std::{
     thread, time,
 };
 
-use miniscript::bitcoin;
+use miniscript::bitcoin::{self, secp256k1};
 
 #[derive(Debug, Clone)]
 struct UpdatedCoins {
@@ -28,6 +28,7 @@ fn update_coins(
     db_conn: &mut Box<dyn DatabaseConnection>,
     previous_tip: &BlockChainTip,
     descs: &[descriptors::InheritanceDescriptor],
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> UpdatedCoins {
     let curr_coins = db_conn.coins();
     log::debug!("Current coins: {:?}", curr_coins);
@@ -35,9 +36,20 @@ fn update_coins(
     // Start by fetching newly received coins.
     let mut received = Vec::new();
     for utxo in bit.received_coins(previous_tip, descs) {
+        // We can only really treat them if we know the derivation index that was used.
         if let Some((derivation_index, is_change)) =
             db_conn.derivation_index_by_address(&utxo.address)
         {
+            // First of if we are receiving coins that are beyond our next derivation index,
+            // adjust it.
+            if derivation_index > db_conn.receive_index() {
+                db_conn.set_receive_index(derivation_index, secp);
+            }
+            if derivation_index > db_conn.change_index() {
+                db_conn.set_change_index(derivation_index, secp);
+            }
+
+            // Now record this coin as a newly received one.
             if !curr_coins.contains_key(&utxo.outpoint) {
                 let UTxO {
                     outpoint, amount, ..
@@ -55,6 +67,7 @@ fn update_coins(
                 received.push(coin);
             }
         } else {
+            // TODO: maybe we could try out something here? Like bruteforcing the next 200 indexes?
             log::error!(
                 "Could not get derivation index for coin '{}' (address: '{}')",
                 &utxo.outpoint,
@@ -170,6 +183,7 @@ fn updates(
     bit: &impl BitcoinInterface,
     db: &impl DatabaseInterface,
     descs: &[descriptors::InheritanceDescriptor],
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
     let mut db_conn = db.connection();
 
@@ -183,18 +197,18 @@ fn updates(
             // between our former chain and the new one, then restart fresh.
             db_conn.rollback_tip(&new_tip);
             log::info!("Tip was rolled back to '{}'.", new_tip);
-            return updates(bit, db, descs);
+            return updates(bit, db, descs, secp);
         }
     };
 
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
     // we may have unconfirmed transactions.
-    let updated_coins = update_coins(bit, &mut db_conn, &current_tip, descs);
+    let updated_coins = update_coins(bit, &mut db_conn, &current_tip, descs, secp);
 
     // If the tip changed while we were polling our Bitcoin interface, start over.
     if bit.chain_tip() != latest_tip {
         log::info!("Chain tip changed while we were updating our state. Starting over.");
-        return updates(bit, db, descs);
+        return updates(bit, db, descs, secp);
     }
 
     // The chain tip did not change since we started our updates. Record them and the latest tip.
@@ -217,6 +231,7 @@ fn rescan_check(
     bit: &impl BitcoinInterface,
     db: &impl DatabaseInterface,
     descs: &[descriptors::InheritanceDescriptor],
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
     log::debug!("Checking the state of an ongoing rescan if there is any");
     let mut db_conn = db.connection();
@@ -254,7 +269,7 @@ fn rescan_check(
             "Rolling back our internal tip to '{}' to update our internal state with past transactions.",
             rescan_tip
         );
-        updates(bit, db, descs)
+        updates(bit, db, descs, secp)
     } else {
         log::debug!("No ongoing rescan.");
     }
@@ -285,6 +300,7 @@ pub fn looper(
         desc.receive_descriptor().clone(),
         desc.change_descriptor().clone(),
     ];
+    let secp = secp256k1::Secp256k1::verification_only();
 
     maybe_initialize_tip(&bit, &db);
 
@@ -316,7 +332,7 @@ pub fn looper(
             }
         }
 
-        updates(&bit, &db, &descs);
-        rescan_check(&bit, &db, &descs);
+        updates(&bit, &db, &descs, &secp);
+        rescan_check(&bit, &db, &descs, &secp);
     }
 }

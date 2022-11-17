@@ -219,8 +219,10 @@ impl DaemonControl {
     pub fn get_new_address(&self) -> GetAddressResult {
         let mut db_conn = self.db.connection();
         let index = db_conn.receive_index();
-        // TODO: should we wrap around instead of failing?
-        db_conn.increment_receive_index(&self.secp);
+        let new_index = index
+            .increment()
+            .expect("Can't get into hardened territory");
+        db_conn.set_receive_index(new_index, &self.secp);
         let address = self
             .config
             .main_descriptor
@@ -362,12 +364,17 @@ impl DaemonControl {
         // an added output* (for the change).
         if nochange_feerate_vb > feerate_vb {
             // Get the change address to create a dummy change txo.
+            let change_index = db_conn.change_index();
             let change_desc = self
                 .config
                 .main_descriptor
                 .change_descriptor()
-                .derive(db_conn.change_index(), &self.secp);
-            db_conn.increment_change_index(&self.secp);
+                .derive(change_index, &self.secp);
+            // Don't forget to update our next change index!
+            let next_index = change_index
+                .increment()
+                .expect("Must not get into hardened territory");
+            db_conn.set_change_index(next_index, &self.secp);
             let mut change_txo = bitcoin::TxOut {
                 value: std::u64::MAX,
                 script_pubkey: change_desc.script_pubkey(),
