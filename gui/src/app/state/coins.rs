@@ -12,14 +12,26 @@ pub struct CoinsPanel {
     coins: Vec<Coin>,
     selected_coin: Option<usize>,
     warning: Option<Error>,
+    /// timelock value to pass for the heir to consume a coin.
+    timelock: u32,
 }
 
 impl CoinsPanel {
-    pub fn new(coins: &[Coin]) -> Self {
+    pub fn new(coins: &[Coin], timelock: u32) -> Self {
         Self {
-            coins: coins.to_owned(),
+            coins: coins
+                .iter()
+                .filter_map(|coin| {
+                    if coin.spend_info.is_none() {
+                        Some(*coin)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
             selected_coin: None,
             warning: None,
+            timelock,
         }
     }
 }
@@ -30,7 +42,7 @@ impl State for CoinsPanel {
             &Menu::Coins,
             cache,
             self.warning.as_ref(),
-            view::coins::coins_view(&self.coins),
+            view::coins::coins_view(cache, &self.coins, self.timelock),
         )
     }
 
@@ -45,7 +57,16 @@ impl State for CoinsPanel {
                 Err(e) => self.warning = Some(e),
                 Ok(coins) => {
                     self.warning = None;
-                    self.coins = coins;
+                    self.coins = coins
+                        .iter()
+                        .filter_map(|coin| {
+                            if coin.spend_info.is_none() {
+                                Some(*coin)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
                 }
             },
             Message::View(view::Message::Close) => {
