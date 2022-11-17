@@ -265,8 +265,8 @@ impl DaemonControl {
 
     pub fn create_spend(
         &self,
-        coins_outpoints: &[bitcoin::OutPoint],
         destinations: &HashMap<bitcoin::Address, u64>,
+        coins_outpoints: &[bitcoin::OutPoint],
         feerate_vb: u64,
     ) -> Result<CreateSpendResult, CommandError> {
         if coins_outpoints.is_empty() {
@@ -677,22 +677,22 @@ mod tests {
             .cloned()
             .collect();
         assert_eq!(
-            control.create_spend(&[], &destinations, 1),
+            control.create_spend(&destinations, &[], 1),
             Err(CommandError::NoOutpoint)
         );
         assert_eq!(
-            control.create_spend(&[dummy_op], &HashMap::new(), 1),
+            control.create_spend(&HashMap::new(), &[dummy_op], 1),
             Err(CommandError::NoDestination)
         );
         assert_eq!(
-            control.create_spend(&[dummy_op], &destinations, 0),
+            control.create_spend(&destinations, &[dummy_op], 0),
             Err(CommandError::InvalidFeerate(0))
         );
 
         // The coin doesn't exist. If we create a new unspent one at this outpoint with a much
         // higher value, we'll get a Spend transaction with a change output.
         assert_eq!(
-            control.create_spend(&[dummy_op], &destinations, 1),
+            control.create_spend(&destinations, &[dummy_op], 1),
             Err(CommandError::UnknownOutpoint(dummy_op))
         );
         let mut db_conn = control.db().lock().unwrap().connection();
@@ -706,7 +706,7 @@ mod tests {
             spend_txid: None,
             spend_block: None,
         }]);
-        let res = control.create_spend(&[dummy_op], &destinations, 1).unwrap();
+        let res = control.create_spend(&destinations, &[dummy_op], 1).unwrap();
         let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
@@ -717,13 +717,13 @@ mod tests {
         // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 170 sats fees.
         // At 2sats/vb, it's twice that.
         assert_eq!(tx.output[1].value, 89_830);
-        let res = control.create_spend(&[dummy_op], &destinations, 2).unwrap();
+        let res = control.create_spend(&destinations, &[dummy_op], 2).unwrap();
         let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.output[1].value, 89_660);
 
         // If we ask for a too high feerate, or a too large/too small output, it'll fail.
         assert_eq!(
-            control.create_spend(&[dummy_op], &destinations, 10_000),
+            control.create_spend(&destinations, &[dummy_op], 10_000),
             Err(CommandError::InsufficientFunds(
                 bitcoin::Amount::from_sat(100_000),
                 bitcoin::Amount::from_sat(10_000),
@@ -732,7 +732,7 @@ mod tests {
         );
         *destinations.get_mut(&dummy_addr).unwrap() = 100_001;
         assert_eq!(
-            control.create_spend(&[dummy_op], &destinations, 1),
+            control.create_spend(&destinations, &[dummy_op], 1),
             Err(CommandError::InsufficientFunds(
                 bitcoin::Amount::from_sat(100_000),
                 bitcoin::Amount::from_sat(100_001),
@@ -741,7 +741,7 @@ mod tests {
         );
         *destinations.get_mut(&dummy_addr).unwrap() = 4_500;
         assert_eq!(
-            control.create_spend(&[dummy_op], &destinations, 1),
+            control.create_spend(&destinations, &[dummy_op], 1),
             Err(CommandError::InvalidOutputValue(bitcoin::Amount::from_sat(
                 4_500
             )))
@@ -750,7 +750,7 @@ mod tests {
         // If we ask for a large, but valid, output we won't get a change output. 95_000 because we
         // won't create an output lower than 5k sats.
         *destinations.get_mut(&dummy_addr).unwrap() = 95_000;
-        let res = control.create_spend(&[dummy_op], &destinations, 1).unwrap();
+        let res = control.create_spend(&destinations, &[dummy_op], 1).unwrap();
         let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
@@ -768,7 +768,7 @@ mod tests {
             .unwrap(),
         )]);
         assert_eq!(
-            control.create_spend(&[dummy_op], &destinations, 1),
+            control.create_spend(&destinations, &[dummy_op], 1),
             Err(CommandError::AlreadySpent(dummy_op))
         );
 
@@ -836,17 +836,17 @@ mod tests {
                 .cloned()
                 .collect();
         let mut psbt_a = control
-            .create_spend(&[dummy_op_a], &destinations_a, 1)
+            .create_spend(&destinations_a, &[dummy_op_a], 1)
             .unwrap()
             .psbt;
         let txid_a = psbt_a.unsigned_tx.txid();
         let psbt_b = control
-            .create_spend(&[dummy_op_b], &destinations_b, 10)
+            .create_spend(&destinations_b, &[dummy_op_b], 10)
             .unwrap()
             .psbt;
         let txid_b = psbt_b.unsigned_tx.txid();
         let psbt_c = control
-            .create_spend(&[dummy_op_a, dummy_op_b], &destinations_c, 100)
+            .create_spend(&destinations_c, &[dummy_op_a, dummy_op_b], 100)
             .unwrap()
             .psbt;
         let txid_c = psbt_c.unsigned_tx.txid();

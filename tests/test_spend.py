@@ -18,7 +18,7 @@ def test_spend_change(minisafed, bitcoind):
         bitcoind.rpc.getnewaddress(): 100_000,
         minisafed.rpc.getnewaddress()["address"]: 100_000,
     }
-    res = minisafed.rpc.createspend(outpoints, destinations, 2)
+    res = minisafed.rpc.createspend(destinations, outpoints, 2)
     assert "psbt" in res
 
     # The transaction must contain a change output.
@@ -44,7 +44,7 @@ def test_spend_change(minisafed, bitcoind):
     destinations = {
         bitcoind.rpc.getnewaddress(): 100_000,
     }
-    res = minisafed.rpc.createspend(outpoints, destinations, 2)
+    res = minisafed.rpc.createspend(destinations, outpoints, 2)
     spend_psbt = PSBT.from_base64(res["psbt"])
 
     # We can sign and broadcast it.

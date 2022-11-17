@@ -65,7 +65,7 @@ def spend_coins(minisafed, bitcoind, coins):
     destinations = {
         bitcoind.rpc.getnewaddress(): total_value - 11 - 31 - 300 * len(coins)
     }
-    res = minisafed.rpc.createspend([c["outpoint"] for c in coins], destinations, 1)
+    res = minisafed.rpc.createspend(destinations, [c["outpoint"] for c in coins], 1)
 
     signed_psbt = minisafed.sign_psbt(PSBT.from_base64(res["psbt"]))
     finalized_psbt = minisafed.finalize_psbt(signed_psbt)
