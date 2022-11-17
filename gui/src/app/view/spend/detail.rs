@@ -37,9 +37,11 @@ pub fn spend_view<'a, T: Into<Element<'a, Message>>>(
         show_delete,
         warning,
         column()
+            .align_items(Alignment::Center)
             .spacing(20)
-            .push(spend_overview_view(tx))
+            .push(spend_header(tx))
             .push(action)
+            .push(spend_overview_view(tx))
             .push(inputs_and_outputs_view(
                 &tx.coins,
                 &tx.psbt,
@@ -139,7 +141,11 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
                             )
                             .width(Length::Fill)
                     } else {
-                        column().width(Length::Fill)
+                        column()
+                            .push(
+                                button::transparent(None, "< Previous").on_press(Message::Previous),
+                            )
+                            .width(Length::Fill)
                     })
                     .align_items(iced::Alignment::Center)
                     .push(
@@ -155,7 +161,7 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
         .into()
 }
 
-fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
+fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
     column()
         .spacing(20)
         .align_items(Alignment::Center)
@@ -192,47 +198,51 @@ fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
                     tx.fee_amount.to_btc()
                 )))),
         )
-        .push(card::simple(
-            column()
-                .push(container(
-                    row()
-                        .push(
-                            container(
-                                row()
-                                    .push(container(icon::key_icon().size(30).width(Length::Fill)))
-                                    .push(column().push(text("Number of signatures:").bold()).push(
-                                        text(&format!("{}", tx.psbt.inputs[0].partial_sigs.len(),)),
-                                    ))
-                                    .align_items(Alignment::Center)
-                                    .spacing(20),
-                            )
-                            .width(Length::FillPortion(1)),
-                        )
-                        .align_items(Alignment::Center)
-                        .spacing(20),
-                ))
-                .push(separation().width(Length::Fill))
-                .push(
-                    column()
-                        .push(
-                            row()
-                                .push(text("Tx ID:").bold().width(Length::Fill))
-                                .push(text(&format!("{}", tx.psbt.unsigned_tx.txid())).small())
-                                .align_items(Alignment::Center),
-                        )
-                        .push(
-                            row()
-                                .push(text("Psbt:").bold().width(Length::Fill))
-                                .push(
-                                    button::transparent(Some(icon::clipboard_icon()), "Copy")
-                                        .on_press(Message::Clipboard(tx.psbt.to_string())),
-                                )
-                                .align_items(Alignment::Center),
-                        ),
-                )
-                .spacing(20),
-        ))
         .into()
+}
+
+fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
+    card::simple(
+        column()
+            .push(container(
+                row()
+                    .push(
+                        container(
+                            row()
+                                .push(container(icon::key_icon().size(30).width(Length::Fill)))
+                                .push(column().push(text("Number of signatures:").bold()).push(
+                                    text(&format!("{}", tx.psbt.inputs[0].partial_sigs.len(),)),
+                                ))
+                                .align_items(Alignment::Center)
+                                .spacing(20),
+                        )
+                        .width(Length::FillPortion(1)),
+                    )
+                    .align_items(Alignment::Center)
+                    .spacing(20),
+            ))
+            .push(separation().width(Length::Fill))
+            .push(
+                column()
+                    .push(
+                        row()
+                            .push(text("Tx ID:").bold().width(Length::Fill))
+                            .push(text(&format!("{}", tx.psbt.unsigned_tx.txid())).small())
+                            .align_items(Alignment::Center),
+                    )
+                    .push(
+                        row()
+                            .push(text("Psbt:").bold().width(Length::Fill))
+                            .push(
+                                button::transparent(Some(icon::clipboard_icon()), "Copy")
+                                    .on_press(Message::Clipboard(tx.psbt.to_string())),
+                            )
+                            .align_items(Alignment::Center),
+                    ),
+            )
+            .spacing(20),
+    )
+    .into()
 }
 
 fn inputs_and_outputs_view<'a>(
@@ -272,24 +282,28 @@ fn inputs_and_outputs_view<'a>(
                                 col.push(
                                     card::simple(
                                         column()
-                                            .width(Length::Fill)
+                                            .spacing(10)
                                             .push(
-                                                text(&format!(
-                                                    "{} BTC",
-                                                    Amount::from_sat(output.value).to_btc()
-                                                ))
-                                                .bold(),
-                                            )
-                                            .push(
-                                                text(&format!(
-                                                    "{}",
-                                                    Address::from_script(
-                                                        &output.script_pubkey,
-                                                        network
+                                                column()
+                                                    .width(Length::Fill)
+                                                    .push(
+                                                        text(&format!(
+                                                            "{} BTC",
+                                                            Amount::from_sat(output.value).to_btc()
+                                                        ))
+                                                        .bold(),
                                                     )
-                                                    .unwrap()
-                                                ))
-                                                .small(),
+                                                    .push(
+                                                        text(&format!(
+                                                            "{}",
+                                                            Address::from_script(
+                                                                &output.script_pubkey,
+                                                                network
+                                                            )
+                                                            .unwrap()
+                                                        ))
+                                                        .small(),
+                                                    ),
                                             )
                                             .push_maybe(if Some(i) == change_index {
                                                 Some(

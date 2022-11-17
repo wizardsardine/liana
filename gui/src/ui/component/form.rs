@@ -5,7 +5,7 @@ use iced::pure::{
 };
 use iced::Length;
 
-use crate::ui::{color, component::text::*};
+use crate::ui::{color, component::text::*, util::Collection};
 
 #[derive(Debug, Clone)]
 pub struct Value<T> {
@@ -70,21 +70,24 @@ where
 
 impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
     fn from(form: Form<'a, Message>) -> Element<'a, Message> {
-        if !form.valid {
-            if let Some(message) = form.warning {
-                return container(
-                    column()
-                        .push(form.input.style(InvalidFormStyle))
-                        .push(text(message).color(color::ALERT).small())
-                        .width(Length::Fill)
-                        .spacing(5),
-                )
+        container(
+            column()
+                .push(if !form.valid {
+                    form.input.style(InvalidFormStyle)
+                } else {
+                    form.input
+                })
+                .push_maybe(if !form.valid {
+                    form.warning
+                        .map(|message| text(message).color(color::ALERT).small())
+                } else {
+                    None
+                })
                 .width(Length::Fill)
-                .into();
-            }
-        }
-
-        container(form.input).width(Length::Fill).into()
+                .spacing(5),
+        )
+        .width(Length::Fill)
+        .into()
     }
 }
 
