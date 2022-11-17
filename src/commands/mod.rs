@@ -333,9 +333,23 @@ impl DaemonControl {
                 value: amount.to_sat(),
                 script_pubkey: address.script_pubkey(),
             });
-            // TODO: if it's an address of ours, signal it as change to signing devices by adding
-            // the BIP32 derivation path to the PSBT output.
-            psbt_outs.push(PsbtOut::default());
+            // If it's an address of ours, signal it as change to signing devices by adding the
+            // BIP32 derivation path to the PSBT output.
+            let bip32_derivation =
+                if let Some((index, is_change)) = db_conn.derivation_index_by_address(address) {
+                    let desc = if is_change {
+                        self.config.main_descriptor.change_descriptor()
+                    } else {
+                        self.config.main_descriptor.receive_descriptor()
+                    };
+                    desc.derive(index, &self.secp).bip32_derivations()
+                } else {
+                    Default::default()
+                };
+            psbt_outs.push(PsbtOut {
+                bip32_derivation,
+                ..PsbtOut::default()
+            });
         }
 
         // Now create the transaction, compute its fees and already sanity check if its feerate
@@ -398,7 +412,10 @@ impl DaemonControl {
                     // TODO: shuffle once we have Taproot
                     change_txo.value = change_amount.to_sat();
                     tx.output.push(change_txo);
-                    psbt_outs.push(PsbtOut::default());
+                    psbt_outs.push(PsbtOut {
+                        bip32_derivation: change_desc.bip32_derivations(),
+                        ..PsbtOut::default()
+                    });
                 }
             }
         }
