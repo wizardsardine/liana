@@ -24,7 +24,7 @@ const RPC_SOCKET_TIMEOUT: u64 = 180;
 // A retry happens every 1 second, this makes us give up after one minute.
 const BITCOIND_RETRY_LIMIT: usize = 60;
 
-// The minimum bitcoind version that can be used with revaultd.
+// The minimum bitcoind version that can be used with lianad.
 const MIN_BITCOIND_VERSION: u64 = 239900;
 
 /// An error in the bitcoind interface.
@@ -591,7 +591,7 @@ impl BitcoinD {
     }
 
     pub fn sync_progress(&self) -> f64 {
-        // TODO: don't harass revaultd, be smarter like in revaultd.
+        // TODO: don't harass lianad, be smarter like in revaultd.
         roundup_progress(
             self.block_chain_info()
                 .get("verificationprogress")
