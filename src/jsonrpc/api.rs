@@ -8,22 +8,8 @@ use std::{collections::HashMap, convert::TryInto, str::FromStr};
 use miniscript::bitcoin::{self, consensus, util::psbt::PartiallySignedTransaction as Psbt};
 
 fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
-    let outpoints = params
-        .get(0, "outpoints")
-        .ok_or_else(|| Error::invalid_params("Missing 'outpoints' parameter."))?
-        .as_array()
-        .and_then(|arr| {
-            arr.iter()
-                .map(|entry| {
-                    entry
-                        .as_str()
-                        .and_then(|e| bitcoin::OutPoint::from_str(e).ok())
-                })
-                .collect::<Option<Vec<bitcoin::OutPoint>>>()
-        })
-        .ok_or_else(|| Error::invalid_params("Invalid 'outpoints' parameter."))?;
     let destinations = params
-        .get(1, "destinations")
+        .get(0, "destinations")
         .ok_or_else(|| Error::invalid_params("Missing 'destinations' parameter."))?
         .as_object()
         .and_then(|obj| {
@@ -36,6 +22,20 @@ fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
                 .collect::<Option<HashMap<bitcoin::Address, u64>>>()
         })
         .ok_or_else(|| Error::invalid_params("Invalid 'destinations' parameter."))?;
+    let outpoints = params
+        .get(1, "outpoints")
+        .ok_or_else(|| Error::invalid_params("Missing 'outpoints' parameter."))?
+        .as_array()
+        .and_then(|arr| {
+            arr.iter()
+                .map(|entry| {
+                    entry
+                        .as_str()
+                        .and_then(|e| bitcoin::OutPoint::from_str(e).ok())
+                })
+                .collect::<Option<Vec<bitcoin::OutPoint>>>()
+        })
+        .ok_or_else(|| Error::invalid_params("Invalid 'outpoints' parameter."))?;
     let feerate: u64 = params
         .get(2, "feerate")
         .ok_or_else(|| Error::invalid_params("Missing 'feerate' parameter."))?
@@ -43,7 +43,7 @@ fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
         .and_then(|i| i.try_into().ok())
         .ok_or_else(|| Error::invalid_params("Invalid 'feerate' parameter."))?;
 
-    let res = control.create_spend(&outpoints, &destinations, feerate)?;
+    let res = control.create_spend(&destinations, &outpoints, feerate)?;
     Ok(serde_json::json!(&res))
 }
 

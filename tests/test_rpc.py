@@ -77,7 +77,7 @@ def test_jsonrpc_server(minisafed, bitcoind):
     destinations = {
         bitcoind.rpc.getnewaddress(): 20_000,
     }
-    res = minisafed.rpc.createspend(outpoints, destinations, 18)
+    res = minisafed.rpc.createspend(destinations, outpoints, 18)
     assert "psbt" in res
     res = minisafed.rpc.createspend(
         outpoints=outpoints, destinations=destinations, feerate=18
@@ -107,7 +107,7 @@ def test_create_spend(minisafed, bitcoind):
         bitcoind.rpc.getnewaddress(): 400_000,
         bitcoind.rpc.getnewaddress(): 1_000_000,
     }
-    res = minisafed.rpc.createspend(outpoints, destinations, 18)
+    res = minisafed.rpc.createspend(destinations, outpoints, 18)
     assert "psbt" in res
 
     # The transaction must contain a change output.
@@ -133,7 +133,7 @@ def test_list_spend(minisafed, bitcoind):
     destinations = {
         bitcoind.rpc.getnewaddress(): int(value_a * COIN // 2),
     }
-    res = minisafed.rpc.createspend(outpoints, destinations, 6)
+    res = minisafed.rpc.createspend(destinations, outpoints, 6)
     assert "psbt" in res
 
     addr = minisafed.rpc.getnewaddress()["address"]
@@ -144,7 +144,7 @@ def test_list_spend(minisafed, bitcoind):
     destinations = {
         bitcoind.rpc.getnewaddress(): int((value_a + value_b) * COIN - 1_000),
     }
-    res_b = minisafed.rpc.createspend(outpoints, destinations, 2)
+    res_b = minisafed.rpc.createspend(destinations, outpoints, 2)
     assert "psbt" in res_b
 
     # Store them both in DB.
@@ -184,7 +184,7 @@ def test_update_spend(minisafed, bitcoind):
     destinations = {
         bitcoind.rpc.getnewaddress(): 200_000,
     }
-    res = minisafed.rpc.createspend(outpoints, destinations, 6)
+    res = minisafed.rpc.createspend(destinations, outpoints, 6)
     assert "psbt" in res
 
     # Now update it
@@ -241,7 +241,7 @@ def test_broadcast_spend(minisafed, bitcoind):
     destinations = {
         bitcoind.rpc.getnewaddress(): 200_000,
     }
-    res = minisafed.rpc.createspend(outpoints, destinations, 6)
+    res = minisafed.rpc.createspend(destinations, outpoints, 6)
     psbt = PSBT.from_base64(res["psbt"])
     txid = psbt.tx.txid().hex()
 
