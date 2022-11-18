@@ -163,7 +163,7 @@ fn setup_sqlite(
     fresh_data_dir: bool,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> Result<SqliteDb, StartupError> {
-    let db_path: path::PathBuf = [data_dir, path::Path::new("minisafed.sqlite3")]
+    let db_path: path::PathBuf = [data_dir, path::Path::new("lianad.sqlite3")]
         .iter()
         .collect();
     let options = if fresh_data_dir {
@@ -189,7 +189,7 @@ fn setup_bitcoind(
     fresh_data_dir: bool,
 ) -> Result<BitcoinD, StartupError> {
     // Now set up the bitcoind interface
-    let wo_path: path::PathBuf = [data_dir, path::Path::new("minisafed_watchonly_wallet")]
+    let wo_path: path::PathBuf = [data_dir, path::Path::new("lianad_watchonly_wallet")]
         .iter()
         .collect();
     let bitcoind = BitcoinD::new(
@@ -247,7 +247,7 @@ pub struct DaemonHandle {
 }
 
 impl DaemonHandle {
-    /// This starts the Minisafe daemon. Call `shutdown` to shut it down.
+    /// This starts the Liana daemon. Call `shutdown` to shut it down.
     ///
     /// You may specify a custom Bitcoin interface through the `bitcoin` parameter. If `None`, the
     /// default Bitcoin interface (`bitcoind` JSONRPC) will be used.
@@ -329,7 +329,7 @@ impl DaemonHandle {
         })
     }
 
-    /// Start the Minisafe daemon with the default Bitcoin and database interfaces (`bitcoind` RPC
+    /// Start the Liana daemon with the default Bitcoin and database interfaces (`bitcoind` RPC
     /// and SQLite).
     pub fn start_default(config: Config) -> Result<DaemonHandle, StartupError> {
         DaemonHandle::start(config, Option::<BitcoinD>::None, Option::<SqliteDb>::None)
@@ -351,7 +351,7 @@ impl DaemonHandle {
                 .expect("Didn't fail at startup, must not now")
                 .as_path(),
             path::Path::new(&control.config.bitcoin_config.network.to_string()),
-            path::Path::new("minisafed_rpc"),
+            path::Path::new("lianad_rpc"),
         ]
         .iter()
         .collect();
@@ -367,12 +367,12 @@ impl DaemonHandle {
     }
 
     // NOTE: this moves out the data as it should not be reused after shutdown
-    /// Shut down the Minisafe daemon.
+    /// Shut down the Liana daemon.
     pub fn shutdown(self) {
         self.bitcoin_poller.stop();
     }
 
-    // We need a shutdown utility that does not move for implementing Drop for the DummyMinisafe
+    // We need a shutdown utility that does not move for implementing Drop for the DummyLiana
     #[cfg(test)]
     pub fn test_shutdown(&mut self) {
         self.bitcoin_poller.test_stop();
@@ -553,7 +553,7 @@ mod tests {
     }
 
     // TODO: we could move the dummy bitcoind thread stuff to the bitcoind module to test the
-    // bitcoind interface, and use the DummyMinisafe from testutils to sanity check the startup.
+    // bitcoind interface, and use the DummyLiana from testutils to sanity check the startup.
     // Note that startup as checked by this unit test is also tested in the functional test
     // framework.
     #[test]
@@ -566,7 +566,7 @@ mod tests {
         let wo_path: path::PathBuf = [
             data_dir.as_path(),
             path::Path::new("bitcoin"),
-            path::Path::new("minisafed_watchonly_wallet"),
+            path::Path::new("lianad_watchonly_wallet"),
         ]
         .iter()
         .collect();

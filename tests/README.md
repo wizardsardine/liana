@@ -1,6 +1,6 @@
-## Minisafed blackbox tests
+## Lianad blackbox tests
 
-Here we test `minisafed` by starting it on a regression testing Bitcoin network,
+Here we test `lianad` by starting it on a regression testing Bitcoin network,
 and by then talking to it as an user would, from the outside.
 
 Python scripts are used for the automation, and specifically the [`pytest` framework](https://docs.pytest.org/en/stable/index.html).

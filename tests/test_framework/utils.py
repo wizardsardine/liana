@@ -17,9 +17,9 @@ VERBOSE = os.getenv("VERBOSE", "0") == "1"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "debug")
 assert LOG_LEVEL in ["trace", "debug", "info", "warn", "error"]
 DEFAULT_MS_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "target/debug/minisafed"
+    os.path.dirname(__file__), "..", "..", "target/debug/lianad"
 )
-MINISAFED_PATH = os.getenv("MINISAFED_PATH", DEFAULT_MS_PATH)
+LIANAD_PATH = os.getenv("LIANAD_PATH", DEFAULT_MS_PATH)
 DEFAULT_BITCOIND_PATH = "bitcoind"
 BITCOIND_PATH = os.getenv("BITCOIND_PATH", DEFAULT_BITCOIND_PATH)
 
@@ -53,7 +53,7 @@ def get_txid(hex_tx):
     return tx.txid().hex()
 
 
-def spend_coins(minisafed, bitcoind, coins):
+def spend_coins(lianad, bitcoind, coins):
     """Spend these coins, no matter how.
     This will create a single transaction spending them all at once at the minimum
     feerate. This will broadcast but not confirm the transaction.
@@ -65,10 +65,10 @@ def spend_coins(minisafed, bitcoind, coins):
     destinations = {
         bitcoind.rpc.getnewaddress(): total_value - 11 - 31 - 300 * len(coins)
     }
-    res = minisafed.rpc.createspend(destinations, [c["outpoint"] for c in coins], 1)
+    res = lianad.rpc.createspend(destinations, [c["outpoint"] for c in coins], 1)
 
-    signed_psbt = minisafed.sign_psbt(PSBT.from_base64(res["psbt"]))
-    finalized_psbt = minisafed.finalize_psbt(signed_psbt)
+    signed_psbt = lianad.sign_psbt(PSBT.from_base64(res["psbt"]))
+    finalized_psbt = lianad.finalize_psbt(signed_psbt)
     tx = finalized_psbt.tx.serialize_with_witness().hex()
     bitcoind.rpc.sendrawtransaction(tx)
 
@@ -175,7 +175,7 @@ class UnixDomainSocketRpc(object):
                 except json.JSONDecodeError:
                     # There is more to read, continue
                     # FIXME: this is a workaround for large reads taken from revaultd.
-                    # We should use the '\n' marker instead since minisafed uses that.
+                    # We should use the '\n' marker instead since lianad uses that.
                     continue
 
     def __getattr__(self, name):

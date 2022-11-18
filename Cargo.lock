@@ -204,6 +204,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "liana"
+version = "0.0.1"
+dependencies = [
+ "backtrace",
+ "base64",
+ "dirs",
+ "fern",
+ "jsonrpc",
+ "libc",
+ "log",
+ "miniscript",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.135"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -234,24 +252,6 @@ name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
-
-[[package]]
-name = "minisafe"
-version = "0.0.1"
-dependencies = [
- "backtrace",
- "base64",
- "dirs",
- "fern",
- "jsonrpc",
- "libc",
- "log",
- "miniscript",
- "rusqlite",
- "serde",
- "serde_json",
- "toml",
-]
 
 [[package]]
 name = "miniscript"

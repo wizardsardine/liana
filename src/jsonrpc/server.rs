@@ -101,7 +101,7 @@ fn connection_handler(
         let req_id = req.id.clone();
         if &req.method == "stop" {
             shutdown.store(true, atomic::Ordering::Relaxed);
-            log::info!("Stopping the minisafe daemon.");
+            log::info!("Stopping the liana daemon.");
         }
 
         log::trace!("JSONRPC request: {:?}", serde_json::to_string(&req));
@@ -146,7 +146,7 @@ pub fn rpcserver_loop(
 
         let handler_id = connections_counter.load(atomic::Ordering::Relaxed);
         thread::Builder::new()
-            .name(format!("minisafe-jsonrpc-{}", handler_id))
+            .name(format!("liana-jsonrpc-{}", handler_id))
             .spawn({
                 let control = daemon_control.clone();
                 let counter = connections_counter.clone();
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn command_read_single() {
         let socket_path = env::temp_dir().join(format!(
-            "minisafed-jsonrpc-socket-{}-{:?}",
+            "lianad-jsonrpc-socket-{}-{:?}",
             process::id(),
             thread::current().id()
         ));
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn command_read_parts() {
         let socket_path = env::temp_dir().join(format!(
-            "minisafed-jsonrpc-socket-{}-{:?}",
+            "lianad-jsonrpc-socket-{}-{:?}",
             process::id(),
             thread::current().id()
         ));
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn command_read_multiple() {
         let socket_path = env::temp_dir().join(format!(
-            "minisafed-jsonrpc-socket-{}-{:?}",
+            "lianad-jsonrpc-socket-{}-{:?}",
             process::id(),
             thread::current().id()
         ));
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn command_read_linebreak() {
         let socket_path = env::temp_dir().join(format!(
-            "minisafed-jsonrpc-socket-{}-{:?}",
+            "lianad-jsonrpc-socket-{}-{:?}",
             process::id(),
             thread::current().id()
         ));
@@ -400,12 +400,12 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn server_sanity_check() {
-        let ms = DummyMinisafe::new();
+        let ms = DummyLiana::new();
         let socket_path: path::PathBuf = [
             ms.tmp_dir.as_path(),
             path::Path::new("d"),
             path::Path::new("bitcoin"),
-            path::Path::new("minisafed_rpc"),
+            path::Path::new("lianad_rpc"),
         ]
         .iter()
         .collect();

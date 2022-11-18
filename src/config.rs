@@ -144,11 +144,11 @@ impl From<std::io::Error> for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-/// Get the absolute path to the minisafe configuration folder.
+/// Get the absolute path to the liana configuration folder.
 ///
-/// It's a "minisafe/<network>/" directory in the XDG standard configuration directory for
-/// all OSes but Linux-based ones, for which it's `~/.minisafe/<network>/`.
-/// There is only one config file at `minisafe/config.toml`, which specifies the network.
+/// It's a "liana/<network>/" directory in the XDG standard configuration directory for
+/// all OSes but Linux-based ones, for which it's `~/.liana/<network>/`.
+/// There is only one config file at `liana/config.toml`, which specifies the network.
 /// Rationale: we want to have the database, RPC socket, etc.. in the same folder as the
 /// configuration file but for Linux the XDG specifoes a data directory (`~/.local/share/`)
 /// different from the configuration one (`~/.config/`).
@@ -161,10 +161,10 @@ pub fn config_folder_path() -> Option<PathBuf> {
 
     if let Some(mut path) = configs_dir {
         #[cfg(target_os = "linux")]
-        path.push(".minisafe");
+        path.push(".liana");
 
         #[cfg(not(target_os = "linux"))]
-        path.push("Minisafe");
+        path.push("Liana");
 
         return Some(path);
     }
@@ -174,7 +174,7 @@ pub fn config_folder_path() -> Option<PathBuf> {
 
 fn config_file_path() -> Option<PathBuf> {
     config_folder_path().map(|mut path| {
-        path.push("minisafe.toml");
+        path.push("liana.toml");
         path
     })
 }
@@ -306,17 +306,17 @@ mod tests {
         #[cfg(target_os = "linux")]
         {
             assert!(filepath.as_path().starts_with("/home/"));
-            assert!(filepath.as_path().ends_with(".minisafe/minisafe.toml"));
+            assert!(filepath.as_path().ends_with(".liana/liana.toml"));
         }
 
         #[cfg(target_os = "macos")]
         assert!(filepath
             .as_path()
-            .ends_with("Library/Application Support/Minisafe/minisafe.toml"));
+            .ends_with("Library/Application Support/Liana/liana.toml"));
 
         #[cfg(target_os = "windows")]
         assert!(filepath
             .as_path()
-            .ends_with(r#"AppData\Roaming\Minisafe\minisafe.toml"#));
+            .ends_with(r#"AppData\Roaming\Liana\liana.toml"#));
     }
 }

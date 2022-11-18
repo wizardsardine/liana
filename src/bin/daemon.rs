@@ -5,7 +5,7 @@ use std::{
     process, thread, time,
 };
 
-use minisafe::{config::Config, DaemonHandle};
+use liana::{config::Config, DaemonHandle};
 
 fn parse_args(args: Vec<String>) -> Option<PathBuf> {
     if args.len() == 1 {
@@ -61,7 +61,7 @@ fn main() {
 
     let daemon = DaemonHandle::start_default(config).unwrap_or_else(|e| {
         // The panic hook will log::error
-        panic!("Starting Minisafe daemon: {}", e);
+        panic!("Starting Liana daemon: {}", e);
     });
     daemon
         .rpc_server()

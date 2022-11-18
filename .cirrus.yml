@@ -31,7 +31,7 @@ task:
     fingerprint_script:
       - rustc --version
       - cat Cargo.lock
-  minisafed_build_script: cargo build --release
+  lianad_build_script: cargo build --release
 
   deps_script: apt update && apt install -y python3 python3-pip
 
@@ -50,6 +50,6 @@ task:
     export BITCOIND_PATH=bitcoin-24.0rc1/bin/bitcoind
 
     # Run the functional tests
-    MINISAFED_PATH=$PWD/target/release/minisafed pytest $TEST_GROUP -vvv -n 2
+    LIANAD_PATH=$PWD/target/release/lianad pytest $TEST_GROUP -vvv -n 2
 
   before_cache_script: rm -rf $CARGO_HOME/registry/index

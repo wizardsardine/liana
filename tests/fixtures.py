@@ -3,7 +3,7 @@ from bip380.descriptors import Descriptor
 from concurrent import futures
 from ephemeral_port_reserve import reserve
 from test_framework.bitcoind import Bitcoind
-from test_framework.minisafed import Minisafed
+from test_framework.lianad import Lianad
 from test_framework.utils import (
     EXECUTOR_WORKERS,
 )
@@ -24,7 +24,7 @@ ATTEMPTS = {}
 def test_base_dir():
     d = os.getenv("TEST_DIR", "/tmp")
 
-    directory = tempfile.mkdtemp(prefix="minisafed-tests-", dir=d)
+    directory = tempfile.mkdtemp(prefix="lianad-tests-", dir=d)
     print("Running tests in {}".format(directory))
 
     yield directory
@@ -114,8 +114,8 @@ def bitcoind(directory):
 
 
 @pytest.fixture
-def minisafed(bitcoind, directory):
-    datadir = os.path.join(directory, "minisafed")
+def lianad(bitcoind, directory):
+    datadir = os.path.join(directory, "lianad")
     os.makedirs(datadir, exist_ok=True)
     bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
 
@@ -123,7 +123,7 @@ def minisafed(bitcoind, directory):
     owner_xpub = owner_hd.get_xpub()
     main_desc = Descriptor.from_str(f"wsh(or_d(pk({owner_xpub}/<0;1>/*),and_v(v:pkh(tpubD9vQiBdDxYzU4cVFtApWj4devZrvcfWaPXX1zHdDc7GPfUsDKqGnbhraccfm7BAXgRgUbVQUV2v2o4NitjGEk7hpbuP85kvBrD4ahFDtNBJ/<0;1>/*),older(65000))))")
 
-    minisafed = Minisafed(
+    lianad = Lianad(
         datadir,
         owner_hd,
         main_desc,
@@ -132,10 +132,10 @@ def minisafed(bitcoind, directory):
     )
 
     try:
-        minisafed.start()
-        yield minisafed
+        lianad.start()
+        yield lianad
     except Exception:
-        minisafed.cleanup()
+        lianad.cleanup()
         raise
 
-    minisafed.cleanup()
+    lianad.cleanup()
