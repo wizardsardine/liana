@@ -9,7 +9,7 @@ use serde_json::json;
 pub mod error;
 pub mod jsonrpc;
 
-use minisafe::{
+use liana::{
     config::Config,
     miniscript::bitcoin::{consensus, util::psbt::Psbt, Address, OutPoint, Txid},
 };
@@ -26,14 +26,14 @@ pub trait Client {
 }
 
 #[derive(Debug, Clone)]
-pub struct Minisafed<C: Client> {
+pub struct Lianad<C: Client> {
     config: Config,
     client: C,
 }
 
-impl<C: Client> Minisafed<C> {
-    pub fn new(client: C, config: Config) -> Minisafed<C> {
-        Minisafed { client, config }
+impl<C: Client> Lianad<C> {
+    pub fn new(client: C, config: Config) -> Lianad<C> {
+        Lianad { client, config }
     }
 
     /// Generic call function for RPC calls.
@@ -50,7 +50,7 @@ impl<C: Client> Minisafed<C> {
     }
 }
 
-impl<C: Client + Debug> Daemon for Minisafed<C> {
+impl<C: Client + Debug> Daemon for Lianad<C> {
     fn is_external(&self) -> bool {
         true
     }

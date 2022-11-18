@@ -87,7 +87,7 @@ impl JsonRPCClient {
             jsonrpc: "2.0",
         };
 
-        debug!("Sending to minisafed: {:#?}", request);
+        debug!("Sending to lianad: {:#?}", request);
 
         to_writer(&mut stream, &request)?;
 
@@ -107,7 +107,7 @@ impl JsonRPCClient {
             return Err(Error::NonceMismatch);
         }
 
-        debug!("Received from minisafed: {:#?}", response);
+        debug!("Received from lianad: {:#?}", response);
 
         Ok(response)
     }

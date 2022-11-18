@@ -1,7 +1,7 @@
 use iced::pure::{column, container, pick_list, row, scrollable, widget, Element};
 use iced::{Alignment, Length};
 
-use minisafe::miniscript::bitcoin;
+use liana::miniscript::bitcoin;
 
 use crate::{
     hw::HardwareWallet,

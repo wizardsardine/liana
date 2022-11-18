@@ -1,4 +1,4 @@
-pub use minisafe::{
+pub use liana::{
     commands::{
         CreateSpendResult, GetAddressResult, GetInfoResult, ListCoinsEntry, ListCoinsResult,
         ListSpendEntry, ListSpendResult,

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use iced::pure::Element;
 use iced::Command;
-use minisafe::miniscript::bitcoin::{
+use liana::miniscript::bitcoin::{
     util::psbt::Psbt, Address, Amount, Denomination, OutPoint, Script,
 };
 

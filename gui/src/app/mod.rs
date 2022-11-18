@@ -16,7 +16,7 @@ use iced::pure::Element;
 use iced::{clipboard, time, Command, Subscription};
 use iced_native::{window, Event};
 
-pub use minisafe::config::Config as DaemonConfig;
+pub use liana::config::Config as DaemonConfig;
 
 pub use config::Config;
 pub use message::Message;
@@ -157,7 +157,7 @@ impl App {
 
         let mut daemon_config_file = OpenOptions::new()
             .write(true)
-            .open(&self.config.minisafed_config_path)
+            .open(&self.config.daemon_config_path)
             .map_err(|e| Error::Config(e.to_string()))?;
 
         let content =

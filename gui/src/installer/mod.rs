@@ -6,7 +6,7 @@ mod view;
 use iced::pure::Element;
 use iced::{clipboard, Command, Subscription};
 use iced_native::{window, Event};
-use minisafe::miniscript::bitcoin;
+use liana::miniscript::bitcoin;
 
 use std::convert::TryInto;
 use std::io::Write;
@@ -153,11 +153,11 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
         .map(|(kind, fingerprint, token)| HardwareWalletConfig::new(kind, fingerprint, token))
         .collect();
 
-    let mut cfg: minisafe::config::Config = ctx
+    let mut cfg: liana::config::Config = ctx
         .try_into()
         .expect("Everything should be checked at this point");
     // Start Daemon to check correctness of installation
-    let daemon = minisafe::DaemonHandle::start_default(cfg.clone()).map_err(|e| {
+    let daemon = liana::DaemonHandle::start_default(cfg.clone()).map_err(|e| {
         Error::Unexpected(format!("Failed to start daemon with entered config: {}", e))
     })?;
     daemon.shutdown();
@@ -170,21 +170,21 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
     let mut datadir_path = cfg.data_dir.clone().unwrap();
     datadir_path.push(cfg.bitcoin_config.network.to_string());
 
-    // create minisafed configuration file
-    let mut minisafed_config_path = datadir_path.clone();
-    minisafed_config_path.push(DEFAULT_FILE_NAME);
-    let mut minisafed_config_file = std::fs::File::create(&minisafed_config_path)
+    // create lianad configuration file
+    let mut daemon_config_path = datadir_path.clone();
+    daemon_config_path.push(DEFAULT_FILE_NAME);
+    let mut daemon_config_file = std::fs::File::create(&daemon_config_path)
         .map_err(|e| Error::CannotCreateFile(e.to_string()))?;
 
     // Step needed because of ValueAfterTable error in the toml serialize implementation.
-    let minisafed_config =
+    let daemon_config =
         toml::Value::try_from(&cfg).expect("daemon::Config has a proper Serialize implementation");
 
-    minisafed_config_file
-        .write_all(minisafed_config.to_string().as_bytes())
+    daemon_config_file
+        .write_all(daemon_config.to_string().as_bytes())
         .map_err(|e| Error::CannotWriteToFile(e.to_string()))?;
 
-    // create minisafe GUI configuration file
+    // create liana GUI configuration file
     let mut gui_config_path = datadir_path;
     gui_config_path.push(gui_config::DEFAULT_FILE_NAME);
     let mut gui_config_file = std::fs::File::create(&gui_config_path)
@@ -193,11 +193,8 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
     gui_config_file
         .write_all(
             toml::to_string(&gui_config::Config::new(
-                minisafed_config_path.canonicalize().map_err(|e| {
-                    Error::Unexpected(format!(
-                        "Failed to canonicalize minisafed config path: {}",
-                        e
-                    ))
+                daemon_config_path.canonicalize().map_err(|e| {
+                    Error::Unexpected(format!("Failed to canonicalize daemon config path: {}", e))
                 })?,
                 hardware_wallets,
             ))

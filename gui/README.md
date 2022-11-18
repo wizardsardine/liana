@@ -1,7 +1,7 @@
-# minisafe-gui
+# liana GUI
 
-Minisafe GUI is an user graphical interface written in rust for the 
-[Minisafe daemon](https://github.com/revault/minisafe).
+Liana GUI is an user graphical interface written in rust for the 
+[Liana daemon](https://github.com/revault/liana).
 
 ## Dependencies
 
@@ -15,9 +15,9 @@ We are striving to remove dependencies, especially the 3D ones.
 
 ## Usage
 
-`minisafe-gui --datadir <datadir> --<network>`
+`liana-gui --datadir <datadir> --<network>`
 
-The default `datadir` is the default `minisafed` `datadir` (`~/.minisafe`
+The default `datadir` is the default `lianad` `datadir` (`~/.liana`
 for linux) and the default `network` is the bitcoin mainnet.
 
 If no argument is provided, the GUI checks in the default `datadir` 
@@ -29,8 +29,8 @@ file for the targeted `network`, the GUI starts with the installer mode.
 Instead of using `--datadir` and `--<network>`, a direct path to
 the GUI configuration file can be provided with `--conf`.
 
-After start up, The GUI will connect to the running minisafed.
-A command starting minisafed is launched if no connection is made.
+After start up, The GUI will connect to the running lianad.
+A command starting lianad is launched if no connection is made.
 
 ## Troubleshooting
 

@@ -4,7 +4,7 @@ use iced::{
     Alignment,
 };
 
-use minisafe::miniscript::bitcoin;
+use liana::miniscript::bitcoin;
 
 use crate::ui::{
     component::{button, card, text::*},

@@ -1,4 +1,4 @@
-use minisafe::miniscript::bitcoin::{util::bip32::Fingerprint, Network};
+use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Network};
 use std::path::PathBuf;
 
 use super::Error;

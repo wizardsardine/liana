@@ -8,7 +8,7 @@ use iced::{Alignment, Command, Subscription};
 use iced_native::{window, Event};
 use log::{debug, info};
 
-use minisafe::{
+use liana::{
     config::{Config, ConfigError},
     miniscript::bitcoin,
 };
@@ -18,7 +18,7 @@ use crate::{
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
 };
 
-type Minisafed = client::Minisafed<client::jsonrpc::JsonRPCClient>;
+type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
 
 pub struct Loader {
     pub gui_config: GUIConfig,
@@ -89,7 +89,7 @@ impl Loader {
                     self.step = Step::StartingDaemon;
                     self.daemon_started = true;
                     return Command::perform(
-                        start_daemon(self.gui_config.minisafed_config_path.clone()),
+                        start_daemon(self.gui_config.daemon_config_path.clone()),
                         Message::Started,
                     );
                 }
@@ -103,12 +103,12 @@ impl Loader {
 
     fn on_start(&mut self, res: Result<Arc<dyn Daemon + Sync + Send>, Error>) -> Command<Message> {
         match res {
-            Ok(minisafed) => {
+            Ok(daemon) => {
                 self.step = Step::Syncing {
-                    daemon: minisafed.clone(),
+                    daemon: daemon.clone(),
                     progress: 0.0,
                 };
-                Command::perform(sync(minisafed, false), Message::Syncing)
+                Command::perform(sync(daemon, false), Message::Syncing)
             }
             Err(e) => {
                 self.step = Step::Error(Box::new(e));
@@ -223,18 +223,18 @@ async fn connect(
     config: Config,
 ) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
     let client = client::jsonrpc::JsonRPCClient::new(socket_path);
-    let minisafed = Minisafed::new(client, config);
+    let daemon = Lianad::new(client, config);
 
     debug!("Searching for external daemon");
-    minisafed.get_info()?;
+    daemon.get_info()?;
     info!("Connected to external daemon");
 
-    Ok(Arc::new(minisafed))
+    Ok(Arc::new(daemon))
 }
 
 // Daemon can start only if a config path is given.
 pub async fn start_daemon(config_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
-    debug!("starting minisafe daemon");
+    debug!("starting liana daemon");
 
     let config = Config::from_file(Some(config_path))
         .map_err(|e| DaemonError::Start(format!("Error parsing config: {}", e)))?;
@@ -246,13 +246,13 @@ pub async fn start_daemon(config_path: PathBuf) -> Result<Arc<dyn Daemon + Sync 
 }
 
 async fn sync(
-    minisafed: Arc<dyn Daemon + Sync + Send>,
+    daemon: Arc<dyn Daemon + Sync + Send>,
     sleep: bool,
 ) -> Result<GetInfoResult, DaemonError> {
     if sleep {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
-    minisafed.get_info()
+    daemon.get_info()
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -266,7 +266,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Config(e) => write!(f, "Config error: {}", e),
-            Self::Daemon(e) => write!(f, "Minisafed error: {}", e),
+            Self::Daemon(e) => write!(f, "Liana daemon error: {}", e),
         }
     }
 }
@@ -283,7 +283,7 @@ impl From<DaemonError> for Error {
     }
 }
 
-/// default minisafed socket path is .minisafe/bitcoin/minisafed_rpc
+/// default lianad socket path is .liana/bitcoin/lianad_rpc
 fn socket_path(
     datadir: &Option<PathBuf>,
     network: bitcoin::Network,
@@ -294,6 +294,6 @@ fn socket_path(
         default_datadir().map_err(|_| ConfigError::DatadirNotFound)?
     };
     path.push(network.to_string());
-    path.push("minisafed_rpc");
+    path.push("lianad_rpc");
     Ok(path)
 }

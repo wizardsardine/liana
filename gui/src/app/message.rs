@@ -1,4 +1,4 @@
-use minisafe::{
+use liana::{
     config::Config as DaemonConfig,
     miniscript::bitcoin::{
         util::{bip32::Fingerprint, psbt::Psbt},

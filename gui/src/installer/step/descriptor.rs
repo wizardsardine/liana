@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use iced::{pure::Element, Command};
-use minisafe::{
+use liana::{
     descriptors::MultipathDescriptor,
     miniscript::{
         bitcoin::{
@@ -439,7 +439,7 @@ async fn register_wallet(
     descriptor: String,
 ) -> Result<(Fingerprint, Option<[u8; 32]>), Error> {
     let hmac = hw
-        .register_wallet("Minisafe", &descriptor)
+        .register_wallet("Liana", &descriptor)
         .await
         .map_err(Error::from)?;
     Ok((fingerprint, hmac))
