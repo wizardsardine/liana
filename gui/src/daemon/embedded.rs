@@ -120,7 +120,7 @@ impl Daemon for EmbeddedDaemon {
             .read()
             .unwrap()
             .control
-            .create_spend(coins_outpoints, destinations, feerate_vb)
+            .create_spend(destinations, coins_outpoints, feerate_vb)
             .map_err(|e| DaemonError::Unexpected(e.to_string()))
     }
 

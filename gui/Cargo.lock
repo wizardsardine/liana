@@ -1620,7 +1620,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 [[package]]
 name = "minisafe"
 version = "0.0.1"
-source = "git+https://github.com/revault/minisafe?branch=master#ac80aa77215169d93bf5a44afb2b854f52e74348"
+source = "git+https://github.com/revault/minisafe?branch=master#25bbce8612f7aaef45d24ec16fc1fd55c6b73594"
 dependencies = [
  "backtrace",
  "base64",
@@ -2804,7 +2804,7 @@ version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
- "cfg-if 1.0.0",
+ "cfg-if 0.1.10",
  "rand 0.8.5",
  "static_assertions",
 ]

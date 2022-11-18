@@ -346,7 +346,7 @@ impl Step for SaveSpend {
             psbt.unsigned_tx
                 .output
                 .iter()
-                .position(|output| outputs_script_pubkeys.contains(&output.script_pubkey))
+                .position(|output| !outputs_script_pubkeys.contains(&output.script_pubkey))
         } else {
             None
         };
