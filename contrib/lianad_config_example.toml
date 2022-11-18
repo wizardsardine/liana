@@ -1,0 +1,38 @@
+# Whether to run the process as a UNIX daemon (double fork magic)
+daemon = false
+
+# (Optional) Path to the folder where we should store the application data.
+# Defaults to `.lianad` in your home folder.
+data_dir = "/home/wizardsardine/.lianad"
+
+# How verbose logging should be (one of "error", "warn", "info", "debug", "trace")
+log_level = "debug"
+
+# The wallet descriptor. It must be a Segwit v0 Pay-To-Witness-Script-Hash (`wsh()`) descriptor
+# corresponding to a `or(pk(A),and(pk(B),older(X)))` policy (either public key A can spend immediately
+# or public key B can spend after X blocks).
+# The public keys must be valid extend keys ("xpubs") ending with a wildcard (i.e. can be derived
+# from). The public keys must be multipath expressions with exactly the `0` and `1` derivation indexes,
+# that is having a derivation step which is `/<0;1>` before the last step. This is in order to be able
+# to derive deposit and change addresses from the same descriptor.
+# The extended public keys must be encoded for the network the daemon is to be run (i.e. "xpub"s for the
+# main network and "tpub"s for everything else).
+#
+# YOUR DESCRIPTOR IS UNIQUE AND MUST BE BACKED UP, WITHOUT IT YOU WONT BE ABLE TO RECOVER YOUR FUNDS.
+#
+main_descriptor = "wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/<0;1>/*),and_v(v:pkh(tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/<0;1>/*),older(2))))#uact7s3g"
+
+# This section is the configuration related to the Bitcoin backend.
+# On what network shall it operate?
+# How often should it poll the Bitcoin backend for updates?
+[bitcoin_config]
+network = "testnet"
+poll_interval_secs = 30
+
+# This section is specific to the bitcoind implementation of the Bitcoin backend. This is the only
+# implementation available for now.
+# In order to be able to connect to bitcoind, it needs to know on what port it is listening as well
+# as where the authentication cookie is located.
+[bitcoind_config]
+addr = "127.0.0.1:18332"
+cookie_path = "/home/wizardsardine/.bitcoin/testnet3/.cookie"
