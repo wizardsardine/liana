@@ -305,7 +305,7 @@ impl DaemonHandle {
         if config.daemon {
             log::info!("Daemonizing");
             let log_file = data_dir.as_path().join("log");
-            let pid_file = data_dir.as_path().join("revaultd.pid");
+            let pid_file = data_dir.as_path().join("lianad.pid");
             unsafe {
                 daemonize::daemonize(&data_dir, &log_file, &pid_file)
                     .map_err(StartupError::Daemonization)?;

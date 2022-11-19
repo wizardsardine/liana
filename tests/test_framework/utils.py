@@ -174,7 +174,7 @@ class UnixDomainSocketRpc(object):
                     return json.loads(buff)
                 except json.JSONDecodeError:
                     # There is more to read, continue
-                    # FIXME: this is a workaround for large reads taken from revaultd.
+                    # FIXME: this is a workaround for large reads taken from lianad.
                     # We should use the '\n' marker instead since lianad uses that.
                     continue
 
