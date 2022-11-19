@@ -1,5 +1,5 @@
 use crate::daemon::model::{Coin, SpendTx};
-use minisafe::miniscript::bitcoin::Network;
+use liana::miniscript::bitcoin::Network;
 
 pub struct Cache {
     pub network: Network,

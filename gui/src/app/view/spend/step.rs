@@ -3,7 +3,7 @@ use iced::{
     Alignment, Length,
 };
 
-use minisafe::miniscript::bitcoin::Amount;
+use liana::miniscript::bitcoin::Amount;
 
 use crate::{
     app::{

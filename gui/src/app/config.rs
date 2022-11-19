@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    /// Path to minisafed configuration file.
-    pub minisafed_config_path: PathBuf,
+    /// Path to lianad configuration file.
+    pub daemon_config_path: PathBuf,
     /// log level, can be "info", "debug", "trace".
     pub log_level: Option<String>,
     /// Use iced debug feature if true.
@@ -18,12 +18,9 @@ pub struct Config {
 pub const DEFAULT_FILE_NAME: &str = "gui.toml";
 
 impl Config {
-    pub fn new(
-        minisafed_config_path: PathBuf,
-        hardware_wallets: Vec<HardwareWalletConfig>,
-    ) -> Self {
+    pub fn new(daemon_config_path: PathBuf, hardware_wallets: Vec<HardwareWalletConfig>) -> Self {
         Self {
-            minisafed_config_path,
+            daemon_config_path,
             log_level: None,
             debug: None,
             hardware_wallets,
@@ -72,10 +69,10 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-// Get the absolute path to the minisafe configuration folder.
+// Get the absolute path to the liana configuration folder.
 ///
-/// This a "minisafe" directory in the XDG standard configuration directory for all OSes but
-/// Linux-based ones, for which it's `~/.minisafe`.
+/// This a "liana" directory in the XDG standard configuration directory for all OSes but
+/// Linux-based ones, for which it's `~/.liana`.
 /// Rationale: we want to have the database, RPC socket, etc.. in the same folder as the
 /// configuration file but for Linux the XDG specify a data directory (`~/.local/share/`) different
 /// from the configuration one (`~/.config/`).
@@ -88,10 +85,10 @@ pub fn default_datadir() -> Result<PathBuf, Box<dyn std::error::Error>> {
 
     if let Some(mut path) = configs_dir {
         #[cfg(target_os = "linux")]
-        path.push(".minisafe");
+        path.push(".liana");
 
         #[cfg(not(target_os = "linux"))]
-        path.push("Minisafe");
+        path.push("Liana");
 
         return Ok(path);
     }

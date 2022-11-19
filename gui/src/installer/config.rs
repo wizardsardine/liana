@@ -1,19 +1,19 @@
 use std::convert::TryFrom;
 
-use minisafe::config::Config as MinisafeConfig;
+use liana::config::Config as LianaConfig;
 
 use super::step::Context;
 
 pub const DEFAULT_FILE_NAME: &str = "daemon.toml";
 
-impl TryFrom<Context> for MinisafeConfig {
+impl TryFrom<Context> for LianaConfig {
     type Error = &'static str;
 
     fn try_from(ctx: Context) -> Result<Self, Self::Error> {
         if ctx.descriptor.is_none() {
             return Err("config does not have a main Descriptor");
         }
-        Ok(MinisafeConfig {
+        Ok(LianaConfig {
             #[cfg(unix)]
             daemon: false,
             log_level: log::LevelFilter::Info,

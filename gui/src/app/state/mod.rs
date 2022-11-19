@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use iced::pure::{column, Element};
 use iced::{widget::qr_code, Command, Subscription};
-use minisafe::miniscript::bitcoin::{Address, Amount};
+use liana::miniscript::bitcoin::{Address, Amount};
 
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view};
 use crate::daemon::{model::Coin, Daemon};
@@ -165,7 +165,7 @@ mod tests {
     use crate::{
         app::cache::Cache,
         daemon::{
-            client::{Minisafed, Request},
+            client::{Lianad, Request},
             model::*,
         },
         utils::{
@@ -174,7 +174,7 @@ mod tests {
         },
     };
 
-    use minisafe::miniscript::bitcoin::Address;
+    use liana::miniscript::bitcoin::Address;
     use serde_json::json;
     use std::str::FromStr;
 
@@ -191,7 +191,7 @@ mod tests {
         )]);
 
         let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::default());
-        let client = Arc::new(Minisafed::new(daemon.run(), fake_daemon_config()));
+        let client = Arc::new(Lianad::new(daemon.run(), fake_daemon_config()));
         let sandbox = sandbox.load(client, &Cache::default()).await;
 
         let panel = sandbox.state();

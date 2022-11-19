@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use async_hwi::{ledger, specter, DeviceKind, Error as HWIError, HWI};
-use log::debug;
-use minisafe::miniscript::bitcoin::{
+use liana::miniscript::bitcoin::{
     hashes::hex::{FromHex, ToHex},
     util::bip32::Fingerprint,
 };
+use log::debug;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use async_hwi::DeviceKind;
 use iced::{pure::Element, Command};
-use minisafe::{
+use liana::{
     config::{BitcoinConfig, BitcoindConfig},
     descriptors::MultipathDescriptor,
     miniscript::bitcoin,

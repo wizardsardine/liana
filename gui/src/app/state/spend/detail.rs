@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use iced::pure::Element;
 use iced::Command;
-use minisafe::miniscript::bitcoin::util::{bip32::Fingerprint, psbt::Psbt};
+use liana::miniscript::bitcoin::util::{bip32::Fingerprint, psbt::Psbt};
 
 use crate::{
     app::{
@@ -290,7 +290,7 @@ impl Action for SignAction {
         let config = self.config.clone();
         let desc = daemon.config().main_descriptor.to_string();
         Command::perform(
-            list_hws(config, "Minisafe".to_string(), desc),
+            list_hws(config, "Liana".to_string(), desc),
             Message::ConnectedHardwareWallets,
         )
     }

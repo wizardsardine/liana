@@ -2,7 +2,7 @@ use iced::{
     pure::{column, Element},
     Alignment,
 };
-use minisafe::miniscript::bitcoin;
+use liana::miniscript::bitcoin;
 
 use crate::ui::component::text::*;
 

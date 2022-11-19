@@ -1,5 +1,5 @@
 use crate::daemon::DaemonError;
-use minisafe::config::ConfigError;
+use liana::config::ConfigError;
 use std::convert::From;
 use std::io::ErrorKind;
 

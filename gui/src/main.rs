@@ -5,9 +5,9 @@ use iced::{executor, Command, Settings, Subscription};
 extern crate serde;
 extern crate serde_json;
 
-use minisafe::{config::Config as DaemonConfig, miniscript::bitcoin};
+use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
 
-use minisafe_gui::{
+use liana_gui::{
     app::{
         self,
         cache::Cache,
@@ -97,9 +97,9 @@ impl Application for GUI {
 
     fn title(&self) -> String {
         match self.state {
-            State::Installer(_) => String::from("Minisafe Installer"),
-            State::App(_) => String::from("Minisafe"),
-            State::Loader(..) => String::from("Minisafe"),
+            State::Installer(_) => String::from("Liana Installer"),
+            State::App(_) => String::from("Liana"),
+            State::Loader(..) => String::from("Liana"),
         }
     }
 
@@ -119,7 +119,7 @@ impl Application for GUI {
             }
             Config::Run(cfg) => {
                 let daemon_cfg =
-                    DaemonConfig::from_file(Some(cfg.minisafed_config_path.clone())).unwrap();
+                    DaemonConfig::from_file(Some(cfg.daemon_config_path.clone())).unwrap();
                 let (loader, command) = Loader::new(cfg, daemon_cfg);
                 (
                     Self {
@@ -152,7 +152,7 @@ impl Application for GUI {
                 if let installer::Message::Exit(path) = *msg {
                     let cfg = app::Config::from_file(&path).unwrap();
                     let daemon_cfg =
-                        DaemonConfig::from_file(Some(cfg.minisafed_config_path.clone())).unwrap();
+                        DaemonConfig::from_file(Some(cfg.daemon_config_path.clone())).unwrap();
                     let (loader, command) = Loader::new(cfg, daemon_cfg);
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
@@ -161,16 +161,16 @@ impl Application for GUI {
                 }
             }
             (State::Loader(loader), Message::Load(msg)) => {
-                if let loader::Message::Synced(info, coins, spend_txs, minisafed) = *msg {
+                if let loader::Message::Synced(info, coins, spend_txs, daemon) = *msg {
                     let cache = Cache {
-                        network: minisafed.config().bitcoin_config.network,
+                        network: daemon.config().bitcoin_config.network,
                         blockheight: info.blockheight,
                         coins,
                         spend_txs,
                         ..Default::default()
                     };
 
-                    let (app, command) = App::new(cache, loader.gui_config.clone(), minisafed);
+                    let (app, command) = App::new(cache, loader.gui_config.clone(), daemon);
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
                 } else {

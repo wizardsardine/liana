@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 
 use super::{model::*, Daemon, DaemonError};
-use minisafe::{
+use liana::{
     config::Config,
     miniscript::bitcoin::{util::psbt::Psbt, Address, OutPoint, Txid},
     DaemonHandle,

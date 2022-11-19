@@ -7,7 +7,7 @@ use std::sync::Arc;
 use chrono::prelude::*;
 use iced::{pure::Element, Command};
 
-use minisafe::config::Config;
+use liana::config::Config;
 
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::State, view},
@@ -211,7 +211,7 @@ impl Setting for BitcoindSettings {
 
                 if self.addr.valid & self.cookie_path.valid {
                     let mut daemon_config = daemon.config().clone();
-                    daemon_config.bitcoind_config = Some(minisafe::config::BitcoindConfig {
+                    daemon_config.bitcoind_config = Some(liana::config::BitcoindConfig {
                         cookie_path: new_path.unwrap(),
                         addr: new_addr.unwrap(),
                     });

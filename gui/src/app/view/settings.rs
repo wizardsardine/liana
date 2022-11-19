@@ -6,7 +6,7 @@ use iced::{
     Alignment, Length,
 };
 
-use minisafe::miniscript::bitcoin;
+use liana::miniscript::bitcoin;
 
 use super::{
     dashboard,
@@ -141,7 +141,7 @@ pub fn bitcoind_edit<'a>(
 
 pub fn bitcoind<'a>(
     network: bitcoin::Network,
-    config: &minisafe::config::BitcoindConfig,
+    config: &liana::config::BitcoindConfig,
     blockheight: i32,
     is_running: Option<bool>,
     can_edit: bool,

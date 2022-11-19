@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::ErrorKind;
 
-use minisafe::{
+use liana::{
     config::Config,
     miniscript::bitcoin::{util::psbt::Psbt, Address, OutPoint, Txid},
 };

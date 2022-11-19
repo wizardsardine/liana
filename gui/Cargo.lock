@@ -1410,6 +1410,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "liana"
+version = "0.0.1"
+source = "git+https://github.com/revault/liana?branch=master#72a7bbea4c2bb931ff78286cff8be4fbe9c44b48"
+dependencies = [
+ "backtrace",
+ "base64",
+ "dirs",
+ "fern",
+ "jsonrpc",
+ "libc",
+ "log",
+ "miniscript",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
+name = "liana_gui"
+version = "0.0.1"
+dependencies = [
+ "async-hwi",
+ "backtrace",
+ "base64",
+ "chrono",
+ "dirs",
+ "fern",
+ "iced",
+ "iced_lazy",
+ "iced_native",
+ "iced_pure",
+ "liana",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "uds_windows",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1616,48 +1658,6 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
-
-[[package]]
-name = "minisafe"
-version = "0.0.1"
-source = "git+https://github.com/revault/minisafe?branch=master#25bbce8612f7aaef45d24ec16fc1fd55c6b73594"
-dependencies = [
- "backtrace",
- "base64",
- "dirs",
- "fern",
- "jsonrpc",
- "libc",
- "log",
- "miniscript",
- "rusqlite",
- "serde",
- "serde_json",
- "toml",
-]
-
-[[package]]
-name = "minisafe-gui"
-version = "0.0.1"
-dependencies = [
- "async-hwi",
- "backtrace",
- "base64",
- "chrono",
- "dirs",
- "fern",
- "iced",
- "iced_lazy",
- "iced_native",
- "iced_pure",
- "log",
- "minisafe",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "uds_windows",
-]
 
 [[package]]
 name = "miniscript"

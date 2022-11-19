@@ -214,7 +214,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                 column()
                     .push(
                         column()
-                            .push(container(text("Minisafe").bold()).padding(10))
+                            .push(container(text("Liana").bold()).padding(10))
                             .push(separation().width(Length::Units(200)))
                             .spacing(10),
                     )

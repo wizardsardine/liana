@@ -3,7 +3,7 @@ use iced::{
     Alignment, Length,
 };
 
-use minisafe::miniscript::bitcoin::{
+use liana::miniscript::bitcoin::{
     util::{bip32::Fingerprint, psbt::Psbt},
     Address, Amount, Network,
 };
