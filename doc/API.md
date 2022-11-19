@@ -1,6 +1,6 @@
-# Minisafe API
+# Liana daemon API
 
-`minisafe` exposes a [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
+`lianad` exposes a [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
 interface over a Unix Domain socket.
 
 Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
@@ -10,6 +10,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`stop`](#stop)                                             | Stops the minisafe daemon                            |
 | [`getinfo`](#getinfo)                                       | Get general information about the daemon             |
 | [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                          |
+| [`listcoins`](#listcoins)                                   | List all wallet transaction outputs.                 |
 | [`listspendtxs`](#listspendtxs)                             | List all stored Spend transactions                   |
 | [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                    |
 | [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it       |
@@ -21,7 +22,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 
 ### `stop`
 
-Stops the minisafe daemon.
+Stops the Liana daemon.
 
 #### Response
 
