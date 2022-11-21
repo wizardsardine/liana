@@ -108,6 +108,33 @@ impl Daemon for EmbeddedDaemon {
             .list_spend())
     }
 
+    fn list_confirmed_txs(
+        &self,
+        start: u32,
+        end: u32,
+        limit: u64,
+    ) -> Result<ListTransactionsResult, DaemonError> {
+        Ok(self
+            .handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .read()
+            .unwrap()
+            .control
+            .list_confirmed_transactions(start, end, limit))
+    }
+
+    fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
+        Ok(self
+            .handle
+            .as_ref()
+            .ok_or(DaemonError::NoAnswer)?
+            .read()
+            .unwrap()
+            .control
+            .list_transactions(txids))
+    }
+
     fn create_spend_tx(
         &self,
         coins_outpoints: &[OutPoint],

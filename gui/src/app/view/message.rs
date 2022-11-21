@@ -30,6 +30,7 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectHardwareWallet(usize),
+    Next,
 }
 
 #[derive(Debug, Clone)]

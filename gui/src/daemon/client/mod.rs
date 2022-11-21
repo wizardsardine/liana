@@ -118,6 +118,22 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         let _res: serde_json::value::Value = self.call("startrescan", Some(vec![t]))?;
         Ok(())
     }
+
+    fn list_confirmed_txs(
+        &self,
+        start: u32,
+        end: u32,
+        limit: u64,
+    ) -> Result<ListTransactionsResult, DaemonError> {
+        self.call(
+            "listconfirmed",
+            Some(vec![json!(start), json!(end), json!(limit)]),
+        )
+    }
+
+    fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
+        self.call("list_transactions", Some(vec![txids]))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

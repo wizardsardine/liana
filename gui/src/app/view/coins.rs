@@ -89,9 +89,15 @@ fn coin_list_view(coin: &Coin, timelock: u32, blockheight: u32) -> Element<Messa
                         .width(Length::Fill),
                 )
                 .push(
-                    text(&format!("{} BTC", coin.amount.to_btc()))
-                        .bold()
-                        .width(Length::Shrink),
+                    row()
+                        .spacing(5)
+                        .push(
+                            text(&format!("{:.8}", coin.amount.to_btc()))
+                                .bold()
+                                .width(Length::Shrink),
+                        )
+                        .push(text("BTC"))
+                        .align_items(Alignment::Center),
                 )
                 .align_items(Alignment::Center)
                 .spacing(20)
