@@ -7,7 +7,6 @@ Liana GUI is an user graphical interface written in rust for the
 
 - `fontconfig` (On Debian/Ubuntu `apt install libfontconfig1-dev`)
 - [`pkg-config`](https://www.freedesktop.org/wiki/Software/pkg-config/) (On Debian/Ubuntu `apt install pkg-config`)
-- [`libxkbcommon`](https://xkbcommon.org/) for the dummy signer (On Debian/Ubuntu `apt install libxkbcommon-dev`)
 - Vulkan drivers (On Debian/Ubuntu `apt install mesa-vulkan-drivers libvulkan-dev`)
 - `libudev-dev` (On Debian/Ubuntu `apt install libudev-dev`)
 
