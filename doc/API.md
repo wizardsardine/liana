@@ -16,6 +16,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it                |
 | [`startrescan`](#startrescan)                               | Start rescanning the block chain from a given date            |
 | [`listconfirmed`](#listconfirmed)                           | List of confirmed transactions of incoming and outgoing funds |
+| [`listtransactions`](#listtransactions)                     | List of transactions with the given txids                     |
 
 # Reference
 
@@ -244,3 +245,19 @@ Confirmation time is based on the timestamp of blocks.
 | `height` | int or `null` | Block height of the transaction, `null` if the transaction is unconfirmed |
 | `time`   | int or `null` | Block time of the transaction, `null` if the transaction is unconfirmed   |
 | `tx`     | string        | hex encoded bitcoin transaction                                           |
+
+### `listtransactions`
+
+`listtransactions` retrieves the transactions with the given txids.
+
+#### Request
+
+| Field         | Type            | Description                           |
+| ------------- | --------------- | ------------------------------------- |
+| `txids`       | array of string | Ids of the transactions  to retrieve  |
+
+#### Response
+
+| Field          | Type   | Description                                            |
+| -------------- | ------ | ------------------------------------------------------ |
+| `transactions` | array  | Array of [Transaction resource](#transaction-resource) |

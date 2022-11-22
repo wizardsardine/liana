@@ -113,6 +113,20 @@ fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json:
     )))
 }
 
+fn list_transactions(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let txids: Vec<bitcoin::Txid> = params
+        .get(0, "txids")
+        .ok_or_else(|| Error::invalid_params("Missing 'txids' parameter."))?
+        .as_array()
+        .and_then(|arr| {
+            arr.iter()
+                .map(|entry| entry.as_str().and_then(|e| bitcoin::Txid::from_str(e).ok()))
+                .collect()
+        })
+        .ok_or_else(|| Error::invalid_params("Invalid 'txids' parameter."))?;
+    Ok(serde_json::json!(&control.list_transactions(&txids)))
+}
+
 fn start_rescan(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let timestamp: u32 = params
         .get(0, "timestamp")
@@ -172,6 +186,14 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
                 )
             })?;
             list_confirmed(control, params)?
+        }
+        "listtransactions" => {
+            let params = req.params.ok_or_else(|| {
+                Error::invalid_params(
+                    "The 'listtransactions' command requires 1 parameter: 'txids'",
+                )
+            })?;
+            list_transactions(control, params)?
         }
         _ => {
             return Err(Error::method_not_found());

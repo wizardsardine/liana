@@ -584,6 +584,25 @@ impl DaemonControl {
             .collect();
         ListTransactionsResult { transactions }
     }
+
+    /// list_transactions retrieves the transactions with the given txids.
+    pub fn list_transactions(&self, txids: &[bitcoin::Txid]) -> ListTransactionsResult {
+        let transactions = txids
+            .iter()
+            .filter_map(|txid| {
+                // TODO: batch batch those calls to the Bitcoin backend
+                // so it can in turn optimize its queries.
+                self.bitcoin
+                    .wallet_transaction(txid)
+                    .map(|(tx, block)| TransactionInfo {
+                        tx,
+                        height: block.map(|b| b.height),
+                        time: block.map(|b| b.time),
+                    })
+            })
+            .collect();
+        ListTransactionsResult { transactions }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -668,6 +687,7 @@ pub struct TransactionInfo {
 mod tests {
     use super::*;
     use crate::{bitcoin::Block, database::SpendBlock, testutils::*};
+
     use bitcoin::{
         blockdata::transaction::{TxIn, TxOut},
         util::bip32::ChildNumber,
@@ -1159,6 +1179,128 @@ mod tests {
 
         assert_eq!(transactions[0].time, Some(3));
         assert_eq!(transactions[0].tx, spend_tx);
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn list_transactions() {
+        let outpoint = OutPoint::new(
+            Txid::from_str("617eab1fc0b03ee7f82ba70166725291783461f1a0e7975eaf8b5f8f674234f3")
+                .unwrap(),
+            0,
+        );
+
+        let tx1: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: outpoint,
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![TxOut {
+                script_pubkey: Script::new(),
+                value: 100_000_000,
+            }],
+        };
+
+        let tx2: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: outpoint,
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![TxOut {
+                script_pubkey: Script::new(),
+                value: 2000,
+            }],
+        };
+
+        let tx3: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: outpoint,
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![TxOut {
+                script_pubkey: Script::new(),
+                value: 3000,
+            }],
+        };
+
+        let mut btc = DummyBitcoind::new();
+        btc.txs.insert(
+            tx1.txid(),
+            (
+                tx1.clone(),
+                Some(Block {
+                    hash: bitcoin::BlockHash::from_str(
+                        "0000000000000000000326b8fca8d3f820647c97ea33ef722096b3c7b2c8ee94",
+                    )
+                    .unwrap(),
+                    time: 1,
+                    height: 1,
+                }),
+            ),
+        );
+        btc.txs.insert(
+            tx2.txid(),
+            (
+                tx2.clone(),
+                Some(Block {
+                    hash: bitcoin::BlockHash::from_str(
+                        "0000000000000000000326b8fca8d3f820647c97ea33ef722096b3c7b2c8ee94",
+                    )
+                    .unwrap(),
+                    time: 2,
+                    height: 2,
+                }),
+            ),
+        );
+        btc.txs.insert(
+            tx3.txid(),
+            (
+                tx3.clone(),
+                Some(Block {
+                    hash: bitcoin::BlockHash::from_str(
+                        "0000000000000000000326b8fca8d3f820647c97ea33ef722096b3c7b2c8ee94",
+                    )
+                    .unwrap(),
+                    time: 4,
+                    height: 4,
+                }),
+            ),
+        );
+
+        let ms = DummyLiana::new(btc, DummyDatabase::new());
+
+        let control = &ms.handle.control;
+
+        let transactions = control.list_transactions(&[tx1.txid()]).transactions;
+        assert_eq!(transactions.len(), 1);
+        assert_eq!(transactions[0].tx, tx1);
+
+        let transactions = control
+            .list_transactions(&[tx1.txid(), tx2.txid(), tx3.txid()])
+            .transactions;
+        assert_eq!(transactions.len(), 3);
+
+        let txs: Vec<Transaction> = transactions
+            .iter()
+            .map(|transaction| transaction.tx.clone())
+            .collect();
+
+        assert!(txs.contains(&tx1));
+        assert!(txs.contains(&tx2));
+        assert!(txs.contains(&tx3));
 
         ms.shutdown();
     }
