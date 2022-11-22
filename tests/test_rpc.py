@@ -1,7 +1,5 @@
-import os
 import pytest
 import random
-import shutil
 import time
 
 from fixtures import *
@@ -47,9 +45,7 @@ def test_listcoins(lianad, bitcoind):
     # If the coin gets confirmed, it'll be marked as such.
     bitcoind.generate_block(1, wait_for_mempool=txid)
     block_height = bitcoind.rpc.getblockcount()
-    wait_for(
-        lambda: lianad.rpc.listcoins()["coins"][0]["block_height"] == block_height
-    )
+    wait_for(lambda: lianad.rpc.listcoins()["coins"][0]["block_height"] == block_height)
 
     # Same if the coin gets spent.
     spend_tx = spend_coins(lianad, bitcoind, (res[0],))
@@ -356,3 +352,173 @@ def test_start_rescan(lianad, bitcoind):
     # Now that it caught up it noticed which one were used onchain, so it won't reuse
     # this derivation indexes anymore.
     assert lianad.rpc.getnewaddress() not in (first_address, second_address)
+
+
+def test_listtransactions(lianad, bitcoind):
+    """Test listing of transactions by txid and timespan"""
+
+    def sign_and_broadcast(psbt):
+        txid = psbt.tx.txid().hex()
+        psbt = lianad.sign_psbt(psbt)
+        lianad.rpc.updatespend(psbt.to_base64())
+        lianad.rpc.broadcastspend(txid)
+        return txid
+
+    def wait_synced():
+        wait_for(
+            lambda: lianad.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
+        )
+
+    best_block = bitcoind.rpc.getbestblockhash()
+    initial_timestamp = bitcoind.rpc.getblockheader(best_block)["time"]
+    wait_synced()
+
+    # Deposit multiple coins in a single transaction
+    destinations = {
+        lianad.rpc.getnewaddress()["address"]: 0.0123456,
+        lianad.rpc.getnewaddress()["address"]: 0.0123457,
+        lianad.rpc.getnewaddress()["address"]: 0.0123458,
+    }
+    txid = bitcoind.rpc.sendmany("", destinations)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 3)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+
+    # Mine 12 blocks to force the blocktime to increase
+    bitcoind.generate_block(12)
+    wait_synced()
+    best_block = bitcoind.rpc.getbestblockhash()
+    second_timestamp = bitcoind.rpc.getblockheader(best_block)["time"]
+    assert second_timestamp > initial_timestamp
+
+    # Deposit a coin that will be unspent
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.123456)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 4)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+
+    # Deposit a coin that will be spent with a change output
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.23456)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 5)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    outpoint = next(
+        c["outpoint"] for c in lianad.rpc.listcoins()["coins"] if txid in c["outpoint"]
+    )
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 100_000,
+    }
+    res = lianad.rpc.createspend(destinations, [outpoint], 6)
+    psbt = PSBT.from_base64(res["psbt"])
+    txid = sign_and_broadcast(psbt)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+
+    # Mine 12 blocks to force the blocktime to increase
+    bitcoind.generate_block(12)
+    wait_synced()
+    best_block = bitcoind.rpc.getbestblockhash()
+    third_timestamp = bitcoind.rpc.getblockheader(best_block)["time"]
+    assert third_timestamp > second_timestamp
+    bitcoind.generate_block(12)
+    wait_synced()
+
+    # Deposit a coin that will be spent with a change output and also two new deposits
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.3456)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 7)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    outpoint = next(
+        c["outpoint"] for c in lianad.rpc.listcoins()["coins"] if txid in c["outpoint"]
+    )
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 11_000,
+        addr: 12_000,  # Even with address reuse! Booooh
+        lianad.rpc.getnewaddress()["address"]: 13_000,
+    }
+    res = lianad.rpc.createspend(destinations, [outpoint], 6)
+    psbt = PSBT.from_base64(res["psbt"])
+    txid = sign_and_broadcast(psbt)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+
+    # Deposit a coin that will be spending (unconfirmed spend transaction)
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.456)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 11)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    outpoint = next(
+        c["outpoint"] for c in lianad.rpc.listcoins()["coins"] if txid in c["outpoint"]
+    )
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 11_000,
+    }
+    res = lianad.rpc.createspend(destinations, [outpoint], 6)
+    psbt = PSBT.from_base64(res["psbt"])
+    txid = sign_and_broadcast(psbt)
+
+    # At this point we have 12 spent and unspent coins, one of them is unconfirmed.
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 12)
+
+    # However some of them share the same txid! This is the case of the 3 first coins
+    # for instance, or the Spend transactions with multiple outputs at one of our addresses.
+    # In total, that's 8 transactions.
+    txids = set(c["outpoint"][:-2] for c in lianad.rpc.listcoins()["coins"])
+    assert len(txids) == 8
+
+    # We can query all of them at once using listtransactions. The result contains all
+    # the correct transactions as hex, with no duplicate.
+    all_txs = lianad.rpc.listtransactions(list(txids))["transactions"]
+    assert len(all_txs) == 8
+    for tx in all_txs:
+        txid = bitcoind.rpc.decoderawtransaction(tx["tx"])["txid"]
+        txids.remove(txid)  # This will raise an error if it isn't there
+
+    # We can also query them one by one.
+    txids = set(c["outpoint"][:-2] for c in lianad.rpc.listcoins()["coins"])
+    for txid in txids:
+        txs = lianad.rpc.listtransactions([txid])["transactions"]
+        bit_txid = bitcoind.rpc.decoderawtransaction(txs[0]["tx"])["txid"]
+        assert bit_txid == txid
+
+    # We can query all confirmed transactions
+    best_block = bitcoind.rpc.getbestblockhash()
+    final_timestamp = bitcoind.rpc.getblockheader(best_block)["time"]
+    txs = lianad.rpc.listconfirmed(initial_timestamp, final_timestamp, 10)[
+        "transactions"
+    ]
+    assert len(txs) == 7, "The last spend tx is unconfirmed"
+    for tx in txs:
+        txid = bitcoind.rpc.decoderawtransaction(tx["tx"])["txid"]
+        txids.remove(txid)  # This will raise an error if it isn't there
+
+    # We can limit the size of the result
+    txs = lianad.rpc.listconfirmed(initial_timestamp, final_timestamp, 5)[
+        "transactions"
+    ]
+    assert len(txs) == 5
+
+    # We can restrict the query to a certain time window.
+    # First get the txid of all the transactions that happened during this timespan.
+    txids = set()
+    for coin in lianad.rpc.listcoins()["coins"]:
+        if coin["block_height"] is None:
+            continue
+        block_hash = bitcoind.rpc.getblockhash(coin["block_height"])
+        block_time = bitcoind.rpc.getblockheader(block_hash)["time"]
+        spend_time = None
+        if coin["spend_info"] is not None and coin["spend_info"]["height"] is not None:
+            spend_bhash = bitcoind.rpc.getblockhash(coin["spend_info"]["height"])
+            spend_time = bitcoind.rpc.getblockheader(spend_bhash)["time"]
+        if (block_time >= second_timestamp and block_time <= third_timestamp) or (
+            spend_time is not None
+            and spend_time >= second_timestamp
+            and spend_time <= third_timestamp
+        ):
+            txids.add(coin["outpoint"][:-2])
+    # It's all 7 minus the first deposit and the last confirmed spend. So that's 5 of them.
+    assert len(txids) == 3
+    # Now let's compare with what lianad is giving us.
+    txs = lianad.rpc.listconfirmed(second_timestamp, third_timestamp, 10)[
+        "transactions"
+    ]
+    assert len(txs) == 3
+    bit_txids = set(bitcoind.rpc.decoderawtransaction(tx["tx"])["txid"] for tx in txs)
+    assert bit_txids == txids

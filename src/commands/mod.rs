@@ -9,7 +9,10 @@ use crate::{
     database::{Coin, DatabaseInterface},
     descriptors, DaemonControl, VERSION,
 };
-use utils::{change_index, deser_amount_from_sats, deser_psbt_base64, ser_amount, ser_base64};
+
+use utils::{
+    change_index, deser_amount_from_sats, deser_base64, deser_hex, ser_amount, ser_base64, ser_hex,
+};
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -555,6 +558,51 @@ impl DaemonControl {
 
         Ok(())
     }
+
+    /// list_confirmed_transactions retrieves a limited list of transactions which occured between two given dates.
+    pub fn list_confirmed_transactions(
+        &self,
+        start: u32,
+        end: u32,
+        limit: u64,
+    ) -> ListTransactionsResult {
+        let mut db_conn = self.db.connection();
+        let txids = db_conn.list_txids(start, end, limit);
+        let transactions = txids
+            .iter()
+            .filter_map(|txid| {
+                // TODO: batch batch those calls to the Bitcoin backend
+                // so it can in turn optimize its queries.
+                self.bitcoin
+                    .wallet_transaction(txid)
+                    .map(|(tx, block)| TransactionInfo {
+                        tx,
+                        height: block.map(|b| b.height),
+                        time: block.map(|b| b.time),
+                    })
+            })
+            .collect();
+        ListTransactionsResult { transactions }
+    }
+
+    /// list_transactions retrieves the transactions with the given txids.
+    pub fn list_transactions(&self, txids: &[bitcoin::Txid]) -> ListTransactionsResult {
+        let transactions = txids
+            .iter()
+            .filter_map(|txid| {
+                // TODO: batch batch those calls to the Bitcoin backend
+                // so it can in turn optimize its queries.
+                self.bitcoin
+                    .wallet_transaction(txid)
+                    .map(|(tx, block)| TransactionInfo {
+                        tx,
+                        height: block.map(|b| b.height),
+                        time: block.map(|b| b.time),
+                    })
+            })
+            .collect();
+        ListTransactionsResult { transactions }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -606,13 +654,13 @@ pub struct ListCoinsResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateSpendResult {
-    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_psbt_base64")]
+    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_base64")]
     pub psbt: Psbt,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListSpendEntry {
-    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_psbt_base64")]
+    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_base64")]
     pub psbt: Psbt,
     pub change_index: Option<u32>,
 }
@@ -622,17 +670,36 @@ pub struct ListSpendResult {
     pub spend_txs: Vec<ListSpendEntry>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListTransactionsResult {
+    pub transactions: Vec<TransactionInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionInfo {
+    #[serde(serialize_with = "ser_hex", deserialize_with = "deser_hex")]
+    pub tx: bitcoin::Transaction,
+    pub height: Option<i32>,
+    pub time: Option<u32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutils::*;
+    use crate::{bitcoin::Block, database::SpendBlock, testutils::*};
+
+    use bitcoin::{
+        blockdata::transaction::{TxIn, TxOut},
+        util::bip32::ChildNumber,
+        OutPoint, PackedLockTime, Script, Sequence, Transaction, Txid, Witness,
+    };
     use std::str::FromStr;
 
     use bitcoin::util::bip32;
 
     #[test]
     fn getinfo() {
-        let ms = DummyLiana::new();
+        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
         // We can query getinfo
         ms.handle.control.get_info();
         ms.shutdown();
@@ -640,7 +707,7 @@ mod tests {
 
     #[test]
     fn getnewaddress() {
-        let ms = DummyLiana::new();
+        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
 
         let control = &ms.handle.control;
         // We can get an address
@@ -661,7 +728,7 @@ mod tests {
 
     #[test]
     fn create_spend() {
-        let ms = DummyLiana::new();
+        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.handle.control;
 
         // Arguments sanity checking
@@ -777,7 +844,7 @@ mod tests {
 
     #[test]
     fn update_spend() {
-        let ms = DummyLiana::new();
+        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.handle.control;
         let mut db_conn = control.db().lock().unwrap().connection();
 
@@ -885,6 +952,355 @@ mod tests {
             control.update_spend(psbt_a),
             Err(CommandError::UnknownOutpoint(external_op))
         );
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn list_confirmed_transactions() {
+        let outpoint = OutPoint::new(
+            Txid::from_str("617eab1fc0b03ee7f82ba70166725291783461f1a0e7975eaf8b5f8f674234f3")
+                .unwrap(),
+            0,
+        );
+
+        let deposit1: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: outpoint,
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![TxOut {
+                script_pubkey: Script::new(),
+                value: 100_000_000,
+            }],
+        };
+
+        let deposit2: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: outpoint,
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![TxOut {
+                script_pubkey: Script::new(),
+                value: 2000,
+            }],
+        };
+
+        let deposit3: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: outpoint,
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![TxOut {
+                script_pubkey: Script::new(),
+                value: 3000,
+            }],
+        };
+
+        let spend_tx: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: OutPoint {
+                    txid: deposit1.txid(),
+                    vout: 0,
+                },
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![
+                TxOut {
+                    script_pubkey: Script::new(),
+                    value: 4000,
+                },
+                TxOut {
+                    script_pubkey: Script::new(),
+                    value: 100_000_000 - 4000 - 1000,
+                },
+            ],
+        };
+
+        let mut db = DummyDatabase::new();
+        db.insert_coins(vec![
+            // Deposit 1
+            Coin {
+                is_change: false,
+                outpoint: OutPoint {
+                    txid: deposit1.txid(),
+                    vout: 0,
+                },
+                block_time: Some(1),
+                block_height: Some(1),
+                spend_block: Some(SpendBlock { time: 3, height: 3 }),
+                derivation_index: ChildNumber::from(0),
+                amount: bitcoin::Amount::from_sat(100_000_000),
+                spend_txid: Some(spend_tx.txid()),
+            },
+            // Deposit 2
+            Coin {
+                is_change: false,
+                outpoint: OutPoint {
+                    txid: deposit2.txid(),
+                    vout: 0,
+                },
+                block_time: Some(2),
+                block_height: Some(2),
+                spend_block: None,
+                derivation_index: ChildNumber::from(1),
+                amount: bitcoin::Amount::from_sat(2000),
+                spend_txid: None,
+            },
+            // This coin is a change output.
+            Coin {
+                is_change: true,
+                outpoint: OutPoint::new(spend_tx.txid(), 1),
+                block_time: Some(3),
+                block_height: Some(3),
+                spend_block: None,
+                derivation_index: ChildNumber::from(2),
+                amount: bitcoin::Amount::from_sat(100_000_000 - 4000 - 1000),
+                spend_txid: None,
+            },
+            // Deposit 3
+            Coin {
+                is_change: false,
+                outpoint: OutPoint {
+                    txid: deposit3.txid(),
+                    vout: 0,
+                },
+                block_time: Some(4),
+                block_height: Some(4),
+                spend_block: None,
+                derivation_index: ChildNumber::from(3),
+                amount: bitcoin::Amount::from_sat(3000),
+                spend_txid: None,
+            },
+        ]);
+
+        let mut btc = DummyBitcoind::new();
+        btc.txs.insert(
+            deposit1.txid(),
+            (
+                deposit1.clone(),
+                Some(Block {
+                    hash: bitcoin::BlockHash::from_str(
+                        "0000000000000000000326b8fca8d3f820647c97ea33ef722096b3c7b2c8ee94",
+                    )
+                    .unwrap(),
+                    time: 1,
+                    height: 1,
+                }),
+            ),
+        );
+        btc.txs.insert(
+            deposit2.txid(),
+            (
+                deposit2.clone(),
+                Some(Block {
+                    hash: bitcoin::BlockHash::from_str(
+                        "0000000000000000000326b8fca8d3f820647c97ea33ef722096b3c7b2c8ee94",
+                    )
+                    .unwrap(),
+                    time: 2,
+                    height: 2,
+                }),
+            ),
+        );
+        btc.txs.insert(
+            spend_tx.txid(),
+            (
+                spend_tx.clone(),
+                Some(Block {
+                    hash: bitcoin::BlockHash::from_str(
+                        "0000000000000000000326b8fca8d3f820647c97ea33ef722096b3c7b2c8ee94",
+                    )
+                    .unwrap(),
+                    time: 3,
+                    height: 3,
+                }),
+            ),
+        );
+        btc.txs.insert(
+            deposit3.txid(),
+            (
+                deposit3.clone(),
+                Some(Block {
+                    hash: bitcoin::BlockHash::from_str(
+                        "0000000000000000000326b8fca8d3f820647c97ea33ef722096b3c7b2c8ee94",
+                    )
+                    .unwrap(),
+                    time: 4,
+                    height: 4,
+                }),
+            ),
+        );
+
+        let ms = DummyLiana::new(btc, db);
+
+        let control = &ms.handle.control;
+
+        let transactions = control.list_confirmed_transactions(0, 4, 10).transactions;
+        assert_eq!(transactions.len(), 4);
+
+        assert_eq!(transactions[0].time, Some(4));
+        assert_eq!(transactions[0].tx, deposit3);
+
+        assert_eq!(transactions[1].time, Some(3));
+        assert_eq!(transactions[1].tx, spend_tx);
+
+        assert_eq!(transactions[2].time, Some(2));
+        assert_eq!(transactions[2].tx, deposit2);
+
+        assert_eq!(transactions[3].time, Some(1));
+        assert_eq!(transactions[3].tx, deposit1);
+
+        let transactions = control.list_confirmed_transactions(2, 3, 10).transactions;
+        assert_eq!(transactions.len(), 2);
+
+        assert_eq!(transactions[0].time, Some(3));
+        assert_eq!(transactions[1].time, Some(2));
+        assert_eq!(transactions[1].tx, deposit2);
+
+        let transactions = control.list_confirmed_transactions(2, 3, 1).transactions;
+        assert_eq!(transactions.len(), 1);
+
+        assert_eq!(transactions[0].time, Some(3));
+        assert_eq!(transactions[0].tx, spend_tx);
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn list_transactions() {
+        let outpoint = OutPoint::new(
+            Txid::from_str("617eab1fc0b03ee7f82ba70166725291783461f1a0e7975eaf8b5f8f674234f3")
+                .unwrap(),
+            0,
+        );
+
+        let tx1: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: outpoint,
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![TxOut {
+                script_pubkey: Script::new(),
+                value: 100_000_000,
+            }],
+        };
+
+        let tx2: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: outpoint,
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![TxOut {
+                script_pubkey: Script::new(),
+                value: 2000,
+            }],
+        };
+
+        let tx3: Transaction = Transaction {
+            version: 1,
+            lock_time: PackedLockTime(1),
+            input: vec![TxIn {
+                witness: Witness::new(),
+                previous_output: outpoint,
+                script_sig: Script::new(),
+                sequence: Sequence(0),
+            }],
+            output: vec![TxOut {
+                script_pubkey: Script::new(),
+                value: 3000,
+            }],
+        };
+
+        let mut btc = DummyBitcoind::new();
+        btc.txs.insert(
+            tx1.txid(),
+            (
+                tx1.clone(),
+                Some(Block {
+                    hash: bitcoin::BlockHash::from_str(
+                        "0000000000000000000326b8fca8d3f820647c97ea33ef722096b3c7b2c8ee94",
+                    )
+                    .unwrap(),
+                    time: 1,
+                    height: 1,
+                }),
+            ),
+        );
+        btc.txs.insert(
+            tx2.txid(),
+            (
+                tx2.clone(),
+                Some(Block {
+                    hash: bitcoin::BlockHash::from_str(
+                        "0000000000000000000326b8fca8d3f820647c97ea33ef722096b3c7b2c8ee94",
+                    )
+                    .unwrap(),
+                    time: 2,
+                    height: 2,
+                }),
+            ),
+        );
+        btc.txs.insert(
+            tx3.txid(),
+            (
+                tx3.clone(),
+                Some(Block {
+                    hash: bitcoin::BlockHash::from_str(
+                        "0000000000000000000326b8fca8d3f820647c97ea33ef722096b3c7b2c8ee94",
+                    )
+                    .unwrap(),
+                    time: 4,
+                    height: 4,
+                }),
+            ),
+        );
+
+        let ms = DummyLiana::new(btc, DummyDatabase::new());
+
+        let control = &ms.handle.control;
+
+        let transactions = control.list_transactions(&[tx1.txid()]).transactions;
+        assert_eq!(transactions.len(), 1);
+        assert_eq!(transactions[0].tx, tx1);
+
+        let transactions = control
+            .list_transactions(&[tx1.txid(), tx2.txid(), tx3.txid()])
+            .transactions;
+        assert_eq!(transactions.len(), 3);
+
+        let txs: Vec<Transaction> = transactions
+            .iter()
+            .map(|transaction| transaction.tx.clone())
+            .collect();
+
+        assert!(txs.contains(&tx1));
+        assert!(txs.contains(&tx2));
+        assert!(txs.contains(&tx3));
 
         ms.shutdown();
     }

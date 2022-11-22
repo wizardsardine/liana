@@ -84,6 +84,49 @@ fn broadcast_spend(control: &DaemonControl, params: Params) -> Result<serde_json
     Ok(serde_json::json!({}))
 }
 
+fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let start: u32 = params
+        .get(0, "start")
+        .ok_or_else(|| Error::invalid_params("Missing 'start' parameter."))?
+        .as_i64()
+        .and_then(|i| i.try_into().ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'start' parameter."))?;
+
+    let end: u32 = params
+        .get(1, "end")
+        .ok_or_else(|| Error::invalid_params("Missing 'end' parameter."))?
+        .as_i64()
+        .and_then(|i| i.try_into().ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'end' parameter."))?;
+
+    let limit: u64 = params
+        .get(2, "limit")
+        .ok_or_else(|| Error::invalid_params("Missing 'limit' parameter."))?
+        .as_i64()
+        .and_then(|i| i.try_into().ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'limit' parameter."))?;
+
+    Ok(serde_json::json!(&control.list_confirmed_transactions(
+        start as u32,
+        end as u32,
+        limit
+    )))
+}
+
+fn list_transactions(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let txids: Vec<bitcoin::Txid> = params
+        .get(0, "txids")
+        .ok_or_else(|| Error::invalid_params("Missing 'txids' parameter."))?
+        .as_array()
+        .and_then(|arr| {
+            arr.iter()
+                .map(|entry| entry.as_str().and_then(|e| bitcoin::Txid::from_str(e).ok()))
+                .collect()
+        })
+        .ok_or_else(|| Error::invalid_params("Invalid 'txids' parameter."))?;
+    Ok(serde_json::json!(&control.list_transactions(&txids)))
+}
+
 fn start_rescan(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let timestamp: u32 = params
         .get(0, "timestamp")
@@ -135,6 +178,22 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
                 .params
                 .ok_or_else(|| Error::invalid_params("Missing 'psbt' parameter."))?;
             update_spend(control, params)?
+        }
+        "listconfirmed" => {
+            let params = req.params.ok_or_else(|| {
+                Error::invalid_params(
+                    "The 'listconfirmed' command requires 3 parameters: 'start', 'end' and 'limit'",
+                )
+            })?;
+            list_confirmed(control, params)?
+        }
+        "listtransactions" => {
+            let params = req.params.ok_or_else(|| {
+                Error::invalid_params(
+                    "The 'listtransactions' command requires 1 parameter: 'txids'",
+                )
+            })?;
+            list_transactions(control, params)?
         }
         _ => {
             return Err(Error::method_not_found());

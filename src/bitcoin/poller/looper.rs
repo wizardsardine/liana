@@ -121,7 +121,11 @@ fn update_coins(
         .map(|coin| (coin.outpoint, coin.spend_txid.expect("Coin is spending")))
         .chain(spending.iter().cloned())
         .collect();
-    let spent = bit.spent_coins(spending_coins.as_slice());
+    let spent = bit
+        .spent_coins(spending_coins.as_slice())
+        .into_iter()
+        .map(|(oupoint, txid, block)| (oupoint, txid, block.height, block.time))
+        .collect();
     log::debug!("Newly spent coins: {:?}", spent);
 
     UpdatedCoins {

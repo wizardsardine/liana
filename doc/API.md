@@ -5,16 +5,18 @@ interface over a Unix Domain socket.
 
 Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 
-| Command                                                     | Description                                          |
-| ----------------------------------------------------------- | ---------------------------------------------------- |
-| [`stop`](#stop)                                             | Stops the minisafe daemon                            |
-| [`getinfo`](#getinfo)                                       | Get general information about the daemon             |
-| [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                          |
-| [`listcoins`](#listcoins)                                   | List all wallet transaction outputs.                 |
-| [`listspendtxs`](#listspendtxs)                             | List all stored Spend transactions                   |
-| [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                    |
-| [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it       |
-| [`startrescan`](#startrescan)                               | Start rescanning the block chain from a given date   |
+| Command                                                     | Description                                                   |
+| ----------------------------------------------------------- | ----------------------------------------------------          |
+| [`stop`](#stop)                                             | Stops the minisafe daemon                                     |
+| [`getinfo`](#getinfo)                                       | Get general information about the daemon                      |
+| [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                                   |
+| [`listcoins`](#listcoins)                                   | List all wallet transaction outputs.                          |
+| [`listspendtxs`](#listspendtxs)                             | List all stored Spend transactions                            |
+| [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                             |
+| [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it                |
+| [`startrescan`](#startrescan)                               | Start rescanning the block chain from a given date            |
+| [`listconfirmed`](#listconfirmed)                           | List of confirmed transactions of incoming and outgoing funds |
+| [`listtransactions`](#listtransactions)                     | List of transactions with the given txids                     |
 
 # Reference
 
@@ -187,7 +189,6 @@ This command does not return anything for now.
 | Field          | Type      | Description                                          |
 | -------------- | --------- | ---------------------------------------------------- |
 
-
 ### `broadcastspend`
 
 #### Request
@@ -203,7 +204,6 @@ This command does not return anything for now.
 | Field          | Type      | Description                                          |
 | -------------- | --------- | ---------------------------------------------------- |
 
-
 ### `startrescan`
 
 #### Request
@@ -218,3 +218,46 @@ This command does not return anything for now.
 
 | Field          | Type      | Description                                          |
 | -------------- | --------- | ---------------------------------------------------- |
+
+### `listconfirmed`
+
+`listconfirmed` retrieves a paginated and ordered list of transactions that were confirmed within a given time window.
+Confirmation time is based on the timestamp of blocks.
+
+#### Request
+
+| Field         | Type         | Description                                |
+| ------------- | ------------ | ------------------------------------------ |
+| `start`       | int          | Inclusive lower bound of the time window   |
+| `end`         | int          | Inclusive upper bound of the time window   |
+| `limit`       | int          | Maximum number of transactions to retrieve |
+
+#### Response
+
+| Field          | Type   | Description                                            |
+| -------------- | ------ | ------------------------------------------------------ |
+| `transactions` | array  | Array of [Transaction resource](#transaction-resource) |
+
+##### Transaction Resource
+
+| Field    | Type          | Description                                                               |
+| -------- | ------------- | ------------------------------------------------------------------------- |
+| `height` | int or `null` | Block height of the transaction, `null` if the transaction is unconfirmed |
+| `time`   | int or `null` | Block time of the transaction, `null` if the transaction is unconfirmed   |
+| `tx`     | string        | hex encoded bitcoin transaction                                           |
+
+### `listtransactions`
+
+`listtransactions` retrieves the transactions with the given txids.
+
+#### Request
+
+| Field         | Type            | Description                           |
+| ------------- | --------------- | ------------------------------------- |
+| `txids`       | array of string | Ids of the transactions  to retrieve  |
+
+#### Response
+
+| Field          | Type   | Description                                            |
+| -------------- | ------ | ------------------------------------------------------ |
+| `transactions` | array  | Array of [Transaction resource](#transaction-resource) |

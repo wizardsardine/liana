@@ -117,6 +117,9 @@ pub trait DatabaseConnection {
 
     /// Mark the given tip as the new best seen block. Update stored data accordingly.
     fn rollback_tip(&mut self, new_tip: &BlockChainTip);
+
+    /// Retrieve a limited list of txids that where deposited or spent between the start and end timestamps (inclusive bounds)
+    fn list_txids(&mut self, start: u32, end: u32, limit: u64) -> Vec<bitcoin::Txid>;
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -244,6 +247,10 @@ impl DatabaseConnection for SqliteConn {
 
     fn rollback_tip(&mut self, new_tip: &BlockChainTip) {
         self.rollback_tip(new_tip)
+    }
+
+    fn list_txids(&mut self, start: u32, end: u32, limit: u64) -> Vec<bitcoin::Txid> {
+        self.db_list_txids(start, end, limit)
     }
 }
 

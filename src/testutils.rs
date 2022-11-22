@@ -1,5 +1,5 @@
 use crate::{
-    bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
+    bitcoin::{BitcoinInterface, Block, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
     database::{Coin, DatabaseConnection, DatabaseInterface, SpendBlock},
     descriptors, DaemonHandle,
@@ -11,11 +11,24 @@ use miniscript::{
     bitcoin::{
         self, secp256k1,
         util::{bip32, psbt::PartiallySignedTransaction as Psbt},
+        Transaction, Txid,
     },
     descriptor,
 };
 
-pub struct DummyBitcoind {}
+pub struct DummyBitcoind {
+    pub txs: HashMap<Txid, (Transaction, Option<Block>)>,
+}
+
+impl DummyBitcoind {}
+
+impl DummyBitcoind {
+    pub fn new() -> Self {
+        Self {
+            txs: HashMap::new(),
+        }
+    }
+}
 
 impl BitcoinInterface for DummyBitcoind {
     fn genesis_block(&self) -> BlockChainTip {
@@ -63,7 +76,7 @@ impl BitcoinInterface for DummyBitcoind {
     fn spent_coins(
         &self,
         _: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)> {
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)> {
         Vec::new()
     }
 
@@ -90,9 +103,16 @@ impl BitcoinInterface for DummyBitcoind {
     fn tip_time(&self) -> u32 {
         todo!()
     }
+
+    fn wallet_transaction(
+        &self,
+        txid: &bitcoin::Txid,
+    ) -> Option<(bitcoin::Transaction, Option<Block>)> {
+        self.txs.get(txid).cloned()
+    }
 }
 
-pub struct DummyDb {
+struct DummyDbState {
     deposit_index: bip32::ChildNumber,
     change_index: bip32::ChildNumber,
     curr_tip: Option<BlockChainTip>,
@@ -100,35 +120,39 @@ pub struct DummyDb {
     spend_txs: HashMap<bitcoin::Txid, Psbt>,
 }
 
-impl DummyDb {
-    pub fn new() -> DummyDb {
-        DummyDb {
-            deposit_index: 0.into(),
-            change_index: 0.into(),
-            curr_tip: None,
-            coins: HashMap::new(),
-            spend_txs: HashMap::new(),
+pub struct DummyDatabase {
+    db: sync::Arc<sync::RwLock<DummyDbState>>,
+}
+
+impl DatabaseInterface for DummyDatabase {
+    fn connection(&self) -> Box<dyn DatabaseConnection> {
+        Box::new(DummyDatabase {
+            db: self.db.clone(),
+        })
+    }
+}
+
+impl DummyDatabase {
+    pub fn new() -> DummyDatabase {
+        DummyDatabase {
+            db: sync::Arc::new(sync::RwLock::new(DummyDbState {
+                deposit_index: 0.into(),
+                change_index: 0.into(),
+                curr_tip: None,
+                coins: HashMap::new(),
+                spend_txs: HashMap::new(),
+            })),
+        }
+    }
+
+    pub fn insert_coins(&mut self, coins: Vec<Coin>) {
+        for coin in coins {
+            self.db.write().unwrap().coins.insert(coin.outpoint, coin);
         }
     }
 }
 
-impl Default for DummyDb {
-    fn default() -> DummyDb {
-        DummyDb::new()
-    }
-}
-
-impl DatabaseInterface for sync::Arc<sync::RwLock<DummyDb>> {
-    fn connection(&self) -> Box<dyn DatabaseConnection> {
-        Box::new(DummyDbConn { db: self.clone() })
-    }
-}
-
-pub struct DummyDbConn {
-    db: sync::Arc<sync::RwLock<DummyDb>>,
-}
-
-impl DatabaseConnection for DummyDbConn {
+impl DatabaseConnection for DummyDatabase {
     fn network(&mut self) -> bitcoin::Network {
         bitcoin::Network::Bitcoin
     }
@@ -284,6 +308,35 @@ impl DatabaseConnection for DummyDbConn {
     fn complete_rescan(&mut self) {
         todo!()
     }
+
+    fn list_txids(&mut self, start: u32, end: u32, limit: u64) -> Vec<bitcoin::Txid> {
+        let mut txids_and_time = Vec::new();
+        let coins = &self.db.read().unwrap().coins;
+        // Get txid and block time of every transactions that happened between start and end
+        // timestamps.
+        for coin in coins.values() {
+            if let Some(time) = coin.block_time {
+                if time >= start && time <= end {
+                    let row = (coin.outpoint.txid, time);
+                    if !txids_and_time.contains(&row) {
+                        txids_and_time.push(row);
+                    }
+                }
+            }
+            if let Some(time) = coin.spend_block.map(|b| b.time) {
+                if time >= start && time <= end {
+                    let row = (coin.spend_txid.expect("spent_at is not none"), time);
+                    if !txids_and_time.contains(&row) {
+                        txids_and_time.push(row);
+                    }
+                }
+            }
+        }
+        // Apply order and limit
+        txids_and_time.sort_by(|(_, t1), (_, t2)| t2.cmp(t1));
+        txids_and_time.truncate(limit as usize);
+        txids_and_time.into_iter().map(|(txid, _)| txid).collect()
+    }
 }
 
 pub struct DummyLiana {
@@ -310,7 +363,11 @@ pub fn tmp_dir() -> path::PathBuf {
 }
 
 impl DummyLiana {
-    pub fn new() -> DummyLiana {
+    /// Creates a new DummyLiana interface
+    pub fn new(
+        bitcoin_interface: impl BitcoinInterface + 'static,
+        database: impl DatabaseInterface + 'static,
+    ) -> DummyLiana {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
         // Use a shorthand for 'datadir', to avoid overflowing SUN_LEN on MacOS.
@@ -336,8 +393,7 @@ impl DummyLiana {
             main_descriptor: desc,
         };
 
-        let db = sync::Arc::from(sync::RwLock::from(DummyDb::new()));
-        let handle = DaemonHandle::start(config, Some(DummyBitcoind {}), Some(db)).unwrap();
+        let handle = DaemonHandle::start(config, Some(bitcoin_interface), Some(database)).unwrap();
         DummyLiana { tmp_dir, handle }
     }
 
