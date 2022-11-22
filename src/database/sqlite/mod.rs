@@ -500,14 +500,14 @@ impl SqliteConn {
                     SELECT txid, blocktime AS date FROM coins \
                     WHERE blocktime >= (?1) \
                     AND blocktime <= (?2) \
-                    ORDER BY blocktime DESC LIMIT (?3) \
+                    ORDER BY blocktime \
                 ) \
                 UNION \
                 SELECT * FROM (
                     SELECT spend_txid AS txid, spend_block_time AS date FROM coins \
                     WHERE spend_block_time >= (?1) \
                     AND spend_block_time <= (?2) \
-                    ORDER BY spend_block_time DESC LIMIT (?3) \
+                    ORDER BY spend_block_time \
                 ) \
                 ORDER BY date DESC LIMIT (?3) \
             )",
