@@ -1,7 +1,9 @@
 use iced::{
-    pure::{column, row, widget::Button, Element},
-    widget::qr_code::{self, QRCode},
-    Alignment,
+    widget::{
+        qr_code::{self, QRCode},
+        Button, Column, Row,
+    },
+    Alignment, Element,
 };
 
 use liana::miniscript::bitcoin;
@@ -15,15 +17,15 @@ use super::message::Message;
 
 pub fn receive<'a>(address: &'a bitcoin::Address, qr: &'a qr_code::State) -> Element<'a, Message> {
     card::simple(
-        column()
+        Column::new()
             .push(QRCode::new(qr).cell_size(10))
             .push(
-                row()
-                    .push(text(&address.to_string()).small())
+                Row::new()
+                    .push(text(address.to_string()).small())
                     .push(
                         Button::new(icon::clipboard_icon())
                             .on_press(Message::Clipboard(address.to_string()))
-                            .style(button::Style::TransparentBorder),
+                            .style(button::Style::TransparentBorder.into()),
                     )
                     .align_items(Alignment::Center),
             )

@@ -2,7 +2,7 @@ mod detail;
 mod step;
 use std::sync::Arc;
 
-use iced::{pure::Element, Command};
+use iced::{Command, Element};
 
 use super::{redirect, State};
 use crate::{

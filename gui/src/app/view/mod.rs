@@ -11,13 +11,12 @@ pub use message::*;
 use warning::warn;
 
 use iced::{
-    pure::{column, container, row, scrollable, widget, Element},
-    Length,
+    widget::{self, scrollable, Button, Column, Container, Row},
+    Element, Length,
 };
 
 use crate::ui::{
-    color,
-    component::{badge, button, separation, text::*},
+    component::{badge, button, container, separation, text::*},
     icon::{coin_icon, cross_icon, home_icon, receive_icon, send_icon, settings_icon},
     util::Collection,
 };
@@ -36,11 +35,11 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
     };
 
     let coins_button = if *menu == Menu::Coins {
-        iced::pure::widget::button::Button::new(
-            container(
-                row()
+        Button::new(
+            Container::new(
+                Row::new()
                     .push(
-                        row()
+                        Row::new()
                             .push(coin_icon())
                             .push(text("Coins"))
                             .spacing(10)
@@ -48,8 +47,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                             .align_items(iced::Alignment::Center),
                     )
                     .push(
-                        container(
-                            text(&format!(
+                        Container::new(
+                            text(format!(
                                 "  {}  ",
                                 cache
                                     .coins
@@ -71,15 +70,15 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
             .padding(5)
             .center_x(),
         )
-        .style(button::Style::Primary)
+        .style(button::Style::Primary.into())
         .on_press(Message::Reload)
         .width(iced::Length::Units(200))
     } else {
-        iced::pure::widget::button::Button::new(
-            container(
-                row()
+        Button::new(
+            Container::new(
+                Row::new()
                     .push(
-                        row()
+                        Row::new()
                             .push(coin_icon())
                             .push(text("Coins"))
                             .spacing(10)
@@ -87,8 +86,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                             .align_items(iced::Alignment::Center),
                     )
                     .push(
-                        container(
-                            text(&format!(
+                        Container::new(
+                            text(format!(
                                 "  {}  ",
                                 cache
                                     .coins
@@ -110,17 +109,17 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
             .padding(5)
             .center_x(),
         )
-        .style(button::Style::Transparent)
+        .style(button::Style::Transparent.into())
         .on_press(Message::Menu(Menu::Coins))
         .width(iced::Length::Units(200))
     };
 
     let spend_button = if *menu == Menu::Spend {
-        iced::pure::widget::button::Button::new(
-            container(
-                row()
+        Button::new(
+            Container::new(
+                Row::new()
                     .push(
-                        row()
+                        Row::new()
                             .push(send_icon())
                             .push(text("Send"))
                             .spacing(10)
@@ -131,8 +130,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                         None
                     } else {
                         Some(
-                            container(
-                                text(&format!("  {}  ", cache.spend_txs.len()))
+                            Container::new(
+                                text(format!("  {}  ", cache.spend_txs.len()))
                                     .small()
                                     .bold(),
                             )
@@ -147,15 +146,15 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
             .padding(5)
             .center_x(),
         )
-        .style(button::Style::Primary)
+        .style(button::Style::Primary.into())
         .on_press(Message::Reload)
         .width(iced::Length::Units(200))
     } else {
-        iced::pure::widget::button::Button::new(
-            container(
-                row()
+        Button::new(
+            Container::new(
+                Row::new()
                     .push(
-                        row()
+                        Row::new()
                             .push(send_icon())
                             .push(text("Send"))
                             .spacing(10)
@@ -166,8 +165,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                         None
                     } else {
                         Some(
-                            container(
-                                text(&format!("  {}  ", cache.spend_txs.len()))
+                            Container::new(
+                                text(format!("  {}  ", cache.spend_txs.len()))
                                     .small()
                                     .bold(),
                             )
@@ -182,7 +181,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
             .padding(5)
             .center_x(),
         )
-        .style(button::Style::Transparent)
+        .style(button::Style::Transparent.into())
         .on_press(Message::Menu(Menu::Spend))
         .width(iced::Length::Units(200))
     };
@@ -207,14 +206,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
             .width(iced::Length::Units(200))
     };
 
-    container(
-        column()
+    Container::new(
+        Column::new()
             .padding(10)
             .push(
-                column()
+                Column::new()
                     .push(
-                        column()
-                            .push(container(text("Liana").bold()).padding(10))
+                        Column::new()
+                            .push(Container::new(text("Liana").bold()).padding(10))
                             .push(separation().width(Length::Units(200)))
                             .spacing(10),
                     )
@@ -226,11 +225,11 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                     .height(Length::Fill),
             )
             .push(
-                container(
-                    column()
+                Container::new(
+                    Column::new()
                         .spacing(10)
                         .push_maybe(cache.rescan_progress.map(|p| {
-                            container(text(&format!("  Rescan...{:.2}%  ", p * 100.0)))
+                            Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
                                 .padding(5)
                                 .style(badge::PillStyle::Simple)
                         }))
@@ -239,19 +238,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                 .height(Length::Shrink),
             ),
     )
-    .style(SidebarStyle)
-}
-
-pub struct SidebarStyle;
-impl widget::container::StyleSheet for SidebarStyle {
-    fn style(&self) -> widget::container::Style {
-        widget::container::Style {
-            background: color::FOREGROUND.into(),
-            border_width: 1.0,
-            border_color: color::SECONDARY,
-            ..widget::container::Style::default()
-        }
-    }
+    .style(container::Style::Sidebar)
 }
 
 pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
@@ -260,17 +247,17 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     warning: Option<&Error>,
     content: T,
 ) -> Element<'a, Message> {
-    row()
+    Row::new()
         .push(
             sidebar(menu, cache)
                 .width(Length::Shrink)
                 .height(Length::Fill),
         )
         .push(
-            column()
+            Column::new()
                 .push(warn(warning))
-                .push(main_section(container(scrollable(
-                    container(content).padding(20),
+                .push(main_section(Container::new(scrollable(
+                    Container::new(content).padding(20),
                 )))),
         )
         .width(iced::Length::Fill)
@@ -279,21 +266,11 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
 }
 
 fn main_section<'a, T: 'a>(menu: widget::Container<'a, T>) -> widget::Container<'a, T> {
-    container(menu.max_width(1500))
-        .style(MainSectionStyle)
+    Container::new(menu.max_width(1500))
+        .style(container::Style::Background)
         .center_x()
         .width(Length::Fill)
         .height(Length::Fill)
-}
-
-pub struct MainSectionStyle;
-impl widget::container::StyleSheet for MainSectionStyle {
-    fn style(&self) -> widget::container::Style {
-        widget::container::Style {
-            background: color::BACKGROUND.into(),
-            ..widget::container::Style::default()
-        }
-    }
 }
 
 pub fn modal<'a, T: Into<Element<'a, Message>>>(
@@ -301,47 +278,37 @@ pub fn modal<'a, T: Into<Element<'a, Message>>>(
     warning: Option<&Error>,
     content: T,
 ) -> Element<'a, Message> {
-    column()
+    Column::new()
         .push(warn(warning))
         .push(
-            container(
-                row()
+            Container::new(
+                Row::new()
                     .push(if is_previous {
-                        column()
+                        Column::new()
                             .push(
                                 button::transparent(None, "< Previous").on_press(Message::Previous),
                             )
                             .width(Length::Fill)
                     } else {
-                        column().width(Length::Fill)
+                        Column::new().width(Length::Fill)
                     })
                     .align_items(iced::Alignment::Center)
                     .push(button::primary(Some(cross_icon()), "Close").on_press(Message::Close)),
             )
             .padding(10)
-            .style(ModalSectionStyle),
+            .style(container::Style::Background),
         )
-        .push(modal_section(container(scrollable(content))))
+        .push(modal_section(Container::new(scrollable(content))))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
 }
 
 fn modal_section<'a, T: 'a>(menu: widget::Container<'a, T>) -> widget::Container<'a, T> {
-    container(menu.max_width(1500))
+    Container::new(menu.max_width(1500))
         .padding(20)
-        .style(ModalSectionStyle)
+        .style(container::Style::Background)
         .center_x()
         .width(Length::Fill)
         .height(Length::Fill)
-}
-
-pub struct ModalSectionStyle;
-impl widget::container::StyleSheet for ModalSectionStyle {
-    fn style(&self) -> widget::container::Style {
-        widget::container::Style {
-            background: color::BACKGROUND.into(),
-            ..widget::container::Style::default()
-        }
-    }
 }

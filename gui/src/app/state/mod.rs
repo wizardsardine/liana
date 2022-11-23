@@ -6,8 +6,8 @@ use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use iced::pure::{column, Element};
 use iced::{widget::qr_code, Command, Subscription};
+use iced::{widget::Column, Element};
 use liana::miniscript::bitcoin::{Address, Amount};
 
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view};
@@ -241,7 +241,7 @@ impl State for ReceivePanel {
                 view::receive::receive(address, self.qr_code.as_ref().unwrap()),
             )
         } else {
-            view::dashboard(&Menu::Receive, cache, self.warning.as_ref(), column())
+            view::dashboard(&Menu::Receive, cache, self.warning.as_ref(), Column::new())
         }
     }
     fn update(

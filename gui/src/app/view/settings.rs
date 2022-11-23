@@ -2,8 +2,8 @@ use std::str::FromStr;
 
 use iced::{
     alignment,
-    pure::{column, container, progress_bar, row, widget, Element},
-    Alignment, Length,
+    widget::{self, Column, Container, ProgressBar, Row},
+    Alignment, Element, Length,
 };
 
 use liana::miniscript::bitcoin;
@@ -43,29 +43,29 @@ pub fn bitcoind_edit<'a>(
     cookie_path: &form::Value<String>,
     processing: bool,
 ) -> Element<'a, SettingsMessage> {
-    let mut col = column().spacing(20);
+    let mut col = Column::new().spacing(20);
     if blockheight != 0 {
         col = col
             .push(
-                row()
+                Row::new()
                     .push(
-                        row()
+                        Row::new()
                             .push(badge::Badge::new(icon::network_icon()))
                             .push(
-                                column()
+                                Column::new()
                                     .push(text("Network:"))
-                                    .push(text(&network.to_string()).bold()),
+                                    .push(text(network.to_string()).bold()),
                             )
                             .spacing(10)
                             .width(Length::FillPortion(1)),
                     )
                     .push(
-                        row()
+                        Row::new()
                             .push(badge::Badge::new(icon::block_icon()))
                             .push(
-                                column()
+                                Column::new()
                                     .push(text("Block Height:"))
-                                    .push(text(&blockheight.to_string()).bold()),
+                                    .push(text(blockheight.to_string()).bold()),
                             )
                             .spacing(10)
                             .width(Length::FillPortion(1)),
@@ -76,7 +76,7 @@ pub fn bitcoind_edit<'a>(
 
     col = col
         .push(
-            column()
+            Column::new()
                 .push(text("Cookie file path:").bold().small())
                 .push(
                     form::Form::new("Cookie file path", cookie_path, |value| {
@@ -89,7 +89,7 @@ pub fn bitcoind_edit<'a>(
                 .spacing(5),
         )
         .push(
-            column()
+            Column::new()
                 .push(text("Socket address:").bold().small())
                 .push(
                     form::Form::new("Socket address:", addr, |value| {
@@ -109,10 +109,10 @@ pub fn bitcoind_edit<'a>(
         confirm_button = confirm_button.on_press(SettingsMessage::ConfirmEdit);
     }
 
-    card::simple(container(
-        column()
+    card::simple(Container::new(
+        Column::new()
             .push(
-                row()
+                Row::new()
                     .push(badge::Badge::new(icon::bitcoin_icon()))
                     .push(text("Bitcoind"))
                     .padding(10)
@@ -123,8 +123,8 @@ pub fn bitcoind_edit<'a>(
             .push(separation().width(Length::Fill))
             .push(col)
             .push(
-                container(
-                    row()
+                Container::new(
+                    Row::new()
                         .push(cancel_button)
                         .push(confirm_button)
                         .spacing(10)
@@ -146,29 +146,29 @@ pub fn bitcoind<'a>(
     is_running: Option<bool>,
     can_edit: bool,
 ) -> Element<'a, SettingsMessage> {
-    let mut col = column().spacing(20);
+    let mut col = Column::new().spacing(20);
     if blockheight != 0 {
         col = col
             .push(
-                row()
+                Row::new()
                     .push(
-                        row()
+                        Row::new()
                             .push(badge::Badge::new(icon::network_icon()))
                             .push(
-                                column()
+                                Column::new()
                                     .push(text("Network:"))
-                                    .push(text(&network.to_string()).bold()),
+                                    .push(text(network.to_string()).bold()),
                             )
                             .spacing(10)
                             .width(Length::FillPortion(1)),
                     )
                     .push(
-                        row()
+                        Row::new()
                             .push(badge::Badge::new(icon::block_icon()))
                             .push(
-                                column()
+                                Column::new()
                                     .push(text("Block Height:"))
-                                    .push(text(&blockheight.to_string()).bold()),
+                                    .push(text(blockheight.to_string()).bold()),
                             )
                             .spacing(10)
                             .width(Length::FillPortion(1)),
@@ -185,21 +185,21 @@ pub fn bitcoind<'a>(
         ("Socket address:", config.addr.to_string()),
     ];
 
-    let mut col_fields = column();
+    let mut col_fields = Column::new();
     for (k, v) in rows {
         col_fields = col_fields.push(
-            row()
-                .push(container(text(k).bold().small()).width(Length::Fill))
-                .push(text(&v).small()),
+            Row::new()
+                .push(Container::new(text(k).bold().small()).width(Length::Fill))
+                .push(text(v).small()),
         );
     }
 
-    card::simple(container(
-        column()
+    card::simple(Container::new(
+        Column::new()
             .push(
-                row()
+                Row::new()
                     .push(
-                        row()
+                        Row::new()
                             .push(badge::Badge::new(icon::bitcoin_icon()))
                             .push(text("Bitcoind"))
                             .push(is_running_label(is_running))
@@ -209,11 +209,11 @@ pub fn bitcoind<'a>(
                     )
                     .push(if can_edit {
                         widget::Button::new(icon::pencil_icon())
-                            .style(button::Style::TransparentBorder)
+                            .style(button::Style::TransparentBorder.into())
                             .on_press(SettingsMessage::Edit)
                     } else {
                         widget::Button::new(icon::pencil_icon())
-                            .style(button::Style::TransparentBorder)
+                            .style(button::Style::TransparentBorder.into())
                     })
                     .align_items(Alignment::Center),
             )
@@ -228,22 +228,22 @@ pub fn bitcoind<'a>(
 pub fn is_running_label<'a, T: 'a>(is_running: Option<bool>) -> widget::Container<'a, T> {
     if let Some(running) = is_running {
         if running {
-            container(
-                row()
-                    .push(icon::dot_icon().size(5).color(color::SUCCESS))
-                    .push(text("Running").small().color(color::SUCCESS))
+            Container::new(
+                Row::new()
+                    .push(icon::dot_icon().size(5).style(color::SUCCESS))
+                    .push(text("Running").small().style(color::SUCCESS))
                     .align_items(Alignment::Center),
             )
         } else {
-            container(
-                row()
-                    .push(icon::dot_icon().size(5).color(color::ALERT))
-                    .push(text("Not running").small().color(color::ALERT))
+            Container::new(
+                Row::new()
+                    .push(icon::dot_icon().size(5).style(color::ALERT))
+                    .push(text("Not running").small().style(color::ALERT))
                     .align_items(Alignment::Center),
             )
         }
     } else {
-        container(column())
+        Container::new(Column::new())
     }
 }
 
@@ -256,14 +256,14 @@ pub fn rescan<'a>(
     processing: bool,
     can_edit: bool,
 ) -> Element<'a, SettingsMessage> {
-    card::simple(container(
-        column()
+    card::simple(Container::new(
+        Column::new()
             .push(
-                row()
+                Row::new()
                     .push(badge::Badge::new(icon::block_icon()))
                     .push(text("Rescan blockchain").width(Length::Fill))
                     .push_maybe(if success {
-                        Some(text("Rescan was successful").color(color::SUCCESS))
+                        Some(text("Rescan was successful").style(color::SUCCESS))
                     } else {
                         None
                     })
@@ -273,18 +273,18 @@ pub fn rescan<'a>(
             )
             .push(separation().width(Length::Fill))
             .push(if let Some(p) = scan_progress {
-                container(
-                    column()
+                Container::new(
+                    Column::new()
                         .width(Length::Fill)
-                        .push(progress_bar(0.0..=1.0, p as f32).width(Length::Fill))
-                        .push(text(&format!("Rescan...{:.2}%", p * 100.0))),
+                        .push(ProgressBar::new(0.0..=1.0, p as f32).width(Length::Fill))
+                        .push(text(format!("Rescan...{:.2}%", p * 100.0))),
                 )
             } else {
-                container(
-                    column()
+                Container::new(
+                    Column::new()
                         .spacing(10)
                         .push(
-                            row()
+                            Row::new()
                                 .push(text("Year:").bold().small())
                                 .push(
                                     form::Form::new("2022", year, |value| {
@@ -321,18 +321,18 @@ pub fn rescan<'a>(
                                     })
                                     && is_ok_and(&u32::from_str(&day.value), |&v| v > 0 && v <= 31))
                             {
-                                row().push(column().width(Length::Fill)).push(
+                                Row::new().push(Column::new().width(Length::Fill)).push(
                                     button::primary(None, "Start rescan")
                                         .on_press(SettingsMessage::ConfirmEdit)
                                         .width(Length::Shrink),
                                 )
                             } else if processing {
-                                row().push(column().width(Length::Fill)).push(
+                                Row::new().push(Column::new().width(Length::Fill)).push(
                                     button::primary(None, "Starting rescan...")
                                         .width(Length::Shrink),
                                 )
                             } else {
-                                row().push(column().width(Length::Fill)).push(
+                                Row::new().push(Column::new().width(Length::Fill)).push(
                                     button::primary(None, "Start rescan").width(Length::Shrink),
                                 )
                             },

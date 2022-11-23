@@ -1,9 +1,10 @@
-use iced::pure::{
-    column, container,
-    widget::text_input::{Style, StyleSheet, TextInput},
-    Element,
+use iced::{
+    widget::{
+        text_input::{Appearance, StyleSheet, TextInput},
+        Column, Container,
+    },
+    Element, Length,
 };
-use iced::Length;
 
 use crate::ui::{color, component::text::*, util::Collection};
 
@@ -70,8 +71,8 @@ where
 
 impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
     fn from(form: Form<'a, Message>) -> Element<'a, Message> {
-        container(
-            column()
+        Container::new(
+            Column::new()
                 .push(if !form.valid {
                     form.input.style(InvalidFormStyle)
                 } else {
@@ -79,7 +80,7 @@ impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
                 })
                 .push_maybe(if !form.valid {
                     form.warning
-                        .map(|message| text(message).color(color::ALERT).small())
+                        .map(|message| text(message).style(color::ALERT).small())
                 } else {
                     None
                 })
@@ -93,8 +94,9 @@ impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
 
 struct InvalidFormStyle;
 impl StyleSheet for InvalidFormStyle {
-    fn active(&self) -> Style {
-        Style {
+    type Style = iced::Theme;
+    fn active(&self, _style: &Self::Style) -> Appearance {
+        Appearance {
             background: iced::Background::Color(color::FOREGROUND),
             border_radius: 5.0,
             border_width: 1.0,
@@ -102,22 +104,34 @@ impl StyleSheet for InvalidFormStyle {
         }
     }
 
-    fn focused(&self) -> Style {
-        Style {
+    fn focused(&self, style: &Self::Style) -> Appearance {
+        Appearance {
             border_color: color::ALERT,
-            ..self.active()
+            ..self.active(style)
         }
     }
 
-    fn placeholder_color(&self) -> iced::Color {
+    fn placeholder_color(&self, _style: &Self::Style) -> iced::Color {
         iced::Color::from_rgb(0.7, 0.7, 0.7)
     }
 
-    fn value_color(&self) -> iced::Color {
+    fn value_color(&self, _style: &Self::Style) -> iced::Color {
         iced::Color::from_rgb(0.3, 0.3, 0.3)
     }
 
-    fn selection_color(&self) -> iced::Color {
+    fn selection_color(&self, _style: &Self::Style) -> iced::Color {
         iced::Color::from_rgb(0.8, 0.8, 1.0)
+    }
+}
+
+impl From<InvalidFormStyle> for Box<dyn StyleSheet<Style = iced::Theme>> {
+    fn from(s: InvalidFormStyle) -> Box<dyn StyleSheet<Style = iced::Theme>> {
+        Box::new(s)
+    }
+}
+
+impl From<InvalidFormStyle> for iced::theme::TextInput {
+    fn from(i: InvalidFormStyle) -> iced::theme::TextInput {
+        iced::theme::TextInput::Custom(i.into())
     }
 }

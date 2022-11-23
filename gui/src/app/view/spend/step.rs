@@ -1,6 +1,6 @@
 use iced::{
-    pure::{column, container, row, widget, Element},
-    Alignment, Length,
+    widget::{self, Button, Column, Container, Row},
+    Alignment, Element, Length,
 };
 
 use liana::miniscript::bitcoin::Amount;
@@ -28,10 +28,10 @@ pub fn choose_recipients_view(
     modal(
         false,
         None,
-        column()
+        Column::new()
             .push(text("Choose recipients").bold().size(50))
             .push(
-                column()
+                Column::new()
                     .push(widget::Column::with_children(recipients).spacing(10))
                     .push(
                         button::transparent(Some(icon::plus_icon()), "Add recipient")
@@ -59,7 +59,7 @@ pub fn recipient_view<'a>(
     address: &form::Value<String>,
     amount: &form::Value<String>,
 ) -> Element<'a, CreateSpendMessage> {
-    row()
+    Row::new()
         .push(
             form::Form::new("Address", address, move |msg| {
                 CreateSpendMessage::RecipientEdited(index, "address", msg)
@@ -69,7 +69,7 @@ pub fn recipient_view<'a>(
             .padding(10),
         )
         .push(
-            container(
+            Container::new(
                 form::Form::new("Amount", amount, move |msg| {
                     CreateSpendMessage::RecipientEdited(index, "amount", msg)
                 })
@@ -97,10 +97,10 @@ pub fn choose_feerate_view<'a>(
     modal(
         true,
         None,
-        column()
+        Column::new()
             .push(text("Choose feerate").bold().size(50))
             .push(
-                container(
+                Container::new(
                     form::Form::new("Feerate", feerate, move |msg| {
                         Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
                     })
@@ -110,7 +110,7 @@ pub fn choose_feerate_view<'a>(
                 )
                 .width(Length::Units(250)),
             )
-            .push_maybe(error.map(|e| card::error("Failed to create spend", &e.to_string())))
+            .push_maybe(error.map(|e| card::error("Failed to create spend", e.to_string())))
             .push_maybe(if is_valid {
                 Some(
                     button::primary(None, "Next")
@@ -133,26 +133,26 @@ pub fn choose_coins_view<'a>(
     modal(
         true,
         None,
-        column()
+        Column::new()
             .push(text("Choose coins").bold().size(50))
             .push(
-                column().spacing(10).push(
+                Column::new().spacing(10).push(
                     coins
                         .iter()
                         .enumerate()
-                        .fold(column().spacing(10), |col, (i, (coin, selected))| {
+                        .fold(Column::new().spacing(10), |col, (i, (coin, selected))| {
                             col.push(coin_list_view(i, coin, *selected))
                         }),
                 ),
             )
             .push_maybe(if is_valid {
-                Some(container(
+                Some(Container::new(
                     button::primary(None, "Next")
                         .on_press(Message::Next)
                         .width(Length::Units(100)),
                 ))
             } else if total_needed.is_some() {
-                Some(container(card::warning(&format!(
+                Some(Container::new(card::warning(format!(
                     "Total amount must be superior to {}",
                     total_needed.unwrap().to_btc(),
                 ))))
@@ -165,24 +165,24 @@ pub fn choose_coins_view<'a>(
 }
 
 fn coin_list_view<'a>(i: usize, coin: &Coin, selected: bool) -> Element<'a, Message> {
-    container(
-        iced::pure::button(
-            row()
+    Container::new(
+        Button::new(
+            Row::new()
                 .push(
-                    row()
+                    Row::new()
                         .push(if selected {
                             icon::square_check_icon()
                         } else {
                             icon::square_icon()
                         })
                         .push(badge::coin())
-                        .push(text(&format!("block: {}", coin.block_height.unwrap_or(0))).small())
+                        .push(text(format!("block: {}", coin.block_height.unwrap_or(0))).small())
                         .spacing(10)
                         .align_items(Alignment::Center)
                         .width(Length::Fill),
                 )
                 .push(
-                    text(&format!("{} BTC", coin.amount.to_btc()))
+                    text(format!("{} BTC", coin.amount.to_btc()))
                         .bold()
                         .width(Length::Shrink),
                 )
@@ -191,7 +191,7 @@ fn coin_list_view<'a>(i: usize, coin: &Coin, selected: bool) -> Element<'a, Mess
         )
         .padding(10)
         .on_press(Message::CreateSpend(CreateSpendMessage::SelectCoin(i)))
-        .style(button::Style::TransparentBorder),
+        .style(button::Style::TransparentBorder.into()),
     )
     .style(card::SimpleCardStyle)
     .into()
