@@ -25,13 +25,14 @@ use uds_windows::UnixStream;
 use std::os::unix::net::UnixStream;
 
 use std::fmt::Debug;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{error, fmt, io};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{to_writer, Deserializer};
+use serde_json::Deserializer;
 
 use log::debug;
 
@@ -89,7 +90,7 @@ impl JsonRPCClient {
 
         debug!("Sending to lianad: {:#?}", request);
 
-        to_writer(&mut stream, &request)?;
+        stream.write_all(&[serde_json::to_string(&request).unwrap().as_bytes(), b"\n"].concat())?;
 
         let response: Response<D> = Deserializer::from_reader(&mut stream)
             .into_iter()
