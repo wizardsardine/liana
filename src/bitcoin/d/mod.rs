@@ -683,20 +683,19 @@ impl BitcoinD {
     /// and iterating through each of those to check if it spends the transaction we are interested
     /// in (requiring an other RPC call for each!!).
     pub fn get_spender_txid(&self, spent_outpoint: &bitcoin::OutPoint) -> Option<bitcoin::Txid> {
-        // Get the hash of the block parent of the spent transaction's block.
+        // Get the hash of the spent transaction's block parent. If the spent transaction is still
+        // unconfirmed, just use the tip.
         let req = self.make_wallet_request(
             "gettransaction",
             &params!(Json::String(spent_outpoint.txid.to_string())),
         );
-        let spent_tx_height = match req.get("blockheight").and_then(Json::as_i64) {
-            Some(h) => h,
-            // FIXME: we assume it's confirmed. If we were to change the logic in the poller, we'd
-            // need to handle it here.
-            None => return None,
+        let list_since_height = match req.get("blockheight").and_then(Json::as_i64) {
+            Some(h) => h as i32,
+            None => self.chain_tip().height,
         };
         let block_hash = if let Ok(res) = self.make_fallible_node_request(
             "getblockhash",
-            &params!(Json::Number((spent_tx_height - 1).into())),
+            &params!(Json::Number((list_since_height - 1).into())),
         ) {
             res.as_str()
                 .expect("'getblockhash' result isn't a string")
