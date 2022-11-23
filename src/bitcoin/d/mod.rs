@@ -708,8 +708,17 @@ impl BitcoinD {
 
         // Now we can get all transactions related to us since the spent transaction confirmed.
         // We'll use it to locate the spender.
-        let lsb_res =
-            self.make_wallet_request("listsinceblock", &params!(Json::String(block_hash)));
+        // TODO: merge this with the existing list_since_block method.
+        let lsb_res = self.make_wallet_request(
+            "listsinceblock",
+            &params!(
+                Json::String(block_hash),
+                Json::Number(1.into()), // Default for min_confirmations for the returned
+                Json::Bool(true),       // Whether to include watchonly
+                Json::Bool(false), // Whether to include an array of txs that were removed in reorgs
+                Json::Bool(true)   // Whether to include UTxOs treated as change.
+            ),
+        );
         let transactions = lsb_res
             .get("transactions")
             .and_then(Json::as_array)
