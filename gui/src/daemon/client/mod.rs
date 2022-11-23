@@ -77,7 +77,7 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
     }
 
     fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
-        self.call("listspend", Option::<Request>::None)
+        self.call("listspendtxs", Option::<Request>::None)
     }
 
     fn create_spend_tx(
@@ -132,7 +132,7 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
     }
 
     fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
-        self.call("list_transactions", Some(vec![txids]))
+        self.call("listtransactions", Some(vec![txids]))
     }
 }
 
