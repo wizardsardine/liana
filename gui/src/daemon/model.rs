@@ -1,9 +1,9 @@
 pub use liana::{
     commands::{
         CreateSpendResult, GetAddressResult, GetInfoResult, ListCoinsEntry, ListCoinsResult,
-        ListSpendEntry, ListSpendResult,
+        ListSpendEntry, ListSpendResult, ListTransactionsResult, TransactionInfo,
     },
-    miniscript::bitcoin::{util::psbt::Psbt, Amount},
+    miniscript::bitcoin::{util::psbt::Psbt, Amount, Transaction},
 };
 
 pub type Coin = ListCoinsEntry;
@@ -59,5 +59,64 @@ impl SpendTx {
             fee_amount: inputs_amount - spend_amount - change_amount,
             status,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HistoryTransaction {
+    pub coins: Vec<Coin>,
+    pub change_indexes: Vec<usize>,
+    pub tx: Transaction,
+    pub outgoing_amount: Amount,
+    pub incoming_amount: Amount,
+    pub fee_amount: Option<Amount>,
+    pub height: Option<i32>,
+    pub time: Option<u32>,
+}
+
+impl HistoryTransaction {
+    pub fn new(
+        tx: Transaction,
+        height: Option<i32>,
+        time: Option<u32>,
+        coins: Vec<Coin>,
+        change_indexes: Vec<usize>,
+    ) -> Self {
+        let (incoming_amount, outgoing_amount) = tx.output.iter().enumerate().fold(
+            (Amount::from_sat(0), Amount::from_sat(0)),
+            |(change, spend), (i, output)| {
+                if change_indexes.contains(&i) {
+                    (change + Amount::from_sat(output.value), spend)
+                } else {
+                    (change, spend + Amount::from_sat(output.value))
+                }
+            },
+        );
+
+        let mut inputs_amount = Amount::from_sat(0);
+        for coin in &coins {
+            inputs_amount += coin.amount;
+        }
+
+        let fee_amount = if inputs_amount > outgoing_amount + incoming_amount {
+            Some(inputs_amount - outgoing_amount - incoming_amount)
+        } else {
+            None
+        };
+
+        Self {
+            tx,
+            coins,
+            change_indexes,
+            outgoing_amount,
+            incoming_amount,
+            fee_amount,
+            height,
+            time,
+        }
+    }
+
+    pub fn is_external(&self) -> bool {
+        self.coins.is_empty()
     }
 }

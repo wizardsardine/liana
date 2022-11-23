@@ -267,11 +267,11 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                 .height(Length::Fill),
         )
         .push(
-            column().push(warn(warning)).push(
-                main_section(container(scrollable(content)))
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-            ),
+            column()
+                .push(warn(warning))
+                .push(main_section(container(scrollable(
+                    container(content).padding(20),
+                )))),
         )
         .width(iced::Length::Fill)
         .height(iced::Length::Fill)
@@ -280,7 +280,6 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
 
 fn main_section<'a, T: 'a>(menu: widget::Container<'a, T>) -> widget::Container<'a, T> {
     container(menu.max_width(1500))
-        .padding(20)
         .style(MainSectionStyle)
         .center_x()
         .width(Length::Fill)
