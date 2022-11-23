@@ -39,7 +39,7 @@ your machine yet, you can download it [there](https://bitcoincore.org/en/downloa
 
 TODO: download links
 
-TODO: link to a longer-form document in the doc/ folder containing the different build methods.
+If you want to build the project from source, see [`doc/BUILD.md`](doc/BUILD.md).
 
 ### Setting up a wallet
 
