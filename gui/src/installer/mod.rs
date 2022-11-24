@@ -16,7 +16,10 @@ use crate::{
 };
 
 pub use message::Message;
-use step::{Context, DefineBitcoind, DefineDescriptor, Final, RegisterDescriptor, Step, Welcome};
+use step::{
+    Context, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor, RegisterDescriptor, Step,
+    Welcome,
+};
 
 pub struct Installer {
     should_exit: bool,
@@ -28,12 +31,6 @@ pub struct Installer {
 }
 
 impl Installer {
-    fn next(&mut self) {
-        if self.current < self.steps.len() - 1 {
-            self.current += 1;
-        }
-    }
-
     fn previous(&mut self) {
         if self.current > 0 {
             self.current -= 1;
@@ -48,14 +45,8 @@ impl Installer {
             Installer {
                 should_exit: false,
                 current: 0,
-                steps: vec![
-                    Welcome::new(network, destination_path.clone()).into(),
-                    DefineDescriptor::new().into(),
-                    RegisterDescriptor::default().into(),
-                    DefineBitcoind::new().into(),
-                    Final::new().into(),
-                ],
-                context: Context::new(network, Some(destination_path)),
+                steps: vec![Welcome::default().into()],
+                context: Context::new(network, destination_path),
             },
             Command::none(),
         )
@@ -73,35 +64,61 @@ impl Installer {
         self.should_exit = true;
     }
 
+    fn next(&mut self) -> Command<Message> {
+        let current_step = self
+            .steps
+            .get_mut(self.current)
+            .expect("There is always a step");
+        if current_step.apply(&mut self.context) {
+            if self.current < self.steps.len() - 1 {
+                self.current += 1;
+            }
+            // skip the step according to the current context.
+            while self
+                .steps
+                .get(self.current)
+                .expect("There is always a step")
+                .skip(&self.context)
+            {
+                if self.current < self.steps.len() - 1 {
+                    self.current += 1;
+                }
+            }
+            // calculate new current_step.
+            let current_step = self
+                .steps
+                .get_mut(self.current)
+                .expect("There is always a step");
+            current_step.load_context(&self.context);
+            return current_step.load();
+        }
+        Command::none()
+    }
+
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::Clibpboard(s) => clipboard::write(s),
-            Message::Next => {
-                let current_step = self
-                    .steps
-                    .get_mut(self.current)
-                    .expect("There is always a step");
-                if current_step.apply(&mut self.context) {
-                    self.next();
-                    // skip the step according to the current context.
-                    while self
-                        .steps
-                        .get(self.current)
-                        .expect("There is always a step")
-                        .skip(&self.context)
-                    {
-                        self.next();
-                    }
-                    // calculate new current_step.
-                    let current_step = self
-                        .steps
-                        .get_mut(self.current)
-                        .expect("There is always a step");
-                    current_step.load_context(&self.context);
-                    return current_step.load();
-                }
-                Command::none()
+            Message::CreateWallet => {
+                self.steps = vec![
+                    Welcome::default().into(),
+                    DefineDescriptor::new().into(),
+                    RegisterDescriptor::default().into(),
+                    DefineBitcoind::new().into(),
+                    Final::new().into(),
+                ];
+                self.next()
             }
+            Message::ImportWallet => {
+                self.steps = vec![
+                    Welcome::default().into(),
+                    ImportDescriptor::new().into(),
+                    RegisterDescriptor::default().into(),
+                    DefineBitcoind::new().into(),
+                    Final::new().into(),
+                ];
+                self.next()
+            }
+            Message::Clibpboard(s) => clipboard::write(s),
+            Message::Next => self.next(),
             Message::Previous => {
                 self.previous();
                 Command::none()
@@ -114,7 +131,7 @@ impl Installer {
                 Command::perform(install(self.context.clone()), Message::Installed)
             }
             Message::Installed(Err(e)) => {
-                let mut data_dir = self.context.data_dir.clone().unwrap();
+                let mut data_dir = self.context.data_dir.clone();
                 data_dir.push(self.context.bitcoin_config.network.to_string());
                 // In case of failure during install, block the thread to
                 // deleted the data_dir/network directory in order to start clean again.

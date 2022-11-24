@@ -13,6 +13,14 @@ fn icon(unicode: char) -> Text<'static> {
         .size(20)
 }
 
+pub fn import_icon() -> Text<'static> {
+    icon('\u{F30A}')
+}
+
+pub fn wallet_icon() -> Text<'static> {
+    icon('\u{F615}')
+}
+
 pub fn hourglass_icon() -> Text<'static> {
     icon('\u{F41F}')
 }

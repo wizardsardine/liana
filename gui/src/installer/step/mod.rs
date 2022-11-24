@@ -1,5 +1,5 @@
 mod descriptor;
-pub use descriptor::{DefineDescriptor, RegisterDescriptor};
+pub use descriptor::{DefineDescriptor, ImportDescriptor, RegisterDescriptor};
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -43,11 +43,11 @@ pub struct Context {
     pub bitcoind_config: Option<BitcoindConfig>,
     pub descriptor: Option<MultipathDescriptor>,
     pub hw_tokens: Vec<(DeviceKind, bitcoin::util::bip32::Fingerprint, [u8; 32])>,
-    pub data_dir: Option<PathBuf>,
+    pub data_dir: PathBuf,
 }
 
 impl Context {
-    pub fn new(network: bitcoin::Network, data_dir: Option<PathBuf>) -> Self {
+    pub fn new(network: bitcoin::Network, data_dir: PathBuf) -> Self {
         Self {
             bitcoin_config: BitcoinConfig {
                 network,
@@ -61,36 +61,12 @@ impl Context {
     }
 }
 
-pub struct Welcome {
-    network: bitcoin::Network,
-    data_dir: PathBuf,
-}
-
-impl Welcome {
-    pub fn new(network: bitcoin::Network, data_dir: PathBuf) -> Self {
-        Self { network, data_dir }
-    }
-
-    fn valid(&self) -> bool {
-        let mut network_datadir = self.data_dir.clone();
-        network_datadir.push(self.network.to_string());
-        !network_datadir.exists()
-    }
-}
+#[derive(Default)]
+pub struct Welcome {}
 
 impl Step for Welcome {
-    fn update(&mut self, message: Message) -> Command<Message> {
-        if let message::Message::Network(network) = message {
-            self.network = network;
-        }
-        Command::none()
-    }
-    fn apply(&mut self, ctx: &mut Context) -> bool {
-        ctx.bitcoin_config.network = self.network;
-        true
-    }
     fn view(&self) -> Element<Message> {
-        view::welcome(&self.network, self.valid())
+        view::welcome()
     }
 }
 

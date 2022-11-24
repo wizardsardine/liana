@@ -68,24 +68,41 @@ const NETWORKS: [Network; 4] = [
     Network::Regtest,
 ];
 
-pub fn welcome(network: &bitcoin::Network, valid: bool) -> Element<Message> {
+pub fn welcome<'a>() -> Element<'a, Message> {
     Container::new(Container::new(
         Column::new()
-            .push(Container::new(
-                PickList::new(&NETWORKS[..], Some(Network::from(*network)), |net| {
-                    Message::Network(net.into())
-                })
-                .padding(10),
-            ))
-            .push(if valid {
-                Container::new(
-                    button::primary(None, "Start the install")
-                        .on_press(Message::Next)
-                        .width(Length::Units(200)),
-                )
-            } else {
-                card::warning("A data directory already exists for this network".to_string())
-            })
+            .push(
+                Row::new()
+                    .spacing(20)
+                    .push(
+                        Button::new(
+                            Container::new(
+                                Column::new()
+                                    .width(Length::Units(200))
+                                    .push(icon::wallet_icon().size(50).width(Length::Units(100)))
+                                    .push(text("Create new wallet"))
+                                    .align_items(Alignment::Center),
+                            )
+                            .padding(50),
+                        )
+                        .style(button::Style::Border.into())
+                        .on_press(Message::CreateWallet),
+                    )
+                    .push(
+                        Button::new(
+                            Container::new(
+                                Column::new()
+                                    .width(Length::Units(200))
+                                    .push(icon::import_icon().size(50).width(Length::Units(100)))
+                                    .push(text("Import wallet"))
+                                    .align_items(Alignment::Center),
+                            )
+                            .padding(50),
+                        )
+                        .style(button::Style::Border.into())
+                        .on_press(Message::ImportWallet),
+                    ),
+            )
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)
@@ -101,26 +118,32 @@ pub fn welcome(network: &bitcoin::Network, valid: bool) -> Element<Message> {
 
 pub fn define_descriptor<'a>(
     network: bitcoin::Network,
-    imported_descriptor: &form::Value<String>,
+    network_valid: bool,
     user_xpub: &form::Value<String>,
     heir_xpub: &form::Value<String>,
     sequence: &form::Value<String>,
     error: Option<&String>,
 ) -> Element<'a, Message> {
-    let col_descriptor = Column::new()
-        .push(text("Descriptor:").bold())
-        .push(
-            form::Form::new("Descriptor", imported_descriptor, |msg| {
-                Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(msg))
+    let row_network = Row::new()
+        .spacing(10)
+        .align_items(Alignment::Center)
+        .push(text("Network:").bold())
+        .push(Container::new(
+            PickList::new(&NETWORKS[..], Some(Network::from(network)), |net| {
+                Message::Network(net.into())
             })
-            .warning("Please enter correct descriptor")
-            .size(20)
             .padding(10),
-        )
-        .spacing(10);
+        ))
+        .push_maybe(if network_valid {
+            None
+        } else {
+            Some(card::warning(
+                "A data directory already exists for this network".to_string(),
+            ))
+        });
 
     let col_user_xpub = Column::new()
-        .push(text("Your xpub:").bold())
+        .push(text("Your public key:").bold())
         .push(
             Row::new()
                 .push(
@@ -144,7 +167,7 @@ pub fn define_descriptor<'a>(
         .spacing(10);
 
     let col_heir_xpub = Column::new()
-        .push(text("Heir xpub:").bold())
+        .push(text("Public key of the recovery key:").bold())
         .push(
             Row::new()
                 .push(
@@ -168,7 +191,7 @@ pub fn define_descriptor<'a>(
         .spacing(10);
 
     let col_sequence = Column::new()
-        .push(text("Number of block:").bold())
+        .push(text("Number of block before enabling recovery:").bold())
         .push(
             Container::new(
                 form::Form::new("Number of block", sequence, |msg| {
@@ -184,21 +207,19 @@ pub fn define_descriptor<'a>(
 
     layout(
         Column::new()
-            .push(text("Create the descriptor").bold().size(50))
+            .push(text("Create the wallet").bold().size(50))
             .push(
                 Column::new()
+                    .push(row_network)
                     .push(col_user_xpub)
                     .push(col_sequence)
                     .push(col_heir_xpub)
                     .spacing(20),
             )
-            .push(text("or import it").bold().size(25))
-            .push(col_descriptor)
             .push(
-                if !imported_descriptor.value.is_empty()
-                    && (!user_xpub.value.is_empty()
-                        || !heir_xpub.value.is_empty()
-                        || !sequence.value.is_empty())
+                if !user_xpub.value.is_empty()
+                    || !heir_xpub.value.is_empty()
+                    || !sequence.value.is_empty()
                 {
                     button::primary(None, "Next").width(Length::Units(200))
                 } else {
@@ -208,6 +229,65 @@ pub fn define_descriptor<'a>(
                 },
             )
             .push_maybe(error.map(|e| card::error("Failed to create descriptor", e.to_string())))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(100)
+            .spacing(50)
+            .align_items(Alignment::Center),
+    )
+}
+
+pub fn import_descriptor<'a>(
+    network: bitcoin::Network,
+    network_valid: bool,
+    imported_descriptor: &form::Value<String>,
+    error: Option<&String>,
+) -> Element<'a, Message> {
+    let row_network = Row::new()
+        .spacing(10)
+        .align_items(Alignment::Center)
+        .push(text("Network:").bold())
+        .push(Container::new(
+            PickList::new(&NETWORKS[..], Some(Network::from(network)), |net| {
+                Message::Network(net.into())
+            })
+            .padding(10),
+        ))
+        .push_maybe(if network_valid {
+            None
+        } else {
+            Some(card::warning(
+                "A data directory already exists for this network".to_string(),
+            ))
+        });
+    let col_descriptor = Column::new()
+        .push(text("Descriptor:").bold())
+        .push(
+            form::Form::new("Descriptor", imported_descriptor, |msg| {
+                Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(msg))
+            })
+            .warning("Please enter correct descriptor")
+            .size(20)
+            .padding(10),
+        )
+        .spacing(10);
+    layout(
+        Column::new()
+            .push(text("Import the wallet").bold().size(50))
+            .push(
+                Column::new()
+                    .spacing(20)
+                    .push(row_network)
+                    .push(col_descriptor),
+            )
+            .push(if !imported_descriptor.value.is_empty() {
+                button::primary(None, "Next").width(Length::Units(200))
+            } else {
+                button::primary(None, "Next")
+                    .width(Length::Units(200))
+                    .on_press(Message::Next)
+            })
+            .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)
@@ -385,9 +465,9 @@ pub fn hardware_wallet_xpubs_modal<'a>(
         Column::new()
             .push(
                 text(if is_heir {
-                    "Import the Heir xpub"
+                    "Import the recovery public key"
                 } else {
-                    "Import the user xpub"
+                    "Import the user public key"
                 })
                 .bold()
                 .size(50),
