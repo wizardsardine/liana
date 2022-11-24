@@ -20,18 +20,62 @@ use crate::{
     },
 };
 
-const NETWORKS: [bitcoin::Network; 4] = [
-    bitcoin::Network::Bitcoin,
-    bitcoin::Network::Testnet,
-    bitcoin::Network::Signet,
-    bitcoin::Network::Regtest,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Network {
+    Mainnet,
+    Testnet,
+    Regtest,
+    Signet,
+}
+
+impl From<bitcoin::Network> for Network {
+    fn from(n: bitcoin::Network) -> Self {
+        match n {
+            bitcoin::Network::Bitcoin => Network::Mainnet,
+            bitcoin::Network::Testnet => Network::Testnet,
+            bitcoin::Network::Regtest => Network::Regtest,
+            bitcoin::Network::Signet => Network::Signet,
+        }
+    }
+}
+
+impl From<Network> for bitcoin::Network {
+    fn from(network: Network) -> bitcoin::Network {
+        match network {
+            Network::Mainnet => bitcoin::Network::Bitcoin,
+            Network::Testnet => bitcoin::Network::Testnet,
+            Network::Regtest => bitcoin::Network::Regtest,
+            Network::Signet => bitcoin::Network::Signet,
+        }
+    }
+}
+
+impl std::fmt::Display for Network {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Mainnet => write!(f, "Bitcoin mainnet"),
+            Self::Testnet => write!(f, "Bitcoin testnet"),
+            Self::Regtest => write!(f, "Bitcoin regtest"),
+            Self::Signet => write!(f, "Bitcoin signet"),
+        }
+    }
+}
+
+const NETWORKS: [Network; 4] = [
+    Network::Mainnet,
+    Network::Testnet,
+    Network::Signet,
+    Network::Regtest,
 ];
 
 pub fn welcome(network: &bitcoin::Network, valid: bool) -> Element<Message> {
     Container::new(Container::new(
         Column::new()
             .push(Container::new(
-                PickList::new(&NETWORKS[..], Some(*network), message::Message::Network).padding(10),
+                PickList::new(&NETWORKS[..], Some(Network::from(*network)), |net| {
+                    Message::Network(net.into())
+                })
+                .padding(10),
             ))
             .push(if valid {
                 Container::new(
