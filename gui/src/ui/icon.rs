@@ -13,6 +13,10 @@ fn icon(unicode: char) -> Text<'static> {
         .size(20)
 }
 
+pub fn reload_icon() -> Text<'static> {
+    icon('\u{F130}')
+}
+
 pub fn import_icon() -> Text<'static> {
     icon('\u{F30A}')
 }

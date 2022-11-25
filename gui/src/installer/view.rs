@@ -317,9 +317,24 @@ pub fn register_descriptor<'a>(
                     .align_items(Alignment::Center),
             )
             .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
-            .push(if !hws.is_empty() {
+            .push(
                 Column::new()
-                    .push(text(format!("{} hardware wallets connected", hws.len())).bold())
+                    .push(
+                        Row::new()
+                            .spacing(10)
+                            .align_items(Alignment::Center)
+                            .push(
+                                Container::new(
+                                    text(format!("{} hardware wallets connected", hws.len()))
+                                        .bold(),
+                                )
+                                .width(Length::Fill),
+                            )
+                            .push(
+                                button::border(Some(icon::reload_icon()), "Refresh")
+                                    .on_press(Message::Reload),
+                            ),
+                    )
                     .spacing(10)
                     .push(
                         hws.iter()
@@ -334,17 +349,8 @@ pub fn register_descriptor<'a>(
                                 ))
                             }),
                     )
-                    .width(Length::Fill)
-            } else {
-                Column::new().push(card::simple(
-                    Column::new()
-                        .spacing(20)
-                        .push("No hardware wallet connected")
-                        .push(button::primary(None, "Refresh").on_press(Message::Reload))
-                        .align_items(Alignment::Center)
-                        .width(Length::Fill),
-                ))
-            })
+                    .width(Length::Fill),
+            )
             .push(
                 button::primary(None, "Next")
                     .on_press(Message::Next)
@@ -473,9 +479,24 @@ pub fn hardware_wallet_xpubs_modal<'a>(
                 .size(50),
             )
             .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
-            .push(if !hws.is_empty() {
+            .push(
                 Column::new()
-                    .push(text(format!("{} hardware wallets connected", hws.len())).bold())
+                    .push(
+                        Row::new()
+                            .spacing(10)
+                            .align_items(Alignment::Center)
+                            .push(
+                                Container::new(
+                                    text(format!("{} hardware wallets connected", hws.len()))
+                                        .bold(),
+                                )
+                                .width(Length::Fill),
+                            )
+                            .push(
+                                button::border(Some(icon::reload_icon()), "Refresh")
+                                    .on_press(Message::Reload),
+                            ),
+                    )
                     .spacing(10)
                     .push(
                         hws.iter()
@@ -490,22 +511,8 @@ pub fn hardware_wallet_xpubs_modal<'a>(
                                 ))
                             }),
                     )
-                    .width(Length::Fill)
-            } else {
-                Column::new()
-                    .push(
-                        card::simple(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fill)
-                                .push("Please connect a hardware wallet")
-                                .push(button::primary(None, "Refresh").on_press(Message::Reload))
-                                .align_items(Alignment::Center),
-                        )
-                        .width(Length::Fill),
-                    )
-                    .width(Length::Fill)
-            })
+                    .width(Length::Fill),
+            )
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)

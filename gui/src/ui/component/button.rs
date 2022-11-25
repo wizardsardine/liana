@@ -16,6 +16,10 @@ pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> button
     button::Button::new(content(icon, t)).style(Style::Transparent.into())
 }
 
+pub fn border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> button::Button<'a, T> {
+    button::Button::new(content(icon, t)).style(Style::Border.into())
+}
+
 pub fn transparent_border<'a, T: 'a>(
     icon: Option<Text<'a>>,
     t: &'static str,
