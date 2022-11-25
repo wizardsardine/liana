@@ -190,3 +190,11 @@ pub fn done_icon() -> Text<'static> {
 pub fn todo_icon() -> Text<'static> {
     icon('\u{F28A}')
 }
+
+pub fn collapse_icon() -> Text<'static> {
+    icon('\u{F284}')
+}
+
+pub fn collapsed_icon() -> Text<'static> {
+    icon('\u{F282}')
+}

@@ -12,7 +12,7 @@ use crate::{
     ui::{
         color,
         component::{
-            button, card, container, form,
+            button, card, collapse, container, form,
             text::{text, Text},
         },
         icon,
@@ -372,7 +372,34 @@ pub fn backup_descriptor<'a>(descriptor: String, done: bool) -> Element<'a, Mess
                     .bold()
                     .size(50),
             )
-            .push(text(super::prompt::BACKUP_DESCRIPTOR_MESSAGE))
+            .push(
+                Column::new()
+                    .push(text(super::prompt::BACKUP_DESCRIPTOR_MESSAGE))
+                    .push(collapse::Collapse::new(
+                        || {
+                            Button::new(
+                                Row::new()
+                                    .align_items(Alignment::Center)
+                                    .spacing(10)
+                                    .push(text("Learn more").small().bold())
+                                    .push(icon::collapse_icon()),
+                            )
+                            .style(button::Style::Transparent.into())
+                        },
+                        || {
+                            Button::new(
+                                Row::new()
+                                    .align_items(Alignment::Center)
+                                    .spacing(10)
+                                    .push(text("Learn more").small().bold())
+                                    .push(icon::collapsed_icon()),
+                            )
+                            .style(button::Style::Transparent.into())
+                        },
+                        help_backup,
+                    ))
+                    .max_width(1000),
+            )
             .push(card::simple(
                 Column::new()
                     .push(text("The descriptor:").small().bold())
@@ -383,7 +410,8 @@ pub fn backup_descriptor<'a>(descriptor: String, done: bool) -> Element<'a, Mess
                                 .on_press(Message::Clibpboard(descriptor)),
                         ),
                     )
-                    .spacing(10),
+                    .spacing(10)
+                    .max_width(1000),
             ))
             .push(Checkbox::new(
                 done,
@@ -397,17 +425,16 @@ pub fn backup_descriptor<'a>(descriptor: String, done: bool) -> Element<'a, Mess
             } else {
                 button::primary(None, "Next").width(Length::Units(200))
             })
-            .push(
-                Column::new()
-                    .push(text("Help:").bold())
-                    .push(text(super::prompt::BACKUP_DESCRIPTOR_HELP).small()),
-            )
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)
             .spacing(50)
             .align_items(Alignment::Center),
     )
+}
+
+pub fn help_backup<'a>() -> Element<'a, Message> {
+    text(super::prompt::BACKUP_DESCRIPTOR_HELP).small().into()
 }
 
 pub fn define_bitcoin<'a>(
