@@ -1,4 +1,4 @@
-use iced::widget::{Button, Column, Container, PickList, Row, Scrollable};
+use iced::widget::{Button, Checkbox, Column, Container, PickList, Row, Scrollable};
 use iced::{Alignment, Element, Length};
 
 use liana::miniscript::bitcoin;
@@ -217,9 +217,9 @@ pub fn define_descriptor<'a>(
                     .spacing(20),
             )
             .push(
-                if !user_xpub.value.is_empty()
-                    || !heir_xpub.value.is_empty()
-                    || !sequence.value.is_empty()
+                if user_xpub.value.is_empty()
+                    && heir_xpub.value.is_empty()
+                    && sequence.value.is_empty()
                 {
                     button::primary(None, "Next").width(Length::Units(200))
                 } else {
@@ -355,6 +355,52 @@ pub fn register_descriptor<'a>(
                 button::primary(None, "Next")
                     .on_press(Message::Next)
                     .width(Length::Units(200)),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(100)
+            .spacing(50)
+            .align_items(Alignment::Center),
+    )
+}
+
+pub fn backup_descriptor<'a>(descriptor: String, done: bool) -> Element<'a, Message> {
+    layout(
+        Column::new()
+            .push(
+                text("Did you backup your wallet descriptor ?")
+                    .bold()
+                    .size(50),
+            )
+            .push(text(super::prompt::BACKUP_DESCRIPTOR_MESSAGE))
+            .push(card::simple(
+                Column::new()
+                    .push(text("The descriptor:").small().bold())
+                    .push(text(descriptor.clone()).small())
+                    .push(
+                        Row::new().push(Column::new().width(Length::Fill)).push(
+                            button::transparent_border(Some(icon::clipboard_icon()), "Copy")
+                                .on_press(Message::Clibpboard(descriptor)),
+                        ),
+                    )
+                    .spacing(10),
+            ))
+            .push(Checkbox::new(
+                done,
+                "I have backed up my descriptor",
+                Message::BackupDone,
+            ))
+            .push(if done {
+                button::primary(None, "Next")
+                    .on_press(Message::Next)
+                    .width(Length::Units(200))
+            } else {
+                button::primary(None, "Next").width(Length::Units(200))
+            })
+            .push(
+                Column::new()
+                    .push(text("Help:").bold())
+                    .push(text(super::prompt::BACKUP_DESCRIPTOR_HELP).small()),
             )
             .width(Length::Fill)
             .height(Length::Fill)

@@ -1,5 +1,6 @@
 mod config;
 mod message;
+mod prompt;
 mod step;
 mod view;
 
@@ -17,8 +18,8 @@ use crate::{
 
 pub use message::Message;
 use step::{
-    Context, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor, RegisterDescriptor, Step,
-    Welcome,
+    BackupDescriptor, Context, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor,
+    RegisterDescriptor, Step, Welcome,
 };
 
 pub struct Installer {
@@ -101,6 +102,7 @@ impl Installer {
                 self.steps = vec![
                     Welcome::default().into(),
                     DefineDescriptor::new().into(),
+                    BackupDescriptor::default().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
                     Final::new().into(),

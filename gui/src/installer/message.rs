@@ -8,6 +8,7 @@ use crate::hw::HardwareWallet;
 pub enum Message {
     CreateWallet,
     ImportWallet,
+    BackupDone(bool),
     Event(iced_native::Event),
     Exit(PathBuf),
     Clibpboard(String),

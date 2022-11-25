@@ -503,3 +503,31 @@ impl From<RegisterDescriptor> for Box<dyn Step> {
         Box::new(s)
     }
 }
+
+#[derive(Default)]
+pub struct BackupDescriptor {
+    done: bool,
+    descriptor: Option<MultipathDescriptor>,
+}
+
+impl Step for BackupDescriptor {
+    fn update(&mut self, message: Message) -> Command<Message> {
+        if let Message::BackupDone(done) = message {
+            self.done = done;
+        }
+        Command::none()
+    }
+    fn load_context(&mut self, ctx: &Context) {
+        self.descriptor = ctx.descriptor.clone();
+    }
+    fn view(&self) -> Element<Message> {
+        let desc = self.descriptor.as_ref().unwrap();
+        view::backup_descriptor(desc.to_string(), self.done)
+    }
+}
+
+impl From<BackupDescriptor> for Box<dyn Step> {
+    fn from(s: BackupDescriptor) -> Box<dyn Step> {
+        Box::new(s)
+    }
+}
