@@ -1530,7 +1530,7 @@ dependencies = [
 [[package]]
 name = "ledger_bitcoin_client"
 version = "0.1.0"
-source = "git+https://github.com/edouardparis/app-bitcoin-new/?branch=bitcoin_client_rs#efe26ed9fcfe0676c33141ad4777fd3786f7d539"
+source = "git+https://github.com/edouardparis/app-bitcoin-new/?branch=bitcoin_client_rs#d63673024003256bb41905eb181908872b7d07b0"
 dependencies = [
  "async-trait",
  "bitcoin",
