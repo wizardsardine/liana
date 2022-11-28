@@ -292,6 +292,7 @@ pub fn setup_logger(log_level: log::LevelFilter) -> Result<(), fern::InitError> 
         })
         .level(log_level)
         .level_for("iced_wgpu", log::LevelFilter::Off)
+        .level_for("iced_winit", log::LevelFilter::Off)
         .level_for("wgpu_core", log::LevelFilter::Off)
         .level_for("wgpu_hal", log::LevelFilter::Off)
         .level_for("gfx_backend_vulkan", log::LevelFilter::Off)
