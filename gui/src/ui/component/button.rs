@@ -1,33 +1,33 @@
-use iced::pure::{
-    container, row,
-    widget::{button, Container},
-};
+use iced::widget::{button, container, Container, Row, Text};
 use iced::{Alignment, Color, Length, Vector};
 
 use super::text::text;
 use crate::ui::color;
 
-pub fn alert<'a, T: 'a>(icon: Option<iced::Text>, t: &str) -> button::Button<'a, T> {
-    button::Button::new(content(icon, t)).style(Style::Destructive)
+pub fn alert<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> button::Button<'a, T> {
+    button::Button::new(content(icon, t)).style(Style::Destructive.into())
 }
 
-pub fn primary<'a, T: 'a>(icon: Option<iced::Text>, t: &str) -> button::Button<'a, T> {
-    button::Button::new(content(icon, t)).style(Style::Primary)
+pub fn primary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> button::Button<'a, T> {
+    button::Button::new(content(icon, t)).style(Style::Primary.into())
 }
 
-pub fn transparent<'a, T: 'a>(icon: Option<iced::Text>, t: &str) -> button::Button<'a, T> {
-    button::Button::new(content(icon, t)).style(Style::Transparent)
+pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> button::Button<'a, T> {
+    button::Button::new(content(icon, t)).style(Style::Transparent.into())
 }
 
-pub fn transparent_border<'a, T: 'a>(icon: Option<iced::Text>, t: &str) -> button::Button<'a, T> {
-    button::Button::new(content(icon, t)).style(Style::TransparentBorder)
+pub fn transparent_border<'a, T: 'a>(
+    icon: Option<Text<'a>>,
+    t: &'static str,
+) -> button::Button<'a, T> {
+    button::Button::new(content(icon, t)).style(Style::TransparentBorder.into())
 }
 
-fn content<'a, T: 'a>(icon: Option<iced::Text>, t: &str) -> Container<'a, T> {
+fn content<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Container<'a, T> {
     match icon {
         None => container(text(t)).width(Length::Fill).center_x().padding(5),
         Some(i) => container(
-            row()
+            Row::new()
                 .push(i)
                 .push(text(t))
                 .spacing(10)
@@ -50,9 +50,10 @@ pub enum Style {
 }
 
 impl button::StyleSheet for Style {
-    fn active(&self) -> button::Style {
+    type Style = iced::Theme;
+    fn active(&self, _style: &Self::Style) -> button::Appearance {
         match self {
-            Style::Primary => button::Style {
+            Style::Primary => button::Appearance {
                 shadow_offset: Vector::default(),
                 background: color::PRIMARY.into(),
                 border_radius: 10.0,
@@ -60,7 +61,7 @@ impl button::StyleSheet for Style {
                 border_color: Color::TRANSPARENT,
                 text_color: color::FOREGROUND,
             },
-            Style::Destructive => button::Style {
+            Style::Destructive => button::Appearance {
                 shadow_offset: Vector::default(),
                 background: color::FOREGROUND.into(),
                 border_radius: 10.0,
@@ -68,7 +69,7 @@ impl button::StyleSheet for Style {
                 border_color: color::ALERT,
                 text_color: color::ALERT,
             },
-            Style::Transparent | Style::TransparentBorder => button::Style {
+            Style::Transparent | Style::TransparentBorder => button::Appearance {
                 shadow_offset: Vector::default(),
                 background: Color::TRANSPARENT.into(),
                 border_radius: 10.0,
@@ -76,7 +77,7 @@ impl button::StyleSheet for Style {
                 border_color: Color::TRANSPARENT,
                 text_color: Color::BLACK,
             },
-            Style::Border => button::Style {
+            Style::Border => button::Appearance {
                 shadow_offset: Vector::default(),
                 background: Color::TRANSPARENT.into(),
                 border_radius: 10.0,
@@ -87,9 +88,9 @@ impl button::StyleSheet for Style {
         }
     }
 
-    fn hovered(&self) -> button::Style {
+    fn hovered(&self, _style: &Self::Style) -> button::Appearance {
         match self {
-            Style::Primary => button::Style {
+            Style::Primary => button::Appearance {
                 shadow_offset: Vector::default(),
                 background: color::PRIMARY.into(),
                 border_radius: 10.0,
@@ -97,7 +98,7 @@ impl button::StyleSheet for Style {
                 border_color: Color::TRANSPARENT,
                 text_color: color::FOREGROUND,
             },
-            Style::Destructive => button::Style {
+            Style::Destructive => button::Appearance {
                 shadow_offset: Vector::default(),
                 background: color::FOREGROUND.into(),
                 border_radius: 10.0,
@@ -105,7 +106,7 @@ impl button::StyleSheet for Style {
                 border_color: color::ALERT,
                 text_color: color::ALERT,
             },
-            Style::Transparent => button::Style {
+            Style::Transparent => button::Appearance {
                 shadow_offset: Vector::default(),
                 background: color::BACKGROUND.into(),
                 border_radius: 10.0,
@@ -113,7 +114,7 @@ impl button::StyleSheet for Style {
                 border_color: Color::TRANSPARENT,
                 text_color: Color::BLACK,
             },
-            Style::TransparentBorder => button::Style {
+            Style::TransparentBorder => button::Appearance {
                 shadow_offset: Vector::default(),
                 background: Color::TRANSPARENT.into(),
                 border_radius: 10.0,
@@ -121,7 +122,7 @@ impl button::StyleSheet for Style {
                 border_color: Color::BLACK,
                 text_color: Color::BLACK,
             },
-            Style::Border => button::Style {
+            Style::Border => button::Appearance {
                 shadow_offset: Vector::default(),
                 background: Color::TRANSPARENT.into(),
                 border_radius: 10.0,
@@ -130,5 +131,17 @@ impl button::StyleSheet for Style {
                 text_color: Color::BLACK,
             },
         }
+    }
+}
+
+impl From<Style> for Box<dyn button::StyleSheet<Style = iced::Theme>> {
+    fn from(s: Style) -> Box<dyn button::StyleSheet<Style = iced::Theme>> {
+        Box::new(s)
+    }
+}
+
+impl From<Style> for iced::theme::Button {
+    fn from(i: Style) -> iced::theme::Button {
+        iced::theme::Button::Custom(i.into())
     }
 }

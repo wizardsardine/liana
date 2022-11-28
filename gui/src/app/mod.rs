@@ -12,8 +12,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::pure::Element;
-use iced::{clipboard, time, Command, Subscription};
+use iced::{clipboard, time, Command, Element, Subscription};
 use iced_native::{window, Event};
 
 pub use liana::config::Config as DaemonConfig;

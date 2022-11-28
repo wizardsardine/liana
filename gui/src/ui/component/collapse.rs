@@ -1,22 +1,22 @@
-use iced::pure::{button, column};
-use iced_lazy::pure::{self, Component};
-use iced_native::text;
-use iced_pure::Element;
+use iced::{
+    widget::{Button, Column},
+    Element,
+};
+use iced_lazy::{self, Component};
 use std::marker::PhantomData;
 
-use crate::ui::component::button::Style;
+use super::button::Style;
 
 pub fn collapse<
     'a,
     Message: 'a,
     T: Into<Message> + Clone + 'a,
-    Renderer: text::Renderer + 'static,
-    H: Fn() -> Element<'a, T, Renderer> + 'a,
-    C: Fn() -> Element<'a, T, Renderer> + 'a,
+    H: Fn() -> Element<'a, T> + 'a,
+    C: Fn() -> Element<'a, T> + 'a,
 >(
     header: H,
     content: C,
-) -> impl Into<Element<'a, Message, Renderer>> {
+) -> impl Into<Element<'a, Message>> {
     Collapse {
         header,
         content,
@@ -36,12 +36,11 @@ enum Event<T> {
     Collapse(bool),
 }
 
-impl<'a, Message, Renderer, T, H, C> Component<Message, Renderer> for Collapse<'a, H, C>
+impl<'a, Message, T, H, C> Component<Message, iced::Renderer> for Collapse<'a, H, C>
 where
     T: Into<Message> + Clone + 'a,
-    H: Fn() -> Element<'a, T, Renderer>,
-    C: Fn() -> Element<'a, T, Renderer>,
-    Renderer: text::Renderer + 'static,
+    H: Fn() -> Element<'a, T>,
+    C: Fn() -> Element<'a, T>,
 {
     type State = bool;
     type Event = Event<T>;
@@ -56,23 +55,23 @@ where
         }
     }
 
-    fn view(&self, state: &Self::State) -> Element<Self::Event, Renderer> {
+    fn view(&self, state: &Self::State) -> Element<Self::Event> {
         if *state {
-            column()
+            Column::new()
                 .push(
-                    button((self.header)().map(Event::Internal))
-                        .style(Style::TransparentBorder)
+                    Button::new((self.header)().map(Event::Internal))
+                        .style(Style::TransparentBorder.into())
                         .padding(10)
                         .on_press(Event::Collapse(false)),
                 )
                 .push((self.content)().map(Event::Internal))
                 .into()
         } else {
-            column()
+            Column::new()
                 .push(
-                    button((self.header)().map(Event::Internal))
+                    Button::new((self.header)().map(Event::Internal))
+                        .style(Style::TransparentBorder.into())
                         .padding(10)
-                        .style(Style::TransparentBorder)
                         .on_press(Event::Collapse(true)),
                 )
                 .into()
@@ -80,16 +79,14 @@ where
     }
 }
 
-impl<'a, Message, Renderer, T, H: 'a, C: 'a> From<Collapse<'a, H, C>>
-    for Element<'a, Message, Renderer>
+impl<'a, Message, T, H: 'a, C: 'a> From<Collapse<'a, H, C>> for Element<'a, Message>
 where
     Message: 'a,
-    Renderer: 'static + text::Renderer,
     T: Into<Message> + Clone + 'a,
-    H: Fn() -> Element<'a, T, Renderer>,
-    C: Fn() -> Element<'a, T, Renderer>,
+    H: Fn() -> Element<'a, T, iced::Renderer>,
+    C: Fn() -> Element<'a, T, iced::Renderer>,
 {
     fn from(c: Collapse<'a, H, C>) -> Self {
-        pure::component(c)
+        iced_lazy::component(c)
     }
 }

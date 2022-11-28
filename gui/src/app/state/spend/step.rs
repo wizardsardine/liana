@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use iced::pure::Element;
-use iced::Command;
+use iced::{Command, Element};
 use liana::miniscript::bitcoin::{
     util::psbt::Psbt, Address, Amount, Denomination, OutPoint, Script,
 };

@@ -1,5 +1,5 @@
 /// from hecjr idea on Discord
-use iced::pure::{
+use iced::{
     widget::{Column, Row},
     Element,
 };

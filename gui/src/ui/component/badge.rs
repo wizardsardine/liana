@@ -1,6 +1,6 @@
 use iced::{
-    pure::{container, widget, Element},
-    Length,
+    widget::{self, Container},
+    Element, Length,
 };
 
 use crate::ui::{color, icon};
@@ -12,36 +12,49 @@ pub enum Style {
 }
 
 impl widget::container::StyleSheet for Style {
-    fn style(&self) -> widget::container::Style {
+    type Style = iced::Theme;
+    fn appearance(&self, _style: &Self::Style) -> widget::container::Appearance {
         match self {
-            Self::Standard => widget::container::Style {
+            Self::Standard => widget::container::Appearance {
                 border_radius: 40.0,
                 background: color::BACKGROUND.into(),
-                ..widget::container::Style::default()
+                ..widget::container::Appearance::default()
             },
-            Self::Success => widget::container::Style {
+            Self::Success => widget::container::Appearance {
                 border_radius: 40.0,
                 background: color::SUCCESS_LIGHT.into(),
                 text_color: color::SUCCESS.into(),
-                ..widget::container::Style::default()
+                ..widget::container::Appearance::default()
             },
-            Self::Warning => widget::container::Style {
+            Self::Warning => widget::container::Appearance {
                 border_radius: 40.0,
                 background: color::WARNING_LIGHT.into(),
                 text_color: color::WARNING.into(),
-                ..widget::container::Style::default()
+                ..widget::container::Appearance::default()
             },
         }
     }
 }
 
-pub struct Badge<S: widget::container::StyleSheet> {
-    icon: widget::Text,
-    style: S,
+impl From<Style> for Box<dyn widget::container::StyleSheet<Style = iced::Theme>> {
+    fn from(s: Style) -> Box<dyn widget::container::StyleSheet<Style = iced::Theme>> {
+        Box::new(s)
+    }
 }
 
-impl Badge<Style> {
-    pub fn new(icon: widget::Text) -> Self {
+impl From<Style> for iced::theme::Container {
+    fn from(i: Style) -> iced::theme::Container {
+        iced::theme::Container::Custom(i.into())
+    }
+}
+
+pub struct Badge {
+    icon: widget::Text<'static>,
+    style: Style,
+}
+
+impl Badge {
+    pub fn new(icon: widget::Text<'static>) -> Self {
         Self {
             icon,
             style: Style::Standard,
@@ -55,11 +68,9 @@ impl Badge<Style> {
     }
 }
 
-impl<'a, Message: 'a, S: 'a + widget::container::StyleSheet> From<Badge<S>>
-    for Element<'a, Message>
-{
-    fn from(badge: Badge<S>) -> Element<'a, Message> {
-        container(badge.icon.width(Length::Units(20)))
+impl<'a, Message: 'a> From<Badge> for Element<'a, Message> {
+    fn from(badge: Badge) -> Element<'a, Message> {
+        Container::new(badge.icon.width(Length::Units(20)))
             .width(Length::Units(40))
             .height(Length::Units(40))
             .style(badge.style)
@@ -69,51 +80,29 @@ impl<'a, Message: 'a, S: 'a + widget::container::StyleSheet> From<Badge<S>>
     }
 }
 
-pub struct ReceiveStyle;
-impl widget::container::StyleSheet for ReceiveStyle {
-    fn style(&self) -> widget::container::Style {
-        widget::container::Style {
-            border_radius: 40.0,
-            background: color::BACKGROUND.into(),
-            ..widget::container::Style::default()
-        }
-    }
-}
-
 pub fn receive<T>() -> widget::container::Container<'static, T> {
-    container(icon::receive_icon().width(Length::Units(20)))
+    Container::new(icon::receive_icon().width(Length::Units(20)))
         .width(Length::Units(40))
         .height(Length::Units(40))
-        .style(ReceiveStyle)
+        .style(Style::Standard)
         .center_x()
         .center_y()
 }
 
-pub struct SpendStyle;
-impl widget::container::StyleSheet for SpendStyle {
-    fn style(&self) -> widget::container::Style {
-        widget::container::Style {
-            border_radius: 40.0,
-            background: color::BACKGROUND.into(),
-            ..widget::container::Style::default()
-        }
-    }
-}
-
 pub fn spend<T>() -> widget::container::Container<'static, T> {
-    container(icon::send_icon().width(Length::Units(20)))
+    Container::new(icon::send_icon().width(Length::Units(20)))
         .width(Length::Units(40))
         .height(Length::Units(40))
-        .style(ReceiveStyle)
+        .style(Style::Standard)
         .center_x()
         .center_y()
 }
 
 pub fn coin<T>() -> widget::container::Container<'static, T> {
-    container(icon::coin_icon().width(Length::Units(20)))
+    Container::new(icon::coin_icon().width(Length::Units(20)))
         .width(Length::Units(40))
         .height(Length::Units(40))
-        .style(ReceiveStyle)
+        .style(Style::Standard)
         .center_x()
         .center_y()
 }
@@ -126,32 +115,45 @@ pub enum PillStyle {
 }
 
 impl widget::container::StyleSheet for PillStyle {
-    fn style(&self) -> widget::container::Style {
+    type Style = iced::Theme;
+    fn appearance(&self, _style: &Self::Style) -> widget::container::Appearance {
         match self {
-            Self::Primary => widget::container::Style {
+            Self::Primary => widget::container::Appearance {
                 background: color::PRIMARY.into(),
                 border_radius: 10.0,
                 text_color: iced::Color::WHITE.into(),
-                ..widget::container::Style::default()
+                ..widget::container::Appearance::default()
             },
-            Self::InversePrimary => widget::container::Style {
+            Self::InversePrimary => widget::container::Appearance {
                 background: color::FOREGROUND.into(),
                 border_radius: 10.0,
                 text_color: color::PRIMARY.into(),
-                ..widget::container::Style::default()
+                ..widget::container::Appearance::default()
             },
-            Self::Success => widget::container::Style {
+            Self::Success => widget::container::Appearance {
                 background: color::SUCCESS.into(),
                 border_radius: 10.0,
                 text_color: iced::Color::WHITE.into(),
-                ..widget::container::Style::default()
+                ..widget::container::Appearance::default()
             },
-            Self::Simple => widget::container::Style {
+            Self::Simple => widget::container::Appearance {
                 background: color::BACKGROUND.into(),
                 border_radius: 10.0,
                 text_color: iced::Color::BLACK.into(),
-                ..widget::container::Style::default()
+                ..widget::container::Appearance::default()
             },
         }
+    }
+}
+
+impl From<PillStyle> for Box<dyn widget::container::StyleSheet<Style = iced::Theme>> {
+    fn from(s: PillStyle) -> Box<dyn widget::container::StyleSheet<Style = iced::Theme>> {
+        Box::new(s)
+    }
+}
+
+impl From<PillStyle> for iced::theme::Container {
+    fn from(i: PillStyle) -> iced::theme::Container {
+        iced::theme::Container::Custom(i.into())
     }
 }

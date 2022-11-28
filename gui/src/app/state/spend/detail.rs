@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use iced::pure::Element;
-use iced::Command;
+use iced::{Command, Element};
 use liana::miniscript::bitcoin::util::{bip32::Fingerprint, psbt::Psbt};
 
 use crate::{
@@ -364,6 +363,6 @@ pub struct NoAction {}
 
 impl Action for NoAction {
     fn view(&self) -> Element<view::Message> {
-        iced::pure::column().into()
+        iced::widget::Column::new().into()
     }
 }

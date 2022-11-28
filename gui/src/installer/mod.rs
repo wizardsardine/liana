@@ -3,8 +3,7 @@ mod message;
 mod step;
 mod view;
 
-use iced::pure::Element;
-use iced::{clipboard, Command, Subscription};
+use iced::{clipboard, Command, Element, Subscription};
 use iced_native::{window, Event};
 use liana::miniscript::bitcoin;
 

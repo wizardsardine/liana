@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use iced::{pure::Element, Command};
+use iced::{Command, Element};
 use liana::{
     descriptors::MultipathDescriptor,
     miniscript::{
@@ -424,7 +424,7 @@ impl Step for RegisterDescriptor {
     fn view(&self) -> Element<Message> {
         let desc = self.descriptor.as_ref().unwrap();
         view::register_descriptor(
-            &desc.to_string(),
+            desc.to_string(),
             &self.hws,
             self.error.as_ref(),
             self.processing,

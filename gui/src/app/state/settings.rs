@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::prelude::*;
-use iced::{pure::Element, Command};
+use iced::{Command, Element};
 
 use liana::config::Config;
 

@@ -3,7 +3,10 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iced::pure::{column, text, Element};
+use iced::{
+    widget::{Column, Text},
+    Element,
+};
 use iced::{Alignment, Command, Subscription};
 use iced_native::{window, Event};
 use log::{debug, info};
@@ -199,16 +202,16 @@ impl Loader {
 
     pub fn view(&self) -> Element<Message> {
         match &self.step {
-            Step::StartingDaemon => cover(text("Starting daemon...")),
-            Step::Connecting => cover(text("Connecting to daemon...")),
-            Step::Syncing { progress, .. } => cover(text(&format!("Syncing... {}%", progress))),
-            Step::Error(error) => cover(text(&format!("Error: {}", error))),
+            Step::StartingDaemon => cover(Text::new("Starting daemon...")),
+            Step::Connecting => cover(Text::new("Connecting to daemon...")),
+            Step::Syncing { progress, .. } => cover(Text::new(format!("Syncing... {}%", progress))),
+            Step::Error(error) => cover(Text::new(format!("Error: {}", error))),
         }
     }
 }
 
 pub fn cover<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Element<'a, T> {
-    column()
+    Column::new()
         .push(content)
         .width(iced::Length::Fill)
         .height(iced::Length::Fill)

@@ -1,6 +1,6 @@
 use iced::{
-    pure::{column, container, row, scrollable, Element},
-    Alignment, Length,
+    widget::{Button, Column, Container, Row, Scrollable},
+    Alignment, Element, Length,
 };
 
 use liana::miniscript::bitcoin::{
@@ -11,14 +11,14 @@ use liana::miniscript::bitcoin::{
 use crate::{
     app::{
         error::Error,
-        view::{message::*, modal_section, warning::warn, ModalSectionStyle},
+        view::{message::*, modal_section, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
     ui::{
         color,
         component::{
-            badge, button, card, separation,
+            badge, button, card, container, separation,
             text::{text, Text},
         },
         icon,
@@ -36,7 +36,7 @@ pub fn spend_view<'a, T: Into<Element<'a, Message>>>(
     spend_modal(
         show_delete,
         warning,
-        column()
+        Column::new()
             .align_items(Alignment::Center)
             .spacing(20)
             .push(spend_header(tx))
@@ -59,10 +59,10 @@ pub fn save_action<'a>(saved: bool) -> Element<'a, Message> {
             .into()
     } else {
         card::simple(
-            column()
+            Column::new()
                 .spacing(10)
                 .push(text("Save the transaction"))
-                .push(row().push(column().width(Length::Fill)).push(
+                .push(Row::new().push(Column::new().width(Length::Fill)).push(
                     button::primary(None, "Save").on_press(Message::Spend(SpendTxMessage::Confirm)),
                 )),
         )
@@ -79,11 +79,11 @@ pub fn broadcast_action<'a>(saved: bool) -> Element<'a, Message> {
             .into()
     } else {
         card::simple(
-            column()
+            Column::new()
                 .spacing(10)
                 .push(text("Broadcast the transaction"))
                 .push(
-                    row().push(column().width(Length::Fill)).push(
+                    Row::new().push(Column::new().width(Length::Fill)).push(
                         button::primary(None, "Broadcast")
                             .on_press(Message::Spend(SpendTxMessage::Confirm)),
                     ),
@@ -102,12 +102,12 @@ pub fn delete_action<'a>(deleted: bool) -> Element<'a, Message> {
             .into()
     } else {
         card::simple(
-            column()
+            Column::new()
                 .spacing(10)
                 .push(text("Delete the transaction draft"))
                 .push(
-                    row()
-                        .push(column().width(Length::Fill))
+                    Row::new()
+                        .push(Column::new().width(Length::Fill))
                         .push(
                             button::transparent(None, "Cancel")
                                 .on_press(Message::Spend(SpendTxMessage::Cancel)),
@@ -128,20 +128,20 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
     warning: Option<&Error>,
     content: T,
 ) -> Element<'a, Message> {
-    column()
+    Column::new()
         .push(warn(warning))
         .push(
-            container(
-                row()
+            Container::new(
+                Row::new()
                     .push(if show_delete {
-                        column()
+                        Column::new()
                             .push(
                                 button::alert(Some(icon::trash_icon()), "Delete")
                                     .on_press(Message::Spend(SpendTxMessage::Delete)),
                             )
                             .width(Length::Fill)
                     } else {
-                        column()
+                        Column::new()
                             .push(
                                 button::transparent(None, "< Previous").on_press(Message::Previous),
                             )
@@ -153,20 +153,20 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
                     ),
             )
             .padding(10)
-            .style(ModalSectionStyle),
+            .style(container::Style::Background),
         )
-        .push(modal_section(container(scrollable(content))))
+        .push(modal_section(Container::new(Scrollable::new(content))))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
 }
 
 fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
-    column()
+    Column::new()
         .spacing(20)
         .align_items(Alignment::Center)
         .push(
-            row()
+            Row::new()
                 .push(badge::Badge::new(icon::send_icon()).style(badge::Style::Standard))
                 .push(text("Spend").bold())
                 .spacing(5)
@@ -174,26 +174,26 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
         )
         .push_maybe(match tx.status {
             SpendStatus::Deprecated => Some(
-                container(text("  Deprecated  ").small())
+                Container::new(text("  Deprecated  ").small())
                     .padding(3)
                     .style(badge::PillStyle::Simple),
             ),
             SpendStatus::Broadcasted => Some(
-                container(text("  Broadcasted  ").small())
+                Container::new(text("  Broadcasted  ").small())
                     .padding(3)
                     .style(badge::PillStyle::Success),
             ),
             _ => None,
         })
         .push(
-            column()
+            Column::new()
                 .align_items(Alignment::Center)
                 .push(
-                    text(&format!("- {} BTC", tx.spend_amount.to_btc()))
+                    text(format!("- {} BTC", tx.spend_amount.to_btc()))
                         .bold()
                         .size(50),
                 )
-                .push(container(text(&format!(
+                .push(Container::new(text(format!(
                     "Miner Fee: {} BTC",
                     tx.fee_amount.to_btc()
                 )))),
@@ -203,16 +203,23 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
 
 fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
     card::simple(
-        column()
-            .push(container(
-                row()
+        Column::new()
+            .push(Container::new(
+                Row::new()
                     .push(
-                        container(
-                            row()
-                                .push(container(icon::key_icon().size(30).width(Length::Fill)))
-                                .push(column().push(text("Number of signatures:").bold()).push(
-                                    text(&format!("{}", tx.psbt.inputs[0].partial_sigs.len(),)),
+                        Container::new(
+                            Row::new()
+                                .push(Container::new(
+                                    icon::key_icon().size(30).width(Length::Fill),
                                 ))
+                                .push(
+                                    Column::new()
+                                        .push(text("Number of signatures:").bold())
+                                        .push(text(format!(
+                                            "{}",
+                                            tx.psbt.inputs[0].partial_sigs.len(),
+                                        ))),
+                                )
                                 .align_items(Alignment::Center)
                                 .spacing(20),
                         )
@@ -223,15 +230,15 @@ fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
             ))
             .push(separation().width(Length::Fill))
             .push(
-                column()
+                Column::new()
                     .push(
-                        row()
+                        Row::new()
                             .push(text("Tx ID:").bold().width(Length::Fill))
-                            .push(text(&format!("{}", tx.psbt.unsigned_tx.txid())).small())
+                            .push(text(format!("{}", tx.psbt.unsigned_tx.txid())).small())
                             .align_items(Alignment::Center),
                     )
                     .push(
-                        row()
+                        Row::new()
                             .push(text("Psbt:").bold().width(Length::Fill))
                             .push(
                                 button::transparent(Some(icon::clipboard_icon()), "Copy")
@@ -251,21 +258,21 @@ fn inputs_and_outputs_view<'a>(
     network: Network,
     change_index: Option<usize>,
 ) -> Element<'a, Message> {
-    column()
+    Column::new()
         .push(
-            row()
+            Row::new()
                 .spacing(10)
                 .push(
-                    column()
+                    Column::new()
                         .spacing(10)
                         .push(text("Spent coins:").bold())
-                        .push(coins.iter().fold(column().spacing(10), |col, coin| {
+                        .push(coins.iter().fold(Column::new().spacing(10), |col, coin| {
                             col.push(
                                 card::simple(
-                                    column()
+                                    Column::new()
                                         .width(Length::Fill)
-                                        .push(text(&format!("{} BTC", coin.amount.to_btc())).bold())
-                                        .push(text(&format!("{}", coin.outpoint)).small()),
+                                        .push(text(format!("{} BTC", coin.amount.to_btc())).bold())
+                                        .push(text(format!("{}", coin.outpoint)).small()),
                                 )
                                 .width(Length::Fill),
                             )
@@ -273,28 +280,28 @@ fn inputs_and_outputs_view<'a>(
                         .width(Length::FillPortion(1)),
                 )
                 .push(
-                    column()
+                    Column::new()
                         .spacing(10)
                         .push(text("Recipients:").bold())
                         .push(psbt.unsigned_tx.output.iter().enumerate().fold(
-                            column().spacing(10),
+                            Column::new().spacing(10),
                             |col, (i, output)| {
                                 col.push(
                                     card::simple(
-                                        column()
+                                        Column::new()
                                             .spacing(10)
                                             .push(
-                                                column()
+                                                Column::new()
                                                     .width(Length::Fill)
                                                     .push(
-                                                        text(&format!(
+                                                        text(format!(
                                                             "{} BTC",
                                                             Amount::from_sat(output.value).to_btc()
                                                         ))
                                                         .bold(),
                                                     )
                                                     .push(
-                                                        text(&format!(
+                                                        text(format!(
                                                             "{}",
                                                             Address::from_script(
                                                                 &output.script_pubkey,
@@ -307,7 +314,7 @@ fn inputs_and_outputs_view<'a>(
                                             )
                                             .push_maybe(if Some(i) == change_index {
                                                 Some(
-                                                    container(text("Change"))
+                                                    Container::new(text("Change"))
                                                         .padding(5)
                                                         .style(badge::PillStyle::Success),
                                                 )
@@ -332,15 +339,15 @@ pub fn sign_action<'a>(
     signed: &[Fingerprint],
 ) -> Element<'a, Message> {
     card::simple(
-        column()
+        Column::new()
             .push(if !hws.is_empty() {
-                column()
+                Column::new()
                     .push(text("Select hardware wallet to sign with:").bold())
                     .spacing(10)
                     .push(
                         hws.iter()
                             .enumerate()
-                            .fold(column().spacing(10), |col, (i, hw)| {
+                            .fold(Column::new().spacing(10), |col, (i, hw)| {
                                 col.push(hw_list_view(
                                     i,
                                     hw,
@@ -352,10 +359,10 @@ pub fn sign_action<'a>(
                     )
                     .width(Length::Fill)
             } else {
-                column()
+                Column::new()
                     .push(
                         card::simple(
-                            column()
+                            Column::new()
                                 .spacing(20)
                                 .width(Length::Fill)
                                 .push("Please connect a hardware wallet")
@@ -380,18 +387,18 @@ fn hw_list_view<'a>(
     processing: bool,
     signed: bool,
 ) -> Element<'a, Message> {
-    let mut bttn = iced::pure::button(
-        row()
+    let mut bttn = Button::new(
+        Row::new()
             .push(
-                column()
-                    .push(text(&format!("{}", hw.kind)).bold())
-                    .push(text(&format!("fingerprint: {}", hw.fingerprint)).small())
+                Column::new()
+                    .push(text(format!("{}", hw.kind)).bold())
+                    .push(text(format!("fingerprint: {}", hw.fingerprint)).small())
                     .spacing(5)
                     .width(Length::Fill),
             )
             .push_maybe(if chosen && processing {
                 Some(
-                    column()
+                    Column::new()
                         .push(text("Processing..."))
                         .push(text("Please check your device").small()),
                 )
@@ -400,11 +407,11 @@ fn hw_list_view<'a>(
             })
             .push_maybe(if signed {
                 Some(
-                    column().push(
-                        row()
+                    Column::new().push(
+                        Row::new()
                             .spacing(5)
-                            .push(icon::circle_check_icon().color(color::SUCCESS))
-                            .push(text("Signed").color(color::SUCCESS)),
+                            .push(icon::circle_check_icon().style(color::SUCCESS))
+                            .push(text("Signed").style(color::SUCCESS)),
                     ),
                 )
             } else {
@@ -414,12 +421,12 @@ fn hw_list_view<'a>(
             .width(Length::Fill),
     )
     .padding(10)
-    .style(button::Style::Border)
+    .style(button::Style::Border.into())
     .width(Length::Fill);
     if !processing {
         bttn = bttn.on_press(Message::Spend(SpendTxMessage::SelectHardwareWallet(i)));
     }
-    container(bttn)
+    Container::new(bttn)
         .width(Length::Fill)
         .style(card::SimpleCardStyle)
         .into()

@@ -2,8 +2,8 @@ pub mod detail;
 pub mod step;
 
 use iced::{
-    pure::{button, column, container, row, Element},
-    Alignment, Length,
+    widget::{Button, Column, Container, Row},
+    Alignment, Element, Length,
 };
 
 use crate::{
@@ -19,27 +19,27 @@ use crate::{
 use super::message::Message;
 
 pub fn spend_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
-    column()
+    Column::new()
         .push(
-            row().push(column().width(Length::Fill)).push(
+            Row::new().push(Column::new().width(Length::Fill)).push(
                 button::primary(Some(icon::plus_icon()), "Create a new transaction")
                     .on_press(Message::Menu(Menu::CreateSpendTx)),
             ),
         )
         .push(
-            container(
-                row()
-                    .push(text(&format!(" {}", spend_txs.len())).bold())
+            Container::new(
+                Row::new()
+                    .push(text(format!(" {}", spend_txs.len())).bold())
                     .push(text(" draft transactions")),
             )
             .width(Length::Fill),
         )
         .push(
-            column().spacing(10).push(
+            Column::new().spacing(10).push(
                 spend_txs
                     .iter()
                     .enumerate()
-                    .fold(column().spacing(10), |col, (i, tx)| {
+                    .fold(Column::new().spacing(10), |col, (i, tx)| {
                         col.push(spend_tx_list_view(i, tx))
                     }),
             ),
@@ -50,20 +50,20 @@ pub fn spend_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
 }
 
 fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
-    container(
-        button(
-            row()
+    Container::new(
+        Button::new(
+            Row::new()
                 .push(
-                    row()
+                    Row::new()
                         .push(badge::spend())
                         .push_maybe(match tx.status {
                             SpendStatus::Deprecated => Some(
-                                container(text("  Deprecated  ").small())
+                                Container::new(text("  Deprecated  ").small())
                                     .padding(3)
                                     .style(badge::PillStyle::Simple),
                             ),
                             SpendStatus::Broadcasted => Some(
-                                container(text("  Broadcasted  ").small())
+                                Container::new(text("  Broadcasted  ").small())
                                     .padding(3)
                                     .style(badge::PillStyle::Success),
                             ),
@@ -74,9 +74,9 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                         .width(Length::Fill),
                 )
                 .push(
-                    column()
-                        .push(text(&format!("{} BTC", tx.spend_amount.to_btc())).bold())
-                        .push(text(&format!("fee: {}", tx.fee_amount.to_btc())).small())
+                    Column::new()
+                        .push(text(format!("{} BTC", tx.spend_amount.to_btc())).bold())
+                        .push(text(format!("fee: {}", tx.fee_amount.to_btc())).small())
                         .width(Length::Shrink),
                 )
                 .align_items(Alignment::Center)
@@ -84,7 +84,7 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
         )
         .padding(10)
         .on_press(Message::Select(i))
-        .style(button::Style::TransparentBorder),
+        .style(button::Style::TransparentBorder.into()),
     )
     .style(card::SimpleCardStyle)
     .into()

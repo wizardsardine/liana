@@ -1,5 +1,5 @@
-use iced::pure::{column, container, pick_list, row, scrollable, widget, Element};
-use iced::{Alignment, Length};
+use iced::widget::{Button, Column, Container, PickList, Row, Scrollable};
+use iced::{Alignment, Element, Length};
 
 use liana::miniscript::bitcoin;
 
@@ -12,7 +12,7 @@ use crate::{
     ui::{
         color,
         component::{
-            button, card, form,
+            button, card, container, form,
             text::{text, Text},
         },
         icon,
@@ -28,19 +28,19 @@ const NETWORKS: [bitcoin::Network; 4] = [
 ];
 
 pub fn welcome(network: &bitcoin::Network, valid: bool) -> Element<Message> {
-    container(container(
-        column()
-            .push(container(
-                pick_list(&NETWORKS[..], Some(*network), message::Message::Network).padding(10),
+    Container::new(Container::new(
+        Column::new()
+            .push(Container::new(
+                PickList::new(&NETWORKS[..], Some(*network), message::Message::Network).padding(10),
             ))
             .push(if valid {
-                container(
+                Container::new(
                     button::primary(None, "Start the install")
                         .on_press(Message::Next)
                         .width(Length::Units(200)),
                 )
             } else {
-                card::warning("A data directory already exists for this network")
+                card::warning("A data directory already exists for this network".to_string())
             })
             .width(Length::Fill)
             .height(Length::Fill)
@@ -63,7 +63,7 @@ pub fn define_descriptor<'a>(
     sequence: &form::Value<String>,
     error: Option<&String>,
 ) -> Element<'a, Message> {
-    let col_descriptor = column()
+    let col_descriptor = Column::new()
         .push(text("Descriptor:").bold())
         .push(
             form::Form::new("Descriptor", imported_descriptor, |msg| {
@@ -75,10 +75,10 @@ pub fn define_descriptor<'a>(
         )
         .spacing(10);
 
-    let col_user_xpub = column()
+    let col_user_xpub = Column::new()
         .push(text("Your xpub:").bold())
         .push(
-            row()
+            Row::new()
                 .push(
                     form::Form::new("Xpub", user_xpub, |msg| {
                         Message::DefineDescriptor(message::DefineDescriptor::UserXpubEdited(msg))
@@ -99,10 +99,10 @@ pub fn define_descriptor<'a>(
         )
         .spacing(10);
 
-    let col_heir_xpub = column()
+    let col_heir_xpub = Column::new()
         .push(text("Heir xpub:").bold())
         .push(
-            row()
+            Row::new()
                 .push(
                     form::Form::new("Xpub", heir_xpub, |msg| {
                         Message::DefineDescriptor(message::DefineDescriptor::HeirXpubEdited(msg))
@@ -123,10 +123,10 @@ pub fn define_descriptor<'a>(
         )
         .spacing(10);
 
-    let col_sequence = column()
+    let col_sequence = Column::new()
         .push(text("Number of block:").bold())
         .push(
-            container(
+            Container::new(
                 form::Form::new("Number of block", sequence, |msg| {
                     Message::DefineDescriptor(message::DefineDescriptor::SequenceEdited(msg))
                 })
@@ -139,10 +139,10 @@ pub fn define_descriptor<'a>(
         .spacing(10);
 
     layout(
-        column()
+        Column::new()
             .push(text("Create the descriptor").bold().size(50))
             .push(
-                column()
+                Column::new()
                     .push(col_user_xpub)
                     .push(col_sequence)
                     .push(col_heir_xpub)
@@ -163,7 +163,7 @@ pub fn define_descriptor<'a>(
                         .on_press(Message::Next)
                 },
             )
-            .push_maybe(error.map(|e| card::error("Failed to create descriptor", e)))
+            .push_maybe(error.map(|e| card::error("Failed to create descriptor", e.to_string())))
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)
@@ -173,34 +173,34 @@ pub fn define_descriptor<'a>(
 }
 
 pub fn register_descriptor<'a>(
-    descriptor: &str,
+    descriptor: String,
     hws: &[(HardwareWallet, Option<[u8; 32]>)],
     error: Option<&Error>,
     processing: bool,
     chosen_hw: Option<usize>,
 ) -> Element<'a, Message> {
     layout(
-        column()
+        Column::new()
             .push(text("Register descriptor").bold().size(50))
             .push(
-                column()
-                    .push(text(descriptor).small())
+                Column::new()
+                    .push(text(descriptor.clone()).small())
                     .push(
                         button::transparent_border(Some(icon::clipboard_icon()), "Copy")
-                            .on_press(Message::Clibpboard(descriptor.to_string())),
+                            .on_press(Message::Clibpboard(descriptor)),
                     )
                     .spacing(10)
                     .align_items(Alignment::Center),
             )
-            .push_maybe(error.map(|e| card::error("Failed to import xpub", &e.to_string())))
+            .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
             .push(if !hws.is_empty() {
-                column()
-                    .push(text(&format!("{} hardware wallets connected", hws.len())).bold())
+                Column::new()
+                    .push(text(format!("{} hardware wallets connected", hws.len())).bold())
                     .spacing(10)
                     .push(
                         hws.iter()
                             .enumerate()
-                            .fold(column().spacing(10), |col, (i, hw)| {
+                            .fold(Column::new().spacing(10), |col, (i, hw)| {
                                 col.push(hw_list_view(
                                     i,
                                     &hw.0,
@@ -212,8 +212,8 @@ pub fn register_descriptor<'a>(
                     )
                     .width(Length::Fill)
             } else {
-                column().push(card::simple(
-                    column()
+                Column::new().push(card::simple(
+                    Column::new()
                         .spacing(20)
                         .push("No hardware wallet connected")
                         .push(button::primary(None, "Refresh").on_press(Message::Reload))
@@ -238,7 +238,7 @@ pub fn define_bitcoin<'a>(
     address: &form::Value<String>,
     cookie_path: &form::Value<String>,
 ) -> Element<'a, Message> {
-    let col_address = column()
+    let col_address = Column::new()
         .push(text("Address:").bold())
         .push(
             form::Form::new("Address", address, |msg| {
@@ -250,7 +250,7 @@ pub fn define_bitcoin<'a>(
         )
         .spacing(10);
 
-    let col_cookie = column()
+    let col_cookie = Column::new()
         .push(text("Cookie path:").bold())
         .push(
             form::Form::new("Cookie path", cookie_path, |msg| {
@@ -263,7 +263,7 @@ pub fn define_bitcoin<'a>(
         .spacing(10);
 
     layout(
-        column()
+        Column::new()
             .push(
                 text("Set up connection to the Bitcoin full node")
                     .bold()
@@ -287,9 +287,9 @@ pub fn define_bitcoin<'a>(
 pub fn install<'a>(
     generating: bool,
     config_path: Option<&std::path::PathBuf>,
-    warning: Option<&String>,
+    warning: Option<&'a String>,
 ) -> Element<'a, Message> {
-    let mut col = column()
+    let mut col = Column::new()
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(100)
@@ -304,10 +304,10 @@ pub fn install<'a>(
         col = col.push(button::primary(None, "Installing ...").width(Length::Units(200)))
     } else if let Some(path) = config_path {
         col = col.push(
-            container(
-                column()
-                    .push(container(text("Installed !")))
-                    .push(container(
+            Container::new(
+                Column::new()
+                    .push(Container::new(text("Installed !")))
+                    .push(Container::new(
                         button::primary(None, "Start")
                             .on_press(Message::Exit(path.clone()))
                             .width(Length::Units(200)),
@@ -338,7 +338,7 @@ pub fn hardware_wallet_xpubs_modal<'a>(
     chosen_hw: Option<usize>,
 ) -> Element<'a, Message> {
     modal(
-        column()
+        Column::new()
             .push(
                 text(if is_heir {
                     "Import the Heir xpub"
@@ -348,15 +348,15 @@ pub fn hardware_wallet_xpubs_modal<'a>(
                 .bold()
                 .size(50),
             )
-            .push_maybe(error.map(|e| card::error("Failed to import xpub", &e.to_string())))
+            .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
             .push(if !hws.is_empty() {
-                column()
-                    .push(text(&format!("{} hardware wallets connected", hws.len())).bold())
+                Column::new()
+                    .push(text(format!("{} hardware wallets connected", hws.len())).bold())
                     .spacing(10)
                     .push(
                         hws.iter()
                             .enumerate()
-                            .fold(column().spacing(10), |col, (i, hw)| {
+                            .fold(Column::new().spacing(10), |col, (i, hw)| {
                                 col.push(hw_list_view(
                                     i,
                                     hw,
@@ -368,10 +368,10 @@ pub fn hardware_wallet_xpubs_modal<'a>(
                     )
                     .width(Length::Fill)
             } else {
-                column()
+                Column::new()
                     .push(
                         card::simple(
-                            column()
+                            Column::new()
                                 .spacing(20)
                                 .width(Length::Fill)
                                 .push("Please connect a hardware wallet")
@@ -397,18 +397,18 @@ fn hw_list_view<'a>(
     processing: bool,
     registered: bool,
 ) -> Element<'a, Message> {
-    let mut bttn = iced::pure::button(
-        row()
+    let mut bttn = Button::new(
+        Row::new()
             .push(
-                column()
-                    .push(text(&format!("{}", hw.kind)).bold())
-                    .push(text(&format!("fingerprint: {}", hw.fingerprint)).small())
+                Column::new()
+                    .push(text(format!("{}", hw.kind)).bold())
+                    .push(text(format!("fingerprint: {}", hw.fingerprint)).small())
                     .spacing(5)
                     .width(Length::Fill),
             )
             .push_maybe(if chosen && processing {
                 Some(
-                    column()
+                    Column::new()
                         .push(text("Processing..."))
                         .push(text("Please check your device").small()),
                 )
@@ -416,7 +416,7 @@ fn hw_list_view<'a>(
                 None
             })
             .push_maybe(if registered {
-                Some(column().push(icon::circle_check_icon().color(color::SUCCESS)))
+                Some(Column::new().push(icon::circle_check_icon().style(color::SUCCESS)))
             } else {
                 None
             })
@@ -424,59 +424,49 @@ fn hw_list_view<'a>(
             .width(Length::Fill),
     )
     .padding(10)
-    .style(button::Style::TransparentBorder)
+    .style(button::Style::TransparentBorder.into())
     .width(Length::Fill);
     if !processing {
         bttn = bttn.on_press(Message::Select(i));
     }
-    container(bttn)
+    Container::new(bttn)
         .width(Length::Fill)
         .style(card::SimpleCardStyle)
         .into()
 }
 
 fn layout<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    container(scrollable(
-        column()
+    Container::new(Scrollable::new(
+        Column::new()
             .push(
-                container(button::transparent(None, "< Previous").on_press(Message::Previous))
+                Container::new(button::transparent(None, "< Previous").on_press(Message::Previous))
                     .padding(5),
             )
-            .push(container(content).width(Length::Fill).center_x()),
+            .push(Container::new(content).width(Length::Fill).center_x()),
     ))
     .center_x()
     .height(Length::Fill)
     .width(Length::Fill)
-    .style(BackgroundStyle)
+    .style(container::Style::Background)
     .into()
 }
 
 fn modal<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    container(scrollable(
-        column()
+    Container::new(Scrollable::new(
+        Column::new()
             .push(
-                row().push(column().width(Length::Fill)).push(
-                    container(
+                Row::new().push(Column::new().width(Length::Fill)).push(
+                    Container::new(
                         button::primary(Some(icon::cross_icon()), "Close").on_press(Message::Close),
                     )
                     .padding(10),
                 ),
             )
-            .push(container(content).width(Length::Fill).center_x()),
+            .push(Container::new(content).width(Length::Fill).center_x()),
     ))
     .center_x()
     .height(Length::Fill)
     .width(Length::Fill)
-    .style(BackgroundStyle)
+    .style(container::Style::Background)
     .into()
-}
-
-pub struct BackgroundStyle;
-impl widget::container::StyleSheet for BackgroundStyle {
-    fn style(&self) -> widget::container::Style {
-        widget::container::Style {
-            background: color::BACKGROUND.into(),
-            ..widget::container::Style::default()
-        }
-    }
 }

@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use async_hwi::DeviceKind;
-use iced::{pure::Element, Command};
+use iced::{Command, Element};
 use liana::{
     config::{BitcoinConfig, BitcoindConfig},
     descriptors::MultipathDescriptor,

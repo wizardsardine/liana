@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use iced::pure::Element;
-use iced::Command;
+use iced::{Command, Element};
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, message::Message, state::State, view},
@@ -10,7 +9,7 @@ use crate::{
 
 pub struct CoinsPanel {
     coins: Vec<Coin>,
-    selected_coin: Option<usize>,
+    selected: Vec<usize>,
     warning: Option<Error>,
     /// timelock value to pass for the heir to consume a coin.
     timelock: u32,
@@ -29,7 +28,7 @@ impl CoinsPanel {
                     }
                 })
                 .collect(),
-            selected_coin: None,
+            selected: Vec::new(),
             warning: None,
             timelock,
         }
@@ -42,7 +41,7 @@ impl State for CoinsPanel {
             &Menu::Coins,
             cache,
             self.warning.as_ref(),
-            view::coins::coins_view(cache, &self.coins, self.timelock),
+            view::coins::coins_view(cache, &self.coins, self.timelock, &self.selected),
         )
     }
 
@@ -56,6 +55,7 @@ impl State for CoinsPanel {
             Message::Coins(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(coins) => {
+                    self.selected = Vec::new();
                     self.warning = None;
                     self.coins = coins
                         .iter()
@@ -69,11 +69,12 @@ impl State for CoinsPanel {
                         .collect();
                 }
             },
-            Message::View(view::Message::Close) => {
-                self.selected_coin = None;
-            }
             Message::View(view::Message::Select(i)) => {
-                self.selected_coin = Some(i);
+                if let Some(position) = self.selected.iter().position(|j| *j == i) {
+                    self.selected.remove(position);
+                } else {
+                    self.selected.push(i);
+                }
             }
             _ => {}
         };
