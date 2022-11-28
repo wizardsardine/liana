@@ -42,7 +42,11 @@ pub struct Context {
     pub bitcoin_config: BitcoinConfig,
     pub bitcoind_config: Option<BitcoindConfig>,
     pub descriptor: Option<MultipathDescriptor>,
-    pub hw_tokens: Vec<(DeviceKind, bitcoin::util::bip32::Fingerprint, [u8; 32])>,
+    pub hws: Vec<(
+        DeviceKind,
+        bitcoin::util::bip32::Fingerprint,
+        Option<[u8; 32]>,
+    )>,
     pub data_dir: PathBuf,
 }
 
@@ -53,7 +57,7 @@ impl Context {
                 network,
                 poll_interval_secs: Duration::from_secs(30),
             },
-            hw_tokens: Vec::new(),
+            hws: Vec::new(),
             bitcoind_config: None,
             descriptor: None,
             data_dir,
@@ -206,6 +210,7 @@ impl From<DefineBitcoind> for Box<dyn Step> {
 
 pub struct Final {
     generating: bool,
+    context: Option<Context>,
     warning: Option<String>,
     config_path: Option<PathBuf>,
 }
@@ -213,6 +218,7 @@ pub struct Final {
 impl Final {
     pub fn new() -> Self {
         Self {
+            context: None,
             generating: false,
             warning: None,
             config_path: None,
@@ -221,6 +227,9 @@ impl Final {
 }
 
 impl Step for Final {
+    fn load_context(&mut self, ctx: &Context) {
+        self.context = Some(ctx.clone());
+    }
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Installed(res) => {
@@ -244,7 +253,11 @@ impl Step for Final {
     }
 
     fn view(&self) -> Element<Message> {
+        let ctx = self.context.as_ref().unwrap();
+        let desc = ctx.descriptor.as_ref().unwrap().to_string();
         view::install(
+            ctx,
+            desc,
             self.generating,
             self.config_path.as_ref(),
             self.warning.as_ref(),

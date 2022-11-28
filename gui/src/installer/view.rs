@@ -7,6 +7,7 @@ use crate::{
     hw::HardwareWallet,
     installer::{
         message::{self, Message},
+        step::Context,
         Error,
     },
     ui::{
@@ -298,7 +299,7 @@ pub fn import_descriptor<'a>(
 
 pub fn register_descriptor<'a>(
     descriptor: String,
-    hws: &[(HardwareWallet, Option<[u8; 32]>)],
+    hws: &[(HardwareWallet, Option<[u8; 32]>, bool)],
     error: Option<&Error>,
     processing: bool,
     chosen_hw: Option<usize>,
@@ -306,16 +307,19 @@ pub fn register_descriptor<'a>(
     layout(
         Column::new()
             .push(text("Register descriptor").bold().size(50))
-            .push(
+            .push(card::simple(
                 Column::new()
+                    .push(text("The descriptor:").small().bold())
                     .push(text(descriptor.clone()).small())
                     .push(
-                        button::transparent_border(Some(icon::clipboard_icon()), "Copy")
-                            .on_press(Message::Clibpboard(descriptor)),
+                        Row::new().push(Column::new().width(Length::Fill)).push(
+                            button::transparent_border(Some(icon::clipboard_icon()), "Copy")
+                                .on_press(Message::Clibpboard(descriptor)),
+                        ),
                     )
                     .spacing(10)
-                    .align_items(Alignment::Center),
-            )
+                    .max_width(1000),
+            ))
             .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
             .push(
                 Column::new()
@@ -345,7 +349,7 @@ pub fn register_descriptor<'a>(
                                     &hw.0,
                                     Some(i) == chosen_hw,
                                     processing,
-                                    hw.1.is_some(),
+                                    hw.2,
                                 ))
                             }),
                     )
@@ -488,15 +492,87 @@ pub fn define_bitcoin<'a>(
 }
 
 pub fn install<'a>(
+    context: &Context,
+    descriptor: String,
     generating: bool,
     config_path: Option<&std::path::PathBuf>,
     warning: Option<&'a String>,
 ) -> Element<'a, Message> {
     let mut col = Column::new()
+        .push(
+            Container::new(
+                Column::new()
+                    .spacing(10)
+                    .push(
+                        card::simple(
+                            Column::new()
+                                .spacing(5)
+                                .push(text("Descriptor:").small().bold())
+                                .push(text(descriptor).small()),
+                        )
+                        .width(Length::Fill),
+                    )
+                    .push(
+                        card::simple(
+                            Column::new()
+                                .spacing(5)
+                                .push(text("Hardware devices:").small().bold())
+                                .push(context.hws.iter().fold(Column::new(), |acc, hw| {
+                                    acc.push(
+                                        Row::new()
+                                            .spacing(5)
+                                            .push(text(hw.0.to_string()).small())
+                                            .push(text(format!("(fingerprint: {})", hw.1)).small()),
+                                    )
+                                })),
+                        )
+                        .width(Length::Fill),
+                    )
+                    .push(
+                        card::simple(
+                            Column::new()
+                                .push(text("Bitcoind:").small().bold())
+                                .push(
+                                    Row::new()
+                                        .spacing(5)
+                                        .align_items(Alignment::Center)
+                                        .push(text("Cookie path:").small())
+                                        .push(
+                                            text(format!(
+                                                "{}",
+                                                context
+                                                    .bitcoind_config
+                                                    .as_ref()
+                                                    .unwrap()
+                                                    .cookie_path
+                                                    .to_string_lossy()
+                                            ))
+                                            .small(),
+                                        ),
+                                )
+                                .push(
+                                    Row::new()
+                                        .spacing(5)
+                                        .align_items(Alignment::Center)
+                                        .push(text("Address:").small())
+                                        .push(
+                                            text(format!(
+                                                "{}",
+                                                context.bitcoind_config.as_ref().unwrap().addr
+                                            ))
+                                            .small(),
+                                        ),
+                                ),
+                        )
+                        .width(Length::Fill),
+                    ),
+            )
+            .padding(50)
+            .max_width(1000),
+        )
+        .spacing(50)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(100)
-        .spacing(50)
         .align_items(Alignment::Center);
 
     if let Some(error) = warning {

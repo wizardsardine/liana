@@ -399,7 +399,7 @@ pub struct RegisterDescriptor {
     descriptor: Option<MultipathDescriptor>,
     processing: bool,
     chosen_hw: Option<usize>,
-    hws: Vec<(HardwareWallet, Option<[u8; 32]>)>,
+    hws: Vec<(HardwareWallet, Option<[u8; 32]>, bool)>,
     error: Option<Error>,
 }
 
@@ -410,7 +410,7 @@ impl Step for RegisterDescriptor {
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Select(i) => {
-                if let Some((hw, hmac)) = self.hws.get(i) {
+                if let Some((hw, hmac, _)) = self.hws.get(i) {
                     if hmac.is_none() {
                         let device = hw.device.clone();
                         let descriptor = self.descriptor.as_ref().unwrap().to_string();
@@ -434,7 +434,8 @@ impl Step for RegisterDescriptor {
                             .iter_mut()
                             .find(|hw_h| hw_h.0.fingerprint == fingerprint)
                         {
-                            hw_h.1 = Some(hmac.unwrap_or([0x00; 32]));
+                            hw_h.1 = hmac;
+                            hw_h.2 = true;
                         }
                     }
                     Err(e) => self.error = Some(e),
@@ -445,9 +446,9 @@ impl Step for RegisterDescriptor {
                     if !self
                         .hws
                         .iter()
-                        .any(|(h, _)| h.fingerprint == hw.fingerprint)
+                        .any(|(h, _, _)| h.fingerprint == hw.fingerprint)
                     {
-                        self.hws.push((hw, None));
+                        self.hws.push((hw, None, false));
                     }
                 }
             }
@@ -459,11 +460,9 @@ impl Step for RegisterDescriptor {
         Command::none()
     }
     fn apply(&mut self, ctx: &mut Context) -> bool {
-        for (hw, token) in &self.hws {
-            if let Some(token) = token {
-                if *token != [0x00; 32] {
-                    ctx.hw_tokens.push((hw.kind, hw.fingerprint, *token));
-                }
+        for (hw, token, registered) in &self.hws {
+            if *registered {
+                ctx.hws.push((hw.kind, hw.fingerprint, *token));
             }
         }
         true

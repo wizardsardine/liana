@@ -166,9 +166,13 @@ impl Installer {
 
 pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
     let hardware_wallets = ctx
-        .hw_tokens
+        .hws
         .iter()
-        .map(|(kind, fingerprint, token)| HardwareWalletConfig::new(kind, fingerprint, token))
+        .filter_map(|(kind, fingerprint, token)| {
+            token
+                .as_ref()
+                .map(|token| HardwareWalletConfig::new(kind, fingerprint, token))
+        })
         .collect();
 
     let mut cfg: liana::config::Config = ctx
