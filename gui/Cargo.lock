@@ -145,8 +145,9 @@ dependencies = [
 
 [[package]]
 name = "async-hwi"
-version = "0.0.1"
-source = "git+https://github.com/revault/async-hwi?branch=master#14b29f820910132d9b8f799d030bfed69ac67239"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b6da8b5e813fa1393db34de31dd4ce826d7603e81867bccd64f5ee216209ee2"
 dependencies = [
  "async-trait",
  "base64",
@@ -1530,7 +1531,8 @@ dependencies = [
 [[package]]
 name = "ledger_bitcoin_client"
 version = "0.1.0"
-source = "git+https://github.com/edouardparis/app-bitcoin-new/?branch=bitcoin_client_rs#d63673024003256bb41905eb181908872b7d07b0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ffce449c35e1983a7035e25b63836064b7b51f70d1c63bebdad8d874617f663"
 dependencies = [
  "async-trait",
  "bitcoin",
