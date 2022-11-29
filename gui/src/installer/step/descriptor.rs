@@ -158,11 +158,12 @@ impl Step for DefineDescriptor {
         true
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
         if let Some(modal) = &self.modal {
             modal.view()
         } else {
             view::define_descriptor(
+                progress,
                 self.network,
                 self.network_valid,
                 &self.user_xpub,
@@ -372,8 +373,9 @@ impl Step for ImportDescriptor {
         }
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
         view::import_descriptor(
+            progress,
             self.network,
             self.network_valid,
             &self.imported_descriptor,
@@ -473,9 +475,10 @@ impl Step for RegisterDescriptor {
             Message::ConnectedHardwareWallets,
         )
     }
-    fn view(&self) -> Element<Message> {
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
         let desc = self.descriptor.as_ref().unwrap();
         view::register_descriptor(
+            progress,
             desc.to_string(),
             &self.hws,
             self.error.as_ref(),
@@ -519,9 +522,9 @@ impl Step for BackupDescriptor {
     fn load_context(&mut self, ctx: &Context) {
         self.descriptor = ctx.descriptor.clone();
     }
-    fn view(&self) -> Element<Message> {
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
         let desc = self.descriptor.as_ref().unwrap();
-        view::backup_descriptor(desc.to_string(), self.done)
+        view::backup_descriptor(progress, desc.to_string(), self.done)
     }
 }
 

@@ -24,7 +24,7 @@ pub trait Step {
     fn update(&mut self, _message: Message) -> Command<Message> {
         Command::none()
     }
-    fn view(&self) -> Element<Message>;
+    fn view(&self, progress: (usize, usize)) -> Element<Message>;
     fn load_context(&mut self, _ctx: &Context) {}
     fn load(&self) -> Command<Message> {
         Command::none()
@@ -69,7 +69,7 @@ impl Context {
 pub struct Welcome {}
 
 impl Step for Welcome {
-    fn view(&self) -> Element<Message> {
+    fn view(&self, _progress: (usize, usize)) -> Element<Message> {
         view::welcome()
     }
 }
@@ -191,8 +191,8 @@ impl Step for DefineBitcoind {
         }
     }
 
-    fn view(&self) -> Element<Message> {
-        view::define_bitcoin(&self.address, &self.cookie_path)
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+        view::define_bitcoin(progress, &self.address, &self.cookie_path)
     }
 }
 
@@ -252,10 +252,11 @@ impl Step for Final {
         Command::none()
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
         let ctx = self.context.as_ref().unwrap();
         let desc = ctx.descriptor.as_ref().unwrap().to_string();
         view::install(
+            progress,
             ctx,
             desc,
             self.generating,

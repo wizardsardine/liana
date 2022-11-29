@@ -160,7 +160,7 @@ impl Installer {
         self.steps
             .get(self.current)
             .expect("There is always a step")
-            .view()
+            .view((self.current, self.steps.len() - 1))
     }
 }
 

@@ -118,6 +118,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
 }
 
 pub fn define_descriptor<'a>(
+    progress: (usize, usize),
     network: bitcoin::Network,
     network_valid: bool,
     user_xpub: &form::Value<String>,
@@ -207,6 +208,7 @@ pub fn define_descriptor<'a>(
         .spacing(10);
 
     layout(
+        progress,
         Column::new()
             .push(text("Create the wallet").bold().size(50))
             .push(
@@ -239,6 +241,7 @@ pub fn define_descriptor<'a>(
 }
 
 pub fn import_descriptor<'a>(
+    progress: (usize, usize),
     network: bitcoin::Network,
     network_valid: bool,
     imported_descriptor: &form::Value<String>,
@@ -273,6 +276,7 @@ pub fn import_descriptor<'a>(
         )
         .spacing(10);
     layout(
+        progress,
         Column::new()
             .push(text("Import the wallet").bold().size(50))
             .push(
@@ -298,6 +302,7 @@ pub fn import_descriptor<'a>(
 }
 
 pub fn register_descriptor<'a>(
+    progress: (usize, usize),
     descriptor: String,
     hws: &[(HardwareWallet, Option<[u8; 32]>, bool)],
     error: Option<&Error>,
@@ -305,6 +310,7 @@ pub fn register_descriptor<'a>(
     chosen_hw: Option<usize>,
 ) -> Element<'a, Message> {
     layout(
+        progress,
         Column::new()
             .push(text("Register descriptor").bold().size(50))
             .push(card::simple(
@@ -368,8 +374,13 @@ pub fn register_descriptor<'a>(
     )
 }
 
-pub fn backup_descriptor<'a>(descriptor: String, done: bool) -> Element<'a, Message> {
+pub fn backup_descriptor<'a>(
+    progress: (usize, usize),
+    descriptor: String,
+    done: bool,
+) -> Element<'a, Message> {
     layout(
+        progress,
         Column::new()
             .push(
                 text("Did you backup your wallet descriptor ?")
@@ -442,6 +453,7 @@ pub fn help_backup<'a>() -> Element<'a, Message> {
 }
 
 pub fn define_bitcoin<'a>(
+    progress: (usize, usize),
     address: &form::Value<String>,
     cookie_path: &form::Value<String>,
 ) -> Element<'a, Message> {
@@ -470,6 +482,7 @@ pub fn define_bitcoin<'a>(
         .spacing(10);
 
     layout(
+        progress,
         Column::new()
             .push(
                 text("Set up connection to the Bitcoin full node")
@@ -492,6 +505,7 @@ pub fn define_bitcoin<'a>(
 }
 
 pub fn install<'a>(
+    progress: (usize, usize),
     context: &Context,
     descriptor: String,
     generating: bool,
@@ -606,7 +620,7 @@ pub fn install<'a>(
         );
     }
 
-    layout(col)
+    layout(progress, col)
 }
 
 pub fn hardware_wallet_xpubs_modal<'a>(
@@ -715,12 +729,20 @@ fn hw_list_view<'a>(
         .into()
 }
 
-fn layout<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+fn layout<'a>(
+    progress: (usize, usize),
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
     Container::new(Scrollable::new(
         Column::new()
             .push(
                 Container::new(button::transparent(None, "< Previous").on_press(Message::Previous))
                     .padding(5),
+            )
+            .push(
+                Container::new(text(format!("{}/{}", progress.0, progress.1)))
+                    .width(Length::Fill)
+                    .center_x(),
             )
             .push(Container::new(content).width(Length::Fill).center_x()),
     ))
