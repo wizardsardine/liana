@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use iced::{Command, Element};
@@ -8,7 +9,7 @@ use liana::{
             util::bip32::{DerivationPath, Fingerprint},
             Network,
         },
-        descriptor::{Descriptor, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
+        descriptor::{DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
     },
 };
 
@@ -24,7 +25,8 @@ use crate::{
 
 pub struct DefineDescriptor {
     network: Network,
-    imported_descriptor: form::Value<String>,
+    network_valid: bool,
+    data_dir: Option<PathBuf>,
     user_xpub: form::Value<String>,
     heir_xpub: form::Value<String>,
     sequence: form::Value<String>,
@@ -37,7 +39,8 @@ impl DefineDescriptor {
     pub fn new() -> Self {
         Self {
             network: Network::Bitcoin,
-            imported_descriptor: form::Value::default(),
+            data_dir: None,
+            network_valid: true,
             user_xpub: form::Value::default(),
             heir_xpub: form::Value::default(),
             sequence: form::Value::default(),
@@ -55,12 +58,14 @@ impl Step for DefineDescriptor {
             Message::Close => {
                 self.modal = None;
             }
+            Message::Network(network) => {
+                self.network = network;
+                let mut network_datadir = self.data_dir.clone().unwrap();
+                network_datadir.push(self.network.to_string());
+                self.network_valid = !network_datadir.exists();
+            }
             Message::DefineDescriptor(msg) => {
                 match msg {
-                    message::DefineDescriptor::ImportDescriptor(desc) => {
-                        self.imported_descriptor.value = desc;
-                        self.imported_descriptor.valid = true;
-                    }
                     message::DefineDescriptor::UserXpubEdited(xpub) => {
                         self.user_xpub.value = xpub;
                         self.user_xpub.valid = true;
@@ -107,78 +112,41 @@ impl Step for DefineDescriptor {
 
     fn load_context(&mut self, ctx: &Context) {
         self.network = ctx.bitcoin_config.network;
+        self.data_dir = Some(ctx.data_dir.clone());
+        let mut network_datadir = ctx.data_dir.clone();
+        network_datadir.push(self.network.to_string());
+        self.network_valid = !network_datadir.exists();
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
+        ctx.bitcoin_config.network = self.network;
         // descriptor forms for import or creation cannot be both empty or filled.
-        if self.imported_descriptor.value.is_empty()
-            == (self.user_xpub.value.is_empty()
-                || self.heir_xpub.value.is_empty()
-                || self.sequence.value.is_empty())
+        let user_key = DescriptorPublicKey::from_str(&self.user_xpub.value);
+        self.user_xpub.valid = user_key.is_ok();
+        if let Ok(key) = &user_key {
+            self.user_xpub.valid = check_key_network(key, self.network);
+        }
+
+        let heir_key = DescriptorPublicKey::from_str(&self.heir_xpub.value);
+        self.heir_xpub.valid = heir_key.is_ok();
+        if let Ok(key) = &heir_key {
+            self.heir_xpub.valid = check_key_network(key, self.network);
+        }
+
+        let sequence = self.sequence.value.parse::<u16>();
+        self.sequence.valid = sequence.is_ok();
+
+        if !self.network_valid
+            || !self.user_xpub.valid
+            || !self.heir_xpub.valid
+            || !self.sequence.valid
         {
-            if !self.user_xpub.value.is_empty() {
-                let key = DescriptorPublicKey::from_str(&self.user_xpub.value);
-                self.user_xpub.valid = key.is_ok();
-                // Check the Network
-                if let Ok(key) = &key {
-                    self.user_xpub.valid = check_key_network(key, ctx.bitcoin_config.network);
-                }
-            }
+            return false;
+        }
 
-            if !self.heir_xpub.value.is_empty() {
-                let key = DescriptorPublicKey::from_str(&self.heir_xpub.value);
-                self.heir_xpub.valid = key.is_ok();
-                // Check the Network
-                if let Ok(key) = &key {
-                    self.heir_xpub.valid = check_key_network(key, ctx.bitcoin_config.network);
-                }
-            }
-
-            if !self.sequence.value.is_empty() {
-                self.sequence.valid = self.sequence.value.parse::<u32>().is_ok();
-            } else {
-                self.sequence.valid = false;
-            }
-
-            if !self.imported_descriptor.value.is_empty() {
-                self.imported_descriptor.valid =
-                    Descriptor::<DescriptorPublicKey>::from_str(&self.imported_descriptor.value)
-                        .is_ok();
-            }
-            false
-        } else if !self.imported_descriptor.value.is_empty() {
-            if let Ok(desc) = MultipathDescriptor::from_str(&self.imported_descriptor.value) {
-                ctx.descriptor = Some(desc);
-                true
-            } else {
-                self.imported_descriptor.valid = false;
-                false
-            }
-        } else {
-            let user_key = DescriptorPublicKey::from_str(&self.user_xpub.value);
-            self.user_xpub.valid = user_key.is_ok();
-            if let Ok(key) = &user_key {
-                self.user_xpub.valid = check_key_network(key, ctx.bitcoin_config.network);
-            }
-
-            let heir_key = DescriptorPublicKey::from_str(&self.heir_xpub.value);
-            self.heir_xpub.valid = heir_key.is_ok();
-            if let Ok(key) = &heir_key {
-                self.heir_xpub.valid = check_key_network(key, ctx.bitcoin_config.network);
-            }
-
-            let sequence = self.sequence.value.parse::<u16>();
-            self.sequence.valid = sequence.is_ok();
-
-            if !self.user_xpub.valid || !self.heir_xpub.valid || !self.sequence.valid {
-                return false;
-            }
-
-            let desc = match MultipathDescriptor::new(
-                user_key.unwrap(),
-                heir_key.unwrap(),
-                sequence.unwrap(),
-            ) {
+        let desc =
+            match MultipathDescriptor::new(user_key.unwrap(), heir_key.unwrap(), sequence.unwrap())
+            {
                 Ok(desc) => desc,
                 Err(e) => {
                     self.error = Some(e.to_string());
@@ -186,18 +154,18 @@ impl Step for DefineDescriptor {
                 }
             };
 
-            ctx.descriptor = Some(desc);
-            true
-        }
+        ctx.descriptor = Some(desc);
+        true
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
         if let Some(modal) = &self.modal {
             modal.view()
         } else {
             view::define_descriptor(
+                progress,
                 self.network,
-                &self.imported_descriptor,
+                self.network_valid,
                 &self.user_xpub,
                 &self.heir_xpub,
                 &self.sequence,
@@ -341,12 +309,99 @@ async fn get_extended_pubkey(
     }))
 }
 
+pub struct ImportDescriptor {
+    network: Network,
+    network_valid: bool,
+    data_dir: Option<PathBuf>,
+    imported_descriptor: form::Value<String>,
+    error: Option<String>,
+}
+
+impl ImportDescriptor {
+    pub fn new() -> Self {
+        Self {
+            network: Network::Bitcoin,
+            network_valid: true,
+            data_dir: None,
+            imported_descriptor: form::Value::default(),
+            error: None,
+        }
+    }
+}
+
+impl Step for ImportDescriptor {
+    // form value is set as valid each time it is edited.
+    // Verification of the values is happening when the user click on Next button.
+    fn update(&mut self, message: Message) -> Command<Message> {
+        match message {
+            Message::Network(network) => {
+                self.network = network;
+                let mut network_datadir = self.data_dir.clone().unwrap();
+                network_datadir.push(self.network.to_string());
+                self.network_valid = !network_datadir.exists();
+            }
+            Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) => {
+                self.imported_descriptor.value = desc;
+                self.imported_descriptor.valid = true;
+            }
+            _ => {}
+        };
+        Command::none()
+    }
+
+    fn load_context(&mut self, ctx: &Context) {
+        self.network = ctx.bitcoin_config.network;
+        self.data_dir = Some(ctx.data_dir.clone());
+        let mut network_datadir = ctx.data_dir.clone();
+        network_datadir.push(self.network.to_string());
+        self.network_valid = !network_datadir.exists();
+    }
+
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        ctx.bitcoin_config.network = self.network;
+        // descriptor forms for import or creation cannot be both empty or filled.
+        if !self.imported_descriptor.value.is_empty() {
+            if let Ok(desc) = MultipathDescriptor::from_str(&self.imported_descriptor.value) {
+                ctx.descriptor = Some(desc);
+                true
+            } else {
+                self.imported_descriptor.valid = false;
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+        view::import_descriptor(
+            progress,
+            self.network,
+            self.network_valid,
+            &self.imported_descriptor,
+            self.error.as_ref(),
+        )
+    }
+}
+
+impl Default for ImportDescriptor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<ImportDescriptor> for Box<dyn Step> {
+    fn from(s: ImportDescriptor) -> Box<dyn Step> {
+        Box::new(s)
+    }
+}
+
 #[derive(Default)]
 pub struct RegisterDescriptor {
     descriptor: Option<MultipathDescriptor>,
     processing: bool,
     chosen_hw: Option<usize>,
-    hws: Vec<(HardwareWallet, Option<[u8; 32]>)>,
+    hws: Vec<(HardwareWallet, Option<[u8; 32]>, bool)>,
     error: Option<Error>,
 }
 
@@ -357,7 +412,7 @@ impl Step for RegisterDescriptor {
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Select(i) => {
-                if let Some((hw, hmac)) = self.hws.get(i) {
+                if let Some((hw, hmac, _)) = self.hws.get(i) {
                     if hmac.is_none() {
                         let device = hw.device.clone();
                         let descriptor = self.descriptor.as_ref().unwrap().to_string();
@@ -381,7 +436,8 @@ impl Step for RegisterDescriptor {
                             .iter_mut()
                             .find(|hw_h| hw_h.0.fingerprint == fingerprint)
                         {
-                            hw_h.1 = Some(hmac.unwrap_or([0x00; 32]));
+                            hw_h.1 = hmac;
+                            hw_h.2 = true;
                         }
                     }
                     Err(e) => self.error = Some(e),
@@ -392,9 +448,9 @@ impl Step for RegisterDescriptor {
                     if !self
                         .hws
                         .iter()
-                        .any(|(h, _)| h.fingerprint == hw.fingerprint)
+                        .any(|(h, _, _)| h.fingerprint == hw.fingerprint)
                     {
-                        self.hws.push((hw, None));
+                        self.hws.push((hw, None, false));
                     }
                 }
             }
@@ -406,11 +462,9 @@ impl Step for RegisterDescriptor {
         Command::none()
     }
     fn apply(&mut self, ctx: &mut Context) -> bool {
-        for (hw, token) in &self.hws {
-            if let Some(token) = token {
-                if *token != [0x00; 32] {
-                    ctx.hw_tokens.push((hw.kind, hw.fingerprint, *token));
-                }
+        for (hw, token, registered) in &self.hws {
+            if *registered {
+                ctx.hws.push((hw.kind, hw.fingerprint, *token));
             }
         }
         true
@@ -421,9 +475,10 @@ impl Step for RegisterDescriptor {
             Message::ConnectedHardwareWallets,
         )
     }
-    fn view(&self) -> Element<Message> {
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
         let desc = self.descriptor.as_ref().unwrap();
         view::register_descriptor(
+            progress,
             desc.to_string(),
             &self.hws,
             self.error.as_ref(),
@@ -447,6 +502,34 @@ async fn register_wallet(
 
 impl From<RegisterDescriptor> for Box<dyn Step> {
     fn from(s: RegisterDescriptor) -> Box<dyn Step> {
+        Box::new(s)
+    }
+}
+
+#[derive(Default)]
+pub struct BackupDescriptor {
+    done: bool,
+    descriptor: Option<MultipathDescriptor>,
+}
+
+impl Step for BackupDescriptor {
+    fn update(&mut self, message: Message) -> Command<Message> {
+        if let Message::BackupDone(done) = message {
+            self.done = done;
+        }
+        Command::none()
+    }
+    fn load_context(&mut self, ctx: &Context) {
+        self.descriptor = ctx.descriptor.clone();
+    }
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+        let desc = self.descriptor.as_ref().unwrap();
+        view::backup_descriptor(progress, desc.to_string(), self.done)
+    }
+}
+
+impl From<BackupDescriptor> for Box<dyn Step> {
+    fn from(s: BackupDescriptor) -> Box<dyn Step> {
         Box::new(s)
     }
 }

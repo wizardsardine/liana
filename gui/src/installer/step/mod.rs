@@ -1,5 +1,5 @@
 mod descriptor;
-pub use descriptor::{DefineDescriptor, RegisterDescriptor};
+pub use descriptor::{BackupDescriptor, DefineDescriptor, ImportDescriptor, RegisterDescriptor};
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -24,7 +24,7 @@ pub trait Step {
     fn update(&mut self, _message: Message) -> Command<Message> {
         Command::none()
     }
-    fn view(&self) -> Element<Message>;
+    fn view(&self, progress: (usize, usize)) -> Element<Message>;
     fn load_context(&mut self, _ctx: &Context) {}
     fn load(&self) -> Command<Message> {
         Command::none()
@@ -42,18 +42,22 @@ pub struct Context {
     pub bitcoin_config: BitcoinConfig,
     pub bitcoind_config: Option<BitcoindConfig>,
     pub descriptor: Option<MultipathDescriptor>,
-    pub hw_tokens: Vec<(DeviceKind, bitcoin::util::bip32::Fingerprint, [u8; 32])>,
-    pub data_dir: Option<PathBuf>,
+    pub hws: Vec<(
+        DeviceKind,
+        bitcoin::util::bip32::Fingerprint,
+        Option<[u8; 32]>,
+    )>,
+    pub data_dir: PathBuf,
 }
 
 impl Context {
-    pub fn new(network: bitcoin::Network, data_dir: Option<PathBuf>) -> Self {
+    pub fn new(network: bitcoin::Network, data_dir: PathBuf) -> Self {
         Self {
             bitcoin_config: BitcoinConfig {
                 network,
                 poll_interval_secs: Duration::from_secs(30),
             },
-            hw_tokens: Vec::new(),
+            hws: Vec::new(),
             bitcoind_config: None,
             descriptor: None,
             data_dir,
@@ -61,36 +65,12 @@ impl Context {
     }
 }
 
-pub struct Welcome {
-    network: bitcoin::Network,
-    data_dir: PathBuf,
-}
-
-impl Welcome {
-    pub fn new(network: bitcoin::Network, data_dir: PathBuf) -> Self {
-        Self { network, data_dir }
-    }
-
-    fn valid(&self) -> bool {
-        let mut network_datadir = self.data_dir.clone();
-        network_datadir.push(self.network.to_string());
-        !network_datadir.exists()
-    }
-}
+#[derive(Default)]
+pub struct Welcome {}
 
 impl Step for Welcome {
-    fn update(&mut self, message: Message) -> Command<Message> {
-        if let message::Message::Network(network) = message {
-            self.network = network;
-        }
-        Command::none()
-    }
-    fn apply(&mut self, ctx: &mut Context) -> bool {
-        ctx.bitcoin_config.network = self.network;
-        true
-    }
-    fn view(&self) -> Element<Message> {
-        view::welcome(&self.network, self.valid())
+    fn view(&self, _progress: (usize, usize)) -> Element<Message> {
+        view::welcome()
     }
 }
 
@@ -211,8 +191,8 @@ impl Step for DefineBitcoind {
         }
     }
 
-    fn view(&self) -> Element<Message> {
-        view::define_bitcoin(&self.address, &self.cookie_path)
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+        view::define_bitcoin(progress, &self.address, &self.cookie_path)
     }
 }
 
@@ -230,6 +210,7 @@ impl From<DefineBitcoind> for Box<dyn Step> {
 
 pub struct Final {
     generating: bool,
+    context: Option<Context>,
     warning: Option<String>,
     config_path: Option<PathBuf>,
 }
@@ -237,6 +218,7 @@ pub struct Final {
 impl Final {
     pub fn new() -> Self {
         Self {
+            context: None,
             generating: false,
             warning: None,
             config_path: None,
@@ -245,6 +227,9 @@ impl Final {
 }
 
 impl Step for Final {
+    fn load_context(&mut self, ctx: &Context) {
+        self.context = Some(ctx.clone());
+    }
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Installed(res) => {
@@ -267,8 +252,13 @@ impl Step for Final {
         Command::none()
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+        let ctx = self.context.as_ref().unwrap();
+        let desc = ctx.descriptor.as_ref().unwrap().to_string();
         view::install(
+            progress,
+            ctx,
+            desc,
             self.generating,
             self.config_path.as_ref(),
             self.warning.as_ref(),

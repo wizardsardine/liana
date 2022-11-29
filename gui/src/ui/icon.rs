@@ -13,6 +13,18 @@ fn icon(unicode: char) -> Text<'static> {
         .size(20)
 }
 
+pub fn reload_icon() -> Text<'static> {
+    icon('\u{F130}')
+}
+
+pub fn import_icon() -> Text<'static> {
+    icon('\u{F30A}')
+}
+
+pub fn wallet_icon() -> Text<'static> {
+    icon('\u{F615}')
+}
+
 pub fn hourglass_icon() -> Text<'static> {
     icon('\u{F41F}')
 }
@@ -177,4 +189,12 @@ pub fn done_icon() -> Text<'static> {
 
 pub fn todo_icon() -> Text<'static> {
     icon('\u{F28A}')
+}
+
+pub fn collapse_icon() -> Text<'static> {
+    icon('\u{F284}')
+}
+
+pub fn collapsed_icon() -> Text<'static> {
+    icon('\u{F282}')
 }

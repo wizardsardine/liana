@@ -6,6 +6,9 @@ use crate::hw::HardwareWallet;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    CreateWallet,
+    ImportWallet,
+    BackupDone(bool),
     Event(iced_native::Event),
     Exit(PathBuf),
     Clibpboard(String),

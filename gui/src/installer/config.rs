@@ -18,7 +18,7 @@ impl TryFrom<Context> for LianaConfig {
             daemon: false,
             log_level: log::LevelFilter::Info,
             main_descriptor: ctx.descriptor.unwrap(),
-            data_dir: ctx.data_dir,
+            data_dir: Some(ctx.data_dir),
             bitcoin_config: ctx.bitcoin_config,
             bitcoind_config: ctx.bitcoind_config,
         })
