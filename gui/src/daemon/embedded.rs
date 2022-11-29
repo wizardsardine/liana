@@ -22,8 +22,8 @@ impl EmbeddedDaemon {
     }
 
     pub fn start(&mut self) -> Result<(), DaemonError> {
-        let handle = DaemonHandle::start_default(self.config.clone())
-            .map_err(|e| DaemonError::Start(e.to_string()))?;
+        let handle =
+            DaemonHandle::start_default(self.config.clone()).map_err(DaemonError::Start)?;
         self.handle = Some(RwLock::new(handle));
         Ok(())
     }
@@ -45,8 +45,7 @@ impl Daemon for EmbeddedDaemon {
             return Ok(());
         }
 
-        let next =
-            DaemonHandle::start_default(cfg).map_err(|e| DaemonError::Start(e.to_string()))?;
+        let next = DaemonHandle::start_default(cfg).map_err(DaemonError::Start)?;
         self.handle.take().unwrap().into_inner().unwrap().shutdown();
         self.handle = Some(RwLock::new(next));
         Ok(())

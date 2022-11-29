@@ -9,9 +9,10 @@ use std::io::ErrorKind;
 use liana::{
     config::Config,
     miniscript::bitcoin::{util::psbt::Psbt, Address, OutPoint, Txid},
+    StartupError,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum DaemonError {
     /// Something was wrong with the request.
     Rpc(i32, String),
@@ -22,7 +23,7 @@ pub enum DaemonError {
     /// No response.
     NoAnswer,
     // Error at start up.
-    Start(String),
+    Start(StartupError),
 }
 
 impl std::fmt::Display for DaemonError {

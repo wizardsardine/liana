@@ -3,7 +3,7 @@ use liana::config::ConfigError;
 use std::convert::From;
 use std::io::ErrorKind;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Error {
     Config(String),
     Daemon(DaemonError),
