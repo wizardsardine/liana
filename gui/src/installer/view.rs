@@ -361,11 +361,13 @@ pub fn register_descriptor<'a>(
                     )
                     .width(Length::Fill),
             )
-            .push(
+            .push(if processing {
+                button::primary(None, "Next").width(Length::Units(200))
+            } else {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
-                    .width(Length::Units(200)),
-            )
+                    .width(Length::Units(200))
+            })
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)
