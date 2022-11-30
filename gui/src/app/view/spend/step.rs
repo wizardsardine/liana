@@ -7,11 +7,13 @@ use liana::miniscript::bitcoin::Amount;
 
 use crate::{
     app::{
+        cache::Cache,
         error::Error,
         view::{message::*, modal},
     },
     daemon::model::Coin,
     ui::{
+        color,
         component::{
             badge, button, card, form,
             text::{text, Text},
@@ -126,6 +128,8 @@ pub fn choose_feerate_view<'a>(
 }
 
 pub fn choose_coins_view<'a>(
+    cache: &Cache,
+    timelock: u32,
     coins: &[(Coin, bool)],
     total_needed: Option<&Amount>,
     is_valid: bool,
@@ -136,14 +140,20 @@ pub fn choose_coins_view<'a>(
         Column::new()
             .push(text("Choose coins").bold().size(50))
             .push(
-                Column::new().spacing(10).push(
-                    coins
-                        .iter()
-                        .enumerate()
-                        .fold(Column::new().spacing(10), |col, (i, (coin, selected))| {
-                            col.push(coin_list_view(i, coin, *selected))
-                        }),
-                ),
+                Column::new()
+                    .spacing(10)
+                    .push(coins.iter().enumerate().fold(
+                        Column::new().spacing(10),
+                        |col, (i, (coin, selected))| {
+                            col.push(coin_list_view(
+                                i,
+                                coin,
+                                timelock,
+                                cache.blockheight as u32,
+                                *selected,
+                            ))
+                        },
+                    )),
             )
             .push_maybe(if is_valid {
                 Some(Container::new(
@@ -164,7 +174,13 @@ pub fn choose_coins_view<'a>(
     )
 }
 
-fn coin_list_view<'a>(i: usize, coin: &Coin, selected: bool) -> Element<'a, Message> {
+fn coin_list_view<'a>(
+    i: usize,
+    coin: &Coin,
+    timelock: u32,
+    blockheight: u32,
+    selected: bool,
+) -> Element<'a, Message> {
     Container::new(
         Button::new(
             Row::new()
@@ -176,7 +192,32 @@ fn coin_list_view<'a>(i: usize, coin: &Coin, selected: bool) -> Element<'a, Mess
                             icon::square_icon()
                         })
                         .push(badge::coin())
-                        .push(text(format!("block: {}", coin.block_height.unwrap_or(0))).small())
+                        .push_maybe(if let Some(b) = coin.block_height {
+                            if blockheight > b as u32 + timelock {
+                                Some(Container::new(
+                                    Row::new()
+                                        .spacing(5)
+                                        .push(text(" 0").small().style(color::ALERT))
+                                        .push(
+                                            icon::hourglass_done_icon().small().style(color::ALERT),
+                                        )
+                                        .align_items(Alignment::Center),
+                                ))
+                            } else {
+                                Some(Container::new(
+                                    Row::new()
+                                        .spacing(5)
+                                        .push(
+                                            text(format!(" {}", b as u32 + timelock - blockheight))
+                                                .small(),
+                                        )
+                                        .push(icon::hourglass_icon().small())
+                                        .align_items(Alignment::Center),
+                                ))
+                            }
+                        } else {
+                            None
+                        })
                         .spacing(10)
                         .align_items(Alignment::Center)
                         .width(Length::Fill),

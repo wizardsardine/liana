@@ -71,9 +71,12 @@ impl App {
             .into(),
             menu::Menu::Receive => ReceivePanel::default().into(),
             menu::Menu::Spend => SpendPanel::new(self.config.clone(), &self.cache.spend_txs).into(),
-            menu::Menu::CreateSpendTx => {
-                CreateSpendPanel::new(self.config.clone(), &self.cache.coins).into()
-            }
+            menu::Menu::CreateSpendTx => CreateSpendPanel::new(
+                self.config.clone(),
+                &self.cache.coins,
+                self.daemon.config().main_descriptor.timelock_value(),
+            )
+            .into(),
         };
         self.state.load(self.daemon.clone())
     }

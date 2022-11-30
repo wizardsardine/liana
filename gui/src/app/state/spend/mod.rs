@@ -104,13 +104,13 @@ pub struct CreateSpendPanel {
 }
 
 impl CreateSpendPanel {
-    pub fn new(config: Config, coins: &[Coin]) -> Self {
+    pub fn new(config: Config, coins: &[Coin], timelock: u32) -> Self {
         Self {
             draft: step::TransactionDraft::default(),
             current: 0,
             steps: vec![
                 Box::new(step::ChooseRecipients::default()),
-                Box::new(step::ChooseCoins::new(coins.to_vec())),
+                Box::new(step::ChooseCoins::new(coins.to_vec(), timelock)),
                 Box::new(step::ChooseFeerate::default()),
                 Box::new(step::SaveSpend::new(config)),
             ],

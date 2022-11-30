@@ -244,6 +244,7 @@ impl Step for ChooseFeerate {
 
 #[derive(Default)]
 pub struct ChooseCoins {
+    timelock: u32,
     coins: Vec<(Coin, bool)>,
     /// draft output amount must be superior to total input amount.
     is_valid: bool,
@@ -251,8 +252,9 @@ pub struct ChooseCoins {
 }
 
 impl ChooseCoins {
-    pub fn new(coins: Vec<Coin>) -> Self {
+    pub fn new(coins: Vec<Coin>, timelock: u32) -> Self {
         Self {
+            timelock,
             coins: coins
                 .into_iter()
                 .filter_map(|c| {
@@ -315,8 +317,14 @@ impl Step for ChooseCoins {
             .collect();
     }
 
-    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
-        view::spend::step::choose_coins_view(&self.coins, self.total_needed.as_ref(), self.is_valid)
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        view::spend::step::choose_coins_view(
+            cache,
+            self.timelock,
+            &self.coins,
+            self.total_needed.as_ref(),
+            self.is_valid,
+        )
     }
 }
 
