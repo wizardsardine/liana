@@ -12,7 +12,7 @@ use crate::{
         cache::Cache, config::Config, error::Error, message::Message, state::spend::detail, view,
     },
     daemon::{
-        model::{Coin, SpendTx},
+        model::{remaining_sequence, Coin, SpendTx},
         Daemon,
     },
     ui::component::form,
@@ -258,19 +258,31 @@ pub struct ChooseCoins {
 }
 
 impl ChooseCoins {
-    pub fn new(coins: Vec<Coin>, timelock: u32) -> Self {
+    pub fn new(coins: Vec<Coin>, timelock: u32, blockheight: u32) -> Self {
+        let mut coins: Vec<(Coin, bool)> = coins
+            .into_iter()
+            .filter_map(|c| {
+                if c.spend_info.is_none() {
+                    Some((c, false))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        coins.sort_by(|(a, _), (b, _)| {
+            if remaining_sequence(a, blockheight, timelock)
+                == remaining_sequence(b, blockheight, timelock)
+            {
+                // bigger amount first
+                b.amount.cmp(&a.amount)
+            } else {
+                // smallest blockheight (remaining_sequence) first
+                a.block_height.cmp(&b.block_height)
+            }
+        });
         Self {
             timelock,
-            coins: coins
-                .into_iter()
-                .filter_map(|c| {
-                    if c.spend_info.is_none() {
-                        Some((c, false))
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
+            coins,
             is_valid: false,
             total_needed: None,
         }

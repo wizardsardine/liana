@@ -75,6 +75,7 @@ impl App {
                 self.config.clone(),
                 &self.cache.coins,
                 self.daemon.config().main_descriptor.timelock_value(),
+                self.cache.blockheight as u32,
             )
             .into(),
         };

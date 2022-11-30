@@ -40,6 +40,7 @@ pub fn choose_recipients_view(
                         button::transparent(Some(icon::plus_icon()), "Add recipient")
                             .on_press(Message::CreateSpend(CreateSpendMessage::AddRecipient)),
                     )
+                    .padding(10)
                     .max_width(1000)
                     .spacing(10),
             )
@@ -152,6 +153,7 @@ pub fn choose_coins_view<'a>(
             .push(text("Choose coins").bold().size(50))
             .push(
                 Column::new()
+                    .padding(10)
                     .spacing(10)
                     .push(coins.iter().enumerate().fold(
                         Column::new().spacing(10),
