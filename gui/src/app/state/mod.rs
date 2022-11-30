@@ -74,7 +74,7 @@ impl State for Home {
             return view::modal(
                 false,
                 self.warning.as_ref(),
-                view::home::event_view(&self.events[i]),
+                view::home::event_view(cache, &self.events[i]),
             );
         }
         view::dashboard(
