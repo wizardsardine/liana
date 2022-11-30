@@ -102,16 +102,19 @@ pub fn recipient_view<'a>(
         .into()
 }
 
-pub fn choose_feerate_view<'a>(
+pub fn choose_coins_view<'a>(
+    cache: &Cache,
+    timelock: u32,
+    coins: &[(Coin, bool)],
+    amount_left: Option<&Amount>,
     feerate: &form::Value<String>,
-    is_valid: bool,
     error: Option<&Error>,
 ) -> Element<'a, Message> {
     modal(
         true,
-        None,
+        error,
         Column::new()
-            .push(text("Choose feerate").bold().size(50))
+            .push(text("Choose coins and feerate").bold().size(50))
             .push(
                 Container::new(
                     form::Form::new("Feerate", feerate, move |msg| {
@@ -123,34 +126,6 @@ pub fn choose_feerate_view<'a>(
                 )
                 .width(Length::Units(250)),
             )
-            .push_maybe(error.map(|e| card::error("Failed to create spend", e.to_string())))
-            .push_maybe(if is_valid {
-                Some(
-                    button::primary(None, "Next")
-                        .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
-                        .width(Length::Units(100)),
-                )
-            } else {
-                None
-            })
-            .spacing(20)
-            .align_items(Alignment::Center),
-        None::<Element<Message>>,
-    )
-}
-
-pub fn choose_coins_view<'a>(
-    cache: &Cache,
-    timelock: u32,
-    coins: &[(Coin, bool)],
-    total_needed: Option<&Amount>,
-    is_valid: bool,
-) -> Element<'a, Message> {
-    modal(
-        true,
-        None,
-        Column::new()
-            .push(text("Choose coins").bold().size(50))
             .push(
                 Column::new()
                     .padding(10)
@@ -168,23 +143,33 @@ pub fn choose_coins_view<'a>(
                         },
                     )),
             )
-            .push_maybe(if is_valid {
-                Some(Container::new(
-                    button::primary(None, "Next")
-                        .on_press(Message::Next)
-                        .width(Length::Units(100)),
-                ))
-            } else if total_needed.is_some() {
-                Some(Container::new(card::warning(format!(
-                    "Total amount must be superior to {}",
-                    total_needed.unwrap().to_btc(),
-                ))))
-            } else {
-                None
-            })
             .spacing(20)
             .align_items(Alignment::Center),
-        None::<Element<Message>>,
+        Some(
+            Container::new(
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push(
+                        Container::new(if let Some(amount_left) = amount_left {
+                            Row::new()
+                                .spacing(5)
+                                .push(text("Amount left to select:"))
+                                .push(text(amount_left.to_string()).bold())
+                        } else {
+                            Row::new().push(text("Please, define feerate"))
+                        })
+                        .width(Length::Fill),
+                    )
+                    .push(if Some(&Amount::from_sat(0)) == amount_left {
+                        button::primary(None, "Next")
+                            .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
+                            .width(Length::Units(100))
+                    } else {
+                        button::primary(None, "Next").width(Length::Units(100))
+                    }),
+            )
+            .padding(20),
+        ),
     )
 }
 

@@ -115,7 +115,6 @@ impl CreateSpendPanel {
                     timelock,
                     blockheight,
                 )),
-                Box::new(step::ChooseFeerate::default()),
                 Box::new(step::SaveSpend::new(config)),
             ],
         }

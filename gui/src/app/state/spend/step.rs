@@ -3,8 +3,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use iced::{Command, Element};
-use liana::miniscript::bitcoin::{
-    util::psbt::Psbt, Address, Amount, Denomination, OutPoint, Script,
+use liana::{
+    config::Config as DaemonConfig,
+    miniscript::bitcoin::{util::psbt::Psbt, Address, Amount, Denomination, OutPoint, Script},
 };
 
 use crate::{
@@ -22,7 +23,6 @@ use crate::{
 pub struct TransactionDraft {
     inputs: Vec<Coin>,
     outputs: HashMap<Address, u64>,
-    feerate: u64,
     generated: Option<Psbt>,
 }
 
@@ -177,84 +177,15 @@ impl Recipient {
 }
 
 #[derive(Default)]
-pub struct ChooseFeerate {
-    feerate: form::Value<String>,
-    generated: Option<Psbt>,
-    warning: Option<Error>,
-}
-
-impl Step for ChooseFeerate {
-    fn update(
-        &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
-        draft: &TransactionDraft,
-        message: Message,
-    ) -> Command<Message> {
-        match message {
-            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::FeerateEdited(
-                s,
-            ))) => {
-                if s.parse::<u64>().is_ok() {
-                    self.feerate.value = s;
-                    self.feerate.valid = true;
-                } else if s.is_empty() {
-                    self.feerate.value = "".to_string();
-                    self.feerate.valid = true;
-                } else {
-                    self.feerate.valid = false;
-                }
-                self.warning = None;
-            }
-            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::Generate)) => {
-                let inputs: Vec<OutPoint> = draft.inputs.iter().map(|c| c.outpoint).collect();
-                let outputs = draft.outputs.clone();
-                let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
-                self.warning = None;
-                return Command::perform(
-                    async move {
-                        daemon
-                            .create_spend_tx(&inputs, &outputs, feerate_vb)
-                            .map(|res| res.psbt)
-                            .map_err(|e| e.into())
-                    },
-                    Message::Psbt,
-                );
-            }
-            Message::Psbt(res) => match res {
-                Ok(psbt) => {
-                    self.generated = Some(psbt);
-                    return Command::perform(async {}, |_| Message::View(view::Message::Next));
-                }
-                Err(e) => self.warning = Some(e),
-            },
-            _ => {}
-        }
-
-        Command::none()
-    }
-
-    fn apply(&self, draft: &mut TransactionDraft) {
-        draft.feerate = self.feerate.value.parse::<u64>().expect("Checked before");
-        draft.generated = self.generated.clone();
-    }
-
-    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
-        view::spend::step::choose_feerate_view(
-            &self.feerate,
-            self.feerate.valid && !self.feerate.value.is_empty(),
-            self.warning.as_ref(),
-        )
-    }
-}
-
-#[derive(Default)]
 pub struct ChooseCoins {
     timelock: u32,
     coins: Vec<(Coin, bool)>,
-    /// draft output amount must be superior to total input amount.
-    is_valid: bool,
-    total_needed: Option<Amount>,
+    recipients: Vec<(Address, Amount)>,
+
+    amount_left_to_select: Option<Amount>,
+    feerate: form::Value<String>,
+    generated: Option<Psbt>,
+    warning: Option<Error>,
 }
 
 impl ChooseCoins {
@@ -283,48 +214,63 @@ impl ChooseCoins {
         Self {
             timelock,
             coins,
-            is_valid: false,
-            total_needed: None,
+            recipients: Vec::new(),
+            feerate: form::Value::default(),
+            generated: None,
+            warning: None,
+            amount_left_to_select: None,
+        }
+    }
+
+    fn amount_left_to_select(&mut self, cfg: &DaemonConfig) {
+        let mut tx_size = 0_u64;
+        let mut outgoing_amount = 0_u64;
+        for (address, amount) in &self.recipients {
+            outgoing_amount += amount.to_sat();
+            tx_size += 8 + address.script_pubkey().len() as u64;
+        }
+
+        // change output
+        tx_size += 8 + 34;
+        // overhead
+        tx_size += 11;
+
+        let input_size = cfg
+            .main_descriptor
+            .receive_descriptor()
+            .spender_input_size();
+
+        let mut selected_amount = 0_u64;
+        for (coin, selected) in &self.coins {
+            if *selected {
+                selected_amount += coin.amount.to_sat();
+                tx_size += input_size as u64;
+            }
+        }
+
+        // If feerate is set we can calcul the required amount.
+        if let Ok(feerate) = self.feerate.value.parse::<u64>() {
+            let required_amount = tx_size * feerate + outgoing_amount;
+
+            if selected_amount > required_amount {
+                self.amount_left_to_select = Some(Amount::from_sat(0));
+            } else {
+                self.amount_left_to_select =
+                    Some(Amount::from_sat(required_amount - selected_amount));
+            }
+        } else {
+            self.amount_left_to_select = None;
         }
     }
 }
 
 impl Step for ChooseCoins {
     fn load(&mut self, draft: &TransactionDraft) {
-        self.total_needed = Some(Amount::from_sat(
-            draft.outputs.values().fold(0, |acc, a| acc + *a),
-        ));
-    }
-
-    fn update(
-        &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
-        _draft: &TransactionDraft,
-        message: Message,
-    ) -> Command<Message> {
-        if let Message::View(view::Message::CreateSpend(view::CreateSpendMessage::SelectCoin(i))) =
-            message
-        {
-            if let Some(coin) = self.coins.get_mut(i) {
-                coin.1 = !coin.1;
-            }
-
-            self.is_valid = self
-                .coins
-                .iter()
-                .filter_map(|(coin, selected)| {
-                    if *selected {
-                        Some(coin.amount.to_sat())
-                    } else {
-                        None
-                    }
-                })
-                .sum::<u64>()
-                > self.total_needed.map(|a| a.to_sat()).unwrap_or(0);
-        }
-
-        Command::none()
+        self.recipients = draft
+            .outputs
+            .iter()
+            .map(|(k, v)| (k.clone(), Amount::from_sat(*v)))
+            .collect();
     }
 
     fn apply(&self, draft: &mut TransactionDraft) {
@@ -333,6 +279,72 @@ impl Step for ChooseCoins {
             .iter()
             .filter_map(|(coin, selected)| if *selected { Some(*coin) } else { None })
             .collect();
+        draft.generated = self.generated.clone();
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        draft: &TransactionDraft,
+        message: Message,
+    ) -> Command<Message> {
+        match message {
+            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::FeerateEdited(
+                s,
+            ))) => {
+                if s.parse::<u64>().is_ok() {
+                    self.feerate.value = s;
+                    self.feerate.valid = true;
+                    self.amount_left_to_select(daemon.config());
+                } else if s.is_empty() {
+                    self.feerate.value = "".to_string();
+                    self.feerate.valid = true;
+                    self.amount_left_to_select = None;
+                } else {
+                    self.feerate.valid = false;
+                    self.amount_left_to_select = None;
+                }
+                self.warning = None;
+            }
+            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::Generate)) => {
+                let inputs: Vec<OutPoint> = self
+                    .coins
+                    .iter()
+                    .filter_map(
+                        |(coin, selected)| if *selected { Some(coin.outpoint) } else { None },
+                    )
+                    .collect();
+                let outputs = draft.outputs.clone();
+                let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
+                self.warning = None;
+                return Command::perform(
+                    async move {
+                        daemon
+                            .create_spend_tx(&inputs, &outputs, feerate_vb)
+                            .map(|res| res.psbt)
+                            .map_err(|e| e.into())
+                    },
+                    Message::Psbt,
+                );
+            }
+            Message::Psbt(res) => match res {
+                Ok(psbt) => {
+                    self.generated = Some(psbt);
+                    return Command::perform(async {}, |_| Message::View(view::Message::Next));
+                }
+                Err(e) => self.warning = Some(e),
+            },
+            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::SelectCoin(i))) => {
+                if let Some(coin) = self.coins.get_mut(i) {
+                    coin.1 = !coin.1;
+                    self.amount_left_to_select(daemon.config());
+                }
+            }
+            _ => {}
+        }
+
+        Command::none()
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
@@ -340,8 +352,9 @@ impl Step for ChooseCoins {
             cache,
             self.timelock,
             &self.coins,
-            self.total_needed.as_ref(),
-            self.is_valid,
+            self.amount_left_to_select.as_ref(),
+            &self.feerate,
+            self.warning.as_ref(),
         )
     }
 }
