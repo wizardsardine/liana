@@ -25,6 +25,7 @@ use crate::{
 
 pub fn choose_recipients_view(
     recipients: Vec<Element<Message>>,
+    total_amount: Amount,
     is_valid: bool,
 ) -> Element<Message> {
     modal(
@@ -42,17 +43,26 @@ pub fn choose_recipients_view(
                     .max_width(1000)
                     .spacing(10),
             )
-            .push_maybe(if is_valid {
-                Some(
-                    button::primary(None, "Next")
-                        .on_press(Message::Next)
-                        .width(Length::Units(100)),
-                )
-            } else {
-                None
-            })
             .spacing(20)
             .align_items(Alignment::Center),
+        Some(
+            Container::new(
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push(
+                        Container::new(text(format!("{}", total_amount)).bold())
+                            .width(Length::Fill),
+                    )
+                    .push(if is_valid {
+                        button::primary(None, "Next")
+                            .on_press(Message::Next)
+                            .width(Length::Units(100))
+                    } else {
+                        button::primary(None, "Next").width(Length::Units(100))
+                    }),
+            )
+            .padding(20),
+        ),
     )
 }
 
@@ -124,6 +134,7 @@ pub fn choose_feerate_view<'a>(
             })
             .spacing(20)
             .align_items(Alignment::Center),
+        None::<Element<Message>>,
     )
 }
 
@@ -171,6 +182,7 @@ pub fn choose_coins_view<'a>(
             })
             .spacing(20)
             .align_items(Alignment::Center),
+        None::<Element<Message>>,
     )
 }
 

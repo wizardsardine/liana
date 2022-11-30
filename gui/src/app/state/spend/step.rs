@@ -94,6 +94,12 @@ impl Step for ChooseRecipients {
                 .enumerate()
                 .map(|(i, recipient)| recipient.view(i).map(view::Message::CreateSpend))
                 .collect(),
+            Amount::from_sat(
+                self.recipients
+                    .iter()
+                    .map(|r| r.amount().unwrap_or(0_u64))
+                    .sum(),
+            ),
             !self.recipients.iter().any(|recipient| !recipient.valid()),
         )
     }
