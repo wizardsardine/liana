@@ -122,7 +122,7 @@ pub fn dot_icon() -> Text<'static> {
 }
 
 pub fn clipboard_icon() -> Text<'static> {
-    icon('\u{F28E}')
+    icon('\u{F3C2}')
 }
 
 pub fn shield_icon() -> Text<'static> {

@@ -8,11 +8,15 @@ use iced::{
 
 use crate::ui::{
     component::{badge, button::Style, card, text::*},
+    icon,
     util::Collection,
 };
 use liana::miniscript::bitcoin;
 
-use crate::{app::view::message::Message, daemon::model::HistoryTransaction};
+use crate::{
+    app::{cache::Cache, view::message::Message},
+    daemon::model::HistoryTransaction,
+};
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
@@ -123,7 +127,7 @@ fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Element<'a, Mess
     .into()
 }
 
-pub fn event_view<'a>(event: &HistoryTransaction) -> Element<'a, Message> {
+pub fn event_view<'a>(cache: &Cache, event: &'a HistoryTransaction) -> Element<'a, Message> {
     Column::new()
         .push(
             Row::new()
@@ -164,13 +168,36 @@ pub fn event_view<'a>(event: &HistoryTransaction) -> Element<'a, Message> {
                 .push(
                     Row::new()
                         .width(Length::Fill)
+                        .align_items(Alignment::Center)
                         .push(Container::new(text("Txid:").bold()).width(Length::Fill))
                         .push(
-                            Container::new(text(format!("{}", event.tx.txid())))
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .push(Container::new(text(format!("{}", event.tx.txid())).small()))
+                                .push(
+                                    Button::new(icon::clipboard_icon())
+                                        .on_press(Message::Clipboard(event.tx.txid().to_string()))
+                                        .style(Style::TransparentBorder.into()),
+                                )
                                 .width(Length::Shrink),
                         ),
                 )
                 .spacing(5),
+        ))
+        .push(super::spend::detail::inputs_and_outputs_view(
+            &event.coins,
+            &event.tx,
+            cache.network,
+            if event.is_external() {
+                None
+            } else {
+                Some(event.change_indexes.clone())
+            },
+            if event.is_external() {
+                Some(event.change_indexes.clone())
+            } else {
+                None
+            },
         ))
         .align_items(Alignment::Center)
         .spacing(20)

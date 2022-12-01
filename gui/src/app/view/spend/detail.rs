@@ -3,10 +3,7 @@ use iced::{
     Alignment, Element, Length,
 };
 
-use liana::miniscript::bitcoin::{
-    util::{bip32::Fingerprint, psbt::Psbt},
-    Address, Amount, Network,
-};
+use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Address, Amount, Network, Transaction};
 
 use crate::{
     app::{
@@ -18,7 +15,9 @@ use crate::{
     ui::{
         color,
         component::{
-            badge, button, card, container, separation,
+            badge, button, card,
+            collapse::Collapse,
+            container, separation,
             text::{text, Text},
         },
         icon,
@@ -28,7 +27,7 @@ use crate::{
 
 pub fn spend_view<'a, T: Into<Element<'a, Message>>>(
     warning: Option<&Error>,
-    tx: &SpendTx,
+    tx: &'a SpendTx,
     action: T,
     show_delete: bool,
     network: Network,
@@ -44,9 +43,10 @@ pub fn spend_view<'a, T: Into<Element<'a, Message>>>(
             .push(spend_overview_view(tx))
             .push(inputs_and_outputs_view(
                 &tx.coins,
-                &tx.psbt,
+                &tx.psbt.unsigned_tx,
                 network,
-                tx.change_index,
+                tx.change_index.map(|i| vec![i]),
+                None,
             )),
     )
 }
@@ -252,81 +252,212 @@ fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
     .into()
 }
 
-fn inputs_and_outputs_view<'a>(
-    coins: &[Coin],
-    psbt: &Psbt,
+pub fn inputs_and_outputs_view<'a>(
+    coins: &'a [Coin],
+    tx: &'a Transaction,
     network: Network,
-    change_index: Option<usize>,
+    change_indexes: Option<Vec<usize>>,
+    receive_indexes: Option<Vec<usize>>,
 ) -> Element<'a, Message> {
     Column::new()
         .push(
-            Row::new()
+            Column::new()
                 .spacing(10)
-                .push(
-                    Column::new()
-                        .spacing(10)
-                        .push(text("Spent coins:").bold())
-                        .push(coins.iter().fold(Column::new().spacing(10), |col, coin| {
-                            col.push(
-                                card::simple(
-                                    Column::new()
-                                        .width(Length::Fill)
-                                        .push(text(format!("{} BTC", coin.amount.to_btc())).bold())
-                                        .push(text(format!("{}", coin.outpoint)).small()),
+                .push_maybe(if !coins.is_empty() {
+                    Some(
+                        Container::new(Collapse::new(
+                            move || {
+                                Button::new(
+                                    Row::new()
+                                        .align_items(Alignment::Center)
+                                        .push(
+                                            text(format!(
+                                                "{} spent coin{}",
+                                                coins.len(),
+                                                if coins.len() == 1 { "" } else { "s" }
+                                            ))
+                                            .bold()
+                                            .width(Length::Fill),
+                                        )
+                                        .push(icon::collapse_icon()),
                                 )
-                                .width(Length::Fill),
-                            )
-                        }))
-                        .width(Length::FillPortion(1)),
-                )
+                                .padding(15)
+                                .width(Length::Fill)
+                                .style(button::Style::TransparentBorder.into())
+                            },
+                            move || {
+                                Button::new(
+                                    Row::new()
+                                        .align_items(Alignment::Center)
+                                        .push(
+                                            text(format!(
+                                                "{} spent coin{}",
+                                                coins.len(),
+                                                if coins.len() == 1 { "" } else { "s" }
+                                            ))
+                                            .bold()
+                                            .width(Length::Fill),
+                                        )
+                                        .push(icon::collapsed_icon()),
+                                )
+                                .padding(15)
+                                .width(Length::Fill)
+                                .style(button::Style::TransparentBorder.into())
+                            },
+                            move || {
+                                coins
+                                    .iter()
+                                    .fold(Column::new(), |col: Column<'a, Message>, coin| {
+                                        col.push(separation().width(Length::Fill)).push(
+                                            Row::new()
+                                                .padding(15)
+                                                .align_items(Alignment::Center)
+                                                .width(Length::Fill)
+                                                .push(
+                                                    Row::new()
+                                                        .width(Length::Fill)
+                                                        .align_items(Alignment::Center)
+                                                        .push(
+                                                            text(coin.outpoint.to_string())
+                                                                .small()
+                                                        )
+                                                        .push(
+                                                            Button::new(icon::clipboard_icon())
+                                                                .on_press(Message::Clipboard(
+                                                                    coin.outpoint.to_string(),
+                                                                ))
+                                                                .style(
+                                                                    button::Style::TransparentBorder.into(),
+                                                                ),
+                                                        ),
+                                                )
+                                                .push(
+                                                    text(format!("{} BTC", coin.amount.to_btc()))
+                                                        .bold(),
+                                                ),
+                                        )
+                                    })
+                                    .into()
+                            },
+                        ))
+                        .style(card::SimpleCardStyle),
+                    )
+                } else {
+                    None
+                })
                 .push(
-                    Column::new()
-                        .spacing(10)
-                        .push(text("Recipients:").bold())
-                        .push(psbt.unsigned_tx.output.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, output)| {
-                                col.push(
-                                    card::simple(
+                    Container::new(Collapse::new(
+                        move || {
+                            Button::new(
+                                Row::new()
+                                    .align_items(Alignment::Center)
+                                    .push(
+                                        text(format!(
+                                            "{} recipient{}",
+                                            tx.output.len(),
+                                            if tx.output.len() == 1 { "" } else { "s" }
+                                        ))
+                                        .bold()
+                                        .width(Length::Fill),
+                                    )
+                                    .push(icon::collapse_icon()),
+                            )
+                            .padding(15)
+                            .width(Length::Fill)
+                            .style(button::Style::TransparentBorder.into())
+                        },
+                        move || {
+                            Button::new(
+                                Row::new()
+                                    .align_items(Alignment::Center)
+                                    .push(
+                                        text(format!(
+                                            "{} recipient{}",
+                                            tx.output.len(),
+                                            if tx.output.len() == 1 { "" } else { "s" }
+                                        ))
+                                        .bold()
+                                        .width(Length::Fill),
+                                    )
+                                    .push(icon::collapsed_icon()),
+                            )
+                            .padding(15)
+                            .width(Length::Fill)
+                            .style(button::Style::TransparentBorder.into())
+                        },
+                        move || {
+                            tx.output
+                                .iter()
+                                .enumerate()
+                                .fold(Column::new(), |col: Column<'a, Message>, (i, output)| {
+                                    let addr = Address::from_script(&output.script_pubkey, network).unwrap();
+                                    col.push(separation().width(Length::Fill)).push(
                                         Column::new()
+                                            .padding(15)
+                                            .width(Length::Fill)
                                             .spacing(10)
                                             .push(
-                                                Column::new()
+                                                Row::new()
                                                     .width(Length::Fill)
+                                                    .push(
+                                                        Row::new()
+                                                        .align_items(Alignment::Center)
+                                                        .width(Length::Fill)
+                                                        .push(text(addr.to_string()).small())
+                                                        .push(
+                                                            Button::new(icon::clipboard_icon())
+                                                                .on_press(Message::Clipboard(
+                                                                    addr.to_string(),
+                                                                ))
+                                                                .style(
+                                                                    button::Style::TransparentBorder.into(),
+                                                                ),
+                                                        ),
+                                                    )
                                                     .push(
                                                         text(format!(
                                                             "{} BTC",
                                                             Amount::from_sat(output.value).to_btc()
                                                         ))
                                                         .bold(),
-                                                    )
-                                                    .push(
-                                                        text(format!(
-                                                            "{}",
-                                                            Address::from_script(
-                                                                &output.script_pubkey,
-                                                                network
-                                                            )
-                                                            .unwrap()
-                                                        ))
-                                                        .small(),
                                                     ),
                                             )
-                                            .push_maybe(if Some(i) == change_index {
-                                                Some(
-                                                    Container::new(text("Change"))
-                                                        .padding(5)
-                                                        .style(badge::PillStyle::Success),
-                                                )
-                                            } else {
-                                                None
-                                            }),
+                                            .push_maybe(
+                                                if let Some(indexes) = change_indexes.as_ref() {
+                                                    if indexes.contains(&i) {
+                                                        Some(
+                                                            Container::new(text("Change"))
+                                                                .padding(5)
+                                                                .style(badge::PillStyle::Success),
+                                                        )
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else {
+                                                    None
+                                                },
+                                            )
+                                            .push_maybe(
+                                                if let Some(indexes) = receive_indexes.as_ref() {
+                                                    if indexes.contains(&i) {
+                                                        Some(
+                                                            Container::new(text("Deposit"))
+                                                                .padding(5)
+                                                                .style(badge::PillStyle::Success),
+                                                        )
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else {
+                                                    None
+                                                },
+                                            ),
                                     )
-                                    .width(Length::Fill),
-                                )
-                            },
-                        ))
-                        .width(Length::FillPortion(1)),
+                                })
+                                .into()
+                        },
+                    ))
+                    .style(card::SimpleCardStyle),
                 ),
         )
         .into()
