@@ -1,23 +1,52 @@
-use crate::ui::{color, icon};
+use crate::ui::{
+    color,
+    component::{button, collapse, text::*},
+    icon,
+};
 use iced::{
-    widget::{container, tooltip, Container, Row, Text, Tooltip},
-    Length,
+    widget::{container, Button, Container, Row},
+    Alignment, Element, Length,
 };
 
-pub fn warning<'a, T: 'a>(message: String, error: String) -> Container<'a, T> {
-    Container::new(Container::new(
-        Tooltip::new(
-            Row::new()
-                .push(icon::warning_icon())
-                .push(Text::new(message))
-                .spacing(20),
-            error,
-            tooltip::Position::Bottom,
-        )
-        .style(TooltipWarningStyle),
-    ))
+pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'a, T> {
+    let message_clone = message.clone();
+    Container::new(Container::new(collapse::Collapse::new(
+        move || {
+            Button::new(
+                Row::new()
+                    .push(
+                        Container::new(text(message_clone.to_string()).small().bold())
+                            .width(Length::Fill),
+                    )
+                    .push(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Learn more").small().bold())
+                            .push(icon::collapse_icon()),
+                    ),
+            )
+            .style(button::Style::Transparent.into())
+        },
+        move || {
+            Button::new(
+                Row::new()
+                    .push(
+                        Container::new(text(message.to_owned()).small().bold()).width(Length::Fill),
+                    )
+                    .push(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Learn more").small().bold())
+                            .push(icon::collapsed_icon()),
+                    ),
+            )
+            .style(button::Style::Transparent.into())
+        },
+        move || Element::<'a, T>::from(text(error.to_owned()).small()),
+    )))
     .padding(15)
-    .center_x()
     .style(WarningStyle)
     .width(Length::Fill)
 }
@@ -44,32 +73,6 @@ impl From<WarningStyle> for Box<dyn container::StyleSheet<Style = iced::Theme>> 
 
 impl From<WarningStyle> for iced::theme::Container {
     fn from(i: WarningStyle) -> iced::theme::Container {
-        iced::theme::Container::Custom(i.into())
-    }
-}
-
-pub struct TooltipWarningStyle;
-impl container::StyleSheet for TooltipWarningStyle {
-    type Style = iced::Theme;
-    fn appearance(&self, _style: &Self::Style) -> container::Appearance {
-        container::Appearance {
-            border_radius: 0.0,
-            border_width: 1.0,
-            text_color: color::WARNING.into(),
-            background: color::FOREGROUND.into(),
-            border_color: color::WARNING,
-        }
-    }
-}
-
-impl From<TooltipWarningStyle> for Box<dyn container::StyleSheet<Style = iced::Theme>> {
-    fn from(s: TooltipWarningStyle) -> Box<dyn container::StyleSheet<Style = iced::Theme>> {
-        Box::new(s)
-    }
-}
-
-impl From<TooltipWarningStyle> for iced::theme::Container {
-    fn from(i: TooltipWarningStyle) -> iced::theme::Container {
         iced::theme::Container::Custom(i.into())
     }
 }

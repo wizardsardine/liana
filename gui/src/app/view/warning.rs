@@ -44,7 +44,7 @@ impl std::fmt::Display for WarningMessage {
     }
 }
 
-pub fn warn<'a, T: 'a>(error: Option<&Error>) -> widget::Container<'a, T> {
+pub fn warn<'a, T: 'a + Clone>(error: Option<&Error>) -> widget::Container<'a, T> {
     if let Some(w) = error {
         let message: WarningMessage = w.into();
         notification::warning(message.to_string(), w.to_string()).width(Length::Fill)

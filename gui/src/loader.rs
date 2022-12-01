@@ -4,21 +4,27 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use iced::{
-    widget::{Column, Text},
+    widget::{Column, Container, ProgressBar},
     Element,
 };
-use iced::{Alignment, Command, Subscription};
+use iced::{Alignment, Command, Length, Subscription};
 use iced_native::{window, Event};
 use log::{debug, info};
 
 use liana::{
     config::{Config, ConfigError},
     miniscript::bitcoin,
+    StartupError,
 };
 
 use crate::{
     app::config::{default_datadir, Config as GUIConfig},
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
+    ui::{
+        component::{button, notification, text::*},
+        icon,
+        util::Collection,
+    },
 };
 
 type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
@@ -27,11 +33,12 @@ pub struct Loader {
     pub gui_config: GUIConfig,
     pub daemon_started: bool,
 
+    daemon_config: Config,
     should_exit: bool,
     step: Step,
 }
 
-enum Step {
+pub enum Step {
     Connecting,
     StartingDaemon,
     Syncing {
@@ -43,6 +50,7 @@ enum Step {
 
 #[derive(Debug)]
 pub enum Message {
+    View(ViewMessage),
     Event(iced_native::Event),
     Syncing(Result<GetInfoResult, DaemonError>),
     Synced(
@@ -65,6 +73,7 @@ impl Loader {
         .unwrap();
         (
             Loader {
+                daemon_config: daemon_config.clone(),
                 gui_config,
                 step: Step::Connecting,
                 should_exit: false,
@@ -177,6 +186,11 @@ impl Loader {
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
+            Message::View(ViewMessage::Retry) => {
+                let (loader, cmd) = Self::new(self.gui_config.clone(), self.daemon_config.clone());
+                *self = loader;
+                cmd
+            }
             Message::Started(res) => self.on_start(res),
             Message::Loaded(res) => self.on_load(res),
             Message::Syncing(res) => self.on_sync(res),
@@ -201,23 +215,78 @@ impl Loader {
     }
 
     pub fn view(&self) -> Element<Message> {
-        match &self.step {
-            Step::StartingDaemon => cover(Text::new("Starting daemon...")),
-            Step::Connecting => cover(Text::new("Connecting to daemon...")),
-            Step::Syncing { progress, .. } => cover(Text::new(format!("Syncing... {}%", progress))),
-            Step::Error(error) => cover(Text::new(format!("Error: {}", error))),
-        }
+        view(&self.step).map(Message::View)
     }
 }
 
-pub fn cover<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Element<'a, T> {
+#[derive(Clone, Debug)]
+pub enum ViewMessage {
+    Retry,
+}
+
+pub fn view(step: &Step) -> Element<ViewMessage> {
+    match &step {
+        Step::StartingDaemon => cover(
+            None,
+            Column::new()
+                .width(Length::Fill)
+                .push(ProgressBar::new(0.0..=1.0, 0.0).width(Length::Fill))
+                .push(text("Starting daemon...")),
+        ),
+        Step::Connecting => cover(
+            None,
+            Column::new()
+                .width(Length::Fill)
+                .push(ProgressBar::new(0.0..=1.0, 0.0).width(Length::Fill))
+                .push(text("Connecting to daemon...")),
+        ),
+        Step::Syncing { progress, .. } => cover(
+            None,
+            Column::new()
+                .width(Length::Fill)
+                .push(ProgressBar::new(0.0..=1.0, *progress as f32).width(Length::Fill))
+                .push(text("Syncing the wallet with the blockchain...")),
+        ),
+        Step::Error(error) => cover(
+            Some(("Error while starting the internal daemon", error)),
+            Column::new()
+                .spacing(20)
+                .width(Length::Fill)
+                .align_items(Alignment::Center)
+                .push(icon::plug_icon().size(100).width(Length::Units(300)))
+                .push(
+                    if matches!(
+                        error.as_ref(),
+                        Error::Daemon(DaemonError::Start(StartupError::Bitcoind(_)))
+                    ) {
+                        text("Liana failed to start, please check if bitcoind is running")
+                    } else {
+                        text("Liana failed to start")
+                    },
+                )
+                .push(
+                    button::primary(None, "Retry")
+                        .width(Length::Units(200))
+                        .on_press(ViewMessage::Retry),
+                ),
+        ),
+    }
+}
+
+pub fn cover<'a, T: 'a + Clone, C: Into<Element<'a, T>>>(
+    warn: Option<(&'static str, &Error)>,
+    content: C,
+) -> Element<'a, T> {
     Column::new()
-        .push(content)
-        .width(iced::Length::Fill)
-        .height(iced::Length::Fill)
-        .padding(50)
-        .spacing(50)
-        .align_items(Alignment::Center)
+        .push_maybe(warn.map(|w| notification::warning(w.0.to_string(), w.1.to_string())))
+        .push(
+            Container::new(content)
+                .width(iced::Length::Fill)
+                .height(iced::Length::Fill)
+                .center_x()
+                .center_y()
+                .padding(50),
+        )
         .into()
 }
 
@@ -239,8 +308,7 @@ async fn connect(
 pub async fn start_daemon(config_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
     debug!("starting liana daemon");
 
-    let config = Config::from_file(Some(config_path))
-        .map_err(|e| DaemonError::Start(format!("Error parsing config: {}", e)))?;
+    let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
 
     let mut daemon = EmbeddedDaemon::new(config);
     daemon.start()?;

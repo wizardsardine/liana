@@ -112,7 +112,7 @@ impl button::StyleSheet for Style {
             },
             Style::Transparent => button::Appearance {
                 shadow_offset: Vector::default(),
-                background: color::BACKGROUND.into(),
+                background: Color::TRANSPARENT.into(),
                 border_radius: 10.0,
                 border_width: 0.0,
                 border_color: Color::TRANSPARENT,
