@@ -326,7 +326,7 @@ pub fn register_descriptor<'a>(
                     .spacing(10)
                     .max_width(1000),
             ))
-            .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
+            .push_maybe(error.map(|e| card::error("Failed to register descriptor", e.to_string())))
             .push(
                 Column::new()
                     .push(

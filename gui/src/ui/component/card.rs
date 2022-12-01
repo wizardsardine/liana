@@ -81,7 +81,7 @@ pub fn error<'a, T: 'a>(message: &'static str, error: String) -> widget::Contain
             Row::new()
                 .spacing(20)
                 .align_items(iced::Alignment::Center)
-                .push(icon::block_icon().style(color::ALERT))
+                .push(icon::warning_icon().style(color::ALERT))
                 .push(text(message).style(color::ALERT)),
             error,
             widget::tooltip::Position::Bottom,
