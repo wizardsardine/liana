@@ -86,7 +86,7 @@ impl button::StyleSheet for Style {
                 background: Color::TRANSPARENT.into(),
                 border_radius: 10.0,
                 border_width: 1.2,
-                border_color: color::BACKGROUND,
+                border_color: color::BORDER_GREY,
                 text_color: Color::BLACK,
             },
         }

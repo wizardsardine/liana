@@ -17,7 +17,7 @@ impl container::StyleSheet for Style {
             Self::Sidebar => container::Appearance {
                 background: color::FOREGROUND.into(),
                 border_width: 1.0,
-                border_color: color::SECONDARY,
+                border_color: color::BORDER_GREY,
                 ..container::Appearance::default()
             },
         }
