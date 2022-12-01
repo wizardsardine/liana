@@ -15,6 +15,8 @@ impl widget::container::StyleSheet for SimpleCardStyle {
     fn appearance(&self, _style: &Self::Style) -> widget::container::Appearance {
         widget::container::Appearance {
             border_radius: 10.0,
+            border_color: color::BORDER_GREY,
+            border_width: 1.0,
             background: color::FOREGROUND.into(),
             ..widget::container::Appearance::default()
         }

@@ -492,15 +492,12 @@ pub fn sign_action<'a>(
             } else {
                 Column::new()
                     .push(
-                        card::simple(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fill)
-                                .push("Please connect a hardware wallet")
-                                .push(button::primary(None, "Refresh").on_press(Message::Reload))
-                                .align_items(Alignment::Center),
-                        )
-                        .width(Length::Fill),
+                        Column::new()
+                            .spacing(20)
+                            .width(Length::Fill)
+                            .push("Please connect a hardware wallet")
+                            .push(button::primary(None, "Refresh").on_press(Message::Reload))
+                            .align_items(Alignment::Center),
                     )
                     .width(Length::Fill)
             })

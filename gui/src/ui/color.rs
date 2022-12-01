@@ -6,6 +6,12 @@ pub const BACKGROUND: Color = Color::from_rgb(
     0xF8 as f32 / 255.0,
 );
 
+pub const BORDER_GREY: Color = Color::from_rgb(
+    0xd0 as f32 / 255.0,
+    0xd7 as f32 / 255.0,
+    0xde as f32 / 255.0,
+);
+
 pub const FOREGROUND: Color = Color::WHITE;
 
 pub const PRIMARY: Color = Color::BLACK;

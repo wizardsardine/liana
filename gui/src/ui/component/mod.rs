@@ -23,7 +23,7 @@ impl iced::widget::container::StyleSheet for SepStyle {
     type Style = iced::Theme;
     fn appearance(&self, _style: &Self::Style) -> iced::widget::container::Appearance {
         iced::widget::container::Appearance {
-            background: color::SECONDARY.into(),
+            background: color::BORDER_GREY.into(),
             ..iced::widget::container::Appearance::default()
         }
     }
