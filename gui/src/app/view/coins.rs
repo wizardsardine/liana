@@ -12,7 +12,7 @@ use crate::ui::{
 
 use crate::{
     app::{cache::Cache, view::message::Message},
-    daemon::model::Coin,
+    daemon::model::{remaining_sequence, Coin},
 };
 
 pub fn coins_view<'a>(
@@ -74,36 +74,43 @@ fn coin_list_view(
                                             .style(badge::PillStyle::Success),
                                     )
                                 } else {
-                                    if let Some(b) = coin.block_height {
-                                        if blockheight > b as u32 + timelock {
-                                            Some(Container::new(
-                                                Row::new()
-                                                    .spacing(5)
-                                                    .push(text(" 0").small().style(color::ALERT))
-                                                    .push(
-                                                        icon::hourglass_done_icon()
-                                                            .small()
-                                                            .style(color::ALERT),
-                                                    )
-                                                    .align_items(Alignment::Center),
-                                            ))
-                                        } else {
-                                            Some(Container::new(
-                                                Row::new()
-                                                    .spacing(5)
-                                                    .push(
-                                                        text(format!(
-                                                            " {}",
-                                                            b as u32 + timelock - blockheight
-                                                        ))
-                                                        .small(),
-                                                    )
-                                                    .push(icon::hourglass_icon().small())
-                                                    .align_items(Alignment::Center),
-                                            ))
-                                        }
+                                    let seq = remaining_sequence(coin, blockheight, timelock);
+                                    if seq == 0 {
+                                        Some(Container::new(
+                                            Row::new()
+                                                .spacing(5)
+                                                .push(text(" 0").small().style(color::ALERT))
+                                                .push(
+                                                    icon::hourglass_done_icon()
+                                                        .small()
+                                                        .style(color::ALERT),
+                                                )
+                                                .align_items(Alignment::Center),
+                                        ))
+                                    } else if seq < timelock * 10 / 100 {
+                                        Some(Container::new(
+                                            Row::new()
+                                                .spacing(5)
+                                                .push(
+                                                    text(format!(" {}", seq))
+                                                        .small()
+                                                        .style(color::WARNING),
+                                                )
+                                                .push(
+                                                    icon::hourglass_icon()
+                                                        .small()
+                                                        .style(color::WARNING),
+                                                )
+                                                .align_items(Alignment::Center),
+                                        ))
                                     } else {
-                                        None
+                                        Some(Container::new(
+                                            Row::new()
+                                                .spacing(5)
+                                                .push(text(format!(" {}", seq)).small())
+                                                .push(icon::hourglass_icon().small())
+                                                .align_items(Alignment::Center),
+                                        ))
                                     }
                                 })
                                 .spacing(10)
@@ -148,10 +155,7 @@ fn coin_list_view(
                                             ))
                                         } else {
                                             Some(Container::new(
-                                                text(format!(
-                                    "The recovery path will be available in {} blocks",
-                                    b as u32 + timelock - blockheight
-                                ))
+                                                text(format!("The recovery path will be available in {} blocks", b as u32 + timelock - blockheight))
                                                 .bold()
                                                 .small(),
                                             ))

@@ -7,6 +7,7 @@ use iced::{
 };
 
 use crate::ui::{
+    color,
     component::{badge, button::Style, card, text::*},
     icon,
     util::Collection,
@@ -22,12 +23,36 @@ pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
 pub fn home_view<'a>(
     balance: &'a bitcoin::Amount,
+    recovery_warning: Option<&(bitcoin::Amount, usize)>,
+    recovery_alert: Option<&(bitcoin::Amount, usize)>,
     pending_events: &[HistoryTransaction],
     events: &Vec<HistoryTransaction>,
 ) -> Element<'a, Message> {
     Column::new()
         .push(Column::new().padding(40))
         .push(text(format!("{} BTC", balance.to_btc())).bold().size(50))
+        .push_maybe(recovery_warning.map(|(a, c)| {
+            Row::new()
+                .spacing(15)
+                .align_items(Alignment::Center)
+                .push(icon::hourglass_icon().size(30).style(color::WARNING))
+                .push(Container::new(text(format!(
+                    "Recovery path will be soon available for {} coins ( {} )",
+                    c, a
+                ))))
+                .padding(10)
+        }))
+        .push_maybe(recovery_alert.map(|(a, c)| {
+            Row::new()
+                .spacing(15)
+                .align_items(Alignment::Center)
+                .push(icon::hourglass_done_icon().style(color::ALERT))
+                .push(Container::new(text(format!(
+                    "Recovery path is available for {} coins ( {} )",
+                    c, a
+                ))))
+                .padding(10)
+        }))
         .push(
             Column::new()
                 .spacing(10)
