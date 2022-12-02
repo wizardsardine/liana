@@ -17,6 +17,15 @@ use std::{collections::BTreeMap, convert::TryFrom, error, fmt, str, sync};
 
 use serde::{Deserialize, Serialize};
 
+const WITNESS_FACTOR: usize = 4;
+
+// Convert a size in weight units to a size in virtual bytes, rounding up.
+fn wu_to_vb(vb: usize) -> usize {
+    (vb + WITNESS_FACTOR - 1)
+        .checked_div(WITNESS_FACTOR)
+        .expect("Non 0")
+}
+
 #[derive(Debug)]
 pub enum DescCreationError {
     InsaneTimelock(u32),
@@ -504,6 +513,20 @@ impl InheritanceDescriptor {
                 ),
         )
     }
+
+    /// Get the maximum size in WU of a satisfaction for this descriptor.
+    pub fn max_sat_weight(&self) -> usize {
+        self.0
+            .max_satisfaction_weight()
+            .expect("Cannot fail for P2WSH")
+    }
+
+    /// Get the maximum size in virtual bytes of the whole input in a transaction spending
+    /// a coin with this Script.
+    pub fn spender_input_size(&self) -> usize {
+        // txid + vout + nSequence + empty scriptSig + witness
+        32 + 4 + 4 + 1 + wu_to_vb(self.max_sat_weight())
+    }
 }
 
 /// Map of a raw public key to the xpub used to derive it and its derivation path
@@ -618,6 +641,48 @@ mod tests {
 
         let desc = MultipathDescriptor::from_str("wsh(andor(pk(tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(65535),pk(tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
         assert_eq!(desc.timelock_value(), 0xffff);
+    }
+
+    #[test]
+    fn inheritance_descriptor_sat_size() {
+        let secp = secp256k1::Secp256k1::verification_only();
+        let desc = MultipathDescriptor::from_str("wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/<0;1>/*),and_v(v:pkh(tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/<0;1>/*),older(2))))#uact7s3g").unwrap();
+        let receive_desc = desc.receive_descriptor();
+        let change_desc = desc.change_descriptor();
+
+        // Receive and change are the same descriptor.
+        assert_eq!(receive_desc.max_sat_weight(), change_desc.max_sat_weight());
+        assert_eq!(
+            receive_desc.spender_input_size(),
+            change_desc.spender_input_size()
+        );
+
+        // Derived or not the expected maximum satisfaction size should be the same for
+        // the same descriptor.
+        assert_eq!(
+            receive_desc.derive(999.into(), &secp).max_sat_weight(),
+            change_desc.derive(999.into(), &secp).max_sat_weight()
+        );
+
+        // Maximum input size is (txid + vout + scriptsig + nSequence + max_sat).
+        // Where max_sat is:
+        // - Push the witness stack size
+        // - Push the script
+        // - Push an empty vector for using the recovery path
+        // - Push the recovery key
+        // - Push a signature for the recovery key
+        // NOTE: The specific value is asserted because this was tested against a regtest
+        // transaction.
+        let stack = vec![vec![0; 68], vec![0; 0], vec![0; 33], vec![0; 72]];
+        let witness_size = bitcoin::VarInt(stack.len() as u64).len()
+            + stack
+                .iter()
+                .map(|item| bitcoin::VarInt(stack.len() as u64).len() + item.len())
+                .sum::<usize>();
+        assert_eq!(
+            receive_desc.spender_input_size(),
+            32 + 4 + 1 + 4 + wu_to_vb(witness_size),
+        );
     }
 
     // TODO: test error conditions of deserialization.
