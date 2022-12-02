@@ -19,7 +19,7 @@ liana = { git = "https://github.com/revault/liana", branch = "master", default-f
 backtrace = "0.3"
 base64 = "0.13"
 
-iced = { version = "0.5", default-features= false, features = ["tokio", "wgpu", "svg", "qr_code"] }
+iced = { version = "0.5", default-features= false, features = ["tokio", "glow", "svg", "qr_code"] }
 iced_native = "0.6"
 iced_lazy = { version = "0.2"}
 
