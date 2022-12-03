@@ -102,10 +102,11 @@ for project_folder in "" "gui"; do
     fi
 
     # FIXME: find a cleaner way to get the binary name, or get rid of patchelf entirely
+    # Note: we also rely on it in manifest.scm
     if [ "$project_folder" = "" ]; then
-        BINARY_NAME="lianad"
+        export BINARY_NAME="lianad"
     elif [ "$project_folder" = "gui" ]; then
-        BINARY_NAME="liana-gui"
+        export BINARY_NAME="liana-gui"
     else
         echo "Can't determine binary name"
         exit 1
