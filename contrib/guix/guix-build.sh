@@ -101,6 +101,16 @@ for project_folder in "" "gui"; do
         sed -i '/checksum/d' "$BUILD_ROOT/Cargo.lock"
     fi
 
+    # FIXME: find a cleaner way to get the binary name, or get rid of patchelf entirely
+    if [ "$project_folder" = "" ]; then
+        BINARY_NAME="lianad"
+    elif [ "$project_folder" = "gui" ]; then
+        BINARY_NAME="liana-gui"
+    else
+        echo "Can't determine binary name"
+        exit 1
+    fi
+
     # Bootstrap a reproducible environment as specified by the manifest in an isolated
     # container, and build the project.
     time_machine shell --no-cwd \
@@ -113,7 +123,7 @@ for project_folder in "" "gui"; do
                --share="$PROJECT_OUT_DIR=$PROJECT_OUT_DIR" \
                --container \
                -m $PWD/contrib/guix/manifest.scm \
-               -- env CC=gcc VENDOR_DIR="$PROJECT_VENDOR_DIR" TARGET_DIR="$PROJECT_OUT_DIR" \
+               -- env CC=gcc VENDOR_DIR="$PROJECT_VENDOR_DIR" TARGET_DIR="$PROJECT_OUT_DIR" BINARY_NAME="$BINARY_NAME" \
                   /bin/sh -c "cd /liana && ./build.sh"
 done
 

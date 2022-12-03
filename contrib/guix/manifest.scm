@@ -5,7 +5,6 @@
         "coreutils"
         "pkg-config" ;; For the GUI
         "eudev" ;; For the GUI
-        "cmake" ;; For the GUI
-        "make" ;; For the GUI
         "fontconfig" ;; For the GUI
+        "patchelf"
         "gcc-toolchain@10.3.0"))

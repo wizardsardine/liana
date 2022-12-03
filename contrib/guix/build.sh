@@ -22,7 +22,6 @@ EOF
 
 # We need to set RUSTC_BOOTSTRAP=1 as a workaround to be able to use unstable
 # features in the GUI dependencies
-# FIXME: GUIX_LD_WRAPPER_DISABLE_RPATH=yes
 RUSTC_BOOTSTRAP=1 cargo -vvv \
     --color always \
     --frozen \
@@ -30,5 +29,12 @@ RUSTC_BOOTSTRAP=1 cargo -vvv \
     rustc \
     --release \
     --target-dir "$TARGET_DIR"
+
+# Assume 64bits. Even bitcoind doesn't ship 32bits binaries for x86.
+# FIXME: is there a cleaner way than using patchelf for this?
+patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 "$TARGET_DIR/release/$BINARY_NAME"
+
+# FIXME: Find a way to use GUIX_LD_WRAPPER_DISABLE_RPATH=yes instead
+patchelf --remove-rpath "$TARGET_DIR/release/$BINARY_NAME"
 
 set +ex
