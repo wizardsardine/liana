@@ -27,6 +27,7 @@ RUSTC_BOOTSTRAP=1 cargo -vvv \
     --frozen \
     --offline \
     rustc \
+    --jobs "$JOBS" \
     --release \
     --target-dir "$TARGET_DIR"
 

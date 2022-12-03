@@ -121,9 +121,10 @@ for project_folder in "" "gui"; do
                --expose="$PWD/contrib/guix/build.sh=/liana/build.sh" \
                --expose="$PROJECT_VENDOR_DIR=$PROJECT_VENDOR_DIR" \
                --share="$PROJECT_OUT_DIR=$PROJECT_OUT_DIR" \
+               --cores="$JOBS" \
                --container \
                -m $PWD/contrib/guix/manifest.scm \
-               -- env CC=gcc VENDOR_DIR="$PROJECT_VENDOR_DIR" TARGET_DIR="$PROJECT_OUT_DIR" BINARY_NAME="$BINARY_NAME" \
+               -- env CC=gcc VENDOR_DIR="$PROJECT_VENDOR_DIR" TARGET_DIR="$PROJECT_OUT_DIR" BINARY_NAME="$BINARY_NAME" JOBS="$JOBS" \
                   /bin/sh -c "cd /liana && ./build.sh"
 done
 
