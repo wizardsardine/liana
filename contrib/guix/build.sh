@@ -1,3 +1,7 @@
+# ==========================================================================
+# The script ran within the GUIX container to build the Liana daemon or GUI.
+# ==========================================================================
+
 set -ex
 
 # Instruct cargo to use our vendored sources
