@@ -155,7 +155,9 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
             .padding(10)
             .style(container::Style::Background),
         )
-        .push(modal_section(Container::new(Scrollable::new(content))))
+        .push(modal_section(Container::new(
+            Container::new(Scrollable::new(content)).max_width(750),
+        )))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
