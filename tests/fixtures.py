@@ -1,7 +1,6 @@
 from bip32 import BIP32
 from bip380.descriptors import Descriptor
 from concurrent import futures
-from ephemeral_port_reserve import reserve
 from test_framework.bitcoind import Bitcoind
 from test_framework.lianad import Lianad
 from test_framework.utils import (
