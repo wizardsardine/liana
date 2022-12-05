@@ -8,7 +8,7 @@ set -ex
 mkdir -p ~/.cargo
 cat <<EOF >~/.cargo/config.toml
 [source.vendored_sources]
-directory = "$VENDOR_DIR"
+directory = "/vendor"
 
 [source.crates-io]
 replace-with = "vendored_sources"
@@ -33,13 +33,13 @@ RUSTC_BOOTSTRAP=1 cargo -vvv \
     rustc \
     --jobs "$JOBS" \
     --release \
-    --target-dir "$TARGET_DIR"
+    --target-dir "/out"
 
 # Assume 64bits. Even bitcoind doesn't ship 32bits binaries for x86.
 # FIXME: is there a cleaner way than using patchelf for this?
-patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 "$TARGET_DIR/release/$BINARY_NAME"
+patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 "/out/release/$BINARY_NAME"
 
 # FIXME: Find a way to use GUIX_LD_WRAPPER_DISABLE_RPATH=yes instead
-patchelf --remove-rpath "$TARGET_DIR/release/$BINARY_NAME"
+patchelf --remove-rpath "/out/release/$BINARY_NAME"
 
 set +ex

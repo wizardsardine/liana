@@ -123,8 +123,8 @@ for project_folder in "" "gui"; do
                --expose="$PROJECT_ROOT/Cargo.toml=/liana/Cargo.toml" \
                --expose="$BUILD_ROOT/Cargo.lock=/liana/Cargo.lock" \
                --expose="$PWD/contrib/guix/build.sh=/liana/build.sh" \
-               --expose="$PROJECT_VENDOR_DIR=$PROJECT_VENDOR_DIR" \
-               --share="$PROJECT_OUT_DIR=$PROJECT_OUT_DIR" \
+               --expose="$PROJECT_VENDOR_DIR=/vendor" \
+               --share="$PROJECT_OUT_DIR=/out" \
                --cores="$JOBS" \
                --container \
                --pure \
