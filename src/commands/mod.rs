@@ -571,7 +571,7 @@ impl DaemonControl {
         let transactions = txids
             .iter()
             .filter_map(|txid| {
-                // TODO: batch batch those calls to the Bitcoin backend
+                // TODO: batch those calls to the Bitcoin backend
                 // so it can in turn optimize its queries.
                 self.bitcoin
                     .wallet_transaction(txid)
@@ -590,7 +590,7 @@ impl DaemonControl {
         let transactions = txids
             .iter()
             .filter_map(|txid| {
-                // TODO: batch batch those calls to the Bitcoin backend
+                // TODO: batch those calls to the Bitcoin backend
                 // so it can in turn optimize its queries.
                 self.bitcoin
                     .wallet_transaction(txid)
