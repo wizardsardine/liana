@@ -338,12 +338,12 @@ impl MultipathDescriptor {
         }
 
         let owner_pk = Miniscript::from_ast(Terminal::Check(sync::Arc::from(
-            Miniscript::from_ast(Terminal::PkK(owner_key)).expect("TODO"),
+            Miniscript::from_ast(Terminal::PkK(owner_key)).expect("pk_k is a valid Miniscript"),
         )))
         .expect("Well typed");
 
         let heir_pkh = Miniscript::from_ast(Terminal::Check(sync::Arc::from(
-            Miniscript::from_ast(Terminal::PkH(heir_key)).expect("TODO"),
+            Miniscript::from_ast(Terminal::PkH(heir_key)).expect("pk_h is a valid Miniscript"),
         )))
         .expect("Well typed");
 
