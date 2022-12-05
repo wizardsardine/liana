@@ -104,9 +104,9 @@ for project_folder in "" "gui"; do
     # FIXME: find a cleaner way to get the binary name, or get rid of patchelf entirely
     # Note: we also rely on it in manifest.scm
     if [ "$project_folder" = "" ]; then
-        export BINARY_NAME="lianad"
+        BINARY_NAME="lianad"
     elif [ "$project_folder" = "gui" ]; then
-        export BINARY_NAME="liana-gui"
+        BINARY_NAME="liana-gui"
     else
         echo "Can't determine binary name"
         exit 1
@@ -114,7 +114,10 @@ for project_folder in "" "gui"; do
 
     # Bootstrap a reproducible environment as specified by the manifest in an isolated
     # container, and build the project.
-    time_machine shell --no-cwd \
+    # NOTE: it looks like "--rebuild-cache" is necessary for the BINARY_NAME variable to
+    # be taken into account when building the container (otherwise the GUI container could
+    # miss some dependencies).
+    BINARY_NAME="$BINARY_NAME" time_machine shell --no-cwd \
                --expose="$PROJECT_ROOT/src=/liana/src" \
                --expose="$PWD/gui/static=/liana/static" \
                --expose="$PROJECT_ROOT/Cargo.toml=/liana/Cargo.toml" \
@@ -124,6 +127,9 @@ for project_folder in "" "gui"; do
                --share="$PROJECT_OUT_DIR=$PROJECT_OUT_DIR" \
                --cores="$JOBS" \
                --container \
+               --pure \
+               --fallback \
+               --rebuild-cache \
                -m $PWD/contrib/guix/manifest.scm \
                -- env CC=gcc VENDOR_DIR="$PROJECT_VENDOR_DIR" TARGET_DIR="$PROJECT_OUT_DIR" BINARY_NAME="$BINARY_NAME" JOBS="$JOBS" \
                   /bin/sh -c "cd /liana && ./build.sh"

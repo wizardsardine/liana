@@ -8,7 +8,7 @@
           ;; Additional dependencies for building the GUI
           (let ((binary_name (getenv "BINARY_NAME")))
             (if
-              (string=? "liana-gui" binary_name)
+              (string=? binary_name "liana-gui")
               (list "pkg-config"
                     "eudev"
                     "fontconfig")
