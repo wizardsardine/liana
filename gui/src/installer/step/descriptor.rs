@@ -23,6 +23,9 @@ use crate::{
     ui::component::form,
 };
 
+const LIANA_STANDARD_PATH: &str = "m/48'/0'/0'/2'";
+const LIANA_TESTNET_STANDARD_PATH: &str = "m/48'/1'/0'/2'";
+
 pub struct DefineDescriptor {
     network: Network,
     network_valid: bool,
@@ -83,13 +86,13 @@ impl Step for DefineDescriptor {
                         }
                     }
                     message::DefineDescriptor::ImportUserHWXpub => {
-                        let modal = GetHardwareWalletXpubModal::new(false);
+                        let modal = GetHardwareWalletXpubModal::new(false, self.network);
                         let cmd = modal.load();
                         self.modal = Some(modal);
                         return cmd;
                     }
                     message::DefineDescriptor::ImportHeirHWXpub => {
-                        let modal = GetHardwareWalletXpubModal::new(true);
+                        let modal = GetHardwareWalletXpubModal::new(true, self.network);
                         let cmd = modal.load();
                         self.modal = Some(modal);
                         return cmd;
@@ -213,16 +216,18 @@ pub struct GetHardwareWalletXpubModal {
     processing: bool,
     hws: Vec<HardwareWallet>,
     error: Option<Error>,
+    network: Network,
 }
 
 impl GetHardwareWalletXpubModal {
-    fn new(is_heir: bool) -> Self {
+    fn new(is_heir: bool, network: Network) -> Self {
         Self {
             is_heir,
             chosen_hw: None,
             processing: false,
             hws: Vec::new(),
             error: None,
+            network,
         }
     }
     fn load(&self) -> Command<Message> {
@@ -238,11 +243,14 @@ impl GetHardwareWalletXpubModal {
                     let device = hw.device.clone();
                     self.chosen_hw = Some(i);
                     self.processing = true;
-                    return Command::perform(get_extended_pubkey(device, hw.fingerprint), |res| {
-                        Message::DefineDescriptor(message::DefineDescriptor::XpubImported(
-                            res.map(|key| key.to_string()),
-                        ))
-                    });
+                    return Command::perform(
+                        get_extended_pubkey(device, hw.fingerprint, self.network),
+                        |res| {
+                            Message::DefineDescriptor(message::DefineDescriptor::XpubImported(
+                                res.map(|key| key.to_string()),
+                            ))
+                        },
+                    );
                 }
             }
             Message::ConnectedHardwareWallets(hws) => {
@@ -292,10 +300,16 @@ impl GetHardwareWalletXpubModal {
 async fn get_extended_pubkey(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     fingerprint: Fingerprint,
+    network: Network,
 ) -> Result<DescriptorPublicKey, Error> {
-    let derivation_path = DerivationPath::master();
+    let derivation_path = DerivationPath::from_str(if network == Network::Bitcoin {
+        LIANA_STANDARD_PATH
+    } else {
+        LIANA_TESTNET_STANDARD_PATH
+    })
+    .unwrap();
     let xkey = hw
-        .get_extended_pubkey(&derivation_path, true)
+        .get_extended_pubkey(&derivation_path, false)
         .await
         .map_err(Error::from)?;
     Ok(DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
