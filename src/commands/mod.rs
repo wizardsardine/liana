@@ -57,6 +57,7 @@ pub enum CommandError {
         /* out value */ bitcoin::Amount,
         /* target feerate */ u64,
     ),
+    FetchingTransaction(bitcoin::OutPoint),
     SanityCheckFailure(Psbt),
     UnknownSpend(bitcoin::Txid),
     // FIXME: when upgrading Miniscript put the actual error there
@@ -82,6 +83,9 @@ impl fmt::Display for CommandError {
                 "Cannot create a {} sat/vb transaction with input value {} and output value {}",
                 feerate, in_val, out_val
             ),
+            Self::FetchingTransaction(op) => {
+                write!(f, "Could not fetch transaction for coin {}", op)
+            }
             Self::SanityCheckFailure(psbt) => write!(
                 f,
                 "BUG! Please report this. Failed sanity checks for PSBT '{:?}'.",
@@ -283,7 +287,7 @@ impl DaemonControl {
         }
         let mut db_conn = self.db.connection();
 
-        // Iterate through given outpoints to fetch the coins (hence checking there existence
+        // Iterate through given outpoints to fetch the coins (hence checking their existence
         // at the same time). We checked there is at least one, therefore after this loop the
         // list of coins is not empty.
         // While doing so, we record the total input value of the transaction to later compute
@@ -292,12 +296,23 @@ impl DaemonControl {
         let mut sat_vb = 0;
         let mut txins = Vec::with_capacity(destinations.len());
         let mut psbt_ins = Vec::with_capacity(destinations.len());
+        let mut spent_txs = HashMap::with_capacity(coins_outpoints.len());
         let coins = db_conn.coins_by_outpoints(coins_outpoints);
         for op in coins_outpoints {
+            // Get the coin from our in-DB unspent txos
             let coin = coins.get(op).ok_or(CommandError::UnknownOutpoint(*op))?;
             if coin.is_spent() {
                 return Err(CommandError::AlreadySpent(*op));
             }
+            // Fetch the transaction that created it if necessary
+            if !spent_txs.contains_key(op) {
+                let tx = self
+                    .bitcoin
+                    .wallet_transaction(&op.txid)
+                    .ok_or(CommandError::FetchingTransaction(*op))?;
+                spent_txs.insert(*op, tx.0);
+            }
+
             in_value += coin.amount;
             txins.push(bitcoin::TxIn {
                 previous_output: *op,
@@ -306,6 +321,7 @@ impl DaemonControl {
                 ..bitcoin::TxIn::default()
             });
 
+            // Populate the PSBT input with the information needed by signers.
             let coin_desc = self.derived_desc(coin);
             sat_vb += desc_sat_vb(&coin_desc);
             let witness_script = Some(coin_desc.witness_script());
@@ -313,11 +329,13 @@ impl DaemonControl {
                 value: coin.amount.to_sat(),
                 script_pubkey: coin_desc.script_pubkey(),
             });
+            let non_witness_utxo = spent_txs.get(op).cloned();
             let bip32_derivation = coin_desc.bip32_derivations();
             psbt_ins.push(PsbtIn {
                 witness_script,
                 witness_utxo,
                 bip32_derivation,
+                non_witness_utxo,
                 ..PsbtIn::default()
             });
         }
@@ -728,14 +746,27 @@ mod tests {
 
     #[test]
     fn create_spend() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
-        let control = &ms.handle.control;
-
-        // Arguments sanity checking
         let dummy_op = bitcoin::OutPoint::from_str(
             "3753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:0",
         )
         .unwrap();
+        let mut dummy_bitcoind = DummyBitcoind::new();
+        dummy_bitcoind.txs.insert(
+            dummy_op.txid,
+            (
+                bitcoin::Transaction {
+                    version: 2,
+                    lock_time: bitcoin::PackedLockTime(0),
+                    input: vec![],
+                    output: vec![],
+                },
+                None,
+            ),
+        );
+        let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
+        let control = &ms.handle.control;
+
+        // Arguments sanity checking
         let dummy_addr =
             bitcoin::Address::from_str("bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv").unwrap();
         let dummy_value = 10_000;
@@ -774,6 +805,7 @@ mod tests {
             spend_block: None,
         }]);
         let res = control.create_spend(&destinations, &[dummy_op], 1).unwrap();
+        assert!(res.psbt.inputs[0].non_witness_utxo.is_some());
         let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
@@ -844,11 +876,6 @@ mod tests {
 
     #[test]
     fn update_spend() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
-        let control = &ms.handle.control;
-        let mut db_conn = control.db().lock().unwrap().connection();
-
-        // Add two (unconfirmed) coins in DB
         let dummy_op_a = bitcoin::OutPoint::from_str(
             "3753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:0",
         )
@@ -857,6 +884,22 @@ mod tests {
             "4753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:1",
         )
         .unwrap();
+        let mut dummy_bitcoind = DummyBitcoind::new();
+        let dummy_tx = bitcoin::Transaction {
+            version: 2,
+            lock_time: bitcoin::PackedLockTime(0),
+            input: vec![],
+            output: vec![],
+        };
+        dummy_bitcoind
+            .txs
+            .insert(dummy_op_a.txid, (dummy_tx.clone(), None));
+        dummy_bitcoind.txs.insert(dummy_op_b.txid, (dummy_tx, None));
+        let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
+        let control = &ms.handle.control;
+        let mut db_conn = control.db().lock().unwrap().connection();
+
+        // Add two (unconfirmed) coins in DB
         db_conn.new_unspent_coins(&[
             Coin {
                 outpoint: dummy_op_a,
