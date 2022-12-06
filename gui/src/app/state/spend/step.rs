@@ -5,7 +5,9 @@ use std::sync::Arc;
 use iced::{Command, Element};
 use liana::{
     config::Config as DaemonConfig,
-    miniscript::bitcoin::{util::psbt::Psbt, Address, Amount, Denomination, OutPoint, Script},
+    miniscript::bitcoin::{
+        self, util::psbt::Psbt, Address, Amount, Denomination, OutPoint, Script,
+    },
 };
 
 use crate::{
@@ -223,44 +225,58 @@ impl ChooseCoins {
     }
 
     fn amount_left_to_select(&mut self, cfg: &DaemonConfig) {
-        let mut tx_size = 0_u64;
-        let mut outgoing_amount = 0_u64;
-        for (address, amount) in &self.recipients {
-            outgoing_amount += amount.to_sat();
-            tx_size += 8 + address.script_pubkey().len() as u64;
-        }
-
-        // change output
-        tx_size += 8 + 34;
-        // overhead
-        tx_size += 11;
-
-        let input_size = cfg
-            .main_descriptor
-            .receive_descriptor()
-            .spender_input_size();
-
-        let mut selected_amount = 0_u64;
-        for (coin, selected) in &self.coins {
-            if *selected {
-                selected_amount += coin.amount.to_sat();
-                tx_size += input_size as u64;
+        // We need the feerate in order to compute the required amount of BTC to
+        // select. Return early if we don't to not do unnecessary computation.
+        let feerate = match self.feerate.value.parse::<u64>() {
+            Ok(f) => f,
+            Err(_) => {
+                self.amount_left_to_select = None;
+                return;
             }
-        }
+        };
 
-        // If feerate is set we can calcul the required amount.
-        if let Ok(feerate) = self.feerate.value.parse::<u64>() {
-            let required_amount = tx_size * feerate + outgoing_amount;
+        // The coins to be included in this transaction.
+        let selected_coins: Vec<_> = self
+            .coins
+            .iter()
+            .filter_map(|(c, selected)| if *selected { Some(c) } else { None })
+            .collect();
 
-            if selected_amount > required_amount {
-                self.amount_left_to_select = Some(Amount::from_sat(0));
-            } else {
-                self.amount_left_to_select =
-                    Some(Amount::from_sat(required_amount - selected_amount));
-            }
-        } else {
-            self.amount_left_to_select = None;
-        }
+        // A dummy representation of the transaction that will be computed, for
+        // the purpose of computing its size in order to anticipate the fees needed.
+        // NOTE: we make the conservative estimation a change output will always be
+        // needed.
+        let tx_template = bitcoin::Transaction {
+            version: 2,
+            lock_time: bitcoin::PackedLockTime(0),
+            input: selected_coins
+                .iter()
+                .map(|_| bitcoin::TxIn::default())
+                .collect(),
+            output: self
+                .recipients
+                .iter()
+                .map(|(addr, amount)| bitcoin::TxOut {
+                    script_pubkey: addr.script_pubkey(),
+                    value: amount.to_sat(),
+                })
+                .collect(),
+        };
+        // nValue size + scriptPubKey CompactSize + OP_0 + PUSH32 + <wit program>
+        const CHANGE_TXO_SIZE: usize = 8 + 1 + 1 + 1 + 32;
+        let satisfaction_vsize = cfg.main_descriptor.change_descriptor().max_sat_weight() / 4;
+        let transaction_size =
+            tx_template.vsize() + satisfaction_vsize * tx_template.input.len() + CHANGE_TXO_SIZE;
+
+        // Now the calculation of the amount left to be selected by the user is a simple
+        // substraction between the value needed by the transaction to be created and the
+        // value that was selected already.
+        let selected_amount = selected_coins.iter().map(|c| c.amount.to_sat()).sum();
+        let output_sum: u64 = tx_template.output.iter().map(|o| o.value).sum();
+        let needed_amount: u64 = transaction_size as u64 * feerate + output_sum;
+        self.amount_left_to_select = Some(Amount::from_sat(
+            needed_amount.saturating_sub(selected_amount),
+        ));
     }
 }
 
