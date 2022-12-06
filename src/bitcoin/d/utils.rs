@@ -86,7 +86,6 @@ mod tests {
 
     // Create a dummy BlockStats struct with the given time
     fn create_stats(time: u32) -> BlockStats {
-        // TODO
         BlockStats {
             height: 0,
             confirmations: 0,

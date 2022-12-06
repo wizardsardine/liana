@@ -48,7 +48,6 @@ fn default_daemon() -> bool {
     false
 }
 
-// TODO: separate Bitcoin config and bitcoind-specific config.
 /// Everything we need to know for talking to bitcoind serenely
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BitcoindConfig {
