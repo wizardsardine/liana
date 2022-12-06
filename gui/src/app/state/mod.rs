@@ -13,7 +13,7 @@ use liana::miniscript::bitcoin::{Address, Amount};
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view};
 
 use crate::daemon::{
-    model::{Coin, HistoryTransaction},
+    model::{remaining_sequence, Coin, HistoryTransaction},
     Daemon,
 };
 pub use coins::CoinsPanel;
@@ -38,6 +38,8 @@ pub trait State {
 
 pub struct Home {
     balance: Amount,
+    recovery_warning: Option<(Amount, usize)>,
+    recovery_alert: Option<(Amount, usize)>,
     pending_events: Vec<HistoryTransaction>,
     events: Vec<HistoryTransaction>,
     selected_event: Option<usize>,
@@ -60,6 +62,8 @@ impl Home {
                     })
                     .sum(),
             ),
+            recovery_alert: None,
+            recovery_warning: None,
             selected_event: None,
             events: Vec::new(),
             pending_events: Vec::new(),
@@ -82,14 +86,20 @@ impl State for Home {
             &Menu::Home,
             cache,
             None,
-            view::home::home_view(&self.balance, &self.pending_events, &self.events),
+            view::home::home_view(
+                &self.balance,
+                self.recovery_warning.as_ref(),
+                self.recovery_alert.as_ref(),
+                &self.pending_events,
+                &self.events,
+            ),
         )
     }
 
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
+        cache: &Cache,
         message: Message,
     ) -> Command<Message> {
         match message {
@@ -97,19 +107,29 @@ impl State for Home {
                 Err(e) => self.warning = Some(e),
                 Ok(coins) => {
                     self.warning = None;
-                    self.balance = Amount::from_sat(
-                        coins
-                            .iter()
-                            .map(|coin| {
-                                // If the coin is not spent and is its transaction is confirmed
-                                if coin.spend_info.is_none() && coin.block_height.is_some() {
-                                    coin.amount.to_sat()
-                                } else {
-                                    0
-                                }
-                            })
-                            .sum(),
-                    );
+                    self.balance = Amount::from_sat(0);
+                    let mut recovery_warning = (Amount::from_sat(0), 0);
+                    let mut recovery_alert = (Amount::from_sat(0), 0);
+                    for coin in coins {
+                        if coin.spend_info.is_none() && coin.block_height.is_some() {
+                            self.balance += coin.amount;
+                            let timelock = daemon.config().main_descriptor.timelock_value();
+                            let seq = remaining_sequence(&coin, cache.blockheight as u32, timelock);
+                            if seq == 0 {
+                                recovery_alert.0 += coin.amount;
+                                recovery_alert.1 += 1;
+                            } else if seq < timelock * 10 / 100 {
+                                recovery_warning.0 += coin.amount;
+                                recovery_warning.1 += 1;
+                            }
+                        }
+                    }
+                    if recovery_warning.1 > 0 {
+                        self.recovery_warning = Some(recovery_warning);
+                    }
+                    if recovery_alert.1 > 0 {
+                        self.recovery_alert = Some(recovery_alert);
+                    }
                 }
             },
             Message::HistoryTransactions(res) => match res {
