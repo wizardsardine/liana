@@ -24,6 +24,8 @@ Taproot as soon as possible, for enhanced privacy.
 
 ## Usage
 
+TL;DR: if you just want to quickly try Liana, check out [the guide](doc/TRY.md)!
+
 As a Bitcoin wallet, Liana needs to be able to connect to the Bitcoin network. The software has been
 developed such as multiple ways to connect to the Bitcoin network may be available. However for now
 only the connection through `bitcoind` is implemented.
@@ -37,9 +39,11 @@ your machine yet, you can download it [there](https://bitcoincore.org/en/downloa
 
 ### Installing the software
 
-TODO: download links
+The recommended installation method for regular users is to download a release. If you prefer to
+build the project from source, see [`doc/BUILD.md`](doc/BUILD.md).
 
-TODO: link to a longer-form document in the doc/ folder containing the different build methods.
+TODO: instructions for downloading a release and verifying the signatures.
+
 
 ### Setting up a wallet
 
