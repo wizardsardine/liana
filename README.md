@@ -37,9 +37,11 @@ your machine yet, you can download it [there](https://bitcoincore.org/en/downloa
 
 ### Installing the software
 
-TODO: download links
+The recommended installation method for regular users is to download a release. If you prefer to
+build the project from source, see [`doc/BUILD.md`](doc/BUILD.md).
 
-If you want to build the project from source, see [`doc/BUILD.md`](doc/BUILD.md).
+TODO: instructions for downloading a release and verifying the signatures.
+
 
 ### Setting up a wallet
 
