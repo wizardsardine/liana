@@ -8,6 +8,18 @@ pub use liana::{
 
 pub type Coin = ListCoinsEntry;
 
+pub fn remaining_sequence(coin: &Coin, blockheight: u32, timelock: u32) -> u32 {
+    if let Some(coin_blockheight) = coin.block_height {
+        if blockheight > coin_blockheight as u32 + timelock {
+            0
+        } else {
+            coin_blockheight as u32 + timelock - blockheight
+        }
+    } else {
+        timelock
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SpendTx {
     pub coins: Vec<Coin>,

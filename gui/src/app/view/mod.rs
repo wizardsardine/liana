@@ -273,10 +273,11 @@ fn main_section<'a, T: 'a>(menu: widget::Container<'a, T>) -> widget::Container<
         .height(Length::Fill)
 }
 
-pub fn modal<'a, T: Into<Element<'a, Message>>>(
+pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
     is_previous: bool,
     warning: Option<&Error>,
     content: T,
+    fixed_footer: Option<F>,
 ) -> Element<'a, Message> {
     Column::new()
         .push(warn(warning))
@@ -299,6 +300,7 @@ pub fn modal<'a, T: Into<Element<'a, Message>>>(
             .style(container::Style::Background),
         )
         .push(modal_section(Container::new(scrollable(content))))
+        .push_maybe(fixed_footer)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -306,7 +308,6 @@ pub fn modal<'a, T: Into<Element<'a, Message>>>(
 
 fn modal_section<'a, T: 'a>(menu: widget::Container<'a, T>) -> widget::Container<'a, T> {
     Container::new(menu.max_width(1500))
-        .padding(20)
         .style(container::Style::Background)
         .center_x()
         .width(Length::Fill)

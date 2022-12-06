@@ -75,6 +75,7 @@ impl State for Home {
                 false,
                 self.warning.as_ref(),
                 view::home::event_view(cache, &self.events[i]),
+                None::<Element<view::Message>>,
             );
         }
         view::dashboard(

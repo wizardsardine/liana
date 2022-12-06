@@ -3,8 +3,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use iced::{Command, Element};
-use liana::miniscript::bitcoin::{
-    util::psbt::Psbt, Address, Amount, Denomination, OutPoint, Script,
+use liana::{
+    config::Config as DaemonConfig,
+    miniscript::bitcoin::{util::psbt::Psbt, Address, Amount, Denomination, OutPoint, Script},
 };
 
 use crate::{
@@ -12,7 +13,7 @@ use crate::{
         cache::Cache, config::Config, error::Error, message::Message, state::spend::detail, view,
     },
     daemon::{
-        model::{Coin, SpendTx},
+        model::{remaining_sequence, Coin, SpendTx},
         Daemon,
     },
     ui::component::form,
@@ -22,7 +23,6 @@ use crate::{
 pub struct TransactionDraft {
     inputs: Vec<Coin>,
     outputs: HashMap<Address, u64>,
-    feerate: u64,
     generated: Option<Psbt>,
 }
 
@@ -94,6 +94,12 @@ impl Step for ChooseRecipients {
                 .enumerate()
                 .map(|(i, recipient)| recipient.view(i).map(view::Message::CreateSpend))
                 .collect(),
+            Amount::from_sat(
+                self.recipients
+                    .iter()
+                    .map(|r| r.amount().unwrap_or(0_u64))
+                    .sum(),
+            ),
             !self.recipients.iter().any(|recipient| !recipient.valid()),
         )
     }
@@ -171,13 +177,111 @@ impl Recipient {
 }
 
 #[derive(Default)]
-pub struct ChooseFeerate {
+pub struct ChooseCoins {
+    timelock: u32,
+    coins: Vec<(Coin, bool)>,
+    recipients: Vec<(Address, Amount)>,
+
+    amount_left_to_select: Option<Amount>,
     feerate: form::Value<String>,
     generated: Option<Psbt>,
     warning: Option<Error>,
 }
 
-impl Step for ChooseFeerate {
+impl ChooseCoins {
+    pub fn new(coins: Vec<Coin>, timelock: u32, blockheight: u32) -> Self {
+        let mut coins: Vec<(Coin, bool)> = coins
+            .into_iter()
+            .filter_map(|c| {
+                if c.spend_info.is_none() {
+                    Some((c, false))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        coins.sort_by(|(a, _), (b, _)| {
+            if remaining_sequence(a, blockheight, timelock)
+                == remaining_sequence(b, blockheight, timelock)
+            {
+                // bigger amount first
+                b.amount.cmp(&a.amount)
+            } else {
+                // smallest blockheight (remaining_sequence) first
+                a.block_height.cmp(&b.block_height)
+            }
+        });
+        Self {
+            timelock,
+            coins,
+            recipients: Vec::new(),
+            feerate: form::Value::default(),
+            generated: None,
+            warning: None,
+            amount_left_to_select: None,
+        }
+    }
+
+    fn amount_left_to_select(&mut self, cfg: &DaemonConfig) {
+        let mut tx_size = 0_u64;
+        let mut outgoing_amount = 0_u64;
+        for (address, amount) in &self.recipients {
+            outgoing_amount += amount.to_sat();
+            tx_size += 8 + address.script_pubkey().len() as u64;
+        }
+
+        // change output
+        tx_size += 8 + 34;
+        // overhead
+        tx_size += 11;
+
+        let input_size = cfg
+            .main_descriptor
+            .receive_descriptor()
+            .spender_input_size();
+
+        let mut selected_amount = 0_u64;
+        for (coin, selected) in &self.coins {
+            if *selected {
+                selected_amount += coin.amount.to_sat();
+                tx_size += input_size as u64;
+            }
+        }
+
+        // If feerate is set we can calcul the required amount.
+        if let Ok(feerate) = self.feerate.value.parse::<u64>() {
+            let required_amount = tx_size * feerate + outgoing_amount;
+
+            if selected_amount > required_amount {
+                self.amount_left_to_select = Some(Amount::from_sat(0));
+            } else {
+                self.amount_left_to_select =
+                    Some(Amount::from_sat(required_amount - selected_amount));
+            }
+        } else {
+            self.amount_left_to_select = None;
+        }
+    }
+}
+
+impl Step for ChooseCoins {
+    fn load(&mut self, draft: &TransactionDraft) {
+        self.recipients = draft
+            .outputs
+            .iter()
+            .map(|(k, v)| (k.clone(), Amount::from_sat(*v)))
+            .collect();
+    }
+
+    fn apply(&self, draft: &mut TransactionDraft) {
+        draft.inputs = self
+            .coins
+            .iter()
+            .filter_map(|(coin, selected)| if *selected { Some(*coin) } else { None })
+            .collect();
+        draft.generated = self.generated.clone();
+    }
+
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -192,16 +296,25 @@ impl Step for ChooseFeerate {
                 if s.parse::<u64>().is_ok() {
                     self.feerate.value = s;
                     self.feerate.valid = true;
+                    self.amount_left_to_select(daemon.config());
                 } else if s.is_empty() {
                     self.feerate.value = "".to_string();
                     self.feerate.valid = true;
+                    self.amount_left_to_select = None;
                 } else {
                     self.feerate.valid = false;
+                    self.amount_left_to_select = None;
                 }
                 self.warning = None;
             }
             Message::View(view::Message::CreateSpend(view::CreateSpendMessage::Generate)) => {
-                let inputs: Vec<OutPoint> = draft.inputs.iter().map(|c| c.outpoint).collect();
+                let inputs: Vec<OutPoint> = self
+                    .coins
+                    .iter()
+                    .filter_map(
+                        |(coin, selected)| if *selected { Some(coin.outpoint) } else { None },
+                    )
+                    .collect();
                 let outputs = draft.outputs.clone();
                 let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
                 self.warning = None;
@@ -222,101 +335,27 @@ impl Step for ChooseFeerate {
                 }
                 Err(e) => self.warning = Some(e),
             },
+            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::SelectCoin(i))) => {
+                if let Some(coin) = self.coins.get_mut(i) {
+                    coin.1 = !coin.1;
+                    self.amount_left_to_select(daemon.config());
+                }
+            }
             _ => {}
         }
 
         Command::none()
     }
 
-    fn apply(&self, draft: &mut TransactionDraft) {
-        draft.feerate = self.feerate.value.parse::<u64>().expect("Checked before");
-        draft.generated = self.generated.clone();
-    }
-
-    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
-        view::spend::step::choose_feerate_view(
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        view::spend::step::choose_coins_view(
+            cache,
+            self.timelock,
+            &self.coins,
+            self.amount_left_to_select.as_ref(),
             &self.feerate,
-            self.feerate.valid && !self.feerate.value.is_empty(),
             self.warning.as_ref(),
         )
-    }
-}
-
-#[derive(Default)]
-pub struct ChooseCoins {
-    coins: Vec<(Coin, bool)>,
-    /// draft output amount must be superior to total input amount.
-    is_valid: bool,
-    total_needed: Option<Amount>,
-}
-
-impl ChooseCoins {
-    pub fn new(coins: Vec<Coin>) -> Self {
-        Self {
-            coins: coins
-                .into_iter()
-                .filter_map(|c| {
-                    if c.spend_info.is_none() {
-                        Some((c, false))
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            is_valid: false,
-            total_needed: None,
-        }
-    }
-}
-
-impl Step for ChooseCoins {
-    fn load(&mut self, draft: &TransactionDraft) {
-        self.total_needed = Some(Amount::from_sat(
-            draft.outputs.values().fold(0, |acc, a| acc + *a),
-        ));
-    }
-
-    fn update(
-        &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
-        _draft: &TransactionDraft,
-        message: Message,
-    ) -> Command<Message> {
-        if let Message::View(view::Message::CreateSpend(view::CreateSpendMessage::SelectCoin(i))) =
-            message
-        {
-            if let Some(coin) = self.coins.get_mut(i) {
-                coin.1 = !coin.1;
-            }
-
-            self.is_valid = self
-                .coins
-                .iter()
-                .filter_map(|(coin, selected)| {
-                    if *selected {
-                        Some(coin.amount.to_sat())
-                    } else {
-                        None
-                    }
-                })
-                .sum::<u64>()
-                > self.total_needed.map(|a| a.to_sat()).unwrap_or(0);
-        }
-
-        Command::none()
-    }
-
-    fn apply(&self, draft: &mut TransactionDraft) {
-        draft.inputs = self
-            .coins
-            .iter()
-            .filter_map(|(coin, selected)| if *selected { Some(*coin) } else { None })
-            .collect();
-    }
-
-    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
-        view::spend::step::choose_coins_view(&self.coins, self.total_needed.as_ref(), self.is_valid)
     }
 }
 

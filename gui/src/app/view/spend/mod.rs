@@ -22,7 +22,7 @@ pub fn spend_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
     Column::new()
         .push(
             Row::new().push(Column::new().width(Length::Fill)).push(
-                button::primary(Some(icon::plus_icon()), "Create a new transaction")
+                button::primary(Some(icon::plus_icon()), "New transaction")
                     .on_press(Message::Menu(Menu::CreateSpendTx)),
             ),
         )
