@@ -170,8 +170,14 @@ fn coin_list_view(
                                     Column::new()
                                         .push(
                                             Row::new()
+                                                .align_items(Alignment::Center)
                                                 .push(text("Outpoint:").small().bold())
-                                                .push(text(format!("{}", coin.outpoint)).small())
+                                                .push(Row::new().align_items(Alignment::Center)
+                                                    .push(text(format!("{}", coin.outpoint)).small())
+                                                    .push(Button::new(icon::clipboard_icon())
+                                                        .on_press(Message::Clipboard(coin.outpoint.to_string()))
+                                                        .style(button::Style::TransparentBorder.into())
+                                                    ))
                                                 .spacing(5),
                                         )
                                         .push_maybe(coin.block_height.map(|b| {
