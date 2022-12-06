@@ -24,6 +24,8 @@ Taproot as soon as possible, for enhanced privacy.
 
 ## Usage
 
+TL;DR: if you just want to quickly try Liana, check out [the guide](doc/TRY.md)!
+
 As a Bitcoin wallet, Liana needs to be able to connect to the Bitcoin network. The software has been
 developed such as multiple ways to connect to the Bitcoin network may be available. However for now
 only the connection through `bitcoind` is implemented.
