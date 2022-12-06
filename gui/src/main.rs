@@ -296,6 +296,9 @@ pub fn setup_logger(log_level: log::LevelFilter) -> Result<(), fern::InitError> 
         .level_for("wgpu_core", log::LevelFilter::Off)
         .level_for("wgpu_hal", log::LevelFilter::Off)
         .level_for("gfx_backend_vulkan", log::LevelFilter::Off)
+        .level_for("iced_glutin", log::LevelFilter::Off)
+        .level_for("iced_glow", log::LevelFilter::Off)
+        .level_for("glow_glyph", log::LevelFilter::Off)
         .level_for("naga", log::LevelFilter::Off)
         .level_for("mio", log::LevelFilter::Off);
 
