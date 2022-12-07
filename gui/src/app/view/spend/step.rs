@@ -27,6 +27,7 @@ pub fn choose_recipients_view(
     recipients: Vec<Element<Message>>,
     total_amount: Amount,
     is_valid: bool,
+    duplicate: bool,
 ) -> Element<Message> {
     modal(
         false,
@@ -49,11 +50,17 @@ pub fn choose_recipients_view(
         Some(
             Container::new(
                 Row::new()
+                    .spacing(20)
                     .align_items(Alignment::Center)
                     .push(
                         Container::new(text(format!("{}", total_amount)).bold())
                             .width(Length::Fill),
                     )
+                    .push_maybe(if duplicate {
+                        Some(text("Two recipient addresses are the same").style(color::WARNING))
+                    } else {
+                        None
+                    })
                     .push(if is_valid {
                         button::primary(None, "Next")
                             .on_press(Message::Next)
