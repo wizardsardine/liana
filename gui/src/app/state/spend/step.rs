@@ -306,6 +306,7 @@ impl ChooseCoins {
 
 impl Step for ChooseCoins {
     fn load(&mut self, draft: &TransactionDraft) {
+        self.warning = None;
         self.recipients = draft
             .outputs
             .iter()

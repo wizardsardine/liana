@@ -8,7 +8,7 @@ use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Address, Amount, Netw
 use crate::{
     app::{
         error::Error,
-        view::{message::*, modal_section, warning::warn},
+        view::{message::*, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
@@ -155,9 +155,15 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
             .padding(10)
             .style(container::Style::Background),
         )
-        .push(modal_section(Container::new(
-            Container::new(Scrollable::new(content)).max_width(750),
-        )))
+        .push(
+            Container::new(Scrollable::new(
+                Container::new(Container::new(content).max_width(750))
+                    .width(Length::Fill)
+                    .center_x(),
+            ))
+            .height(Length::Fill)
+            .style(container::Style::Background),
+        )
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
