@@ -148,6 +148,9 @@ pub fn define_descriptor<'a>(
         .push(text("Your public key:").bold())
         .push(
             Row::new()
+                .push(button::border(Some(icon::chip_icon()), "Import").on_press(
+                    Message::DefineDescriptor(message::DefineDescriptor::ImportUserHWXpub),
+                ))
                 .push(
                     form::Form::new("Xpub", user_xpub, |msg| {
                         Message::DefineDescriptor(message::DefineDescriptor::UserXpubEdited(msg))
@@ -158,11 +161,9 @@ pub fn define_descriptor<'a>(
                         "Please enter correct tpub"
                     })
                     .size(20)
-                    .padding(10),
+                    .padding(12),
                 )
-                .push(button::primary(Some(icon::chip_icon()), "Import").on_press(
-                    Message::DefineDescriptor(message::DefineDescriptor::ImportUserHWXpub),
-                ))
+                .push(Container::new(text("/<0;1>/*")))
                 .spacing(5)
                 .align_items(Alignment::Center),
         )
@@ -172,6 +173,9 @@ pub fn define_descriptor<'a>(
         .push(text("Public key of the recovery key:").bold())
         .push(
             Row::new()
+                .push(button::border(Some(icon::chip_icon()), "Import").on_press(
+                    Message::DefineDescriptor(message::DefineDescriptor::ImportHeirHWXpub),
+                ))
                 .push(
                     form::Form::new("Xpub", heir_xpub, |msg| {
                         Message::DefineDescriptor(message::DefineDescriptor::HeirXpubEdited(msg))
@@ -182,11 +186,9 @@ pub fn define_descriptor<'a>(
                         "Please enter correct tpub"
                     })
                     .size(20)
-                    .padding(10),
+                    .padding(12),
                 )
-                .push(button::primary(Some(icon::chip_icon()), "Import").on_press(
-                    Message::DefineDescriptor(message::DefineDescriptor::ImportHeirHWXpub),
-                ))
+                .push(Container::new(text("/<0;1>/*")))
                 .spacing(5)
                 .align_items(Alignment::Center),
         )
@@ -217,7 +219,7 @@ pub fn define_descriptor<'a>(
                     .push(col_user_xpub)
                     .push(col_sequence)
                     .push(col_heir_xpub)
-                    .spacing(20),
+                    .spacing(25),
             )
             .push(
                 if user_xpub.value.is_empty()
@@ -326,7 +328,7 @@ pub fn register_descriptor<'a>(
                     .spacing(10)
                     .max_width(1000),
             ))
-            .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
+            .push_maybe(error.map(|e| card::error("Failed to register descriptor", e.to_string())))
             .push(
                 Column::new()
                     .push(
