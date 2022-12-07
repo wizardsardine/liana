@@ -43,12 +43,33 @@ pub trait Step {
 
 pub struct ChooseRecipients {
     recipients: Vec<Recipient>,
+    is_valid: bool,
+    is_duplicate: bool,
 }
 
 impl std::default::Default for ChooseRecipients {
     fn default() -> Self {
         Self {
             recipients: vec![Recipient::default()],
+            is_valid: false,
+            is_duplicate: false,
+        }
+    }
+}
+
+impl ChooseRecipients {
+    fn check_valid(&mut self) {
+        self.is_valid = !self.recipients.is_empty();
+        self.is_duplicate = false;
+        for (i, recipient) in self.recipients.iter().enumerate() {
+            if !recipient.valid() {
+                self.is_valid = false;
+            }
+            if !self.is_duplicate {
+                self.is_duplicate = self.recipients[..i]
+                    .iter()
+                    .any(|r| r.address.value == recipient.address.value);
+            }
         }
     }
 }
@@ -74,6 +95,8 @@ impl Step for ChooseRecipients {
                 }
                 _ => {}
             }
+
+            self.check_valid();
         }
         Command::none()
     }
@@ -102,7 +125,8 @@ impl Step for ChooseRecipients {
                     .map(|r| r.amount().unwrap_or(0_u64))
                     .sum(),
             ),
-            !self.recipients.iter().any(|recipient| !recipient.valid()),
+            self.is_valid,
+            self.is_duplicate,
         )
     }
 }
