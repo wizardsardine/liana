@@ -15,41 +15,41 @@ def get_coin(lianad, outpoint_or_txid):
 def test_reorg_detection(lianad, bitcoind):
     """Test we detect block chain reorganization under various conditions."""
     initial_height = bitcoind.rpc.getblockcount()
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == initial_height)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
 
     # Re-mine the last block. We should detect it as a reorg.
     bitcoind.invalidate_remine(initial_height)
     lianad.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == initial_height)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
 
     # Same if we re-mine the next-to-last block.
     bitcoind.invalidate_remine(initial_height - 1)
     lianad.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == initial_height)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
 
     # Same if we re-mine a deep block.
     bitcoind.invalidate_remine(initial_height - 50)
     lianad.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == initial_height)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
 
     # Same if the new chain is longer.
     bitcoind.simple_reorg(initial_height - 10, shift=20)
     lianad.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == initial_height + 10)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height + 10)
 
 
 def test_reorg_exclusion(lianad, bitcoind):
     """Test the unconfirmation by a reorg of a coin in various states."""
     initial_height = bitcoind.rpc.getblockcount()
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == initial_height)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
 
     # A confirmed received coin
     addr = lianad.rpc.getnewaddress()["address"]
@@ -78,7 +78,7 @@ def test_reorg_exclusion(lianad, bitcoind):
     # Reorg the chain down to the initial height, excluding all transactions.
     current_height = bitcoind.rpc.getblockcount()
     bitcoind.simple_reorg(initial_height, shift=-1)
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == current_height + 1)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == current_height + 1)
 
     # They must all be marked as unconfirmed.
     new_coin_a = get_coin(lianad, coin_a["outpoint"])
@@ -99,7 +99,7 @@ def test_reorg_exclusion(lianad, bitcoind):
     bitcoind.rpc.sendrawtransaction(c_spend_tx)
     bitcoind.generate_block(1, wait_for_mempool=5)
     new_height = bitcoind.rpc.getblockcount()
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == new_height)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == new_height)
     assert all(
         c["block_height"] == new_height for c in lianad.rpc.listcoins()["coins"]
     ), (lianad.rpc.listcoins()["coins"], new_height)
@@ -145,7 +145,7 @@ def test_reorg_status_recovery(lianad, bitcoind):
     txids = [bitcoind.rpc.sendtoaddress(addr, 0.5670) for addr in addresses]
     bitcoind.generate_block(1, wait_for_mempool=txids)
     initial_height = bitcoind.rpc.getblockcount()
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == initial_height)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
 
     # Both coins are confirmed. Spend the second one then get their infos.
     wait_for(lambda: len(list_coins()) == 2)
@@ -162,7 +162,7 @@ def test_reorg_status_recovery(lianad, bitcoind):
     # spending the second coin will be mined at the height the reorg happened).
     bitcoind.simple_reorg(initial_height, shift=0)
     new_height = bitcoind.rpc.getblockcount()
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == new_height)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == new_height)
     new_coin_a = get_coin(lianad, coin_a["outpoint"])
     assert coin_a == new_coin_a
     new_coin_b = get_coin(lianad, coin_b["outpoint"])
@@ -178,7 +178,7 @@ def test_rescan_edge_cases(lianad, bitcoind):
     list_coins = lambda: lianad.rpc.listcoins()["coins"]
     sorted_coins = lambda: sorted(list_coins(), key=lambda c: c["outpoint"])
     wait_synced = lambda: wait_for(
-        lambda: lianad.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
     )
 
     def reorg_shift(height, txs):

@@ -157,7 +157,7 @@ class Lianad(TailableProc):
         bitcoind.node_rpc.unloadwallet(wallet_path)
         self.start()
         wait_for(
-            lambda: self.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
+            lambda: self.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
         )
 
     def start(self):

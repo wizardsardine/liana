@@ -50,7 +50,7 @@ This command does not take any parameter for now.
 | -------------------- | ------- | -------------------------------------------------------------------------------------------------- |
 | `version`            | string        | Version following the [SimVer](http://www.simver.org/) format                                |
 | `network`            | string        | Answer can be `mainnet`, `testnet`, `regtest`                                                |
-| `blockheight`        | integer       | The block height we are synced at.                                                           |
+| `block_height`       | integer       | The block height we are synced at.                                                           |
 | `sync`               | float         | The synchronization progress as percentage (`0 < sync < 1`)                                  |
 | `descriptors`        | object        | Object with the name of the descriptor as key and the descriptor string as value             |
 | `rescan_progress`    | float or null | Progress of an ongoing rescan as a percentage (between 0 and 1) if there is any              |
@@ -91,7 +91,7 @@ This command does not take any parameter for now.
 | -------------- | ------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `amount`       | int           | Value of the TxO in satoshis.                                                                                      |
 | `outpoint`     | string        | Transaction id and output index of this coin.                                                                      |
-| `block_height` | int or null   | Blockheight the transaction was confirmed at, or `null`.                                                           |
+| `block_height` | int or null   | Block height the transaction was confirmed at, or `null`.                                                          |
 | `spend_info`   | object        | Information about the transaction spending this coin. See [Spending transaction info](#spending_transaction_info). |
 
 
