@@ -31,7 +31,6 @@ To download and verify binaries you will also need:
 
 To run the GUI you will need some additional libraries:
 - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/) (On Debian/Ubuntu `apt install libfontconfig1-dev`)
-- [`pkg-config`](https://www.freedesktop.org/wiki/Software/pkg-config/) (On Debian/Ubuntu `apt install pkg-config`)
 - [Libudev](https://www.freedesktop.org/software/systemd/man/libudev.html) (On Debian/Ubuntu `apt install libudev-dev`)
 
 ### Throwaway folder
