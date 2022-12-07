@@ -6,10 +6,10 @@ use liana::{
     descriptors::MultipathDescriptor,
     miniscript::{
         bitcoin::{
-            util::bip32::{DerivationPath, Fingerprint},
+            util::bip32::{DerivationPath, ExtendedPubKey, Fingerprint},
             Network,
         },
-        descriptor::{DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
+        descriptor::DescriptorPublicKey,
     },
 };
 
@@ -124,13 +124,13 @@ impl Step for DefineDescriptor {
     fn apply(&mut self, ctx: &mut Context) -> bool {
         ctx.bitcoin_config.network = self.network;
         // descriptor forms for import or creation cannot be both empty or filled.
-        let user_key = DescriptorPublicKey::from_str(&self.user_xpub.value);
+        let user_key = DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", &self.user_xpub.value));
         self.user_xpub.valid = user_key.is_ok();
         if let Ok(key) = &user_key {
             self.user_xpub.valid = check_key_network(key, self.network);
         }
 
-        let heir_key = DescriptorPublicKey::from_str(&self.heir_xpub.value);
+        let heir_key = DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", &self.heir_xpub.value));
         self.heir_xpub.valid = heir_key.is_ok();
         if let Ok(key) = &heir_key {
             self.heir_xpub.valid = check_key_network(key, self.network);
@@ -297,30 +297,47 @@ impl GetHardwareWalletXpubModal {
     }
 }
 
+pub struct XKey {
+    origin: Option<(Fingerprint, DerivationPath)>,
+    key: ExtendedPubKey,
+}
+
+impl std::fmt::Display for XKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if let Some((ref master_id, ref master_deriv)) = self.origin {
+            std::fmt::Formatter::write_str(f, "[")?;
+            for byte in master_id.into_bytes().iter() {
+                write!(f, "{:02x}", byte)?;
+            }
+            for child in master_deriv {
+                write!(f, "/{}", child)?;
+            }
+            std::fmt::Formatter::write_str(f, "]")?;
+        }
+        self.key.fmt(f)?;
+        Ok(())
+    }
+}
+
 async fn get_extended_pubkey(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     fingerprint: Fingerprint,
     network: Network,
-) -> Result<DescriptorPublicKey, Error> {
+) -> Result<XKey, Error> {
     let derivation_path = DerivationPath::from_str(if network == Network::Bitcoin {
         LIANA_STANDARD_PATH
     } else {
         LIANA_TESTNET_STANDARD_PATH
     })
     .unwrap();
-    let xkey = hw
+    let key = hw
         .get_extended_pubkey(&derivation_path, false)
         .await
         .map_err(Error::from)?;
-    Ok(DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
+    Ok(XKey {
         origin: Some((fingerprint, derivation_path)),
-        derivation_paths: vec![
-            DerivationPath::from_str("m/0").unwrap(),
-            DerivationPath::from_str("m/1").unwrap(),
-        ],
-        xkey,
-        wildcard: Wildcard::Unhardened,
-    }))
+        key,
+    })
 }
 
 pub struct ImportDescriptor {
