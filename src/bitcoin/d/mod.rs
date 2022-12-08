@@ -245,7 +245,7 @@ impl BitcoinD {
             sendonly_client,
             watchonly_client,
             watchonly_wallet_path,
-            retries: 0,
+            retries: BITCOIND_RETRY_LIMIT,
         })
     }
 
@@ -268,12 +268,6 @@ impl BitcoinD {
         self.check_client(&self.node_client)?;
         self.check_client(&self.watchonly_client)?;
         Ok(())
-    }
-
-    /// Set how many times we'll retry a failed request. If passed None will set to default.
-    pub fn with_retry_limit(mut self, retry_limit: Option<usize>) -> Self {
-        self.retries = retry_limit.unwrap_or(BITCOIND_RETRY_LIMIT);
-        self
     }
 
     /// Wrapper to retry a request sent to bitcoind upon IO failure

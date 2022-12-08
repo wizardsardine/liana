@@ -207,7 +207,7 @@ fn setup_bitcoind(
     bitcoind.sanity_check(&config.main_descriptor, config.bitcoin_config.network)?;
     log::info!("Connection to bitcoind established and checked.");
 
-    Ok(bitcoind.with_retry_limit(None))
+    Ok(bitcoind)
 }
 
 #[derive(Clone)]
