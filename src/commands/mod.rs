@@ -162,6 +162,13 @@ fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
         return Err(CommandError::SanityCheckFailure(psbt.clone()));
     }
 
+    // Check for dust outputs
+    for txo in psbt.unsigned_tx.output.iter() {
+        if txo.value < txo.script_pubkey.dust_value().to_sat() {
+            return Err(CommandError::SanityCheckFailure(psbt.clone()));
+        }
+    }
+
     Ok(())
 }
 
