@@ -30,6 +30,7 @@ fn wu_to_vb(vb: usize) -> usize {
 pub enum DescCreationError {
     InsaneTimelock(u32),
     InvalidKey(Box<descriptor::DescriptorPublicKey>),
+    DuplicateKey(Box<descriptor::DescriptorPublicKey>),
     Miniscript(miniscript::Error),
     IncompatibleDesc,
     DerivedKeyParsing,
@@ -45,6 +46,9 @@ impl std::fmt::Display for DescCreationError {
                     "Invalid key '{}'. Need a wildcard ('ranged') xpub with a multipath for (and only for) deriving change addresses. That is, an xpub of the form 'xpub.../<0;1>/*'.",
                     key
                     )
+            }
+            Self::DuplicateKey(key) => {
+                write!(f, "Duplicate key '{}'.", key)
             }
             Self::Miniscript(e) => write!(f, "Miniscript error: '{}'.", e),
             Self::IncompatibleDesc => write!(f, "Descriptor is not compatible."),
@@ -347,6 +351,19 @@ impl MultipathDescriptor {
             return Err(DescCreationError::InvalidKey((**key).clone().into()));
         }
 
+        // Check for key duplicates. They are invalid in (nonmalleable) miniscripts.
+        let owner_xpub = match owner_key {
+            descriptor::DescriptorPublicKey::MultiXPub(ref multi_xpub) => multi_xpub.xkey,
+            _ => unreachable!("Just checked it was a multixpub above"),
+        };
+        let heir_xpub = match heir_key {
+            descriptor::DescriptorPublicKey::MultiXPub(ref multi_xpub) => multi_xpub.xkey,
+            _ => unreachable!("Just checked it was a multixpub above"),
+        };
+        if owner_xpub == heir_xpub {
+            return Err(DescCreationError::DuplicateKey(owner_key.into()));
+        }
+
         let owner_pk = Miniscript::from_ast(Terminal::Check(sync::Arc::from(
             Miniscript::from_ast(Terminal::PkK(owner_key)).expect("pk_k is a valid Miniscript"),
         )))
@@ -612,6 +629,17 @@ mod tests {
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/*'").unwrap();
         MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/<0;1;2>/*'").unwrap();
+        MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
+
+        // You can't pass duplicate keys, even if they are encoded differently.
+        let owner_key = descriptor::DescriptorPublicKey::from_str("xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap();
+        let heir_key = descriptor::DescriptorPublicKey::from_str("xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap();
+        MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
+        let owner_key = descriptor::DescriptorPublicKey::from_str("[00aabb44]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap();
+        let heir_key = descriptor::DescriptorPublicKey::from_str("xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap();
+        MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
+        let owner_key = descriptor::DescriptorPublicKey::from_str("[00aabb44]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap();
+        let heir_key = descriptor::DescriptorPublicKey::from_str("[11223344/2/98]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap();
         MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
     }
 
