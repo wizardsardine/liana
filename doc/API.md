@@ -11,12 +11,15 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`getinfo`](#getinfo)                                       | Get general information about the daemon                      |
 | [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                                   |
 | [`listcoins`](#listcoins)                                   | List all wallet transaction outputs.                          |
+| [`createspend`](#createspend)                               | Create a new Spend transaction                                |
+| [`updatespend`](#updatespend)                               | Store a created Spend transaction                             |
 | [`listspendtxs`](#listspendtxs)                             | List all stored Spend transactions                            |
 | [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                             |
 | [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it                |
 | [`startrescan`](#startrescan)                               | Start rescanning the block chain from a given date            |
 | [`listconfirmed`](#listconfirmed)                           | List of confirmed transactions of incoming and outgoing funds |
 | [`listtransactions`](#listtransactions)                     | List of transactions with the given txids                     |
+| [`createrecovery`](#createrecovery)                         | Create a recovery transaction to sweep expired coins          |
 
 # Reference
 
@@ -261,3 +264,25 @@ Confirmation time is based on the timestamp of blocks.
 | Field          | Type   | Description                                            |
 | -------------- | ------ | ------------------------------------------------------ |
 | `transactions` | array  | Array of [Transaction resource](#transaction-resource) |
+
+
+### `createrecovery`
+
+Create a transaction that sweeps all coins whose timelocked recovery path is available to a provided
+address at a provided feerate.
+
+Will error if no such coins are available or the sum of their value is not enough to cover the
+requested feerate.
+
+#### Request
+
+| Field      | Type              | Description                                                       |
+| ---------- | ----------------- | ----------------------------------------------------------------- |
+| `address`  | str               | The Bitcoin address to sweep the coins to.                        |
+| `feerate`  | integer           | Target feerate for the transaction, in satoshis per virtual byte. |
+
+#### Response
+
+| Field          | Type      | Description                                          |
+| -------------- | --------- | ---------------------------------------------------- |
+| `psbt`         | string    | PSBT of the recovery transaction, encoded as base64. |

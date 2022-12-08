@@ -39,8 +39,7 @@ fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
     let feerate: u64 = params
         .get(2, "feerate")
         .ok_or_else(|| Error::invalid_params("Missing 'feerate' parameter."))?
-        .as_i64()
-        .and_then(|i| i.try_into().ok())
+        .as_u64()
         .ok_or_else(|| Error::invalid_params("Invalid 'feerate' parameter."))?;
 
     let res = control.create_spend(&destinations, &outpoints, feerate)?;
@@ -139,6 +138,23 @@ fn start_rescan(control: &DaemonControl, params: Params) -> Result<serde_json::V
     Ok(serde_json::json!({}))
 }
 
+fn create_recovery(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let address = params
+        .get(0, "address")
+        .ok_or_else(|| Error::invalid_params("Missing 'address' parameter."))?
+        .as_str()
+        .and_then(|s| bitcoin::Address::from_str(s).ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'address' parameter."))?;
+    let feerate: u64 = params
+        .get(1, "feerate")
+        .ok_or_else(|| Error::invalid_params("Missing 'feerate' parameter."))?
+        .as_u64()
+        .ok_or_else(|| Error::invalid_params("Invalid 'feerate' parameter."))?;
+
+    let res = control.create_recovery(address, feerate)?;
+    Ok(serde_json::json!(&res))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -147,6 +163,12 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
                 .params
                 .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?;
             broadcast_spend(control, params)?
+        }
+        "createrecovery" => {
+            let params = req.params.ok_or_else(|| {
+                Error::invalid_params("Missing 'address' and 'feerate' parameters.")
+            })?;
+            create_recovery(control, params)?
         }
         "createspend" => {
             let params = req.params.ok_or_else(|| {

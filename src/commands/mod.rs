@@ -15,7 +15,7 @@ use utils::{
 };
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{hash_map, BTreeMap, HashMap},
     convert::TryInto,
     fmt,
 };
@@ -67,6 +67,7 @@ pub enum CommandError {
     InsaneRescanTimestamp(u32),
     /// An error that might occur in the racy rescan triggering logic.
     RescanTrigger(String),
+    RecoveryNotAvailable,
 }
 
 impl fmt::Display for CommandError {
@@ -102,6 +103,10 @@ impl fmt::Display for CommandError {
             ),
             Self::InsaneRescanTimestamp(t) => write!(f, "Insane timestamp '{}'.", t),
             Self::RescanTrigger(s) => write!(f, "Error while starting rescan: '{}'", s),
+            Self::RecoveryNotAvailable => write!(
+                f,
+                "No coin currently available through the timelocked recovery path."
+            ),
         }
     }
 }
@@ -628,6 +633,117 @@ impl DaemonControl {
             .collect();
         ListTransactionsResult { transactions }
     }
+
+    /// Create a transaction that sweeps all coins whose timelocked recovery path is currently
+    /// available to a provided address with the provided feerate.
+    ///
+    /// Note that not all coins may be spendable through the recovery path at the same time.
+    pub fn create_recovery(
+        &self,
+        address: bitcoin::Address,
+        feerate_vb: u64,
+    ) -> Result<CreateRecoveryResult, CommandError> {
+        if feerate_vb < 1 {
+            return Err(CommandError::InvalidFeerate(feerate_vb));
+        }
+        let mut db_conn = self.db.connection();
+
+        // The transaction template. We'll fill-in the inputs afterward.
+        let mut psbt = Psbt {
+            unsigned_tx: bitcoin::Transaction {
+                version: 2,
+                lock_time: bitcoin::PackedLockTime(0), // TODO: anti-fee sniping
+                input: Vec::new(),
+                output: vec![bitcoin::TxOut {
+                    script_pubkey: address.script_pubkey(),
+                    value: 0xFF_FF_FF_FF,
+                }],
+            },
+            version: 0,
+            xpub: BTreeMap::new(),
+            proprietary: BTreeMap::new(),
+            unknown: BTreeMap::new(),
+            inputs: Vec::new(),
+            outputs: vec![PsbtOut::default()],
+        };
+
+        // Query the coins that we can spend through the recovery path from the database.
+        let current_height = self.bitcoin.chain_tip().height;
+        let desc_timelock = self.config.main_descriptor.timelock_value();
+        let timelock: i32 = desc_timelock
+            .try_into()
+            .expect("Must fit, it's effectively a u16");
+        let sweepable_coins = db_conn
+            .coins(CoinType::Unspent)
+            .into_iter()
+            .filter(|(_, c)| {
+                // We are interested in coins available at the *next* block
+                c.block_height
+                    .map(|h| current_height + 1 >= h + timelock)
+                    .unwrap_or(false)
+            });
+
+        // Fill-in the transaction inputs and PSBT inputs information. Record the value
+        // that is fed to the transaction while doing so, to compute the fees afterward.
+        let csv_value: u16 = desc_timelock
+            .try_into()
+            .expect("Must fit, it's effectively a u16");
+        let mut in_value = bitcoin::Amount::from_sat(0);
+        let mut sat_vb = 0;
+        let mut spent_txs = HashMap::new();
+        for (_, coin) in sweepable_coins {
+            in_value += coin.amount;
+            psbt.unsigned_tx.input.push(bitcoin::TxIn {
+                previous_output: coin.outpoint,
+                sequence: bitcoin::Sequence::from_height(csv_value),
+                // TODO: once we move to Taproot, anti-fee-sniping using nSequence
+                ..bitcoin::TxIn::default()
+            });
+
+            // Fetch the transaction that created this coin if necessary
+            if let hash_map::Entry::Vacant(e) = spent_txs.entry(coin.outpoint) {
+                let tx = self
+                    .bitcoin
+                    .wallet_transaction(&coin.outpoint.txid)
+                    .ok_or(CommandError::FetchingTransaction(coin.outpoint))?;
+                e.insert(tx.0);
+            }
+
+            let coin_desc = self.derived_desc(&coin);
+            sat_vb += desc_sat_vb(&coin_desc);
+            let witness_script = Some(coin_desc.witness_script());
+            let witness_utxo = Some(bitcoin::TxOut {
+                value: coin.amount.to_sat(),
+                script_pubkey: coin_desc.script_pubkey(),
+            });
+            let non_witness_utxo = spent_txs.get(&coin.outpoint).cloned();
+            let bip32_derivation = coin_desc.bip32_derivations();
+            psbt.inputs.push(PsbtIn {
+                witness_script,
+                witness_utxo,
+                non_witness_utxo,
+                bip32_derivation,
+                ..PsbtIn::default()
+            });
+        }
+
+        // The sweepable_coins iterator may have been empty.
+        if psbt.unsigned_tx.input.is_empty() {
+            return Err(CommandError::RecoveryNotAvailable);
+        }
+
+        // Compute the value of the single output based on the requested feerate.
+        let tx_vbytes = psbt.unsigned_tx.vsize() as u64 + sat_vb;
+        let absolute_fee = bitcoin::Amount::from_sat(tx_vbytes.checked_mul(feerate_vb).unwrap());
+        let output_value = in_value.checked_sub(absolute_fee).ok_or({
+            CommandError::InsufficientFunds(in_value, bitcoin::Amount::from_sat(0), feerate_vb)
+        })?;
+        psbt.unsigned_tx.output[0].value = output_value.to_sat();
+
+        sanity_check_psbt(&psbt)?;
+
+        Ok(CreateRecoveryResult { psbt })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -706,6 +822,12 @@ pub struct TransactionInfo {
     pub tx: bitcoin::Transaction,
     pub height: Option<i32>,
     pub time: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CreateRecoveryResult {
+    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_base64")]
+    pub psbt: Psbt,
 }
 
 #[cfg(test)]
