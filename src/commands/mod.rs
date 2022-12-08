@@ -39,7 +39,7 @@ const DUST_OUTPUT_SATS: u64 = 5_000;
 const MAX_FEE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
 
 // Assume that paying more than 1000sat/vb in feerate is a bug.
-const MAX_FEERATE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
+const MAX_FEERATE: u64 = 1_000;
 
 // Timestamp in the header of the genesis block. Used for sanity checks.
 const MAINNET_GENESIS_TIME: u32 = 1231006505;
