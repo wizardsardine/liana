@@ -6,7 +6,7 @@ mod utils;
 
 use crate::{
     bitcoin::BitcoinInterface,
-    database::{Coin, DatabaseInterface},
+    database::{Coin, CoinType, DatabaseInterface},
     descriptors, DaemonControl, VERSION,
 };
 
@@ -243,7 +243,7 @@ impl DaemonControl {
     pub fn list_coins(&self) -> ListCoinsResult {
         let mut db_conn = self.db.connection();
         let coins: Vec<ListCoinsEntry> = db_conn
-            .coins()
+            .coins(CoinType::All)
             // Can't use into_values as of Rust 1.48
             .into_iter()
             .map(|(_, coin)| {

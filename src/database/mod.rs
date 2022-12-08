@@ -81,7 +81,7 @@ pub trait DatabaseConnection {
     ) -> Option<(bip32::ChildNumber, bool)>;
 
     /// Get all our coins, past or present, spent or not.
-    fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
+    fn coins(&mut self, coin_type: CoinType) -> HashMap<bitcoin::OutPoint, Coin>;
 
     /// List coins that are being spent and whose spending transaction is still unconfirmed.
     fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
@@ -178,8 +178,8 @@ impl DatabaseConnection for SqliteConn {
         self.complete_wallet_rescan()
     }
 
-    fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
-        self.coins()
+    fn coins(&mut self, coin_type: CoinType) -> HashMap<bitcoin::OutPoint, Coin> {
+        self.coins(coin_type)
             .into_iter()
             .map(|db_coin| (db_coin.outpoint, db_coin.into()))
             .collect()
@@ -315,4 +315,11 @@ impl Coin {
     pub fn is_spent(&self) -> bool {
         self.spend_txid.is_some()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CoinType {
+    All,
+    Unspent,
+    Spent,
 }
