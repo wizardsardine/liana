@@ -472,6 +472,20 @@ impl MultipathDescriptor {
         assert!(csv.is_height_locked());
         csv.to_consensus_u32()
     }
+
+    /// Get the maximum size in WU of a satisfaction for this descriptor.
+    pub fn max_sat_weight(&self) -> usize {
+        self.multi_desc
+            .max_satisfaction_weight()
+            .expect("Cannot fail for P2WSH")
+    }
+
+    /// Get the maximum size in virtual bytes of the whole input in a transaction spending
+    /// a coin with this Script.
+    pub fn spender_input_size(&self) -> usize {
+        // txid + vout + nSequence + empty scriptSig + witness
+        32 + 4 + 4 + 1 + wu_to_vb(self.max_sat_weight())
+    }
 }
 
 impl InheritanceDescriptor {
@@ -530,20 +544,6 @@ impl InheritanceDescriptor {
                     "May only fail on hardened derivation indexes, but we ruled out this case.",
                 ),
         )
-    }
-
-    /// Get the maximum size in WU of a satisfaction for this descriptor.
-    pub fn max_sat_weight(&self) -> usize {
-        self.0
-            .max_satisfaction_weight()
-            .expect("Cannot fail for P2WSH")
-    }
-
-    /// Get the maximum size in virtual bytes of the whole input in a transaction spending
-    /// a coin with this Script.
-    pub fn spender_input_size(&self) -> usize {
-        // txid + vout + nSequence + empty scriptSig + witness
-        32 + 4 + 4 + 1 + wu_to_vb(self.max_sat_weight())
     }
 }
 
@@ -679,15 +679,8 @@ mod tests {
         let receive_desc = desc.receive_descriptor();
         let change_desc = desc.change_descriptor();
 
-        // Receive and change are the same descriptor.
-        assert_eq!(receive_desc.max_sat_weight(), change_desc.max_sat_weight());
-        assert_eq!(
-            receive_desc.spender_input_size(),
-            change_desc.spender_input_size()
-        );
-
         // Derived or not the expected maximum satisfaction size should be the same for
-        // the same descriptor.
+        // the change and receive descriptor.
         assert_eq!(
             receive_desc.derive(999.into(), &secp).max_sat_weight(),
             change_desc.derive(999.into(), &secp).max_sat_weight()
@@ -709,7 +702,7 @@ mod tests {
                 .map(|item| bitcoin::VarInt(stack.len() as u64).len() + item.len())
                 .sum::<usize>();
         assert_eq!(
-            receive_desc.spender_input_size(),
+            desc.spender_input_size(),
             32 + 4 + 1 + 4 + wu_to_vb(witness_size),
         );
     }
