@@ -187,7 +187,23 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
         "getinfo" => serde_json::json!(&control.get_info()),
         "getnewaddress" => serde_json::json!(&control.get_new_address()),
         "listcoins" => serde_json::json!(&control.list_coins()),
+        "listconfirmed" => {
+            let params = req.params.ok_or_else(|| {
+                Error::invalid_params(
+                    "The 'listconfirmed' command requires 3 parameters: 'start', 'end' and 'limit'",
+                )
+            })?;
+            list_confirmed(control, params)?
+        }
         "listspendtxs" => serde_json::json!(&control.list_spend()),
+        "listtransactions" => {
+            let params = req.params.ok_or_else(|| {
+                Error::invalid_params(
+                    "The 'listtransactions' command requires 1 parameter: 'txids'",
+                )
+            })?;
+            list_transactions(control, params)?
+        }
         "startrescan" => {
             let params = req
                 .params
@@ -200,22 +216,6 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
                 .params
                 .ok_or_else(|| Error::invalid_params("Missing 'psbt' parameter."))?;
             update_spend(control, params)?
-        }
-        "listconfirmed" => {
-            let params = req.params.ok_or_else(|| {
-                Error::invalid_params(
-                    "The 'listconfirmed' command requires 3 parameters: 'start', 'end' and 'limit'",
-                )
-            })?;
-            list_confirmed(control, params)?
-        }
-        "listtransactions" => {
-            let params = req.params.ok_or_else(|| {
-                Error::invalid_params(
-                    "The 'listtransactions' command requires 1 parameter: 'txids'",
-                )
-            })?;
-            list_transactions(control, params)?
         }
         _ => {
             return Err(Error::method_not_found());
