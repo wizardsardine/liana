@@ -124,10 +124,10 @@ pub fn choose_coins_view<'a>(
             .push(text("Choose coins and feerate").bold().size(50))
             .push(
                 Container::new(
-                    form::Form::new("Feerate", feerate, move |msg| {
+                    form::Form::new("Feerate (sat/vbyte)", feerate, move |msg| {
                         Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
                     })
-                    .warning("Please enter correct feerate")
+                    .warning("Please enter correct feerate (sat/vbyte)")
                     .size(20)
                     .padding(10),
                 )
