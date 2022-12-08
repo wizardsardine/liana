@@ -26,8 +26,7 @@ jobs:
           - nightly
         os:
           - ubuntu-latest
-          # See issue https://github.com/revault/liana/issues/69
-          #- macOS-latest
+          - macOS-latest
           - windows-latest
     runs-on: ${{ matrix.os }}
     steps:
@@ -43,7 +42,8 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: cargo test --verbose --no-default-features
       - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
-        if: matrix.os != 'windows-latest'
+        # See issue https://github.com/revault/liana/issues/69
+        if: matrix.os != 'windows-latest' && (matrix.os != 'macOS-latest' || matrix.toolchain != '1.48')
         run: cargo test --verbose --color always -- --nocapture
 
   linter_gui:
