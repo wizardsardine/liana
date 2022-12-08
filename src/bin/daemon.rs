@@ -60,8 +60,8 @@ fn main() {
     });
 
     let daemon = DaemonHandle::start_default(config).unwrap_or_else(|e| {
-        // The panic hook will log::error
-        panic!("Starting Liana daemon: {}", e);
+        log::error!("Error starting Liana daemon: {}", e);
+        process::exit(1);
     });
     daemon
         .rpc_server()
