@@ -301,8 +301,8 @@ impl DaemonControl {
         // fees, and add necessary information to the PSBT inputs.
         let mut in_value = bitcoin::Amount::from_sat(0);
         let mut sat_vb = 0;
-        let mut txins = Vec::with_capacity(destinations.len());
-        let mut psbt_ins = Vec::with_capacity(destinations.len());
+        let mut txins = Vec::with_capacity(coins_outpoints.len());
+        let mut psbt_ins = Vec::with_capacity(coins_outpoints.len());
         let mut spent_txs = HashMap::with_capacity(coins_outpoints.len());
         let coins = db_conn.coins_by_outpoints(coins_outpoints);
         for op in coins_outpoints {
