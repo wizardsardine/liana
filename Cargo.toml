@@ -25,7 +25,7 @@ jsonrpc_server = []
 
 [dependencies]
 # For managing transactions (it re-exports the bitcoin crate)
-miniscript = { version = "9.0", features = ["serde"] }
+miniscript = { git = "https://github.com/darosior/rust-miniscript", branch = "multipath_descriptors_on_9.0", features = ["serde"] }
 
 # Don't reinvent the wheel
 dirs = "3.0"
@@ -58,4 +58,4 @@ libc = "0.2"
 base64 = "0.13"
 
 [patch.crates-io]
-miniscript = { git = "https://github.com/darosior/rust-miniscript", branch = "multipath_descriptors_on_9.0" }
+
