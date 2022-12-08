@@ -1635,9 +1635,9 @@ dependencies = [
 
 [[package]]
 name = "ledger_bitcoin_client"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ffce449c35e1983a7035e25b63836064b7b51f70d1c63bebdad8d874617f663"
+checksum = "7de8bb8c131c03c33df548b5c45ccc5c20e3f89aa973b4c8bdd539132af7f48f"
 dependencies = [
  "async-trait",
  "bitcoin",
