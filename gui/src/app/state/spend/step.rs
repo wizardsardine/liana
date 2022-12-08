@@ -288,7 +288,7 @@ impl ChooseCoins {
         };
         // nValue size + scriptPubKey CompactSize + OP_0 + PUSH32 + <wit program>
         const CHANGE_TXO_SIZE: usize = 8 + 1 + 1 + 1 + 32;
-        let satisfaction_vsize = cfg.main_descriptor.change_descriptor().max_sat_weight() / 4;
+        let satisfaction_vsize = cfg.main_descriptor.max_sat_weight() / 4;
         let transaction_size =
             tx_template.vsize() + satisfaction_vsize * tx_template.input.len() + CHANGE_TXO_SIZE;
 
