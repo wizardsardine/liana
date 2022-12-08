@@ -190,12 +190,13 @@ fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
             false
         }
         descriptor::DescriptorPublicKey::MultiXPub(ref xpub) => {
+            let der_paths = xpub.derivation_paths.paths();
             // Rust-miniscript enforces BIP389 which states that all paths must have the same len.
-            let len = xpub.derivation_paths.get(0).expect("Cannot be empty").len();
+            let len = der_paths.get(0).expect("Cannot be empty").len();
             xpub.wildcard == descriptor::Wildcard::Unhardened
-                && xpub.derivation_paths.len() == 2
-                && xpub.derivation_paths[0][len - 1] == 0.into()
-                && xpub.derivation_paths[1][len - 1] == 1.into()
+                && der_paths.len() == 2
+                && der_paths[0][len - 1] == 0.into()
+                && der_paths[1][len - 1] == 1.into()
         }
     }
 }
