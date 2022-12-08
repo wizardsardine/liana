@@ -9,7 +9,9 @@ use crate::{
 };
 use utils::block_before_date;
 
-use std::{cmp, collections::HashSet, convert::TryInto, fs, io, str::FromStr, time::Duration};
+use std::{
+    cmp, collections::HashSet, convert::TryInto, fs, io, str::FromStr, thread, time::Duration,
+};
 
 use jsonrpc::{
     arg,
@@ -177,8 +179,9 @@ impl BitcoinD {
     ) -> Result<BitcoinD, BitcoindError> {
         let cookie_string =
             fs::read_to_string(&config.cookie_path).map_err(BitcoindError::CookieFile)?;
+        let watchonly_url = format!("http://{}/wallet/{}", config.addr, watchonly_wallet_path);
 
-        // Create a dummy client with a low timeout first to test the connection
+        // Create a dummy bitcoind with clients using a low timeout to sanity check the connection.
         let dummy_node_client = Client::with_transport(
             SimpleHttpTransport::builder()
                 .url(&config.addr.to_string())
@@ -187,35 +190,35 @@ impl BitcoinD {
                 .cookie_auth(cookie_string.clone())
                 .build(),
         );
-        let req = dummy_node_client.build_request("echo", &[]);
-        dummy_node_client.send_request(req.clone())?;
-
-        let node_client = Client::with_transport(
+        let sendonly_client = Client::with_transport(
             SimpleHttpTransport::builder()
-                .url(&config.addr.to_string())
+                .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
-                .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
+                .timeout(Duration::from_secs(1))
                 .cookie_auth(cookie_string.clone())
                 .build(),
         );
-
-        // Create a dummy client with a low timeout first to test the connection
-        let url = format!("http://{}/wallet/{}", config.addr, watchonly_wallet_path);
         let dummy_wo_client = Client::with_transport(
             SimpleHttpTransport::builder()
-                .url(&url)
+                .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(3))
                 .cookie_auth(cookie_string.clone())
                 .build(),
         );
-        let req = dummy_wo_client.build_request("echo", &[]);
-        dummy_wo_client.send_request(req.clone())?;
+        let dummy_bitcoind = BitcoinD {
+            node_client: dummy_node_client,
+            sendonly_client,
+            watchonly_client: dummy_wo_client,
+            watchonly_wallet_path: watchonly_wallet_path.clone(),
+            retries: 0,
+        };
+        dummy_bitcoind.check_connection()?;
 
-        let watchonly_url = format!("http://{}/wallet/{}", config.addr, watchonly_wallet_path);
-        let watchonly_client = Client::with_transport(
+        // Now the connection is checked, create the clients with an appropriate timeout.
+        let node_client = Client::with_transport(
             SimpleHttpTransport::builder()
-                .url(&watchonly_url)
+                .url(&config.addr.to_string())
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
                 .cookie_auth(cookie_string.clone())
@@ -226,10 +229,17 @@ impl BitcoinD {
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(1))
+                .cookie_auth(cookie_string.clone())
+                .build(),
+        );
+        let watchonly_client = Client::with_transport(
+            SimpleHttpTransport::builder()
+                .url(&watchonly_url)
+                .map_err(BitcoindError::from)?
+                .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
                 .cookie_auth(cookie_string)
                 .build(),
         );
-
         Ok(BitcoinD {
             node_client,
             sendonly_client,
@@ -237,6 +247,27 @@ impl BitcoinD {
             watchonly_wallet_path,
             retries: 0,
         })
+    }
+
+    fn check_client(&self, client: &Client) -> Result<(), BitcoindError> {
+        if let Err(e) = self.make_request(client, "echo", &[]) {
+            if e.is_warming_up() {
+                log::info!("bitcoind is warming up. Retrying connection sanity check in 1 second.");
+                thread::sleep(Duration::from_secs(1));
+                return self.check_client(client);
+            } else {
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
+    // Make sure bitcoind is reachable through all clients. Note we don't check the sendonly client
+    // since it has precisely a very low timeout for the purpose of ignoring responses.
+    fn check_connection(&self) -> Result<(), BitcoindError> {
+        self.check_client(&self.node_client)?;
+        self.check_client(&self.watchonly_client)?;
+        Ok(())
     }
 
     /// Set how many times we'll retry a failed request. If passed None will set to default.
@@ -531,6 +562,7 @@ impl BitcoinD {
     /// Try to load the watchonly wallet in bitcoind. It will continue on error (since it's
     /// likely the wallet is just already loaded) and log it as info instead.
     pub fn try_load_watchonly_wallet(&self) {
+        // TODO: check if it's not loaded instead of blindly trying to load it.
         if let Err(e) = self.make_fallible_node_request(
             "loadwallet",
             &params!(Json::String(self.watchonly_wallet_path.clone()),),
