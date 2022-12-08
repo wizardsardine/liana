@@ -1,37 +1,36 @@
-# liana GUI
+# Liana GUI
 
-Liana GUI is an user graphical interface written in rust for the 
-[Liana daemon](https://github.com/revault/liana).
+The Liana graphical interface.
 
 ## Dependencies
 
-- `fontconfig` (On Debian/Ubuntu `apt install libfontconfig1-dev`)
-- [`pkg-config`](https://www.freedesktop.org/wiki/Software/pkg-config/) (On Debian/Ubuntu `apt install pkg-config`)
-- Vulkan drivers (On Debian/Ubuntu `apt install mesa-vulkan-drivers libvulkan-dev`)
-- `libudev-dev` (On Debian/Ubuntu `apt install libudev-dev`)
+You will need a few dependencies in order to run correctly this software. For Linux systems, those
+are:
+- [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/) for access to fonts (On Debian/Ubuntu `apt install libfontconfig1-dev`)
+- [`libudev-dev`](https://www.freedesktop.org/software/systemd/man/libudev.html) to communicate with devices through USB (On Debian/Ubuntu `apt install libudev-dev`)
 
-We are striving to remove dependencies, especially the 3D ones.
+In addition, if you want to build the project from source, you will need:
+- [`pkg-config`](https://www.freedesktop.org/wiki/Software/pkg-config/) (On Debian/Ubuntu `apt install pkg-config`)
+
 
 ## Usage
 
-`liana-gui --datadir <datadir> --<network>`
+*For a quick guide to try out the software see [../doc/TRY.md](../doc/TRY.md).*
 
-The default `datadir` is the default `lianad` `datadir` (`~/.liana`
-for linux) and the default `network` is the bitcoin mainnet.
+```
+liana-gui --datadir <datadir> --<network>
+```
 
-If no argument is provided, the GUI checks in the default `datadir` 
-the configuration file for the bitcoin mainnet.
+The default `datadir` is the same as for `lianad` (`~/.liana` for Linux). The default network is
+Bitcoin mainnet, but testnet signet and regtest are supported.
 
-If the provided `datadir` is empty or does not have the configuration
-file for the targeted `network`, the GUI starts with the installer mode.
+If the software is started with no parameter and no data directory is detected, a Liana installer
+will be spawned that will guide you in the processing of configuring Liana.
 
-Instead of using `--datadir` and `--<network>`, a direct path to
-the GUI configuration file can be provided with `--conf`.
+If the software is started and a reachable `lianad` is running, it will plug to it via `lianad`'s
+JSONRPC interface.
 
-After start up, The GUI will connect to the running lianad.
-A command starting lianad is launched if no connection is made.
+### Troubleshooting
 
-## Troubleshooting
-
-- If you encounter layout issue on `X11`, try to start the GUI with
-  `WINIT_X11_SCALE_FACTOR` manually set to 1
+- If you encounter layout issue on `X11`, try to start the GUI with `WINIT_X11_SCALE_FACTOR`
+  manually set to 1
