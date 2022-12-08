@@ -11,7 +11,7 @@ def test_getinfo(lianad):
     res = lianad.rpc.getinfo()
     assert res["version"] == "0.1"
     assert res["network"] == "regtest"
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == 101)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == 101)
     res = lianad.rpc.getinfo()
     assert res["sync"] == 1.0
     assert "main" in res["descriptors"]
@@ -58,7 +58,7 @@ def test_listcoins(lianad, bitcoind):
     # And if this spending tx gets confirmed.
     bitcoind.generate_block(1, wait_for_mempool=spend_txid)
     curr_height = bitcoind.rpc.getblockcount()
-    wait_for(lambda: lianad.rpc.getinfo()["blockheight"] == curr_height)
+    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == curr_height)
     spend_info = lianad.rpc.listcoins()["coins"][0]["spend_info"]
     assert spend_info["txid"] == spend_txid
     assert spend_info["height"] == curr_height
@@ -315,7 +315,7 @@ def test_start_rescan(lianad, bitcoind):
         bitcoind.generate_block(random.randint(1, 5), wait_for_mempool=2)
         wait_for(lambda: all_spent(to_spend))
     wait_for(
-        lambda: lianad.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
     )
 
     # Receiving addresses are derived at much higher indexes now.
@@ -345,7 +345,7 @@ def test_start_rescan(lianad, bitcoind):
     assert rescan_progress is None or 0 <= rescan_progress <= 1
     wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
     wait_for(
-        lambda: lianad.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
     )
     assert coins_before == sorted_coins()
 
@@ -366,7 +366,7 @@ def test_listtransactions(lianad, bitcoind):
 
     def wait_synced():
         wait_for(
-            lambda: lianad.rpc.getinfo()["blockheight"] == bitcoind.rpc.getblockcount()
+            lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
         )
 
     best_block = bitcoind.rpc.getbestblockhash()
