@@ -1,0 +1,26 @@
+FROM debian:bullseye
+
+RUN apt-get update && \
+    apt-get install --assume-yes \
+    curl \
+    pkg-config \
+    build-essential \
+    libfontconfig1-dev \
+    libxkbcommon-dev
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y \
+    --default-toolchain stable \
+    --no-modify-path \
+    --profile minimal
+
+ENV RUSTUP_HOME=/root/.rustup \
+    CARGO_HOME=/root/.cargo \
+    PATH=/root/.cargo/bin:$PATH
+
+RUN rustup override set 1.65
+RUN rustup target add aarch64-apple-darwin
+
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+
+RUN cargo build --release --target aarch64-apple-darwin
