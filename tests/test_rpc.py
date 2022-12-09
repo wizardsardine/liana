@@ -3,7 +3,11 @@ import random
 import time
 
 from fixtures import *
-from test_framework.serializations import PSBT, PSBT_IN_PARTIAL_SIG
+from test_framework.serializations import (
+    PSBT,
+    PSBT_IN_PARTIAL_SIG,
+    PSBT_IN_NON_WITNESS_UTXO,
+)
 from test_framework.utils import wait_for, COIN, RpcError, get_txid, spend_coins
 
 
@@ -110,6 +114,13 @@ def test_create_spend(lianad, bitcoind):
     spend_psbt = PSBT.from_base64(res["psbt"])
     assert len(spend_psbt.o) == 4
     assert len(spend_psbt.tx.vout) == 4
+
+    # The transaction must contain the spent transaction for each input
+    spent_txs = [bitcoind.rpc.gettransaction(op[:64]) for op in outpoints]
+    for i, psbt_in in enumerate(spend_psbt.i):
+        assert psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] == bytes.fromhex(
+            spent_txs[i]["hex"]
+        )
 
     # We can sign it and broadcast it.
     signed_psbt = lianad.sign_psbt(PSBT.from_base64(res["psbt"]))
