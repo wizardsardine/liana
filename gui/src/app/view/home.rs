@@ -69,7 +69,7 @@ pub fn home_view<'a>(
                         .iter()
                         .enumerate()
                         .fold(Column::new().spacing(10), |col, (i, event)| {
-                            col.push(event_list_view(i, event))
+                            col.push(event_list_view(i + pending_events.len(), event))
                         }),
                 )
                 .push_maybe(
