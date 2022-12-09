@@ -68,6 +68,7 @@ pub trait Daemon: Debug {
         _end: u32,
         _limit: u64,
     ) -> Result<model::ListTransactionsResult, DaemonError>;
+    fn create_recovery(&self, address: Address, feerate_vb: u64) -> Result<Psbt, DaemonError>;
     fn list_txs(&self, txid: &[Txid]) -> Result<model::ListTransactionsResult, DaemonError>;
 
     fn list_spend_transactions(&self) -> Result<Vec<model::SpendTx>, DaemonError> {
