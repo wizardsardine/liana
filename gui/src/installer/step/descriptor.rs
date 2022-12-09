@@ -393,6 +393,7 @@ impl Step for ImportDescriptor {
         // descriptor forms for import or creation cannot be both empty or filled.
         if !self.imported_descriptor.value.is_empty() {
             if let Ok(desc) = MultipathDescriptor::from_str(&self.imported_descriptor.value) {
+                self.imported_descriptor.valid = true;
                 ctx.descriptor = Some(desc);
                 true
             } else {

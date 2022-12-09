@@ -287,7 +287,7 @@ pub fn import_descriptor<'a>(
                     .push(row_network)
                     .push(col_descriptor),
             )
-            .push(if !imported_descriptor.value.is_empty() {
+            .push(if imported_descriptor.value.is_empty() {
                 button::primary(None, "Next").width(Length::Units(200))
             } else {
                 button::primary(None, "Next")
