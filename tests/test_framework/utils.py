@@ -75,6 +75,14 @@ def spend_coins(lianad, bitcoind, coins):
     return tx
 
 
+def sign_and_broadcast(lianad, bitcoind, psbt, recovery=False):
+    """Sign a PSBT, finalize it, extract the transaction and broadcast it."""
+    signed_psbt = lianad.sign_psbt(psbt, recovery)
+    finalized_psbt = lianad.finalize_psbt(signed_psbt)
+    tx = finalized_psbt.tx.serialize_with_witness().hex()
+    return bitcoind.rpc.sendrawtransaction(tx)
+
+
 class RpcError(ValueError):
     def __init__(self, method: str, params: dict, error: str):
         super(ValueError, self).__init__(

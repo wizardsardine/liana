@@ -8,7 +8,14 @@ from test_framework.serializations import (
     PSBT_IN_PARTIAL_SIG,
     PSBT_IN_NON_WITNESS_UTXO,
 )
-from test_framework.utils import wait_for, COIN, RpcError, get_txid, spend_coins
+from test_framework.utils import (
+    wait_for,
+    COIN,
+    RpcError,
+    get_txid,
+    spend_coins,
+    sign_and_broadcast,
+)
 
 
 def test_getinfo(lianad):
@@ -123,10 +130,7 @@ def test_create_spend(lianad, bitcoind):
         )
 
     # We can sign it and broadcast it.
-    signed_psbt = lianad.sign_psbt(PSBT.from_base64(res["psbt"]))
-    finalized_psbt = lianad.finalize_psbt(signed_psbt)
-    tx = finalized_psbt.tx.serialize_with_witness().hex()
-    bitcoind.rpc.sendrawtransaction(tx)
+    sign_and_broadcast(PSBT.from_base64(res["psbt"]))
 
 
 def test_list_spend(lianad, bitcoind):
