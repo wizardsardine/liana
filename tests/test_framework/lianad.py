@@ -30,6 +30,7 @@ class Lianad(TailableProc):
         self,
         datadir,
         owner_hd,
+        recovery_hd,
         multi_desc,
         bitcoind_rpc_port,
         bitcoind_cookie_path,
@@ -40,6 +41,7 @@ class Lianad(TailableProc):
         self.prefix = os.path.split(datadir)[-1]
 
         self.owner_hd = owner_hd
+        self.recovery_hd = recovery_hd
         self.multi_desc = multi_desc
         self.receive_desc, self.change_desc = multi_desc.singlepath_descriptors()
 
@@ -63,14 +65,19 @@ class Lianad(TailableProc):
             f.write(f"cookie_path = '{bitcoind_cookie_path}'\n")
             f.write(f"addr = '127.0.0.1:{bitcoind_rpc_port}'\n")
 
-    def sign_psbt(self, psbt):
-        """Sign a transaction using the owner's key.
-        This will fill the 'partial_sigs' field of all inputs.
+    def sign_psbt(self, psbt, recovery=False):
+        """Sign a transaction.
+
+        This will fill the 'partial_sigs' field of all inputs. Uses either the 'primary'
+        'recovery' key as specified.
 
         :param psbt: PSBT of the transaction to be signed.
         :returns: PSBT with a signature in each input for the owner's key.
         """
         assert isinstance(psbt, PSBT)
+
+        # Which key to sign the transaction with.
+        hd = self.recovery_hd if recovery else self.owner_hd
 
         # Sign each input.
         for i, psbt_in in enumerate(psbt.i):
@@ -84,12 +91,9 @@ class Lianad(TailableProc):
             ]
             script_code = psbt_in.map[PSBT_IN_WITNESS_SCRIPT]
 
-            # Now sign the transaction with the key of the "owner" (the participant that
-            # can sign immediately without a timelock)
+            # Now sign the transaction.
             sighash = sighash_all_witness(script_code, psbt, i)
-            privkey = coincurve.PrivateKey(
-                self.owner_hd.get_privkey_from_path(der_path)
-            )
+            privkey = coincurve.PrivateKey(hd.get_privkey_from_path(der_path))
             pubkey = privkey.public_key.format()
             assert pubkey in psbt_in.map[PSBT_IN_BIP32_DERIVATION].keys(), (
                 der_path,
