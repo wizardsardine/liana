@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use iced::{
     alignment,
-    widget::{self, Column, Container, ProgressBar, Row},
+    widget::{self, Column, Container, ProgressBar, Row, Space},
     Alignment, Element, Length,
 };
 
@@ -32,7 +32,29 @@ pub fn list<'a>(
         &Menu::Settings,
         cache,
         warning,
-        widget::Column::with_children(settings).spacing(20),
+        widget::Column::with_children(settings)
+            .spacing(20)
+            .push(card::simple(
+                Column::new()
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::recovery_icon()))
+                            .push(text("Recovery").bold())
+                            .padding(10)
+                            .spacing(20)
+                            .align_items(Alignment::Center)
+                            .width(Length::Fill),
+                    )
+                    .push(separation().width(Length::Fill))
+                    .push(Space::with_height(Length::Units(10)))
+                    .push(text("In case of loss of the main key, the recovery key can move the funds after a certain time."))
+                    .push(Space::with_height(Length::Units(10)))
+                    .push(
+                        Row::new()
+                            .push(Space::with_width(Length::Fill))
+                            .push(button::primary(None, "Recover funds").on_press(Message::Menu(Menu::Recovery))),
+                    ),
+            )),
     )
 }
 
@@ -114,7 +136,7 @@ pub fn bitcoind_edit<'a>(
             .push(
                 Row::new()
                     .push(badge::Badge::new(icon::bitcoin_icon()))
-                    .push(text("Bitcoind"))
+                    .push(text("Bitcoind").bold())
                     .padding(10)
                     .spacing(20)
                     .align_items(Alignment::Center)
@@ -201,7 +223,7 @@ pub fn bitcoind<'a>(
                     .push(
                         Row::new()
                             .push(badge::Badge::new(icon::bitcoin_icon()))
-                            .push(text("Bitcoind"))
+                            .push(text("Bitcoind").bold())
                             .push(is_running_label(is_running))
                             .spacing(20)
                             .align_items(Alignment::Center)
@@ -261,7 +283,7 @@ pub fn rescan<'a>(
             .push(
                 Row::new()
                     .push(badge::Badge::new(icon::block_icon()))
-                    .push(text("Rescan blockchain").width(Length::Fill))
+                    .push(text("Rescan blockchain").bold().width(Length::Fill))
                     .push_maybe(if success {
                         Some(text("Rescan was successful").style(color::SUCCESS))
                     } else {
