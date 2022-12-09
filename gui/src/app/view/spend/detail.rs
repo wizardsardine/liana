@@ -8,12 +8,11 @@ use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Address, Amount, Netw
 use crate::{
     app::{
         error::Error,
-        view::{message::*, warning::warn},
+        view::{hw::hw_list_view, message::*, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
     ui::{
-        color,
         component::{
             badge, button, card,
             collapse::Collapse,
@@ -514,56 +513,4 @@ pub fn sign_action<'a>(
     )
     .width(Length::Fill)
     .into()
-}
-
-fn hw_list_view<'a>(
-    i: usize,
-    hw: &HardwareWallet,
-    chosen: bool,
-    processing: bool,
-    signed: bool,
-) -> Element<'a, Message> {
-    let mut bttn = Button::new(
-        Row::new()
-            .push(
-                Column::new()
-                    .push(text(format!("{}", hw.kind)).bold())
-                    .push(text(format!("fingerprint: {}", hw.fingerprint)).small())
-                    .spacing(5)
-                    .width(Length::Fill),
-            )
-            .push_maybe(if chosen && processing {
-                Some(
-                    Column::new()
-                        .push(text("Processing..."))
-                        .push(text("Please check your device").small()),
-                )
-            } else {
-                None
-            })
-            .push_maybe(if signed {
-                Some(
-                    Column::new().push(
-                        Row::new()
-                            .spacing(5)
-                            .push(icon::circle_check_icon().style(color::SUCCESS))
-                            .push(text("Signed").style(color::SUCCESS)),
-                    ),
-                )
-            } else {
-                None
-            })
-            .align_items(Alignment::Center)
-            .width(Length::Fill),
-    )
-    .padding(10)
-    .style(button::Style::Border.into())
-    .width(Length::Fill);
-    if !processing {
-        bttn = bttn.on_press(Message::Spend(SpendTxMessage::SelectHardwareWallet(i)));
-    }
-    Container::new(bttn)
-        .width(Length::Fill)
-        .style(card::SimpleCardStyle)
-        .into()
 }

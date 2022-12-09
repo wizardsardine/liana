@@ -3,7 +3,9 @@ mod warning;
 
 pub mod coins;
 pub mod home;
+pub mod hw;
 pub mod receive;
+pub mod recovery;
 pub mod settings;
 pub mod spend;
 

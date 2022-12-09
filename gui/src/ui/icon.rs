@@ -13,6 +13,10 @@ fn icon(unicode: char) -> Text<'static> {
         .size(20)
 }
 
+pub fn recovery_icon() -> Text<'static> {
+    icon('\u{F467}')
+}
+
 pub fn plug_icon() -> Text<'static> {
     icon('\u{F4F6}')
 }
