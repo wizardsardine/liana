@@ -164,7 +164,7 @@ impl Application for GUI {
                 if let loader::Message::Synced(info, coins, spend_txs, daemon) = *msg {
                     let cache = Cache {
                         network: daemon.config().bitcoin_config.network,
-                        blockheight: info.blockheight,
+                        blockheight: info.block_height,
                         coins,
                         spend_txs,
                         ..Default::default()

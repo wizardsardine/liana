@@ -119,7 +119,7 @@ impl App {
                 self.cache.spend_txs = txs.clone();
             }
             Message::Info(Ok(info)) => {
-                self.cache.blockheight = info.blockheight;
+                self.cache.blockheight = info.block_height;
                 self.cache.rescan_progress = info.rescan_progress;
             }
             Message::StartRescan(Ok(())) => {

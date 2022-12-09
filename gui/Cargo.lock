@@ -1646,7 +1646,7 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "0.0.1"
-source = "git+https://github.com/revault/liana?branch=master#38e342c8cd4c7d5d9d497013aa466fe62c0e3a4b"
+source = "git+https://github.com/revault/liana?branch=master#d385e99726733851da9101557cf2dfcbe4c2a2a0"
 dependencies = [
  "backtrace",
  "base64",
@@ -1902,8 +1902,8 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "miniscript"
-version = "8.0.0"
-source = "git+https://github.com/darosior/rust-miniscript?branch=multipath_descriptors_on_8.0#a63d5a263a9006b4d29342012133a3bc919765ba"
+version = "9.0.0"
+source = "git+https://github.com/darosior/rust-miniscript?branch=multipath_descriptors_on_9.0#3104519501ce6ad15b36dcec759936f4d3bd3980"
 dependencies = [
  "bitcoin",
  "serde",
