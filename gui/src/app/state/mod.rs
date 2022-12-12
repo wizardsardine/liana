@@ -75,10 +75,15 @@ impl Home {
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(i) = self.selected_event {
+            let event = if i < self.pending_events.len() {
+                &self.pending_events[i]
+            } else {
+                &self.events[i - self.pending_events.len()]
+            };
             return view::modal(
                 false,
                 self.warning.as_ref(),
-                view::home::event_view(cache, &self.events[i]),
+                view::home::event_view(cache, event),
                 None::<Element<view::Message>>,
             );
         }
