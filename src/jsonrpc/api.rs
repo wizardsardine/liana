@@ -84,6 +84,20 @@ fn broadcast_spend(control: &DaemonControl, params: Params) -> Result<serde_json
     Ok(serde_json::json!({}))
 }
 
+fn broadcast_tx(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let psbt: Psbt = params
+        .get(0, "psbt")
+        .ok_or_else(|| Error::invalid_params("Missing 'psbt' parameter."))?
+        .as_str()
+        .and_then(|s| base64::decode(s).ok())
+        .and_then(|bytes| consensus::deserialize(&bytes).ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'psbt' parameter."))?;
+
+    control.broadcast_tx(psbt)?;
+
+    Ok(serde_json::json!({}))
+}
+
 fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let start: u32 = params
         .get(0, "start")
@@ -147,6 +161,12 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
                 .params
                 .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?;
             broadcast_spend(control, params)?
+        }
+        "broadcasttx" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'psbt' parameter."))?;
+            broadcast_tx(control, params)?
         }
         "createspend" => {
             let params = req.params.ok_or_else(|| {

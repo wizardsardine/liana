@@ -268,6 +268,29 @@ def test_broadcast_spend(lianad, bitcoind):
     lianad.rpc.broadcastspend(txid)
 
 
+def test_broadcast_tx(lianad, bitcoind):
+    # Create a new coin and a spending tx for it.
+    addr = lianad.rpc.getnewaddress()["address"]
+    bitcoind.rpc.sendtoaddress(addr, 0.2567)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) > 0)
+    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins()["coins"]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 200_000,
+    }
+    res = lianad.rpc.createspend(destinations, outpoints, 6)
+    psbt = PSBT.from_base64(res["psbt"])
+
+    # We can't broadcast an unsigned transaction
+    with pytest.raises(RpcError, match="Failed to finalize the spend transaction.*"):
+        lianad.rpc.broadcasttx(psbt.to_base64())
+
+    signed_psbt = lianad.sign_psbt(PSBT.from_base64(res["psbt"]))
+    txid = psbt.tx.txid().hex()
+
+    lianad.rpc.broadcasttx(signed_psbt.to_base64())
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+
+
 def test_start_rescan(lianad, bitcoind):
     """Test we successfully retrieve all our transactions after losing state by rescanning."""
     initial_timestamp = int(time.time())

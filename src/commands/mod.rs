@@ -61,7 +61,7 @@ pub enum CommandError {
     SanityCheckFailure(Psbt),
     UnknownSpend(bitcoin::Txid),
     // FIXME: when upgrading Miniscript put the actual error there
-    SpendFinalization(String),
+    TxFinalization(String),
     TxBroadcast(String),
     AlreadyRescanning,
     InsaneRescanTimestamp(u32),
@@ -92,7 +92,7 @@ impl fmt::Display for CommandError {
                 psbt
             ),
             Self::UnknownSpend(txid) => write!(f, "Unknown spend transaction '{}'.", txid),
-            Self::SpendFinalization(e) => {
+            Self::TxFinalization(e) => {
                 write!(f, "Failed to finalize the spend transaction PSBT: '{}'.", e)
             }
             Self::TxBroadcast(e) => write!(f, "Failed to broadcast transaction: '{}'.", e),
@@ -531,13 +531,19 @@ impl DaemonControl {
     pub fn broadcast_spend(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
         let mut db_conn = self.db.connection();
 
-        // First, try to finalize the spending transaction with the elements contained
-        // in the PSBT.
-        let mut spend_psbt = db_conn
+        let spend_psbt = db_conn
             .spend_tx(txid)
             .ok_or(CommandError::UnknownSpend(*txid))?;
-        spend_psbt.finalize_mut(&self.secp).map_err(|e| {
-            CommandError::SpendFinalization(
+
+        self.broadcast_tx(spend_psbt)
+    }
+
+    /// Finalize and broadcast this transaction.
+    pub fn broadcast_tx(&self, mut psbt: Psbt) -> Result<(), CommandError> {
+        // First, try to finalize the transaction with the elements contained
+        // in the PSBT.
+        psbt.finalize_mut(&self.secp).map_err(|e| {
+            CommandError::TxFinalization(
                 e.into_iter()
                     .next()
                     .map(|e| e.to_string())
@@ -547,7 +553,7 @@ impl DaemonControl {
 
         // Then, broadcast it (or try to, we never know if we are not going to hit an
         // error at broadcast time).
-        let final_tx = spend_psbt.extract_tx();
+        let final_tx = psbt.extract_tx();
         self.bitcoin
             .broadcast_tx(&final_tx)
             .map_err(CommandError::TxBroadcast)
