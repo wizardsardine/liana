@@ -29,8 +29,6 @@ use miniscript::{
 };
 use serde::{Deserialize, Serialize};
 
-const WITNESS_FACTOR: usize = 4;
-
 // We would never create a transaction with an output worth less than this.
 // That's 1$ at 20_000$ per BTC.
 const DUST_OUTPUT_SATS: u64 = 5_000;
@@ -159,7 +157,7 @@ fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
     }
 
     // Check the feerate isn't insane.
-    let tx_vb: u64 = tx_vbytes(tx);
+    let tx_vb = tx.vsize() as u64;
     let feerate_sats_vb = abs_fee
         .checked_div(tx_vb)
         .ok_or_else(|| CommandError::SanityCheckFailure(psbt.clone()))?;
@@ -175,24 +173,6 @@ fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
     }
 
     Ok(())
-}
-
-// Get the maximum satisfaction size in vbytes for this descriptor
-fn desc_sat_vb(desc: &descriptors::DerivedInheritanceDescriptor) -> u64 {
-    desc.max_sat_weight()
-        .checked_div(WITNESS_FACTOR)
-        .unwrap()
-        .try_into()
-        .unwrap()
-}
-
-// Get the virtual size of this transaction
-fn tx_vbytes(tx: &bitcoin::Transaction) -> u64 {
-    tx.weight()
-        .checked_div(WITNESS_FACTOR)
-        .unwrap()
-        .try_into()
-        .unwrap()
 }
 
 // Get the size of a type that can be serialized (txos, transactions, ..)
@@ -305,6 +285,7 @@ impl DaemonControl {
         // While doing so, we record the total input value of the transaction to later compute
         // fees, and add necessary information to the PSBT inputs.
         let mut in_value = bitcoin::Amount::from_sat(0);
+        let txin_sat_vb = self.config.main_descriptor.max_sat_vbytes();
         let mut sat_vb = 0;
         let mut txins = Vec::with_capacity(coins_outpoints.len());
         let mut psbt_ins = Vec::with_capacity(coins_outpoints.len());
@@ -335,7 +316,7 @@ impl DaemonControl {
 
             // Populate the PSBT input with the information needed by signers.
             let coin_desc = self.derived_desc(coin);
-            sat_vb += desc_sat_vb(&coin_desc);
+            sat_vb += txin_sat_vb;
             let witness_script = Some(coin_desc.witness_script());
             let witness_utxo = Some(bitcoin::TxOut {
                 value: coin.amount.to_sat(),
@@ -393,14 +374,17 @@ impl DaemonControl {
             input: txins,
             output: txouts,
         };
-        let nochange_vb = tx_vbytes(&tx) + sat_vb;
+        let nochange_vb = (tx.vsize() + sat_vb) as u64;
         let absolute_fee =
             in_value
                 .checked_sub(out_value)
                 .ok_or(CommandError::InsufficientFunds(
                     in_value, out_value, feerate_vb,
                 ))?;
-        let nochange_feerate_vb = absolute_fee.to_sat().checked_div(nochange_vb).unwrap();
+        let nochange_feerate_vb = absolute_fee
+            .to_sat()
+            .checked_div(nochange_vb as u64)
+            .unwrap();
         if nochange_feerate_vb.checked_mul(10).unwrap() < feerate_vb.checked_mul(9).unwrap() {
             return Err(CommandError::InsufficientFunds(
                 in_value, out_value, feerate_vb,
@@ -689,6 +673,7 @@ impl DaemonControl {
             .try_into()
             .expect("Must fit, it's effectively a u16");
         let mut in_value = bitcoin::Amount::from_sat(0);
+        let txin_sat_vb = self.config.main_descriptor.max_sat_vbytes();
         let mut sat_vb = 0;
         let mut spent_txs = HashMap::new();
         for (_, coin) in sweepable_coins {
@@ -710,7 +695,7 @@ impl DaemonControl {
             }
 
             let coin_desc = self.derived_desc(&coin);
-            sat_vb += desc_sat_vb(&coin_desc);
+            sat_vb += txin_sat_vb;
             let witness_script = Some(coin_desc.witness_script());
             let witness_utxo = Some(bitcoin::TxOut {
                 value: coin.amount.to_sat(),
@@ -733,7 +718,7 @@ impl DaemonControl {
         }
 
         // Compute the value of the single output based on the requested feerate.
-        let tx_vbytes = psbt.unsigned_tx.vsize() as u64 + sat_vb;
+        let tx_vbytes = (psbt.unsigned_tx.vsize() + sat_vb) as u64;
         let absolute_fee = bitcoin::Amount::from_sat(tx_vbytes.checked_mul(feerate_vb).unwrap());
         let output_value = in_value.checked_sub(absolute_fee).ok_or({
             CommandError::InsufficientFunds(in_value, bitcoin::Amount::from_sat(0), feerate_vb)
@@ -942,12 +927,12 @@ mod tests {
         assert_eq!(tx.output[0].script_pubkey, dummy_addr.script_pubkey());
         assert_eq!(tx.output[0].value, dummy_value);
 
-        // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 170 sats fees.
+        // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 171 sats fees.
         // At 2sats/vb, it's twice that.
-        assert_eq!(tx.output[1].value, 89_830);
+        assert_eq!(tx.output[1].value, 89_829);
         let res = control.create_spend(&destinations, &[dummy_op], 2).unwrap();
         let tx = res.psbt.unsigned_tx;
-        assert_eq!(tx.output[1].value, 89_660);
+        assert_eq!(tx.output[1].value, 89_658);
 
         // If we ask for a too high feerate, or a too large/too small output, it'll fail.
         assert_eq!(
