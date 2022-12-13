@@ -6,7 +6,7 @@ mod utils;
 
 use crate::{
     bitcoin::BitcoinInterface,
-    database::{Coin, DatabaseInterface},
+    database::{Coin, CoinType, DatabaseInterface},
     descriptors, DaemonControl, VERSION,
 };
 
@@ -15,7 +15,7 @@ use utils::{
 };
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{hash_map, BTreeMap, HashMap},
     convert::TryInto,
     fmt,
 };
@@ -29,8 +29,6 @@ use miniscript::{
 };
 use serde::{Deserialize, Serialize};
 
-const WITNESS_FACTOR: usize = 4;
-
 // We would never create a transaction with an output worth less than this.
 // That's 1$ at 20_000$ per BTC.
 const DUST_OUTPUT_SATS: u64 = 5_000;
@@ -39,7 +37,7 @@ const DUST_OUTPUT_SATS: u64 = 5_000;
 const MAX_FEE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
 
 // Assume that paying more than 1000sat/vb in feerate is a bug.
-const MAX_FEERATE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
+const MAX_FEERATE: u64 = 1_000;
 
 // Timestamp in the header of the genesis block. Used for sanity checks.
 const MAINNET_GENESIS_TIME: u32 = 1231006505;
@@ -67,6 +65,7 @@ pub enum CommandError {
     InsaneRescanTimestamp(u32),
     /// An error that might occur in the racy rescan triggering logic.
     RescanTrigger(String),
+    RecoveryNotAvailable,
 }
 
 impl fmt::Display for CommandError {
@@ -102,6 +101,10 @@ impl fmt::Display for CommandError {
             ),
             Self::InsaneRescanTimestamp(t) => write!(f, "Insane timestamp '{}'.", t),
             Self::RescanTrigger(s) => write!(f, "Error while starting rescan: '{}'", s),
+            Self::RecoveryNotAvailable => write!(
+                f,
+                "No coin currently available through the timelocked recovery path."
+            ),
         }
     }
 }
@@ -154,7 +157,7 @@ fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
     }
 
     // Check the feerate isn't insane.
-    let tx_vb: u64 = tx_vbytes(tx);
+    let tx_vb = tx.vsize() as u64;
     let feerate_sats_vb = abs_fee
         .checked_div(tx_vb)
         .ok_or_else(|| CommandError::SanityCheckFailure(psbt.clone()))?;
@@ -162,25 +165,14 @@ fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
         return Err(CommandError::SanityCheckFailure(psbt.clone()));
     }
 
+    // Check for dust outputs
+    for txo in psbt.unsigned_tx.output.iter() {
+        if txo.value < txo.script_pubkey.dust_value().to_sat() {
+            return Err(CommandError::SanityCheckFailure(psbt.clone()));
+        }
+    }
+
     Ok(())
-}
-
-// Get the maximum satisfaction size in vbytes for this descriptor
-fn desc_sat_vb(desc: &descriptors::DerivedInheritanceDescriptor) -> u64 {
-    desc.max_sat_weight()
-        .checked_div(WITNESS_FACTOR)
-        .unwrap()
-        .try_into()
-        .unwrap()
-}
-
-// Get the virtual size of this transaction
-fn tx_vbytes(tx: &bitcoin::Transaction) -> u64 {
-    tx.weight()
-        .checked_div(WITNESS_FACTOR)
-        .unwrap()
-        .try_into()
-        .unwrap()
 }
 
 // Get the size of a type that can be serialized (txos, transactions, ..)
@@ -243,7 +235,7 @@ impl DaemonControl {
     pub fn list_coins(&self) -> ListCoinsResult {
         let mut db_conn = self.db.connection();
         let coins: Vec<ListCoinsEntry> = db_conn
-            .coins()
+            .coins(CoinType::All)
             // Can't use into_values as of Rust 1.48
             .into_iter()
             .map(|(_, coin)| {
@@ -293,9 +285,10 @@ impl DaemonControl {
         // While doing so, we record the total input value of the transaction to later compute
         // fees, and add necessary information to the PSBT inputs.
         let mut in_value = bitcoin::Amount::from_sat(0);
+        let txin_sat_vb = self.config.main_descriptor.max_sat_vbytes();
         let mut sat_vb = 0;
-        let mut txins = Vec::with_capacity(destinations.len());
-        let mut psbt_ins = Vec::with_capacity(destinations.len());
+        let mut txins = Vec::with_capacity(coins_outpoints.len());
+        let mut psbt_ins = Vec::with_capacity(coins_outpoints.len());
         let mut spent_txs = HashMap::with_capacity(coins_outpoints.len());
         let coins = db_conn.coins_by_outpoints(coins_outpoints);
         for op in coins_outpoints {
@@ -323,7 +316,7 @@ impl DaemonControl {
 
             // Populate the PSBT input with the information needed by signers.
             let coin_desc = self.derived_desc(coin);
-            sat_vb += desc_sat_vb(&coin_desc);
+            sat_vb += txin_sat_vb;
             let witness_script = Some(coin_desc.witness_script());
             let witness_utxo = Some(bitcoin::TxOut {
                 value: coin.amount.to_sat(),
@@ -381,14 +374,17 @@ impl DaemonControl {
             input: txins,
             output: txouts,
         };
-        let nochange_vb = tx_vbytes(&tx) + sat_vb;
+        let nochange_vb = (tx.vsize() + sat_vb) as u64;
         let absolute_fee =
             in_value
                 .checked_sub(out_value)
                 .ok_or(CommandError::InsufficientFunds(
                     in_value, out_value, feerate_vb,
                 ))?;
-        let nochange_feerate_vb = absolute_fee.to_sat().checked_div(nochange_vb).unwrap();
+        let nochange_feerate_vb = absolute_fee
+            .to_sat()
+            .checked_div(nochange_vb as u64)
+            .unwrap();
         if nochange_feerate_vb.checked_mul(10).unwrap() < feerate_vb.checked_mul(9).unwrap() {
             return Err(CommandError::InsufficientFunds(
                 in_value, out_value, feerate_vb,
@@ -621,6 +617,118 @@ impl DaemonControl {
             .collect();
         ListTransactionsResult { transactions }
     }
+
+    /// Create a transaction that sweeps all coins whose timelocked recovery path is currently
+    /// available to a provided address with the provided feerate.
+    ///
+    /// Note that not all coins may be spendable through the recovery path at the same time.
+    pub fn create_recovery(
+        &self,
+        address: bitcoin::Address,
+        feerate_vb: u64,
+    ) -> Result<CreateRecoveryResult, CommandError> {
+        if feerate_vb < 1 {
+            return Err(CommandError::InvalidFeerate(feerate_vb));
+        }
+        let mut db_conn = self.db.connection();
+
+        // The transaction template. We'll fill-in the inputs afterward.
+        let mut psbt = Psbt {
+            unsigned_tx: bitcoin::Transaction {
+                version: 2,
+                lock_time: bitcoin::PackedLockTime(0), // TODO: anti-fee sniping
+                input: Vec::new(),
+                output: vec![bitcoin::TxOut {
+                    script_pubkey: address.script_pubkey(),
+                    value: 0xFF_FF_FF_FF,
+                }],
+            },
+            version: 0,
+            xpub: BTreeMap::new(),
+            proprietary: BTreeMap::new(),
+            unknown: BTreeMap::new(),
+            inputs: Vec::new(),
+            outputs: vec![PsbtOut::default()],
+        };
+
+        // Query the coins that we can spend through the recovery path from the database.
+        let current_height = self.bitcoin.chain_tip().height;
+        let desc_timelock = self.config.main_descriptor.timelock_value();
+        let timelock: i32 = desc_timelock
+            .try_into()
+            .expect("Must fit, it's effectively a u16");
+        let sweepable_coins = db_conn
+            .coins(CoinType::Unspent)
+            .into_iter()
+            .filter(|(_, c)| {
+                // We are interested in coins available at the *next* block
+                c.block_height
+                    .map(|h| current_height + 1 >= h + timelock)
+                    .unwrap_or(false)
+            });
+
+        // Fill-in the transaction inputs and PSBT inputs information. Record the value
+        // that is fed to the transaction while doing so, to compute the fees afterward.
+        let csv_value: u16 = desc_timelock
+            .try_into()
+            .expect("Must fit, it's effectively a u16");
+        let mut in_value = bitcoin::Amount::from_sat(0);
+        let txin_sat_vb = self.config.main_descriptor.max_sat_vbytes();
+        let mut sat_vb = 0;
+        let mut spent_txs = HashMap::new();
+        for (_, coin) in sweepable_coins {
+            in_value += coin.amount;
+            psbt.unsigned_tx.input.push(bitcoin::TxIn {
+                previous_output: coin.outpoint,
+                sequence: bitcoin::Sequence::from_height(csv_value),
+                // TODO: once we move to Taproot, anti-fee-sniping using nSequence
+                ..bitcoin::TxIn::default()
+            });
+
+            // Fetch the transaction that created this coin if necessary
+            if let hash_map::Entry::Vacant(e) = spent_txs.entry(coin.outpoint) {
+                let tx = self
+                    .bitcoin
+                    .wallet_transaction(&coin.outpoint.txid)
+                    .ok_or(CommandError::FetchingTransaction(coin.outpoint))?;
+                e.insert(tx.0);
+            }
+
+            let coin_desc = self.derived_desc(&coin);
+            sat_vb += txin_sat_vb;
+            let witness_script = Some(coin_desc.witness_script());
+            let witness_utxo = Some(bitcoin::TxOut {
+                value: coin.amount.to_sat(),
+                script_pubkey: coin_desc.script_pubkey(),
+            });
+            let non_witness_utxo = spent_txs.get(&coin.outpoint).cloned();
+            let bip32_derivation = coin_desc.bip32_derivations();
+            psbt.inputs.push(PsbtIn {
+                witness_script,
+                witness_utxo,
+                non_witness_utxo,
+                bip32_derivation,
+                ..PsbtIn::default()
+            });
+        }
+
+        // The sweepable_coins iterator may have been empty.
+        if psbt.unsigned_tx.input.is_empty() {
+            return Err(CommandError::RecoveryNotAvailable);
+        }
+
+        // Compute the value of the single output based on the requested feerate.
+        let tx_vbytes = (psbt.unsigned_tx.vsize() + sat_vb) as u64;
+        let absolute_fee = bitcoin::Amount::from_sat(tx_vbytes.checked_mul(feerate_vb).unwrap());
+        let output_value = in_value.checked_sub(absolute_fee).ok_or({
+            CommandError::InsufficientFunds(in_value, bitcoin::Amount::from_sat(0), feerate_vb)
+        })?;
+        psbt.unsigned_tx.output[0].value = output_value.to_sat();
+
+        sanity_check_psbt(&psbt)?;
+
+        Ok(CreateRecoveryResult { psbt })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -699,6 +807,12 @@ pub struct TransactionInfo {
     pub tx: bitcoin::Transaction,
     pub height: Option<i32>,
     pub time: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CreateRecoveryResult {
+    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_base64")]
+    pub psbt: Psbt,
 }
 
 #[cfg(test)]
@@ -813,12 +927,12 @@ mod tests {
         assert_eq!(tx.output[0].script_pubkey, dummy_addr.script_pubkey());
         assert_eq!(tx.output[0].value, dummy_value);
 
-        // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 170 sats fees.
+        // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 171 sats fees.
         // At 2sats/vb, it's twice that.
-        assert_eq!(tx.output[1].value, 89_830);
+        assert_eq!(tx.output[1].value, 89_829);
         let res = control.create_spend(&destinations, &[dummy_op], 2).unwrap();
         let tx = res.psbt.unsigned_tx;
-        assert_eq!(tx.output[1].value, 89_660);
+        assert_eq!(tx.output[1].value, 89_658);
 
         // If we ask for a too high feerate, or a too large/too small output, it'll fail.
         assert_eq!(

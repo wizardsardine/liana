@@ -487,6 +487,17 @@ impl MultipathDescriptor {
             .expect("Cannot fail for P2WSH")
     }
 
+    /// Get the maximum size in vbytes (rounded up) of a satisfaction for this descriptor.
+    pub fn max_sat_vbytes(&self) -> usize {
+        self.multi_desc
+            .max_satisfaction_weight()
+            .expect("Cannot fail for P2WSH")
+            .checked_add(WITNESS_FACTOR - 1)
+            .unwrap()
+            .checked_div(WITNESS_FACTOR)
+            .unwrap()
+    }
+
     /// Get the maximum size in virtual bytes of the whole input in a transaction spending
     /// a coin with this Script.
     pub fn spender_input_size(&self) -> usize {
@@ -588,13 +599,6 @@ impl DerivedInheritanceDescriptor {
             .map(|k| (k.key.inner, (k.origin.0, k.origin.1)))
             .collect()
     }
-
-    /// Get the maximum size in WU of a satisfaction for this descriptor.
-    pub fn max_sat_weight(&self) -> usize {
-        self.0
-            .max_satisfaction_weight()
-            .expect("Cannot fail for P2WSH")
-    }
 }
 
 #[cfg(test)]
@@ -667,7 +671,6 @@ mod tests {
         der_desc.script_pubkey();
         der_desc.witness_script();
         assert!(!der_desc.bip32_derivations().is_empty());
-        assert!(!der_desc.max_sat_weight() > 0);
     }
 
     #[test]
@@ -684,17 +687,8 @@ mod tests {
 
     #[test]
     fn inheritance_descriptor_sat_size() {
-        let secp = secp256k1::Secp256k1::verification_only();
         let desc = MultipathDescriptor::from_str("wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/<0;1>/*),and_v(v:pkh(tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/<0;1>/*),older(2))))#uact7s3g").unwrap();
-        let receive_desc = desc.receive_descriptor();
-        let change_desc = desc.change_descriptor();
-
-        // Derived or not the expected maximum satisfaction size should be the same for
-        // the change and receive descriptor.
-        assert_eq!(
-            receive_desc.derive(999.into(), &secp).max_sat_weight(),
-            change_desc.derive(999.into(), &secp).max_sat_weight()
-        );
+        assert_eq!(desc.max_sat_vbytes(), (1 + 69 + 1 + 34 + 73 + 3) / 4); // See the stack details below.
 
         // Maximum input size is (txid + vout + scriptsig + nSequence + max_sat).
         // Where max_sat is:

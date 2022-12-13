@@ -8,7 +8,14 @@ from test_framework.serializations import (
     PSBT_IN_PARTIAL_SIG,
     PSBT_IN_NON_WITNESS_UTXO,
 )
-from test_framework.utils import wait_for, COIN, RpcError, get_txid, spend_coins
+from test_framework.utils import (
+    wait_for,
+    COIN,
+    RpcError,
+    get_txid,
+    spend_coins,
+    sign_and_broadcast,
+)
 
 
 def test_getinfo(lianad):
@@ -123,10 +130,7 @@ def test_create_spend(lianad, bitcoind):
         )
 
     # We can sign it and broadcast it.
-    signed_psbt = lianad.sign_psbt(PSBT.from_base64(res["psbt"]))
-    finalized_psbt = lianad.finalize_psbt(signed_psbt)
-    tx = finalized_psbt.tx.serialize_with_witness().hex()
-    bitcoind.rpc.sendrawtransaction(tx)
+    sign_and_broadcast(lianad, bitcoind, PSBT.from_base64(res["psbt"]))
 
 
 def test_list_spend(lianad, bitcoind):
@@ -533,3 +537,51 @@ def test_listtransactions(lianad, bitcoind):
     assert len(txs) == 3
     bit_txids = set(bitcoind.rpc.decoderawtransaction(tx["tx"])["txid"] for tx in txs)
     assert bit_txids == txids
+
+
+def test_create_recovery(lianad, bitcoind):
+    """Test the sweep of coins that are available through the timelocked path."""
+    # Start by getting a few coins
+    destinations = {
+        lianad.rpc.getnewaddress()["address"]: 0.1,
+        lianad.rpc.getnewaddress()["address"]: 0.2,
+        lianad.rpc.getnewaddress()["address"]: 0.3,
+    }
+    txid = bitcoind.rpc.sendmany("", destinations)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
+
+    # There's nothing to sweep
+    with pytest.raises(
+        RpcError,
+        match="No coin currently available through the timelocked recovery path",
+    ):
+        lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
+
+    # Receive another coin, it will be one block after the others
+    txid = bitcoind.rpc.sendtoaddress(lianad.rpc.getnewaddress()["address"], 0.4)
+
+    # Make the timelock of the 3 first coins mature (we use a csv of 10 in the fixture)
+    bitcoind.generate_block(9, wait_for_mempool=txid)
+
+    # Now we can create a recovery tx that sweeps the first 3 coins.
+    res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 18)
+    reco_psbt = PSBT.from_base64(res["psbt"])
+    assert len(reco_psbt.tx.vin) == 3, "The last coin's timelock hasn't matured yet"
+    assert len(reco_psbt.tx.vout) == 1
+    assert int(0.5999 * COIN) < int(reco_psbt.tx.vout[0].nValue) < int(0.6 * COIN)
+    txid = sign_and_broadcast(lianad, bitcoind, reco_psbt, recovery=True)
+
+    # And by mining one more block we'll be able to sweep the last coin.
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
+    res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 1)
+    reco_psbt = PSBT.from_base64(res["psbt"])
+    assert len(reco_psbt.tx.vin) == 1
+    assert len(reco_psbt.tx.vout) == 1
+    assert int(0.39999 * COIN) < int(reco_psbt.tx.vout[0].nValue) < int(0.4 * COIN)
+    sign_and_broadcast(lianad, bitcoind, reco_psbt, recovery=True)

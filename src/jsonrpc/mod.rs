@@ -161,7 +161,8 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::UnknownSpend(..)
             | commands::CommandError::SpendFinalization(..)
             | commands::CommandError::InsaneRescanTimestamp(..)
-            | commands::CommandError::AlreadyRescanning => {
+            | commands::CommandError::AlreadyRescanning
+            | commands::CommandError::RecoveryNotAvailable => {
                 Error::new(ErrorCode::InvalidParams, e.to_string())
             }
             commands::CommandError::FetchingTransaction(..)

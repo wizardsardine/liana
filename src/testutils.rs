@@ -1,7 +1,7 @@
 use crate::{
     bitcoin::{BitcoinInterface, Block, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
-    database::{Coin, DatabaseConnection, DatabaseInterface, SpendBlock},
+    database::{Coin, CoinType, DatabaseConnection, DatabaseInterface, SpendBlock},
     descriptors, DaemonHandle,
 };
 
@@ -189,8 +189,19 @@ impl DatabaseConnection for DummyDatabase {
         self.db.write().unwrap().change_index = index;
     }
 
-    fn coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
-        self.db.read().unwrap().coins.clone()
+    fn coins(&mut self, coin_type: CoinType) -> HashMap<bitcoin::OutPoint, Coin> {
+        let coins = self.db.read().unwrap().coins.clone();
+        match coin_type {
+            CoinType::All => coins,
+            CoinType::Unspent => coins
+                .into_iter()
+                .filter(|(_, c)| c.spend_txid.is_none())
+                .collect(),
+            CoinType::Spent => coins
+                .into_iter()
+                .filter(|(_, c)| c.spend_txid.is_some())
+                .collect(),
+        }
     }
 
     fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {
