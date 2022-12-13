@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use std::{error::Error, path::PathBuf, str::FromStr};
 
 use iced::{executor, Application, Command, Element, Settings, Subscription};
