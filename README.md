@@ -24,14 +24,14 @@ Taproot as soon as possible, for enhanced privacy.
 
 ## Usage
 
-TL;DR: if you just want to quickly try Liana, check out [the guide](doc/TRY.md)!
+TL;DR: if you just want to quickly try Liana on Bitcoin Signet, check out [the guide](doc/TRY.md)!
 
 As a Bitcoin wallet, Liana needs to be able to connect to the Bitcoin network. The software has been
 developed such as multiple ways to connect to the Bitcoin network may be available. However for now
 only the connection through `bitcoind` is implemented.
 
-Therefore in order to use Liana you need to have Bitcoin Core running on your machine for the
-desired network. The `bitcoind` installation may be pruned (note this may affect block chain
+Therefore in order to use Liana you need to have Bitcoin Core `bitcoind` running on your machine for the
+desired network (mainnet, signet, testnet or regtest). The `bitcoind` installation may be pruned (note this may affect block chain
 rescans) up to the maximum (around 550MB of blocks).
 
 The minimum supported version of Bitcoin Core is `24.0.1`. If you don't have Bitcoin Core installed on
@@ -39,7 +39,7 @@ your machine yet, you can download it [there](https://bitcoincore.org/en/downloa
 
 ### Installing the software
 
-The recommended installation method for regular users is to download a release. If you prefer to
+The recommended installation method for regular users is to download a binary release. If you prefer to
 build the project from source, see [`doc/BUILD.md`](doc/BUILD.md).
 
 TODO: instructions for downloading a release and verifying the signatures.
@@ -47,7 +47,7 @@ TODO: instructions for downloading a release and verifying the signatures.
 
 ### Setting up a wallet
 
-If you are using the GUI, you can just start the program. It will spawn an installer that will guide
+If you are using the graphical user interface (GUI), you can just start the program. It will spawn an installer that will guide
 you through the process of setting up a new wallet.
 
 If you are using the daemon, you will need to specify its configuration as a TOML file. There is a
@@ -56,37 +56,36 @@ Then you can start the daemon like so:
 ```
 lianad --conf /path/to/your/conf.toml
 ```
-
 #### The script descriptor
 
 **MAKE SURE TO BACK UP YOUR DESCRIPTOR**
 
-In Bitcoin, the conditions for spending a certain amount of coins are expressed using a
+In Bitcoin, the conditions for spending a certain amount of coins are expressed using
 [Script](https://en.bitcoin.it/wiki/Script). In order to be able to recover your coins, you need to
 back up both:
 - The Script template, in the form of a standard [Output Script
   Descriptor](https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki)
-- The private key corresponding to the public key used in the Script
+- The private key(s) corresponding to the public key(s) used in the Script
 
 By so doing, any software that understands the Output Script Descriptor standard will be able to
-retrieve your coins. By using your private key you would then be able to sign a transaction spending
+retrieve your coins. By using your private key(s) you would then be able to sign a transaction spending
 them.
 
 But **without the descriptor you won't be able to recover from your backup**. Note however it is
-simpler to have redundancy for your descriptor backup. A thief getting access to it will be able to
-learn your balance (and transaction history), but **will not be able to steal your funds**.
+simpler to have redundancy for your descriptor backup. A thief getting access to it would be able to
+learn your balance (and transaction history), but **would not be able to steal your funds**.
 Therefore you may afford a greater number of backups of your descriptor(s) and using less secure
-mediums than for storing your private key.
+mediums than for storing your private key(s).
+
 
 ### Using a wallet
 
 You can use Liana just like a regular wallet. Just be aware that if you are using a relative
 timelock (the only type of timelocks supported for now), time starts ticking when you receive a
-payment. That is if you want the recovery path to never be available, all coins must be spent
+payment. That is if you want the recovery path to never be available, each coin must be spent
 at least once every `N` blocks. (With `N` the configured value of the timelock.)
 
-For now, only the Ledger and Specter DIY signing devices are supported. We may add the possibility
-to use Liana as a "hot" wallet in the future (i.e. with a private key directly on the laptop).
+For now, only the Ledger and Specter DIY signing devices are supported, as Miniscript compatibility of the signer is a must. We expect more signing devices to implement Miniscript capability. We may add the possibility to use Liana as a "hot" wallet in the future (i.e. with a private key directly on the laptop).
 
 If you are using the GUI, it should be intuitive what menu to use depending on your intention. If it
 is not, bug report are very welcome so [feel free to report it](https://github.com/revault/liana/issues)! :)
@@ -118,7 +117,7 @@ Note also that you might connect the GUI to a running `lianad`. If the GUI detec
 already running, it will plug to it and communicate through the JSONRPC API.
 
 
-### Wallet recovery
+### Using the recovery path
 
 TODO: have a longer form document on recovery through the recovery path.
 
