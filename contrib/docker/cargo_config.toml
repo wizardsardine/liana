@@ -1,0 +1,17 @@
+[source.vendored_sources]
+directory = "vendor"
+
+[source.crates-io]
+replace-with = "vendored_sources"
+
+[source."https://github.com/darosior/rust-miniscript"]
+git = "https://github.com/darosior/rust-miniscript"
+branch = "multipath_descriptors_on_8.0"
+replace-with = "vendored_sources"
+
+[source."https://github.com/revault/liana"]
+git = "https://github.com/revault/liana"
+branch = "master"
+replace-with = "vendored_sources"
+
+# TODO: strip debug symbols as is done in Guix to reduce binary size.
