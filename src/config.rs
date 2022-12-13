@@ -314,8 +314,9 @@ mod tests {
             .ends_with("Library/Application Support/Liana/liana.toml"));
 
         #[cfg(target_os = "windows")]
-        assert!(filepath
-            .as_path()
-            .ends_with(r#"AppData\Roaming\Liana\liana.toml"#));
+        assert_eq!(
+            filepath.as_path().to_string_lossy(),
+            r#"AppData\Roaming\Liana\liana.toml"#
+        );
     }
 }
