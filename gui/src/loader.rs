@@ -96,7 +96,8 @@ impl Loader {
                 Error::Config(_) => {
                     self.step = Step::Error(Box::new(e));
                 }
-                Error::Daemon(DaemonError::Transport(Some(ErrorKind::ConnectionRefused), _))
+                Error::Daemon(DaemonError::ClientNotSupported)
+                | Error::Daemon(DaemonError::Transport(Some(ErrorKind::ConnectionRefused), _))
                 | Error::Daemon(DaemonError::Transport(Some(ErrorKind::NotFound), _)) => {
                     self.step = Step::StartingDaemon;
                     self.daemon_started = true;
