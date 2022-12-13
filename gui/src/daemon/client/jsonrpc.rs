@@ -18,9 +18,6 @@
 //! and parsing responses
 //!
 
-#[cfg(windows)]
-use uds_windows::UnixStream;
-
 #[cfg(not(windows))]
 use std::os::unix::net::UnixStream;
 
@@ -70,7 +67,17 @@ impl JsonRPCClient {
         self.timeout = timeout;
     }
 
+    #[cfg(windows)]
+    pub fn send_request<S: Serialize + Debug, D: DeserializeOwned + Debug>(
+        &self,
+        method: &str,
+        params: Option<S>,
+    ) -> Result<Response<D>, Error> {
+        Err(Error::NotSupported)
+    }
+
     /// Sends a request to a client
+    #[cfg(not(windows))]
     pub fn send_request<S: Serialize + Debug, D: DeserializeOwned + Debug>(
         &self,
         method: &str,
@@ -185,6 +192,8 @@ pub enum Error {
     NonceMismatch,
     /// Response to a request had a jsonrpc field other than "2.0"
     VersionMismatch,
+    /// unix socket communication is not supported.
+    NotSupported,
 }
 
 impl From<serde_json::Error> for Error {
@@ -214,6 +223,7 @@ impl fmt::Display for Error {
             Error::NoErrorOrResult => write!(f, "Malformed RPC response"),
             Error::NonceMismatch => write!(f, "Nonce of response did not match nonce of request"),
             Error::VersionMismatch => write!(f, "`jsonrpc` field set to non-\"2.0\""),
+            Error::NotSupported => write!(f, "unix socket communication is not supported"),
         }
     }
 }
@@ -239,6 +249,7 @@ impl From<Error> for super::DaemonError {
                 super::DaemonError::Transport(None, format!("transport: {}", e))
             }
             Error::NoErrorOrResult => super::DaemonError::NoAnswer,
+            Error::NotSupported => super::DaemonError::ClientNotSupported,
             Error::Rpc(e) => super::DaemonError::Rpc(e.code, e.message),
         }
     }

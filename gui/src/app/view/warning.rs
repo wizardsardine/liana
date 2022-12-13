@@ -28,6 +28,9 @@ impl From<&Error> for WarningMessage {
                 }
                 DaemonError::Unexpected(_) => WarningMessage("Unknown error".to_string()),
                 DaemonError::Start(_) => WarningMessage("Daemon failed to start".to_string()),
+                DaemonError::ClientNotSupported => {
+                    WarningMessage("Daemon client is not supported".to_string())
+                }
                 DaemonError::NoAnswer | DaemonError::Transport(..) => {
                     WarningMessage("Communication with Daemon failed".to_string())
                 }
