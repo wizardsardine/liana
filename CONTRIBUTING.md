@@ -66,7 +66,7 @@ query).
 
 ## Minimum Supported Rust Version
 
-`minisafed` should always compile and pass tests using **Rust 1.48**.
+`lianad` should always compile and pass tests using **Rust 1.48**.
 
 ## Style
 
