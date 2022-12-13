@@ -24,8 +24,6 @@ pub enum DaemonError {
     NoAnswer,
     // Error at start up.
     Start(StartupError),
-    // Error if the client is not supported.
-    ClientNotSupported,
 }
 
 impl std::fmt::Display for DaemonError {
@@ -36,7 +34,6 @@ impl std::fmt::Display for DaemonError {
             Self::Transport(kind, e) => write!(f, "Daemon transport error: [{:?}] {}", kind, e),
             Self::Unexpected(e) => write!(f, "Daemon unexpected error: {}", e),
             Self::Start(e) => write!(f, "Daemon did not start: {}", e),
-            Self::ClientNotSupported => write!(f, "Daemon communication is not supported"),
         }
     }
 }

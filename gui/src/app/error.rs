@@ -31,9 +31,6 @@ impl std::fmt::Display for Error {
                 DaemonError::Start(e) => {
                     write!(f, "Failed to start daemon: {}", e)
                 }
-                DaemonError::ClientNotSupported => {
-                    write!(f, "Daemon client is not supported")
-                }
                 DaemonError::Rpc(code, e) => {
                     write!(f, "[{:?}] {}", code, e)
                 }
