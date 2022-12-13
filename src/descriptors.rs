@@ -39,7 +39,9 @@ pub enum DescCreationError {
 impl std::fmt::Display for DescCreationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::InsaneTimelock(tl) => write!(f, "Timelock value '{}' isn't safe to use", tl),
+            Self::InsaneTimelock(tl) => {
+                write!(f, "Timelock value '{}' isn't valid or safe to use", tl)
+            }
             Self::InvalidKey(key) => {
                 write!(
                     f,
@@ -179,9 +181,10 @@ impl ToPublicKey for DerivedPublicKey {
 // All this is achieved simply through asking for a 16-bit integer, since all the
 // above are signaled in leftmost bits.
 fn csv_check(csv_value: u32) -> Result<(), DescCreationError> {
-    u16::try_from(csv_value)
-        .map(|_| ())
-        .map_err(|_| DescCreationError::InsaneTimelock(csv_value))
+    if csv_value > 0 && u16::try_from(csv_value).is_ok() {
+        return Ok(());
+    }
+    Err(DescCreationError::InsaneTimelock(csv_value))
 }
 
 // We require the descriptor key to:
@@ -340,8 +343,12 @@ impl MultipathDescriptor {
         //  - not be disabled
         //  - be in number of blocks
         //  - be 'clean' / minimal, ie all bits without consensus meaning should be 0
+        //  - be positive (Miniscript requires it not to be 0)
         //
         // All this is achieved through asking for a 16-bit integer.
+        if timelock == 0 {
+            return Err(DescCreationError::InsaneTimelock(timelock as u32));
+        }
         let timelock = Sequence::from_height(timelock);
 
         if let Some(key) = vec![&owner_key, &heir_key]
@@ -601,13 +608,16 @@ mod tests {
         let owner_key = descriptor::DescriptorPublicKey::from_str("xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*").unwrap();
         let timelock = 52560;
-        assert_eq!(MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap().to_string(), "wsh(or_d(pk(xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh(xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#8n2ydpkt");
+        assert_eq!(MultipathDescriptor::new(owner_key.clone(), heir_key.clone(), timelock).unwrap().to_string(), "wsh(or_d(pk(xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh(xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#8n2ydpkt");
 
         // We prevent footguns with timelocks by requiring a u16. Note how the following wouldn't
         // compile:
         //MultipathDescriptor::new(owner_key.clone(), heir_key.clone(), 0x00_01_0f_00).unwrap_err();
         //MultipathDescriptor::new(owner_key.clone(), heir_key.clone(), (1 << 31) + 1).unwrap_err();
         //MultipathDescriptor::new(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
+
+        // You can't use a null timelock in Miniscript.
+        MultipathDescriptor::new(owner_key, heir_key, 0).unwrap_err();
 
         let owner_key = descriptor::DescriptorPublicKey::from_str("[aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*").unwrap();
         let heir_key = descriptor::DescriptorPublicKey::from_str("xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*").unwrap();

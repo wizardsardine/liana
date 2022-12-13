@@ -222,6 +222,7 @@ def test_rescan_edge_cases(lianad, bitcoind):
     lianad.stop()
     lianad.start()
     wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
+    wait_synced()
     assert coins_before == sorted_coins()
 
     # Lose our state again
