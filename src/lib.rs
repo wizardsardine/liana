@@ -433,10 +433,10 @@ mod tests {
         stream.flush().unwrap();
     }
 
-    // Send them a pruned getblockchaininfo telling them we are at version 23.99
+    // Send them a pruned getblockchaininfo telling them we are at version 24.0
     fn complete_version_check(server: &net::TcpListener) {
         let net_resp =
-            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"version\":239900}}\n"
+            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"version\":240000}}\n"
                 .as_bytes();
         let (mut stream, _) = server.accept().unwrap();
         read_til_json_end(&mut stream);

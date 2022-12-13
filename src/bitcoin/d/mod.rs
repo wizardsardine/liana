@@ -35,7 +35,7 @@ const RPC_SOCKET_TIMEOUT: u64 = 180;
 const BITCOIND_RETRY_LIMIT: usize = 60;
 
 // The minimum bitcoind version that can be used with lianad.
-const MIN_BITCOIND_VERSION: u64 = 239900;
+const MIN_BITCOIND_VERSION: u64 = 240000;
 
 /// An error in the bitcoind interface.
 #[derive(Debug)]
