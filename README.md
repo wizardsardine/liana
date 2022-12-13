@@ -34,7 +34,7 @@ Therefore in order to use Liana you need to have Bitcoin Core running on your ma
 desired network. The `bitcoind` installation may be pruned (note this may affect block chain
 rescans) up to the maximum (around 550MB of blocks).
 
-The minimum supported version of Bitcoin Core is `24.0`. If you don't have Bitcoin Core installed on
+The minimum supported version of Bitcoin Core is `24.0.1`. If you don't have Bitcoin Core installed on
 your machine yet, you can download it [there](https://bitcoincore.org/en/download/).
 
 ### Installing the software
