@@ -1,0 +1,5 @@
+*
+!gui/Cargo.*
+!gui/src
+!gui/static
+!contrib/docker/cargo_config.toml
