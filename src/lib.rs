@@ -203,7 +203,7 @@ fn setup_bitcoind(
         bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
         log::info!("Created a new watchonly wallet on bitcoind.");
     }
-    bitcoind.try_load_watchonly_wallet();
+    bitcoind.maybe_load_watchonly_wallet()?;
     bitcoind.sanity_check(&config.main_descriptor, config.bitcoin_config.network)?;
     log::info!("Connection to bitcoind established and checked.");
 
@@ -433,10 +433,10 @@ mod tests {
         stream.flush().unwrap();
     }
 
-    // Send them a pruned getblockchaininfo telling them we are at version 23.99
+    // Send them a pruned getblockchaininfo telling them we are at version 24.0
     fn complete_version_check(server: &net::TcpListener) {
         let net_resp =
-            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"version\":239900}}\n"
+            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"version\":240000}}\n"
                 .as_bytes();
         let (mut stream, _) = server.accept().unwrap();
         read_til_json_end(&mut stream);
@@ -488,12 +488,19 @@ mod tests {
 
     // Send them a dummy result to loadwallet.
     fn complete_wallet_loading(server: &net::TcpListener) {
-        let net_resp =
+        let listwallets_resp =
+            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[]}\n".as_bytes();
+        let (mut stream, _) = server.accept().unwrap();
+        read_til_json_end(&mut stream);
+        stream.write_all(listwallets_resp).unwrap();
+        stream.flush().unwrap();
+
+        let loadwallet_resp =
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"name\":\"dummy\"}}\n"
                 .as_bytes();
         let (mut stream, _) = server.accept().unwrap();
         read_til_json_end(&mut stream);
-        stream.write_all(net_resp).unwrap();
+        stream.write_all(loadwallet_resp).unwrap();
         stream.flush().unwrap();
     }
 

@@ -45,15 +45,13 @@ cd liana_quicktry
 
 ## Step 1: setup `bitcoind`
 
-Liana needs `bitcoind` to communicate with the Bitcoin network. Minimum supported version is 24.0.
+Liana needs `bitcoind` to communicate with the Bitcoin network. Minimum supported version is 24.0.1.
 
 ### Download
 
-TODO: update to 24.0.1 when it's released.
-
 Download the `bitcoind` binary from [the official website of the Bitcoin Core
-project](https://bitcoincore.org/bin/bitcoin-core-24.0/) according to your platform (in the context
-of this guide, it is most likely `bitcoin-24.0-x86_64-linux-gnu.tar.gz`).
+project](https://bitcoincore.org/bin/bitcoin-core-24.0.1/) according to your platform (in the context
+of this guide, it is most likely `bitcoin-24.0.1-x86_64-linux-gnu.tar.gz`).
 
 Then verify the signature against a key you trust. The Bitcoin Core Github repo contains [a
 list](https://github.com/bitcoin/bitcoin/blob/master/contrib/builder-keys/keys.txt) of frequent
@@ -62,11 +60,11 @@ signers. Mine is `590B7292695AFFA5B672CBB2E13FC145CD3F4304`.
 Finally, uncompress the archive to get access to the `bitcoind` binary.
 
 ```
-curl -O https://bitcoincore.org/bin/bitcoin-core-24.0/bitcoin-24.0-x86_64-linux-gnu.tar.gz -O https://bitcoincore.org/bin/bitcoin-core-24.0/SHA256SUMS -O https://bitcoincore.org/bin/bitcoin-core-24.0/SHA256SUMS.asc
+curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/SHA256SUMS -O https://bitcoincore.org/bin/bitcoin-core-24.0/SHA256SUMS.asc
 sha256sum --ignore-missing --check SHA256SUMS
 gpg --keyserver hkps://keys.openpgp.org --receive 590B7292695AFFA5B672CBB2E13FC145CD3F4304
 gpg --verify SHA256SUMS.asc
-tar -xzf bitcoin-24.0-x86_64-linux-gnu.tar.gz
+tar -xzf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
 ```
 
 For details on verifying your download, or for verifying the download on a non-Linux machine refer
@@ -77,14 +75,14 @@ to
 
 Run `bitcoind` in the background on the public signet network.
 ```
-./bitcoin-24.0/bin/bitcoind -signet -daemon
+./bitcoin-24.0.1/bin/bitcoind -signet -daemon
 ```
 
 If it is the first time you start a signet Bitcoin on this machine it will take a few minutes to
 synchronize (depends on your connection and hardware of course, but it shouldn't take longer than a
 handful of minutes). You can track the progress using the `getblockchaininfo` command:
 ```
-./bitcoin-24.0/bin/bitcoin-cli -signet getblockchaininfo
+./bitcoin-24.0.1/bin/bitcoin-cli -signet getblockchaininfo
 ```
 
 You do not need to wait for full synchronisation before moving on to the next step.

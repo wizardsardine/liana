@@ -35,7 +35,7 @@ const RPC_SOCKET_TIMEOUT: u64 = 180;
 const BITCOIND_RETRY_LIMIT: usize = 60;
 
 // The minimum bitcoind version that can be used with lianad.
-const MIN_BITCOIND_VERSION: u64 = 239900;
+const MIN_BITCOIND_VERSION: u64 = 240000;
 
 /// An error in the bitcoind interface.
 #[derive(Debug)]
@@ -553,16 +553,15 @@ impl BitcoinD {
         Ok(())
     }
 
-    /// Try to load the watchonly wallet in bitcoind. It will continue on error (since it's
-    /// likely the wallet is just already loaded) and log it as info instead.
-    pub fn try_load_watchonly_wallet(&self) {
-        // TODO: check if it's not loaded instead of blindly trying to load it.
-        if let Err(e) = self.make_fallible_node_request(
-            "loadwallet",
-            &params!(Json::String(self.watchonly_wallet_path.clone()),),
-        ) {
-            log::info!("Got error '{}' while trying to load watchonly on bitcoind. It is possibly already loaded.", e);
+    /// Load the watchonly wallet on bitcoind, if it isn't already.
+    pub fn maybe_load_watchonly_wallet(&self) -> Result<(), BitcoindError> {
+        if !self.list_wallets().contains(&self.watchonly_wallet_path) {
+            self.make_fallible_node_request(
+                "loadwallet",
+                &params!(Json::String(self.watchonly_wallet_path.clone()),),
+            )?;
         }
+        Ok(())
     }
 
     /// Perform various sanity checks on the bitcoind instance.
