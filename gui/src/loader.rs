@@ -143,7 +143,7 @@ impl Loader {
             } => {
                 match res {
                     Ok(info) => {
-                        if (info.sync - 1.0_f64).abs() < f64::EPSILON {
+                        if info.sync >= 0.999_f64 {
                             let daemon = daemon.clone();
                             return Command::perform(
                                 async move {
