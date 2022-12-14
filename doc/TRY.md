@@ -19,10 +19,11 @@ TODO: adapt the guide to Windows and MacOS.
 Here is a list of the system dependencies: the tools and libraries you need to have installed on
 your system to follow the guide.
 
-> TL;DR dependencies (details below):
-> - Arch Linux: check if you have all the required packages: `pacman -Q coreutils tar git sdl2 curl gnupg fontconfig systemd-libs`
-> If any is listed as "was not found", get it with `pacman -Sy [missing package name]`
-> - Debian/Ubuntu: `apt install git libsdl2-dev curl gpg libfontconfig1-dev libudev-dev`
+TL-DR:
+- Debian/Ubuntu: `apt install git libsdl2-dev curl gpg libfontconfig1-dev libudev-dev`
+- Arch Linux: check if you have all the required packages: `pacman -Q coreutils tar git sdl2 curl gnupg fontconfig systemd-libs`.
+If any is listed as "was not found", get it with `pacman -Sy [missing package name]`
+- Other distribution: see the link to projects below to search for the name of your distribution's packages.
 
 We'll use basic tools which should already be present on your system, such as:
 - `shasum`
