@@ -8,7 +8,7 @@ use miniscript::bitcoin;
 /// Bitcoind uses a guess for the value of verificationprogress. It will eventually get to
 /// be 1, and we want to be less conservative.
 pub fn roundup_progress(progress: f64) -> f64 {
-    let precision = 10u64.pow(5) as f64;
+    let precision = 10u64.pow(3) as f64;
     let progress_rounded = (progress * precision + 1.0) as u64;
 
     if progress_rounded >= precision as u64 {
@@ -366,12 +366,12 @@ mod tests {
     #[test]
     fn bitcoind_roundup_progress() {
         assert_eq!(roundup_progress(0.6), 0.6);
-        assert_eq!(roundup_progress(0.67891), 0.67891);
+        assert_eq!(roundup_progress(0.67891), 0.678);
         assert_eq!(roundup_progress(0.98), 0.98);
         assert_eq!(roundup_progress(0.998), 0.998);
-        assert_eq!(roundup_progress(0.9997), 0.9997);
-        assert_eq!(roundup_progress(0.9476), 0.9476);
-        assert_eq!(roundup_progress(0.99998), 0.99998);
-        assert_eq!(roundup_progress(0.999998), 1.0);
+        assert_eq!(roundup_progress(0.9476), 0.947);
+        assert_eq!(roundup_progress(0.998), 0.998);
+        assert_eq!(roundup_progress(0.9998), 1.0);
+        assert_eq!(roundup_progress(0.9991), 1.0);
     }
 }
