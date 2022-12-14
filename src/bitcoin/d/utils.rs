@@ -2,6 +2,22 @@ use crate::bitcoin::{d::BlockStats, BlockChainTip};
 
 use miniscript::bitcoin;
 
+/// Truncate the sync progress, rounding it up if it gets above 0.999. Note this also caps the
+/// progress to 1.0, as bitcoind could temporarily return value >1.0 in getblockchaininfo's
+/// "verificationprogress" field.
+/// Bitcoind uses a guess for the value of verificationprogress. It will eventually get to
+/// be 1, and we want to be less conservative.
+pub fn roundup_progress(progress: f64) -> f64 {
+    let precision = 10u64.pow(3) as f64;
+    let progress_rounded = (progress * precision + 1.0) as u64;
+
+    if progress_rounded >= precision as u64 {
+        1.0
+    } else {
+        (progress * precision) as u64 as f64 / precision
+    }
+}
+
 // As a standalone function to unit test it.
 /// Get the last block of the chain before the given date by performing a binary search.
 pub fn block_before_date<Fh, Fs>(
@@ -345,5 +361,17 @@ mod tests {
                 hash: bh!("000000000000000005c0655db17fde80f67ff0502a62b7250ed2685619d19bb2"),
             }
         );
+    }
+
+    #[test]
+    fn bitcoind_roundup_progress() {
+        assert_eq!(roundup_progress(0.6), 0.6);
+        assert_eq!(roundup_progress(0.67891), 0.678);
+        assert_eq!(roundup_progress(0.98), 0.98);
+        assert_eq!(roundup_progress(0.998), 0.998);
+        assert_eq!(roundup_progress(0.9476), 0.947);
+        assert_eq!(roundup_progress(0.998), 0.998);
+        assert_eq!(roundup_progress(0.9998), 1.0);
+        assert_eq!(roundup_progress(0.9991), 1.0);
     }
 }

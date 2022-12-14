@@ -7,7 +7,7 @@ use crate::{
     config,
     descriptors::MultipathDescriptor,
 };
-use utils::block_before_date;
+use utils::{block_before_date, roundup_progress};
 
 use std::{
     cmp, collections::HashSet, convert::TryInto, fs, io, str::FromStr, thread, time::Duration,
@@ -957,18 +957,6 @@ impl BitcoinD {
             |h| self.get_block_hash(h),
             |h| self.get_block_stats(h),
         )
-    }
-}
-// Bitcoind uses a guess for the value of verificationprogress. It will eventually get to
-// be 1, and we want to be less conservative.
-fn roundup_progress(progress: f64) -> f64 {
-    let precision = 10u64.pow(5) as f64;
-    let progress_rounded = (progress * precision + 1.0) as u64;
-
-    if progress_rounded >= precision as u64 {
-        1.0
-    } else {
-        (progress_rounded as f64 / precision) as f64
     }
 }
 
