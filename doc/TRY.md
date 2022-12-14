@@ -135,7 +135,7 @@ Choose network Signet. For the primary key we will use the one from the dummy si
 can choose anything valid. Preferably something small to test the case where coins are soon to
 become accessible on the recovery branch.
 
-For the recovery key you could use another simulator but in this guide i'll just use a key generated online at https://iancoleman.io/bip39/. Click the **GENERATE** at the top of the website, then make sure to select **Coin: BTC-Bitcoin Testnet** to generate a tpub_. You can then copy the **Account Extended Public Key** and paste it in the recovery path of Liana.
+For the recovery key you could use another simulator but in this guide i'll just use a key generated online at https://iancoleman.io/bip39/. Click the **GENERATE** at the top of the website, then make sure to select **Coin: BTC-Bitcoin Testnet** to generate a tpub. You can then copy the **Account Extended Public Key** and paste it in the recovery path of Liana.
 
 Make the next step happy by ticking the "I backed up my descriptor" checkbox.
 
