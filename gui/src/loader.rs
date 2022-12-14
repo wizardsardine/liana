@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use iced::{
-    widget::{Column, Container, ProgressBar},
+    widget::{Column, Container, ProgressBar, Row},
     Element,
 };
 use iced::{Alignment, Command, Length, Subscription};
@@ -30,6 +30,7 @@ use crate::{
 type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
 
 pub struct Loader {
+    pub datadir_path: Option<PathBuf>,
     pub gui_config: GUIConfig,
     pub daemon_started: bool,
 
@@ -65,7 +66,11 @@ pub enum Message {
 }
 
 impl Loader {
-    pub fn new(gui_config: GUIConfig, daemon_config: Config) -> (Self, Command<Message>) {
+    pub fn new(
+        datadir_path: Option<PathBuf>,
+        gui_config: GUIConfig,
+        daemon_config: Config,
+    ) -> (Self, Command<Message>) {
         let path = socket_path(
             &daemon_config.data_dir,
             daemon_config.bitcoin_config.network,
@@ -73,6 +78,7 @@ impl Loader {
         .unwrap();
         (
             Loader {
+                datadir_path,
                 daemon_config: daemon_config.clone(),
                 gui_config,
                 step: Step::Connecting,
@@ -188,7 +194,11 @@ impl Loader {
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::View(ViewMessage::Retry) => {
-                let (loader, cmd) = Self::new(self.gui_config.clone(), self.daemon_config.clone());
+                let (loader, cmd) = Self::new(
+                    self.datadir_path.clone(),
+                    self.gui_config.clone(),
+                    self.daemon_config.clone(),
+                );
                 *self = loader;
                 cmd
             }
@@ -216,16 +226,17 @@ impl Loader {
     }
 
     pub fn view(&self) -> Element<Message> {
-        view(&self.step).map(Message::View)
+        view(self.datadir_path.as_ref(), &self.step).map(Message::View)
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum ViewMessage {
     Retry,
+    SwitchNetwork,
 }
 
-pub fn view(step: &Step) -> Element<ViewMessage> {
+pub fn view<'a>(datadir_path: Option<&'a PathBuf>, step: &'a Step) -> Element<'a, ViewMessage> {
     match &step {
         Step::StartingDaemon => cover(
             None,
@@ -266,9 +277,17 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                     },
                 )
                 .push(
-                    button::primary(None, "Retry")
-                        .width(Length::Units(200))
-                        .on_press(ViewMessage::Retry),
+                    Row::new()
+                        .spacing(10)
+                        .push_maybe(datadir_path.map(|_| {
+                            button::border(None, "Use another Bitcoin network")
+                                .on_press(ViewMessage::SwitchNetwork)
+                        }))
+                        .push(
+                            button::primary(None, "Retry")
+                                .width(Length::Units(200))
+                                .on_press(ViewMessage::Retry),
+                        ),
                 ),
         ),
     }

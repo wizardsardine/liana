@@ -9,6 +9,7 @@ pub enum Style {
     Standard,
     Success,
     Warning,
+    Bitcoin,
 }
 
 impl widget::container::StyleSheet for Style {
@@ -30,6 +31,12 @@ impl widget::container::StyleSheet for Style {
                 border_radius: 40.0,
                 background: color::WARNING_LIGHT.into(),
                 text_color: color::WARNING.into(),
+                ..widget::container::Appearance::default()
+            },
+            Self::Bitcoin => widget::container::Appearance {
+                border_radius: 40.0,
+                background: color::WARNING.into(),
+                text_color: iced::Color::WHITE.into(),
                 ..widget::container::Appearance::default()
             },
         }
