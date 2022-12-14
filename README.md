@@ -39,7 +39,7 @@ your machine yet, you can download it [there](https://bitcoincore.org/en/downloa
 
 ### Installing the software
 
-The recommended installation method for regular users is to download a binary release. If you prefer to
+The recommended installation method for regular users is to download an executable software release. If you prefer to
 build the project from source, see [`doc/BUILD.md`](doc/BUILD.md).
 
 TODO: instructions for downloading a release and verifying the signatures.
@@ -57,8 +57,6 @@ Then you can start the daemon like so:
 lianad --conf /path/to/your/conf.toml
 ```
 #### The script descriptor
-
-**MAKE SURE TO BACK UP YOUR DESCRIPTOR**
 
 In Bitcoin, the conditions for spending a certain amount of coins are expressed using
 [Script](https://en.bitcoin.it/wiki/Script). In order to be able to recover your coins, you need to
