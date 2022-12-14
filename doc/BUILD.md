@@ -40,9 +40,8 @@ sub   rsa4096/0x5CB4A9347B3B09DC 2014-12-15 [S]
 
 You can therefore pull the key from either the above or from a keyserver:
 ```
-$ gpg --keyserver hkps://keys.openpgp.org --receive 0x85AB96E6FA1BE5FE
+$ gpg --keyserver hkps://keys.openpgp.org --receive 108F66205EAEB0AAA8DD5E1C85AB96E6FA1BE5FE
 ```
-(Make sure to double check the whole key is the same, not just the fingerprint.)
 
 And then you can download the archive corresponding to your system and CPU architecture, verify the
 signature and use the `cargo` binary from this archive to build Liana. Here is an example for
