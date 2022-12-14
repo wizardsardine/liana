@@ -63,7 +63,7 @@ of this guide, it is most likely `bitcoin-24.0.1-x86_64-linux-gnu.tar.gz`), and 
 curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/SHA256SUMS -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/SHA256SUMS.asc
 ```
 
-2. Verify the hash of Bitcoin Core.
+2. Verify the hash of the downloaded archive.
 ```
 sha256sum --ignore-missing --check SHA256SUMS
 ```
