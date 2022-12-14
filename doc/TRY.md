@@ -4,8 +4,7 @@
 
 This document is a short set of instructions for trying out Liana on Bitcoin signet. It does not attempt to
 give any nuance, details or describe alternative configurations.
-This guide uses an emulator of the Specter hardware signer. You can also use an actual Specter or Ledger hardware should you have one at hand.
-**Do not use the Specter emulator on the mainnet/with real funds. This guide is for a test network, Signet**
+This guide uses an emulator of the Specter hardware signer.
 
 This guide mostly assumes you are running a 64-bit Linux.
 
@@ -19,7 +18,7 @@ TODO: adapt the guide to Windows and MacOS.
 Here is a list of the system dependencies: the tools and libraries you need to have installed on
 your system to follow the guide.
 
-TL-DR:
+TL;DR:
 - Debian/Ubuntu: `apt install git libsdl2-dev curl gpg libfontconfig1-dev libudev-dev`
 - Arch Linux: check if you have all the required packages: `pacman -Q coreutils tar git sdl2 curl gnupg fontconfig systemd-libs`.
 If any is listed as "was not found", get it with `pacman -Sy [missing package name]`
@@ -135,7 +134,6 @@ Since you presumably never installed Liana, this will start the installer. Creat
 Choose network Signet. For the primary key we will use the one from the dummy signing device you just started. Do this by simply clicking on the "import" button next to the text input in the Liana installer. For the number of blocks before the recovery key becomes active, you
 can choose anything valid. Preferably something small to test the case where coins are soon to
 become accessible on the recovery branch.
-> a block corresponds to an **average** of 10 minutes.
 
 For the recovery key you could use another simulator but in this guide i'll just use a key generated online at https://iancoleman.io/bip39/. Click the **GENERATE** at the top of the website, then make sure to select **Coin: BTC-Bitcoin Testnet** to generate a tpub_. You can then copy the **Account Extended Public Key** and paste it in the recovery path of Liana.
 
