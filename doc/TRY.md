@@ -2,8 +2,9 @@
 
 > *Just give me the TL;DR!*
 
-This document is a short set of instructions for trying out Liana on signet. It does not attempt to
+This document is a short set of instructions for trying out Liana on Bitcoin signet. It does not attempt to
 give any nuance, details or describe alternative configurations.
+This guide uses an emulator of the Specter hardware signer.
 
 This guide mostly assumes you are running a 64-bit Linux.
 
@@ -16,6 +17,12 @@ TODO: adapt the guide to Windows and MacOS.
 
 Here is a list of the system dependencies: the tools and libraries you need to have installed on
 your system to follow the guide.
+
+TL;DR:
+- Debian/Ubuntu: `apt install git libsdl2-dev curl gpg libfontconfig1-dev libudev-dev`
+- Arch Linux: check if you have all the required packages: `pacman -Q coreutils tar git sdl2 curl gnupg fontconfig systemd-libs`.
+If any is listed as "was not found", get it with `pacman -Sy [missing package name]`
+- Other distribution: see the link to projects below to search for the name of your distribution's packages.
 
 We'll use basic tools which should already be present on your system, such as:
 - `shasum`
@@ -49,21 +56,28 @@ Liana needs `bitcoind` to communicate with the Bitcoin network. Minimum supporte
 
 ### Download
 
-Download the `bitcoind` binary from [the official website of the Bitcoin Core
+1. Download the `bitcoind` binary from [the official website of the Bitcoin Core
 project](https://bitcoincore.org/bin/bitcoin-core-24.0.1/) according to your platform (in the context
-of this guide, it is most likely `bitcoin-24.0.1-x86_64-linux-gnu.tar.gz`).
+of this guide, it is most likely `bitcoin-24.0.1-x86_64-linux-gnu.tar.gz`), and associated SHA256SUMS and SHA256SUMS.asc verification files.
+```
+curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/SHA256SUMS -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/SHA256SUMS.asc
+```
 
-Then verify the signature against a key you trust. The Bitcoin Core Github repo contains [a
+2. Verify the hash of the downloaded archive.
+```
+sha256sum --ignore-missing --check SHA256SUMS
+```
+
+3. Verify the signature against a key you trust. The Bitcoin Core Github repo contains [a
 list](https://github.com/bitcoin/bitcoin/blob/master/contrib/builder-keys/keys.txt) of frequent
 signers. Mine is `590B7292695AFFA5B672CBB2E13FC145CD3F4304`.
-
-Finally, uncompress the archive to get access to the `bitcoind` binary.
-
 ```
-curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/SHA256SUMS -O https://bitcoincore.org/bin/bitcoin-core-24.0/SHA256SUMS.asc
-sha256sum --ignore-missing --check SHA256SUMS
 gpg --keyserver hkps://keys.openpgp.org --receive 590B7292695AFFA5B672CBB2E13FC145CD3F4304
 gpg --verify SHA256SUMS.asc
+```
+
+4. Finally, uncompress the archive to get access to the `bitcoind` binary.
+```
 tar -xzf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
 ```
 
@@ -102,6 +116,7 @@ git checkout 6a6983e15e4d3c8c03937f8bee040de350ce722f
 make simulate
 ```
 
+This step might take a few minutes at the first launch of the Specter emulator.
 A window will pop up. Choose a dummy pin code and generate a new key. Then go to settings, switch
 network to signet.
 
@@ -116,23 +131,15 @@ TODO: download and sig verification details
 
 Since you presumably never installed Liana, this will start the installer. Create a new wallet.
 
-Choose network Signet. For the primary key use the one from your dummy signing device, the Specter
-simulator you just started. You can do that simply by clicking on the "import" button next to the
-text input in the installer. For the number of blocks before the recovery key becomes active, you
-can choose anything valid. But prefer something small to test the case where coins are soon to
+Choose network Signet. For the primary key we will use the one from the dummy signing device you just started. Do this by simply clicking on the "import" button next to the text input in the Liana installer. For the number of blocks before the recovery key becomes active, you
+can choose anything valid. Preferably something small to test the case where coins are soon to
 become accessible on the recovery branch.
 
-For the recovery key you could use another simulator but in this guide i'll just use a random xpub:
-`tpubDDU2vzv4Rk2kU8VjDDQBWYTb7tmSd9ddV4ERmm5VesfoaxBJQm3CyNc4fjcYAzEqXn3YQ8dxpzkhQjpxT3Nqp7yQh1UMczL1MMfTSKXNv3n/<0;1>/*`.
-You can also generate one from, for instance https://iancoleman.io/bip39/. But make sure to append
-`/<0;1>/*` to it, this is to be able to derive both change and receive addresses from the same
-descriptor.
+For the recovery key you could use another simulator but in this guide i'll just use a key generated online at https://iancoleman.io/bip39/. Click the **GENERATE** at the top of the website, then make sure to select **Coin: BTC-Bitcoin Testnet** to generate a tpub. You can then copy the **Account Extended Public Key** and paste it in the recovery path of Liana.
 
-TODO: have the installer input xpubs without the derivation part. https://github.com/revault/liana/issues/155
+Make the next step happy by ticking the "I backed up my descriptor" checkbox.
 
-Make the next step happy by ticking the "i backed up my descriptor" checkbox.
-
-Import the descriptor to your Specter by clicking on the `specter-simulator` tile.
+Import the descriptor to your Specter by clicking on the `specter-simulator` tile. Accept it on the Specter emulator.
 
 Finally, configure the connection to `bitcoind`. The default should work for what we did in this
 guide. Click sur continue and finalize the installation.
