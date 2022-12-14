@@ -30,7 +30,7 @@ As a Bitcoin wallet, Liana needs to be able to connect to the Bitcoin network. T
 developed such as multiple ways to connect to the Bitcoin network may be available. However for now
 only the connection through `bitcoind` is implemented.
 
-Therefore in order to use Liana you need to have Bitcoin Core `bitcoind` running on your machine for the
+Therefore in order to use Liana you need to have the Bitcoin Core daemon (`bitcoind`) running on your machine for the
 desired network (mainnet, signet, testnet or regtest). The `bitcoind` installation may be pruned (note this may affect block chain
 rescans) up to the maximum (around 550MB of blocks).
 
