@@ -20,7 +20,7 @@ pub use liana::config::Config as DaemonConfig;
 pub use config::Config;
 pub use message::Message;
 
-use state::{CoinsPanel, CreateSpendPanel, Home, ReceivePanel, SpendPanel, State};
+use state::{CoinsPanel, CreateSpendPanel, Home, ReceivePanel, RecoveryPanel, SpendPanel, State};
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu},
@@ -67,6 +67,13 @@ impl App {
             menu::Menu::Coins => CoinsPanel::new(
                 &self.cache.coins,
                 self.daemon.config().main_descriptor.timelock_value(),
+            )
+            .into(),
+            menu::Menu::Recovery => RecoveryPanel::new(
+                self.config.clone(),
+                &self.cache.coins,
+                self.daemon.config().main_descriptor.timelock_value(),
+                self.cache.blockheight as u32,
             )
             .into(),
             menu::Menu::Receive => ReceivePanel::default().into(),

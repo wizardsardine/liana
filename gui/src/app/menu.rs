@@ -6,4 +6,5 @@ pub enum Menu {
     Settings,
     Coins,
     CreateSpendTx,
+    Recovery,
 }

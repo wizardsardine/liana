@@ -1,4 +1,5 @@
 mod coins;
+mod recovery;
 mod settings;
 mod spend;
 
@@ -17,6 +18,7 @@ use crate::daemon::{
     Daemon,
 };
 pub use coins::CoinsPanel;
+pub use recovery::RecoveryPanel;
 pub use settings::SettingsState;
 pub use spend::{CreateSpendPanel, SpendPanel};
 
