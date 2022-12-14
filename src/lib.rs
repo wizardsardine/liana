@@ -188,10 +188,17 @@ fn setup_bitcoind(
     data_dir: &path::Path,
     fresh_data_dir: bool,
 ) -> Result<BitcoinD, StartupError> {
-    // Now set up the bitcoind interface
+    // NOTE: this is a hack! We normally store the watchonly wallet within our data directory.
+    // But on windows bitcoind would prefix the wallet path with "C:\\\\?" when calling
+    // 'loadwallet'. Therefore instead on Windows store the wallet.dat in bitcoind's data directory
+    // instead by not providing an absolute path but the name of a wallet.
+    #[cfg(not(windows))]
     let wo_path: path::PathBuf = [data_dir, path::Path::new("lianad_watchonly_wallet")]
         .iter()
         .collect();
+    #[cfg(windows)]
+    let wo_path = path::Path::new("lianad_watchonly_wallet");
+
     let bitcoind = BitcoinD::new(
         config
             .bitcoind_config
