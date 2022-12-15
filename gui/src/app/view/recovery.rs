@@ -82,7 +82,12 @@ pub fn recovery<'a>(
                                                 .on_press(Message::Clipboard(psbt.unsigned_tx.txid().to_string()))
                                                 .style(button::Style::Border.into()))
                                     )
-                                    .push(Row::new().push(text(format!("Fees: {}", recoverable_coins.1 - Amount::from_sat(psbt.unsigned_tx.output[0].value))).small()))
+                                    .push_maybe(if recoverable_coins.1.to_sat() > psbt.unsigned_tx.output[0].value {
+                                        Some(Row::new()
+                                            .push(text(format!("Fees: {}", recoverable_coins.1 - Amount::from_sat(psbt.unsigned_tx.output[0].value))).small()))
+                                    } else {
+                                            None
+                                    })
                             ))
                 } else {
                     Column::new()
@@ -115,7 +120,12 @@ pub fn recovery<'a>(
                                                 .on_press(Message::Clipboard(psbt.unsigned_tx.txid().to_string()))
                                                 .style(button::Style::Border.into()))
                                     )
-                                    .push(Row::new().push(text(format!("Fees: {}", recoverable_coins.1 - Amount::from_sat(psbt.unsigned_tx.output[0].value))).small()))
+                                    .push_maybe(if recoverable_coins.1.to_sat() > psbt.unsigned_tx.output[0].value {
+                                        Some(Row::new()
+                                            .push(text(format!("Fees: {}", recoverable_coins.1 - Amount::from_sat(psbt.unsigned_tx.output[0].value))).small()))
+                                    } else {
+                                            None
+                                    })
                             )
                         )
                         .push(if !hws.is_empty() {
@@ -186,7 +196,7 @@ pub fn recovery<'a>(
                 )
                 .width(Length::Units(250)),
             )
-            .push(if feerate.valid && !feerate.value.is_empty() && address.valid && !address.value.is_empty() {
+            .push(if feerate.valid && !feerate.value.is_empty() && address.valid && !address.value.is_empty() && recoverable_coins.0 != 0 {
                 button::primary(None, "Next").on_press(Message::Next).width(Length::Units(200))
             } else {
                 button::primary(None, "Next")
