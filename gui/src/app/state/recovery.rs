@@ -44,7 +44,8 @@ impl RecoveryPanel {
         let mut recoverable_coins = (0, Amount::from_sat(0));
         for coin in coins {
             if coin.spend_info.is_none() {
-                if remaining_sequence(coin, blockheight, timelock) != 0 {
+                // recoverable coins are coins that can be recoverable next block.
+                if remaining_sequence(coin, blockheight, timelock) > 1 {
                     locked_coins.0 += 1;
                     locked_coins.1 += coin.amount;
                 } else {
@@ -103,8 +104,9 @@ impl State for RecoveryPanel {
                     self.recoverable_coins = (0, Amount::from_sat(0));
                     for coin in coins {
                         if coin.spend_info.is_none() {
+                            // recoverable coins are coins that can be recoverable next block.
                             if remaining_sequence(&coin, cache.blockheight as u32, self.timelock)
-                                != 0
+                                > 1
                             {
                                 self.locked_coins.0 += 1;
                                 self.locked_coins.1 += coin.amount;
