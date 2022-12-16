@@ -38,9 +38,7 @@ COPY contrib/docker/cargo_config.toml /liana/.cargo/cargo_config.toml
 # https://github.com/rust-lang/rust/issues/48409
 RUN echo "#!/bin/sh" > rustc_wrapper.sh && \
     echo "/liana/rust-1.65.0-x86_64-unknown-linux-gnu/rustc/bin/rustc \"\$@\" -L /liana/rust-1.65.0-x86_64-pc-windows-gnu/rust-std-x86_64-pc-windows-gnu/lib/rustlib/x86_64-pc-windows-gnu/lib/ -L /liana/rust-1.65.0-x86_64-unknown-linux-gnu/rust-std-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/" >> rustc_wrapper.sh && \
-    chmod +x rustc_wrapper.sh && \
-    cat rustc_wrapper.sh && \
-    ./rustc_wrapper.sh -vV
+    chmod +x rustc_wrapper.sh
 ENV RUSTC="/liana/rustc_wrapper.sh"
 
-CMD ["./docker/build.sh"]
+CMD ["./docker/windows_cmd.sh"]
