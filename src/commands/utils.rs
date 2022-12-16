@@ -33,7 +33,7 @@ where
     T: consensus::Decodable,
 {
     let s = String::deserialize(d)?;
-    let s = base64::decode(&s).map_err(de::Error::custom)?;
+    let s = base64::decode(s).map_err(de::Error::custom)?;
     consensus::deserialize(&s).map_err(de::Error::custom)
 }
 

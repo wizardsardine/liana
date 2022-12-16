@@ -188,7 +188,7 @@ impl Config {
         let config_file =
             custom_path.unwrap_or(config_file_path().ok_or(ConfigError::DatadirNotFound)?);
 
-        let config = toml::from_slice::<Config>(&std::fs::read(&config_file)?)
+        let config = toml::from_slice::<Config>(&std::fs::read(config_file)?)
             .map_err(|e| ConfigError::ReadingFile(format!("Parsing configuration file: {}", e)))?;
         config.check()?;
 

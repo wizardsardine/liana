@@ -105,11 +105,9 @@ fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json:
         .and_then(|i| i.try_into().ok())
         .ok_or_else(|| Error::invalid_params("Invalid 'limit' parameter."))?;
 
-    Ok(serde_json::json!(&control.list_confirmed_transactions(
-        start as u32,
-        end as u32,
-        limit
-    )))
+    Ok(serde_json::json!(
+        &control.list_confirmed_transactions(start, end, limit)
+    ))
 }
 
 fn list_transactions(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {

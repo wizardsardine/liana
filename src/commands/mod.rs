@@ -234,6 +234,7 @@ impl DaemonControl {
     /// Get a list of all known coins.
     pub fn list_coins(&self) -> ListCoinsResult {
         let mut db_conn = self.db.connection();
+        #[allow(clippy::iter_kv_map)] // Because Rust 1.48
         let coins: Vec<ListCoinsEntry> = db_conn
             .coins(CoinType::All)
             // Can't use into_values as of Rust 1.48
@@ -381,10 +382,7 @@ impl DaemonControl {
                 .ok_or(CommandError::InsufficientFunds(
                     in_value, out_value, feerate_vb,
                 ))?;
-        let nochange_feerate_vb = absolute_fee
-            .to_sat()
-            .checked_div(nochange_vb as u64)
-            .unwrap();
+        let nochange_feerate_vb = absolute_fee.to_sat().checked_div(nochange_vb).unwrap();
         if nochange_feerate_vb.checked_mul(10).unwrap() < feerate_vb.checked_mul(9).unwrap() {
             return Err(CommandError::InsufficientFunds(
                 in_value, out_value, feerate_vb,
