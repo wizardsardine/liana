@@ -60,7 +60,7 @@ for project_folder in "" "gui"; do
     PROJECT_ROOT="$PWD/$project_folder"
     PROJECT_VENDOR_DIR="$VENDOR_DIR/$project_folder"
     PROJECT_OUT_DIR="$OUT_DIR/$project_folder"
-    PROJECT_PATCHES_ROOT="$PWD/contrib/guix/patches/$project_folder"
+    PROJECT_PATCHES_ROOT="$PWD/contrib/reproducible/guix/patches/$project_folder"
 
     project_needs_patches() {
         test $(ls -A1q "$PROJECT_PATCHES_ROOT" |grep patch)
@@ -122,7 +122,7 @@ for project_folder in "" "gui"; do
                --expose="$PWD/gui/static=/liana/static" \
                --expose="$PROJECT_ROOT/Cargo.toml=/liana/Cargo.toml" \
                --expose="$BUILD_ROOT/Cargo.lock=/liana/Cargo.lock" \
-               --expose="$PWD/contrib/guix/build.sh=/liana/build.sh" \
+               --expose="$PWD/contrib/reproducible/guix/build.sh=/liana/build.sh" \
                --expose="$PROJECT_VENDOR_DIR=/vendor" \
                --share="$PROJECT_OUT_DIR=/out" \
                --cores="$JOBS" \
@@ -130,7 +130,7 @@ for project_folder in "" "gui"; do
                --pure \
                --fallback \
                --rebuild-cache \
-               -m $PWD/contrib/guix/manifest.scm \
+               -m $PWD/contrib/reproducible/guix/manifest.scm \
                -- env CC=gcc VENDOR_DIR="$PROJECT_VENDOR_DIR" TARGET_DIR="$PROJECT_OUT_DIR" BINARY_NAME="$BINARY_NAME" JOBS="$JOBS" \
                   /bin/sh -c "cd /liana && ./build.sh"
 done

@@ -119,7 +119,7 @@ Override the default list of substitute servers by passing the
 guix <cmd> --substitute-urls='https://guix.carldong.io https://ci.guix.gnu.org'
 ```
 
-For scripts under `./contrib/guix`, set the `SUBSTITUTE_URLS` environment
+For scripts under `./contrib/reproducible/guix`, set the `SUBSTITUTE_URLS` environment
 variable:
 
 ```sh
@@ -159,7 +159,7 @@ the `build.sh` script that will take care of building the dependencies and the p
 
 To start a build, simply run the `guix-build.sh` script from the root of the repository:
 ```
-$ ./contrib/guix/guix-build.sh
+$ ./contrib/reproducible/guix/guix-build.sh
 ```
 
 The script shouldn't contain any bash-ism, so it should work with other shells as well.
