@@ -113,6 +113,15 @@ fn coin_list_view(
                                         ))
                                     }
                                 })
+                                .push_maybe(if coin.block_height.is_none() {
+                                    Some(
+                                        Container::new(text("  Unconfirmed  ").small())
+                                            .padding(3)
+                                            .style(badge::PillStyle::Simple),
+                                    )
+                                } else {
+                                    None
+                                })
                                 .spacing(10)
                                 .align_items(Alignment::Center)
                                 .width(Length::Fill),

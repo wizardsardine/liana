@@ -11,7 +11,7 @@ use crate::{
         error::Error,
         view::{message::*, modal},
     },
-    daemon::model::Coin,
+    daemon::model::{remaining_sequence, Coin},
     ui::{
         color,
         component::{
@@ -198,8 +198,15 @@ fn coin_list_view<'a>(
                             icon::square_icon()
                         })
                         .push(badge::coin())
-                        .push_maybe(if let Some(b) = coin.block_height {
-                            if blockheight > b as u32 + timelock {
+                        .push_maybe(if coin.spend_info.is_some() {
+                            Some(
+                                Container::new(text("  Spent  ").small())
+                                    .padding(3)
+                                    .style(badge::PillStyle::Success),
+                            )
+                        } else {
+                            let seq = remaining_sequence(coin, blockheight, timelock);
+                            if seq == 0 {
                                 Some(Container::new(
                                     Row::new()
                                         .spacing(5)
@@ -209,18 +216,32 @@ fn coin_list_view<'a>(
                                         )
                                         .align_items(Alignment::Center),
                                 ))
-                            } else {
+                            } else if seq < timelock * 10 / 100 {
                                 Some(Container::new(
                                     Row::new()
                                         .spacing(5)
                                         .push(
-                                            text(format!(" {}", b as u32 + timelock - blockheight))
-                                                .small(),
+                                            text(format!(" {}", seq)).small().style(color::WARNING),
                                         )
+                                        .push(icon::hourglass_icon().small().style(color::WARNING))
+                                        .align_items(Alignment::Center),
+                                ))
+                            } else {
+                                Some(Container::new(
+                                    Row::new()
+                                        .spacing(5)
+                                        .push(text(format!(" {}", seq)).small())
                                         .push(icon::hourglass_icon().small())
                                         .align_items(Alignment::Center),
                                 ))
                             }
+                        })
+                        .push_maybe(if coin.block_height.is_none() {
+                            Some(
+                                Container::new(text("  Unconfirmed  ").small())
+                                    .padding(3)
+                                    .style(badge::PillStyle::Simple),
+                            )
                         } else {
                             None
                         })
