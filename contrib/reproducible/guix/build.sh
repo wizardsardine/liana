@@ -5,8 +5,8 @@
 set -ex
 
 # Instruct cargo to use our vendored sources
-mkdir -p ~/.cargo
-cat <<EOF >~/.cargo/config.toml
+mkdir -p .cargo
+cat <<EOF >.cargo/config.toml
 [source.vendored_sources]
 directory = "/vendor"
 
