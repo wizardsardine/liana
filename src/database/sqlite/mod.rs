@@ -647,7 +647,7 @@ mod tests {
         db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
             .unwrap();
 
-        fs::remove_dir_all(&tmp_dir).unwrap();
+        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
@@ -675,7 +675,7 @@ mod tests {
             assert_eq!(db_tip.block_hash.unwrap(), new_tip.hash);
         }
 
-        fs::remove_dir_all(&tmp_dir).unwrap();
+        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
@@ -819,7 +819,7 @@ mod tests {
             assert_eq!(coin.spend_block.unwrap().height, height);
         }
 
-        fs::remove_dir_all(&tmp_dir).unwrap();
+        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
@@ -916,7 +916,7 @@ mod tests {
             }
         }
 
-        fs::remove_dir_all(&tmp_dir).unwrap();
+        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
@@ -1104,7 +1104,7 @@ mod tests {
             assert_eq!(db_coins[&coins[4].outpoint], coin);
         }
 
-        fs::remove_dir_all(&tmp_dir).unwrap();
+        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
@@ -1142,7 +1142,7 @@ mod tests {
             assert_eq!(db_wallet.timestamp, dummy_timestamp);
         }
 
-        fs::remove_dir_all(&tmp_dir).unwrap();
+        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
@@ -1295,6 +1295,6 @@ mod tests {
             );
         }
 
-        fs::remove_dir_all(&tmp_dir).unwrap();
+        fs::remove_dir_all(tmp_dir).unwrap();
     }
 }
