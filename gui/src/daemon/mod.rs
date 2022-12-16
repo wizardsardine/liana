@@ -127,6 +127,10 @@ pub trait Daemon: Debug {
         let coins = self.list_coins()?.coins;
         let mut txids: Vec<Txid> = Vec::new();
         for coin in &coins {
+            if coin.block_height.is_none() && !txids.contains(&coin.outpoint.txid) {
+                txids.push(coin.outpoint.txid);
+            }
+
             if let Some(spend) = coin.spend_info {
                 if spend.height.is_none() && !txids.contains(&spend.txid) {
                     txids.push(spend.txid);
