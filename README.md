@@ -129,7 +129,15 @@ already running, it will plug to it and communicate through the JSONRPC API.
 
 ### Using the recovery path
 
-TODO: have a longer form document on recovery through the recovery path.
+You may sweep the coins whose timelocked recovery path is available. You will need to sign the
+transaction using the recovery key, hence make sure to connect the appropriate signing device.
+
+In the GUI, this option is available in the "Settings" menu at the "Recovery" section. Click on the
+"Recover funds" button, enter the destination for the sweep and the feerate you want to use for the
+sweep transaction. Then sign it with the recovery key and broadcast it.
+
+For the daemon, see the [`createrecovery`](doc/API.md#createrecovery) command. It will create a
+sweep PSBT to the requested address with the specified feerate, filled with all available coins.
 
 
 ## About the software project
