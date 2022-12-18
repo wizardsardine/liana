@@ -40,9 +40,19 @@ your machine yet, you can download it [there](https://bitcoincore.org/en/downloa
 ### Installing the software
 
 The recommended installation method for regular users is to download an executable software release. If you prefer to
-build the project from source, see [`doc/BUILD.md`](doc/BUILD.md).
+build the project from source, see [`doc/BUILD.md`](doc/BUILD.md) instead.
 
-TODO: instructions for downloading a release and verifying the signatures.
+Head to the [release page](https://github.com/revault/liana/releases) and download the right
+executable for your platform. If you are not sure what is the "right" executable for your platform,
+choose `liana-0.1.exe` if you are on Windows, `liana-0.1.dmg` if you are on MacOS and
+`liana-0.1-x86_64-linux-gnu.tar.gz` if you are on Linux.
+
+For every file available on the release page, there is an accompanying `.asc` file with the same
+name. This is a GPG signature made with Antoine Poinsot's key:
+`590B7292695AFFA5B672CBB2E13FC145CD3F4304`. This key is available elsewhere for cross-checking, such
+as on [his Twitter profile](https://twitter.com/darosior) or his [personal
+website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
+against this key.
 
 Releases of Liana are reproducibly built. See [`contrib/reproducible`](contrib/reproducible) for
 details and instructions if you want to check a release.
@@ -85,7 +95,14 @@ timelock (the only type of timelocks supported for now), time starts ticking whe
 payment. That is if you want the recovery path to never be available, each coin must be spent
 at least once every `N` blocks. (With `N` the configured value of the timelock.)
 
-For now, only the Ledger and Specter DIY signing devices are supported, as Miniscript compatibility of the signer is a must. We expect more signing devices to implement Miniscript capability. We may add the possibility to use Liana as a "hot" wallet in the future (i.e. with a private key directly on the laptop).
+For now, only the Ledger and Specter DIY signing devices are supported, as Miniscript compatibility
+of the signer is a must. We expect more signing devices to implement Miniscript capability. We may
+add the possibility to use Liana as a "hot" wallet in the future (i.e. with a private key directly
+on the laptop).
+
+If you are using a Ledger device, make sure to install the currently latest version of the Bitcoin
+application: `2.1.0`. This is the minimum supported version, as it's the first one to introduce
+support for Miniscript.
 
 If you are using the GUI, it should be intuitive what menu to use depending on your intention. If it
 is not, bug report are very welcome so [feel free to report it](https://github.com/revault/liana/issues)! :)
@@ -119,7 +136,15 @@ already running, it will plug to it and communicate through the JSONRPC API.
 
 ### Using the recovery path
 
-TODO: have a longer form document on recovery through the recovery path.
+You may sweep the coins whose timelocked recovery path is available. You will need to sign the
+transaction using the recovery key, hence make sure to connect the appropriate signing device.
+
+In the GUI, this option is available in the "Settings" menu at the "Recovery" section. Click on the
+"Recover funds" button, enter the destination for the sweep and the feerate you want to use for the
+sweep transaction. Then sign it with the recovery key and broadcast it.
+
+For the daemon, see the [`createrecovery`](doc/API.md#createrecovery) command. It will create a
+sweep PSBT to the requested address with the specified feerate, filled with all available coins.
 
 
 ## About the software project

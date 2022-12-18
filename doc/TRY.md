@@ -125,11 +125,20 @@ Keep the Specter simulator open and move on to the next step.
 
 ## Step 3: start Liana
 
-Get the latest Liana software release and start it.
+Head to the [release page](https://github.com/revault/liana/releases) and download the right
+executable for your platform. If you are not sure what is the "right" executable for your platform,
+choose `liana-0.1.exe` if you are on Windows, `liana-0.1.dmg` if you are on MacOS and
+`liana-0.1-x86_64-linux-gnu.tar.gz` if you are on Linux.
 
-TODO: download and sig verification details
+For every file available on the release page, there is an accompanying `.asc` file with the same
+name. This is a GPG signature made with Antoine Poinsot's key:
+`590B7292695AFFA5B672CBB2E13FC145CD3F4304`. This key is available elsewhere for cross-checking, such
+as on [his Twitter profile](https://twitter.com/darosior) or his [personal
+website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
+against this key.
 
-Since you presumably never installed Liana, this will start the installer. Create a new wallet.
+At startup, you will have the choice between using an existing wallet or setting up a new one. Since
+you presumably never installed Liana, choose to set up a new one.
 
 Choose network Signet. For the primary key we will use the one from the dummy signing device you just started. Do this by simply clicking on the "import" button next to the text input in the Liana installer. For the number of blocks before the recovery key becomes active, you
 can choose anything valid. Preferably something small to test the case where coins are soon to
