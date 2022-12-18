@@ -15,7 +15,7 @@ replace-with = "vendored_sources"
 
 [source."https://github.com/darosior/rust-miniscript"]
 git = "https://github.com/darosior/rust-miniscript"
-branch = "multipath_descriptors_on_8.0"
+branch = "multipath_descriptors_on_9.0"
 replace-with = "vendored_sources"
 
 [source."https://github.com/revault/liana"]
