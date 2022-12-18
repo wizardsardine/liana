@@ -40,9 +40,19 @@ your machine yet, you can download it [there](https://bitcoincore.org/en/downloa
 ### Installing the software
 
 The recommended installation method for regular users is to download an executable software release. If you prefer to
-build the project from source, see [`doc/BUILD.md`](doc/BUILD.md).
+build the project from source, see [`doc/BUILD.md`](doc/BUILD.md) instead.
 
-TODO: instructions for downloading a release and verifying the signatures.
+Head to the [release page](https://github.com/revault/liana/releases) and download the right
+executable for your platform. If you are not sure what is the "right" executable for your platform,
+choose `liana-0.1.exe` if you are on Windows, `liana-0.1.dmg` if you are on MacOS and
+`liana-0.1-x86_64-linux-gnu.tar.gz` if you are on Linux.
+
+For every file available on the release page, there is an accompanying `.asc` file with the same
+name. This is a GPG signature made with Antoine Poinsot's key:
+`590B7292695AFFA5B672CBB2E13FC145CD3F4304`. This key is available elsewhere for cross-checking, such
+as on [his Twitter profile](https://twitter.com/darosior) or his [personal
+website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
+against this key.
 
 Releases of Liana are reproducibly built. See [`contrib/reproducible`](contrib/reproducible) for
 details and instructions if you want to check a release.
