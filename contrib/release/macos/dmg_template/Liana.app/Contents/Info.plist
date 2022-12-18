@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist SYSTEM "file://localhost/System/Library/DTDs/PropertyList.dtd">
+<plist version="0.9">
+<dict>
+  <key>LSMinimumSystemVersion</key>
+  <string>10.15.0</string>
+
+  <key>LSArchitecturePriority</key>
+  <array>
+    <string>x86_64</string>
+  </array>
+
+  <!-- TODO -->
+  <!--<key>CFBundleIconFile</key>-->
+  <!--<string></string>-->
+
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+
+  <key>CFBundleSupportedPlatforms</key>
+  <array>
+	   <string>MacOSX</string>
+  </array>
+
+  <key>CFBundleShortVersionString</key>
+  <string>VERSION_PLACEHOLDER</string>
+
+  <key>CFBundleVersion</key>
+  <string>VERSION_PLACEHOLDER</string>
+
+  <key>CFBundleSignature</key>
+  <string>????</string>
+
+  <key>CFBundleExecutable</key>
+  <string>Liana</string>
+
+  <key>CFBundleName</key>
+  <string>Liana</string>
+
+  <key>LSHasLocalizedDisplayName</key>
+  <true/>
+
+  <key>CFBundleIdentifier</key>
+  <string>org.wizardsardine.liana</string>
+
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>CFBundleURLName</key>
+      <string>org.wizardsardine.liana</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>liana</string>
+      </array>
+    </dict>
+  </array>
+
+  <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+
+  <key>NSHighResolutionCapable</key>
+    <string>True</string>
+
+  <key>LSApplicationCategoryType</key>
+    <string>public.app-category.finance</string>
+</dict>
+</plist>
