@@ -110,8 +110,26 @@ pub async fn list_hardware_wallets(
         }
     }
     match ledger::Ledger::try_connect_hid() {
-        Ok(device) => match HardwareWallet::new(Arc::new(device)).await {
-            Ok(hw) => hws.push(hw),
+        Ok(mut device) => match device.get_master_fingerprint().await {
+            Ok(fingerprint) => {
+                if let Some((name, descriptor)) = wallet {
+                    device
+                        .load_wallet(
+                            name,
+                            descriptor,
+                            cfg.iter()
+                                .find(|cfg| cfg.fingerprint == fingerprint.to_string())
+                                .map(|cfg| cfg.token()),
+                        )
+                        .expect("Configuration must be correct");
+                }
+
+                hws.push(HardwareWallet {
+                    kind: device.device_kind(),
+                    fingerprint,
+                    device: Arc::new(device),
+                });
+            }
             Err(e) => {
                 debug!("{}", e);
             }

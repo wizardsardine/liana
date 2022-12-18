@@ -118,8 +118,13 @@ impl State for RecoveryPanel {
                     }
                 }
             },
+            // We add the new hws without dropping the reference of the previous ones.
             Message::ConnectedHardwareWallets(hws) => {
-                self.hws = hws;
+                for h in hws {
+                    if !self.hws.iter().any(|hw| hw.fingerprint == h.fingerprint) {
+                        self.hws.push(h);
+                    }
+                }
             }
             Message::Psbt(res) => match res {
                 Ok(psbt) => self.generated = Some(psbt),

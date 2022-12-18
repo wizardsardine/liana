@@ -480,7 +480,16 @@ pub fn sign_action<'a>(
         Column::new()
             .push(if !hws.is_empty() {
                 Column::new()
-                    .push(text("Select hardware wallet to sign with:").bold())
+                    .push(
+                        Row::new()
+                            .push(
+                                text("Select hardware wallet to sign with:")
+                                    .bold()
+                                    .width(Length::Fill),
+                            )
+                            .push(button::border(None, "Refresh").on_press(Message::Reload))
+                            .align_items(Alignment::Center),
+                    )
                     .spacing(10)
                     .push(
                         hws.iter()
@@ -503,7 +512,7 @@ pub fn sign_action<'a>(
                             .spacing(20)
                             .width(Length::Fill)
                             .push("Please connect a hardware wallet")
-                            .push(button::primary(None, "Refresh").on_press(Message::Reload))
+                            .push(button::border(None, "Refresh").on_press(Message::Reload))
                             .align_items(Alignment::Center),
                     )
                     .width(Length::Fill)
