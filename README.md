@@ -44,6 +44,8 @@ build the project from source, see [`doc/BUILD.md`](doc/BUILD.md).
 
 TODO: instructions for downloading a release and verifying the signatures.
 
+Releases of Liana are reproducibly built. See [`contrib/reproducible`](contrib/reproducible) for
+details and instructions if you want to check a release.
 
 ### Setting up a wallet
 

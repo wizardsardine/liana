@@ -29,5 +29,5 @@ path to the script by setting the `XCODE_PATH` env var).
 
 Finally, run the script from the root of the repository:
 ```
-./contrib/docker/docker-build.sh
+./contrib/reproducible/docker/docker-build.sh
 ```

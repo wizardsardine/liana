@@ -28,7 +28,7 @@ COPY gui/Cargo.toml gui/Cargo.lock /liana/
 RUN /liana/rust-1.65.0-x86_64-unknown-linux-gnu/cargo/bin/cargo vendor
 
 # Cargo configuration for using the vendored dependencies during the build.
-COPY contrib/docker/cargo_config.toml /liana/.cargo/cargo_config.toml
+COPY contrib/reproducible/docker/cargo_config.toml /liana/.cargo/cargo_config.toml
 
 # For some reason, we can't just set the RUSTFLAGS environment variable to add `-L` for compiling dependencies.
 # This doesn't work: RUSTFLAGS="-L /liana/rust-1.65.0-x86_64-pc-windows-gnu/rust-std-x86_64-pc-windows-gnu/lib/rustlib/x86_64-pc-windows-gnu/lib/ -L /liana/rust-1.65.0-x86_64-unknown-linux-gnu/rust-std-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/"

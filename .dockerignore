@@ -1,4 +1,4 @@
 *
 !Cargo.*
 !gui/Cargo.*
-!contrib/docker/cargo_config.toml
+!contrib/reproducible/docker/cargo_config.toml
