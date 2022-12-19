@@ -1640,7 +1640,7 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "0.0.1"
-source = "git+https://github.com/revault/liana?branch=master#ad1f0e20b1a4c46007839cc20200e348eb041275"
+source = "git+https://github.com/revault/liana?branch=master#2e7c7826e9f9ed824221651d6bce34ae3d8c7fb8"
 dependencies = [
  "backtrace",
  "base64",
