@@ -4,7 +4,8 @@
           "rust:cargo"
           "coreutils"
           "patchelf"
-          "gcc-toolchain@10.3.0")
+          "gcc-toolchain@10.3.0"
+          "musl")
           ;; Additional dependencies for building the GUI
           (let ((is_gui (getenv "IS_GUI")))
             (if

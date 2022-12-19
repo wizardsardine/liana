@@ -32,16 +32,41 @@ maybe_create_dir "$BIN_DIR"
 # That's what Guix comes with.
 RUST_VERSION="1.60.0"
 CARGO_BIN="$BIN_DIR/cargo"
+MUSL_STDLIB="$BIN_DIR/musl_stdlib"
+MUSL_RUSTC_DIR="$BIN_DIR/musl_rustc"
 
 # First off get the cargo binary to run on the host to vendor dependencies.
 # We assume the host is a 64bit Linux system.
 if ! [ -f "$CARGO_BIN" ]; then
-    ARCHIVE_PATH="$BIN_DIR/rust-for-cargo.tar.gz"
+    test -f "$ARCHIVE_PATH" || ARCHIVE_PATH="$BIN_DIR/rust-for-cargo.tar.gz"
     curl -o "$ARCHIVE_PATH" "https://static.rust-lang.org/dist/rust-$RUST_VERSION-x86_64-unknown-linux-gnu.tar.gz"
     echo "b8a4c3959367d053825e31f90a5eb86418eb0d80cacda52bfa80b078e18150d5 $ARCHIVE_PATH" | $SHASUM_BIN -c
     # Path of the cargo binary within the archive
     CARGO_BIN_PATH="rust-$RUST_VERSION-x86_64-unknown-linux-gnu/cargo/bin/cargo"
     ( cd $BIN_DIR && tar -xzf $ARCHIVE_PATH $CARGO_BIN_PATH && mv $CARGO_BIN_PATH $CARGO_BIN )
+fi
+
+# Then get the Rust stdlib for musl.
+if ! [ -d "$MUSL_STDLIB" ] || ! [ -f "$MUSL_RUSTC_DIR" ]; then
+    ARCHIVE_PATH="$BIN_DIR/rust-for-musl.tar.gz"
+    test -f "$ARCHIVE_PATH" || curl -o "$ARCHIVE_PATH" "https://static.rust-lang.org/dist/rust-$RUST_VERSION-x86_64-unknown-linux-musl.tar.gz"
+    #echo "b8a4c3959367d053825e31f90a5eb86418eb0d80cacda52bfa80b078e18150d5 $ARCHIVE_PATH" | $SHASUM_BIN -c
+    # Path of the compiled stdlib within the archive
+    STDLIB_PATH="rust-$RUST_VERSION-x86_64-unknown-linux-musl/rust-std-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/lib/"
+    RUSTC_DIR_PATH="rust-$RUST_VERSION-x86_64-unknown-linux-musl/rustc"
+    (
+        cd "$BIN_DIR"
+        if ! [ -d "$MUSL_STDLIB" ]; then
+            tar -xzf "$ARCHIVE_PATH" "$STDLIB_PATH"
+            mv "$STDLIB_PATH" "$MUSL_STDLIB"
+        fi
+        if ! [ -d "$MUSL_RUSTC_DIR" ]; then
+            tar -xzf "$ARCHIVE_PATH" "$RUSTC_DIR_PATH"
+            mv "$RUSTC_DIR_PATH" "$MUSL_RUSTC_DIR"
+        fi
+    )
+    ls
+    ls $MUSL_RUSTC_DIR
 fi
 
 # Execute "$@" in a pinned, possibly older version of Guix, for reproducibility
@@ -67,6 +92,8 @@ IS_GUI=0 time_machine shell --no-cwd \
            --expose="$PWD/Cargo.toml=/liana/Cargo.toml" \
            --expose="$PWD/Cargo.lock=/liana/Cargo.lock" \
            --expose="$PWD/contrib/reproducible/guix/build.sh=/liana/build.sh" \
+           --expose="$MUSL_STDLIB=/liana/musl_stdlib" \
+           --expose="$MUSL_RUSTC_DIR=/liana/musl_rustc" \
            --expose="$VENDOR_DIR=/vendor" \
            --share="$OUT_DIR=/out" \
            --cores="$JOBS" \
@@ -124,6 +151,7 @@ IS_GUI=1 time_machine shell --no-cwd \
            --expose="$GUI_ROOT_DIR/static=/liana/static" \
            --expose="$GUI_ROOT_DIR/Cargo.toml=/liana/Cargo.toml" \
            --expose="$BUILD_ROOT/Cargo.lock=/liana/Cargo.lock" \
+           --expose="$MUSL_STDLIB=/liana/musl_stdlib" \
            --expose="$PWD/contrib/reproducible/guix/build.sh=/liana/build.sh" \
            --expose="$GUI_VENDOR_DIR=/vendor" \
            --share="$GUI_OUT_DIR=/out" \
