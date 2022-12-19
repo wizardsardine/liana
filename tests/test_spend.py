@@ -50,9 +50,69 @@ def test_spend_change(lianad, bitcoind):
     # We can sign and broadcast it.
     signed_psbt = lianad.sign_psbt(spend_psbt)
     lianad.rpc.updatespend(signed_psbt.to_base64())
+
     spend_txid = signed_psbt.tx.txid().hex()
     lianad.rpc.broadcastspend(spend_txid)
     bitcoind.generate_block(1, wait_for_mempool=spend_txid)
+
+
+def test_spend_change_increment(lianad, bitcoind):
+    """We verify that the change index is incremented"""
+    # Receive a coin on a receive address
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
+
+    # Create a transaction that will spend this coin to
+    # an external address and one of our change addresses.
+    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins()["coins"]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 100_000,
+    }
+    res = lianad.rpc.createspend(destinations, outpoints, 2)
+    spend_psbt = PSBT.from_base64(res["psbt"])
+
+    # Sign and broadcast this first Spend transaction.
+    signed_psbt = lianad.sign_psbt(spend_psbt)
+    lianad.rpc.updatespend(signed_psbt.to_base64())
+
+    res = lianad.rpc.listspendtxs()
+    assert len(res["spend_txs"]) == 1
+    for tx in res["spend_txs"]:
+        change_index = tx["change_index"]
+        assert change_index is not None
+
+    spend_txid = signed_psbt.tx.txid().hex()
+    lianad.rpc.broadcastspend(spend_txid)
+    bitcoind.generate_block(1, wait_for_mempool=spend_txid)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 2)
+
+    # Now create a new transaction that spends the change output as well as
+    # the output sent to the receive address.
+    outpoints = [
+        c["outpoint"]
+        for c in lianad.rpc.listcoins()["coins"]
+        if c["spend_info"] is None
+    ]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 100_000,
+    }
+    res = lianad.rpc.createspend(destinations, outpoints, 2)
+    spend_psbt = PSBT.from_base64(res["psbt"])
+
+    # We can sign and broadcast it.
+    signed_psbt = lianad.sign_psbt(spend_psbt)
+    lianad.rpc.updatespend(signed_psbt.to_base64())
+
+    res = lianad.rpc.listspendtxs()
+    assert len(res["spend_txs"]) == 2
+    for tx in res["spend_txs"]:
+        change_index = tx["change_index"]
+        assert change_index is not None
+
+    spend_txid = signed_psbt.tx.txid().hex()
+    lianad.rpc.broadcastspend(spend_txid)
 
 
 def test_coin_marked_spent(lianad, bitcoind):
