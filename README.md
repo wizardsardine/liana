@@ -54,6 +54,14 @@ as on [his Twitter profile](https://twitter.com/darosior) or his [personal
 website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
 against this key.
 
+Note that we do not codesign ("notarize") the released binaries for now. Windows or macOS may
+prevent you from installing the software. On macOS, you would get a warning saying the developer of
+this application couldn't be verified. This is because we didn't register with Apple prior to
+releasing the application. Make sure you verified the GPG signature of the download, then add an
+exception for Liana by following the steps from [this Apple support
+guide](https://support.apple.com/en-us/HT202491) (section "If you want to open an app that hasn’t
+been notarized or is from an unidentified developer").
+
 Releases of Liana are reproducibly built. See [`contrib/reproducible`](contrib/reproducible) for
 details and instructions if you want to check a release.
 
