@@ -47,6 +47,7 @@ pub enum CommandError {
     InvalidFeerate(/* sats/vb */ u64),
     UnknownOutpoint(bitcoin::OutPoint),
     AlreadySpent(bitcoin::OutPoint),
+    AddressNetwork(bitcoin::Address, /* Expected */ bitcoin::Network),
     InvalidOutputValue(bitcoin::Amount),
     InsufficientFunds(
         /* in value */ bitcoin::Amount,
@@ -74,6 +75,11 @@ impl fmt::Display for CommandError {
             Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {} sats/vb.", sats_vb),
             Self::AlreadySpent(op) => write!(f, "Coin at '{}' is already spent.", op),
             Self::UnknownOutpoint(op) => write!(f, "Unknown outpoint '{}'.", op),
+            Self::AddressNetwork(addr, expected) => write!(
+                f,
+                "Invalid network for address '{}'. Our network is '{}' but address is for '{}'.",
+                addr, expected, addr.network
+            ),
             Self::InvalidOutputValue(amount) => write!(f, "Invalid output value '{}'.", amount),
             Self::InsufficientFunds(in_val, out_val, feerate) => write!(
                 f,
@@ -187,6 +193,22 @@ impl DaemonControl {
             self.config.main_descriptor.receive_descriptor()
         };
         desc.derive(coin.derivation_index, &self.secp)
+    }
+
+    // Check whether this address is valid for the network we are operating on.
+    fn validate_address(&self, addr: &bitcoin::Address) -> Result<(), CommandError> {
+        // NOTE: signet uses testnet addresses
+        if addr.network == self.config.bitcoin_config.network
+            || (addr.network == bitcoin::Network::Testnet
+                && self.config.bitcoin_config.network == bitcoin::Network::Signet)
+        {
+            return Ok(());
+        }
+
+        Err(CommandError::AddressNetwork(
+            addr.clone(),
+            self.config.bitcoin_config.network,
+        ))
     }
 }
 
@@ -338,6 +360,8 @@ impl DaemonControl {
         let mut txouts = Vec::with_capacity(destinations.len());
         let mut psbt_outs = Vec::with_capacity(destinations.len());
         for (address, value_sat) in destinations {
+            self.validate_address(address)?;
+
             let amount = bitcoin::Amount::from_sat(*value_sat);
             check_output_value(amount)?;
             out_value = out_value.checked_add(amount).unwrap();
@@ -622,6 +646,7 @@ impl DaemonControl {
         if feerate_vb < 1 {
             return Err(CommandError::InvalidFeerate(feerate_vb));
         }
+        self.validate_address(&address)?;
         let mut db_conn = self.db.connection();
 
         // The transaction template. We'll fill-in the inputs afterward.
@@ -949,6 +974,24 @@ mod tests {
             Err(CommandError::InvalidOutputValue(bitcoin::Amount::from_sat(
                 4_500
             )))
+        );
+
+        // If we ask to create an output for an address from another network, it will fail.
+        let invalid_addr = bitcoin::Address {
+            network: bitcoin::Network::Testnet,
+            payload: dummy_addr.payload.clone(),
+        };
+        let invalid_destinations: HashMap<bitcoin::Address, u64> =
+            [(invalid_addr.clone(), dummy_value)]
+                .iter()
+                .cloned()
+                .collect();
+        assert_eq!(
+            control.create_spend(&invalid_destinations, &[dummy_op], 1),
+            Err(CommandError::AddressNetwork(
+                invalid_addr,
+                bitcoin::Network::Bitcoin
+            ))
         );
 
         // If we ask for a large, but valid, output we won't get a change output. 95_000 because we
