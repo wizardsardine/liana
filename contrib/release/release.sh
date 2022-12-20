@@ -43,7 +43,7 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
     cd "$BUILD_DIR"
     create_dir "$WINDOWS_DIR_NAME"
     cp "$BUILD_DIR/gui/x86_64-pc-windows-gnu/release/liana-gui.exe" ../README.md "$WINDOWS_DIR_NAME"
-    zip "$WINDOWS_ARCHIVE" "$WINDOWS_DIR_NAME"
+    zip -r "$WINDOWS_ARCHIVE" "$WINDOWS_DIR_NAME"
     cp "$WINDOWS_ARCHIVE" "$RELEASE_DIR"
     cp "$BUILD_DIR/gui/x86_64-pc-windows-gnu/release/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX.exe"
 )
