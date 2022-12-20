@@ -19,7 +19,7 @@ Here is a list of the system dependencies: the tools and libraries you need to h
 your system to follow the guide.
 
 TL;DR:
-- Debian/Ubuntu: `apt install git libsdl2-dev curl gpg libfontconfig1-dev libudev-dev`
+- Debian/Ubuntu: `apt install git libsdl2-dev curl gpg libfontconfig1-dev libudev-dev gcc make`
 - Arch Linux: check if you have all the required packages: `pacman -Q coreutils tar git sdl2 curl gnupg fontconfig systemd-libs`.
 If any is listed as "was not found", get it with `pacman -Sy [missing package name]`
 - Other distribution: see the link to projects below to search for the name of your distribution's packages.
@@ -29,6 +29,7 @@ We'll use basic tools which should already be present on your system, such as:
 - `tar`
 
 To run the Specter signing device simulator you will need:
+- `gcc` and `make` (On Debian/Ubuntu `apt install gcc make`)
 - `git` (On Debian/Ubuntu `apt install gpg`)
 - [SDL2](https://wiki.libsdl.org/SDL2/FrontPage) (On Debian/Ubuntu `apt install libsdl2-dev`)
 
