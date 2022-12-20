@@ -156,6 +156,7 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::UnknownOutpoint(..)
             | commands::CommandError::InvalidFeerate(..)
             | commands::CommandError::AlreadySpent(..)
+            | commands::CommandError::AddressNetwork(..)
             | commands::CommandError::InvalidOutputValue(..)
             | commands::CommandError::InsufficientFunds(..)
             | commands::CommandError::UnknownSpend(..)
