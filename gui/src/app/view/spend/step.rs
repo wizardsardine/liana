@@ -84,7 +84,7 @@ pub fn recipient_view<'a>(
             form::Form::new("Address", address, move |msg| {
                 CreateSpendMessage::RecipientEdited(index, "address", msg)
             })
-            .warning("Please enter correct bitcoin address")
+            .warning("Please enter correct bitcoin address for the current network")
             .size(20)
             .padding(10),
         )

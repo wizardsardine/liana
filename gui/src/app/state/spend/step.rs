@@ -5,7 +5,9 @@ use std::sync::Arc;
 use iced::{Command, Element};
 use liana::{
     config::Config as DaemonConfig,
-    miniscript::bitcoin::{self, util::psbt::Psbt, Address, Amount, Denomination, OutPoint},
+    miniscript::bitcoin::{
+        self, util::psbt::Psbt, Address, Amount, Denomination, Network, OutPoint,
+    },
 };
 
 use crate::{
@@ -75,7 +77,7 @@ impl ChooseRecipients {
 impl Step for ChooseRecipients {
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         _draft: &TransactionDraft,
         message: Message,
@@ -89,7 +91,10 @@ impl Step for ChooseRecipients {
                     self.recipients.remove(*i);
                 }
                 view::CreateSpendMessage::RecipientEdited(i, _, _) => {
-                    self.recipients.get_mut(*i).unwrap().update(msg);
+                    self.recipients
+                        .get_mut(*i)
+                        .unwrap()
+                        .update(daemon.config().bitcoin_config.network, msg);
                 }
                 _ => {}
             }
@@ -166,18 +171,20 @@ impl Recipient {
             && self.amount.valid
     }
 
-    fn update(&mut self, message: view::CreateSpendMessage) {
+    fn update(&mut self, network: Network, message: view::CreateSpendMessage) {
         match message {
             view::CreateSpendMessage::RecipientEdited(_, "address", address) => {
                 self.address.value = address;
-                if self.address.value.is_empty() {
-                    // Make the error disappear if we deleted the invalid address
-                    self.address.valid = true;
-                } else if Address::from_str(&self.address.value).is_ok() {
-                    self.address.valid = true;
+                if let Ok(address) = Address::from_str(&self.address.value) {
+                    self.address.valid = address.network == network
+                        || (address.network == bitcoin::Network::Testnet
+                            && network == bitcoin::Network::Signet);
                     if !self.amount.value.is_empty() {
                         self.amount.valid = self.amount().is_ok();
                     }
+                } else if self.address.value.is_empty() {
+                    // Make the error disappear if we deleted the invalid address
+                    self.address.valid = true;
                 } else {
                     self.address.valid = false;
                 }
