@@ -10,9 +10,7 @@ use crate::{
     descriptors, DaemonControl, VERSION,
 };
 
-use utils::{
-    change_index, deser_amount_from_sats, deser_base64, deser_hex, ser_amount, ser_base64, ser_hex,
-};
+use utils::{deser_amount_from_sats, deser_base64, deser_hex, ser_amount, ser_base64, ser_hex};
 
 use std::{
     collections::{hash_map, BTreeMap, HashMap},
@@ -507,11 +505,7 @@ impl DaemonControl {
         let spend_txs = db_conn
             .list_spend()
             .into_iter()
-            .map(|psbt| {
-                let change_index =
-                    change_index(&psbt, &mut db_conn).map(|i| i.try_into().expect("insane usize"));
-                ListSpendEntry { psbt, change_index }
-            })
+            .map(|psbt| ListSpendEntry { psbt })
             .collect();
         ListSpendResult { spend_txs }
     }
@@ -786,7 +780,6 @@ pub struct CreateSpendResult {
 pub struct ListSpendEntry {
     #[serde(serialize_with = "ser_base64", deserialize_with = "deser_base64")]
     pub psbt: Psbt,
-    pub change_index: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

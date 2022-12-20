@@ -168,9 +168,7 @@ def test_list_spend(lianad, bitcoind):
     list_res = lianad.rpc.listspendtxs()["spend_txs"]
     assert len(list_res) == 2
     first_psbt = next(entry for entry in list_res if entry["psbt"] == res["psbt"])
-    assert first_psbt["change_index"] == 1
     second_psbt = next(entry for entry in list_res if entry["psbt"] == res_b["psbt"])
-    assert second_psbt["change_index"] is None
 
     # If we delete the first one, we'll get only the second one.
     first_psbt = PSBT.from_base64(res["psbt"])

@@ -174,7 +174,6 @@ This command does not take any parameter for now.
 | Field          | Type              | Description                                                             |
 | -------------- | ----------------- | ----------------------------------------------------------------------- |
 | `psbt`         | string            | Base64-encoded PSBT of the Spend transaction.                           |
-| `change_index` | int or null       | Index of the change output in the transaction outputs, if there is one. |
 
 
 ### `delspendtx`
