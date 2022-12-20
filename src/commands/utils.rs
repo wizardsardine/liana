@@ -1,8 +1,4 @@
-use crate::database::DatabaseConnection;
-
-use miniscript::bitcoin::{
-    self, consensus, hashes::hex::FromHex, util::psbt::PartiallySignedTransaction as Psbt,
-};
+use miniscript::bitcoin::{self, consensus, hashes::hex::FromHex};
 use serde::{de, Deserialize, Deserializer, Serializer};
 
 /// Serialize an amount as sats
@@ -53,24 +49,4 @@ where
     let s = String::deserialize(d)?;
     let s = Vec::from_hex(&s).map_err(de::Error::custom)?;
     consensus::deserialize(&s).map_err(de::Error::custom)
-}
-
-// Utility to gather the index of a change output in a Psbt, if there is one.
-pub fn change_index(psbt: &Psbt, db_conn: &mut Box<dyn DatabaseConnection>) -> Option<usize> {
-    let network = db_conn.network();
-
-    for (i, txo) in psbt.unsigned_tx.output.iter().enumerate() {
-        // Small optimization. TODO: adapt once we have Taproot support.
-        if !txo.script_pubkey.is_v0_p2wsh() {
-            continue;
-        }
-
-        if let Ok(address) = bitcoin::Address::from_script(&txo.script_pubkey, network) {
-            if let Some((_, true)) = db_conn.derivation_index_by_address(&address) {
-                return Some(i);
-            }
-        }
-    }
-
-    None
 }
