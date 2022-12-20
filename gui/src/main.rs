@@ -165,6 +165,12 @@ impl Application for GUI {
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
+                launcher::Message::Event(iced_native::Event::Window(
+                    iced_native::window::Event::CloseRequested,
+                )) => {
+                    l.stop();
+                    Command::none()
+                }
                 launcher::Message::Run(network) => {
                     let mut path = l.datadir_path.clone();
                     path.push(network.to_string());
@@ -177,6 +183,7 @@ impl Application for GUI {
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 }
+                _ => Command::none(),
             },
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(path) = *msg {
@@ -233,7 +240,7 @@ impl Application for GUI {
             State::Installer(v) => v.subscription().map(|msg| Message::Install(Box::new(msg))),
             State::Loader(v) => v.subscription().map(|msg| Message::Load(Box::new(msg))),
             State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
-            _ => Subscription::none(),
+            State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
         }
     }
 
