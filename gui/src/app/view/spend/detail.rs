@@ -44,7 +44,7 @@ pub fn spend_view<'a, T: Into<Element<'a, Message>>>(
                 &tx.coins,
                 &tx.psbt.unsigned_tx,
                 network,
-                tx.change_index.map(|i| vec![i]),
+                Some(tx.change_indexes.clone()),
                 None,
             )),
     )

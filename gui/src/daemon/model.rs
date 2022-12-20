@@ -24,7 +24,7 @@ pub fn remaining_sequence(coin: &Coin, blockheight: u32, timelock: u32) -> u32 {
 pub struct SpendTx {
     pub coins: Vec<Coin>,
     pub psbt: Psbt,
-    pub change_index: Option<usize>,
+    pub change_indexes: Vec<usize>,
     pub spend_amount: Amount,
     pub fee_amount: Amount,
     pub status: SpendStatus,
@@ -38,11 +38,13 @@ pub enum SpendStatus {
 }
 
 impl SpendTx {
-    pub fn new(psbt: Psbt, change_index: Option<usize>, coins: Vec<Coin>) -> Self {
+    pub fn new(psbt: Psbt, coins: Vec<Coin>) -> Self {
+        let mut change_indexes = Vec::new();
         let (change_amount, spend_amount) = psbt.unsigned_tx.output.iter().enumerate().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
             |(change, spend), (i, output)| {
-                if Some(i) == change_index {
+                if !psbt.outputs[i].bip32_derivation.is_empty() {
+                    change_indexes.push(i);
                     (change + Amount::from_sat(output.value), spend)
                 } else {
                     (change, spend + Amount::from_sat(output.value))
@@ -66,7 +68,7 @@ impl SpendTx {
         Self {
             coins,
             psbt,
-            change_index,
+            change_indexes,
             spend_amount,
             fee_amount: inputs_amount - spend_amount - change_amount,
             status,
