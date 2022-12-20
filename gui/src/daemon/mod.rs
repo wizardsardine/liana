@@ -88,7 +88,7 @@ pub trait Daemon: Debug {
                     })
                     .copied()
                     .collect();
-                model::SpendTx::new(tx.psbt, tx.change_index.map(|i| i as usize), coins)
+                model::SpendTx::new(tx.psbt, coins)
             })
             .collect())
     }

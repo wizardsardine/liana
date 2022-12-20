@@ -5,9 +5,7 @@ use std::sync::Arc;
 use iced::{Command, Element};
 use liana::{
     config::Config as DaemonConfig,
-    miniscript::bitcoin::{
-        self, util::psbt::Psbt, Address, Amount, Denomination, OutPoint, Script,
-    },
+    miniscript::bitcoin::{self, util::psbt::Psbt, Address, Amount, Denomination, OutPoint},
 };
 
 use crate::{
@@ -416,26 +414,9 @@ impl SaveSpend {
 
 impl Step for SaveSpend {
     fn load(&mut self, draft: &TransactionDraft) {
-        let outputs_script_pubkeys: Vec<Script> = draft
-            .outputs
-            .keys()
-            .map(|addr| addr.script_pubkey())
-            .collect();
-        let index = if let Some(psbt) = &draft.generated {
-            psbt.unsigned_tx
-                .output
-                .iter()
-                .position(|output| !outputs_script_pubkeys.contains(&output.script_pubkey))
-        } else {
-            None
-        };
         self.spend = Some(detail::SpendTxState::new(
             self.config.clone(),
-            SpendTx::new(
-                draft.generated.clone().unwrap(),
-                index,
-                draft.inputs.clone(),
-            ),
+            SpendTx::new(draft.generated.clone().unwrap(), draft.inputs.clone()),
             false,
         ));
     }
