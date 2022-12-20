@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use iced::{
     widget::{Button, Column, Container, Row},
-    Alignment, Element, Length,
+    Alignment, Element, Length, Subscription,
 };
 
 use liana::miniscript::bitcoin::Network;
@@ -44,6 +44,10 @@ impl Launcher {
 
     pub fn should_exit(&self) -> bool {
         self.should_exit
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        iced_native::subscription::events().map(Message::Event)
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -111,6 +115,7 @@ impl Launcher {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Event(iced_native::Event),
     Install,
     Run(Network),
 }
