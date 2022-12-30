@@ -30,11 +30,11 @@ pub struct SpendTx {
     pub status: SpendStatus,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpendStatus {
     Pending,
     Deprecated,
-    Broadcasted,
+    Broadcast,
 }
 
 impl SpendTx {
@@ -58,7 +58,7 @@ impl SpendTx {
             inputs_amount += coin.amount;
             if let Some(info) = coin.spend_info {
                 if info.txid == psbt.unsigned_tx.txid() {
-                    status = SpendStatus::Broadcasted
+                    status = SpendStatus::Broadcast
                 } else {
                     status = SpendStatus::Deprecated
                 }
@@ -73,6 +73,10 @@ impl SpendTx {
             fee_amount: inputs_amount - spend_amount - change_amount,
             status,
         }
+    }
+
+    pub fn is_signed(&self) -> bool {
+        !self.psbt.inputs.first().unwrap().partial_sigs.is_empty()
     }
 }
 

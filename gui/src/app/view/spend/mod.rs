@@ -62,8 +62,8 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                                     .padding(3)
                                     .style(badge::PillStyle::Simple),
                             ),
-                            SpendStatus::Broadcasted => Some(
-                                Container::new(text("  Broadcasted  ").small())
+                            SpendStatus::Broadcast => Some(
+                                Container::new(text("  Broadcast  ").small())
                                     .padding(3)
                                     .style(badge::PillStyle::Success),
                             ),

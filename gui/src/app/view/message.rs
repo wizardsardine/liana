@@ -27,6 +27,9 @@ pub enum CreateSpendMessage {
 #[derive(Debug, Clone)]
 pub enum SpendTxMessage {
     Delete,
+    Sign,
+    Broadcast,
+    Save,
     Confirm,
     Cancel,
     SelectHardwareWallet(usize),
