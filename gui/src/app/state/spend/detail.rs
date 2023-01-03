@@ -12,14 +12,12 @@ use crate::{
         Daemon,
     },
     hw::{list_hardware_wallets, HardwareWallet},
+    ui::component::modal,
 };
 
 trait Action {
     fn warning(&self) -> Option<&Error> {
         None
-    }
-    fn updated(&self) -> bool {
-        false
     }
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         Command::none()
@@ -40,13 +38,13 @@ pub struct SpendTxState {
     config: Config,
     tx: SpendTx,
     saved: bool,
-    action: Box<dyn Action>,
+    action: Option<Box<dyn Action>>,
 }
 
 impl SpendTxState {
     pub fn new(config: Config, tx: SpendTx, saved: bool) -> Self {
         Self {
-            action: choose_action(&config, saved, &tx),
+            action: None,
             config,
             tx,
             saved,
@@ -54,7 +52,11 @@ impl SpendTxState {
     }
 
     pub fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        self.action.load(daemon)
+        if let Some(action) = &self.action {
+            action.load(daemon)
+        } else {
+            Command::none()
+        }
     }
 
     pub fn update(
@@ -63,60 +65,57 @@ impl SpendTxState {
         cache: &Cache,
         message: Message,
     ) -> Command<Message> {
-        let cmd = match &message {
+        match &message {
             Message::View(view::Message::Spend(msg)) => match msg {
                 view::SpendTxMessage::Cancel => {
-                    self.action = choose_action(&self.config, self.saved, &self.tx);
-                    self.action.load(daemon.clone())
+                    self.action = None;
                 }
                 view::SpendTxMessage::Delete => {
-                    self.action = Box::new(DeleteAction::default());
-                    self.action.load(daemon.clone())
+                    self.action = Some(Box::new(DeleteAction::default()));
                 }
-                _ => self
-                    .action
-                    .update(daemon.clone(), cache, message, &mut self.tx),
+                view::SpendTxMessage::Sign => {
+                    let action = SignAction::new(self.config.clone());
+                    let cmd = action.load(daemon);
+                    self.action = Some(Box::new(action));
+                    return cmd;
+                }
+                view::SpendTxMessage::Broadcast => {
+                    self.action = Some(Box::new(BroadcastAction::default()));
+                }
+                view::SpendTxMessage::Save => {
+                    self.action = Some(Box::new(SaveAction::default()));
+                }
+                _ => {
+                    if let Some(action) = self.action.as_mut() {
+                        return action.update(daemon.clone(), cache, message, &mut self.tx);
+                    }
+                }
             },
-            _ => self
-                .action
-                .update(daemon.clone(), cache, message, &mut self.tx),
+            Message::Updated(Ok(_)) => {
+                self.saved = true;
+                if let Some(action) = self.action.as_mut() {
+                    return action.update(daemon.clone(), cache, message, &mut self.tx);
+                }
+            }
+            _ => {
+                if let Some(action) = self.action.as_mut() {
+                    return action.update(daemon.clone(), cache, message, &mut self.tx);
+                }
+            }
         };
-        if self.action.updated() {
-            self.saved = true;
-            self.action = choose_action(&self.config, self.saved, &self.tx);
-            self.action.load(daemon)
-        } else {
-            cmd
-        }
+        Command::none()
     }
 
     pub fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        detail::spend_view(
-            self.action.warning(),
-            &self.tx,
-            self.action.view(),
-            self.saved,
-            cache.network,
-        )
-    }
-}
-
-fn choose_action(config: &Config, saved: bool, tx: &SpendTx) -> Box<dyn Action> {
-    if saved {
-        match tx.status {
-            SpendStatus::Deprecated | SpendStatus::Broadcasted => {
-                return Box::new(NoAction::default());
-            }
-            _ => {}
-        }
-
-        if !tx.psbt.inputs.first().unwrap().partial_sigs.is_empty() {
-            return Box::new(BroadcastAction::default());
+        let content = detail::spend_view(&self.tx, self.saved, cache.network);
+        if let Some(action) = &self.action {
+            modal::Modal::new(content, action.view())
+                .on_blur(view::Message::Spend(view::SpendTxMessage::Cancel))
+                .into()
         } else {
-            return Box::new(SignAction::new(config.clone()));
+            content
         }
     }
-    Box::new(SaveAction::default())
 }
 
 #[derive(Default)]
@@ -126,14 +125,6 @@ pub struct SaveAction {
 }
 
 impl Action for SaveAction {
-    fn warning(&self) -> Option<&Error> {
-        self.error.as_ref()
-    }
-
-    fn updated(&self) -> bool {
-        self.saved
-    }
-
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -159,20 +150,17 @@ impl Action for SaveAction {
         Command::none()
     }
     fn view(&self) -> Element<view::Message> {
-        detail::save_action(self.saved)
+        detail::save_action(self.error.as_ref(), self.saved)
     }
 }
 
 #[derive(Default)]
 pub struct BroadcastAction {
-    broadcasted: bool,
+    broadcast: bool,
     error: Option<Error>,
 }
 
 impl Action for BroadcastAction {
-    fn warning(&self) -> Option<&Error> {
-        self.error.as_ref()
-    }
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -195,7 +183,10 @@ impl Action for BroadcastAction {
                 );
             }
             Message::Updated(res) => match res {
-                Ok(()) => self.broadcasted = true,
+                Ok(()) => {
+                    tx.status = SpendStatus::Broadcast;
+                    self.broadcast = true;
+                }
                 Err(e) => self.error = Some(e),
             },
             _ => {}
@@ -203,7 +194,7 @@ impl Action for BroadcastAction {
         Command::none()
     }
     fn view(&self) -> Element<view::Message> {
-        detail::broadcast_action(self.broadcasted)
+        detail::broadcast_action(self.error.as_ref(), self.broadcast)
     }
 }
 
@@ -214,10 +205,6 @@ pub struct DeleteAction {
 }
 
 impl Action for DeleteAction {
-    fn warning(&self) -> Option<&Error> {
-        self.error.as_ref()
-    }
-
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -248,7 +235,7 @@ impl Action for DeleteAction {
         Command::none()
     }
     fn view(&self) -> Element<view::Message> {
-        detail::delete_action(self.deleted)
+        detail::delete_action(self.error.as_ref(), self.deleted)
     }
 }
 
@@ -259,7 +246,6 @@ pub struct SignAction {
     hws: Vec<HardwareWallet>,
     error: Option<Error>,
     signed: Vec<Fingerprint>,
-    updated: bool,
 }
 
 impl SignAction {
@@ -271,7 +257,6 @@ impl SignAction {
             hws: Vec::new(),
             error: None,
             signed: Vec::new(),
-            updated: false,
         }
     }
 }
@@ -279,10 +264,6 @@ impl SignAction {
 impl Action for SignAction {
     fn warning(&self) -> Option<&Error> {
         self.error.as_ref()
-    }
-
-    fn updated(&self) -> bool {
-        self.updated
     }
 
     fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
@@ -327,7 +308,7 @@ impl Action for SignAction {
                 }
             },
             Message::Updated(res) => match res {
-                Ok(()) => self.updated = true,
+                Ok(()) => self.processing = false,
                 Err(e) => self.error = Some(e),
             },
             // We add the new hws without dropping the reference of the previous ones.
@@ -346,7 +327,13 @@ impl Action for SignAction {
         Command::none()
     }
     fn view(&self) -> Element<view::Message> {
-        view::spend::detail::sign_action(&self.hws, self.processing, self.chosen_hw, &self.signed)
+        view::spend::detail::sign_action(
+            self.error.as_ref(),
+            &self.hws,
+            self.processing,
+            self.chosen_hw,
+            &self.signed,
+        )
     }
 }
 
@@ -361,13 +348,4 @@ async fn sign_psbt(
 ) -> Result<(Psbt, Fingerprint), Error> {
     hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
     Ok((psbt, fingerprint))
-}
-
-#[derive(Default)]
-pub struct NoAction {}
-
-impl Action for NoAction {
-    fn view(&self) -> Element<view::Message> {
-        iced::widget::Column::new().into()
-    }
 }

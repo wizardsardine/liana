@@ -24,21 +24,14 @@ use crate::{
     },
 };
 
-pub fn spend_view<'a, T: Into<Element<'a, Message>>>(
-    warning: Option<&Error>,
-    tx: &'a SpendTx,
-    action: T,
-    show_delete: bool,
-    network: Network,
-) -> Element<'a, Message> {
+pub fn spend_view(tx: &SpendTx, saved: bool, network: Network) -> Element<Message> {
     spend_modal(
-        show_delete,
-        warning,
+        saved,
+        None,
         Column::new()
             .align_items(Alignment::Center)
             .spacing(20)
             .push(spend_header(tx))
-            .push(action)
             .push(spend_overview_view(tx))
             .push(inputs_and_outputs_view(
                 &tx.coins,
@@ -50,36 +43,44 @@ pub fn spend_view<'a, T: Into<Element<'a, Message>>>(
     )
 }
 
-pub fn save_action<'a>(saved: bool) -> Element<'a, Message> {
+pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Message> {
     if saved {
         card::simple(text("Transaction is saved"))
-            .width(Length::Fill)
+            .width(Length::Units(400))
             .align_x(iced::alignment::Horizontal::Center)
             .into()
     } else {
         card::simple(
             Column::new()
                 .spacing(10)
-                .push(text("Save the transaction"))
-                .push(Row::new().push(Column::new().width(Length::Fill)).push(
-                    button::primary(None, "Save").on_press(Message::Spend(SpendTxMessage::Confirm)),
-                )),
+                .push_maybe(warning.map(|w| warn(Some(w))))
+                .push(text("Save the transaction as draft"))
+                .push(
+                    Row::new()
+                        .push(Column::new().width(Length::Fill))
+                        .push(button::alert(None, "Ignore").on_press(Message::Close))
+                        .push(
+                            button::primary(None, "Save")
+                                .on_press(Message::Spend(SpendTxMessage::Confirm)),
+                        ),
+                ),
         )
-        .width(Length::Fill)
+        .width(Length::Units(400))
         .into()
     }
 }
 
-pub fn broadcast_action<'a>(saved: bool) -> Element<'a, Message> {
+pub fn broadcast_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Message> {
     if saved {
-        card::simple(text("Transaction is broadcasted"))
-            .width(Length::Fill)
+        card::simple(text("Transaction is broadcast"))
+            .width(Length::Units(400))
             .align_x(iced::alignment::Horizontal::Center)
             .into()
     } else {
         card::simple(
             Column::new()
                 .spacing(10)
+                .push_maybe(warning.map(|w| warn(Some(w))))
                 .push(text("Broadcast the transaction"))
                 .push(
                     Row::new().push(Column::new().width(Length::Fill)).push(
@@ -88,21 +89,28 @@ pub fn broadcast_action<'a>(saved: bool) -> Element<'a, Message> {
                     ),
                 ),
         )
-        .width(Length::Fill)
+        .width(Length::Units(400))
         .into()
     }
 }
 
-pub fn delete_action<'a>(deleted: bool) -> Element<'a, Message> {
+pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, Message> {
     if deleted {
-        card::simple(text("Transaction is deleted"))
-            .align_x(iced::alignment::Horizontal::Center)
-            .width(Length::Fill)
-            .into()
+        card::simple(
+            Column::new()
+                .spacing(20)
+                .align_items(Alignment::Center)
+                .push(text("Transaction is deleted"))
+                .push(button::primary(None, "Go back to drafts").on_press(Message::Close)),
+        )
+        .align_x(iced::alignment::Horizontal::Center)
+        .width(Length::Units(400))
+        .into()
     } else {
         card::simple(
             Column::new()
                 .spacing(10)
+                .push_maybe(warning.map(|w| warn(Some(w))))
                 .push(text("Delete the transaction draft"))
                 .push(
                     Row::new()
@@ -117,13 +125,13 @@ pub fn delete_action<'a>(deleted: bool) -> Element<'a, Message> {
                         ),
                 ),
         )
-        .width(Length::Fill)
+        .width(Length::Units(400))
         .into()
     }
 }
 
 pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
-    show_delete: bool,
+    saved: bool,
     warning: Option<&Error>,
     content: T,
 ) -> Element<'a, Message> {
@@ -132,7 +140,7 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
         .push(
             Container::new(
                 Row::new()
-                    .push(if show_delete {
+                    .push(if saved {
                         Column::new()
                             .push(
                                 button::alert(Some(icon::trash_icon()), "Delete")
@@ -147,9 +155,12 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
                             .width(Length::Fill)
                     })
                     .align_items(iced::Alignment::Center)
-                    .push(
-                        button::primary(Some(icon::cross_icon()), "Close").on_press(Message::Close),
-                    ),
+                    .push(if saved {
+                        button::primary(Some(icon::cross_icon()), "Close").on_press(Message::Close)
+                    } else {
+                        button::primary(Some(icon::cross_icon()), "Close")
+                            .on_press(Message::Spend(SpendTxMessage::Save))
+                    }),
             )
             .padding(10)
             .style(container::Style::Background),
@@ -185,8 +196,8 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
                     .padding(3)
                     .style(badge::PillStyle::Simple),
             ),
-            SpendStatus::Broadcasted => Some(
-                Container::new(text("  Broadcasted  ").small())
+            SpendStatus::Broadcast => Some(
+                Container::new(text("  Broadcast  ").small())
                     .padding(3)
                     .style(badge::PillStyle::Success),
             ),
@@ -225,8 +236,25 @@ fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
                                         .push(text(format!(
                                             "{}",
                                             tx.psbt.inputs[0].partial_sigs.len(),
-                                        ))),
+                                        )))
+                                        .width(Length::Fill),
                                 )
+                                .push_maybe(if tx.status == SpendStatus::Pending {
+                                    if !tx.is_signed() {
+                                        Some(
+                                            button::primary(None, "Sign")
+                                                .on_press(Message::Spend(SpendTxMessage::Sign)),
+                                        )
+                                    } else {
+                                        Some(
+                                            button::primary(None, "Broadcast").on_press(
+                                                Message::Spend(SpendTxMessage::Broadcast),
+                                            ),
+                                        )
+                                    }
+                                } else {
+                                    None
+                                })
                                 .align_items(Alignment::Center)
                                 .spacing(20),
                         )
@@ -471,6 +499,7 @@ pub fn inputs_and_outputs_view<'a>(
 }
 
 pub fn sign_action<'a>(
+    warning: Option<&Error>,
     hws: &[HardwareWallet],
     processing: bool,
     chosen_hw: Option<usize>,
@@ -478,6 +507,7 @@ pub fn sign_action<'a>(
 ) -> Element<'a, Message> {
     card::simple(
         Column::new()
+            .push_maybe(warning.map(|w| warn(Some(w))))
             .push(if !hws.is_empty() {
                 Column::new()
                     .push(
@@ -520,6 +550,6 @@ pub fn sign_action<'a>(
             .width(Length::Fill)
             .align_items(Alignment::Center),
     )
-    .width(Length::Fill)
+    .width(Length::Units(500))
     .into()
 }

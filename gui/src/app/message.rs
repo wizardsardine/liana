@@ -26,6 +26,7 @@ pub enum Message {
     Psbt(Result<Psbt, Error>),
     Signed(Result<(Psbt, Fingerprint), Error>),
     Updated(Result<(), Error>),
+    Saved(Result<(), Error>),
     StartRescan(Result<(), Error>),
     ConnectedHardwareWallets(Vec<HardwareWallet>),
     HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
