@@ -2,29 +2,84 @@ pub mod detail;
 pub mod step;
 
 use iced::{
-    widget::{Button, Column, Container, Row},
+    widget::{Button, Column, Container, Row, Space},
     Alignment, Element, Length,
 };
 
 use crate::{
-    app::menu::Menu,
+    app::{error::Error, menu::Menu},
     daemon::model::{SpendStatus, SpendTx},
     ui::{
-        component::{badge, button, card, text::*},
+        color,
+        component::{badge, button, card, form, text::*},
         icon,
         util::Collection,
     },
 };
 
-use super::message::Message;
+use super::{message::*, warning::warn};
+
+pub fn import_spend_view<'a>(
+    imported: &form::Value<String>,
+    error: Option<&Error>,
+    processing: bool,
+) -> Element<'a, Message> {
+    Column::new()
+        .push(warn(error))
+        .push(card::simple(
+            Column::new()
+                .spacing(10)
+                .push(text("Insert PSBT:").bold())
+                .push(
+                    form::Form::new("PSBT", imported, move |msg| {
+                        Message::ImportSpend(ImportSpendMessage::PsbtEdited(msg))
+                    })
+                    .warning("Please enter a base64 encoded PSBT")
+                    .size(20)
+                    .padding(10),
+                )
+                .push(Row::new().push(Space::with_width(Length::Fill)).push(
+                    if imported.valid && !imported.value.is_empty() && !processing {
+                        button::primary(None, "Import")
+                            .on_press(Message::ImportSpend(ImportSpendMessage::Confirm))
+                    } else if processing {
+                        button::primary(None, "Processing...")
+                    } else {
+                        button::primary(None, "Import")
+                    },
+                )),
+        ))
+        .max_width(400)
+        .into()
+}
+
+pub fn import_spend_success_view<'a>() -> Element<'a, Message> {
+    Column::new()
+        .push(
+            card::simple(Container::new(
+                text("PSBT is imported").style(color::SUCCESS),
+            ))
+            .padding(50),
+        )
+        .width(Length::Units(400))
+        .align_items(Alignment::Center)
+        .into()
+}
 
 pub fn spend_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
     Column::new()
         .push(
-            Row::new().push(Column::new().width(Length::Fill)).push(
-                button::primary(Some(icon::plus_icon()), "New transaction")
-                    .on_press(Message::Menu(Menu::CreateSpendTx)),
-            ),
+            Row::new()
+                .spacing(10)
+                .push(Column::new().width(Length::Fill))
+                .push(
+                    button::border(Some(icon::import_icon()), "Import")
+                        .on_press(Message::ImportSpend(ImportSpendMessage::Import)),
+                )
+                .push(
+                    button::primary(Some(icon::plus_icon()), "New")
+                        .on_press(Message::Menu(Menu::CreateSpendTx)),
+                ),
         )
         .push(
             Container::new(

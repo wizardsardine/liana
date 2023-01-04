@@ -9,6 +9,7 @@ pub enum Message {
     Select(usize),
     Settings(usize, SettingsMessage),
     CreateSpend(CreateSpendMessage),
+    ImportSpend(ImportSpendMessage),
     Spend(SpendTxMessage),
     Next,
     Previous,
@@ -22,6 +23,13 @@ pub enum CreateSpendMessage {
     RecipientEdited(usize, &'static str, String),
     FeerateEdited(String),
     Generate,
+}
+
+#[derive(Debug, Clone)]
+pub enum ImportSpendMessage {
+    Import,
+    PsbtEdited(String),
+    Confirm,
 }
 
 #[derive(Debug, Clone)]

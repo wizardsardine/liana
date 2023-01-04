@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use iced::{Command, Element};
 
-use liana::descriptors::MultipathDescriptor;
+use liana::{
+    descriptors::MultipathDescriptor,
+    miniscript::bitcoin::{consensus, util::psbt::Psbt},
+};
 
 use super::{redirect, State};
 use crate::{
@@ -13,6 +16,7 @@ use crate::{
         model::{Coin, SpendTx},
         Daemon,
     },
+    ui::component::{form, modal},
 };
 
 pub struct SpendPanel {
@@ -20,6 +24,7 @@ pub struct SpendPanel {
     selected_tx: Option<detail::SpendTxState>,
     spend_txs: Vec<SpendTx>,
     warning: Option<Error>,
+    import_tx: Option<ImportSpendState>,
 }
 
 impl SpendPanel {
@@ -29,6 +34,7 @@ impl SpendPanel {
             spend_txs: spend_txs.to_vec(),
             warning: None,
             selected_tx: None,
+            import_tx: None,
         }
     }
 }
@@ -38,12 +44,23 @@ impl State for SpendPanel {
         if let Some(tx) = &self.selected_tx {
             tx.view(cache)
         } else {
-            view::dashboard(
+            let list_view = view::dashboard(
                 &Menu::Spend,
                 cache,
                 self.warning.as_ref(),
                 view::spend::spend_view(&self.spend_txs),
-            )
+            );
+            if let Some(import_tx) = &self.import_tx {
+                modal::Modal::new(list_view, import_tx.view())
+                    .on_blur(if import_tx.processing {
+                        None
+                    } else {
+                        Some(view::Message::Close)
+                    })
+                    .into()
+            } else {
+                list_view
+            }
         }
     }
 
@@ -61,9 +78,18 @@ impl State for SpendPanel {
                     self.spend_txs = txs;
                 }
             },
+            Message::View(view::Message::ImportSpend(view::ImportSpendMessage::Import)) => {
+                if self.import_tx.is_none() {
+                    self.import_tx = Some(ImportSpendState::new());
+                }
+            }
             Message::View(view::Message::Close) => {
                 if self.selected_tx.is_some() {
                     self.selected_tx = None;
+                    return self.load(daemon);
+                }
+                if self.import_tx.is_some() {
+                    self.import_tx = None;
                     return self.load(daemon);
                 }
             }
@@ -78,6 +104,10 @@ impl State for SpendPanel {
             _ => {
                 if let Some(tx) = &mut self.selected_tx {
                     return tx.update(daemon, cache, message);
+                }
+
+                if let Some(import_tx) = &mut self.import_tx {
+                    return import_tx.update(daemon, cache, message);
                 }
             }
         }
@@ -186,5 +216,77 @@ impl State for CreateSpendPanel {
 impl From<CreateSpendPanel> for Box<dyn State> {
     fn from(s: CreateSpendPanel) -> Box<dyn State> {
         Box::new(s)
+    }
+}
+
+pub struct ImportSpendState {
+    imported: form::Value<String>,
+    processing: bool,
+    error: Option<Error>,
+    success: bool,
+}
+
+impl ImportSpendState {
+    pub fn new() -> Self {
+        Self {
+            imported: form::Value::default(),
+            processing: false,
+            error: None,
+            success: false,
+        }
+    }
+}
+
+impl ImportSpendState {
+    fn view<'a>(&self) -> Element<'a, view::Message> {
+        if self.success {
+            view::spend::import_spend_success_view()
+        } else {
+            view::spend::import_spend_view(&self.imported, self.error.as_ref(), self.processing)
+        }
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        message: Message,
+    ) -> Command<Message> {
+        match message {
+            Message::Updated(res) => {
+                self.processing = false;
+                match res {
+                    Ok(()) => {
+                        self.success = true;
+                        self.error = None;
+                    }
+                    Err(e) => self.error = e.into(),
+                }
+            }
+            Message::View(view::Message::ImportSpend(view::ImportSpendMessage::PsbtEdited(s))) => {
+                self.imported.value = s;
+                self.imported.valid = base64::decode(&self.imported.value)
+                    .ok()
+                    .and_then(|bytes| consensus::encode::deserialize::<Psbt>(&bytes).ok())
+                    .is_some();
+            }
+            Message::View(view::Message::ImportSpend(view::ImportSpendMessage::Confirm)) => {
+                if self.imported.valid {
+                    self.processing = true;
+                    self.error = None;
+                    let imported: Psbt = consensus::encode::deserialize(
+                        &base64::decode(&self.imported.value).expect("Already checked"),
+                    )
+                    .unwrap();
+                    return Command::perform(
+                        async move { daemon.update_spend_tx(&imported).map_err(|e| e.into()) },
+                        Message::Updated,
+                    );
+                }
+            }
+            _ => {}
+        }
+
+        Command::none()
     }
 }

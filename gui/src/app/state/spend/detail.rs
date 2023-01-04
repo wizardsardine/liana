@@ -110,7 +110,7 @@ impl SpendTxState {
         let content = detail::spend_view(&self.tx, self.saved, cache.network);
         if let Some(action) = &self.action {
             modal::Modal::new(content, action.view())
-                .on_blur(view::Message::Spend(view::SpendTxMessage::Cancel))
+                .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
                 .into()
         } else {
             content
