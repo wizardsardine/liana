@@ -41,6 +41,8 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectHardwareWallet(usize),
+    EditPsbt,
+    PsbtEdited(String),
     Next,
 }
 
