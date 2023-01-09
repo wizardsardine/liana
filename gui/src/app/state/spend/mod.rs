@@ -109,7 +109,7 @@ impl CreateSpendPanel {
             draft: step::TransactionDraft::default(),
             current: 0,
             steps: vec![
-                Box::new(step::ChooseRecipients::default()),
+                Box::new(step::ChooseRecipients::new(coins)),
                 Box::new(step::ChooseCoins::new(
                     coins.to_vec(),
                     timelock,

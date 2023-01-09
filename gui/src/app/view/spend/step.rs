@@ -23,12 +23,13 @@ use crate::{
     },
 };
 
-pub fn choose_recipients_view(
-    recipients: Vec<Element<Message>>,
+pub fn choose_recipients_view<'a>(
+    balance_available: &'a Amount,
+    recipients: Vec<Element<'a, Message>>,
     total_amount: Amount,
     is_valid: bool,
     duplicate: bool,
-) -> Element<Message> {
+) -> Element<'a, Message> {
     modal(
         false,
         None,
@@ -53,8 +54,14 @@ pub fn choose_recipients_view(
                     .spacing(20)
                     .align_items(Alignment::Center)
                     .push(
-                        Container::new(text(format!("{}", total_amount)).bold())
-                            .width(Length::Fill),
+                        Container::new(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .spacing(5)
+                                .push(text(format!("{}", total_amount)).bold())
+                                .push(text(format!("/ {}", balance_available))),
+                        )
+                        .width(Length::Fill),
                     )
                     .push_maybe(if duplicate {
                         Some(text("Two recipient addresses are the same").style(color::WARNING))

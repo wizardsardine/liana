@@ -42,22 +42,30 @@ pub trait Step {
 }
 
 pub struct ChooseRecipients {
+    balance_available: Amount,
     recipients: Vec<Recipient>,
     is_valid: bool,
     is_duplicate: bool,
 }
 
-impl std::default::Default for ChooseRecipients {
-    fn default() -> Self {
+impl ChooseRecipients {
+    pub fn new(coins: &[Coin]) -> Self {
         Self {
+            balance_available: coins
+                .iter()
+                .filter_map(|coin| {
+                    if coin.spend_info.is_none() {
+                        Some(coin.amount)
+                    } else {
+                        None
+                    }
+                })
+                .sum(),
             recipients: vec![Recipient::default()],
             is_valid: false,
             is_duplicate: false,
         }
     }
-}
-
-impl ChooseRecipients {
     fn check_valid(&mut self) {
         self.is_valid = !self.recipients.is_empty();
         self.is_duplicate = false;
@@ -117,6 +125,7 @@ impl Step for ChooseRecipients {
 
     fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
         view::spend::step::choose_recipients_view(
+            &self.balance_available,
             self.recipients
                 .iter()
                 .enumerate()
