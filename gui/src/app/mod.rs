@@ -80,6 +80,7 @@ impl App {
             menu::Menu::Spend => SpendPanel::new(self.config.clone(), &self.cache.spend_txs).into(),
             menu::Menu::CreateSpendTx => CreateSpendPanel::new(
                 self.config.clone(),
+                self.daemon.config().main_descriptor.clone(),
                 &self.cache.coins,
                 self.daemon.config().main_descriptor.timelock_value(),
                 self.cache.blockheight as u32,
