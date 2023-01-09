@@ -1,10 +1,12 @@
 use crate::ui::font;
 use std::borrow::Cow;
 
+pub const TEXT_REGULAR_SIZE: u16 = 25;
+
 pub fn text<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a> {
     iced::widget::Text::new(content)
         .font(font::REGULAR)
-        .size(25)
+        .size(TEXT_REGULAR_SIZE)
 }
 
 pub trait Text {
