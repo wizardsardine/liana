@@ -21,6 +21,9 @@ use crate::{
     ui::component::form,
 };
 
+/// See: https://github.com/wizardsardine/liana/blob/master/src/commands/mod.rs#L32
+const DUST_OUTPUT_SATS: u64 = 5_000;
+
 #[derive(Default, Clone)]
 pub struct TransactionDraft {
     inputs: Vec<Coin>,
@@ -159,6 +162,10 @@ impl Recipient {
             .map_err(|_| Error::Unexpected("cannot parse output amount".to_string()))?;
 
         if amount.to_sat() == 0 {
+            return Err(Error::Unexpected("Amount should be non-zero".to_string()));
+        }
+
+        if amount.to_sat() < DUST_OUTPUT_SATS {
             return Err(Error::Unexpected("Amount should be non-zero".to_string()));
         }
 

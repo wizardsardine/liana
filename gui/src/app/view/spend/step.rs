@@ -100,11 +100,11 @@ pub fn recipient_view<'a>(
                 form::Form::new("Amount", amount, move |msg| {
                     CreateSpendMessage::RecipientEdited(index, "amount", msg)
                 })
-                .warning("Please enter correct amount")
+                .warning("Please enter correct amount (> 5000 sats)")
                 .size(20)
                 .padding(10),
             )
-            .width(Length::Units(250)),
+            .width(Length::Units(300)),
         )
         .spacing(5)
         .push(
