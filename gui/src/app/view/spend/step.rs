@@ -68,7 +68,7 @@ pub fn choose_recipients_view<'a>(
                     } else {
                         None
                     })
-                    .push(if is_valid {
+                    .push(if is_valid && total_amount < *balance_available {
                         button::primary(None, "Next")
                             .on_press(Message::Next)
                             .width(Length::Units(100))
