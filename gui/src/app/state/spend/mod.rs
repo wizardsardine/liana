@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use iced::{Command, Element};
 
+use liana::descriptors::MultipathDescriptor;
+
 use super::{redirect, State};
 use crate::{
     app::{cache::Cache, config::Config, error::Error, menu::Menu, message::Message, view},
@@ -104,13 +106,20 @@ pub struct CreateSpendPanel {
 }
 
 impl CreateSpendPanel {
-    pub fn new(config: Config, coins: &[Coin], timelock: u32, blockheight: u32) -> Self {
+    pub fn new(
+        config: Config,
+        descriptor: MultipathDescriptor,
+        coins: &[Coin],
+        timelock: u32,
+        blockheight: u32,
+    ) -> Self {
         Self {
             draft: step::TransactionDraft::default(),
             current: 0,
             steps: vec![
-                Box::new(step::ChooseRecipients::default()),
+                Box::new(step::ChooseRecipients::new(coins)),
                 Box::new(step::ChooseCoins::new(
+                    descriptor,
                     coins.to_vec(),
                     timelock,
                     blockheight,

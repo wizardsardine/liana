@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use iced::{Command, Element};
 use liana::{
-    config::Config as DaemonConfig,
+    descriptors::MultipathDescriptor,
     miniscript::bitcoin::{
         self, util::psbt::Psbt, Address, Amount, Denomination, Network, OutPoint,
     },
@@ -20,6 +20,9 @@ use crate::{
     },
     ui::component::form,
 };
+
+/// See: https://github.com/wizardsardine/liana/blob/master/src/commands/mod.rs#L32
+const DUST_OUTPUT_SATS: u64 = 5_000;
 
 #[derive(Default, Clone)]
 pub struct TransactionDraft {
@@ -42,22 +45,30 @@ pub trait Step {
 }
 
 pub struct ChooseRecipients {
+    balance_available: Amount,
     recipients: Vec<Recipient>,
     is_valid: bool,
     is_duplicate: bool,
 }
 
-impl std::default::Default for ChooseRecipients {
-    fn default() -> Self {
+impl ChooseRecipients {
+    pub fn new(coins: &[Coin]) -> Self {
         Self {
+            balance_available: coins
+                .iter()
+                .filter_map(|coin| {
+                    if coin.spend_info.is_none() {
+                        Some(coin.amount)
+                    } else {
+                        None
+                    }
+                })
+                .sum(),
             recipients: vec![Recipient::default()],
             is_valid: false,
             is_duplicate: false,
         }
     }
-}
-
-impl ChooseRecipients {
     fn check_valid(&mut self) {
         self.is_valid = !self.recipients.is_empty();
         self.is_duplicate = false;
@@ -117,6 +128,7 @@ impl Step for ChooseRecipients {
 
     fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
         view::spend::step::choose_recipients_view(
+            &self.balance_available,
             self.recipients
                 .iter()
                 .enumerate()
@@ -150,6 +162,10 @@ impl Recipient {
             .map_err(|_| Error::Unexpected("cannot parse output amount".to_string()))?;
 
         if amount.to_sat() == 0 {
+            return Err(Error::Unexpected("Amount should be non-zero".to_string()));
+        }
+
+        if amount.to_sat() < DUST_OUTPUT_SATS {
             return Err(Error::Unexpected("Amount should be non-zero".to_string()));
         }
 
@@ -207,8 +223,8 @@ impl Recipient {
     }
 }
 
-#[derive(Default)]
 pub struct ChooseCoins {
+    descriptor: MultipathDescriptor,
     timelock: u32,
     coins: Vec<(Coin, bool)>,
     recipients: Vec<(Address, Amount)>,
@@ -220,7 +236,12 @@ pub struct ChooseCoins {
 }
 
 impl ChooseCoins {
-    pub fn new(coins: Vec<Coin>, timelock: u32, blockheight: u32) -> Self {
+    pub fn new(
+        descriptor: MultipathDescriptor,
+        coins: Vec<Coin>,
+        timelock: u32,
+        blockheight: u32,
+    ) -> Self {
         let mut coins: Vec<(Coin, bool)> = coins
             .into_iter()
             .filter_map(|c| {
@@ -243,6 +264,7 @@ impl ChooseCoins {
             }
         });
         Self {
+            descriptor,
             timelock,
             coins,
             recipients: Vec::new(),
@@ -253,7 +275,7 @@ impl ChooseCoins {
         }
     }
 
-    fn amount_left_to_select(&mut self, cfg: &DaemonConfig) {
+    fn amount_left_to_select(&mut self) {
         // We need the feerate in order to compute the required amount of BTC to
         // select. Return early if we don't to not do unnecessary computation.
         let feerate = match self.feerate.value.parse::<u64>() {
@@ -293,7 +315,7 @@ impl ChooseCoins {
         };
         // nValue size + scriptPubKey CompactSize + OP_0 + PUSH32 + <wit program>
         const CHANGE_TXO_SIZE: usize = 8 + 1 + 1 + 1 + 32;
-        let satisfaction_vsize = cfg.main_descriptor.max_sat_weight() / 4;
+        let satisfaction_vsize = self.descriptor.max_sat_weight() / 4;
         let transaction_size =
             tx_template.vsize() + satisfaction_vsize * tx_template.input.len() + CHANGE_TXO_SIZE;
 
@@ -317,6 +339,7 @@ impl Step for ChooseCoins {
             .iter()
             .map(|(k, v)| (k.clone(), Amount::from_sat(*v)))
             .collect();
+        self.amount_left_to_select();
     }
 
     fn apply(&self, draft: &mut TransactionDraft) {
@@ -342,7 +365,7 @@ impl Step for ChooseCoins {
                 if s.parse::<u64>().is_ok() {
                     self.feerate.value = s;
                     self.feerate.valid = true;
-                    self.amount_left_to_select(daemon.config());
+                    self.amount_left_to_select();
                 } else if s.is_empty() {
                     self.feerate.value = "".to_string();
                     self.feerate.valid = true;
@@ -384,7 +407,7 @@ impl Step for ChooseCoins {
             Message::View(view::Message::CreateSpend(view::CreateSpendMessage::SelectCoin(i))) => {
                 if let Some(coin) = self.coins.get_mut(i) {
                     coin.1 = !coin.1;
-                    self.amount_left_to_select(daemon.config());
+                    self.amount_left_to_select();
                 }
             }
             _ => {}
