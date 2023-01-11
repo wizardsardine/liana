@@ -9,6 +9,7 @@ pub enum Message {
     Select(usize),
     Settings(usize, SettingsMessage),
     CreateSpend(CreateSpendMessage),
+    ImportSpend(ImportSpendMessage),
     Spend(SpendTxMessage),
     Next,
     Previous,
@@ -25,6 +26,13 @@ pub enum CreateSpendMessage {
 }
 
 #[derive(Debug, Clone)]
+pub enum ImportSpendMessage {
+    Import,
+    PsbtEdited(String),
+    Confirm,
+}
+
+#[derive(Debug, Clone)]
 pub enum SpendTxMessage {
     Delete,
     Sign,
@@ -33,6 +41,8 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectHardwareWallet(usize),
+    EditPsbt,
+    PsbtEdited(String),
     Next,
 }
 

@@ -1,5 +1,5 @@
 use iced::{
-    widget::{Button, Column, Container, Row, Scrollable},
+    widget::{Button, Column, Container, Row, Scrollable, Space},
     Alignment, Element, Length,
 };
 
@@ -13,10 +13,11 @@ use crate::{
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
     ui::{
+        color,
         component::{
             badge, button, card,
             collapse::Collapse,
-            container, separation,
+            container, form, separation,
             text::{text, Text},
         },
         icon,
@@ -266,18 +267,35 @@ fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
             .push(separation().width(Length::Fill))
             .push(
                 Column::new()
+                    .spacing(10)
                     .push(
                         Row::new()
                             .push(text("Tx ID:").bold().width(Length::Fill))
-                            .push(text(format!("{}", tx.psbt.unsigned_tx.txid())).small())
+                            .push(text(tx.psbt.unsigned_tx.txid().to_string()).small())
+                            .push(
+                                Button::new(icon::clipboard_icon())
+                                    .on_press(Message::Clipboard(
+                                        tx.psbt.unsigned_tx.txid().to_string(),
+                                    ))
+                                    .style(button::Style::TransparentBorder.into()),
+                            )
                             .align_items(Alignment::Center),
                     )
                     .push(
                         Row::new()
-                            .push(text("Psbt:").bold().width(Length::Fill))
+                            .align_items(Alignment::Center)
+                            .push(text("PSBT:").bold().width(Length::Fill))
                             .push(
-                                button::transparent(Some(icon::clipboard_icon()), "Copy")
-                                    .on_press(Message::Clipboard(tx.psbt.to_string())),
+                                Row::new()
+                                    .spacing(5)
+                                    .push(
+                                        button::border(Some(icon::clipboard_icon()), "Copy")
+                                            .on_press(Message::Clipboard(tx.psbt.to_string())),
+                                    )
+                                    .push(
+                                        button::border(Some(icon::import_icon()), "Update")
+                                            .on_press(Message::Spend(SpendTxMessage::EditPsbt)),
+                                    ),
                             )
                             .align_items(Alignment::Center),
                     ),
@@ -539,7 +557,7 @@ pub fn sign_action<'a>(
                 Column::new()
                     .push(
                         Column::new()
-                            .spacing(20)
+                            .spacing(15)
                             .width(Length::Fill)
                             .push("Please connect a hardware wallet")
                             .push(button::border(None, "Refresh").on_press(Message::Reload))
@@ -547,9 +565,72 @@ pub fn sign_action<'a>(
                     )
                     .width(Length::Fill)
             })
+            .spacing(20)
             .width(Length::Fill)
             .align_items(Alignment::Center),
     )
     .width(Length::Units(500))
     .into()
+}
+
+pub fn update_spend_view<'a>(
+    psbt: String,
+    updated: &form::Value<String>,
+    error: Option<&Error>,
+    processing: bool,
+) -> Element<'a, Message> {
+    Column::new()
+        .push(warn(error))
+        .push(card::simple(
+            Column::new()
+                .spacing(20)
+                .push(
+                    Row::new()
+                        .push(text("PSBT:").bold().width(Length::Fill))
+                        .push(
+                            button::border(Some(icon::clipboard_icon()), "Copy")
+                                .on_press(Message::Clipboard(psbt)),
+                        )
+                        .align_items(Alignment::Center),
+                )
+                .push(separation().width(Length::Fill))
+                .push(
+                    Column::new()
+                        .spacing(10)
+                        .push(text("Insert updated PSBT:").bold())
+                        .push(
+                            form::Form::new("PSBT", updated, move |msg| {
+                                Message::ImportSpend(ImportSpendMessage::PsbtEdited(msg))
+                            })
+                            .warning("Please enter the correct base64 encoded PSBT")
+                            .size(20)
+                            .padding(10),
+                        )
+                        .push(Row::new().push(Space::with_width(Length::Fill)).push(
+                            if updated.valid && !updated.value.is_empty() && !processing {
+                                button::primary(None, "Update")
+                                    .on_press(Message::ImportSpend(ImportSpendMessage::Confirm))
+                            } else if processing {
+                                button::primary(None, "Processing...")
+                            } else {
+                                button::primary(None, "Update")
+                            },
+                        )),
+                ),
+        ))
+        .max_width(400)
+        .into()
+}
+
+pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
+    Column::new()
+        .push(
+            card::simple(Container::new(
+                text("Spend transaction is updated").style(color::SUCCESS),
+            ))
+            .padding(50),
+        )
+        .width(Length::Units(400))
+        .align_items(Alignment::Center)
+        .into()
 }

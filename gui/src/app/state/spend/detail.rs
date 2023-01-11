@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use iced::{Command, Element};
-use liana::miniscript::bitcoin::util::{bip32::Fingerprint, psbt::Psbt};
+use liana::miniscript::bitcoin::{
+    consensus,
+    util::{bip32::Fingerprint, psbt::Psbt},
+};
 
 use crate::{
     app::{
@@ -12,7 +15,7 @@ use crate::{
         Daemon,
     },
     hw::{list_hardware_wallets, HardwareWallet},
-    ui::component::modal,
+    ui::component::{form, modal},
 };
 
 trait Action {
@@ -79,6 +82,12 @@ impl SpendTxState {
                     self.action = Some(Box::new(action));
                     return cmd;
                 }
+                view::SpendTxMessage::EditPsbt => {
+                    let action = UpdateAction::new(self.tx.psbt.to_string());
+                    let cmd = action.load(daemon);
+                    self.action = Some(Box::new(action));
+                    return cmd;
+                }
                 view::SpendTxMessage::Broadcast => {
                     self.action = Some(Box::new(BroadcastAction::default()));
                 }
@@ -110,7 +119,7 @@ impl SpendTxState {
         let content = detail::spend_view(&self.tx, self.saved, cache.network);
         if let Some(action) = &self.action {
             modal::Modal::new(content, action.view())
-                .on_blur(view::Message::Spend(view::SpendTxMessage::Cancel))
+                .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
                 .into()
         } else {
             content
@@ -348,4 +357,111 @@ async fn sign_psbt(
 ) -> Result<(Psbt, Fingerprint), Error> {
     hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
     Ok((psbt, fingerprint))
+}
+
+pub struct UpdateAction {
+    psbt: String,
+    updated: form::Value<String>,
+    processing: bool,
+    error: Option<Error>,
+    success: bool,
+}
+
+impl UpdateAction {
+    pub fn new(psbt: String) -> Self {
+        Self {
+            psbt,
+            updated: form::Value::default(),
+            processing: false,
+            error: None,
+            success: false,
+        }
+    }
+}
+
+impl Action for UpdateAction {
+    fn view(&self) -> Element<view::Message> {
+        if self.success {
+            view::spend::detail::update_spend_success_view()
+        } else {
+            view::spend::detail::update_spend_view(
+                self.psbt.clone(),
+                &self.updated,
+                self.error.as_ref(),
+                self.processing,
+            )
+        }
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        message: Message,
+        tx: &mut SpendTx,
+    ) -> Command<Message> {
+        match message {
+            Message::Updated(res) => {
+                self.processing = false;
+                match res {
+                    Ok(()) => {
+                        self.success = true;
+                        self.error = None;
+                        let psbt = consensus::encode::deserialize::<Psbt>(
+                            &base64::decode(&self.updated.value).unwrap(),
+                        )
+                        .expect("Already checked");
+                        for (i, input) in tx.psbt.inputs.iter_mut().enumerate() {
+                            if tx
+                                .psbt
+                                .unsigned_tx
+                                .input
+                                .get(i)
+                                .map(|tx_in| tx_in.previous_output)
+                                != psbt
+                                    .unsigned_tx
+                                    .input
+                                    .get(i)
+                                    .map(|tx_in| tx_in.previous_output)
+                            {
+                                continue;
+                            }
+                            if let Some(updated_input) = psbt.inputs.get(i) {
+                                input
+                                    .partial_sigs
+                                    .extend(updated_input.partial_sigs.clone().into_iter());
+                            }
+                        }
+                    }
+                    Err(e) => self.error = e.into(),
+                }
+            }
+            Message::View(view::Message::ImportSpend(view::ImportSpendMessage::PsbtEdited(s))) => {
+                self.updated.value = s;
+                if let Some(psbt) = base64::decode(&self.updated.value)
+                    .ok()
+                    .and_then(|bytes| consensus::encode::deserialize::<Psbt>(&bytes).ok())
+                {
+                    self.updated.valid = tx.psbt.unsigned_tx.txid() == psbt.unsigned_tx.txid();
+                }
+            }
+            Message::View(view::Message::ImportSpend(view::ImportSpendMessage::Confirm)) => {
+                if self.updated.valid {
+                    self.processing = true;
+                    self.error = None;
+                    let updated: Psbt = consensus::encode::deserialize(
+                        &base64::decode(&self.updated.value).expect("Already checked"),
+                    )
+                    .unwrap();
+                    return Command::perform(
+                        async move { daemon.update_spend_tx(&updated).map_err(|e| e.into()) },
+                        Message::Updated,
+                    );
+                }
+            }
+            _ => {}
+        }
+
+        Command::none()
+    }
 }
