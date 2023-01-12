@@ -262,7 +262,7 @@ def test_broadcast_spend(lianad, bitcoind):
     # We can't broadcast an unsigned transaction
     with pytest.raises(RpcError, match="Failed to finalize the spend transaction.*"):
         lianad.rpc.broadcastspend(txid)
-    signed_psbt = lianad.sign_psbt(PSBT.from_base64(res["psbt"]))
+    signed_psbt = lianad.signer.sign_psbt(PSBT.from_base64(res["psbt"]))
     lianad.rpc.updatespend(signed_psbt.to_base64())
 
     # Now we've signed and stored it, the daemon will take care of finalizing
@@ -372,7 +372,7 @@ def test_listtransactions(lianad, bitcoind):
 
     def sign_and_broadcast(psbt):
         txid = psbt.tx.txid().hex()
-        psbt = lianad.sign_psbt(psbt)
+        psbt = lianad.signer.sign_psbt(psbt)
         lianad.rpc.updatespend(psbt.to_base64())
         lianad.rpc.broadcastspend(txid)
         return txid

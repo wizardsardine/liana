@@ -27,7 +27,7 @@ def test_spend_change(lianad, bitcoind):
     assert len(spend_psbt.tx.vout) == 3
 
     # Sign and broadcast this first Spend transaction.
-    signed_psbt = lianad.sign_psbt(spend_psbt)
+    signed_psbt = lianad.signer.sign_psbt(spend_psbt)
     lianad.rpc.updatespend(signed_psbt.to_base64())
     spend_txid = signed_psbt.tx.txid().hex()
     lianad.rpc.broadcastspend(spend_txid)
@@ -48,7 +48,7 @@ def test_spend_change(lianad, bitcoind):
     spend_psbt = PSBT.from_base64(res["psbt"])
 
     # We can sign and broadcast it.
-    signed_psbt = lianad.sign_psbt(spend_psbt)
+    signed_psbt = lianad.signer.sign_psbt(spend_psbt)
     lianad.rpc.updatespend(signed_psbt.to_base64())
     spend_txid = signed_psbt.tx.txid().hex()
     lianad.rpc.broadcastspend(spend_txid)
@@ -85,7 +85,7 @@ def test_coin_marked_spent(lianad, bitcoind):
 
     def sign_and_broadcast(psbt):
         txid = psbt.tx.txid().hex()
-        psbt = lianad.sign_psbt(psbt)
+        psbt = lianad.signer.sign_psbt(psbt)
         lianad.rpc.updatespend(psbt.to_base64())
         lianad.rpc.broadcastspend(txid)
         return txid
