@@ -19,7 +19,7 @@ def sign_psbt(psbt, hds):
 
     :param psbt: PSBT of the transaction to be signed.
     :param hds: the BIP32 objects to sign the transaction with.
-    :returns: PSBT with a signature in each input for the owner's key.
+    :returns: PSBT with a signature in each input for the given keys.
     """
     assert isinstance(psbt, PSBT)
 
@@ -50,8 +50,10 @@ def sign_psbt(psbt, hds):
             logging.debug(
                 f"Adding signature {sig.hex()} for pubkey {pubkey.hex()} (path {der_path})"
             )
-            assert PSBT_IN_PARTIAL_SIG not in psbt_in.map
-            psbt_in.map[PSBT_IN_PARTIAL_SIG] = {pubkey: sig}
+            if PSBT_IN_PARTIAL_SIG not in psbt_in.map:
+                psbt_in.map[PSBT_IN_PARTIAL_SIG] = {pubkey: sig}
+            else:
+                psbt_in.map[PSBT_IN_PARTIAL_SIG][pubkey] = sig
 
     return psbt
 
@@ -68,6 +70,28 @@ class SingleSigner:
         'recovery' key as specified.
 
         :param psbt: PSBT of the transaction to be signed.
-        :returns: PSBT with a signature in each input for the owner's key.
+        :returns: PSBT with a signature in each input for the specified key.
         """
         return sign_psbt(psbt, [self.recovery_hd if recovery else self.primary_hd])
+
+
+class MultiSigner:
+    def __init__(
+        self, primary_thresh, primary_hds_count, recovery_thresh, recovery_hds_count
+    ):
+        self.prim_thresh = primary_thresh
+        self.prim_hds = [
+            BIP32.from_seed(os.urandom(32), network="test")
+            for _ in range(primary_hds_count)
+        ]
+        self.recov_thresh = recovery_thresh
+        self.recov_hds = [
+            BIP32.from_seed(os.urandom(32), network="test")
+            for _ in range(recovery_hds_count)
+        ]
+
+    def sign_psbt(self, psbt, key_indices, recovery=False):
+        """Sign a transaction with the keys at the specified indices."""
+        hds = self.recov_hds if recovery else self.prim_hds
+        hds = [hds[i] for i in key_indices]
+        return sign_psbt(psbt, hds)

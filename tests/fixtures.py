@@ -3,7 +3,7 @@ from bip380.descriptors import Descriptor
 from concurrent import futures
 from test_framework.bitcoind import Bitcoind
 from test_framework.lianad import Lianad
-from test_framework.signer import SingleSigner
+from test_framework.signer import SingleSigner, MultiSigner
 from test_framework.utils import (
     EXECUTOR_WORKERS,
 )
@@ -127,6 +127,50 @@ def lianad(bitcoind, directory):
     csv_value = 10
     main_desc = Descriptor.from_str(
         f"wsh(or_d(pk({primary_xpub}/<0;1>/*),and_v(v:pkh({recovery_xpub}/<0;1>/*),older({csv_value}))))"
+    )
+
+    lianad = Lianad(
+        datadir,
+        signer,
+        main_desc,
+        bitcoind.rpcport,
+        bitcoind_cookie,
+    )
+
+    try:
+        lianad.start()
+        yield lianad
+    except Exception:
+        lianad.cleanup()
+        raise
+
+    lianad.cleanup()
+
+
+def multi_expression(thresh, keys):
+    exp = f"multi({thresh},"
+    for i, key in enumerate(keys):
+        exp += f"{key.get_xpub()}/<0;1>/*"
+        if i != len(keys) - 1:
+            exp += ","
+    return exp + ")"
+
+
+@pytest.fixture
+def lianad_multisig(bitcoind, directory):
+    datadir = os.path.join(directory, "lianad")
+    os.makedirs(datadir, exist_ok=True)
+    bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
+
+    # A 3-of-4 that degrades into a 2-of-5 after 10 blocks
+    signer = MultiSigner(3, 4, 2, 5)
+    csv_value = 10
+    prim_multi, recov_multi = (
+        multi_expression(signer.prim_thresh, signer.prim_hds),
+        multi_expression(signer.recov_thresh, signer.recov_hds),
+    )
+    main_desc = Descriptor.from_str(
+        f"wsh(or_d({prim_multi},and_v(v:{recov_multi},older({csv_value}))))"
     )
 
     lianad = Lianad(
