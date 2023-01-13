@@ -13,6 +13,7 @@ use liana_gui::{
         self,
         cache::Cache,
         config::{default_datadir, ConfigError},
+        wallet::Wallet,
         App,
     },
     installer::{self, Installer},
@@ -206,14 +207,16 @@ impl Application for GUI {
                 }
                 loader::Message::Synced(info, coins, spend_txs, daemon) => {
                     let cache = Cache {
-                        network: daemon.config().bitcoin_config.network,
+                        network: info.network,
                         blockheight: info.block_height,
                         coins,
                         spend_txs,
                         ..Default::default()
                     };
 
-                    let (app, command) = App::new(cache, loader.gui_config.clone(), daemon);
+                    let wallet = Wallet::new(info.descriptors.main);
+
+                    let (app, command) = App::new(cache, wallet, loader.gui_config.clone(), daemon);
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
                 }

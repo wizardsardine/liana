@@ -51,8 +51,8 @@ impl Daemon for EmbeddedDaemon {
         Ok(())
     }
 
-    fn config(&self) -> &Config {
-        &self.config
+    fn config(&self) -> Option<&Config> {
+        Some(&self.config)
     }
 
     fn stop(&mut self) -> Result<(), DaemonError> {
