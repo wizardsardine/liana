@@ -9,7 +9,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        view::{message::*, modal},
+        view::{message::*, modal, util::amount},
     },
     daemon::model::{remaining_sequence, Coin},
     ui::{
@@ -256,11 +256,7 @@ fn coin_list_view<'a>(
                         .align_items(Alignment::Center)
                         .width(Length::Fill),
                 )
-                .push(
-                    text(format!("{} BTC", coin.amount.to_btc()))
-                        .bold()
-                        .width(Length::Shrink),
-                )
+                .push(amount(&coin.amount))
                 .align_items(Alignment::Center)
                 .spacing(20),
         )

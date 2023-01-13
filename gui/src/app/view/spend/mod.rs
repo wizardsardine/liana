@@ -7,7 +7,7 @@ use iced::{
 };
 
 use crate::{
-    app::{error::Error, menu::Menu},
+    app::{error::Error, menu::Menu, view::util::*},
     daemon::model::{SpendStatus, SpendTx},
     ui::{
         color,
@@ -130,8 +130,8 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                 )
                 .push(
                     Column::new()
-                        .push(text(format!("{} BTC", tx.spend_amount.to_btc())).bold())
-                        .push(text(format!("fee: {}", tx.fee_amount.to_btc())).small())
+                        .push(amount(&tx.spend_amount))
+                        .push(text(format!("fee: {:8}", tx.fee_amount.to_btc())).small())
                         .width(Length::Shrink),
                 )
                 .align_items(Alignment::Center)

@@ -15,7 +15,10 @@ use crate::ui::{
 use liana::miniscript::bitcoin;
 
 use crate::{
-    app::{cache::Cache, view::message::Message},
+    app::{
+        cache::Cache,
+        view::{message::Message, util::*},
+    },
     daemon::model::HistoryTransaction,
 };
 
@@ -30,16 +33,23 @@ pub fn home_view<'a>(
 ) -> Element<'a, Message> {
     Column::new()
         .push(Column::new().padding(40))
-        .push(text(format!("{} BTC", balance.to_btc())).bold().size(50))
+        .push(amount_with_size(balance, 50))
         .push_maybe(recovery_warning.map(|(a, c)| {
             Row::new()
                 .spacing(15)
                 .align_items(Alignment::Center)
                 .push(icon::hourglass_icon().size(30).style(color::WARNING))
-                .push(Container::new(text(format!(
-                    "Recovery path will be soon available for {} coins ( {} )",
-                    c, a
-                ))))
+                .push(
+                    Row::new()
+                        .spacing(5)
+                        .push(text(format!(
+                            "Recovery path will be soon available for {} coins",
+                            c
+                        )))
+                        .push(text("("))
+                        .push(amount(a))
+                        .push(text(")")),
+                )
                 .padding(10)
         }))
         .push_maybe(recovery_alert.map(|(a, c)| {
@@ -47,10 +57,14 @@ pub fn home_view<'a>(
                 .spacing(15)
                 .align_items(Alignment::Center)
                 .push(icon::hourglass_done_icon().style(color::ALERT))
-                .push(Container::new(text(format!(
-                    "Recovery path is available for {} coins ( {} )",
-                    c, a
-                ))))
+                .push(
+                    Row::new()
+                        .spacing(5)
+                        .push(text(format!("Recovery path is available for {} coins", c)))
+                        .push(text("("))
+                        .push(amount(a))
+                        .push(text(")")),
+                )
                 .padding(10)
         }))
         .push(
@@ -124,23 +138,19 @@ fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Element<'a, Mess
                         .align_items(Alignment::Center)
                         .width(Length::Fill),
                 )
-                .push(
+                .push(if event.is_external() {
                     Row::new()
-                        .push(
-                            text({
-                                if event.is_external() {
-                                    format!("+ {:.8}", event.incoming_amount.to_btc())
-                                } else {
-                                    format!("- {:.8}", event.outgoing_amount.to_btc())
-                                }
-                            })
-                            .bold()
-                            .width(Length::Shrink),
-                        )
-                        .push(text("BTC"))
                         .spacing(5)
-                        .align_items(Alignment::Center),
-                )
+                        .push(text("+"))
+                        .push(amount(&event.incoming_amount))
+                        .align_items(Alignment::Center)
+                } else {
+                    Row::new()
+                        .spacing(5)
+                        .push(text("-"))
+                        .push(amount(&event.outgoing_amount))
+                        .align_items(Alignment::Center)
+                })
                 .align_items(Alignment::Center)
                 .spacing(20),
         )
@@ -164,22 +174,15 @@ pub fn event_view<'a>(cache: &Cache, event: &'a HistoryTransaction) -> Element<'
                 .spacing(10)
                 .align_items(Alignment::Center),
         )
-        .push(
-            text({
-                if event.is_external() {
-                    format!("+ {} BTC", event.incoming_amount.to_btc())
-                } else {
-                    format!("- {} BTC", event.outgoing_amount.to_btc())
-                }
-            })
-            .bold()
-            .size(50)
-            .width(Length::Shrink),
-        )
+        .push(if event.is_external() {
+            amount_with_size(&event.incoming_amount, 50)
+        } else {
+            amount_with_size(&event.outgoing_amount, 50)
+        })
         .push_maybe(
             event
                 .fee_amount
-                .map(|fee| Container::new(text(format!("Miner Fee: {} BTC", fee.to_btc())))),
+                .map(|fee| Row::new().push(text("Miner Fee: ")).push(amount(&fee))),
         )
         .push(card::simple(
             Column::new()
@@ -226,6 +229,6 @@ pub fn event_view<'a>(cache: &Cache, event: &'a HistoryTransaction) -> Element<'
         ))
         .align_items(Alignment::Center)
         .spacing(20)
-        .max_width(750)
+        .max_width(800)
         .into()
 }

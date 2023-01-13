@@ -3,16 +3,18 @@ use iced::{
     Alignment, Element, Length,
 };
 
-use crate::ui::{
-    color,
-    component::{badge, button, card, separation, text::*},
-    icon,
-    util::Collection,
-};
-
 use crate::{
-    app::{cache::Cache, view::message::Message},
+    app::{
+        cache::Cache,
+        view::{message::Message, util::*},
+    },
     daemon::model::{remaining_sequence, Coin},
+    ui::{
+        color,
+        component::{badge, button, card, separation, text::*},
+        icon,
+        util::Collection,
+    },
 };
 
 pub fn coins_view<'a>(
@@ -126,17 +128,7 @@ fn coin_list_view(
                                 .align_items(Alignment::Center)
                                 .width(Length::Fill),
                         )
-                        .push(
-                            Row::new()
-                                .spacing(5)
-                                .push(
-                                    text(format!("{:.8}", coin.amount.to_btc()))
-                                        .bold()
-                                        .width(Length::Shrink),
-                                )
-                                .push(text("BTC"))
-                                .align_items(Alignment::Center),
-                        )
+                        .push(amount(&coin.amount))
                         .align_items(Alignment::Center)
                         .spacing(20),
                 )

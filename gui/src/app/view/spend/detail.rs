@@ -8,7 +8,7 @@ use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Address, Amount, Netw
 use crate::{
     app::{
         error::Error,
-        view::{hw::hw_list_view, message::*, warning::warn},
+        view::{hw::hw_list_view, message::*, util::*, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
@@ -168,7 +168,7 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
         )
         .push(
             Container::new(Scrollable::new(
-                Container::new(Container::new(content).max_width(750))
+                Container::new(Container::new(content).max_width(800))
                     .width(Length::Fill)
                     .center_x(),
             ))
@@ -207,15 +207,12 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
         .push(
             Column::new()
                 .align_items(Alignment::Center)
+                .push(amount_with_size(&tx.spend_amount, 50))
                 .push(
-                    text(format!("- {} BTC", tx.spend_amount.to_btc()))
-                        .bold()
-                        .size(50),
-                )
-                .push(Container::new(text(format!(
-                    "Miner Fee: {} BTC",
-                    tx.fee_amount.to_btc()
-                )))),
+                    Row::new()
+                        .push(text("Miner fee: "))
+                        .push(amount(&tx.fee_amount)),
+                ),
         )
         .into()
 }
@@ -384,10 +381,7 @@ pub fn inputs_and_outputs_view<'a>(
                                                                 ),
                                                         ),
                                                 )
-                                                .push(
-                                                    text(format!("{} BTC", coin.amount.to_btc()))
-                                                        .bold(),
-                                                ),
+                                                .push(amount(&coin.amount)),
                                         )
                                     })
                                     .into()
@@ -468,11 +462,7 @@ pub fn inputs_and_outputs_view<'a>(
                                                         ),
                                                     )
                                                     .push(
-                                                        text(format!(
-                                                            "{} BTC",
-                                                            Amount::from_sat(output.value).to_btc()
-                                                        ))
-                                                        .bold(),
+                                                        amount(&Amount::from_sat(output.value))
                                                     ),
                                             )
                                             .push_maybe(
