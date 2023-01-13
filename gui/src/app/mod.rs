@@ -4,6 +4,7 @@ pub mod menu;
 pub mod message;
 pub mod state;
 pub mod view;
+pub mod wallet;
 
 mod error;
 
@@ -22,7 +23,7 @@ pub use message::Message;
 use state::{CoinsPanel, CreateSpendPanel, Home, ReceivePanel, RecoveryPanel, SpendPanel, State};
 
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu},
+    app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
     daemon::Daemon,
 };
 
@@ -30,16 +31,18 @@ pub struct App {
     state: Box<dyn State>,
     cache: Cache,
     config: Config,
+    wallet: Wallet,
     daemon: Arc<dyn Daemon + Sync + Send>,
 }
 
 impl App {
     pub fn new(
         cache: Cache,
+        wallet: Wallet,
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
     ) -> (App, Command<Message>) {
-        let state: Box<dyn State> = Home::new(&cache.coins).into();
+        let state: Box<dyn State> = Home::new(wallet.clone(), &cache.coins).into();
         let cmd = state.load(daemon.clone());
         (
             Self {
@@ -47,6 +50,7 @@ impl App {
                 cache,
                 config,
                 daemon,
+                wallet,
             },
             cmd,
         )
@@ -55,31 +59,36 @@ impl App {
     fn load_state(&mut self, menu: &Menu) -> Command<Message> {
         self.state = match menu {
             menu::Menu::Settings => state::SettingsState::new(
-                self.daemon.config().clone(),
+                self.daemon.config().cloned(),
                 &self.cache,
                 self.daemon.is_external(),
             )
             .into(),
-            menu::Menu::Home => Home::new(&self.cache.coins).into(),
+            menu::Menu::Home => Home::new(self.wallet.clone(), &self.cache.coins).into(),
             menu::Menu::Coins => CoinsPanel::new(
                 &self.cache.coins,
-                self.daemon.config().main_descriptor.timelock_value(),
+                self.wallet.main_descriptor.timelock_value(),
             )
             .into(),
             menu::Menu::Recovery => RecoveryPanel::new(
+                self.wallet.clone(),
                 self.config.clone(),
                 &self.cache.coins,
-                self.daemon.config().main_descriptor.timelock_value(),
+                self.wallet.main_descriptor.timelock_value(),
                 self.cache.blockheight as u32,
             )
             .into(),
             menu::Menu::Receive => ReceivePanel::default().into(),
-            menu::Menu::Spend => SpendPanel::new(self.config.clone(), &self.cache.spend_txs).into(),
-            menu::Menu::CreateSpendTx => CreateSpendPanel::new(
+            menu::Menu::Spend => SpendPanel::new(
+                self.wallet.clone(),
                 self.config.clone(),
-                self.daemon.config().main_descriptor.clone(),
+                &self.cache.spend_txs,
+            )
+            .into(),
+            menu::Menu::CreateSpendTx => CreateSpendPanel::new(
+                self.wallet.clone(),
+                self.config.clone(),
                 &self.cache.coins,
-                self.daemon.config().main_descriptor.timelock_value(),
                 self.cache.blockheight as u32,
             )
             .into(),

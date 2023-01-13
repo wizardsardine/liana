@@ -7,7 +7,7 @@ use std::sync::Arc;
 use chrono::prelude::*;
 use iced::{Command, Element};
 
-use liana::config::Config;
+use liana::config::{BitcoinConfig, BitcoindConfig, Config};
 
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::State, view},
@@ -23,19 +23,13 @@ trait Setting: std::fmt::Debug {
         cache: &Cache,
         message: view::SettingsMessage,
     ) -> Command<Message>;
-    fn view<'a>(
-        &self,
-        cfg: &'a Config,
-        cache: &'a Cache,
-        can_edit: bool,
-    ) -> Element<'a, view::SettingsMessage>;
+    fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsMessage>;
 }
 
 #[derive(Debug)]
 pub struct SettingsState {
     warning: Option<Error>,
     config_updated: bool,
-    config: Config,
     daemon_is_external: bool,
 
     settings: Vec<Box<dyn Setting>>,
@@ -43,17 +37,24 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
-    pub fn new(config: Config, cache: &Cache, daemon_is_external: bool) -> Self {
-        let settings = vec![
-            BitcoindSettings::new(&config).into(),
-            RescanSetting::new(cache.rescan_progress).into(),
-        ];
+    pub fn new(config: Option<Config>, cache: &Cache, daemon_is_external: bool) -> Self {
+        let settings = if let Some(config) = &config {
+            vec![
+                BitcoindSettings::new(
+                    config.bitcoin_config.clone(),
+                    config.bitcoind_config.clone().unwrap(),
+                )
+                .into(),
+                RescanSetting::new(cache.rescan_progress).into(),
+            ]
+        } else {
+            vec![RescanSetting::new(cache.rescan_progress).into()]
+        };
 
         SettingsState {
             daemon_is_external,
             warning: None,
             config_updated: false,
-            config,
             settings,
             // If a scan is running, the current setting edited is the Rescan panel.
             current: cache.rescan_progress.map(|_| 1),
@@ -123,7 +124,7 @@ impl State for SettingsState {
                 .enumerate()
                 .map(|(i, setting)| {
                     setting
-                        .view(&self.config, cache, can_edit)
+                        .view(cache, can_edit)
                         .map(move |msg| view::Message::Settings(i, msg))
                 })
                 .collect(),
@@ -139,6 +140,8 @@ impl From<SettingsState> for Box<dyn State> {
 
 #[derive(Debug)]
 pub struct BitcoindSettings {
+    bitcoind_config: BitcoindConfig,
+    bitcoin_config: BitcoinConfig,
     edit: bool,
     processing: bool,
     cookie_path: form::Value<String>,
@@ -152,18 +155,21 @@ impl From<BitcoindSettings> for Box<dyn Setting> {
 }
 
 impl BitcoindSettings {
-    fn new(cfg: &Config) -> BitcoindSettings {
-        let cfg = cfg.bitcoind_config.as_ref().unwrap();
+    fn new(bitcoin_config: BitcoinConfig, bitcoind_config: BitcoindConfig) -> BitcoindSettings {
+        let path = bitcoind_config.cookie_path.to_str().unwrap().to_string();
+        let addr = bitcoind_config.addr.to_string();
         BitcoindSettings {
+            bitcoind_config,
+            bitcoin_config,
             edit: false,
             processing: false,
             cookie_path: form::Value {
                 valid: true,
-                value: cfg.cookie_path.to_str().unwrap().to_string(),
+                value: path,
             },
             addr: form::Value {
                 valid: true,
-                value: cfg.addr.to_string(),
+                value: addr,
             },
         }
     }
@@ -210,7 +216,7 @@ impl Setting for BitcoindSettings {
                 self.cookie_path.valid = new_path.is_ok();
 
                 if self.addr.valid & self.cookie_path.valid {
-                    let mut daemon_config = daemon.config().clone();
+                    let mut daemon_config = daemon.config().cloned().unwrap();
                     daemon_config.bitcoind_config = Some(liana::config::BitcoindConfig {
                         cookie_path: new_path.unwrap(),
                         addr: new_addr.unwrap(),
@@ -225,15 +231,10 @@ impl Setting for BitcoindSettings {
         Command::none()
     }
 
-    fn view<'a>(
-        &self,
-        config: &'a Config,
-        cache: &'a Cache,
-        can_edit: bool,
-    ) -> Element<'a, view::SettingsMessage> {
+    fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsMessage> {
         if self.edit {
             view::settings::bitcoind_edit(
-                config.bitcoin_config.network,
+                self.bitcoin_config.network,
                 cache.blockheight,
                 &self.addr,
                 &self.cookie_path,
@@ -241,8 +242,8 @@ impl Setting for BitcoindSettings {
             )
         } else {
             view::settings::bitcoind(
-                config.bitcoin_config.network,
-                config.bitcoind_config.as_ref().unwrap(),
+                self.bitcoin_config.network,
+                &self.bitcoind_config,
                 cache.blockheight,
                 Some(cache.blockheight != 0),
                 can_edit,
@@ -328,12 +329,7 @@ impl Setting for RescanSetting {
         Command::none()
     }
 
-    fn view<'a>(
-        &self,
-        _config: &'a Config,
-        cache: &'a Cache,
-        can_edit: bool,
-    ) -> Element<'a, view::SettingsMessage> {
+    fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsMessage> {
         view::settings::rescan(
             &self.year,
             &self.month,
