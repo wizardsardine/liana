@@ -31,7 +31,7 @@ fn wu_to_vb(vb: usize) -> usize {
 }
 
 #[derive(Debug)]
-pub enum DescCreationError {
+pub enum LianaDescError {
     InsaneTimelock(u32),
     InvalidKey(Box<descriptor::DescriptorPublicKey>),
     DuplicateKey(Box<descriptor::DescriptorPublicKey>),
@@ -42,7 +42,7 @@ pub enum DescCreationError {
     InvalidMultiKeys(usize),
 }
 
-impl std::fmt::Display for DescCreationError {
+impl std::fmt::Display for LianaDescError {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::InsaneTimelock(tl) => {
@@ -67,7 +67,7 @@ impl std::fmt::Display for DescCreationError {
     }
 }
 
-impl error::Error for DescCreationError {}
+impl error::Error for LianaDescError {}
 
 /// A public key used in derived descriptors
 #[derive(Debug, Eq, PartialEq, Clone, Ord, PartialOrd, Hash)]
@@ -93,7 +93,7 @@ impl fmt::Display for DerivedPublicKey {
 }
 
 impl str::FromStr for DerivedPublicKey {
-    type Err = DescCreationError;
+    type Err = LianaDescError;
 
     fn from_str(s: &str) -> Result<DerivedPublicKey, Self::Err> {
         // The key is always of the form:
@@ -101,37 +101,37 @@ impl str::FromStr for DerivedPublicKey {
 
         // 1 + 8 + 1 + 1 + 1 + 66 minimum
         if s.len() < 78 {
-            return Err(DescCreationError::DerivedKeyParsing);
+            return Err(LianaDescError::DerivedKeyParsing);
         }
 
         // Non-ASCII?
         for ch in s.as_bytes() {
             if *ch < 20 || *ch > 127 {
-                return Err(DescCreationError::DerivedKeyParsing);
+                return Err(LianaDescError::DerivedKeyParsing);
             }
         }
 
         if s.chars().next().expect("Size checked above") != '[' {
-            return Err(DescCreationError::DerivedKeyParsing);
+            return Err(LianaDescError::DerivedKeyParsing);
         }
 
         let mut parts = s[1..].split(']');
-        let fg_deriv = parts.next().ok_or(DescCreationError::DerivedKeyParsing)?;
-        let key_str = parts.next().ok_or(DescCreationError::DerivedKeyParsing)?;
+        let fg_deriv = parts.next().ok_or(LianaDescError::DerivedKeyParsing)?;
+        let key_str = parts.next().ok_or(LianaDescError::DerivedKeyParsing)?;
 
         if fg_deriv.len() < 10 {
-            return Err(DescCreationError::DerivedKeyParsing);
+            return Err(LianaDescError::DerivedKeyParsing);
         }
         let fingerprint = bip32::Fingerprint::from_str(&fg_deriv[..8])
-            .map_err(|_| DescCreationError::DerivedKeyParsing)?;
+            .map_err(|_| LianaDescError::DerivedKeyParsing)?;
         let deriv_path = bip32::DerivationPath::from_str(&fg_deriv[9..])
-            .map_err(|_| DescCreationError::DerivedKeyParsing)?;
+            .map_err(|_| LianaDescError::DerivedKeyParsing)?;
         if deriv_path.into_iter().any(bip32::ChildNumber::is_hardened) {
-            return Err(DescCreationError::DerivedKeyParsing);
+            return Err(LianaDescError::DerivedKeyParsing);
         }
 
         let key = bitcoin::PublicKey::from_str(key_str)
-            .map_err(|_| DescCreationError::DerivedKeyParsing)?;
+            .map_err(|_| LianaDescError::DerivedKeyParsing)?;
 
         Ok(DerivedPublicKey {
             key,
@@ -188,11 +188,11 @@ impl ToPublicKey for DerivedPublicKey {
 //
 // All this is achieved simply through asking for a 16-bit integer, since all the
 // above are signaled in leftmost bits.
-fn csv_check(csv_value: u32) -> Result<(), DescCreationError> {
+fn csv_check(csv_value: u32) -> Result<(), LianaDescError> {
     if csv_value > 0 && u16::try_from(csv_value).is_ok() {
         return Ok(());
     }
-    Err(DescCreationError::InsaneTimelock(csv_value))
+    Err(LianaDescError::InsaneTimelock(csv_value))
 }
 
 // We require the descriptor key to:
@@ -236,12 +236,12 @@ impl LianaDescKeys {
     pub fn from_multi(
         thresh: usize,
         keys: Vec<descriptor::DescriptorPublicKey>,
-    ) -> Result<LianaDescKeys, DescCreationError> {
+    ) -> Result<LianaDescKeys, LianaDescError> {
         if keys.len() < 2 || keys.len() > 20 {
-            return Err(DescCreationError::InvalidMultiKeys(keys.len()));
+            return Err(LianaDescError::InvalidMultiKeys(keys.len()));
         }
         if thresh == 0 || thresh > keys.len() {
-            return Err(DescCreationError::InvalidMultiThresh(thresh));
+            return Err(LianaDescError::InvalidMultiThresh(thresh));
         }
         Ok(LianaDescKeys {
             thresh: Some(thresh),
@@ -312,14 +312,14 @@ fn is_single_key_or_multisig(policy: &&SemanticPolicy<descriptor::DescriptorPubl
 }
 
 impl str::FromStr for MultipathDescriptor {
-    type Err = DescCreationError;
+    type Err = LianaDescError;
 
     fn from_str(s: &str) -> Result<MultipathDescriptor, Self::Err> {
         let wsh_desc = descriptor::Wsh::<descriptor::DescriptorPublicKey>::from_str(s)
-            .map_err(DescCreationError::Miniscript)?;
+            .map_err(LianaDescError::Miniscript)?;
         let ms = match wsh_desc.as_inner() {
             descriptor::WshInner::Ms(ms) => ms,
-            _ => return Err(DescCreationError::IncompatibleDesc),
+            _ => return Err(LianaDescError::IncompatibleDesc),
         };
         let invalid_key = ms.iter_pk().find_map(|pk| {
             if is_valid_desc_key(&pk) {
@@ -329,7 +329,7 @@ impl str::FromStr for MultipathDescriptor {
             }
         });
         if let Some(key) = invalid_key {
-            return Err(DescCreationError::InvalidKey(key.into()));
+            return Err(LianaDescError::InvalidKey(key.into()));
         }
 
         // Semantic of the Miniscript must be either the owner now, or the heir after
@@ -342,15 +342,15 @@ impl str::FromStr for MultipathDescriptor {
             SemanticPolicy::Threshold(1, subs) => Some(subs),
             _ => None,
         }
-        .ok_or(DescCreationError::IncompatibleDesc)?;
+        .ok_or(LianaDescError::IncompatibleDesc)?;
         if subs.len() != 2 {
-            return Err(DescCreationError::IncompatibleDesc);
+            return Err(LianaDescError::IncompatibleDesc);
         }
 
         // Non-timelocked spending path may be either a single key check or a multisig.
         subs.iter()
             .find(is_single_key_or_multisig)
-            .ok_or(DescCreationError::IncompatibleDesc)?;
+            .ok_or(LianaDescError::IncompatibleDesc)?;
 
         // Recovery spending path
         let recov_subs = subs
@@ -359,9 +359,9 @@ impl str::FromStr for MultipathDescriptor {
                 SemanticPolicy::Threshold(2, subs) => Some(subs),
                 _ => None,
             })
-            .ok_or(DescCreationError::IncompatibleDesc)?;
+            .ok_or(LianaDescError::IncompatibleDesc)?;
         if recov_subs.len() != 2 {
-            return Err(DescCreationError::IncompatibleDesc);
+            return Err(LianaDescError::IncompatibleDesc);
         }
         // Must be timelocked
         let csv_value = recov_subs
@@ -370,13 +370,13 @@ impl str::FromStr for MultipathDescriptor {
                 SemanticPolicy::Older(csv) => Some(csv),
                 _ => None,
             })
-            .ok_or(DescCreationError::IncompatibleDesc)?;
+            .ok_or(LianaDescError::IncompatibleDesc)?;
         csv_check(csv_value.to_consensus_u32())?;
         // The timelocked spending path may have a single key check or a multisig.
         recov_subs
             .iter()
             .find(is_single_key_or_multisig)
-            .ok_or(DescCreationError::IncompatibleDesc)?;
+            .ok_or(LianaDescError::IncompatibleDesc)?;
 
         // All good, construct the multipath descriptor.
         let multi_desc = descriptor::Descriptor::Wsh(wsh_desc);
@@ -419,7 +419,7 @@ impl MultipathDescriptor {
         owner_keys: LianaDescKeys,
         heir_keys: LianaDescKeys,
         timelock: u16,
-    ) -> Result<MultipathDescriptor, DescCreationError> {
+    ) -> Result<MultipathDescriptor, LianaDescError> {
         // We require the locktime to:
         //  - not be disabled
         //  - be in number of blocks
@@ -428,14 +428,14 @@ impl MultipathDescriptor {
         //
         // All this is achieved through asking for a 16-bit integer.
         if timelock == 0 {
-            return Err(DescCreationError::InsaneTimelock(timelock as u32));
+            return Err(LianaDescError::InsaneTimelock(timelock as u32));
         }
         let timelock = Sequence::from_height(timelock);
 
         // Check all keys are valid according to our standard (this checks all are multipath keys).
         let all_keys = owner_keys.keys().iter().chain(heir_keys.keys().iter());
         if let Some(key) = all_keys.clone().find(|k| !is_valid_desc_key(k)) {
-            return Err(DescCreationError::InvalidKey((*key).clone().into()));
+            return Err(LianaDescError::InvalidKey((*key).clone().into()));
         }
 
         // Check for key duplicates. They are invalid in (nonmalleable) miniscripts.
@@ -446,7 +446,7 @@ impl MultipathDescriptor {
                 _ => unreachable!("Just checked it was a multixpub above"),
             };
             if key_set.contains(&xpub) {
-                return Err(DescCreationError::DuplicateKey(key.clone().into()));
+                return Err(LianaDescError::DuplicateKey(key.clone().into()));
             }
             key_set.insert(xpub);
         }
