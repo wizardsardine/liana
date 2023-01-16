@@ -6,7 +6,7 @@ use iced::{executor, Application, Command, Element, Settings, Subscription};
 extern crate serde;
 extern crate serde_json;
 
-use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
+use liana::miniscript::bitcoin;
 
 use liana_gui::{
     app::{
@@ -132,9 +132,7 @@ impl Application for GUI {
                 )
             }
             Config::Run(datadir_path, cfg) => {
-                let daemon_cfg =
-                    DaemonConfig::from_file(Some(cfg.daemon_config_path.clone())).unwrap();
-                let (loader, command) = Loader::new(datadir_path, cfg, daemon_cfg);
+                let (loader, command) = Loader::new(datadir_path, cfg);
                 (
                     Self {
                         state: State::Loader(Box::new(loader)),
@@ -177,10 +175,7 @@ impl Application for GUI {
                     path.push(network.to_string());
                     path.push(app::config::DEFAULT_FILE_NAME);
                     let cfg = app::Config::from_file(&path).unwrap();
-                    let daemon_cfg =
-                        DaemonConfig::from_file(Some(cfg.daemon_config_path.clone())).unwrap();
-                    let (loader, command) =
-                        Loader::new(Some(l.datadir_path.clone()), cfg, daemon_cfg);
+                    let (loader, command) = Loader::new(Some(l.datadir_path.clone()), cfg);
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 }
@@ -189,9 +184,7 @@ impl Application for GUI {
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(path) = *msg {
                     let cfg = app::Config::from_file(&path).unwrap();
-                    let daemon_cfg =
-                        DaemonConfig::from_file(Some(cfg.daemon_config_path.clone())).unwrap();
-                    let (loader, command) = Loader::new(None, cfg, daemon_cfg);
+                    let (loader, command) = Loader::new(None, cfg);
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 } else {

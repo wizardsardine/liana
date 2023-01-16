@@ -215,9 +215,10 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
     gui_config_file
         .write_all(
             toml::to_string(&gui_config::Config::new(
-                daemon_config_path.canonicalize().map_err(|e| {
+                Some(daemon_config_path.canonicalize().map_err(|e| {
                     Error::Unexpected(format!("Failed to canonicalize daemon config path: {}", e))
-                })?,
+                })?),
+                None,
                 hardware_wallets,
             ))
             .unwrap()

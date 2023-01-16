@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     /// Path to lianad configuration file.
-    pub daemon_config_path: PathBuf,
+    pub daemon_config_path: Option<PathBuf>,
+    /// Path to the lianad rpc socket.
+    pub daemon_rpc_path: Option<PathBuf>,
     /// log level, can be "info", "debug", "trace".
     pub log_level: Option<String>,
     /// Use iced debug feature if true.
@@ -18,9 +20,14 @@ pub struct Config {
 pub const DEFAULT_FILE_NAME: &str = "gui.toml";
 
 impl Config {
-    pub fn new(daemon_config_path: PathBuf, hardware_wallets: Vec<HardwareWalletConfig>) -> Self {
+    pub fn new(
+        daemon_config_path: Option<PathBuf>,
+        daemon_rpc_path: Option<PathBuf>,
+        hardware_wallets: Vec<HardwareWalletConfig>,
+    ) -> Self {
         Self {
             daemon_config_path,
+            daemon_rpc_path,
             log_level: None,
             debug: None,
             hardware_wallets,

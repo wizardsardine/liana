@@ -13,7 +13,7 @@ In addition, if you want to build the project from source, you will need:
 - [`pkg-config`](https://www.freedesktop.org/wiki/Software/pkg-config/) (On Debian/Ubuntu `apt install pkg-config`)
 
 
-## Usage
+## Common usage
 
 *For a quick guide to try out the software see [../doc/TRY.md](../doc/TRY.md).*
 
@@ -27,8 +27,12 @@ Bitcoin mainnet, but testnet signet and regtest are supported.
 If the software is started with no parameter and no data directory is detected, a Liana installer
 will be spawned that will guide you in the processing of configuring Liana.
 
-If the software is started and a reachable `lianad` is running, it will plug to it via `lianad`'s
-JSONRPC interface.
+## Connecting to an external Liana daemon
+
+By setting in the `liana-gui` configuration file the `daemon_rpc_path`
+field. The GUI will connect to the distant daemon via `lianad`'s
+JSONRPC interface. In case of failure, the GUI will display an error
+message.
 
 ### Troubleshooting
 

@@ -175,20 +175,22 @@ impl App {
             }
         }
 
-        let mut daemon_config_file = OpenOptions::new()
-            .write(true)
-            .open(&self.config.daemon_config_path)
-            .map_err(|e| Error::Config(e.to_string()))?;
+        if let Some(path) = &self.config.daemon_config_path {
+            let mut daemon_config_file = OpenOptions::new()
+                .write(true)
+                .open(path)
+                .map_err(|e| Error::Config(e.to_string()))?;
 
-        let content =
-            toml::to_string(&self.daemon.config()).map_err(|e| Error::Config(e.to_string()))?;
+            let content =
+                toml::to_string(&self.daemon.config()).map_err(|e| Error::Config(e.to_string()))?;
 
-        daemon_config_file
-            .write_all(content.as_bytes())
-            .map_err(|e| {
-                log::warn!("failed to write to file: {:?}", e);
-                Error::Config(e.to_string())
-            })?;
+            daemon_config_file
+                .write_all(content.as_bytes())
+                .map_err(|e| {
+                    log::warn!("failed to write to file: {:?}", e);
+                    Error::Config(e.to_string())
+                })?;
+        }
 
         Ok(())
     }

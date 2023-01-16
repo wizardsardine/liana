@@ -329,10 +329,7 @@ mod tests {
             client::{Lianad, Request},
             model::*,
         },
-        utils::{
-            mock::{fake_daemon_config, Daemon},
-            sandbox::Sandbox,
-        },
+        utils::{mock::Daemon, sandbox::Sandbox},
     };
 
     use liana::miniscript::bitcoin::Address;
@@ -352,7 +349,7 @@ mod tests {
         )]);
 
         let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::default());
-        let client = Arc::new(Lianad::new(daemon.run(), fake_daemon_config()));
+        let client = Arc::new(Lianad::new(daemon.run()));
         let sandbox = sandbox.load(client, &Cache::default()).await;
 
         let panel = sandbox.state();

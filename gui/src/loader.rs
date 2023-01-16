@@ -1,5 +1,4 @@
 use std::convert::From;
-use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -13,12 +12,11 @@ use log::{debug, info};
 
 use liana::{
     config::{Config, ConfigError},
-    miniscript::bitcoin,
     StartupError,
 };
 
 use crate::{
-    app::config::{default_datadir, Config as GUIConfig},
+    app::config::Config as GUIConfig,
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
     ui::{
         component::{button, notification, text::*},
@@ -32,9 +30,7 @@ type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
 pub struct Loader {
     pub datadir_path: Option<PathBuf>,
     pub gui_config: GUIConfig,
-    pub daemon_started: bool,
 
-    daemon_config: Config,
     should_exit: bool,
     step: Step,
 }
@@ -61,63 +57,26 @@ pub enum Message {
         Arc<dyn Daemon + Sync + Send>,
     ),
     Started(Result<Arc<dyn Daemon + Sync + Send>, Error>),
-    Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
-    Failure(DaemonError),
+    Connected(Result<Arc<dyn Daemon + Sync + Send>, Error>),
 }
 
 impl Loader {
-    pub fn new(
-        datadir_path: Option<PathBuf>,
-        gui_config: GUIConfig,
-        daemon_config: Config,
-    ) -> (Self, Command<Message>) {
-        let path = socket_path(
-            &daemon_config.data_dir,
-            daemon_config.bitcoin_config.network,
-        )
-        .unwrap();
+    pub fn new(datadir_path: Option<PathBuf>, gui_config: GUIConfig) -> (Self, Command<Message>) {
         (
             Loader {
                 datadir_path,
-                daemon_config: daemon_config.clone(),
-                gui_config,
+                gui_config: gui_config.clone(),
                 step: Step::Connecting,
                 should_exit: false,
-                daemon_started: false,
             },
-            Command::perform(connect(path, daemon_config), Message::Loaded),
+            if let Some(path) = gui_config.daemon_config_path {
+                Command::perform(start_daemon(path), Message::Started)
+            } else if let Some(socket_path) = gui_config.daemon_rpc_path {
+                Command::perform(connect(socket_path), Message::Connected)
+            } else {
+                Command::none()
+            },
         )
-    }
-
-    fn on_load(&mut self, res: Result<Arc<dyn Daemon + Sync + Send>, Error>) -> Command<Message> {
-        match res {
-            Ok(daemon) => {
-                self.step = Step::Syncing {
-                    daemon: daemon.clone(),
-                    progress: 0.0,
-                };
-                return Command::perform(sync(daemon, false), Message::Syncing);
-            }
-            Err(e) => match e {
-                Error::Config(_) => {
-                    self.step = Step::Error(Box::new(e));
-                }
-                Error::Daemon(DaemonError::ClientNotSupported)
-                | Error::Daemon(DaemonError::Transport(Some(ErrorKind::ConnectionRefused), _))
-                | Error::Daemon(DaemonError::Transport(Some(ErrorKind::NotFound), _)) => {
-                    self.step = Step::StartingDaemon;
-                    self.daemon_started = true;
-                    return Command::perform(
-                        start_daemon(self.gui_config.daemon_config_path.clone()),
-                        Message::Started,
-                    );
-                }
-                _ => {
-                    self.step = Step::Error(Box::new(e));
-                }
-            },
-        }
-        Command::none()
     }
 
     fn on_start(&mut self, res: Result<Arc<dyn Daemon + Sync + Send>, Error>) -> Command<Message> {
@@ -194,21 +153,13 @@ impl Loader {
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::View(ViewMessage::Retry) => {
-                let (loader, cmd) = Self::new(
-                    self.datadir_path.clone(),
-                    self.gui_config.clone(),
-                    self.daemon_config.clone(),
-                );
+                let (loader, cmd) = Self::new(self.datadir_path.clone(), self.gui_config.clone());
                 *self = loader;
                 cmd
             }
             Message::Started(res) => self.on_start(res),
-            Message::Loaded(res) => self.on_load(res),
+            Message::Connected(res) => self.on_start(res),
             Message::Syncing(res) => self.on_sync(res),
-            Message::Failure(_) => {
-                self.daemon_started = false;
-                Command::none()
-            }
             Message::Event(Event::Window(window::Event::CloseRequested)) => {
                 self.stop();
                 Command::none()
@@ -260,7 +211,11 @@ pub fn view<'a>(datadir_path: Option<&'a PathBuf>, step: &'a Step) -> Element<'a
                 .push(text("Syncing the wallet with the blockchain...")),
         ),
         Step::Error(error) => cover(
-            Some(("Error while starting the internal daemon", error)),
+            if matches!(error.as_ref(), Error::Daemon(DaemonError::Transport(_, _))) {
+                Some(("Error while connecting to the external daemon", error))
+            } else {
+                Some(("Error while starting the internal daemon", error))
+            },
             Column::new()
                 .spacing(20)
                 .width(Length::Fill)
@@ -310,14 +265,14 @@ pub fn cover<'a, T: 'a + Clone, C: Into<Element<'a, T>>>(
         .into()
 }
 
-async fn connect(
-    socket_path: PathBuf,
-    _config: Config,
-) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
+async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
+    info!(
+        "Searching for connect to external daemon at {}",
+        socket_path.to_string_lossy(),
+    );
     let client = client::jsonrpc::JsonRPCClient::new(socket_path);
     let daemon = Lianad::new(client);
 
-    debug!("Searching for external daemon");
     daemon.get_info()?;
     info!("Connected to external daemon");
 
@@ -372,19 +327,4 @@ impl From<DaemonError> for Error {
     fn from(error: DaemonError) -> Self {
         Error::Daemon(error)
     }
-}
-
-/// default lianad socket path is .liana/bitcoin/lianad_rpc
-fn socket_path(
-    datadir: &Option<PathBuf>,
-    network: bitcoin::Network,
-) -> Result<PathBuf, ConfigError> {
-    let mut path = if let Some(ref datadir) = datadir {
-        datadir.clone()
-    } else {
-        default_datadir().map_err(|_| ConfigError::DatadirNotFound)?
-    };
-    path.push(network.to_string());
-    path.push("lianad_rpc");
-    Ok(path)
 }
