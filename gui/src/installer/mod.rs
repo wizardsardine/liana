@@ -5,7 +5,6 @@ mod step;
 mod view;
 
 use iced::{clipboard, Command, Element, Subscription};
-use iced_native::{window, Event};
 use liana::miniscript::bitcoin;
 
 use std::convert::TryInto;
@@ -23,7 +22,6 @@ use step::{
 };
 
 pub struct Installer {
-    should_exit: bool,
     current: usize,
     steps: Vec<Box<dyn Step>>,
 
@@ -44,7 +42,6 @@ impl Installer {
     ) -> (Installer, Command<Message>) {
         (
             Installer {
-                should_exit: false,
                 current: 0,
                 steps: vec![Welcome::default().into()],
                 context: Context::new(network, destination_path),
@@ -54,16 +51,10 @@ impl Installer {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        iced_native::subscription::events().map(Message::Event)
+        Subscription::none()
     }
 
-    pub fn should_exit(&self) -> bool {
-        self.should_exit
-    }
-
-    pub fn stop(&mut self) {
-        self.should_exit = true;
-    }
+    pub fn stop(&mut self) {}
 
     fn next(&mut self) -> Command<Message> {
         let current_step = self
@@ -142,10 +133,6 @@ impl Installer {
                     .get_mut(self.current)
                     .expect("There is always a step")
                     .update(Message::Installed(Err(e)));
-                Command::none()
-            }
-            Message::Event(Event::Window(window::Event::CloseRequested)) => {
-                self.stop();
                 Command::none()
             }
             _ => self

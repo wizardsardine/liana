@@ -13,7 +13,6 @@ use crate::ui::{
 };
 
 pub struct Launcher {
-    should_exit: bool,
     choices: Vec<Network>,
     pub datadir_path: PathBuf,
 }
@@ -34,20 +33,13 @@ impl Launcher {
         Self {
             datadir_path,
             choices,
-            should_exit: false,
         }
     }
 
-    pub fn stop(&mut self) {
-        self.should_exit = true;
-    }
-
-    pub fn should_exit(&self) -> bool {
-        self.should_exit
-    }
+    pub fn stop(&mut self) {}
 
     pub fn subscription(&self) -> Subscription<Message> {
-        iced_native::subscription::events().map(Message::Event)
+        Subscription::none()
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -115,7 +107,6 @@ impl Launcher {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Event(iced_native::Event),
     Install,
     Run(Network),
 }

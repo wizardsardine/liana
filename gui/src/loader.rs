@@ -8,7 +8,6 @@ use iced::{
     Element,
 };
 use iced::{Alignment, Command, Length, Subscription};
-use iced_native::{window, Event};
 use log::{debug, info};
 
 use liana::{
@@ -35,7 +34,6 @@ pub struct Loader {
     pub daemon_started: bool,
 
     daemon_config: Config,
-    should_exit: bool,
     step: Step,
 }
 
@@ -52,7 +50,6 @@ pub enum Step {
 #[derive(Debug)]
 pub enum Message {
     View(ViewMessage),
-    Event(iced_native::Event),
     Syncing(Result<GetInfoResult, DaemonError>),
     Synced(
         GetInfoResult,
@@ -82,7 +79,6 @@ impl Loader {
                 daemon_config: daemon_config.clone(),
                 gui_config,
                 step: Step::Connecting,
-                should_exit: false,
                 daemon_started: false,
             },
             Command::perform(connect(path, daemon_config), Message::Loaded),
@@ -181,13 +177,9 @@ impl Loader {
                 if let Some(d) = Arc::get_mut(daemon) {
                     d.stop().expect("Daemon is internal");
                     log::info!("Internal daemon stopped");
-                    self.should_exit = true;
+                } else {
                 }
-            } else {
-                self.should_exit = true;
             }
-        } else {
-            self.should_exit = true;
         }
     }
 
@@ -209,20 +201,12 @@ impl Loader {
                 self.daemon_started = false;
                 Command::none()
             }
-            Message::Event(Event::Window(window::Event::CloseRequested)) => {
-                self.stop();
-                Command::none()
-            }
             _ => Command::none(),
         }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        iced_native::subscription::events().map(Message::Event)
-    }
-
-    pub fn should_exit(&self) -> bool {
-        self.should_exit
+        Subscription::none()
     }
 
     pub fn view(&self) -> Element<Message> {
