@@ -15,7 +15,6 @@ use crate::{
 #[derive(Debug)]
 pub enum Message {
     Tick,
-    Event(iced_native::Event),
     View(view::Message),
     LoadDaemonConfig(Box<DaemonConfig>),
     DaemonConfigLoaded(Result<(), Error>),

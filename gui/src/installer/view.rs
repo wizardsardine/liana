@@ -433,8 +433,8 @@ pub fn backup_descriptor<'a>(
                     .max_width(1000),
             ))
             .push(Checkbox::new(
-                done,
                 "I have backed up my descriptor",
+                done,
                 Message::BackupDone,
             ))
             .push(if done {

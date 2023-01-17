@@ -138,11 +138,12 @@ where
         &self,
         state: &mut Tree,
         layout: Layout<'_>,
+        renderer: &Renderer,
         operation: &mut dyn widget::Operation<Message>,
     ) {
         self.base
             .as_widget()
-            .operate(&mut state.children[0], layout, operation);
+            .operate(&mut state.children[0], layout, renderer, operation);
     }
 }
 
@@ -236,10 +237,18 @@ where
         );
     }
 
-    fn operate(&mut self, layout: Layout<'_>, operation: &mut dyn widget::Operation<Message>) {
-        self.content
-            .as_widget()
-            .operate(self.tree, layout.children().next().unwrap(), operation);
+    fn operate(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn widget::Operation<Message>,
+    ) {
+        self.content.as_widget().operate(
+            self.tree,
+            layout.children().next().unwrap(),
+            renderer,
+            operation,
+        );
     }
 
     fn mouse_interaction(

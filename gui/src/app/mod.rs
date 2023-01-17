@@ -13,7 +13,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::{clipboard, time, Command, Element, Subscription};
-use iced_native::{window, Event};
 
 pub use liana::config::Config as DaemonConfig;
 
@@ -28,7 +27,6 @@ use crate::{
 };
 
 pub struct App {
-    should_exit: bool,
     state: Box<dyn State>,
     cache: Cache,
     config: Config,
@@ -45,7 +43,6 @@ impl App {
         let cmd = state.load(daemon.clone());
         (
             Self {
-                should_exit: false,
                 state,
                 cache,
                 config,
@@ -92,14 +89,9 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
-            iced_native::subscription::events().map(Message::Event),
             time::every(Duration::from_secs(5)).map(|_| Message::Tick),
             self.state.subscription(),
         ])
-    }
-
-    pub fn should_exit(&self) -> bool {
-        self.should_exit
     }
 
     pub fn stop(&mut self) {
@@ -109,10 +101,7 @@ impl App {
             if let Some(d) = Arc::get_mut(&mut self.daemon) {
                 d.stop().expect("Daemon is internal");
                 log::info!("Internal daemon stopped");
-                self.should_exit = true;
             }
-        } else {
-            self.should_exit = true;
         }
     }
 
@@ -150,10 +139,6 @@ impl App {
             }
             Message::View(view::Message::Menu(menu)) => self.load_state(&menu),
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
-            Message::Event(Event::Window(window::Event::CloseRequested)) => {
-                self.stop();
-                Command::none()
-            }
             _ => self.state.update(self.daemon.clone(), &self.cache, message),
         }
     }

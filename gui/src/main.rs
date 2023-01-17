@@ -84,6 +84,7 @@ pub enum Message {
     Install(Box<installer::Message>),
     Load(Box<loader::Message>),
     Run(Box<app::Message>),
+    Event(iced_native::Event),
 }
 
 async fn ctrl_c() -> Result<(), ()> {
@@ -149,14 +150,20 @@ impl Application for GUI {
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match (&mut self.state, message) {
-            (_, Message::CtrlC) => {
+            (_, Message::CtrlC)
+            | (
+                _,
+                Message::Event(iced_native::Event::Window(
+                    iced_native::window::Event::CloseRequested,
+                )),
+            ) => {
                 match &mut self.state {
                     State::Loader(s) => s.stop(),
                     State::Launcher(s) => s.stop(),
                     State::Installer(s) => s.stop(),
                     State::App(s) => s.stop(),
-                }
-                Command::none()
+                };
+                iced::window::close()
             }
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
                 launcher::Message::Install => {
@@ -164,12 +171,6 @@ impl Application for GUI {
                         Installer::new(l.datadir_path.clone(), bitcoin::Network::Bitcoin);
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
-                }
-                launcher::Message::Event(iced_native::Event::Window(
-                    iced_native::window::Event::CloseRequested,
-                )) => {
-                    l.stop();
-                    Command::none()
                 }
                 launcher::Message::Run(network) => {
                     let mut path = l.datadir_path.clone();
@@ -183,7 +184,6 @@ impl Application for GUI {
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 }
-                _ => Command::none(),
             },
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(path) = *msg {
@@ -226,22 +226,16 @@ impl Application for GUI {
         }
     }
 
-    fn should_exit(&self) -> bool {
-        match &self.state {
-            State::Launcher(v) => v.should_exit(),
-            State::Installer(v) => v.should_exit(),
-            State::Loader(v) => v.should_exit(),
-            State::App(v) => v.should_exit(),
-        }
-    }
-
     fn subscription(&self) -> Subscription<Self::Message> {
-        match &self.state {
-            State::Installer(v) => v.subscription().map(|msg| Message::Install(Box::new(msg))),
-            State::Loader(v) => v.subscription().map(|msg| Message::Load(Box::new(msg))),
-            State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
-            State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
-        }
+        Subscription::batch(vec![
+            match &self.state {
+                State::Installer(v) => v.subscription().map(|msg| Message::Install(Box::new(msg))),
+                State::Loader(v) => v.subscription().map(|msg| Message::Load(Box::new(msg))),
+                State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
+                State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
+            },
+            iced_native::subscription::events().map(Self::Message::Event),
+        ])
     }
 
     fn view(&self) -> Element<Self::Message> {
