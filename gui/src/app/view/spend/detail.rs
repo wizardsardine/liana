@@ -513,26 +513,26 @@ pub fn sign_action<'a>(
     chosen_hw: Option<usize>,
     signed: &[Fingerprint],
 ) -> Element<'a, Message> {
-    card::simple(
-        Column::new()
-            .push_maybe(warning.map(|w| warn(Some(w))))
-            .push(if !hws.is_empty() {
-                Column::new()
-                    .push(
-                        Row::new()
-                            .push(
-                                text("Select hardware wallet to sign with:")
-                                    .bold()
-                                    .width(Length::Fill),
-                            )
-                            .push(button::border(None, "Refresh").on_press(Message::Reload))
-                            .align_items(Alignment::Center),
-                    )
-                    .spacing(10)
-                    .push(
-                        hws.iter()
-                            .enumerate()
-                            .fold(Column::new().spacing(10), |col, (i, hw)| {
+    Column::new()
+        .push_maybe(warning.map(|w| warn(Some(w))))
+        .push(card::simple(
+            Column::new()
+                .push(if !hws.is_empty() {
+                    Column::new()
+                        .push(
+                            Row::new()
+                                .push(
+                                    text("Select hardware wallet to sign with:")
+                                        .bold()
+                                        .width(Length::Fill),
+                                )
+                                .push(button::border(None, "Refresh").on_press(Message::Reload))
+                                .align_items(Alignment::Center),
+                        )
+                        .spacing(10)
+                        .push(hws.iter().enumerate().fold(
+                            Column::new().spacing(10),
+                            |col, (i, hw)| {
                                 col.push(hw_list_view(
                                     i,
                                     hw,
@@ -540,27 +540,27 @@ pub fn sign_action<'a>(
                                     processing,
                                     signed.contains(&hw.fingerprint),
                                 ))
-                            }),
-                    )
-                    .width(Length::Fill)
-            } else {
-                Column::new()
-                    .push(
-                        Column::new()
-                            .spacing(15)
-                            .width(Length::Fill)
-                            .push("Please connect a hardware wallet")
-                            .push(button::border(None, "Refresh").on_press(Message::Reload))
-                            .align_items(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-            })
-            .spacing(20)
-            .width(Length::Fill)
-            .align_items(Alignment::Center),
-    )
-    .width(Length::Units(500))
-    .into()
+                            },
+                        ))
+                        .width(Length::Fill)
+                } else {
+                    Column::new()
+                        .push(
+                            Column::new()
+                                .spacing(15)
+                                .width(Length::Fill)
+                                .push("Please connect a hardware wallet")
+                                .push(button::border(None, "Refresh").on_press(Message::Reload))
+                                .align_items(Alignment::Center),
+                        )
+                        .width(Length::Fill)
+                })
+                .spacing(20)
+                .width(Length::Fill)
+                .align_items(Alignment::Center),
+        ))
+        .width(Length::Units(500))
+        .into()
 }
 
 pub fn update_spend_view<'a>(

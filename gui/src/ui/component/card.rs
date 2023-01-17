@@ -35,6 +35,36 @@ impl From<SimpleCardStyle> for iced::theme::Container {
     }
 }
 
+pub fn invalid<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> widget::Container<'a, T> {
+    Container::new(content).padding(15).style(InvalidCardStyle)
+}
+
+pub struct InvalidCardStyle;
+impl widget::container::StyleSheet for InvalidCardStyle {
+    type Style = iced::Theme;
+    fn appearance(&self, _style: &Self::Style) -> widget::container::Appearance {
+        widget::container::Appearance {
+            border_radius: 10.0,
+            border_color: color::ALERT,
+            border_width: 1.0,
+            background: color::FOREGROUND.into(),
+            ..widget::container::Appearance::default()
+        }
+    }
+}
+
+impl From<InvalidCardStyle> for Box<dyn widget::container::StyleSheet<Style = iced::Theme>> {
+    fn from(s: InvalidCardStyle) -> Box<dyn widget::container::StyleSheet<Style = iced::Theme>> {
+        Box::new(s)
+    }
+}
+
+impl From<InvalidCardStyle> for iced::theme::Container {
+    fn from(i: InvalidCardStyle) -> iced::theme::Container {
+        iced::theme::Container::Custom(i.into())
+    }
+}
+
 /// display an error card with the message and the error in a tooltip.
 pub fn warning<'a, T: 'a>(message: String) -> widget::Container<'a, T> {
     Container::new(

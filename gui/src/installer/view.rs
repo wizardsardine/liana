@@ -1,5 +1,7 @@
-use iced::widget::{Button, Checkbox, Column, Container, PickList, Row, Scrollable};
-use iced::{Alignment, Element, Length};
+use iced::widget::{
+    scrollable::Properties, Button, Checkbox, Column, Container, PickList, Row, Scrollable, Space,
+};
+use iced::{alignment, Alignment, Element, Length};
 
 use liana::miniscript::bitcoin;
 
@@ -13,8 +15,9 @@ use crate::{
     ui::{
         color,
         component::{
-            button, card, collapse, container, form,
+            button, card, collapse, container, form, separation,
             text::{text, Text},
+            tooltip,
         },
         icon,
         util::Collection,
@@ -117,13 +120,17 @@ pub fn welcome<'a>() -> Element<'a, Message> {
     .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn define_descriptor<'a>(
     progress: (usize, usize),
     network: bitcoin::Network,
     network_valid: bool,
-    user_xpub: &form::Value<String>,
-    heir_xpub: &form::Value<String>,
+    spending_keys: Vec<Element<'a, Message>>,
+    recovery_keys: Vec<Element<'a, Message>>,
     sequence: &form::Value<String>,
+    spending_threshold: usize,
+    recovery_threshold: usize,
+    valid: bool,
     error: Option<&String>,
 ) -> Element<'a, Message> {
     let row_network = Row::new()
@@ -144,70 +151,151 @@ pub fn define_descriptor<'a>(
             ))
         });
 
-    let col_user_xpub = Column::new()
-        .push(text("Your public key:").bold())
+    let col_spending_keys = Column::new()
         .push(
             Row::new()
-                .push(button::border(Some(icon::chip_icon()), "Import").on_press(
-                    Message::DefineDescriptor(message::DefineDescriptor::ImportUserHWXpub),
-                ))
-                .push(
-                    form::Form::new("Xpub", user_xpub, |msg| {
-                        Message::DefineDescriptor(message::DefineDescriptor::UserXpubEdited(msg))
-                    })
-                    .warning(if network == bitcoin::Network::Bitcoin {
-                        "Please enter correct xpub"
-                    } else {
-                        "Please enter correct tpub"
-                    })
-                    .size(20)
-                    .padding(12),
-                )
-                .push(Container::new(text("/<0;1>/*")))
-                .spacing(5)
-                .align_items(Alignment::Center),
+                .spacing(10)
+                .push(text("Primary path:").bold())
+                .push(tooltip(
+                    super::prompt::DEFINE_DESCRIPTOR_PRIMATRY_PATH_TOOLTIP,
+                )),
         )
-        .spacing(10);
-
-    let col_heir_xpub = Column::new()
-        .push(text("Public key of the recovery key:").bold())
-        .push(
-            Row::new()
-                .push(button::border(Some(icon::chip_icon()), "Import").on_press(
-                    Message::DefineDescriptor(message::DefineDescriptor::ImportHeirHWXpub),
-                ))
-                .push(
-                    form::Form::new("Xpub", heir_xpub, |msg| {
-                        Message::DefineDescriptor(message::DefineDescriptor::HeirXpubEdited(msg))
-                    })
-                    .warning(if network == bitcoin::Network::Bitcoin {
-                        "Please enter correct xpub"
-                    } else {
-                        "Please enter correct tpub"
-                    })
-                    .size(20)
-                    .padding(12),
-                )
-                .push(Container::new(text("/<0;1>/*")))
-                .spacing(5)
-                .align_items(Alignment::Center),
-        )
-        .spacing(10);
-
-    let col_sequence = Column::new()
-        .push(text("Number of block before enabling recovery:").bold())
+        .push(separation().width(Length::Fill))
         .push(
             Container::new(
-                form::Form::new("Number of block", sequence, |msg| {
-                    Message::DefineDescriptor(message::DefineDescriptor::SequenceEdited(msg))
-                })
-                .warning("Please enter correct block number")
-                .size(20)
-                .padding(10),
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push_maybe(if spending_keys.len() > 1 {
+                        Some(threshsold_input::threshsold_input(
+                            spending_threshold,
+                            spending_keys.len(),
+                            |value| {
+                                Message::DefineDescriptor(
+                                    message::DefineDescriptor::ThresholdEdited(false, value),
+                                )
+                            },
+                        ))
+                    } else {
+                        None
+                    })
+                    .push(
+                        Scrollable::new(
+                            Row::new()
+                                .spacing(5)
+                                .align_items(Alignment::Center)
+                                .push(Row::with_children(spending_keys).spacing(5))
+                                .push(
+                                    Button::new(
+                                        Container::new(icon::plus_icon().size(50))
+                                            .width(Length::Units(250))
+                                            .height(Length::Units(250))
+                                            .align_y(alignment::Vertical::Center)
+                                            .align_x(alignment::Horizontal::Center),
+                                    )
+                                    .width(Length::Units(250))
+                                    .height(Length::Units(250))
+                                    .style(button::Style::TransparentBorder.into())
+                                    .on_press(
+                                        Message::DefineDescriptor(
+                                            message::DefineDescriptor::AddKey(false),
+                                        ),
+                                    ),
+                                )
+                                .padding(5),
+                        )
+                        .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
+                    ),
             )
-            .width(Length::Units(150)),
+            .width(Length::Fill)
+            .align_x(alignment::Horizontal::Center),
         )
         .spacing(10);
+
+    let col_recovery_keys = Column::new()
+        .push(text("Recovery path:").bold())
+        .push(separation().width(Length::Fill))
+        .push(
+            Container::new(
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push_maybe(if recovery_keys.len() > 1 {
+                        Some(threshsold_input::threshsold_input(
+                            recovery_threshold,
+                            recovery_keys.len(),
+                            |value| {
+                                Message::DefineDescriptor(
+                                    message::DefineDescriptor::ThresholdEdited(true, value),
+                                )
+                            },
+                        ))
+                    } else {
+                        None
+                    })
+                    .push(
+                        Scrollable::new(
+                            Row::new()
+                                .spacing(5)
+                                .align_items(Alignment::Center)
+                                .push(Row::with_children(recovery_keys).spacing(5))
+                                .push(
+                                    Button::new(
+                                        Container::new(icon::plus_icon().size(50))
+                                            .width(Length::Units(250))
+                                            .height(Length::Units(250))
+                                            .align_y(alignment::Vertical::Center)
+                                            .align_x(alignment::Horizontal::Center),
+                                    )
+                                    .width(Length::Units(250))
+                                    .height(Length::Units(250))
+                                    .style(button::Style::TransparentBorder.into())
+                                    .on_press(
+                                        Message::DefineDescriptor(
+                                            message::DefineDescriptor::AddKey(true),
+                                        ),
+                                    ),
+                                )
+                                .padding(5),
+                        )
+                        .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
+                    ),
+            )
+            .width(Length::Fill)
+            .align_x(alignment::Horizontal::Center),
+        )
+        .spacing(10);
+
+    let col_sequence = Container::new(
+        Row::new()
+            .spacing(50)
+            .align_items(Alignment::Center)
+            .push(Container::new(icon::arrow_down().size(50)).align_x(alignment::Horizontal::Right))
+            .push(
+                Column::new()
+                    .push(
+                        Row::new()
+                            .spacing(10)
+                            .push(text("Blocks before recovery:").bold())
+                            .push(tooltip(super::prompt::DEFINE_DESCRIPTOR_SEQUENCE_TOOLTIP)),
+                    )
+                    .push(
+                        Container::new(
+                            form::Form::new("Number of block", sequence, |msg| {
+                                Message::DefineDescriptor(
+                                    message::DefineDescriptor::SequenceEdited(msg),
+                                )
+                            })
+                            .warning("Please enter correct block number")
+                            .size(20)
+                            .padding(10),
+                        )
+                        .width(Length::Units(150)),
+                    )
+                    .spacing(10),
+            )
+            .padding(20),
+    )
+    .width(Length::Fill)
+    .align_x(alignment::Horizontal::Center);
 
     layout(
         progress,
@@ -216,23 +304,18 @@ pub fn define_descriptor<'a>(
             .push(
                 Column::new()
                     .push(row_network)
-                    .push(col_user_xpub)
+                    .push(col_spending_keys)
                     .push(col_sequence)
-                    .push(col_heir_xpub)
+                    .push(col_recovery_keys)
                     .spacing(25),
             )
-            .push(
-                if user_xpub.value.is_empty()
-                    && heir_xpub.value.is_empty()
-                    && sequence.value.is_empty()
-                {
-                    button::primary(None, "Next").width(Length::Units(200))
-                } else {
-                    button::primary(None, "Next")
-                        .width(Length::Units(200))
-                        .on_press(Message::Next)
-                },
-            )
+            .push(if !valid {
+                button::primary(None, "Next").width(Length::Units(200))
+            } else {
+                button::primary(None, "Next")
+                    .width(Length::Units(200))
+                    .on_press(Message::Next)
+            })
             .push_maybe(error.map(|e| card::error("Failed to create descriptor", e.to_string())))
             .width(Length::Fill)
             .height(Length::Fill)
@@ -627,6 +710,119 @@ pub fn install<'a>(
     layout(progress, col)
 }
 
+pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
+    card::simple(
+        Column::new()
+            .width(Length::Fill)
+            .align_items(Alignment::Center)
+            .push(
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push(icon::key_icon())
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        Button::new(icon::cross_icon())
+                            .style(button::Style::Transparent.into())
+                            .on_press(message::DefineKey::Delete),
+                    ),
+            )
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(5)
+                        .push(
+                            button::border(Some(icon::import_icon()), "from text input")
+                                .on_press(message::DefineKey::ImportFromClipboard),
+                        )
+                        .push(
+                            button::border(Some(icon::chip_icon()), "from hardware")
+                                .on_press(message::DefineKey::ImportFromHardware),
+                        ),
+                )
+                .height(Length::Fill)
+                .align_y(alignment::Vertical::Center),
+            ),
+    )
+    .padding(5)
+    .height(Length::Units(250))
+    .width(Length::Units(250))
+    .into()
+}
+
+pub fn defined_descriptor_key<'a>(
+    key: String,
+    valid: bool,
+    duplicate: bool,
+) -> Element<'a, message::DefineKey> {
+    let col = Column::new()
+        .spacing(40)
+        .width(Length::Fill)
+        .align_items(Alignment::Center)
+        .push(
+            Row::new()
+                .align_items(Alignment::Center)
+                .push(icon::key_icon())
+                .push(Space::with_width(Length::Fill))
+                .push(
+                    Button::new(icon::cross_icon())
+                        .style(button::Style::Transparent.into())
+                        .on_press(message::DefineKey::Delete),
+                ),
+        )
+        .push(
+            Column::new()
+                .align_items(Alignment::Center)
+                .spacing(5)
+                .push(
+                    Container::new(
+                        Scrollable::new(Container::new(text(key.clone())))
+                            .height(Length::Units(50))
+                            .horizontal_scroll(Properties::new().width(2).scroller_width(2)),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+                )
+                .push(
+                    button::transparent_border(Some(icon::clipboard_icon()), "Copy")
+                        .on_press(message::DefineKey::Clipboard(key)),
+                ),
+        );
+
+    if !valid {
+        Column::new()
+            .align_items(Alignment::Center)
+            .push(
+                card::invalid(col)
+                    .padding(5)
+                    .height(Length::Units(250))
+                    .width(Length::Units(250)),
+            )
+            .push(
+                text("Key is for a different network")
+                    .small()
+                    .style(color::ALERT),
+            )
+            .into()
+    } else if duplicate {
+        Column::new()
+            .align_items(Alignment::Center)
+            .push(
+                card::invalid(col)
+                    .padding(5)
+                    .height(Length::Units(250))
+                    .width(Length::Units(250)),
+            )
+            .push(text("Key is a duplicate").small().style(color::ALERT))
+            .into()
+    } else {
+        card::simple(col)
+            .padding(5)
+            .height(Length::Units(250))
+            .width(Length::Units(250))
+            .into()
+    }
+}
+
 pub fn hardware_wallet_xpubs_modal<'a>(
     is_heir: bool,
     hws: &[HardwareWallet],
@@ -634,19 +830,20 @@ pub fn hardware_wallet_xpubs_modal<'a>(
     processing: bool,
     chosen_hw: Option<usize>,
 ) -> Element<'a, Message> {
-    modal(
+    card::simple(
         Column::new()
+            .spacing(20)
             .push(
                 text(if is_heir {
-                    "Import the recovery public key"
+                    "Import the recovery public key:"
                 } else {
-                    "Import the user public key"
+                    "Import the user public key:"
                 })
-                .bold()
-                .size(50),
+                .bold(),
             )
+            .push(separation().width(Length::Fill))
             .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
-            .push(
+            .push(if !hws.is_empty() {
                 Column::new()
                     .push(
                         Row::new()
@@ -678,14 +875,62 @@ pub fn hardware_wallet_xpubs_modal<'a>(
                                 ))
                             }),
                     )
-                    .width(Length::Fill),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(100)
-            .spacing(50)
-            .align_items(Alignment::Center),
+                    .width(Length::Fill)
+            } else {
+                Column::new()
+                    .push(
+                        Column::new()
+                            .spacing(15)
+                            .width(Length::Fill)
+                            .push("Please connect a hardware wallet")
+                            .push(button::border(None, "Refresh").on_press(Message::Reload))
+                            .align_items(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+            })
+            .width(Length::Units(600)),
     )
+    .into()
+}
+pub fn clipboard_xpub_modal<'a>(
+    form_xpub: &form::Value<String>,
+    network: bitcoin::Network,
+) -> Element<'a, Message> {
+    card::simple(
+        Column::new()
+            .spacing(10)
+            .push(text("Input extended public key:").bold())
+            .push(
+                Row::new()
+                    .push(
+                        form::Form::new("Extended public key", form_xpub, |msg| {
+                            Message::DefineDescriptor(message::DefineDescriptor::XPubEdited(msg))
+                        })
+                        .warning(if network == bitcoin::Network::Bitcoin {
+                            "Please enter correct xpub"
+                        } else {
+                            "Please enter correct tpub"
+                        })
+                        .size(20)
+                        .padding(10),
+                    )
+                    .spacing(10)
+                    .push(Container::new(text("/<0;1>/*")).padding(5)),
+            )
+            .push(
+                Row::new()
+                    .push(Space::with_width(Length::Fill))
+                    .push(if form_xpub.valid {
+                        button::primary(None, "Apply").on_press(Message::DefineDescriptor(
+                            message::DefineDescriptor::ConfirmXpub,
+                        ))
+                    } else {
+                        button::primary(None, "Apply")
+                    }),
+            ),
+    )
+    .width(Length::Units(600))
+    .into()
 }
 
 fn hw_list_view<'a>(
@@ -757,22 +1002,104 @@ fn layout<'a>(
     .into()
 }
 
-fn modal<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    Container::new(Scrollable::new(
-        Column::new()
-            .push(
-                Row::new().push(Column::new().width(Length::Fill)).push(
-                    Container::new(
-                        button::primary(Some(icon::cross_icon()), "Close").on_press(Message::Close),
-                    )
-                    .padding(10),
-                ),
-            )
-            .push(Container::new(content).width(Length::Fill).center_x()),
-    ))
-    .center_x()
-    .height(Length::Fill)
-    .width(Length::Fill)
-    .style(container::Style::Background)
-    .into()
+mod threshsold_input {
+    use crate::ui::{
+        component::{button, text::*},
+        icon,
+    };
+    use iced::alignment::{self, Alignment};
+    use iced::widget::{Button, Column, Container};
+    use iced::{Element, Length};
+    use iced_lazy::{self, Component};
+
+    pub struct ThresholdInput<Message> {
+        value: usize,
+        max: usize,
+        on_change: Box<dyn Fn(usize) -> Message>,
+    }
+
+    pub fn threshsold_input<Message>(
+        value: usize,
+        max: usize,
+        on_change: impl Fn(usize) -> Message + 'static,
+    ) -> ThresholdInput<Message> {
+        ThresholdInput::new(value, max, on_change)
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum Event {
+        IncrementPressed,
+        DecrementPressed,
+    }
+
+    impl<Message> ThresholdInput<Message> {
+        pub fn new(
+            value: usize,
+            max: usize,
+            on_change: impl Fn(usize) -> Message + 'static,
+        ) -> Self {
+            Self {
+                value,
+                max,
+                on_change: Box::new(on_change),
+            }
+        }
+    }
+
+    impl<Message> Component<Message, iced::Renderer> for ThresholdInput<Message> {
+        type State = ();
+        type Event = Event;
+
+        fn update(&mut self, _state: &mut Self::State, event: Event) -> Option<Message> {
+            match event {
+                Event::IncrementPressed => {
+                    if self.value < self.max {
+                        Some((self.on_change)(self.value.saturating_add(1)))
+                    } else {
+                        None
+                    }
+                }
+                Event::DecrementPressed => {
+                    if self.value > 1 {
+                        Some((self.on_change)(self.value.saturating_sub(1)))
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+
+        fn view(&self, _state: &Self::State) -> Element<Self::Event> {
+            let button = |label, on_press| {
+                Button::new(label)
+                    .style(button::Style::Transparent.into())
+                    .width(Length::Units(50))
+                    .on_press(on_press)
+            };
+
+            Column::new()
+                .height(Length::Units(250))
+                .width(Length::Units(200))
+                .push(button(icon::up_icon().size(50), Event::IncrementPressed))
+                .push(text("Threshold:").small().bold())
+                .push(
+                    Container::new(text(format!("{}/{}", self.value, self.max)).size(50))
+                        .height(Length::Fill)
+                        .align_y(alignment::Vertical::Center),
+                )
+                .push(button(icon::down_icon().size(50), Event::DecrementPressed))
+                .align_items(Alignment::Center)
+                .spacing(10)
+                .into()
+        }
+    }
+
+    impl<'a, Message> From<ThresholdInput<Message>> for Element<'a, Message>
+    where
+        Message: 'a,
+    {
+        fn from(numeric_input: ThresholdInput<Message>) -> Self {
+            iced_lazy::component(numeric_input)
+        }
+    }
 }

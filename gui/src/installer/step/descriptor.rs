@@ -1,15 +1,16 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use iced::{Command, Element};
 use liana::{
-    descriptors::MultipathDescriptor,
+    descriptors::{LianaDescKeys, MultipathDescriptor},
     miniscript::{
         bitcoin::{
             util::bip32::{DerivationPath, ExtendedPubKey, Fingerprint},
             Network,
         },
-        descriptor::DescriptorPublicKey,
+        descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
     },
 };
 
@@ -20,20 +21,32 @@ use crate::{
         step::{Context, Step},
         view, Error,
     },
-    ui::component::form,
+    ui::component::{form, modal::Modal},
 };
 
 const LIANA_STANDARD_PATH: &str = "m/48'/0'/0'/2'";
 const LIANA_TESTNET_STANDARD_PATH: &str = "m/48'/1'/0'/2'";
 
+pub trait DescriptorKeyModal {
+    fn processing(&self) -> bool {
+        false
+    }
+    fn update(&mut self, _message: Message) -> Command<Message> {
+        Command::none()
+    }
+    fn view(&self) -> Element<Message>;
+}
+
 pub struct DefineDescriptor {
     network: Network,
     network_valid: bool,
     data_dir: Option<PathBuf>,
-    user_xpub: form::Value<String>,
-    heir_xpub: form::Value<String>,
+    spending_keys: Vec<DescriptorKey>,
+    spending_threshold: usize,
+    recovery_keys: Vec<DescriptorKey>,
+    recovery_threshold: usize,
     sequence: form::Value<String>,
-    modal: Option<GetHardwareWalletXpubModal>,
+    modal: Option<Box<dyn DescriptorKeyModal>>,
 
     error: Option<String>,
 }
@@ -44,11 +57,68 @@ impl DefineDescriptor {
             network: Network::Bitcoin,
             data_dir: None,
             network_valid: true,
-            user_xpub: form::Value::default(),
-            heir_xpub: form::Value::default(),
+            spending_keys: vec![DescriptorKey::new("Key 1".to_string())],
+            spending_threshold: 1,
+            recovery_keys: vec![DescriptorKey::new("Recovery key 1".to_string())],
+            recovery_threshold: 1,
             sequence: form::Value::default(),
             modal: None,
             error: None,
+        }
+    }
+
+    fn valid(&self) -> bool {
+        !self.spending_keys.is_empty()
+            && !self.recovery_keys.is_empty()
+            && !self.sequence.value.is_empty()
+            && !self.spending_keys.iter().any(|k| k.key.is_none())
+            && !self.spending_keys.iter().any(|k| k.key.is_none())
+    }
+
+    // TODO: Improve algo
+    fn check_for_duplicate(&mut self) {
+        let mut all_keys = HashSet::new();
+        let mut duplicate_keys = HashSet::new();
+        let mut all_names = HashSet::new();
+        let mut duplicate_names = HashSet::new();
+        for spending_key in &self.spending_keys {
+            if all_names.contains(&spending_key.name) {
+                duplicate_names.insert(spending_key.name.clone());
+            } else {
+                all_names.insert(spending_key.name.clone());
+            }
+            if let Some(key) = &spending_key.key {
+                if all_keys.contains(key) {
+                    duplicate_keys.insert(key.clone());
+                } else {
+                    all_keys.insert(key.clone());
+                }
+            }
+        }
+        for recovery_key in &self.recovery_keys {
+            if all_names.contains(&recovery_key.name) {
+                duplicate_names.insert(recovery_key.name.clone());
+            } else {
+                all_names.insert(recovery_key.name.clone());
+            }
+            if let Some(key) = &recovery_key.key {
+                if all_keys.contains(key) {
+                    duplicate_keys.insert(key.clone());
+                } else {
+                    all_keys.insert(key.clone());
+                }
+            }
+        }
+        for spending_key in self.spending_keys.iter_mut() {
+            spending_key.duplicate_name = duplicate_names.contains(&spending_key.name);
+            if let Some(key) = &spending_key.key {
+                spending_key.duplicate_key = duplicate_keys.contains(&key);
+            }
+        }
+        for recovery_key in self.recovery_keys.iter_mut() {
+            if let Some(key) = &recovery_key.key {
+                recovery_key.duplicate_key = duplicate_keys.contains(&key);
+            }
         }
     }
 }
@@ -57,6 +127,7 @@ impl Step for DefineDescriptor {
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, message: Message) -> Command<Message> {
+        self.error = None;
         match message {
             Message::Close => {
                 self.modal = None;
@@ -66,18 +137,21 @@ impl Step for DefineDescriptor {
                 let mut network_datadir = self.data_dir.clone().unwrap();
                 network_datadir.push(self.network.to_string());
                 self.network_valid = !network_datadir.exists();
+                for key in self.spending_keys.iter_mut() {
+                    key.check_network(self.network);
+                }
+                for key in self.recovery_keys.iter_mut() {
+                    key.check_network(self.network);
+                }
             }
             Message::DefineDescriptor(msg) => {
                 match msg {
-                    message::DefineDescriptor::UserXpubEdited(xpub) => {
-                        self.user_xpub.value = xpub;
-                        self.user_xpub.valid = true;
-                        self.modal = None;
-                    }
-                    message::DefineDescriptor::HeirXpubEdited(xpub) => {
-                        self.heir_xpub.value = xpub;
-                        self.heir_xpub.valid = true;
-                        self.modal = None;
+                    message::DefineDescriptor::ThresholdEdited(is_recovery, value) => {
+                        if is_recovery {
+                            self.recovery_threshold = value;
+                        } else {
+                            self.spending_threshold = value;
+                        }
                     }
                     message::DefineDescriptor::SequenceEdited(seq) => {
                         self.sequence.valid = true;
@@ -85,18 +159,63 @@ impl Step for DefineDescriptor {
                             self.sequence.value = seq;
                         }
                     }
-                    message::DefineDescriptor::ImportUserHWXpub => {
-                        let modal = GetHardwareWalletXpubModal::new(false, self.network);
-                        let cmd = modal.load();
-                        self.modal = Some(modal);
-                        return cmd;
+                    message::DefineDescriptor::AddKey(is_recovery) => {
+                        if is_recovery {
+                            self.recovery_keys.push(DescriptorKey::new(format!(
+                                "Recovery key {}",
+                                self.recovery_keys.len() + 1
+                            )));
+                            self.recovery_threshold += 1;
+                        } else {
+                            self.spending_keys.push(DescriptorKey::new(format!(
+                                "Key {}",
+                                self.spending_keys.len() + 1
+                            )));
+                            self.spending_threshold += 1;
+                        }
                     }
-                    message::DefineDescriptor::ImportHeirHWXpub => {
-                        let modal = GetHardwareWalletXpubModal::new(true, self.network);
-                        let cmd = modal.load();
-                        self.modal = Some(modal);
-                        return cmd;
-                    }
+                    message::DefineDescriptor::Key(is_recovery, i, msg) => match msg {
+                        message::DefineKey::Clipboard(key) => {
+                            return Command::perform(async move { key }, Message::Clibpboard);
+                        }
+                        message::DefineKey::Imported(imported_key) => {
+                            if is_recovery {
+                                if let Some(recovery_key) = self.recovery_keys.get_mut(i) {
+                                    recovery_key.key = Some(imported_key);
+                                    recovery_key.check_network(self.network);
+                                }
+                            } else if let Some(spending_key) = self.spending_keys.get_mut(i) {
+                                spending_key.key = Some(imported_key);
+                                spending_key.check_network(self.network);
+                            }
+                            self.modal = None;
+                            self.check_for_duplicate();
+                        }
+                        message::DefineKey::ImportFromClipboard => {
+                            let modal = ImportXpubModal::new(i, is_recovery, self.network);
+                            self.modal = Some(Box::new(modal));
+                        }
+                        message::DefineKey::ImportFromHardware => {
+                            let modal = HardwareXpubModal::new(i, is_recovery, self.network);
+                            let cmd = modal.load();
+                            self.modal = Some(Box::new(modal));
+                            return cmd;
+                        }
+                        message::DefineKey::Delete => {
+                            if is_recovery {
+                                self.recovery_keys.remove(i);
+                                if self.recovery_threshold > self.recovery_keys.len() {
+                                    self.recovery_threshold -= 1;
+                                }
+                            } else {
+                                self.spending_keys.remove(i);
+                                if self.spending_threshold > self.spending_keys.len() {
+                                    self.spending_threshold -= 1;
+                                }
+                            }
+                            self.check_for_duplicate();
+                        }
+                    },
                     _ => {
                         if let Some(modal) = &mut self.modal {
                             return modal.update(Message::DefineDescriptor(msg));
@@ -123,57 +242,139 @@ impl Step for DefineDescriptor {
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
         ctx.bitcoin_config.network = self.network;
-        // descriptor forms for import or creation cannot be both empty or filled.
-        let user_key = DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", &self.user_xpub.value));
-        self.user_xpub.valid = user_key.is_ok();
-        if let Ok(key) = &user_key {
-            self.user_xpub.valid = check_key_network(key, self.network);
-        }
+        let spending_keys: Vec<DescriptorPublicKey> = self
+            .spending_keys
+            .iter()
+            .filter_map(|k| k.key.clone())
+            .collect();
 
-        let heir_key = DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", &self.heir_xpub.value));
-        self.heir_xpub.valid = heir_key.is_ok();
-        if let Ok(key) = &heir_key {
-            self.heir_xpub.valid = check_key_network(key, self.network);
-        }
+        let recovery_keys: Vec<DescriptorPublicKey> = self
+            .recovery_keys
+            .iter()
+            .filter_map(|k| k.key.clone())
+            .collect();
 
         let sequence = self.sequence.value.parse::<u16>();
         self.sequence.valid = sequence.is_ok();
 
         if !self.network_valid
-            || !self.user_xpub.valid
-            || !self.heir_xpub.valid
             || !self.sequence.valid
+            || recovery_keys.is_empty()
+            || spending_keys.is_empty()
         {
             return false;
         }
 
-        let desc =
-            match MultipathDescriptor::new(user_key.unwrap(), heir_key.unwrap(), sequence.unwrap())
-            {
-                Ok(desc) => desc,
+        let spending_keys = if spending_keys.len() == 1 {
+            LianaDescKeys::from_single(spending_keys[0].clone())
+        } else {
+            match LianaDescKeys::from_multi(self.spending_threshold, spending_keys) {
+                Ok(keys) => keys,
                 Err(e) => {
                     self.error = Some(e.to_string());
                     return false;
                 }
-            };
+            }
+        };
+
+        let recovery_keys = if recovery_keys.len() == 1 {
+            LianaDescKeys::from_single(recovery_keys[0].clone())
+        } else {
+            match LianaDescKeys::from_multi(self.recovery_threshold, recovery_keys) {
+                Ok(keys) => keys,
+                Err(e) => {
+                    self.error = Some(e.to_string());
+                    return false;
+                }
+            }
+        };
+
+        let desc = match MultipathDescriptor::new(spending_keys, recovery_keys, sequence.unwrap()) {
+            Ok(desc) => desc,
+            Err(e) => {
+                self.error = Some(e.to_string());
+                return false;
+            }
+        };
 
         ctx.descriptor = Some(desc);
         true
     }
 
     fn view(&self, progress: (usize, usize)) -> Element<Message> {
+        let content = view::define_descriptor(
+            progress,
+            self.network,
+            self.network_valid,
+            self.spending_keys
+                .iter()
+                .enumerate()
+                .map(|(i, key)| {
+                    key.view().map(move |msg| {
+                        Message::DefineDescriptor(message::DefineDescriptor::Key(false, i, msg))
+                    })
+                })
+                .collect(),
+            self.recovery_keys
+                .iter()
+                .enumerate()
+                .map(|(i, key)| {
+                    key.view().map(move |msg| {
+                        Message::DefineDescriptor(message::DefineDescriptor::Key(true, i, msg))
+                    })
+                })
+                .collect(),
+            &self.sequence,
+            self.spending_threshold,
+            self.recovery_threshold,
+            self.valid(),
+            self.error.as_ref(),
+        );
         if let Some(modal) = &self.modal {
-            modal.view()
+            Modal::new(content, modal.view())
+                .on_blur(if modal.processing() {
+                    None
+                } else {
+                    Some(Message::Close)
+                })
+                .into()
         } else {
-            view::define_descriptor(
-                progress,
-                self.network,
-                self.network_valid,
-                &self.user_xpub,
-                &self.heir_xpub,
-                &self.sequence,
-                self.error.as_ref(),
-            )
+            content
+        }
+    }
+}
+
+pub struct DescriptorKey {
+    pub name: String,
+    pub valid: bool,
+    pub key: Option<DescriptorPublicKey>,
+    pub duplicate_key: bool,
+    pub duplicate_name: bool,
+}
+
+impl DescriptorKey {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            valid: true,
+            key: None,
+            duplicate_key: false,
+            duplicate_name: false,
+        }
+    }
+
+    pub fn check_network(&mut self, network: Network) {
+        if let Some(key) = &self.key {
+            self.valid = check_key_network(key, network);
+        }
+    }
+
+    pub fn view(&self) -> Element<message::DefineKey> {
+        match &self.key {
+            None => view::undefined_descriptor_key(),
+            Some(key) => {
+                view::defined_descriptor_key(key.to_string(), self.valid, self.duplicate_key)
+            }
         }
     }
 }
@@ -210,19 +411,22 @@ impl From<DefineDescriptor> for Box<dyn Step> {
     }
 }
 
-pub struct GetHardwareWalletXpubModal {
-    is_heir: bool,
-    chosen_hw: Option<usize>,
-    processing: bool,
-    hws: Vec<HardwareWallet>,
-    error: Option<Error>,
+pub struct HardwareXpubModal {
+    is_recovery: bool,
+    key_index: usize,
     network: Network,
+    error: Option<Error>,
+    processing: bool,
+
+    chosen_hw: Option<usize>,
+    hws: Vec<HardwareWallet>,
 }
 
-impl GetHardwareWalletXpubModal {
-    fn new(is_heir: bool, network: Network) -> Self {
+impl HardwareXpubModal {
+    fn new(key_index: usize, is_recovery: bool, network: Network) -> Self {
         Self {
-            is_heir,
+            is_recovery,
+            key_index,
             chosen_hw: None,
             processing: false,
             hws: Vec::new(),
@@ -236,6 +440,13 @@ impl GetHardwareWalletXpubModal {
             Message::ConnectedHardwareWallets,
         )
     }
+}
+
+impl DescriptorKeyModal for HardwareXpubModal {
+    fn processing(&self) -> bool {
+        self.processing
+    }
+
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Select(i) => {
@@ -246,8 +457,8 @@ impl GetHardwareWalletXpubModal {
                     return Command::perform(
                         get_extended_pubkey(device, hw.fingerprint, self.network),
                         |res| {
-                            Message::DefineDescriptor(message::DefineDescriptor::XpubImported(
-                                res.map(|key| key.to_string()),
+                            Message::DefineDescriptor(message::DefineDescriptor::HWXpubImported(
+                                res,
                             ))
                         },
                     );
@@ -259,23 +470,23 @@ impl GetHardwareWalletXpubModal {
             Message::Reload => {
                 return self.load();
             }
-            Message::DefineDescriptor(message::DefineDescriptor::XpubImported(res)) => {
+            Message::DefineDescriptor(message::DefineDescriptor::HWXpubImported(res)) => {
                 self.processing = false;
                 match res {
                     Ok(key) => {
-                        if self.is_heir {
-                            return Command::perform(
-                                async move { key },
-                                message::DefineDescriptor::HeirXpubEdited,
-                            )
-                            .map(Message::DefineDescriptor);
-                        } else {
-                            return Command::perform(
-                                async move { key },
-                                message::DefineDescriptor::UserXpubEdited,
-                            )
-                            .map(Message::DefineDescriptor);
-                        }
+                        let key_index = self.key_index;
+                        let is_recovery = self.is_recovery;
+                        return Command::perform(
+                            async move { (is_recovery, key_index, key) },
+                            |(is_recovery, key_index, key)| {
+                                message::DefineDescriptor::Key(
+                                    is_recovery,
+                                    key_index,
+                                    message::DefineKey::Imported(key),
+                                )
+                            },
+                        )
+                        .map(Message::DefineDescriptor);
                     }
                     Err(e) => {
                         self.error = Some(e);
@@ -288,12 +499,66 @@ impl GetHardwareWalletXpubModal {
     }
     fn view(&self) -> Element<Message> {
         view::hardware_wallet_xpubs_modal(
-            self.is_heir,
+            self.is_recovery,
             &self.hws,
             self.error.as_ref(),
             self.processing,
             self.chosen_hw,
         )
+    }
+}
+
+pub struct ImportXpubModal {
+    is_recovery: bool,
+    key_index: usize,
+    form_xpub: form::Value<String>,
+    network: Network,
+}
+
+impl ImportXpubModal {
+    fn new(key_index: usize, is_recovery: bool, network: Network) -> Self {
+        Self {
+            form_xpub: form::Value::default(),
+            is_recovery,
+            key_index,
+            network,
+        }
+    }
+}
+
+impl DescriptorKeyModal for ImportXpubModal {
+    fn update(&mut self, message: Message) -> Command<Message> {
+        match message {
+            Message::DefineDescriptor(message::DefineDescriptor::XPubEdited(s)) => {
+                self.form_xpub.valid =
+                    DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", s)).is_ok();
+                self.form_xpub.value = s;
+            }
+            Message::DefineDescriptor(message::DefineDescriptor::ConfirmXpub) => {
+                if let Ok(key) =
+                    DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", self.form_xpub.value))
+                {
+                    let key_index = self.key_index;
+                    let is_recovery = self.is_recovery;
+                    return Command::perform(
+                        async move { (is_recovery, key_index, key) },
+                        |(is_recovery, key_index, key)| {
+                            message::DefineDescriptor::Key(
+                                is_recovery,
+                                key_index,
+                                message::DefineKey::Imported(key),
+                            )
+                        },
+                    )
+                    .map(Message::DefineDescriptor);
+                }
+            }
+            _ => {}
+        };
+        Command::none()
+    }
+    fn view(&self) -> Element<Message> {
+        view::clipboard_xpub_modal(&self.form_xpub, self.network)
     }
 }
 
@@ -323,21 +588,27 @@ async fn get_extended_pubkey(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     fingerprint: Fingerprint,
     network: Network,
-) -> Result<XKey, Error> {
+) -> Result<DescriptorPublicKey, Error> {
     let derivation_path = DerivationPath::from_str(if network == Network::Bitcoin {
         LIANA_STANDARD_PATH
     } else {
         LIANA_TESTNET_STANDARD_PATH
     })
     .unwrap();
-    let key = hw
+    let xkey = hw
         .get_extended_pubkey(&derivation_path, false)
         .await
         .map_err(Error::from)?;
-    Ok(XKey {
+    Ok(DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
         origin: Some((fingerprint, derivation_path)),
-        key,
-    })
+        derivation_paths: DerivPaths::new(vec![
+            DerivationPath::from_str("m/0").unwrap(),
+            DerivationPath::from_str("m/1").unwrap(),
+        ])
+        .unwrap(),
+        wildcard: Wildcard::Unhardened,
+        xkey,
+    }))
 }
 
 pub struct ImportDescriptor {

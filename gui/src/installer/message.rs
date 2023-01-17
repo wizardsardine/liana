@@ -1,4 +1,7 @@
-use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Network};
+use liana::miniscript::{
+    bitcoin::{util::bip32::Fingerprint, Network},
+    DescriptorPublicKey,
+};
 use std::path::PathBuf;
 
 use super::Error;
@@ -34,10 +37,21 @@ pub enum DefineBitcoind {
 #[derive(Debug, Clone)]
 pub enum DefineDescriptor {
     ImportDescriptor(String),
-    ImportUserHWXpub,
-    ImportHeirHWXpub,
-    XpubImported(Result<String, Error>),
-    UserXpubEdited(String),
-    HeirXpubEdited(String),
+    /// AddKey(is_recovery)
+    AddKey(bool),
+    Key(bool, usize, DefineKey),
+    HWXpubImported(Result<DescriptorPublicKey, Error>),
+    XPubEdited(String),
     SequenceEdited(String),
+    ThresholdEdited(bool, usize),
+    ConfirmXpub,
+}
+
+#[derive(Debug, Clone)]
+pub enum DefineKey {
+    Delete,
+    ImportFromHardware,
+    ImportFromClipboard,
+    Clipboard(String),
+    Imported(DescriptorPublicKey),
 }

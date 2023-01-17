@@ -7,6 +7,9 @@ pub mod form;
 pub mod modal;
 pub mod notification;
 pub mod text;
+pub mod tooltip;
+
+pub use tooltip::tooltip;
 
 use iced::widget::{Column, Container, Text};
 use iced::Length;
