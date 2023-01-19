@@ -7,6 +7,8 @@ mod database;
 pub mod descriptors;
 #[cfg(feature = "jsonrpc_server")]
 mod jsonrpc;
+mod random;
+pub mod signer;
 #[cfg(test)]
 mod testutils;
 
