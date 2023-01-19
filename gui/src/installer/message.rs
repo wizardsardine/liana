@@ -10,8 +10,9 @@ use crate::hw::HardwareWallet;
 #[derive(Debug, Clone)]
 pub enum Message {
     CreateWallet,
+    ParticipateWallet,
     ImportWallet,
-    BackupDone(bool),
+    UserActionDone(bool),
     Exit(PathBuf),
     Clibpboard(String),
     Next,
@@ -24,6 +25,7 @@ pub enum Message {
     Network(Network),
     DefineBitcoind(DefineBitcoind),
     DefineDescriptor(DefineDescriptor),
+    ImportXpub(Result<DescriptorPublicKey, Error>),
     ConnectedHardwareWallets(Vec<HardwareWallet>),
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
 }

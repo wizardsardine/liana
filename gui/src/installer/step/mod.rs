@@ -1,5 +1,7 @@
 mod descriptor;
-pub use descriptor::{BackupDescriptor, DefineDescriptor, ImportDescriptor, RegisterDescriptor};
+pub use descriptor::{
+    BackupDescriptor, DefineDescriptor, ImportDescriptor, ParticipateXpub, RegisterDescriptor,
+};
 
 use std::path::PathBuf;
 use std::str::FromStr;

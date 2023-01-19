@@ -18,7 +18,7 @@ use crate::{
 pub use message::Message;
 use step::{
     BackupDescriptor, Context, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor,
-    RegisterDescriptor, Step, Welcome,
+    ParticipateXpub, RegisterDescriptor, Step, Welcome,
 };
 
 pub struct Installer {
@@ -100,10 +100,22 @@ impl Installer {
                 ];
                 self.next()
             }
+            Message::ParticipateWallet => {
+                self.steps = vec![
+                    Welcome::default().into(),
+                    ParticipateXpub::new().into(),
+                    ImportDescriptor::new(false).into(),
+                    BackupDescriptor::default().into(),
+                    RegisterDescriptor::default().into(),
+                    DefineBitcoind::new().into(),
+                    Final::new().into(),
+                ];
+                self.next()
+            }
             Message::ImportWallet => {
                 self.steps = vec![
                     Welcome::default().into(),
-                    ImportDescriptor::new().into(),
+                    ImportDescriptor::new(true).into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
                     Final::new().into(),

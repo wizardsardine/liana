@@ -82,12 +82,12 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                         Button::new(
                             Container::new(
                                 Column::new()
-                                    .width(Length::Units(200))
+                                    .width(Length::Units(250))
                                     .push(icon::wallet_icon().size(50).width(Length::Units(100)))
-                                    .push(text("Create new wallet"))
+                                    .push(text("Create a new wallet"))
                                     .align_items(Alignment::Center),
                             )
-                            .padding(50),
+                            .padding(20),
                         )
                         .style(button::Style::Border.into())
                         .on_press(Message::CreateWallet),
@@ -96,12 +96,26 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                         Button::new(
                             Container::new(
                                 Column::new()
-                                    .width(Length::Units(200))
-                                    .push(icon::import_icon().size(50).width(Length::Units(100)))
-                                    .push(text("Import wallet"))
+                                    .width(Length::Units(250))
+                                    .push(icon::people_icon().size(50).width(Length::Units(100)))
+                                    .push(text("Participate in a new wallet"))
                                     .align_items(Alignment::Center),
                             )
-                            .padding(50),
+                            .padding(20),
+                        )
+                        .style(button::Style::Border.into())
+                        .on_press(Message::ParticipateWallet),
+                    )
+                    .push(
+                        Button::new(
+                            Container::new(
+                                Column::new()
+                                    .width(Length::Units(250))
+                                    .push(icon::import_icon().size(50).width(Length::Units(100)))
+                                    .push(text("Import a wallet backup"))
+                                    .align_items(Alignment::Center),
+                            )
+                            .padding(20),
                         )
                         .style(button::Style::Border.into())
                         .on_press(Message::ImportWallet),
@@ -109,7 +123,6 @@ pub fn welcome<'a>() -> Element<'a, Message> {
             )
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding(100)
             .spacing(50)
             .align_items(Alignment::Center),
     ))
@@ -327,6 +340,7 @@ pub fn define_descriptor<'a>(
 
 pub fn import_descriptor<'a>(
     progress: (usize, usize),
+    change_network: bool,
     network: bitcoin::Network,
     network_valid: bool,
     imported_descriptor: &form::Value<String>,
@@ -367,7 +381,11 @@ pub fn import_descriptor<'a>(
             .push(
                 Column::new()
                     .spacing(20)
-                    .push(row_network)
+                    .push_maybe(if change_network {
+                        Some(row_network)
+                    } else {
+                        None
+                    })
                     .push(col_descriptor),
             )
             .push(if imported_descriptor.value.is_empty() {
@@ -378,6 +396,127 @@ pub fn import_descriptor<'a>(
                     .on_press(Message::Next)
             })
             .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(100)
+            .spacing(50)
+            .align_items(Alignment::Center),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn participate_xpub<'a>(
+    progress: (usize, usize),
+    network: bitcoin::Network,
+    network_valid: bool,
+    hws: &[(HardwareWallet, bool)],
+    processing: bool,
+    chosen_hw: Option<usize>,
+    xpub: Option<&'a String>,
+    shared: bool,
+    error: Option<&Error>,
+) -> Element<'a, Message> {
+    let row_network = Row::new()
+        .spacing(10)
+        .align_items(Alignment::Center)
+        .push(text("Network:").bold())
+        .push(Container::new(
+            PickList::new(&NETWORKS[..], Some(Network::from(network)), |net| {
+                Message::Network(net.into())
+            })
+            .padding(10),
+        ))
+        .push_maybe(if network_valid {
+            None
+        } else {
+            Some(card::warning(
+                "A data directory already exists for this network".to_string(),
+            ))
+        });
+
+    layout(
+        progress,
+        Column::new()
+            .push(text("Share your public key").bold().size(50))
+            .push(
+                Column::new()
+                    .spacing(20)
+                    .width(Length::Fill)
+                    .push(row_network),
+            )
+            .push(
+                Column::new()
+                    .push(
+                        Row::new()
+                            .spacing(10)
+                            .align_items(Alignment::Center)
+                            .push(
+                                Container::new(
+                                    text(format!("Select your hardware wallet:")).bold(),
+                                )
+                                .width(Length::Fill),
+                            )
+                            .push(
+                                button::border(Some(icon::reload_icon()), "Refresh")
+                                    .on_press(Message::Reload),
+                            ),
+                    )
+                    .spacing(10)
+                    .push(
+                        hws.iter()
+                            .enumerate()
+                            .fold(Column::new().spacing(10), |col, (i, hw)| {
+                                col.push(hw_list_view(
+                                    i,
+                                    &hw.0,
+                                    Some(i) == chosen_hw,
+                                    processing,
+                                    hw.1,
+                                ))
+                            }),
+                    )
+                    .width(Length::Fill),
+            )
+            .push_maybe(xpub.map(|xpub| {
+                Column::new()
+                    .spacing(5)
+                    .push(text("Your extended pubkey:").bold())
+                    .push(
+                        Row::new()
+                            .spacing(5)
+                            .align_items(Alignment::Center)
+                            .push(
+                                Container::new(
+                                    Scrollable::new(Container::new(text(xpub)).padding(10))
+                                        .horizontal_scroll(
+                                            Properties::new().width(2).scroller_width(2),
+                                        ),
+                                )
+                                .width(Length::Fill),
+                            )
+                            .push(
+                                Container::new(
+                                    button::border(Some(icon::clipboard_icon()), "Copy")
+                                        .on_press(Message::Clibpboard(xpub.clone()))
+                                        .width(Length::Shrink),
+                                )
+                                .padding(10),
+                            ),
+                    )
+            }))
+            .push(Checkbox::new(
+                "I have shared my xpub",
+                shared,
+                Message::UserActionDone,
+            ))
+            .push(if shared {
+                button::primary(None, "Next")
+                    .width(Length::Units(200))
+                    .on_press(Message::Next)
+            } else {
+                button::primary(None, "Next").width(Length::Units(200))
+            })
+            .push_maybe(error.map(|e| card::error("Hardware error", e.to_string())))
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)
@@ -518,7 +657,7 @@ pub fn backup_descriptor<'a>(
             .push(Checkbox::new(
                 "I have backed up my descriptor",
                 done,
-                Message::BackupDone,
+                Message::UserActionDone,
             ))
             .push(if done {
                 button::primary(None, "Next")

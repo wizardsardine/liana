@@ -611,17 +611,156 @@ async fn get_extended_pubkey(
     }))
 }
 
+pub struct ParticipateXpub {
+    network: Network,
+    network_valid: bool,
+    data_dir: Option<PathBuf>,
+
+    xpub: Option<String>,
+    shared: bool,
+
+    processing: bool,
+    chosen_hw: Option<usize>,
+    hws: Vec<(HardwareWallet, bool)>,
+    error: Option<Error>,
+}
+
+impl ParticipateXpub {
+    pub fn new() -> Self {
+        Self {
+            network: Network::Bitcoin,
+            network_valid: true,
+            data_dir: None,
+            processing: false,
+            xpub: None,
+            chosen_hw: None,
+            hws: Vec::new(),
+            shared: false,
+            error: None,
+        }
+    }
+}
+
+impl Step for ParticipateXpub {
+    // form value is set as valid each time it is edited.
+    // Verification of the values is happening when the user click on Next button.
+    fn update(&mut self, message: Message) -> Command<Message> {
+        match message {
+            Message::Network(network) => {
+                self.network = network;
+                let mut network_datadir = self.data_dir.clone().unwrap();
+                network_datadir.push(self.network.to_string());
+                self.network_valid = !network_datadir.exists();
+            }
+            Message::UserActionDone(shared) => self.shared = shared,
+            Message::ImportXpub(res) => {
+                self.processing = false;
+                match res {
+                    Err(e) => {
+                        self.error = e.into();
+                        self.chosen_hw = None;
+                    }
+                    Ok(xpub) => {
+                        self.error = None;
+                        self.xpub = Some(xpub.to_string().trim_end_matches("/<0;1>/*").to_string());
+                        for (i, (_, imported)) in self.hws.iter_mut().enumerate() {
+                            *imported = Some(i) == self.chosen_hw;
+                        }
+                        self.chosen_hw = None;
+                    }
+                }
+            }
+            Message::Select(i) => {
+                if let Some((hw, _)) = self.hws.get(i) {
+                    let device = hw.device.clone();
+                    self.chosen_hw = Some(i);
+                    self.processing = true;
+                    self.error = None;
+                    return Command::perform(
+                        get_extended_pubkey(device, hw.fingerprint, self.network),
+                        Message::ImportXpub,
+                    );
+                }
+            }
+            Message::ConnectedHardwareWallets(hws) => {
+                for hw in hws {
+                    if !self
+                        .hws
+                        .iter()
+                        .any(|(h, _)| h.fingerprint == hw.fingerprint)
+                    {
+                        self.hws.push((hw, false));
+                    }
+                }
+            }
+            Message::Reload => {
+                return self.load();
+            }
+            _ => {}
+        };
+        Command::none()
+    }
+
+    fn load_context(&mut self, ctx: &Context) {
+        self.network = ctx.bitcoin_config.network;
+        self.data_dir = Some(ctx.data_dir.clone());
+        let mut network_datadir = ctx.data_dir.clone();
+        network_datadir.push(self.network.to_string());
+        self.network_valid = !network_datadir.exists();
+    }
+
+    fn load(&self) -> Command<Message> {
+        Command::perform(
+            list_hardware_wallets(&[], None),
+            Message::ConnectedHardwareWallets,
+        )
+    }
+
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        ctx.bitcoin_config.network = self.network;
+        true
+    }
+
+    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+        view::participate_xpub(
+            progress,
+            self.network,
+            self.network_valid,
+            &self.hws,
+            self.processing,
+            self.chosen_hw,
+            self.xpub.as_ref(),
+            self.shared,
+            self.error.as_ref(),
+        )
+    }
+}
+
+impl Default for ParticipateXpub {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<ParticipateXpub> for Box<dyn Step> {
+    fn from(s: ParticipateXpub) -> Box<dyn Step> {
+        Box::new(s)
+    }
+}
+
 pub struct ImportDescriptor {
     network: Network,
     network_valid: bool,
+    change_network: bool,
     data_dir: Option<PathBuf>,
     imported_descriptor: form::Value<String>,
     error: Option<String>,
 }
 
 impl ImportDescriptor {
-    pub fn new() -> Self {
+    pub fn new(change_network: bool) -> Self {
         Self {
+            change_network,
             network: Network::Bitcoin,
             network_valid: true,
             data_dir: None,
@@ -679,17 +818,12 @@ impl Step for ImportDescriptor {
     fn view(&self, progress: (usize, usize)) -> Element<Message> {
         view::import_descriptor(
             progress,
+            self.change_network,
             self.network,
             self.network_valid,
             &self.imported_descriptor,
             self.error.as_ref(),
         )
-    }
-}
-
-impl Default for ImportDescriptor {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -817,7 +951,7 @@ pub struct BackupDescriptor {
 
 impl Step for BackupDescriptor {
     fn update(&mut self, message: Message) -> Command<Message> {
-        if let Message::BackupDone(done) = message {
+        if let Message::UserActionDone(done) = message {
             self.done = done;
         }
         Command::none()

@@ -218,3 +218,7 @@ pub fn down_icon() -> Text<'static> {
 pub fn up_icon() -> Text<'static> {
     icon('\u{F27C}')
 }
+
+pub fn people_icon() -> Text<'static> {
+    icon('\u{F4CF}')
+}
