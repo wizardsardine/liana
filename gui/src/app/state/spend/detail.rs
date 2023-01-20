@@ -9,6 +9,7 @@ use liana::miniscript::bitcoin::{
 use crate::{
     app::{
         cache::Cache, config::Config, error::Error, message::Message, view, view::spend::detail,
+        wallet::Wallet,
     },
     daemon::{
         model::{SpendStatus, SpendTx},
@@ -22,13 +23,13 @@ trait Action {
     fn warning(&self) -> Option<&Error> {
         None
     }
-    fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn load(&self, _wallet: &Wallet, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         Command::none()
     }
     fn update(
         &mut self,
+        _wallet: &Wallet,
         _daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
         _message: Message,
         _tx: &mut SpendTx,
     ) -> Command<Message> {
@@ -38,6 +39,7 @@ trait Action {
 }
 
 pub struct SpendTxState {
+    wallet: Wallet,
     config: Config,
     tx: SpendTx,
     saved: bool,
@@ -45,8 +47,9 @@ pub struct SpendTxState {
 }
 
 impl SpendTxState {
-    pub fn new(config: Config, tx: SpendTx, saved: bool) -> Self {
+    pub fn new(wallet: Wallet, config: Config, tx: SpendTx, saved: bool) -> Self {
         Self {
+            wallet,
             action: None,
             config,
             tx,
@@ -56,7 +59,7 @@ impl SpendTxState {
 
     pub fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         if let Some(action) = &self.action {
-            action.load(daemon)
+            action.load(&self.wallet, daemon)
         } else {
             Command::none()
         }
@@ -65,7 +68,7 @@ impl SpendTxState {
     pub fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        cache: &Cache,
+        _cache: &Cache,
         message: Message,
     ) -> Command<Message> {
         match &message {
@@ -78,13 +81,13 @@ impl SpendTxState {
                 }
                 view::SpendTxMessage::Sign => {
                     let action = SignAction::new(self.config.clone());
-                    let cmd = action.load(daemon);
+                    let cmd = action.load(&self.wallet, daemon);
                     self.action = Some(Box::new(action));
                     return cmd;
                 }
                 view::SpendTxMessage::EditPsbt => {
                     let action = UpdateAction::new(self.tx.psbt.to_string());
-                    let cmd = action.load(daemon);
+                    let cmd = action.load(&self.wallet, daemon);
                     self.action = Some(Box::new(action));
                     return cmd;
                 }
@@ -96,19 +99,19 @@ impl SpendTxState {
                 }
                 _ => {
                     if let Some(action) = self.action.as_mut() {
-                        return action.update(daemon.clone(), cache, message, &mut self.tx);
+                        return action.update(&self.wallet, daemon.clone(), message, &mut self.tx);
                     }
                 }
             },
             Message::Updated(Ok(_)) => {
                 self.saved = true;
                 if let Some(action) = self.action.as_mut() {
-                    return action.update(daemon.clone(), cache, message, &mut self.tx);
+                    return action.update(&self.wallet, daemon.clone(), message, &mut self.tx);
                 }
             }
             _ => {
                 if let Some(action) = self.action.as_mut() {
-                    return action.update(daemon.clone(), cache, message, &mut self.tx);
+                    return action.update(&self.wallet, daemon.clone(), message, &mut self.tx);
                 }
             }
         };
@@ -136,8 +139,8 @@ pub struct SaveAction {
 impl Action for SaveAction {
     fn update(
         &mut self,
+        _wallet: &Wallet,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
         message: Message,
         tx: &mut SpendTx,
     ) -> Command<Message> {
@@ -172,8 +175,8 @@ pub struct BroadcastAction {
 impl Action for BroadcastAction {
     fn update(
         &mut self,
+        _wallet: &Wallet,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
         message: Message,
         tx: &mut SpendTx,
     ) -> Command<Message> {
@@ -216,8 +219,8 @@ pub struct DeleteAction {
 impl Action for DeleteAction {
     fn update(
         &mut self,
+        _wallet: &Wallet,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
         message: Message,
         tx: &mut SpendTx,
     ) -> Command<Message> {
@@ -275,18 +278,19 @@ impl Action for SignAction {
         self.error.as_ref()
     }
 
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn load(&self, wallet: &Wallet, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         let config = self.config.clone();
-        let desc = daemon.config().main_descriptor.to_string();
+        let desc = wallet.main_descriptor.to_string();
+        let name = wallet.name.clone();
         Command::perform(
-            list_hws(config, "Liana".to_string(), desc),
+            list_hws(config, name, desc),
             Message::ConnectedHardwareWallets,
         )
     }
     fn update(
         &mut self,
+        wallet: &Wallet,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
         message: Message,
         tx: &mut SpendTx,
     ) -> Command<Message> {
@@ -329,7 +333,7 @@ impl Action for SignAction {
                 }
             }
             Message::View(view::Message::Reload) => {
-                return self.load(daemon);
+                return self.load(wallet, daemon);
             }
             _ => {}
         };
@@ -395,8 +399,8 @@ impl Action for UpdateAction {
 
     fn update(
         &mut self,
+        _wallet: &Wallet,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
         message: Message,
         tx: &mut SpendTx,
     ) -> Command<Message> {

@@ -12,6 +12,7 @@ use crate::{
         message::Message,
         state::{redirect, State},
         view,
+        wallet::Wallet,
     },
     daemon::{
         model::{remaining_sequence, Coin},
@@ -24,6 +25,7 @@ use crate::{
 use liana::miniscript::bitcoin::{util::psbt::Psbt, Address, Amount, Network};
 
 pub struct RecoveryPanel {
+    wallet: Wallet,
     config: Config,
     locked_coins: (usize, Amount),
     recoverable_coins: (usize, Amount),
@@ -39,7 +41,13 @@ pub struct RecoveryPanel {
 }
 
 impl RecoveryPanel {
-    pub fn new(config: Config, coins: &[Coin], timelock: u32, blockheight: u32) -> Self {
+    pub fn new(
+        wallet: Wallet,
+        config: Config,
+        coins: &[Coin],
+        timelock: u32,
+        blockheight: u32,
+    ) -> Self {
         let mut locked_coins = (0, Amount::from_sat(0));
         let mut recoverable_coins = (0, Amount::from_sat(0));
         for coin in coins {
@@ -55,6 +63,7 @@ impl RecoveryPanel {
             }
         }
         Self {
+            wallet,
             config,
             locked_coins,
             recoverable_coins,
@@ -195,7 +204,7 @@ impl State for RecoveryPanel {
 
     fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         let config = self.config.clone();
-        let desc = daemon.config().main_descriptor.to_string();
+        let desc = self.wallet.main_descriptor.to_string();
         let daemon = daemon.clone();
         Command::batch(vec![
             Command::perform(
@@ -208,7 +217,7 @@ impl State for RecoveryPanel {
                 Message::Coins,
             ),
             Command::perform(
-                list_hws(config, "Liana".to_string(), desc),
+                list_hws(config, self.wallet.name.clone(), desc),
                 Message::ConnectedHardwareWallets,
             ),
         ])

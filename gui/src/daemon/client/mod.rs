@@ -27,13 +27,12 @@ pub trait Client {
 
 #[derive(Debug, Clone)]
 pub struct Lianad<C: Client> {
-    config: Config,
     client: C,
 }
 
 impl<C: Client> Lianad<C> {
-    pub fn new(client: C, config: Config) -> Lianad<C> {
-        Lianad { client, config }
+    pub fn new(client: C) -> Lianad<C> {
+        Lianad { client }
     }
 
     /// Generic call function for RPC calls.
@@ -55,8 +54,8 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         true
     }
 
-    fn config(&self) -> &Config {
-        &self.config
+    fn config(&self) -> Option<&Config> {
+        None
     }
 
     fn stop(&mut self) -> Result<(), DaemonError> {

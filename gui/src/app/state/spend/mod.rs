@@ -4,14 +4,14 @@ use std::sync::Arc;
 
 use iced::{Command, Element};
 
-use liana::{
-    descriptors::MultipathDescriptor,
-    miniscript::bitcoin::{consensus, util::psbt::Psbt},
-};
+use liana::miniscript::bitcoin::{consensus, util::psbt::Psbt};
 
 use super::{redirect, State};
 use crate::{
-    app::{cache::Cache, config::Config, error::Error, menu::Menu, message::Message, view},
+    app::{
+        cache::Cache, config::Config, error::Error, menu::Menu, message::Message, view,
+        wallet::Wallet,
+    },
     daemon::{
         model::{Coin, SpendTx},
         Daemon,
@@ -20,6 +20,7 @@ use crate::{
 };
 
 pub struct SpendPanel {
+    wallet: Wallet,
     config: Config,
     selected_tx: Option<detail::SpendTxState>,
     spend_txs: Vec<SpendTx>,
@@ -28,8 +29,9 @@ pub struct SpendPanel {
 }
 
 impl SpendPanel {
-    pub fn new(config: Config, spend_txs: &[SpendTx]) -> Self {
+    pub fn new(wallet: Wallet, config: Config, spend_txs: &[SpendTx]) -> Self {
         Self {
+            wallet,
             config,
             spend_txs: spend_txs.to_vec(),
             warning: None,
@@ -95,7 +97,12 @@ impl State for SpendPanel {
             }
             Message::View(view::Message::Select(i)) => {
                 if let Some(tx) = self.spend_txs.get(i) {
-                    let tx = detail::SpendTxState::new(self.config.clone(), tx.clone(), true);
+                    let tx = detail::SpendTxState::new(
+                        self.wallet.clone(),
+                        self.config.clone(),
+                        tx.clone(),
+                        true,
+                    );
                     let cmd = tx.load(daemon);
                     self.selected_tx = Some(tx);
                     return cmd;
@@ -136,13 +143,9 @@ pub struct CreateSpendPanel {
 }
 
 impl CreateSpendPanel {
-    pub fn new(
-        config: Config,
-        descriptor: MultipathDescriptor,
-        coins: &[Coin],
-        timelock: u32,
-        blockheight: u32,
-    ) -> Self {
+    pub fn new(wallet: Wallet, config: Config, coins: &[Coin], blockheight: u32) -> Self {
+        let descriptor = wallet.main_descriptor.clone();
+        let timelock = descriptor.timelock_value();
         Self {
             draft: step::TransactionDraft::default(),
             current: 0,
@@ -154,7 +157,7 @@ impl CreateSpendPanel {
                     timelock,
                     blockheight,
                 )),
-                Box::new(step::SaveSpend::new(config)),
+                Box::new(step::SaveSpend::new(wallet, config)),
             ],
         }
     }

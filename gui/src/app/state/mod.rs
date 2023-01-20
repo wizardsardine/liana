@@ -11,7 +11,7 @@ use iced::{widget::qr_code, Command, Subscription};
 use iced::{widget::Column, Element};
 use liana::miniscript::bitcoin::{Address, Amount};
 
-use super::{cache::Cache, error::Error, menu::Menu, message::Message, view};
+use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet};
 
 use crate::daemon::{
     model::{remaining_sequence, Coin, HistoryTransaction},
@@ -39,6 +39,7 @@ pub trait State {
 }
 
 pub struct Home {
+    wallet: Wallet,
     balance: Amount,
     recovery_warning: Option<(Amount, usize)>,
     recovery_alert: Option<(Amount, usize)>,
@@ -49,8 +50,9 @@ pub struct Home {
 }
 
 impl Home {
-    pub fn new(coins: &[Coin]) -> Self {
+    pub fn new(wallet: Wallet, coins: &[Coin]) -> Self {
         Self {
+            wallet,
             balance: Amount::from_sat(
                 coins
                     .iter()
@@ -120,7 +122,7 @@ impl State for Home {
                     for coin in coins {
                         if coin.spend_info.is_none() && coin.block_height.is_some() {
                             self.balance += coin.amount;
-                            let timelock = daemon.config().main_descriptor.timelock_value();
+                            let timelock = self.wallet.main_descriptor.timelock_value();
                             let seq = remaining_sequence(&coin, cache.blockheight as u32, timelock);
                             if seq == 0 {
                                 recovery_alert.0 += coin.amount;
@@ -327,10 +329,7 @@ mod tests {
             client::{Lianad, Request},
             model::*,
         },
-        utils::{
-            mock::{fake_daemon_config, Daemon},
-            sandbox::Sandbox,
-        },
+        utils::{mock::Daemon, sandbox::Sandbox},
     };
 
     use liana::miniscript::bitcoin::Address;
@@ -350,7 +349,7 @@ mod tests {
         )]);
 
         let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::default());
-        let client = Arc::new(Lianad::new(daemon.run(), fake_daemon_config()));
+        let client = Arc::new(Lianad::new(daemon.run()));
         let sandbox = sandbox.load(client, &Cache::default()).await;
 
         let panel = sandbox.state();

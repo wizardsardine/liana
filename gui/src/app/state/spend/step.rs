@@ -13,6 +13,7 @@ use liana::{
 use crate::{
     app::{
         cache::Cache, config::Config, error::Error, message::Message, state::spend::detail, view,
+        wallet::Wallet,
     },
     daemon::{
         model::{remaining_sequence, Coin, SpendTx},
@@ -88,8 +89,8 @@ impl ChooseRecipients {
 impl Step for ChooseRecipients {
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
         _draft: &TransactionDraft,
         message: Message,
     ) -> Command<Message> {
@@ -105,7 +106,7 @@ impl Step for ChooseRecipients {
                     self.recipients
                         .get_mut(*i)
                         .unwrap()
-                        .update(daemon.config().bitcoin_config.network, msg);
+                        .update(cache.network, msg);
                 }
                 _ => {}
             }
@@ -429,13 +430,15 @@ impl Step for ChooseCoins {
 }
 
 pub struct SaveSpend {
+    wallet: Wallet,
     config: Config,
     spend: Option<detail::SpendTxState>,
 }
 
 impl SaveSpend {
-    pub fn new(config: Config) -> Self {
+    pub fn new(wallet: Wallet, config: Config) -> Self {
         Self {
+            wallet,
             config,
             spend: None,
         }
@@ -445,6 +448,7 @@ impl SaveSpend {
 impl Step for SaveSpend {
     fn load(&mut self, draft: &TransactionDraft) {
         self.spend = Some(detail::SpendTxState::new(
+            self.wallet.clone(),
             self.config.clone(),
             SpendTx::new(draft.generated.clone().unwrap(), draft.inputs.clone()),
             false,

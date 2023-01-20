@@ -296,10 +296,10 @@ pub fn cover<'a, T: 'a + Clone, C: Into<Element<'a, T>>>(
 
 async fn connect(
     socket_path: PathBuf,
-    config: Config,
+    _config: Config,
 ) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
     let client = client::jsonrpc::JsonRPCClient::new(socket_path);
-    let daemon = Lianad::new(client, config);
+    let daemon = Lianad::new(client);
 
     debug!("Searching for external daemon");
     daemon.get_info()?;
