@@ -1,18 +1,14 @@
 use iced::{
-    widget::{Button, Column, Container, Row, Space},
+    widget::{Column, Container, Row, Space},
     Alignment, Element, Length,
 };
 
-use liana::miniscript::bitcoin::{util::psbt::Psbt, Amount};
+use liana::miniscript::bitcoin::Amount;
 
 use crate::{
-    app::view::{
-        hw::hw_list_view,
-        message::{CreateSpendMessage, Message},
-    },
-    hw::HardwareWallet,
+    app::view::message::{CreateSpendMessage, Message},
     ui::{
-        component::{button, card, form, text::*},
+        component::{button, form, text::*},
         icon,
         util::Collection,
     },
@@ -24,10 +20,6 @@ pub fn recovery<'a>(
     recoverable_coins: &(usize, Amount),
     feerate: &form::Value<String>,
     address: &'a form::Value<String>,
-    generated: Option<&Psbt>,
-    hws: &[HardwareWallet],
-    chosen_hw: Option<usize>,
-    done: bool,
 ) -> Element<'a, Message> {
     Column::new()
         .push(Space::with_height(Length::Units(100)))
@@ -59,173 +51,7 @@ pub fn recovery<'a>(
             None
         })
         .push(Space::with_height(Length::Units(20)))
-        .push(if let Some(psbt) = generated {
-            if done {
-                Column::new()
-                    .spacing(20)
-                    .align_items(Alignment::Center)
-                    .push(text("Funds were sweeped"))
-                    .push(card::simple(
-                        Column::new()
-                            .push(
-                                Row::new()
-                                    .spacing(5)
-                                    .align_items(Alignment::Center)
-                                    .push(
-                                        text(format!(
-                                            "{}",
-                                            Amount::from_sat(psbt.unsigned_tx.output[0].value)
-                                        ))
-                                        .small()
-                                        .bold(),
-                                    )
-                                    .push(text(" to ").small())
-                                    .push(text(&address.value).small().bold()),
-                            )
-                            .push(
-                                Row::new()
-                                    .spacing(5)
-                                    .align_items(Alignment::Center)
-                                    .push(
-                                        text(format!("Txid: {}", psbt.unsigned_tx.txid())).small(),
-                                    )
-                                    .push(
-                                        Button::new(icon::clipboard_icon().small())
-                                            .on_press(Message::Clipboard(
-                                                psbt.unsigned_tx.txid().to_string(),
-                                            ))
-                                            .style(button::Style::Border.into()),
-                                    ),
-                            )
-                            .push_maybe(
-                                if recoverable_coins.1.to_sat() > psbt.unsigned_tx.output[0].value {
-                                    Some(
-                                        Row::new().push(
-                                            text(format!(
-                                                "Fees: {}",
-                                                recoverable_coins.1
-                                                    - Amount::from_sat(
-                                                        psbt.unsigned_tx.output[0].value
-                                                    )
-                                            ))
-                                            .small(),
-                                        ),
-                                    )
-                                } else {
-                                    None
-                                },
-                            ),
-                    ))
-            } else {
-                Column::new()
-                    .spacing(20)
-                    .align_items(Alignment::Center)
-                    .push_maybe(if chosen_hw.is_none() {
-                        Some(button::border(None, "< Previous").on_press(Message::Previous))
-                    } else {
-                        None
-                    })
-                    .push(text("Sign the transaction to sweep the funds").bold())
-                    .push(card::simple(
-                        Column::new()
-                            .push(
-                                Row::new()
-                                    .spacing(5)
-                                    .align_items(Alignment::Center)
-                                    .push(
-                                        text(format!(
-                                            "{}",
-                                            Amount::from_sat(psbt.unsigned_tx.output[0].value)
-                                        ))
-                                        .small()
-                                        .bold(),
-                                    )
-                                    .push(text(" to ").small())
-                                    .push(text(&address.value).small().bold()),
-                            )
-                            .push(
-                                Row::new()
-                                    .spacing(5)
-                                    .align_items(Alignment::Center)
-                                    .push(
-                                        text(format!("Txid: {}", psbt.unsigned_tx.txid())).small(),
-                                    )
-                                    .push(
-                                        Button::new(icon::clipboard_icon().small())
-                                            .on_press(Message::Clipboard(
-                                                psbt.unsigned_tx.txid().to_string(),
-                                            ))
-                                            .style(button::Style::Border.into()),
-                                    ),
-                            )
-                            .push_maybe(
-                                if recoverable_coins.1.to_sat() > psbt.unsigned_tx.output[0].value {
-                                    Some(
-                                        Row::new().push(
-                                            text(format!(
-                                                "Fees: {}",
-                                                recoverable_coins.1
-                                                    - Amount::from_sat(
-                                                        psbt.unsigned_tx.output[0].value
-                                                    )
-                                            ))
-                                            .small(),
-                                        ),
-                                    )
-                                } else {
-                                    None
-                                },
-                            ),
-                    ))
-                    .push(if !hws.is_empty() {
-                        Column::new()
-                            .push(
-                                Row::new()
-                                    .align_items(Alignment::Center)
-                                    .push(
-                                        text("Select hardware wallet to sign with:")
-                                            .bold()
-                                            .width(Length::Fill),
-                                    )
-                                    .push_maybe(if chosen_hw.is_none() {
-                                        Some(
-                                            button::border(None, "Refresh")
-                                                .on_press(Message::Reload),
-                                        )
-                                    } else {
-                                        None
-                                    }),
-                            )
-                            .spacing(10)
-                            .push(hws.iter().enumerate().fold(
-                                Column::new().spacing(10),
-                                |col, (i, hw)| {
-                                    col.push(hw_list_view(
-                                        i,
-                                        hw,
-                                        Some(i) == chosen_hw,
-                                        chosen_hw.is_some(),
-                                        false,
-                                    ))
-                                },
-                            ))
-                            .max_width(500)
-                    } else {
-                        Column::new()
-                            .push(
-                                Column::new()
-                                    .spacing(20)
-                                    .width(Length::Fill)
-                                    .push("Please connect a hardware wallet")
-                                    .push(
-                                        button::primary(None, "Refresh").on_press(Message::Reload),
-                                    )
-                                    .align_items(Alignment::Center),
-                            )
-                            .width(Length::Fill)
-                    })
-            }
-        } else {
+        .push(
             Column::new()
                 .push(text("Enter destination address and feerate:").bold())
                 .push(
@@ -267,8 +93,8 @@ pub fn recovery<'a>(
                     },
                 )
                 .spacing(20)
-                .align_items(Alignment::Center)
-        })
+                .align_items(Alignment::Center),
+        )
         .align_items(Alignment::Center)
         .spacing(20)
         .into()
