@@ -191,6 +191,19 @@ impl HotSigner {
 
         Ok(())
     }
+
+    /// Get the extended public key at the given derivation path.
+    pub fn xpub_at(
+        &self,
+        der_path: &bip32::DerivationPath,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
+    ) -> bip32::ExtendedPubKey {
+        let xpriv = self
+            .master_xpriv
+            .derive_priv(secp, der_path)
+            .expect("Never fails");
+        bip32::ExtendedPubKey::from_priv(secp, &xpriv)
+    }
 }
 
 #[cfg(test)]
@@ -219,6 +232,13 @@ mod tests {
                 .unwrap()
                 .words(),
             signer.words()
+        );
+
+        // We can get an xpub for it.
+        let secp = secp256k1::Secp256k1::signing_only();
+        let _ = signer.xpub_at(
+            &bip32::DerivationPath::from_str("m/42'/43/0987'/0/2").unwrap(),
+            &secp,
         );
     }
 
