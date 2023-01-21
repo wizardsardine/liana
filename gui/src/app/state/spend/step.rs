@@ -447,10 +447,16 @@ impl SaveSpend {
 
 impl Step for SaveSpend {
     fn load(&mut self, draft: &TransactionDraft) {
+        let psbt = draft.generated.clone().unwrap();
+        let sigs = self
+            .wallet
+            .main_descriptor
+            .partial_spend_info(&psbt)
+            .unwrap();
         self.spend = Some(detail::SpendTxState::new(
             self.wallet.clone(),
             self.config.clone(),
-            SpendTx::new(draft.generated.clone().unwrap(), draft.inputs.clone()),
+            SpendTx::new(psbt, draft.inputs.clone(), sigs),
             false,
         ));
     }

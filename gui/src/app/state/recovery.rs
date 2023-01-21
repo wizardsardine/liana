@@ -160,6 +160,7 @@ impl State for RecoveryPanel {
                     let address = Address::from_str(&self.recipient.value).expect("Checked before");
                     let feerate_vb = self.feerate.value.parse::<u64>().expect("Checked before");
                     self.warning = None;
+                    let desc = self.wallet.main_descriptor.clone();
                     return Command::perform(
                         async move {
                             let psbt = daemon.create_recovery(address, feerate_vb)?;
@@ -174,7 +175,8 @@ impl State for RecoveryPanel {
                                 })
                                 .copied()
                                 .collect();
-                            Ok(SpendTx::new(psbt, coins))
+                            let sigs = desc.partial_spend_info(&psbt).unwrap();
+                            Ok(SpendTx::new(psbt, coins, sigs))
                         },
                         Message::Recovery,
                     );
