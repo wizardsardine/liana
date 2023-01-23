@@ -7,7 +7,7 @@ use liana::{
     descriptors::{LianaDescKeys, MultipathDescriptor},
     miniscript::{
         bitcoin::{
-            util::bip32::{DerivationPath, ExtendedPubKey, Fingerprint},
+            util::bip32::{DerivationPath, Fingerprint},
             Network,
         },
         descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
@@ -48,6 +48,8 @@ pub struct DefineDescriptor {
     sequence: form::Value<String>,
     modal: Option<Box<dyn DescriptorKeyModal>>,
 
+    name_indexes: (usize, usize),
+
     error: Option<String>,
 }
 
@@ -61,6 +63,7 @@ impl DefineDescriptor {
             spending_threshold: 1,
             recovery_keys: vec![DescriptorKey::new("Recovery key 1".to_string())],
             recovery_threshold: 1,
+            name_indexes: (1, 1),
             sequence: form::Value::default(),
             modal: None,
             error: None,
@@ -112,12 +115,12 @@ impl DefineDescriptor {
         for spending_key in self.spending_keys.iter_mut() {
             spending_key.duplicate_name = duplicate_names.contains(&spending_key.name);
             if let Some(key) = &spending_key.key {
-                spending_key.duplicate_key = duplicate_keys.contains(&key);
+                spending_key.duplicate_key = duplicate_keys.contains(key);
             }
         }
         for recovery_key in self.recovery_keys.iter_mut() {
             if let Some(key) = &recovery_key.key {
-                recovery_key.duplicate_key = duplicate_keys.contains(&key);
+                recovery_key.duplicate_key = duplicate_keys.contains(key);
             }
         }
     }
@@ -161,16 +164,16 @@ impl Step for DefineDescriptor {
                     }
                     message::DefineDescriptor::AddKey(is_recovery) => {
                         if is_recovery {
+                            self.name_indexes.0 += 1;
                             self.recovery_keys.push(DescriptorKey::new(format!(
                                 "Recovery key {}",
-                                self.recovery_keys.len() + 1
+                                self.name_indexes.0,
                             )));
                             self.recovery_threshold += 1;
                         } else {
-                            self.spending_keys.push(DescriptorKey::new(format!(
-                                "Key {}",
-                                self.spending_keys.len() + 1
-                            )));
+                            self.name_indexes.1 += 1;
+                            self.spending_keys
+                                .push(DescriptorKey::new(format!("Key {}", self.name_indexes.1,)));
                             self.spending_threshold += 1;
                         }
                     }
@@ -178,28 +181,51 @@ impl Step for DefineDescriptor {
                         message::DefineKey::Clipboard(key) => {
                             return Command::perform(async move { key }, Message::Clibpboard);
                         }
-                        message::DefineKey::Imported(imported_key) => {
+                        message::DefineKey::Edited(name, imported_key) => {
                             if is_recovery {
                                 if let Some(recovery_key) = self.recovery_keys.get_mut(i) {
+                                    recovery_key.name = name;
                                     recovery_key.key = Some(imported_key);
                                     recovery_key.check_network(self.network);
                                 }
                             } else if let Some(spending_key) = self.spending_keys.get_mut(i) {
+                                spending_key.name = name;
                                 spending_key.key = Some(imported_key);
                                 spending_key.check_network(self.network);
                             }
                             self.modal = None;
                             self.check_for_duplicate();
                         }
-                        message::DefineKey::ImportFromClipboard => {
-                            let modal = ImportXpubModal::new(i, is_recovery, self.network);
-                            self.modal = Some(Box::new(modal));
-                        }
-                        message::DefineKey::ImportFromHardware => {
-                            let modal = HardwareXpubModal::new(i, is_recovery, self.network);
-                            let cmd = modal.load();
-                            self.modal = Some(Box::new(modal));
-                            return cmd;
+                        message::DefineKey::Edit => {
+                            if is_recovery {
+                                if let Some(recovery_key) = self.recovery_keys.get(i) {
+                                    let name = recovery_key.name.clone();
+                                    let key = recovery_key
+                                        .key
+                                        .as_ref()
+                                        .map(|k| {
+                                            k.to_string().trim_end_matches("/<0;1>/*").to_string()
+                                        })
+                                        .unwrap_or_else(|| "".to_string());
+                                    let modal =
+                                        EditXpubModal::new(name, key, i, is_recovery, self.network);
+                                    let cmd = modal.load();
+                                    self.modal = Some(Box::new(modal));
+                                    return cmd;
+                                }
+                            } else if let Some(spending_key) = self.spending_keys.get(i) {
+                                let name = spending_key.name.clone();
+                                let key = spending_key
+                                    .key
+                                    .as_ref()
+                                    .map(|k| k.to_string().trim_end_matches("/<0;1>/*").to_string())
+                                    .unwrap_or_else(|| "".to_string());
+                                let modal =
+                                    EditXpubModal::new(name, key, i, is_recovery, self.network);
+                                let cmd = modal.load();
+                                self.modal = Some(Box::new(modal));
+                                return cmd;
+                            }
                         }
                         message::DefineKey::Delete => {
                             if is_recovery {
@@ -371,10 +397,13 @@ impl DescriptorKey {
 
     pub fn view(&self) -> Element<message::DefineKey> {
         match &self.key {
-            None => view::undefined_descriptor_key(),
-            Some(key) => {
-                view::defined_descriptor_key(key.to_string(), self.valid, self.duplicate_key)
-            }
+            None => view::undefined_descriptor_key(&self.name),
+            Some(_) => view::defined_descriptor_key(
+                &self.name,
+                self.valid,
+                self.duplicate_key,
+                self.duplicate_name,
+            ),
         }
     }
 }
@@ -411,20 +440,37 @@ impl From<DefineDescriptor> for Box<dyn Step> {
     }
 }
 
-pub struct HardwareXpubModal {
+pub struct EditXpubModal {
     is_recovery: bool,
     key_index: usize,
     network: Network,
     error: Option<Error>,
     processing: bool,
 
+    form_name: form::Value<String>,
+    form_xpub: form::Value<String>,
+
     chosen_hw: Option<usize>,
     hws: Vec<HardwareWallet>,
 }
 
-impl HardwareXpubModal {
-    fn new(key_index: usize, is_recovery: bool, network: Network) -> Self {
+impl EditXpubModal {
+    fn new(
+        name: String,
+        key: String,
+        key_index: usize,
+        is_recovery: bool,
+        network: Network,
+    ) -> Self {
         Self {
+            form_name: form::Value {
+                valid: true,
+                value: name,
+            },
+            form_xpub: form::Value {
+                valid: true,
+                value: key,
+            },
             is_recovery,
             key_index,
             chosen_hw: None,
@@ -442,7 +488,7 @@ impl HardwareXpubModal {
     }
 }
 
-impl DescriptorKeyModal for HardwareXpubModal {
+impl DescriptorKeyModal for EditXpubModal {
     fn processing(&self) -> bool {
         self.processing
     }
@@ -474,61 +520,18 @@ impl DescriptorKeyModal for HardwareXpubModal {
                 self.processing = false;
                 match res {
                     Ok(key) => {
-                        let key_index = self.key_index;
-                        let is_recovery = self.is_recovery;
-                        return Command::perform(
-                            async move { (is_recovery, key_index, key) },
-                            |(is_recovery, key_index, key)| {
-                                message::DefineDescriptor::Key(
-                                    is_recovery,
-                                    key_index,
-                                    message::DefineKey::Imported(key),
-                                )
-                            },
-                        )
-                        .map(Message::DefineDescriptor);
+                        self.form_xpub.value =
+                            key.to_string().trim_end_matches("/<0;1>/*").to_string();
                     }
                     Err(e) => {
                         self.error = Some(e);
                     }
                 }
             }
-            _ => {}
-        };
-        Command::none()
-    }
-    fn view(&self) -> Element<Message> {
-        view::hardware_wallet_xpubs_modal(
-            self.is_recovery,
-            &self.hws,
-            self.error.as_ref(),
-            self.processing,
-            self.chosen_hw,
-        )
-    }
-}
-
-pub struct ImportXpubModal {
-    is_recovery: bool,
-    key_index: usize,
-    form_xpub: form::Value<String>,
-    network: Network,
-}
-
-impl ImportXpubModal {
-    fn new(key_index: usize, is_recovery: bool, network: Network) -> Self {
-        Self {
-            form_xpub: form::Value::default(),
-            is_recovery,
-            key_index,
-            network,
-        }
-    }
-}
-
-impl DescriptorKeyModal for ImportXpubModal {
-    fn update(&mut self, message: Message) -> Command<Message> {
-        match message {
+            Message::DefineDescriptor(message::DefineDescriptor::NameEdited(name)) => {
+                self.form_name.valid = true;
+                self.form_name.value = name;
+            }
             Message::DefineDescriptor(message::DefineDescriptor::XPubEdited(s)) => {
                 self.form_xpub.valid =
                     DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", s)).is_ok();
@@ -540,13 +543,14 @@ impl DescriptorKeyModal for ImportXpubModal {
                 {
                     let key_index = self.key_index;
                     let is_recovery = self.is_recovery;
+                    let name = self.form_name.value.clone();
                     return Command::perform(
                         async move { (is_recovery, key_index, key) },
                         |(is_recovery, key_index, key)| {
                             message::DefineDescriptor::Key(
                                 is_recovery,
                                 key_index,
-                                message::DefineKey::Imported(key),
+                                message::DefineKey::Edited(name, key),
                             )
                         },
                     )
@@ -558,29 +562,15 @@ impl DescriptorKeyModal for ImportXpubModal {
         Command::none()
     }
     fn view(&self) -> Element<Message> {
-        view::clipboard_xpub_modal(&self.form_xpub, self.network)
-    }
-}
-
-pub struct XKey {
-    origin: Option<(Fingerprint, DerivationPath)>,
-    key: ExtendedPubKey,
-}
-
-impl std::fmt::Display for XKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if let Some((ref master_id, ref master_deriv)) = self.origin {
-            std::fmt::Formatter::write_str(f, "[")?;
-            for byte in master_id.into_bytes().iter() {
-                write!(f, "{:02x}", byte)?;
-            }
-            for child in master_deriv {
-                write!(f, "/{}", child)?;
-            }
-            std::fmt::Formatter::write_str(f, "]")?;
-        }
-        self.key.fmt(f)?;
-        Ok(())
+        view::edit_key_modal(
+            self.network,
+            &self.hws,
+            self.error.as_ref(),
+            self.processing,
+            self.chosen_hw,
+            &self.form_xpub,
+            &self.form_name,
+        )
     }
 }
 

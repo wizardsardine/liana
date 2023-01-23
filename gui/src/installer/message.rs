@@ -44,6 +44,7 @@ pub enum DefineDescriptor {
     Key(bool, usize, DefineKey),
     HWXpubImported(Result<DescriptorPublicKey, Error>),
     XPubEdited(String),
+    NameEdited(String),
     SequenceEdited(String),
     ThresholdEdited(bool, usize),
     ConfirmXpub,
@@ -52,8 +53,7 @@ pub enum DefineDescriptor {
 #[derive(Debug, Clone)]
 pub enum DefineKey {
     Delete,
-    ImportFromHardware,
-    ImportFromClipboard,
+    Edit,
     Clipboard(String),
-    Imported(DescriptorPublicKey),
+    Edited(String, DescriptorPublicKey),
 }
