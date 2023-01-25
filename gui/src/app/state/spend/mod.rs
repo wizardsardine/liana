@@ -8,10 +8,7 @@ use liana::miniscript::bitcoin::{consensus, util::psbt::Psbt};
 
 use super::{redirect, State};
 use crate::{
-    app::{
-        cache::Cache, config::Config, error::Error, menu::Menu, message::Message, view,
-        wallet::Wallet,
-    },
+    app::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet},
     daemon::{
         model::{Coin, SpendTx},
         Daemon,
@@ -20,8 +17,7 @@ use crate::{
 };
 
 pub struct SpendPanel {
-    wallet: Wallet,
-    config: Config,
+    wallet: Arc<Wallet>,
     selected_tx: Option<detail::SpendTxState>,
     spend_txs: Vec<SpendTx>,
     warning: Option<Error>,
@@ -29,10 +25,9 @@ pub struct SpendPanel {
 }
 
 impl SpendPanel {
-    pub fn new(wallet: Wallet, config: Config, spend_txs: &[SpendTx]) -> Self {
+    pub fn new(wallet: Arc<Wallet>, spend_txs: &[SpendTx]) -> Self {
         Self {
             wallet,
-            config,
             spend_txs: spend_txs.to_vec(),
             warning: None,
             selected_tx: None,
@@ -97,12 +92,7 @@ impl State for SpendPanel {
             }
             Message::View(view::Message::Select(i)) => {
                 if let Some(tx) = self.spend_txs.get(i) {
-                    let tx = detail::SpendTxState::new(
-                        self.wallet.clone(),
-                        self.config.clone(),
-                        tx.clone(),
-                        true,
-                    );
+                    let tx = detail::SpendTxState::new(self.wallet.clone(), tx.clone(), true);
                     let cmd = tx.load(daemon);
                     self.selected_tx = Some(tx);
                     return cmd;
@@ -143,7 +133,7 @@ pub struct CreateSpendPanel {
 }
 
 impl CreateSpendPanel {
-    pub fn new(wallet: Wallet, config: Config, coins: &[Coin], blockheight: u32) -> Self {
+    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: u32) -> Self {
         let descriptor = wallet.main_descriptor.clone();
         let timelock = descriptor.timelock_value();
         Self {
@@ -157,7 +147,7 @@ impl CreateSpendPanel {
                     timelock,
                     blockheight,
                 )),
-                Box::new(step::SaveSpend::new(wallet, config)),
+                Box::new(step::SaveSpend::new(wallet)),
             ],
         }
     }

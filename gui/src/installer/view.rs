@@ -8,9 +8,9 @@ use liana::miniscript::bitcoin;
 use crate::{
     hw::HardwareWallet,
     installer::{
+        context::Context,
         message::{self, Message},
-        step::Context,
-        Error,
+        prompt, Error,
     },
     ui::{
         color,
@@ -171,9 +171,7 @@ pub fn define_descriptor<'a>(
                 .spacing(10)
                 .push(Space::with_width(Length::Units(40)))
                 .push(text("Primary path:").bold())
-                .push(tooltip(
-                    super::prompt::DEFINE_DESCRIPTOR_PRIMATRY_PATH_TOOLTIP,
-                )),
+                .push(tooltip(prompt::DEFINE_DESCRIPTOR_PRIMATRY_PATH_TOOLTIP)),
         )
         .push(separation().width(Length::Fill))
         .push(
@@ -294,7 +292,7 @@ pub fn define_descriptor<'a>(
                         Row::new()
                             .spacing(10)
                             .push(text("Blocks before recovery:").bold())
-                            .push(tooltip(super::prompt::DEFINE_DESCRIPTOR_SEQUENCE_TOOLTIP)),
+                            .push(tooltip(prompt::DEFINE_DESCRIPTOR_SEQUENCE_TOOLTIP)),
                     )
                     .push(
                         Container::new(
@@ -319,7 +317,7 @@ pub fn define_descriptor<'a>(
     layout(
         progress,
         Column::new()
-            .push(Space::with_height(Length::Units(50)))
+            .push(Space::with_height(Length::Units(30)))
             .push(text("Create the wallet").bold().size(50))
             .push(
                 Column::new()
@@ -620,7 +618,7 @@ pub fn backup_descriptor<'a>(
             )
             .push(
                 Column::new()
-                    .push(text(super::prompt::BACKUP_DESCRIPTOR_MESSAGE))
+                    .push(text(prompt::BACKUP_DESCRIPTOR_MESSAGE))
                     .push(collapse::Collapse::new(
                         || {
                             Button::new(
@@ -680,7 +678,7 @@ pub fn backup_descriptor<'a>(
 }
 
 pub fn help_backup<'a>() -> Element<'a, Message> {
-    text(super::prompt::BACKUP_DESCRIPTOR_HELP).small().into()
+    text(prompt::BACKUP_DESCRIPTOR_HELP).small().into()
 }
 
 pub fn define_bitcoin<'a>(
@@ -854,7 +852,7 @@ pub fn install<'a>(
     layout(progress, col)
 }
 
-pub fn undefined_descriptor_key(name: &str) -> Element<message::DefineKey> {
+pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
     card::simple(
         Column::new()
             .width(Length::Fill)
@@ -875,8 +873,13 @@ pub fn undefined_descriptor_key(name: &str) -> Element<message::DefineKey> {
                         .spacing(15)
                         .align_items(Alignment::Center)
                         .push(
-                            Scrollable::new(text(name).bold())
-                                .horizontal_scroll(Properties::new().width(2).scroller_width(2)),
+                            Scrollable::new(
+                                icon::key_icon()
+                                    .style(color::DARK_GREY)
+                                    .size(50)
+                                    .width(Length::Units(50)),
+                            )
+                            .horizontal_scroll(Properties::new().width(2).scroller_width(2)),
                         )
                         .push(icon::circle_check_icon().style(color::FOREGROUND).size(50)),
                 )
@@ -884,8 +887,7 @@ pub fn undefined_descriptor_key(name: &str) -> Element<message::DefineKey> {
                 .align_y(alignment::Vertical::Center),
             )
             .push(
-                button::border(Some(icon::pencil_icon()), "Edit")
-                    .on_press(message::DefineKey::Edit),
+                button::border(Some(icon::pencil_icon()), "Set").on_press(message::DefineKey::Edit),
             )
             .push(Space::with_height(Length::Units(5))),
     )
@@ -967,7 +969,7 @@ pub fn defined_descriptor_key(
                     .height(Length::Units(200))
                     .width(Length::Units(200)),
             )
-            .push(text("Key is a duplicate").small().style(color::ALERT))
+            .push(text("Duplicate key").small().style(color::ALERT))
             .into()
     } else if duplicate_name {
         Column::new()
@@ -978,7 +980,7 @@ pub fn defined_descriptor_key(
                     .height(Length::Units(200))
                     .width(Length::Units(200)),
             )
-            .push(text("Name is a duplicate").small().style(color::ALERT))
+            .push(text("Duplicate name").small().style(color::ALERT))
             .into()
     } else {
         card::simple(col)
@@ -989,6 +991,7 @@ pub fn defined_descriptor_key(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn edit_key_modal<'a>(
     network: bitcoin::Network,
     hws: &[HardwareWallet],
@@ -996,62 +999,14 @@ pub fn edit_key_modal<'a>(
     processing: bool,
     chosen_hw: Option<usize>,
     form_xpub: &form::Value<String>,
-    form_name: &form::Value<String>,
+    form_name: &'a form::Value<String>,
+    edit_name: bool,
 ) -> Element<'a, Message> {
     Column::new()
         .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
         .push(card::simple(
             Column::new()
                 .spacing(25)
-                .push(
-                    Container::new(
-                        Row::new()
-                            .spacing(5)
-                            .push(icon::pencil_icon())
-                            .push(text("Edit")),
-                    )
-                    .width(Length::Fill)
-                    .align_x(alignment::Horizontal::Center),
-                )
-                .push(
-                    Column::new()
-                        .spacing(5)
-                        .push(text("Edit name:").bold())
-                        .push(
-                            form::Form::new("Name", form_name, |msg| {
-                                Message::DefineDescriptor(message::DefineDescriptor::NameEdited(
-                                    msg,
-                                ))
-                            })
-                            .warning("Please enter correct name")
-                            .size(20)
-                            .padding(10),
-                        ),
-                )
-                .push(
-                    Column::new()
-                        .spacing(5)
-                        .push(text("Enter an extended public key:").bold())
-                        .push(
-                            Row::new()
-                                .push(
-                                    form::Form::new("Extended public key", form_xpub, |msg| {
-                                        Message::DefineDescriptor(
-                                            message::DefineDescriptor::XPubEdited(msg),
-                                        )
-                                    })
-                                    .warning(if network == bitcoin::Network::Bitcoin {
-                                        "Please enter correct xpub"
-                                    } else {
-                                        "Please enter correct tpub"
-                                    })
-                                    .size(20)
-                                    .padding(10),
-                                )
-                                .spacing(10)
-                                .push(Container::new(text("/<0;1>/*")).padding(5)),
-                        ),
-                )
                 .push(if !hws.is_empty() {
                     Column::new()
                         .push(
@@ -1059,7 +1014,7 @@ pub fn edit_key_modal<'a>(
                                 .spacing(10)
                                 .align_items(Alignment::Center)
                                 .push(
-                                    Container::new(text("Or select a hardware wallet:").bold())
+                                    Container::new(text("Select a hardware wallet:").bold())
                                         .width(Length::Fill),
                                 )
                                 .push(
@@ -1100,6 +1055,75 @@ pub fn edit_key_modal<'a>(
                         )
                         .width(Length::Fill)
                 })
+                .push(
+                    Column::new()
+                        .spacing(5)
+                        .push(text("Or enter an extended public key:").bold())
+                        .push(
+                            Row::new()
+                                .push(
+                                    form::Form::new("Extended public key", form_xpub, |msg| {
+                                        Message::DefineDescriptor(
+                                            message::DefineDescriptor::XPubEdited(msg),
+                                        )
+                                    })
+                                    .warning(if network == bitcoin::Network::Bitcoin {
+                                        "Please enter correct xpub with origin"
+                                    } else {
+                                        "Please enter correct tpub with origin"
+                                    })
+                                    .size(20)
+                                    .padding(10),
+                                )
+                                .spacing(10)
+                                .push(Container::new(text("/<0;1>/*")).padding(5)),
+                        ),
+                )
+                .push(
+                    if !edit_name && !form_xpub.value.is_empty() && form_xpub.valid {
+                        Column::new().push(
+                            Row::new()
+                                .push(
+                                    Column::new()
+                                        .spacing(5)
+                                        .width(Length::Fill)
+                                        .push(
+                                            Row::new()
+                                                .spacing(5)
+                                                .push(text("Fingerprint alias:").bold())
+                                                .push(tooltip(
+                                                    prompt::DEFINE_DESCRIPTOR_FINGERPRINT_TOOLTIP,
+                                                )),
+                                        )
+                                        .push(text(&form_name.value)),
+                                )
+                                .push(button::border(Some(icon::pencil_icon()), "Edit").on_press(
+                                    Message::DefineDescriptor(message::DefineDescriptor::EditName),
+                                )),
+                        )
+                    } else if !form_xpub.value.is_empty() && form_xpub.valid {
+                        Column::new()
+                            .spacing(5)
+                            .push(
+                                Row::new()
+                                    .spacing(5)
+                                    .push(text("Fingerprint alias:").bold())
+                                    .push(tooltip(prompt::DEFINE_DESCRIPTOR_FINGERPRINT_TOOLTIP)),
+                            )
+                            .push(
+                                form::Form::new("Alias", form_name, |msg| {
+                                    Message::DefineDescriptor(
+                                        message::DefineDescriptor::NameEdited(msg),
+                                    )
+                                })
+                                .warning("Please enter correct alias")
+                                .size(20)
+                                .padding(10),
+                            )
+                    } else {
+                        Column::new()
+                    },
+                )
                 .push(
                     if form_xpub.valid && !form_xpub.value.is_empty() && !form_name.value.is_empty()
                     {

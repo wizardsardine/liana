@@ -11,9 +11,7 @@ use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
 use liana_gui::{
     app::{
         self,
-        cache::Cache,
         config::{default_datadir, ConfigError},
-        wallet::Wallet,
         App,
     },
     installer::{self, Installer},
@@ -205,17 +203,7 @@ impl Application for GUI {
                     )));
                     Command::none()
                 }
-                loader::Message::Synced(info, coins, spend_txs, daemon) => {
-                    let cache = Cache {
-                        network: info.network,
-                        blockheight: info.block_height,
-                        coins,
-                        spend_txs,
-                        ..Default::default()
-                    };
-
-                    let wallet = Wallet::new(info.descriptors.main);
-
+                loader::Message::Synced(Ok((wallet, cache, daemon))) => {
                     let (app, command) = App::new(cache, wallet, loader.gui_config.clone(), daemon);
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))

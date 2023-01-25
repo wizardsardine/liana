@@ -11,19 +11,19 @@ pub struct Config {
     /// Use iced debug feature if true.
     pub debug: Option<bool>,
     /// hardware wallets config.
-    #[serde(default)]
-    pub hardware_wallets: Vec<HardwareWalletConfig>,
+    /// LEGACY: Use Settings module instead.
+    pub hardware_wallets: Option<Vec<HardwareWalletConfig>>,
 }
 
 pub const DEFAULT_FILE_NAME: &str = "gui.toml";
 
 impl Config {
-    pub fn new(daemon_config_path: PathBuf, hardware_wallets: Vec<HardwareWalletConfig>) -> Self {
+    pub fn new(daemon_config_path: PathBuf) -> Self {
         Self {
             daemon_config_path,
             log_level: None,
             debug: None,
-            hardware_wallets,
+            hardware_wallets: None,
         }
     }
 
@@ -39,14 +39,6 @@ impl Config {
                 })
             })?;
         Ok(config)
-    }
-
-    pub fn default_path() -> Result<PathBuf, ConfigError> {
-        let mut datadir = default_datadir().map_err(|_| {
-            ConfigError::Unexpected("Could not locate the default datadir directory.".to_owned())
-        })?;
-        datadir.push(DEFAULT_FILE_NAME);
-        Ok(datadir)
     }
 }
 

@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 
 use liana::config::Config as LianaConfig;
 
-use super::step::Context;
+use super::Context;
 
 pub const DEFAULT_FILE_NAME: &str = "daemon.toml";
 

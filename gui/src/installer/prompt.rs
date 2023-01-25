@@ -4,3 +4,5 @@ pub const DEFINE_DESCRIPTOR_PRIMATRY_PATH_TOOLTIP: &str =
     "This is the keys that can spend received coins immediately,\n with no time restriction.";
 pub const DEFINE_DESCRIPTOR_SEQUENCE_TOOLTIP: &str =
     "Number of blocks after a coin is received \nfor which the recovery path is not available";
+pub const DEFINE_DESCRIPTOR_FINGERPRINT_TOOLTIP: &str =
+    "The alias is applied on all the keys derived from the same seed";

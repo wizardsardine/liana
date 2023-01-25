@@ -8,8 +8,7 @@ use liana::miniscript::bitcoin::{
 
 use crate::{
     app::{
-        cache::Cache, config::Config, error::Error, message::Message, view, view::spend::detail,
-        wallet::Wallet,
+        cache::Cache, error::Error, message::Message, view, view::spend::detail, wallet::Wallet,
     },
     daemon::{
         model::{SpendStatus, SpendTx},
@@ -39,19 +38,17 @@ trait Action {
 }
 
 pub struct SpendTxState {
-    wallet: Wallet,
-    config: Config,
+    wallet: Arc<Wallet>,
     tx: SpendTx,
     saved: bool,
     action: Option<Box<dyn Action>>,
 }
 
 impl SpendTxState {
-    pub fn new(wallet: Wallet, config: Config, tx: SpendTx, saved: bool) -> Self {
+    pub fn new(wallet: Arc<Wallet>, tx: SpendTx, saved: bool) -> Self {
         Self {
             wallet,
             action: None,
-            config,
             tx,
             saved,
         }
@@ -80,7 +77,7 @@ impl SpendTxState {
                     self.action = Some(Box::new(DeleteAction::default()));
                 }
                 view::SpendTxMessage::Sign => {
-                    let action = SignAction::new(self.config.clone());
+                    let action = SignAction::new();
                     let cmd = action.load(&self.wallet, daemon);
                     self.action = Some(Box::new(action));
                     return cmd;
@@ -252,7 +249,6 @@ impl Action for DeleteAction {
 }
 
 pub struct SignAction {
-    config: Config,
     chosen_hw: Option<usize>,
     processing: bool,
     hws: Vec<HardwareWallet>,
@@ -261,9 +257,8 @@ pub struct SignAction {
 }
 
 impl SignAction {
-    pub fn new(config: Config) -> Self {
+    pub fn new() -> Self {
         Self {
-            config,
             chosen_hw: None,
             processing: false,
             hws: Vec::new(),
@@ -279,13 +274,8 @@ impl Action for SignAction {
     }
 
     fn load(&self, wallet: &Wallet, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        let config = self.config.clone();
-        let desc = wallet.main_descriptor.to_string();
-        let name = wallet.name.clone();
-        Command::perform(
-            list_hws(config, name, desc),
-            Message::ConnectedHardwareWallets,
-        )
+        let wallet = wallet.clone();
+        Command::perform(list_hws(wallet), Message::ConnectedHardwareWallets)
     }
     fn update(
         &mut self,
@@ -350,8 +340,12 @@ impl Action for SignAction {
     }
 }
 
-async fn list_hws(config: Config, wallet_name: String, descriptor: String) -> Vec<HardwareWallet> {
-    list_hardware_wallets(&config.hardware_wallets, Some((&wallet_name, &descriptor))).await
+async fn list_hws(wallet: Wallet) -> Vec<HardwareWallet> {
+    list_hardware_wallets(
+        &wallet.hardware_wallets,
+        Some((&wallet.name, &wallet.main_descriptor.to_string())),
+    )
+    .await
 }
 
 async fn sign_psbt(

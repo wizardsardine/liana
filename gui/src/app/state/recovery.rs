@@ -6,7 +6,6 @@ use iced::{Command, Element};
 use crate::{
     app::{
         cache::Cache,
-        config::Config,
         error::Error,
         menu::Menu,
         message::Message,
@@ -25,8 +24,7 @@ use crate::{
 use liana::miniscript::bitcoin::{Address, Amount, Network};
 
 pub struct RecoveryPanel {
-    wallet: Wallet,
-    config: Config,
+    wallet: Arc<Wallet>,
     locked_coins: (usize, Amount),
     recoverable_coins: (usize, Amount),
     warning: Option<Error>,
@@ -38,13 +36,7 @@ pub struct RecoveryPanel {
 }
 
 impl RecoveryPanel {
-    pub fn new(
-        wallet: Wallet,
-        config: Config,
-        coins: &[Coin],
-        timelock: u32,
-        blockheight: u32,
-    ) -> Self {
+    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], timelock: u32, blockheight: u32) -> Self {
         let mut locked_coins = (0, Amount::from_sat(0));
         let mut recoverable_coins = (0, Amount::from_sat(0));
         for coin in coins {
@@ -61,7 +53,6 @@ impl RecoveryPanel {
         }
         Self {
             wallet,
-            config,
             locked_coins,
             recoverable_coins,
             warning: None,
@@ -123,12 +114,7 @@ impl State for RecoveryPanel {
             },
             Message::Recovery(res) => match res {
                 Ok(tx) => {
-                    self.generated = Some(detail::SpendTxState::new(
-                        self.wallet.clone(),
-                        self.config.clone(),
-                        tx,
-                        false,
-                    ))
+                    self.generated = Some(detail::SpendTxState::new(self.wallet.clone(), tx, false))
                 }
                 Err(e) => self.warning = Some(e),
             },
