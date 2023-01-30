@@ -78,8 +78,17 @@ impl SpendTx {
         }
     }
 
-    pub fn is_signed(&self) -> bool {
-        !self.psbt.inputs.first().unwrap().partial_sigs.is_empty()
+    pub fn is_ready(&self) -> bool {
+        let path = self.sigs.primary_path();
+        if path.signed_pubkeys.len() >= path.threshold {
+            return true;
+        }
+        if let Some(path) = self.sigs.recovery_path() {
+            if path.signed_pubkeys.len() >= path.threshold {
+                return true;
+            }
+        }
+        false
     }
 }
 

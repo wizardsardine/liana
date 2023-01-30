@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use iced::{Command, Element};
-use liana::miniscript::bitcoin::{
-    consensus,
-    util::{bip32::Fingerprint, psbt::Psbt},
+use liana::{
+    descriptors::LianaDescInfo,
+    miniscript::bitcoin::{
+        consensus,
+        util::{bip32::Fingerprint, psbt::Psbt},
+    },
 };
 
 use crate::{
@@ -39,6 +42,7 @@ trait Action {
 
 pub struct SpendTxState {
     wallet: Arc<Wallet>,
+    desc_info: LianaDescInfo,
     tx: SpendTx,
     saved: bool,
     action: Option<Box<dyn Action>>,
@@ -47,6 +51,7 @@ pub struct SpendTxState {
 impl SpendTxState {
     pub fn new(wallet: Arc<Wallet>, tx: SpendTx, saved: bool) -> Self {
         Self {
+            desc_info: wallet.main_descriptor.info(),
             wallet,
             action: None,
             tx,
@@ -116,7 +121,13 @@ impl SpendTxState {
     }
 
     pub fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = detail::spend_view(&self.tx, self.saved, cache.network);
+        let content = detail::spend_view(
+            &self.tx,
+            self.saved,
+            &self.desc_info,
+            &self.wallet.keys_aliases,
+            cache.network,
+        );
         if let Some(action) = &self.action {
             modal::Modal::new(content, action.view())
                 .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
@@ -311,7 +322,10 @@ impl Action for SignAction {
                 }
             },
             Message::Updated(res) => match res {
-                Ok(()) => self.processing = false,
+                Ok(()) => {
+                    self.processing = false;
+                    tx.sigs = wallet.main_descriptor.partial_spend_info(&tx.psbt).unwrap();
+                }
                 Err(e) => self.error = Some(e),
             },
             // We add the new hws without dropping the reference of the previous ones.
@@ -393,7 +407,7 @@ impl Action for UpdateAction {
 
     fn update(
         &mut self,
-        _wallet: &Wallet,
+        wallet: &Wallet,
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
@@ -430,6 +444,7 @@ impl Action for UpdateAction {
                                     .extend(updated_input.partial_sigs.clone().into_iter());
                             }
                         }
+                        tx.sigs = wallet.main_descriptor.partial_spend_info(&tx.psbt).unwrap();
                     }
                     Err(e) => self.error = e.into(),
                 }

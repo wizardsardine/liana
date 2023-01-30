@@ -121,6 +121,10 @@ pub fn circle_check_icon() -> Text<'static> {
     icon('\u{F26B}')
 }
 
+pub fn circle_cross_icon() -> Text<'static> {
+    icon('\u{F623}')
+}
+
 pub fn network_icon() -> Text<'static> {
     icon('\u{F40D}')
 }
