@@ -67,7 +67,7 @@ def spend_coins(lianad, bitcoind, coins):
     }
     res = lianad.rpc.createspend(destinations, [c["outpoint"] for c in coins], 1)
 
-    signed_psbt = lianad.sign_psbt(PSBT.from_base64(res["psbt"]))
+    signed_psbt = lianad.signer.sign_psbt(PSBT.from_base64(res["psbt"]))
     finalized_psbt = lianad.finalize_psbt(signed_psbt)
     tx = finalized_psbt.tx.serialize_with_witness().hex()
     bitcoind.rpc.sendrawtransaction(tx)
@@ -77,7 +77,7 @@ def spend_coins(lianad, bitcoind, coins):
 
 def sign_and_broadcast(lianad, bitcoind, psbt, recovery=False):
     """Sign a PSBT, finalize it, extract the transaction and broadcast it."""
-    signed_psbt = lianad.sign_psbt(psbt, recovery)
+    signed_psbt = lianad.signer.sign_psbt(psbt, recovery)
     finalized_psbt = lianad.finalize_psbt(signed_psbt)
     tx = finalized_psbt.tx.serialize_with_witness().hex()
     return bitcoind.rpc.sendrawtransaction(tx)
