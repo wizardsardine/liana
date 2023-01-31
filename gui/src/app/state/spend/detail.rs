@@ -25,12 +25,16 @@ trait Action {
     fn warning(&self) -> Option<&Error> {
         None
     }
-    fn load(&self, _wallet: &Wallet, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn load(
+        &self,
+        _wallet: Arc<Wallet>,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+    ) -> Command<Message> {
         Command::none()
     }
     fn update(
         &mut self,
-        _wallet: &Wallet,
+        _wallet: Arc<Wallet>,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _message: Message,
         _tx: &mut SpendTx,
@@ -61,7 +65,7 @@ impl SpendTxState {
 
     pub fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         if let Some(action) = &self.action {
-            action.load(&self.wallet, daemon)
+            action.load(self.wallet.clone(), daemon)
         } else {
             Command::none()
         }
@@ -83,13 +87,13 @@ impl SpendTxState {
                 }
                 view::SpendTxMessage::Sign => {
                     let action = SignAction::new();
-                    let cmd = action.load(&self.wallet, daemon);
+                    let cmd = action.load(self.wallet.clone(), daemon);
                     self.action = Some(Box::new(action));
                     return cmd;
                 }
                 view::SpendTxMessage::EditPsbt => {
                     let action = UpdateAction::new(self.tx.psbt.to_string());
-                    let cmd = action.load(&self.wallet, daemon);
+                    let cmd = action.load(self.wallet.clone(), daemon);
                     self.action = Some(Box::new(action));
                     return cmd;
                 }
@@ -101,19 +105,34 @@ impl SpendTxState {
                 }
                 _ => {
                     if let Some(action) = self.action.as_mut() {
-                        return action.update(&self.wallet, daemon.clone(), message, &mut self.tx);
+                        return action.update(
+                            self.wallet.clone(),
+                            daemon.clone(),
+                            message,
+                            &mut self.tx,
+                        );
                     }
                 }
             },
             Message::Updated(Ok(_)) => {
                 self.saved = true;
                 if let Some(action) = self.action.as_mut() {
-                    return action.update(&self.wallet, daemon.clone(), message, &mut self.tx);
+                    return action.update(
+                        self.wallet.clone(),
+                        daemon.clone(),
+                        message,
+                        &mut self.tx,
+                    );
                 }
             }
             _ => {
                 if let Some(action) = self.action.as_mut() {
-                    return action.update(&self.wallet, daemon.clone(), message, &mut self.tx);
+                    return action.update(
+                        self.wallet.clone(),
+                        daemon.clone(),
+                        message,
+                        &mut self.tx,
+                    );
                 }
             }
         };
@@ -147,7 +166,7 @@ pub struct SaveAction {
 impl Action for SaveAction {
     fn update(
         &mut self,
-        _wallet: &Wallet,
+        _wallet: Arc<Wallet>,
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
@@ -183,7 +202,7 @@ pub struct BroadcastAction {
 impl Action for BroadcastAction {
     fn update(
         &mut self,
-        _wallet: &Wallet,
+        _wallet: Arc<Wallet>,
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
@@ -227,7 +246,7 @@ pub struct DeleteAction {
 impl Action for DeleteAction {
     fn update(
         &mut self,
-        _wallet: &Wallet,
+        _wallet: Arc<Wallet>,
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
@@ -284,13 +303,16 @@ impl Action for SignAction {
         self.error.as_ref()
     }
 
-    fn load(&self, wallet: &Wallet, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        let wallet = wallet.clone();
+    fn load(
+        &self,
+        wallet: Arc<Wallet>,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+    ) -> Command<Message> {
         Command::perform(list_hws(wallet), Message::ConnectedHardwareWallets)
     }
     fn update(
         &mut self,
-        wallet: &Wallet,
+        wallet: Arc<Wallet>,
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
@@ -365,7 +387,7 @@ impl Action for SignAction {
     }
 }
 
-async fn list_hws(wallet: Wallet) -> Vec<HardwareWallet> {
+async fn list_hws(wallet: Arc<Wallet>) -> Vec<HardwareWallet> {
     list_hardware_wallets(
         &wallet.hardware_wallets,
         Some((&wallet.name, &wallet.main_descriptor.to_string())),
@@ -418,7 +440,7 @@ impl Action for UpdateAction {
 
     fn update(
         &mut self,
-        wallet: &Wallet,
+        wallet: Arc<Wallet>,
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,

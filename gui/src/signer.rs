@@ -18,6 +18,12 @@ pub struct Signer {
     fingerprint: Fingerprint,
 }
 
+impl std::fmt::Debug for Signer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Signer").finish()
+    }
+}
+
 impl Signer {
     pub fn new(key: HotSigner) -> Self {
         let curve = secp256k1::Secp256k1::signing_only();
