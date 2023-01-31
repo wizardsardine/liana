@@ -746,18 +746,76 @@ async fn get_extended_pubkey(
     }))
 }
 
+pub struct HardwareWalletXpubs {
+    hw: HardwareWallet,
+    xpubs: Vec<String>,
+    processing: bool,
+    error: Option<Error>,
+    next_account: ChildNumber,
+}
+
+impl HardwareWalletXpubs {
+    fn new(hw: HardwareWallet) -> Self {
+        Self {
+            hw,
+            xpubs: Vec::new(),
+            processing: false,
+            error: None,
+            next_account: ChildNumber::from_hardened_idx(0).unwrap(),
+        }
+    }
+
+    fn update(&mut self, res: Result<DescriptorPublicKey, Error>) {
+        self.processing = false;
+        match res {
+            Err(e) => {
+                self.error = e.into();
+            }
+            Ok(xpub) => {
+                self.error = None;
+                self.next_account = self.next_account.increment().unwrap();
+                self.xpubs
+                    .push(xpub.to_string().trim_end_matches("/<0;1>/*").to_string());
+            }
+        }
+    }
+
+    fn select(&mut self, i: usize, network: Network) -> Command<Message> {
+        let device = self.hw.device.clone();
+        self.processing = true;
+        self.error = None;
+        let fingerprint = self.hw.fingerprint;
+        let next_account = self.next_account;
+        Command::perform(
+            async move {
+                (
+                    i,
+                    get_extended_pubkey(device, fingerprint, network, next_account).await,
+                )
+            },
+            |(i, res)| Message::ImportXpub(i, res),
+        )
+    }
+
+    pub fn view(&self, i: usize) -> Element<Message> {
+        view::hardware_wallet_xpubs(
+            i,
+            &self.xpubs,
+            &self.hw,
+            self.processing,
+            self.error.as_ref(),
+        )
+    }
+}
+
 pub struct ParticipateXpub {
     network: Network,
     network_valid: bool,
     data_dir: Option<PathBuf>,
 
-    xpub: Option<String>,
     shared: bool,
 
-    processing: bool,
-    chosen_hw: Option<usize>,
-    hws: Vec<(HardwareWallet, bool)>,
-    error: Option<Error>,
+    xpubs_hw: Vec<HardwareWalletXpubs>,
 }
 
 impl ParticipateXpub {
@@ -766,12 +824,8 @@ impl ParticipateXpub {
             network: Network::Bitcoin,
             network_valid: true,
             data_dir: None,
-            processing: false,
-            xpub: None,
-            chosen_hw: None,
-            hws: Vec::new(),
+            xpubs_hw: Vec::new(),
             shared: false,
-            error: None,
         }
     }
 }
@@ -788,48 +842,26 @@ impl Step for ParticipateXpub {
                 self.network_valid = !network_datadir.exists();
             }
             Message::UserActionDone(shared) => self.shared = shared,
-            Message::ImportXpub(res) => {
-                self.processing = false;
-                match res {
-                    Err(e) => {
-                        self.error = e.into();
-                        self.chosen_hw = None;
-                    }
-                    Ok(xpub) => {
-                        self.error = None;
-                        self.xpub = Some(xpub.to_string().trim_end_matches("/<0;1>/*").to_string());
-                        for (i, (_, imported)) in self.hws.iter_mut().enumerate() {
-                            *imported = Some(i) == self.chosen_hw;
-                        }
-                        self.chosen_hw = None;
-                    }
+            Message::ImportXpub(i, res) => {
+                if let Some(hw) = self.xpubs_hw.get_mut(i) {
+                    hw.update(res);
                 }
             }
             Message::Select(i) => {
-                if let Some((hw, _)) = self.hws.get(i) {
-                    let device = hw.device.clone();
-                    self.chosen_hw = Some(i);
-                    self.processing = true;
-                    self.error = None;
-                    return Command::perform(
-                        get_extended_pubkey(
-                            device,
-                            hw.fingerprint,
-                            self.network,
-                            ChildNumber::from_hardened_idx(0).unwrap(),
-                        ),
-                        Message::ImportXpub,
-                    );
+                if let Some(hw) = self.xpubs_hw.get_mut(i) {
+                    return hw.select(i, self.network);
                 }
             }
             Message::ConnectedHardwareWallets(hws) => {
                 for hw in hws {
-                    if !self
-                        .hws
-                        .iter()
-                        .any(|(h, _)| h.fingerprint == hw.fingerprint)
+                    if let Some(xpub_hw) = self
+                        .xpubs_hw
+                        .iter_mut()
+                        .find(|h| h.hw.fingerprint == hw.fingerprint)
                     {
-                        self.hws.push((hw, false));
+                        xpub_hw.hw = hw;
+                    } else {
+                        self.xpubs_hw.push(HardwareWalletXpubs::new(hw));
                     }
                 }
             }
@@ -866,12 +898,12 @@ impl Step for ParticipateXpub {
             progress,
             self.network,
             self.network_valid,
-            &self.hws,
-            self.processing,
-            self.chosen_hw,
-            self.xpub.as_ref(),
+            self.xpubs_hw
+                .iter()
+                .enumerate()
+                .map(|(i, hw)| hw.view(i))
+                .collect(),
             self.shared,
-            self.error.as_ref(),
         )
     }
 }

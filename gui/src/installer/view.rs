@@ -409,18 +409,103 @@ pub fn import_descriptor<'a>(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn participate_xpub<'a>(
+pub fn hardware_wallet_xpubs<'a>(
+    i: usize,
+    xpubs: &'a Vec<String>,
+    hw: &HardwareWallet,
+    processing: bool,
+    error: Option<&Error>,
+) -> Element<'a, Message> {
+    let mut bttn = Button::new(
+        Row::new()
+            .align_items(Alignment::Center)
+            .push(
+                Column::new()
+                    .push(text(format!("{}", hw.kind)).bold())
+                    .push(text(format!("fingerprint: {}", hw.fingerprint)).small())
+                    .spacing(5)
+                    .width(Length::Fill),
+            )
+            .push_maybe(error.map(|e| {
+                iced::widget::tooltip(
+                    Row::new()
+                        .spacing(5)
+                        .align_items(Alignment::Center)
+                        .push(icon::warning_icon().style(color::ALERT))
+                        .push(text("An error occured").style(color::ALERT)),
+                    e,
+                    iced::widget::tooltip::Position::Bottom,
+                )
+                .style(card::ErrorCardStyle)
+            })),
+    )
+    .padding(10)
+    .style(button::Style::TransparentBorder.into())
+    .width(Length::Fill);
+    if !processing {
+        bttn = bttn.on_press(Message::Select(i));
+    }
+    Container::new(
+        Column::new()
+            .push(bttn)
+            .push_maybe(if xpubs.is_empty() {
+                None
+            } else {
+                Some(separation().width(Length::Fill))
+            })
+            .push_maybe(if xpubs.is_empty() {
+                None
+            } else {
+                Some(xpubs.iter().fold(Column::new().padding(15), |col, xpub| {
+                    col.push(
+                        Row::new()
+                            .spacing(5)
+                            .align_items(Alignment::Center)
+                            .push(
+                                Container::new(
+                                    Scrollable::new(Container::new(text(xpub).small()).padding(10))
+                                        .horizontal_scroll(
+                                            Properties::new().width(2).scroller_width(2),
+                                        ),
+                                )
+                                .width(Length::Fill),
+                            )
+                            .push(
+                                Container::new(
+                                    button::border(Some(icon::clipboard_icon()), "Copy")
+                                        .on_press(Message::Clibpboard(xpub.clone()))
+                                        .width(Length::Shrink),
+                                )
+                                .padding(10),
+                            ),
+                    )
+                }))
+            })
+            .push_maybe(if !xpubs.is_empty() {
+                Some(
+                    Container::new(if !processing {
+                        button::border(Some(icon::plus_icon()), "New public key")
+                            .on_press(Message::Select(i))
+                    } else {
+                        button::border(Some(icon::plus_icon()), "New public key")
+                    })
+                    .padding(10),
+                )
+            } else {
+                None
+            }),
+    )
+    .style(card::SimpleCardStyle)
+    .into()
+}
+
+pub fn participate_xpub(
     progress: (usize, usize),
     network: bitcoin::Network,
     network_valid: bool,
-    hws: &[(HardwareWallet, bool)],
-    processing: bool,
-    chosen_hw: Option<usize>,
-    xpub: Option<&'a String>,
+    hws: Vec<Element<Message>>,
     shared: bool,
-    error: Option<&Error>,
-) -> Element<'a, Message> {
+) -> Element<Message> {
     let row_network = Row::new()
         .spacing(10)
         .align_items(Alignment::Center)
@@ -442,7 +527,7 @@ pub fn participate_xpub<'a>(
     layout(
         progress,
         Column::new()
-            .push(text("Share your public key").bold().size(50))
+            .push(text("Share your public keys").bold().size(50))
             .push(
                 Column::new()
                     .spacing(20)
@@ -456,7 +541,7 @@ pub fn participate_xpub<'a>(
                             .spacing(10)
                             .align_items(Alignment::Center)
                             .push(
-                                Container::new(text("Select your hardware wallet:").bold())
+                                Container::new(text("Generate an extended public key by selecting a signing device:").bold())
                                     .width(Length::Fill),
                             )
                             .push(
@@ -465,50 +550,11 @@ pub fn participate_xpub<'a>(
                             ),
                     )
                     .spacing(10)
-                    .push(
-                        hws.iter()
-                            .enumerate()
-                            .fold(Column::new().spacing(10), |col, (i, hw)| {
-                                col.push(hw_list_view(
-                                    i,
-                                    &hw.0,
-                                    Some(i) == chosen_hw,
-                                    processing,
-                                    hw.1,
-                                ))
-                            }),
-                    )
+                    .push(Column::with_children(hws).spacing(10))
                     .width(Length::Fill),
             )
-            .push_maybe(xpub.map(|xpub| {
-                Column::new()
-                    .spacing(5)
-                    .push(text("Your extended pubkey:").bold())
-                    .push(
-                        Row::new()
-                            .spacing(5)
-                            .align_items(Alignment::Center)
-                            .push(
-                                Container::new(
-                                    Scrollable::new(Container::new(text(xpub)).padding(10))
-                                        .horizontal_scroll(
-                                            Properties::new().width(2).scroller_width(2),
-                                        ),
-                                )
-                                .width(Length::Fill),
-                            )
-                            .push(
-                                Container::new(
-                                    button::border(Some(icon::clipboard_icon()), "Copy")
-                                        .on_press(Message::Clibpboard(xpub.clone()))
-                                        .width(Length::Shrink),
-                                )
-                                .padding(10),
-                            ),
-                    )
-            }))
             .push(Checkbox::new(
-                "I have shared my xpub",
+                "I have shared my public keys",
                 shared,
                 Message::UserActionDone,
             ))
@@ -519,7 +565,6 @@ pub fn participate_xpub<'a>(
             } else {
                 button::primary(None, "Next").width(Length::Units(200))
             })
-            .push_maybe(error.map(|e| card::error("Hardware error", e.to_string())))
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)

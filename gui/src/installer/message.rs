@@ -25,7 +25,7 @@ pub enum Message {
     Network(Network),
     DefineBitcoind(DefineBitcoind),
     DefineDescriptor(DefineDescriptor),
-    ImportXpub(Result<DescriptorPublicKey, Error>),
+    ImportXpub(usize, Result<DescriptorPublicKey, Error>),
     ConnectedHardwareWallets(Vec<HardwareWallet>),
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
 }
