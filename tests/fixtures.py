@@ -126,7 +126,7 @@ def lianad(bitcoind, directory):
     )
     csv_value = 10
     main_desc = Descriptor.from_str(
-        f"wsh(or_d(pk({primary_xpub}/<0;1>/*),and_v(v:pkh({recovery_xpub}/<0;1>/*),older({csv_value}))))"
+        f"wsh(or_d(pk([aabbccdd]{primary_xpub}/<0;1>/*),and_v(v:pkh([aabbccdd]{recovery_xpub}/<0;1>/*),older({csv_value}))))"
     )
 
     lianad = Lianad(
@@ -150,7 +150,7 @@ def lianad(bitcoind, directory):
 def multi_expression(thresh, keys):
     exp = f"multi({thresh},"
     for i, key in enumerate(keys):
-        exp += f"{key.get_xpub()}/<0;1>/*"
+        exp += f"[aabbccdd]{key.get_xpub()}/<0;1>/*"
         if i != len(keys) - 1:
             exp += ","
     return exp + ")"
