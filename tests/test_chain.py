@@ -289,7 +289,11 @@ def test_deposit_replacement(lianad, bitcoind):
     # Make sure we registered the unconfirmed coin. Then RBF the deposit tx.
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
     txid = bitcoind.rpc.sendrawtransaction(conflicting_tx)
-    bitcoind.generate_block(1, wait_for_mempool=txid)
 
     # We must forget about the deposit.
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 0)
+
+    # Send a new one, it'll be detected.
+    addr = lianad.rpc.getnewaddress()["address"]
+    bitcoind.rpc.sendtoaddress(addr, 2)
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
