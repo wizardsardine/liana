@@ -5,11 +5,11 @@ pub mod d;
 pub mod poller;
 
 use crate::{
-    bitcoin::d::{BitcoindError, LSBlockEntry},
+    bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry},
     descriptors,
 };
 
-use std::{collections::HashMap, fmt, sync};
+use std::{fmt, sync};
 
 use miniscript::bitcoin;
 
@@ -169,28 +169,21 @@ impl BitcoinInterface for d::BitcoinD {
     ) -> Vec<(bitcoin::OutPoint, i32, u32)> {
         // The confirmed coins.
         let mut confirmed = Vec::with_capacity(outpoints.len());
-        // It's likely some coins got created in the same transaction. In that case we don't need
-        // to make multipe calls to gettransaction for those. Cache it here instead.
-        let mut get_tx_cache = HashMap::new();
+        // Cached calls to `gettransaction`.
+        let mut tx_getter = CachedTxGetter::new(self);
 
         for op in outpoints {
-            // Try to get the transaction from the cache, and fallback to querying
-            // `gettransaction`.
-            let res = if let Some(res) = get_tx_cache.get(&op.txid) {
+            let res = if let Some(res) = tx_getter.get_transaction(&op.txid) {
                 res
             } else {
-                if let Some(res) = self.get_transaction(&op.txid) {
-                    get_tx_cache.insert(&op.txid, res);
-                    get_tx_cache.get(&op.txid).expect("It was just inserted.")
-                } else {
-                    log::error!("Transaction not in wallet for coin '{}'.", op);
-                    continue;
-                }
+                log::error!("Transaction not in wallet for coin '{}'.", op);
+                continue;
             };
 
             // If the transaction was confirmed, mark the coin as such.
             if let Some(block) = res.block {
                 confirmed.push((*op, block.height, block.time));
+                continue;
             }
         }
 
@@ -227,47 +220,33 @@ impl BitcoinInterface for d::BitcoinD {
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)> {
+        // Spend coins to be returned.
         let mut spent = Vec::with_capacity(outpoints.len());
+        // Cached calls to `gettransaction`.
+        let mut tx_getter = CachedTxGetter::new(self);
 
-        let mut cache: HashMap<bitcoin::Txid, Option<d::GetTxRes>> = HashMap::new();
         for (op, txid) in outpoints {
-            let tx: Option<&d::GetTxRes> = match cache.get(txid) {
-                Some(tx) => tx.as_ref(),
-                None => {
-                    let tx = self.get_transaction(txid);
-                    cache.insert(*txid, tx);
-                    cache.get(txid).unwrap().as_ref()
-                }
+            let res = if let Some(res) = tx_getter.get_transaction(txid) {
+                res
+            } else {
+                log::error!("Could not get tx {} spending coin {}.", txid, op);
+                continue;
             };
 
-            // There is an immutable borrow on the cache, these txs will be added once it is
-            // dropped.
-            let mut txs_to_cache: Vec<(bitcoin::Txid, Option<d::GetTxRes>)> = Vec::new();
-
-            if let Some(tx) = tx {
-                if let Some(block) = tx.block {
-                    spent.push((*op, *txid, block));
-                } else if !tx.conflicting_txs.is_empty() {
-                    for txid in &tx.conflicting_txs {
-                        let tx: Option<&d::GetTxRes> = match cache.get(txid) {
-                            Some(tx) => tx.as_ref(),
-                            None => {
-                                let tx = self.get_transaction(txid);
-                                txs_to_cache.push((*txid, tx));
-                                txs_to_cache.last().unwrap().1.as_ref()
-                            }
-                        };
-                        if let Some(tx) = tx {
-                            if let Some(block) = tx.block {
-                                spent.push((*op, *txid, block))
-                            }
-                        }
-                    }
-                }
+            // If the transaction was confirmed, mark it as such.
+            if let Some(block) = res.block {
+                spent.push((*op, *txid, block));
+                continue;
             }
 
-            for (txid, res) in txs_to_cache {
-                cache.insert(txid, res);
+            // If a conflicting transaction was confirmed instead, replace the txid of the
+            // spender for this coin with it and mark it as confirmed.
+            for txid in &res.conflicting_txs {
+                if let Some(tx) = tx_getter.get_transaction(txid) {
+                    if let Some(block) = tx.block {
+                        spent.push((*op, *txid, block))
+                    }
+                }
             }
         }
 

@@ -10,7 +10,13 @@ use crate::{
 use utils::{block_before_date, roundup_progress};
 
 use std::{
-    cmp, collections::HashSet, convert::TryInto, fs, io, str::FromStr, thread, time::Duration,
+    cmp,
+    collections::{HashMap, HashSet},
+    convert::TryInto,
+    fs, io,
+    str::FromStr,
+    thread,
+    time::Duration,
 };
 
 use jsonrpc::{
@@ -1119,4 +1125,34 @@ pub struct BlockStats {
     pub height: i32,
     pub time: u32,
     pub median_time_past: u32,
+}
+
+/// Make cached calls to bitcoind's `gettransaction`. It's useful for instance when coins have been
+/// created or spent in a single transaction.
+pub struct CachedTxGetter<'a> {
+    bitcoind: &'a BitcoinD,
+    cache: HashMap<bitcoin::Txid, GetTxRes>,
+}
+
+impl<'a> CachedTxGetter<'a> {
+    pub fn new(bitcoind: &'a BitcoinD) -> Self {
+        Self {
+            bitcoind,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Query a transaction. Tries to get it from the cache and falls back to calling
+    /// `gettransaction` on bitcoind. If both fail, returns None.
+    pub fn get_transaction(&mut self, txid: &bitcoin::Txid) -> Option<GetTxRes> {
+        // TODO: work around the borrow checker to avoid having to clone.
+        if let Some(res) = self.cache.get(txid) {
+            Some(res.clone())
+        } else if let Some(res) = self.bitcoind.get_transaction(txid) {
+            self.cache.insert(*txid, res);
+            self.cache.get(txid).cloned()
+        } else {
+            None
+        }
+    }
 }
