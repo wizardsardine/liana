@@ -220,6 +220,12 @@ impl DatabaseConnection for DummyDatabase {
         }
     }
 
+    fn remove_coins(&mut self, outpoints: &[bitcoin::OutPoint]) {
+        for op in outpoints {
+            self.db.write().unwrap().coins.remove(op);
+        }
+    }
+
     fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32, u32)]) {
         for (op, height, time) in outpoints {
             let mut db = self.db.write().unwrap();

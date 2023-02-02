@@ -89,6 +89,9 @@ pub trait DatabaseConnection {
     /// Store new UTxOs. Coins must not already be in database.
     fn new_unspent_coins(&mut self, coins: &[Coin]);
 
+    /// Remove some UTxOs from the database.
+    fn remove_coins(&mut self, coins: &[bitcoin::OutPoint]);
+
     /// Mark a set of coins as being confirmed at a specified height and block time.
     fn confirm_coins(&mut self, outpoints: &[(bitcoin::OutPoint, i32, u32)]);
 
@@ -194,6 +197,10 @@ impl DatabaseConnection for SqliteConn {
 
     fn new_unspent_coins<'a>(&mut self, coins: &[Coin]) {
         self.new_unspent_coins(coins)
+    }
+
+    fn remove_coins(&mut self, outpoints: &[bitcoin::OutPoint]) {
+        self.remove_coins(outpoints)
     }
 
     fn confirm_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, i32, u32)]) {
