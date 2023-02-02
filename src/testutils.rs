@@ -65,8 +65,11 @@ impl BitcoinInterface for DummyBitcoind {
         Vec::new()
     }
 
-    fn confirmed_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, i32, u32)> {
-        Vec::new()
+    fn confirmed_coins(
+        &self,
+        _: &[bitcoin::OutPoint],
+    ) -> (Vec<(bitcoin::OutPoint, i32, u32)>, Vec<bitcoin::OutPoint>) {
+        (Vec::new(), Vec::new())
     }
 
     fn spending_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {

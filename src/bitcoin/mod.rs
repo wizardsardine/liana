@@ -58,11 +58,12 @@ pub trait BitcoinInterface: Send {
         descs: &[descriptors::InheritanceDescriptor],
     ) -> Vec<UTxO>;
 
-    /// Get all coins that were confirmed, and at what height and time.
+    /// Get all coins that were confirmed, and at what height and time. Along with "expired"
+    /// unconfirmed coins (for instance whose creating transaction may have been replaced).
     fn confirmed_coins(
         &self,
         outpoints: &[bitcoin::OutPoint],
-    ) -> Vec<(bitcoin::OutPoint, i32, u32)>;
+    ) -> (Vec<(bitcoin::OutPoint, i32, u32)>, Vec<bitcoin::OutPoint>);
 
     /// Get all coins that are being spent, and the spending txid.
     fn spending_coins(
@@ -166,9 +167,10 @@ impl BitcoinInterface for d::BitcoinD {
     fn confirmed_coins(
         &self,
         outpoints: &[bitcoin::OutPoint],
-    ) -> Vec<(bitcoin::OutPoint, i32, u32)> {
-        // The confirmed coins.
+    ) -> (Vec<(bitcoin::OutPoint, i32, u32)>, Vec<bitcoin::OutPoint>) {
+        // The confirmed and expired coins to be returned.
         let mut confirmed = Vec::with_capacity(outpoints.len());
+        let mut expired = Vec::new();
         // Cached calls to `gettransaction`.
         let mut tx_getter = CachedTxGetter::new(self);
 
@@ -185,9 +187,14 @@ impl BitcoinInterface for d::BitcoinD {
                 confirmed.push((*op, block.height, block.time));
                 continue;
             }
+
+            // If the transaction was dropped from the mempool, discard the coin.
+            if !self.is_in_mempool(&op.txid) {
+                expired.push(*op);
+            }
         }
 
-        confirmed
+        (confirmed, expired)
     }
 
     fn spending_coins(
@@ -340,7 +347,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn confirmed_coins(
         &self,
         outpoints: &[bitcoin::OutPoint],
-    ) -> Vec<(bitcoin::OutPoint, i32, u32)> {
+    ) -> (Vec<(bitcoin::OutPoint, i32, u32)>, Vec<bitcoin::OutPoint>) {
         self.lock().unwrap().confirmed_coins(outpoints)
     }
 

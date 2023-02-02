@@ -76,13 +76,10 @@ def test_reorg_exclusion(lianad, bitcoind):
     bitcoind.simple_reorg(initial_height, shift=-1)
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == current_height + 1)
 
-    # They must all be marked as unconfirmed.
-    new_coin_a = get_coin(lianad, coin_a["outpoint"])
-    assert new_coin_a["block_height"] is None
-    new_coin_b = get_coin(lianad, coin_b["outpoint"])
-    assert new_coin_b["block_height"] is None
-    new_coin_c = get_coin(lianad, coin_c["outpoint"])
-    assert new_coin_c["block_height"] is None
+    # For a too deep reorg bitcoind doesn't update the mempool. The deposit transactions were
+    # dropped. And we discard the unconfirmed coins whose deposit tx isn't part of our mempool
+    # anymore: the coins must have been marked as unconfirmed and subsequently discarded.
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 0)
 
     # And if we now confirm everything, they'll be marked as such. The one that was 'spending'
     # will now be spent (its spending transaction will be confirmed) and the one that was spent

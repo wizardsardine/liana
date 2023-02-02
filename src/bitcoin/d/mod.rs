@@ -964,6 +964,22 @@ impl BitcoinD {
             |h| self.get_block_stats(h),
         )
     }
+
+    /// Whether this transaction is in the mempool.
+    pub fn is_in_mempool(&self, txid: &bitcoin::Txid) -> bool {
+        match self
+            .make_fallible_node_request("getmempoolentry", &params!(Json::String(txid.to_string())))
+        {
+            Ok(_) => true,
+            Err(BitcoindError::Server(jsonrpc::Error::Rpc(jsonrpc::error::RpcError {
+                code: -5,
+                ..
+            }))) => false,
+            Err(e) => {
+                panic!("Unexpected error returned by bitcoind {}", e);
+            }
+        }
+    }
 }
 
 /// An entry in the 'listdescriptors' result.

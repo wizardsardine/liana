@@ -15,6 +15,7 @@ use miniscript::bitcoin::{self, secp256k1};
 struct UpdatedCoins {
     pub received: Vec<Coin>,
     pub confirmed: Vec<(bitcoin::OutPoint, i32, u32)>,
+    pub expired: Vec<bitcoin::OutPoint>,
     pub spending: Vec<(bitcoin::OutPoint, bitcoin::Txid)>,
     pub spent: Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)>,
 }
@@ -91,8 +92,9 @@ fn update_coins(
             }
         })
         .collect();
-    let confirmed = bit.confirmed_coins(&to_be_confirmed);
+    let (confirmed, expired) = bit.confirmed_coins(&to_be_confirmed);
     log::debug!("Newly confirmed coins: {:?}", confirmed);
+    log::debug!("Expired coins: {:?}", expired);
 
     // We need to take the newly received ones into account as well, as they may have been
     // spent within the previous tip and the current one, and we may not poll this chunk of the
@@ -131,6 +133,7 @@ fn update_coins(
     UpdatedCoins {
         received,
         confirmed,
+        expired,
         spending,
         spent,
     }
@@ -219,6 +222,7 @@ fn updates(
     // Having the tip in database means that, as far as the chain is concerned, we've got all
     // updates up to this block. But not more.
     db_conn.new_unspent_coins(&updated_coins.received);
+    db_conn.remove_coins(&updated_coins.expired);
     db_conn.confirm_coins(&updated_coins.confirmed);
     db_conn.spend_coins(&updated_coins.spending);
     db_conn.confirm_spend(&updated_coins.spent);
