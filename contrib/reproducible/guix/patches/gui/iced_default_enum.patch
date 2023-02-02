@@ -55,10 +55,10 @@ index 8ae1cacb..25a3028b 100644
              .cloned()
              .collect();
 diff --git a/iced_style/src/theme.rs b/iced_style/src/theme.rs
-index d7ebb827..224a04fc 100644
+index 55bfa4ca..e29fde31 100644
 --- a/iced_style/src/theme.rs
 +++ b/iced_style/src/theme.rs
-@@ -25,10 +25,9 @@ use iced_core::{Background, Color, Vector};
+@@ -26,10 +26,9 @@ use iced_core::{Background, Color, Vector};
  use std::rc::Rc;
  
  /// A built-in theme.
@@ -70,7 +70,7 @@ index d7ebb827..224a04fc 100644
      Light,
      /// The built-in dark variant.
      Dark,
-@@ -61,6 +60,12 @@ impl Theme {
+@@ -62,6 +61,12 @@ impl Theme {
      }
  }
  
@@ -83,7 +83,7 @@ index d7ebb827..224a04fc 100644
  /// A [`Theme`] with a customized [`Palette`].
  #[derive(Debug, Clone, Copy, PartialEq)]
  pub struct Custom {
-@@ -79,15 +84,19 @@ impl Custom {
+@@ -80,15 +85,19 @@ impl Custom {
  }
  
  /// The style of an application.
@@ -105,7 +105,7 @@ index d7ebb827..224a04fc 100644
  impl application::StyleSheet for Theme {
      type Style = Application;
  
-@@ -119,10 +128,11 @@ impl From<fn(&Theme) -> application::Appearance> for Application {
+@@ -120,10 +129,11 @@ impl From<fn(&Theme) -> application::Appearance> for Application {
  }
  
  /// The style of a button.
@@ -119,7 +119,7 @@ index d7ebb827..224a04fc 100644
      Primary,
      /// The secondary style.
      Secondary,
-@@ -138,6 +148,12 @@ pub enum Button {
+@@ -139,6 +149,12 @@ pub enum Button {
      Custom(Box<dyn button::StyleSheet<Style = Theme>>),
  }
  
@@ -132,7 +132,7 @@ index d7ebb827..224a04fc 100644
  impl button::StyleSheet for Theme {
      type Style = Button;
  
-@@ -227,10 +243,11 @@ impl button::StyleSheet for Theme {
+@@ -228,10 +244,11 @@ impl button::StyleSheet for Theme {
  }
  
  /// The style of a checkbox.
@@ -146,7 +146,7 @@ index d7ebb827..224a04fc 100644
      Primary,
      /// The secondary style.
      Secondary,
-@@ -242,6 +259,12 @@ pub enum Checkbox {
+@@ -243,6 +260,12 @@ pub enum Checkbox {
      Custom(Box<dyn checkbox::StyleSheet<Style = Theme>>),
  }
  
@@ -159,7 +159,7 @@ index d7ebb827..224a04fc 100644
  impl checkbox::StyleSheet for Theme {
      type Style = Checkbox;
  
-@@ -339,10 +362,11 @@ fn checkbox_appearance(
+@@ -340,10 +363,11 @@ fn checkbox_appearance(
  }
  
  /// The style of a container.
@@ -173,7 +173,7 @@ index d7ebb827..224a04fc 100644
      Transparent,
      /// A simple box.
      Box,
-@@ -350,6 +374,12 @@ pub enum Container {
+@@ -351,6 +375,12 @@ pub enum Container {
      Custom(Box<dyn container::StyleSheet<Style = Theme>>),
  }
  
@@ -186,7 +186,7 @@ index d7ebb827..224a04fc 100644
  impl From<fn(&Theme) -> container::Appearance> for Container {
      fn from(f: fn(&Theme) -> container::Appearance) -> Self {
          Self::Custom(Box::new(f))
-@@ -387,15 +417,19 @@ impl container::StyleSheet for fn(&Theme) -> container::Appearance {
+@@ -388,15 +418,19 @@ impl container::StyleSheet for fn(&Theme) -> container::Appearance {
  }
  
  /// The style of a slider.
@@ -208,7 +208,7 @@ index d7ebb827..224a04fc 100644
  impl slider::StyleSheet for Theme {
      type Style = Slider;
  
-@@ -468,15 +502,20 @@ impl slider::StyleSheet for Theme {
+@@ -469,15 +503,20 @@ impl slider::StyleSheet for Theme {
  }
  
  /// The style of a menu.
@@ -231,7 +231,7 @@ index d7ebb827..224a04fc 100644
  impl menu::StyleSheet for Theme {
      type Style = Menu;
  
-@@ -510,10 +549,9 @@ impl From<PickList> for Menu {
+@@ -511,10 +550,9 @@ impl From<PickList> for Menu {
  }
  
  /// The style of a pick list.
@@ -243,7 +243,7 @@ index d7ebb827..224a04fc 100644
      Default,
      /// A custom style.
      Custom(
-@@ -522,6 +560,12 @@ pub enum PickList {
+@@ -523,6 +561,12 @@ pub enum PickList {
      ),
  }
  
@@ -256,7 +256,7 @@ index d7ebb827..224a04fc 100644
  impl pick_list::StyleSheet for Theme {
      type Style = PickList;
  
-@@ -565,15 +609,19 @@ impl pick_list::StyleSheet for Theme {
+@@ -566,15 +610,19 @@ impl pick_list::StyleSheet for Theme {
  }
  
  /// The style of a radio button.
@@ -278,7 +278,7 @@ index d7ebb827..224a04fc 100644
  impl radio::StyleSheet for Theme {
      type Style = Radio;
  
-@@ -620,15 +668,19 @@ impl radio::StyleSheet for Theme {
+@@ -621,15 +669,19 @@ impl radio::StyleSheet for Theme {
  }
  
  /// The style of a toggler.
@@ -300,7 +300,7 @@ index d7ebb827..224a04fc 100644
  impl toggler::StyleSheet for Theme {
      type Style = Toggler;
  
-@@ -687,15 +739,19 @@ impl toggler::StyleSheet for Theme {
+@@ -688,15 +740,19 @@ impl toggler::StyleSheet for Theme {
  }
  
  /// The style of a pane grid.
@@ -322,7 +322,7 @@ index d7ebb827..224a04fc 100644
  impl pane_grid::StyleSheet for Theme {
      type Style = PaneGrid;
  
-@@ -729,10 +785,11 @@ impl pane_grid::StyleSheet for Theme {
+@@ -730,10 +786,11 @@ impl pane_grid::StyleSheet for Theme {
  }
  
  /// The style of a progress bar.
@@ -336,7 +336,7 @@ index d7ebb827..224a04fc 100644
      Primary,
      /// The success style.
      Success,
-@@ -742,6 +799,12 @@ pub enum ProgressBar {
+@@ -743,6 +800,12 @@ pub enum ProgressBar {
      Custom(Box<dyn progress_bar::StyleSheet<Style = Theme>>),
  }
  
@@ -349,7 +349,7 @@ index d7ebb827..224a04fc 100644
  impl From<fn(&Theme) -> progress_bar::Appearance> for ProgressBar {
      fn from(f: fn(&Theme) -> progress_bar::Appearance) -> Self {
          Self::Custom(Box::new(f))
-@@ -782,15 +845,22 @@ impl progress_bar::StyleSheet for fn(&Theme) -> progress_bar::Appearance {
+@@ -783,15 +846,22 @@ impl progress_bar::StyleSheet for fn(&Theme) -> progress_bar::Appearance {
  }
  
  /// The style of a rule.
@@ -374,7 +374,29 @@ index d7ebb827..224a04fc 100644
  impl From<fn(&Theme) -> rule::Appearance> for Rule {
      fn from(f: fn(&Theme) -> rule::Appearance) -> Self {
          Self::Custom(Box::new(f))
-@@ -824,15 +894,19 @@ impl rule::StyleSheet for fn(&Theme) -> rule::Appearance {
+@@ -827,15 +897,19 @@ impl rule::StyleSheet for fn(&Theme) -> rule::Appearance {
+ /**
+  * Svg
+  */
+-#[derive(Default)]
+ pub enum Svg {
+     /// No filtering to the rendered SVG.
+-    #[default]
+     Default,
+     /// A custom style.
+     Custom(Box<dyn svg::StyleSheet<Style = Theme>>),
+ }
+ 
++impl Default for Svg {
++    fn default() -> Self {
++        Self::Default
++    }
++}
++
+ impl Svg {
+     /// Creates a custom [`Svg`] style.
+     pub fn custom_fn(f: fn(&Theme) -> svg::Appearance) -> Self {
+@@ -863,15 +937,19 @@ impl svg::StyleSheet for fn(&Theme) -> svg::Appearance {
  }
  
  /// The style of a scrollable.
@@ -393,10 +415,10 @@ index d7ebb827..224a04fc 100644
 +    }
 +}
 +
- impl scrollable::StyleSheet for Theme {
-     type Style = Scrollable;
- 
-@@ -889,15 +963,23 @@ impl scrollable::StyleSheet for Theme {
+ impl Scrollable {
+     /// Creates a custom [`Scrollable`] theme.
+     pub fn custom<T: scrollable::StyleSheet<Style = Theme> + 'static>(
+@@ -961,15 +1039,23 @@ impl scrollable::StyleSheet for Theme {
  }
  
  /// The style of text.
@@ -422,7 +444,7 @@ index d7ebb827..224a04fc 100644
  impl From<Color> for Text {
      fn from(color: Color) -> Self {
          Text::Color(color)
-@@ -916,15 +998,19 @@ impl text::StyleSheet for Theme {
+@@ -988,15 +1074,19 @@ impl text::StyleSheet for Theme {
  }
  
  /// The style of a text input.
