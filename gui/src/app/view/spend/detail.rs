@@ -672,7 +672,7 @@ pub fn inputs_and_outputs_view<'a>(
 
 pub fn sign_action<'a>(
     warning: Option<&Error>,
-    hws: &[HardwareWallet],
+    hws: &'a [HardwareWallet],
     processing: bool,
     chosen_hw: Option<usize>,
     signed: &[Fingerprint],
@@ -702,7 +702,9 @@ pub fn sign_action<'a>(
                                     hw,
                                     Some(i) == chosen_hw,
                                     processing,
-                                    signed.contains(&hw.fingerprint),
+                                    hw.fingerprint()
+                                        .map(|f| signed.contains(&f))
+                                        .unwrap_or(false),
                                 ))
                             },
                         ))

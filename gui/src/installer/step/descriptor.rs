@@ -602,18 +602,27 @@ impl DescriptorKeyModal for EditXpubModal {
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Select(i) => {
-                if let Some(hw) = self.hws.get(i) {
-                    let device = hw.device.clone();
+                if let Some(HardwareWallet::Supported {
+                    device,
+                    fingerprint,
+                    ..
+                }) = self.hws.get(i)
+                {
                     self.chosen_hw = Some(i);
                     self.processing = true;
                     // If another account n exists, the key is retrieved for the account n+1
                     let account_index = self
                         .account_indexes
-                        .get(&hw.fingerprint)
+                        .get(fingerprint)
                         .map(|account_index| account_index.increment().unwrap())
                         .unwrap_or_else(|| ChildNumber::from_hardened_idx(0).unwrap());
                     return Command::perform(
-                        get_extended_pubkey(device, hw.fingerprint, self.network, account_index),
+                        get_extended_pubkey(
+                            device.clone(),
+                            *fingerprint,
+                            self.network,
+                            account_index,
+                        ),
                         |res| {
                             Message::DefineDescriptor(message::DefineDescriptor::HWXpubImported(
                                 res,
@@ -781,20 +790,29 @@ impl HardwareWalletXpubs {
     }
 
     fn select(&mut self, i: usize, network: Network) -> Command<Message> {
-        let device = self.hw.device.clone();
-        self.processing = true;
-        self.error = None;
-        let fingerprint = self.hw.fingerprint;
-        let next_account = self.next_account;
-        Command::perform(
-            async move {
-                (
-                    i,
-                    get_extended_pubkey(device, fingerprint, network, next_account).await,
-                )
-            },
-            |(i, res)| Message::ImportXpub(i, res),
-        )
+        if let HardwareWallet::Supported {
+            device,
+            fingerprint,
+            ..
+        } = &self.hw
+        {
+            let device = device.clone();
+            let fingerprint = *fingerprint;
+            self.processing = true;
+            self.error = None;
+            let next_account = self.next_account;
+            Command::perform(
+                async move {
+                    (
+                        i,
+                        get_extended_pubkey(device, fingerprint, network, next_account).await,
+                    )
+                },
+                |(i, res)| Message::ImportXpub(i, res),
+            )
+        } else {
+            Command::none()
+        }
     }
 
     pub fn view(&self, i: usize) -> Element<Message> {
@@ -854,11 +872,9 @@ impl Step for ParticipateXpub {
             }
             Message::ConnectedHardwareWallets(hws) => {
                 for hw in hws {
-                    if let Some(xpub_hw) = self
-                        .xpubs_hw
-                        .iter_mut()
-                        .find(|h| h.hw.fingerprint == hw.fingerprint)
-                    {
+                    if let Some(xpub_hw) = self.xpubs_hw.iter_mut().find(|h| {
+                        h.hw.fingerprint() == hw.fingerprint() && h.hw.kind() == hw.kind()
+                    }) {
                         xpub_hw.hw = hw;
                     } else {
                         self.xpubs_hw.push(HardwareWalletXpubs::new(hw));
@@ -1021,15 +1037,23 @@ impl Step for RegisterDescriptor {
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Select(i) => {
-                if let Some((hw, hmac, _)) = self.hws.get(i) {
+                if let Some((
+                    HardwareWallet::Supported {
+                        device,
+                        fingerprint,
+                        ..
+                    },
+                    hmac,
+                    _,
+                )) = self.hws.get(i)
+                {
                     if hmac.is_none() {
-                        let device = hw.device.clone();
                         let descriptor = self.descriptor.as_ref().unwrap().to_string();
                         self.chosen_hw = Some(i);
                         self.processing = true;
                         self.error = None;
                         return Command::perform(
-                            register_wallet(device, hw.fingerprint, descriptor),
+                            register_wallet(device.clone(), *fingerprint, descriptor),
                             Message::WalletRegistered,
                         );
                     }
@@ -1043,7 +1067,7 @@ impl Step for RegisterDescriptor {
                         if let Some(hw_h) = self
                             .hws
                             .iter_mut()
-                            .find(|hw_h| hw_h.0.fingerprint == fingerprint)
+                            .find(|hw_h| hw_h.0.fingerprint() == Some(fingerprint))
                         {
                             hw_h.1 = hmac;
                             hw_h.2 = true;
@@ -1054,11 +1078,9 @@ impl Step for RegisterDescriptor {
             }
             Message::ConnectedHardwareWallets(hws) => {
                 for hw in hws {
-                    if !self
-                        .hws
-                        .iter()
-                        .any(|(h, _, _)| h.fingerprint == hw.fingerprint)
-                    {
+                    if !self.hws.iter().any(|(h, _, _)| {
+                        h.fingerprint() == hw.fingerprint() && h.kind() == hw.kind()
+                    }) {
                         self.hws.push((hw, None, false));
                     }
                 }
@@ -1073,7 +1095,8 @@ impl Step for RegisterDescriptor {
     fn apply(&mut self, ctx: &mut Context) -> bool {
         for (hw, token, registered) in &self.hws {
             if *registered {
-                ctx.hws.push((hw.kind, hw.fingerprint, *token));
+                ctx.hws
+                    .push((*hw.kind(), hw.fingerprint().unwrap(), *token));
             }
         }
         true

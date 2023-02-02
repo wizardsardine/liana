@@ -412,7 +412,7 @@ pub fn import_descriptor<'a>(
 pub fn hardware_wallet_xpubs<'a>(
     i: usize,
     xpubs: &'a Vec<String>,
-    hw: &HardwareWallet,
+    hw: &'a HardwareWallet,
     processing: bool,
     error: Option<&Error>,
 ) -> Element<'a, Message> {
@@ -421,8 +421,38 @@ pub fn hardware_wallet_xpubs<'a>(
             .align_items(Alignment::Center)
             .push(
                 Column::new()
-                    .push(text(format!("{}", hw.kind)).bold())
-                    .push(text(format!("fingerprint: {}", hw.fingerprint)).small())
+                    .push(text(format!("{}", hw.kind())).bold())
+                    .push(match hw {
+                        HardwareWallet::Supported {
+                            fingerprint,
+                            version,
+                            ..
+                        } => Row::new()
+                            .spacing(5)
+                            .push(text(format!("fingerprint: {}", fingerprint)).small())
+                            .push_maybe(
+                                version
+                                    .as_ref()
+                                    .map(|v| text(format!("version: {}", v)).small()),
+                            ),
+                        HardwareWallet::Unsupported {
+                            version, message, ..
+                        } => Row::new()
+                            .spacing(5)
+                            .push_maybe(
+                                version
+                                    .as_ref()
+                                    .map(|v| text(format!("version: {}", v)).small()),
+                            )
+                            .push(
+                                iced::widget::tooltip::Tooltip::new(
+                                    icon::warning_icon(),
+                                    message,
+                                    iced::widget::tooltip::Position::Bottom,
+                                )
+                                .style(card::SimpleCardStyle),
+                            ),
+                    })
                     .spacing(5)
                     .width(Length::Fill),
             )
@@ -442,7 +472,7 @@ pub fn hardware_wallet_xpubs<'a>(
     .padding(10)
     .style(button::Style::TransparentBorder.into())
     .width(Length::Fill);
-    if !processing {
+    if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Select(i));
     }
     Container::new(
@@ -576,7 +606,7 @@ pub fn participate_xpub(
 pub fn register_descriptor<'a>(
     progress: (usize, usize),
     descriptor: String,
-    hws: &[(HardwareWallet, Option<[u8; 32]>, bool)],
+    hws: &'a [(HardwareWallet, Option<[u8; 32]>, bool)],
     error: Option<&Error>,
     processing: bool,
     chosen_hw: Option<usize>,
@@ -1039,7 +1069,7 @@ pub fn defined_descriptor_key(
 #[allow(clippy::too_many_arguments)]
 pub fn edit_key_modal<'a>(
     network: bitcoin::Network,
-    hws: &[HardwareWallet],
+    hws: &'a [HardwareWallet],
     error: Option<&Error>,
     processing: bool,
     chosen_hw: Option<usize>,
@@ -1187,19 +1217,49 @@ pub fn edit_key_modal<'a>(
         .into()
 }
 
-fn hw_list_view<'a>(
+fn hw_list_view(
     i: usize,
     hw: &HardwareWallet,
     chosen: bool,
     processing: bool,
     registered: bool,
-) -> Element<'a, Message> {
+) -> Element<Message> {
     let mut bttn = Button::new(
         Row::new()
             .push(
                 Column::new()
-                    .push(text(format!("{}", hw.kind)).bold())
-                    .push(text(format!("fingerprint: {}", hw.fingerprint)).small())
+                    .push(text(format!("{}", hw.kind())).bold())
+                    .push(match hw {
+                        HardwareWallet::Supported {
+                            fingerprint,
+                            version,
+                            ..
+                        } => Row::new()
+                            .spacing(5)
+                            .push(text(format!("fingerprint: {}", fingerprint)).small())
+                            .push_maybe(
+                                version
+                                    .as_ref()
+                                    .map(|v| text(format!("version: {}", v)).small()),
+                            ),
+                        HardwareWallet::Unsupported {
+                            version, message, ..
+                        } => Row::new()
+                            .spacing(5)
+                            .push_maybe(
+                                version
+                                    .as_ref()
+                                    .map(|v| text(format!("version: {}", v)).small()),
+                            )
+                            .push(
+                                iced::widget::tooltip::Tooltip::new(
+                                    icon::warning_icon(),
+                                    message,
+                                    iced::widget::tooltip::Position::Bottom,
+                                )
+                                .style(card::SimpleCardStyle),
+                            ),
+                    })
                     .spacing(5)
                     .width(Length::Fill),
             )
@@ -1223,7 +1283,7 @@ fn hw_list_view<'a>(
     .padding(10)
     .style(button::Style::TransparentBorder.into())
     .width(Length::Fill);
-    if !processing {
+    if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Select(i));
     }
     Container::new(bttn)
