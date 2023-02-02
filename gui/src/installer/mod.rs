@@ -1,4 +1,4 @@
-mod config;
+mod context;
 mod message;
 mod prompt;
 mod step;
@@ -7,17 +7,15 @@ mod view;
 use iced::{clipboard, Command, Element, Subscription};
 use liana::miniscript::bitcoin;
 
-use std::convert::TryInto;
+use context::Context;
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::{
-    app::config as gui_config, hw::HardwareWalletConfig, installer::config::DEFAULT_FILE_NAME,
-};
+use crate::app::{config as gui_config, settings as gui_settings};
 
 pub use message::Message;
 use step::{
-    BackupDescriptor, Context, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor,
+    BackupDescriptor, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor, ParticipateXpub,
     RegisterDescriptor, Step, Welcome,
 };
 
@@ -100,10 +98,22 @@ impl Installer {
                 ];
                 self.next()
             }
+            Message::ParticipateWallet => {
+                self.steps = vec![
+                    Welcome::default().into(),
+                    ParticipateXpub::new().into(),
+                    ImportDescriptor::new(false).into(),
+                    BackupDescriptor::default().into(),
+                    RegisterDescriptor::default().into(),
+                    DefineBitcoind::new().into(),
+                    Final::new().into(),
+                ];
+                self.next()
+            }
             Message::ImportWallet => {
                 self.steps = vec![
                     Welcome::default().into(),
-                    ImportDescriptor::new().into(),
+                    ImportDescriptor::new(true).into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
                     Final::new().into(),
@@ -152,19 +162,7 @@ impl Installer {
 }
 
 pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
-    let hardware_wallets = ctx
-        .hws
-        .iter()
-        .filter_map(|(kind, fingerprint, token)| {
-            token
-                .as_ref()
-                .map(|token| HardwareWalletConfig::new(kind, fingerprint, token))
-        })
-        .collect();
-
-    let mut cfg: liana::config::Config = ctx
-        .try_into()
-        .expect("Everything should be checked at this point");
+    let mut cfg: liana::config::Config = ctx.extract_daemon_config();
     // Start Daemon to check correctness of installation
     let daemon = liana::DaemonHandle::start_default(cfg.clone()).map_err(|e| {
         Error::Unexpected(format!("Failed to start daemon with entered config: {}", e))
@@ -179,40 +177,53 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
     let mut datadir_path = cfg.data_dir.clone().unwrap();
     datadir_path.push(cfg.bitcoin_config.network.to_string());
 
-    // create lianad configuration file
-    let mut daemon_config_path = datadir_path.clone();
-    daemon_config_path.push(DEFAULT_FILE_NAME);
-    let mut daemon_config_file = std::fs::File::create(&daemon_config_path)
-        .map_err(|e| Error::CannotCreateFile(e.to_string()))?;
-
     // Step needed because of ValueAfterTable error in the toml serialize implementation.
     let daemon_config =
         toml::Value::try_from(&cfg).expect("daemon::Config has a proper Serialize implementation");
 
-    daemon_config_file
-        .write_all(daemon_config.to_string().as_bytes())
-        .map_err(|e| Error::CannotWriteToFile(e.to_string()))?;
+    // create lianad configuration file
+    let daemon_config_path = create_and_write_file(
+        datadir_path.clone(),
+        "daemon.toml",
+        daemon_config.to_string().as_bytes(),
+    )?;
 
     // create liana GUI configuration file
-    let mut gui_config_path = datadir_path;
-    gui_config_path.push(gui_config::DEFAULT_FILE_NAME);
-    let mut gui_config_file = std::fs::File::create(&gui_config_path)
-        .map_err(|e| Error::CannotCreateFile(e.to_string()))?;
+    let gui_config_path = create_and_write_file(
+        datadir_path.clone(),
+        gui_config::DEFAULT_FILE_NAME,
+        toml::to_string(&gui_config::Config::new(
+            daemon_config_path.canonicalize().map_err(|e| {
+                Error::Unexpected(format!("Failed to canonicalize daemon config path: {}", e))
+            })?,
+        ))
+        .unwrap()
+        .as_bytes(),
+    )?;
 
-    gui_config_file
-        .write_all(
-            toml::to_string(&gui_config::Config::new(
-                daemon_config_path.canonicalize().map_err(|e| {
-                    Error::Unexpected(format!("Failed to canonicalize daemon config path: {}", e))
-                })?,
-                hardware_wallets,
-            ))
-            .unwrap()
-            .as_bytes(),
-        )
-        .map_err(|e| Error::CannotWriteToFile(e.to_string()))?;
+    // create liana GUI settings file
+    let settings: gui_settings::Settings = ctx.extract_gui_settings();
+    create_and_write_file(
+        datadir_path,
+        gui_settings::DEFAULT_FILE_NAME,
+        serde_json::to_string_pretty(&settings).unwrap().as_bytes(),
+    )?;
 
     Ok(gui_config_path)
+}
+
+pub fn create_and_write_file(
+    mut network_datadir: PathBuf,
+    file_name: &str,
+    data: &[u8],
+) -> Result<PathBuf, Error> {
+    network_datadir.push(file_name);
+    let path = network_datadir;
+    let mut file =
+        std::fs::File::create(&path).map_err(|e| Error::CannotCreateFile(e.to_string()))?;
+    file.write_all(data)
+        .map_err(|e| Error::CannotWriteToFile(e.to_string()))?;
+    Ok(path)
 }
 
 #[derive(Debug, Clone)]

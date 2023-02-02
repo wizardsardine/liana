@@ -1,4 +1,7 @@
-use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Network};
+use liana::miniscript::{
+    bitcoin::{util::bip32::Fingerprint, Network},
+    DescriptorPublicKey,
+};
 use std::path::PathBuf;
 
 use super::Error;
@@ -7,8 +10,9 @@ use crate::hw::HardwareWallet;
 #[derive(Debug, Clone)]
 pub enum Message {
     CreateWallet,
+    ParticipateWallet,
     ImportWallet,
-    BackupDone(bool),
+    UserActionDone(bool),
     Exit(PathBuf),
     Clibpboard(String),
     Next,
@@ -21,6 +25,7 @@ pub enum Message {
     Network(Network),
     DefineBitcoind(DefineBitcoind),
     DefineDescriptor(DefineDescriptor),
+    ImportXpub(usize, Result<DescriptorPublicKey, Error>),
     ConnectedHardwareWallets(Vec<HardwareWallet>),
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
 }
@@ -34,10 +39,22 @@ pub enum DefineBitcoind {
 #[derive(Debug, Clone)]
 pub enum DefineDescriptor {
     ImportDescriptor(String),
-    ImportUserHWXpub,
-    ImportHeirHWXpub,
-    XpubImported(Result<String, Error>),
-    UserXpubEdited(String),
-    HeirXpubEdited(String),
+    /// AddKey(is_recovery)
+    AddKey(bool),
+    Key(bool, usize, DefineKey),
+    HWXpubImported(Result<DescriptorPublicKey, Error>),
+    XPubEdited(String),
+    EditName,
+    NameEdited(String),
     SequenceEdited(String),
+    ThresholdEdited(bool, usize),
+    ConfirmXpub,
+}
+
+#[derive(Debug, Clone)]
+pub enum DefineKey {
+    Delete,
+    Edit,
+    Clipboard(String),
+    Edited(String, DescriptorPublicKey),
 }

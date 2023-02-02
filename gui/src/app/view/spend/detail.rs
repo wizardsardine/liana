@@ -1,9 +1,14 @@
+use std::collections::HashMap;
+
 use iced::{
-    widget::{Button, Column, Container, Row, Scrollable, Space},
+    widget::{scrollable, tooltip, Button, Column, Container, Row, Scrollable, Space},
     Alignment, Element, Length,
 };
 
-use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Address, Amount, Network, Transaction};
+use liana::{
+    descriptors::{LianaDescInfo, PathInfo, PathSpendInfo},
+    miniscript::bitcoin::{util::bip32::Fingerprint, Address, Amount, Network, Transaction},
+};
 
 use crate::{
     app::{
@@ -25,7 +30,13 @@ use crate::{
     },
 };
 
-pub fn spend_view(tx: &SpendTx, saved: bool, network: Network) -> Element<Message> {
+pub fn spend_view<'a>(
+    tx: &'a SpendTx,
+    saved: bool,
+    desc_info: &'a LianaDescInfo,
+    key_aliases: &'a HashMap<Fingerprint, String>,
+    network: Network,
+) -> Element<'a, Message> {
     spend_modal(
         saved,
         None,
@@ -33,7 +44,7 @@ pub fn spend_view(tx: &SpendTx, saved: bool, network: Network) -> Element<Messag
             .align_items(Alignment::Center)
             .spacing(20)
             .push(spend_header(tx))
-            .push(spend_overview_view(tx))
+            .push(spend_overview_view(tx, desc_info, key_aliases))
             .push(inputs_and_outputs_view(
                 &tx.coins,
                 &tx.psbt.unsigned_tx,
@@ -187,7 +198,11 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
         .push(
             Row::new()
                 .push(badge::Badge::new(icon::send_icon()).style(badge::Style::Standard))
-                .push(text("Spend").bold())
+                .push(if tx.sigs.recovery_path().is_some() {
+                    text("Recovery").bold()
+                } else {
+                    text("Spend").bold()
+                })
                 .spacing(5)
                 .align_items(Alignment::Center),
         )
@@ -217,67 +232,17 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
         .into()
 }
 
-fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
-    card::simple(
+fn spend_overview_view<'a>(
+    tx: &'a SpendTx,
+    desc_info: &'a LianaDescInfo,
+    key_aliases: &'a HashMap<Fingerprint, String>,
+) -> Element<'a, Message> {
+    Container::new(
         Column::new()
-            .push(Container::new(
-                Row::new()
-                    .push(
-                        Container::new(
-                            Row::new()
-                                .push(Container::new(
-                                    icon::key_icon().size(30).width(Length::Fill),
-                                ))
-                                .push(
-                                    Column::new()
-                                        .push(text("Number of signatures:").bold())
-                                        .push(text(format!(
-                                            "{}",
-                                            tx.psbt.inputs[0].partial_sigs.len(),
-                                        )))
-                                        .width(Length::Fill),
-                                )
-                                .push_maybe(if tx.status == SpendStatus::Pending {
-                                    if !tx.is_signed() {
-                                        Some(
-                                            button::primary(None, "Sign")
-                                                .on_press(Message::Spend(SpendTxMessage::Sign)),
-                                        )
-                                    } else {
-                                        Some(
-                                            button::primary(None, "Broadcast").on_press(
-                                                Message::Spend(SpendTxMessage::Broadcast),
-                                            ),
-                                        )
-                                    }
-                                } else {
-                                    None
-                                })
-                                .align_items(Alignment::Center)
-                                .spacing(20),
-                        )
-                        .width(Length::FillPortion(1)),
-                    )
-                    .align_items(Alignment::Center)
-                    .spacing(20),
-            ))
-            .push(separation().width(Length::Fill))
             .push(
                 Column::new()
+                    .padding(15)
                     .spacing(10)
-                    .push(
-                        Row::new()
-                            .push(text("Tx ID:").bold().width(Length::Fill))
-                            .push(text(tx.psbt.unsigned_tx.txid().to_string()).small())
-                            .push(
-                                Button::new(icon::clipboard_icon())
-                                    .on_press(Message::Clipboard(
-                                        tx.psbt.unsigned_tx.txid().to_string(),
-                                    ))
-                                    .style(button::Style::TransparentBorder.into()),
-                            )
-                            .align_items(Alignment::Center),
-                    )
                     .push(
                         Row::new()
                             .align_items(Alignment::Center)
@@ -295,10 +260,209 @@ fn spend_overview_view<'a>(tx: &SpendTx) -> Element<'a, Message> {
                                     ),
                             )
                             .align_items(Alignment::Center),
+                    )
+                    .push(
+                        Row::new()
+                            .push(text("Tx ID:").bold().width(Length::Fill))
+                            .push(text(tx.psbt.unsigned_tx.txid().to_string()).small())
+                            .push(
+                                Button::new(icon::clipboard_icon())
+                                    .on_press(Message::Clipboard(
+                                        tx.psbt.unsigned_tx.txid().to_string(),
+                                    ))
+                                    .style(button::Style::TransparentBorder.into()),
+                            )
+                            .align_items(Alignment::Center),
                     ),
             )
-            .spacing(20),
+            .push(signatures(tx, desc_info, key_aliases)),
     )
+    .style(card::SimpleCardStyle)
+    .into()
+}
+
+pub fn signatures<'a>(
+    tx: &'a SpendTx,
+    desc_info: &'a LianaDescInfo,
+    keys_aliases: &'a HashMap<Fingerprint, String>,
+) -> Element<'a, Message> {
+    Column::new()
+        .push(Collapse::new(
+            move || {
+                Button::new(
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .push(if tx.is_ready() {
+                            Row::new()
+                                .spacing(5)
+                                .align_items(Alignment::Center)
+                                .push(icon::circle_check_icon().style(color::SUCCESS))
+                                .push(text("Ready").bold().style(color::SUCCESS))
+                                .width(Length::Fill)
+                        } else {
+                            Row::new()
+                                .spacing(5)
+                                .align_items(Alignment::Center)
+                                .push(icon::circle_cross_icon())
+                                .push(text("Not ready").bold())
+                                .width(Length::Fill)
+                        })
+                        .push(icon::collapse_icon()),
+                )
+                .padding(15)
+                .width(Length::Fill)
+                .style(button::Style::TransparentBorder.into())
+            },
+            move || {
+                Button::new(
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .push(if tx.is_ready() {
+                            Row::new()
+                                .spacing(5)
+                                .align_items(Alignment::Center)
+                                .push(icon::circle_check_icon().style(color::SUCCESS))
+                                .push(text("Ready").bold().style(color::SUCCESS))
+                                .width(Length::Fill)
+                        } else {
+                            Row::new()
+                                .spacing(5)
+                                .align_items(Alignment::Center)
+                                .push(icon::circle_cross_icon())
+                                .push(text("Not ready").bold())
+                                .width(Length::Fill)
+                        })
+                        .push(icon::collapsed_icon()),
+                )
+                .padding(15)
+                .width(Length::Fill)
+                .style(button::Style::TransparentBorder.into())
+            },
+            move || {
+                Into::<Element<'a, Message>>::into(
+                    Column::new().push(separation().width(Length::Fill)).push(
+                        Column::new()
+                            .padding(15)
+                            .spacing(10)
+                            .push(path_view(
+                                desc_info.primary_path(),
+                                tx.sigs.primary_path(),
+                                keys_aliases,
+                            ))
+                            .push_maybe(tx.sigs.recovery_path().as_ref().map(|path| {
+                                let (_, keys) = desc_info.recovery_path();
+                                path_view(keys, path, keys_aliases)
+                            })),
+                    ),
+                )
+            },
+        ))
+        .push_maybe(if tx.status == SpendStatus::Pending {
+            Some(
+                Column::new().push(separation().width(Length::Fill)).push(
+                    Container::new(
+                        Row::new()
+                            .push(Space::with_width(Length::Fill))
+                            .push_maybe(if !tx.is_ready() {
+                                Some(
+                                    button::primary(None, "Sign")
+                                        .on_press(Message::Spend(SpendTxMessage::Sign))
+                                        .width(Length::Units(150)),
+                                )
+                            } else {
+                                Some(
+                                    button::primary(None, "Broadcast")
+                                        .on_press(Message::Spend(SpendTxMessage::Broadcast))
+                                        .width(Length::Units(150)),
+                                )
+                            })
+                            .align_items(Alignment::Center)
+                            .spacing(20),
+                    )
+                    .padding(15),
+                ),
+            )
+        } else {
+            None
+        })
+        .into()
+}
+
+pub fn path_view<'a>(
+    path: &'a PathInfo,
+    sigs: &'a PathSpendInfo,
+    key_aliases: &'a HashMap<Fingerprint, String>,
+) -> Element<'a, Message> {
+    let mut keys: Vec<Fingerprint> = path.thresh_fingerprints().1.into_iter().collect();
+    keys.sort();
+    Scrollable::new(
+        Row::new()
+            .spacing(5)
+            .align_items(Alignment::Center)
+            .push(if sigs.signed_pubkeys.len() >= sigs.threshold {
+                icon::circle_check_icon().style(color::SUCCESS)
+            } else {
+                icon::circle_cross_icon()
+            })
+            .push(
+                Container::new(text(format!("  {}  ", sigs.threshold))).style(
+                    if sigs.signed_pubkeys.len() >= sigs.threshold {
+                        badge::PillStyle::Success
+                    } else {
+                        badge::PillStyle::Simple
+                    },
+                ),
+            )
+            .push(text(format!(
+                "signature{} out of",
+                if sigs.threshold > 1 { "s" } else { "" }
+            )))
+            .push(
+                sigs.signed_pubkeys
+                    .keys()
+                    .fold(Row::new().spacing(5), |row, value| {
+                        row.push(if let Some(alias) = key_aliases.get(value) {
+                            Container::new(
+                                tooltip::Tooltip::new(
+                                    Container::new(text(alias))
+                                        .padding(3)
+                                        .style(badge::PillStyle::Success),
+                                    value.to_string(),
+                                    tooltip::Position::Bottom,
+                                )
+                                .style(card::SimpleCardStyle),
+                            )
+                        } else {
+                            Container::new(text(value.to_string()))
+                                .padding(3)
+                                .style(badge::PillStyle::Success)
+                        })
+                    }),
+            )
+            .push(keys.iter().fold(Row::new().spacing(5), |row, &value| {
+                row.push_maybe(if !sigs.signed_pubkeys.contains_key(&value) {
+                    Some(if let Some(alias) = key_aliases.get(&value) {
+                        Container::new(
+                            tooltip::Tooltip::new(
+                                Container::new(text(alias))
+                                    .padding(3)
+                                    .style(badge::PillStyle::Simple),
+                                value.to_string(),
+                                tooltip::Position::Bottom,
+                            )
+                            .style(card::SimpleCardStyle),
+                        )
+                    } else {
+                        Container::new(text(value.to_string()))
+                            .padding(3)
+                            .style(badge::PillStyle::Simple)
+                    })
+                } else {
+                    None
+                })
+            })),
+    )
+    .horizontal_scroll(scrollable::Properties::new().width(2).scroller_width(2))
     .into()
 }
 
@@ -513,26 +677,26 @@ pub fn sign_action<'a>(
     chosen_hw: Option<usize>,
     signed: &[Fingerprint],
 ) -> Element<'a, Message> {
-    card::simple(
-        Column::new()
-            .push_maybe(warning.map(|w| warn(Some(w))))
-            .push(if !hws.is_empty() {
-                Column::new()
-                    .push(
-                        Row::new()
-                            .push(
-                                text("Select hardware wallet to sign with:")
-                                    .bold()
-                                    .width(Length::Fill),
-                            )
-                            .push(button::border(None, "Refresh").on_press(Message::Reload))
-                            .align_items(Alignment::Center),
-                    )
-                    .spacing(10)
-                    .push(
-                        hws.iter()
-                            .enumerate()
-                            .fold(Column::new().spacing(10), |col, (i, hw)| {
+    Column::new()
+        .push_maybe(warning.map(|w| warn(Some(w))))
+        .push(card::simple(
+            Column::new()
+                .push(if !hws.is_empty() {
+                    Column::new()
+                        .push(
+                            Row::new()
+                                .push(
+                                    text("Select hardware wallet to sign with:")
+                                        .bold()
+                                        .width(Length::Fill),
+                                )
+                                .push(button::border(None, "Refresh").on_press(Message::Reload))
+                                .align_items(Alignment::Center),
+                        )
+                        .spacing(10)
+                        .push(hws.iter().enumerate().fold(
+                            Column::new().spacing(10),
+                            |col, (i, hw)| {
                                 col.push(hw_list_view(
                                     i,
                                     hw,
@@ -540,27 +704,27 @@ pub fn sign_action<'a>(
                                     processing,
                                     signed.contains(&hw.fingerprint),
                                 ))
-                            }),
-                    )
-                    .width(Length::Fill)
-            } else {
-                Column::new()
-                    .push(
-                        Column::new()
-                            .spacing(15)
-                            .width(Length::Fill)
-                            .push("Please connect a hardware wallet")
-                            .push(button::border(None, "Refresh").on_press(Message::Reload))
-                            .align_items(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-            })
-            .spacing(20)
-            .width(Length::Fill)
-            .align_items(Alignment::Center),
-    )
-    .width(Length::Units(500))
-    .into()
+                            },
+                        ))
+                        .width(Length::Fill)
+                } else {
+                    Column::new()
+                        .push(
+                            Column::new()
+                                .spacing(15)
+                                .width(Length::Fill)
+                                .push("Please connect a hardware wallet")
+                                .push(button::border(None, "Refresh").on_press(Message::Reload))
+                                .align_items(Alignment::Center),
+                        )
+                        .width(Length::Fill)
+                })
+                .spacing(20)
+                .width(Length::Fill)
+                .align_items(Alignment::Center),
+        ))
+        .width(Length::Units(500))
+        .into()
 }
 
 pub fn update_spend_view<'a>(

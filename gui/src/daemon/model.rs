@@ -3,6 +3,7 @@ pub use liana::{
         CreateSpendResult, GetAddressResult, GetInfoResult, ListCoinsEntry, ListCoinsResult,
         ListSpendEntry, ListSpendResult, ListTransactionsResult, TransactionInfo,
     },
+    descriptors::PartialSpendInfo,
     miniscript::bitcoin::{util::psbt::Psbt, Amount, Transaction},
 };
 
@@ -28,6 +29,7 @@ pub struct SpendTx {
     pub spend_amount: Amount,
     pub fee_amount: Amount,
     pub status: SpendStatus,
+    pub sigs: PartialSpendInfo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,7 +40,7 @@ pub enum SpendStatus {
 }
 
 impl SpendTx {
-    pub fn new(psbt: Psbt, coins: Vec<Coin>) -> Self {
+    pub fn new(psbt: Psbt, coins: Vec<Coin>, sigs: PartialSpendInfo) -> Self {
         let mut change_indexes = Vec::new();
         let (change_amount, spend_amount) = psbt.unsigned_tx.output.iter().enumerate().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
@@ -72,11 +74,21 @@ impl SpendTx {
             spend_amount,
             fee_amount: inputs_amount - spend_amount - change_amount,
             status,
+            sigs,
         }
     }
 
-    pub fn is_signed(&self) -> bool {
-        !self.psbt.inputs.first().unwrap().partial_sigs.is_empty()
+    pub fn is_ready(&self) -> bool {
+        let path = self.sigs.primary_path();
+        if path.signed_pubkeys.len() >= path.threshold {
+            return true;
+        }
+        if let Some(path) = self.sigs.recovery_path() {
+            if path.signed_pubkeys.len() >= path.threshold {
+                return true;
+            }
+        }
+        false
     }
 }
 

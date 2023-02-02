@@ -1,21 +1,18 @@
 mod descriptor;
-pub use descriptor::{BackupDescriptor, DefineDescriptor, ImportDescriptor, RegisterDescriptor};
+pub use descriptor::{
+    BackupDescriptor, DefineDescriptor, ImportDescriptor, ParticipateXpub, RegisterDescriptor,
+};
 
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::time::Duration;
 
-use async_hwi::DeviceKind;
 use iced::{Command, Element};
-use liana::{
-    config::{BitcoinConfig, BitcoindConfig},
-    descriptors::MultipathDescriptor,
-    miniscript::bitcoin,
-};
+use liana::{config::BitcoindConfig, miniscript::bitcoin};
 
 use crate::ui::component::form;
 
 use crate::installer::{
+    context::Context,
     message::{self, Message},
     view,
 };
@@ -34,34 +31,6 @@ pub trait Step {
     }
     fn apply(&mut self, _ctx: &mut Context) -> bool {
         true
-    }
-}
-
-#[derive(Clone)]
-pub struct Context {
-    pub bitcoin_config: BitcoinConfig,
-    pub bitcoind_config: Option<BitcoindConfig>,
-    pub descriptor: Option<MultipathDescriptor>,
-    pub hws: Vec<(
-        DeviceKind,
-        bitcoin::util::bip32::Fingerprint,
-        Option<[u8; 32]>,
-    )>,
-    pub data_dir: PathBuf,
-}
-
-impl Context {
-    pub fn new(network: bitcoin::Network, data_dir: PathBuf) -> Self {
-        Self {
-            bitcoin_config: BitcoinConfig {
-                network,
-                poll_interval_secs: Duration::from_secs(30),
-            },
-            hws: Vec::new(),
-            bitcoind_config: None,
-            descriptor: None,
-            data_dir,
-        }
     }
 }
 

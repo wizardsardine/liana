@@ -72,25 +72,29 @@ pub trait Daemon: Debug {
     fn list_txs(&self, txid: &[Txid]) -> Result<model::ListTransactionsResult, DaemonError>;
 
     fn list_spend_transactions(&self) -> Result<Vec<model::SpendTx>, DaemonError> {
+        let info = self.get_info()?;
         let coins = self.list_coins()?.coins;
-        let spend_txs = self.list_spend_txs()?.spend_txs;
-        Ok(spend_txs
-            .into_iter()
-            .map(|tx| {
-                let coins = coins
-                    .iter()
-                    .filter(|coin| {
-                        tx.psbt
-                            .unsigned_tx
-                            .input
-                            .iter()
-                            .any(|input| input.previous_output == coin.outpoint)
-                    })
-                    .copied()
-                    .collect();
-                model::SpendTx::new(tx.psbt, coins)
-            })
-            .collect())
+        let mut spend_txs = Vec::new();
+        for tx in self.list_spend_txs()?.spend_txs {
+            let coins = coins
+                .iter()
+                .filter(|coin| {
+                    tx.psbt
+                        .unsigned_tx
+                        .input
+                        .iter()
+                        .any(|input| input.previous_output == coin.outpoint)
+                })
+                .copied()
+                .collect();
+            let sigs = info
+                .descriptors
+                .main
+                .partial_spend_info(&tx.psbt)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
+            spend_txs.push(model::SpendTx::new(tx.psbt, coins, sigs))
+        }
+        Ok(spend_txs)
     }
 
     fn list_history_txs(

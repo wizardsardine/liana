@@ -2,6 +2,7 @@ pub mod cache;
 pub mod config;
 pub mod menu;
 pub mod message;
+pub mod settings;
 pub mod state;
 pub mod view;
 pub mod wallet;
@@ -31,14 +32,14 @@ pub struct App {
     state: Box<dyn State>,
     cache: Cache,
     config: Config,
-    wallet: Wallet,
+    wallet: Arc<Wallet>,
     daemon: Arc<dyn Daemon + Sync + Send>,
 }
 
 impl App {
     pub fn new(
         cache: Cache,
-        wallet: Wallet,
+        wallet: Arc<Wallet>,
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
     ) -> (App, Command<Message>) {
@@ -72,22 +73,15 @@ impl App {
             .into(),
             menu::Menu::Recovery => RecoveryPanel::new(
                 self.wallet.clone(),
-                self.config.clone(),
                 &self.cache.coins,
                 self.wallet.main_descriptor.timelock_value(),
                 self.cache.blockheight as u32,
             )
             .into(),
             menu::Menu::Receive => ReceivePanel::default().into(),
-            menu::Menu::Spend => SpendPanel::new(
-                self.wallet.clone(),
-                self.config.clone(),
-                &self.cache.spend_txs,
-            )
-            .into(),
+            menu::Menu::Spend => SpendPanel::new(self.wallet.clone(), &self.cache.spend_txs).into(),
             menu::Menu::CreateSpendTx => CreateSpendPanel::new(
                 self.wallet.clone(),
-                self.config.clone(),
                 &self.cache.coins,
                 self.cache.blockheight as u32,
             )

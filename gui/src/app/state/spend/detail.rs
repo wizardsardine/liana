@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
 use iced::{Command, Element};
-use liana::miniscript::bitcoin::{
-    consensus,
-    util::{bip32::Fingerprint, psbt::Psbt},
+use liana::{
+    descriptors::LianaDescInfo,
+    miniscript::bitcoin::{
+        consensus,
+        util::{bip32::Fingerprint, psbt::Psbt},
+    },
 };
 
 use crate::{
     app::{
-        cache::Cache, config::Config, error::Error, message::Message, view, view::spend::detail,
-        wallet::Wallet,
+        cache::Cache, error::Error, message::Message, view, view::spend::detail, wallet::Wallet,
     },
     daemon::{
         model::{SpendStatus, SpendTx},
@@ -39,19 +41,19 @@ trait Action {
 }
 
 pub struct SpendTxState {
-    wallet: Wallet,
-    config: Config,
+    wallet: Arc<Wallet>,
+    desc_info: LianaDescInfo,
     tx: SpendTx,
     saved: bool,
     action: Option<Box<dyn Action>>,
 }
 
 impl SpendTxState {
-    pub fn new(wallet: Wallet, config: Config, tx: SpendTx, saved: bool) -> Self {
+    pub fn new(wallet: Arc<Wallet>, tx: SpendTx, saved: bool) -> Self {
         Self {
+            desc_info: wallet.main_descriptor.info(),
             wallet,
             action: None,
-            config,
             tx,
             saved,
         }
@@ -80,7 +82,7 @@ impl SpendTxState {
                     self.action = Some(Box::new(DeleteAction::default()));
                 }
                 view::SpendTxMessage::Sign => {
-                    let action = SignAction::new(self.config.clone());
+                    let action = SignAction::new();
                     let cmd = action.load(&self.wallet, daemon);
                     self.action = Some(Box::new(action));
                     return cmd;
@@ -119,7 +121,13 @@ impl SpendTxState {
     }
 
     pub fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = detail::spend_view(&self.tx, self.saved, cache.network);
+        let content = detail::spend_view(
+            &self.tx,
+            self.saved,
+            &self.desc_info,
+            &self.wallet.keys_aliases,
+            cache.network,
+        );
         if let Some(action) = &self.action {
             modal::Modal::new(content, action.view())
                 .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
@@ -252,7 +260,6 @@ impl Action for DeleteAction {
 }
 
 pub struct SignAction {
-    config: Config,
     chosen_hw: Option<usize>,
     processing: bool,
     hws: Vec<HardwareWallet>,
@@ -261,9 +268,8 @@ pub struct SignAction {
 }
 
 impl SignAction {
-    pub fn new(config: Config) -> Self {
+    pub fn new() -> Self {
         Self {
-            config,
             chosen_hw: None,
             processing: false,
             hws: Vec::new(),
@@ -279,13 +285,8 @@ impl Action for SignAction {
     }
 
     fn load(&self, wallet: &Wallet, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        let config = self.config.clone();
-        let desc = wallet.main_descriptor.to_string();
-        let name = wallet.name.clone();
-        Command::perform(
-            list_hws(config, name, desc),
-            Message::ConnectedHardwareWallets,
-        )
+        let wallet = wallet.clone();
+        Command::perform(list_hws(wallet), Message::ConnectedHardwareWallets)
     }
     fn update(
         &mut self,
@@ -321,7 +322,10 @@ impl Action for SignAction {
                 }
             },
             Message::Updated(res) => match res {
-                Ok(()) => self.processing = false,
+                Ok(()) => {
+                    self.processing = false;
+                    tx.sigs = wallet.main_descriptor.partial_spend_info(&tx.psbt).unwrap();
+                }
                 Err(e) => self.error = Some(e),
             },
             // We add the new hws without dropping the reference of the previous ones.
@@ -350,8 +354,12 @@ impl Action for SignAction {
     }
 }
 
-async fn list_hws(config: Config, wallet_name: String, descriptor: String) -> Vec<HardwareWallet> {
-    list_hardware_wallets(&config.hardware_wallets, Some((&wallet_name, &descriptor))).await
+async fn list_hws(wallet: Wallet) -> Vec<HardwareWallet> {
+    list_hardware_wallets(
+        &wallet.hardware_wallets,
+        Some((&wallet.name, &wallet.main_descriptor.to_string())),
+    )
+    .await
 }
 
 async fn sign_psbt(
@@ -399,7 +407,7 @@ impl Action for UpdateAction {
 
     fn update(
         &mut self,
-        _wallet: &Wallet,
+        wallet: &Wallet,
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
@@ -436,6 +444,7 @@ impl Action for UpdateAction {
                                     .extend(updated_input.partial_sigs.clone().into_iter());
                             }
                         }
+                        tx.sigs = wallet.main_descriptor.partial_spend_info(&tx.psbt).unwrap();
                     }
                     Err(e) => self.error = e.into(),
                 }

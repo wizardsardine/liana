@@ -1,6 +1,7 @@
 use crate::daemon::model::{Coin, SpendTx};
 use liana::miniscript::bitcoin::Network;
 
+#[derive(Debug)]
 pub struct Cache {
     pub network: Network,
     pub blockheight: i32,

@@ -39,7 +39,7 @@ pub trait State {
 }
 
 pub struct Home {
-    wallet: Wallet,
+    wallet: Arc<Wallet>,
     balance: Amount,
     recovery_warning: Option<(Amount, usize)>,
     recovery_alert: Option<(Amount, usize)>,
@@ -50,7 +50,7 @@ pub struct Home {
 }
 
 impl Home {
-    pub fn new(wallet: Wallet, coins: &[Coin]) -> Self {
+    pub fn new(wallet: Arc<Wallet>, coins: &[Coin]) -> Self {
         Self {
             wallet,
             balance: Amount::from_sat(

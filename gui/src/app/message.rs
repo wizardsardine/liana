@@ -23,6 +23,7 @@ pub enum Message {
     Coins(Result<Vec<Coin>, Error>),
     SpendTxs(Result<Vec<SpendTx>, Error>),
     Psbt(Result<Psbt, Error>),
+    Recovery(Result<SpendTx, Error>),
     Signed(Result<(Psbt, Fingerprint), Error>),
     Updated(Result<(), Error>),
     Saved(Result<(), Error>),

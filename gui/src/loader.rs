@@ -17,7 +17,12 @@ use liana::{
 };
 
 use crate::{
-    app::config::{default_datadir, Config as GUIConfig},
+    app::{
+        cache::Cache,
+        config::{default_datadir, Config as GUIConfig},
+        settings::{self, Settings},
+        wallet::Wallet,
+    },
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
     ui::{
         component::{button, notification, text::*},
@@ -30,6 +35,7 @@ type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
 
 pub struct Loader {
     pub datadir_path: Option<PathBuf>,
+    pub network: bitcoin::Network,
     pub gui_config: GUIConfig,
     pub daemon_started: bool,
 
@@ -47,16 +53,12 @@ pub enum Step {
     Error(Box<Error>),
 }
 
+#[allow(clippy::type_complexity)]
 #[derive(Debug)]
 pub enum Message {
     View(ViewMessage),
     Syncing(Result<GetInfoResult, DaemonError>),
-    Synced(
-        GetInfoResult,
-        Vec<Coin>,
-        Vec<SpendTx>,
-        Arc<dyn Daemon + Sync + Send>,
-    ),
+    Synced(Result<(Arc<Wallet>, Cache, Arc<dyn Daemon + Sync + Send>), Error>),
     Started(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     Failure(DaemonError),
@@ -75,6 +77,7 @@ impl Loader {
         .unwrap();
         (
             Loader {
+                network: daemon_config.bitcoin_config.network,
                 datadir_path,
                 daemon_config: daemon_config.clone(),
                 gui_config,
@@ -141,18 +144,47 @@ impl Loader {
                     Ok(info) => {
                         if (info.sync - 1.0_f64).abs() < f64::EPSILON {
                             let daemon = daemon.clone();
+                            let settings_path =
+                                settings_path(&self.datadir_path, self.network).unwrap();
+                            let gui_config_hws = self
+                                .gui_config
+                                .hardware_wallets
+                                .as_ref()
+                                .cloned()
+                                .unwrap_or_default();
                             return Command::perform(
                                 async move {
-                                    let coins = daemon
-                                        .list_coins()
-                                        .map(|res| res.coins)
-                                        .unwrap_or_else(|_| Vec::new());
-                                    let spend_txs = daemon
-                                        .list_spend_transactions()
-                                        .unwrap_or_else(|_| Vec::new());
-                                    (info, coins, spend_txs, daemon)
+                                    let coins = daemon.list_coins().map(|res| res.coins)?;
+                                    let spend_txs = daemon.list_spend_transactions()?;
+                                    let cache = Cache {
+                                        network: info.network,
+                                        blockheight: info.block_height,
+                                        coins,
+                                        spend_txs,
+                                        ..Default::default()
+                                    };
+                                    let wallet = match Settings::from_file(&settings_path) {
+                                        Ok(settings) => {
+                                            if let Some(wallet_setting) = settings.wallets.first() {
+                                                Wallet::legacy(info.descriptors.main)
+                                                    .with_harware_wallets(
+                                                        wallet_setting.hardware_wallets.clone(),
+                                                    )
+                                                    .with_key_aliases(wallet_setting.keys_aliases())
+                                            } else {
+                                                Wallet::legacy(info.descriptors.main)
+                                                    .with_harware_wallets(gui_config_hws)
+                                            }
+                                        }
+                                        Err(settings::SettingsError::NotFound) => {
+                                            Wallet::legacy(info.descriptors.main)
+                                                .with_harware_wallets(gui_config_hws)
+                                        }
+                                        Err(e) => return Err(e.into()),
+                                    };
+                                    Ok((Arc::new(wallet), cache, daemon))
                                 },
-                                |res| Message::Synced(res.0, res.1, res.2, res.3),
+                                Message::Synced,
                             );
                         } else {
                             *progress = info.sync
@@ -333,6 +365,7 @@ async fn sync(
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum Error {
+    Settings(settings::SettingsError),
     Config(ConfigError),
     Daemon(DaemonError),
 }
@@ -340,9 +373,16 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            Self::Settings(e) => write!(f, "Settings error: {}", e),
             Self::Config(e) => write!(f, "Config error: {}", e),
             Self::Daemon(e) => write!(f, "Liana daemon error: {}", e),
         }
+    }
+}
+
+impl From<settings::SettingsError> for Error {
+    fn from(error: settings::SettingsError) -> Self {
+        Error::Settings(error)
     }
 }
 
@@ -370,5 +410,20 @@ fn socket_path(
     };
     path.push(network.to_string());
     path.push("lianad_rpc");
+    Ok(path)
+}
+
+/// default liana settings path is .liana/bitcoin/settings.json
+fn settings_path(
+    datadir: &Option<PathBuf>,
+    network: bitcoin::Network,
+) -> Result<PathBuf, ConfigError> {
+    let mut path = if let Some(ref datadir) = datadir {
+        datadir.clone()
+    } else {
+        default_datadir().map_err(|_| ConfigError::DatadirNotFound)?
+    };
+    path.push(network.to_string());
+    path.push(settings::DEFAULT_FILE_NAME);
     Ok(path)
 }

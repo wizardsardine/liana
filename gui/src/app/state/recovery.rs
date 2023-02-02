@@ -6,48 +6,37 @@ use iced::{Command, Element};
 use crate::{
     app::{
         cache::Cache,
-        config::Config,
         error::Error,
         menu::Menu,
         message::Message,
+        state::spend::detail,
         state::{redirect, State},
         view,
         wallet::Wallet,
     },
     daemon::{
-        model::{remaining_sequence, Coin},
+        model::{remaining_sequence, Coin, SpendTx},
         Daemon,
     },
-    hw::{list_hardware_wallets, HardwareWallet},
     ui::component::form,
 };
 
-use liana::miniscript::bitcoin::{util::psbt::Psbt, Address, Amount, Network};
+use liana::miniscript::bitcoin::{Address, Amount, Network};
 
 pub struct RecoveryPanel {
-    wallet: Wallet,
-    config: Config,
+    wallet: Arc<Wallet>,
     locked_coins: (usize, Amount),
     recoverable_coins: (usize, Amount),
     warning: Option<Error>,
     feerate: form::Value<String>,
     recipient: form::Value<String>,
-    generated: Option<Psbt>,
-    hws: Vec<HardwareWallet>,
-    selected_hw: Option<usize>,
-    signed: bool,
+    generated: Option<detail::SpendTxState>,
     /// timelock value to pass for the heir to consume a coin.
     timelock: u32,
 }
 
 impl RecoveryPanel {
-    pub fn new(
-        wallet: Wallet,
-        config: Config,
-        coins: &[Coin],
-        timelock: u32,
-        blockheight: u32,
-    ) -> Self {
+    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], timelock: u32, blockheight: u32) -> Self {
         let mut locked_coins = (0, Amount::from_sat(0));
         let mut recoverable_coins = (0, Amount::from_sat(0));
         for coin in coins {
@@ -64,7 +53,6 @@ impl RecoveryPanel {
         }
         Self {
             wallet,
-            config,
             locked_coins,
             recoverable_coins,
             warning: None,
@@ -72,30 +60,27 @@ impl RecoveryPanel {
             recipient: form::Value::default(),
             generated: None,
             timelock,
-            hws: Vec::new(),
-            selected_hw: None,
-            signed: false,
         }
     }
 }
 
 impl State for RecoveryPanel {
-    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, view::Message> {
-        view::modal(
-            false,
-            self.warning.as_ref(),
-            view::recovery::recovery(
-                &self.locked_coins,
-                &self.recoverable_coins,
-                &self.feerate,
-                &self.recipient,
-                self.generated.as_ref(),
-                &self.hws,
-                self.selected_hw,
-                self.signed,
-            ),
-            None::<Element<view::Message>>,
-        )
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        if let Some(generated) = &self.generated {
+            generated.view(cache)
+        } else {
+            view::modal(
+                false,
+                self.warning.as_ref(),
+                view::recovery::recovery(
+                    &self.locked_coins,
+                    &self.recoverable_coins,
+                    &self.feerate,
+                    &self.recipient,
+                ),
+                None::<Element<view::Message>>,
+            )
+        }
     }
 
     fn update(
@@ -127,27 +112,13 @@ impl State for RecoveryPanel {
                     }
                 }
             },
-            // We add the new hws without dropping the reference of the previous ones.
-            Message::ConnectedHardwareWallets(hws) => {
-                for h in hws {
-                    if !self.hws.iter().any(|hw| hw.fingerprint == h.fingerprint) {
-                        self.hws.push(h);
-                    }
+            Message::Recovery(res) => match res {
+                Ok(tx) => {
+                    self.generated = Some(detail::SpendTxState::new(self.wallet.clone(), tx, false))
                 }
-            }
-            Message::Psbt(res) => match res {
-                Ok(psbt) => self.generated = Some(psbt),
                 Err(e) => self.warning = Some(e),
-            },
-            Message::Updated(res) => match res {
-                Err(e) => self.warning = Some(e),
-                Ok(()) => {
-                    self.warning = None;
-                    self.signed = true;
-                }
             },
             Message::View(msg) => match msg {
-                view::Message::Reload => return self.load(daemon),
                 view::Message::Close => return redirect(Menu::Settings),
                 view::Message::Previous => self.generated = None,
                 view::Message::CreateSpend(view::CreateSpendMessage::RecipientEdited(
@@ -175,68 +146,54 @@ impl State for RecoveryPanel {
                     let address = Address::from_str(&self.recipient.value).expect("Checked before");
                     let feerate_vb = self.feerate.value.parse::<u64>().expect("Checked before");
                     self.warning = None;
+                    let desc = self.wallet.main_descriptor.clone();
                     return Command::perform(
                         async move {
-                            daemon
-                                .create_recovery(address, feerate_vb)
-                                .map_err(|e| e.into())
+                            let psbt = daemon.create_recovery(address, feerate_vb)?;
+                            let coins = daemon.list_coins().map(|res| res.coins)?;
+                            let coins = coins
+                                .iter()
+                                .filter(|coin| {
+                                    psbt.unsigned_tx
+                                        .input
+                                        .iter()
+                                        .any(|input| input.previous_output == coin.outpoint)
+                                })
+                                .copied()
+                                .collect();
+                            let sigs = desc.partial_spend_info(&psbt).unwrap();
+                            Ok(SpendTx::new(psbt, coins, sigs))
                         },
-                        Message::Psbt,
+                        Message::Recovery,
                     );
                 }
-                view::Message::Spend(view::SpendTxMessage::SelectHardwareWallet(i)) => {
-                    if let Some(hw) = self.hws.get(i) {
-                        let device = hw.device.clone();
-                        self.selected_hw = Some(i);
-                        let psbt = self.generated.clone().unwrap();
-                        return Command::perform(
-                            send_funds(daemon, device, psbt),
-                            Message::Updated,
-                        );
+                _ => {
+                    if let Some(generated) = &mut self.generated {
+                        return generated.update(daemon, cache, Message::View(msg));
                     }
                 }
-                _ => {}
             },
-            _ => {}
+            _ => {
+                if let Some(generated) = &mut self.generated {
+                    return generated.update(daemon, cache, message);
+                }
+            }
         };
         Command::none()
     }
 
     fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        let config = self.config.clone();
-        let desc = self.wallet.main_descriptor.to_string();
         let daemon = daemon.clone();
-        Command::batch(vec![
-            Command::perform(
-                async move {
-                    daemon
-                        .list_coins()
-                        .map(|res| res.coins)
-                        .map_err(|e| e.into())
-                },
-                Message::Coins,
-            ),
-            Command::perform(
-                list_hws(config, self.wallet.name.clone(), desc),
-                Message::ConnectedHardwareWallets,
-            ),
-        ])
+        Command::perform(
+            async move {
+                daemon
+                    .list_coins()
+                    .map(|res| res.coins)
+                    .map_err(|e| e.into())
+            },
+            Message::Coins,
+        )
     }
-}
-
-async fn list_hws(config: Config, wallet_name: String, descriptor: String) -> Vec<HardwareWallet> {
-    list_hardware_wallets(&config.hardware_wallets, Some((&wallet_name, &descriptor))).await
-}
-
-async fn send_funds(
-    daemon: Arc<dyn Daemon + Sync + Send>,
-    hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
-    mut psbt: Psbt,
-) -> Result<(), Error> {
-    hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
-    daemon.update_spend_tx(&psbt)?;
-    daemon.broadcast_spend_tx(&psbt.unsigned_tx.txid())?;
-    Ok(())
 }
 
 impl From<RecoveryPanel> for Box<dyn State> {

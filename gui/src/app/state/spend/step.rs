@@ -12,8 +12,7 @@ use liana::{
 
 use crate::{
     app::{
-        cache::Cache, config::Config, error::Error, message::Message, state::spend::detail, view,
-        wallet::Wallet,
+        cache::Cache, error::Error, message::Message, state::spend::detail, view, wallet::Wallet,
     },
     daemon::{
         model::{remaining_sequence, Coin, SpendTx},
@@ -430,16 +429,14 @@ impl Step for ChooseCoins {
 }
 
 pub struct SaveSpend {
-    wallet: Wallet,
-    config: Config,
+    wallet: Arc<Wallet>,
     spend: Option<detail::SpendTxState>,
 }
 
 impl SaveSpend {
-    pub fn new(wallet: Wallet, config: Config) -> Self {
+    pub fn new(wallet: Arc<Wallet>) -> Self {
         Self {
             wallet,
-            config,
             spend: None,
         }
     }
@@ -447,10 +444,15 @@ impl SaveSpend {
 
 impl Step for SaveSpend {
     fn load(&mut self, draft: &TransactionDraft) {
+        let psbt = draft.generated.clone().unwrap();
+        let sigs = self
+            .wallet
+            .main_descriptor
+            .partial_spend_info(&psbt)
+            .unwrap();
         self.spend = Some(detail::SpendTxState::new(
             self.wallet.clone(),
-            self.config.clone(),
-            SpendTx::new(draft.generated.clone().unwrap(), draft.inputs.clone()),
+            SpendTx::new(psbt, draft.inputs.clone(), sigs),
             false,
         ));
     }

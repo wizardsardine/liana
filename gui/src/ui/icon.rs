@@ -13,6 +13,10 @@ fn icon(unicode: char) -> Text<'static> {
         .size(20)
 }
 
+pub fn arrow_down() -> Text<'static> {
+    icon('\u{F128}')
+}
+
 pub fn recovery_icon() -> Text<'static> {
     icon('\u{F467}')
 }
@@ -117,6 +121,10 @@ pub fn circle_check_icon() -> Text<'static> {
     icon('\u{F26B}')
 }
 
+pub fn circle_cross_icon() -> Text<'static> {
+    icon('\u{F623}')
+}
+
 pub fn network_icon() -> Text<'static> {
     icon('\u{F40D}')
 }
@@ -205,4 +213,16 @@ pub fn collapse_icon() -> Text<'static> {
 
 pub fn collapsed_icon() -> Text<'static> {
     icon('\u{F282}')
+}
+
+pub fn down_icon() -> Text<'static> {
+    icon('\u{F279}')
+}
+
+pub fn up_icon() -> Text<'static> {
+    icon('\u{F27C}')
+}
+
+pub fn people_icon() -> Text<'static> {
+    icon('\u{F4CF}')
 }

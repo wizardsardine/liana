@@ -111,23 +111,63 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                 .push(
                     Row::new()
                         .push(badge::spend())
-                        .push_maybe(match tx.status {
-                            SpendStatus::Deprecated => Some(
-                                Container::new(text("  Deprecated  ").small())
-                                    .padding(3)
-                                    .style(badge::PillStyle::Simple),
-                            ),
-                            SpendStatus::Broadcast => Some(
-                                Container::new(text("  Broadcast  ").small())
-                                    .padding(3)
-                                    .style(badge::PillStyle::Success),
-                            ),
-                            _ => None,
+                        .push(if let Some(sigs) = tx.sigs.recovery_path() {
+                            Row::new()
+                                .spacing(10)
+                                .align_items(Alignment::Center)
+                                .push(
+                                    Row::new()
+                                        .spacing(5)
+                                        .align_items(Alignment::Center)
+                                        .push(text(format!(
+                                            "{}/{}",
+                                            if sigs.signed_pubkeys.len() <= sigs.threshold {
+                                                sigs.signed_pubkeys.len()
+                                            } else {
+                                                sigs.threshold
+                                            },
+                                            sigs.threshold
+                                        )))
+                                        .push(icon::key_icon()),
+                                )
+                                .push(
+                                    Container::new(text(" Recovery ").small())
+                                        .padding(3)
+                                        .style(badge::PillStyle::Simple),
+                                )
+                        } else {
+                            let sigs = tx.sigs.primary_path();
+                            Row::new()
+                                .spacing(5)
+                                .align_items(Alignment::Center)
+                                .push(text(format!(
+                                    "{}/{}",
+                                    if sigs.signed_pubkeys.len() <= sigs.threshold {
+                                        sigs.signed_pubkeys.len()
+                                    } else {
+                                        sigs.threshold
+                                    },
+                                    sigs.threshold
+                                )))
+                                .push(icon::key_icon())
                         })
                         .spacing(10)
                         .align_items(Alignment::Center)
                         .width(Length::Fill),
                 )
+                .push_maybe(match tx.status {
+                    SpendStatus::Deprecated => Some(
+                        Container::new(text("  Deprecated  ").small())
+                            .padding(3)
+                            .style(badge::PillStyle::Simple),
+                    ),
+                    SpendStatus::Broadcast => Some(
+                        Container::new(text("  Broadcast  ").small())
+                            .padding(3)
+                            .style(badge::PillStyle::Success),
+                    ),
+                    _ => None,
+                })
                 .push(
                     Column::new()
                         .push(amount(&tx.spend_amount))
