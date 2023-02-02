@@ -167,16 +167,30 @@ impl BitcoinInterface for d::BitcoinD {
         &self,
         outpoints: &[bitcoin::OutPoint],
     ) -> Vec<(bitcoin::OutPoint, i32, u32)> {
+        // The confirmed coins.
         let mut confirmed = Vec::with_capacity(outpoints.len());
+        // It's likely some coins got created in the same transaction. In that case we don't need
+        // to make multipe calls to gettransaction for those. Cache it here instead.
+        let mut get_tx_cache = HashMap::new();
 
         for op in outpoints {
-            // TODO: batch those calls to gettransaction
-            if let Some(res) = self.get_transaction(&op.txid) {
-                if let Some(block) = res.block {
-                    confirmed.push((*op, block.height, block.time));
-                }
+            // Try to get the transaction from the cache, and fallback to querying
+            // `gettransaction`.
+            let res = if let Some(res) = get_tx_cache.get(&op.txid) {
+                res
             } else {
-                log::error!("Transaction not in wallet for coin '{}'.", op);
+                if let Some(res) = self.get_transaction(&op.txid) {
+                    get_tx_cache.insert(&op.txid, res);
+                    get_tx_cache.get(&op.txid).expect("It was just inserted.")
+                } else {
+                    log::error!("Transaction not in wallet for coin '{}'.", op);
+                    continue;
+                }
+            };
+
+            // If the transaction was confirmed, mark the coin as such.
+            if let Some(block) = res.block {
+                confirmed.push((*op, block.height, block.time));
             }
         }
 
