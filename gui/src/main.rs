@@ -339,6 +339,14 @@ pub fn setup_logger(log_level: log::LevelFilter) -> Result<(), fern::InitError> 
         .level_for("iced_glow", log::LevelFilter::Off)
         .level_for("glow_glyph", log::LevelFilter::Off)
         .level_for("naga", log::LevelFilter::Off)
+        .level_for(
+            "ledger_transport_hid",
+            if log_level == log::LevelFilter::Info {
+                log::LevelFilter::Off
+            } else {
+                log_level
+            },
+        )
         .level_for("mio", log::LevelFilter::Off);
 
     dispatcher.chain(std::io::stdout()).apply()?;
