@@ -1,14 +1,10 @@
-import time
-
 from fixtures import *
 from test_framework.utils import wait_for, get_txid, spend_coins
 
 
 def get_coin(lianad, outpoint_or_txid):
     return next(
-        c
-        for c in lianad.rpc.listcoins()["coins"]
-        if outpoint_or_txid in c["outpoint"]
+        c for c in lianad.rpc.listcoins()["coins"] if outpoint_or_txid in c["outpoint"]
     )
 
 
@@ -257,3 +253,46 @@ def test_rescan_edge_cases(lianad, bitcoind):
     wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
     assert len(sorted_coins()) == len(coins_before)
     assert all(c["outpoint"] in outpoints_before for c in list_coins())
+
+
+def test_deposit_replacement(lianad, bitcoind):
+    """Test we discard an unconfirmed deposit that was replaced."""
+    # Get some more coins.
+    bitcoind.generate_block(1)
+
+    # Create a new unconfirmed deposit.
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 1)
+
+    # Create a transaction conflicting with the deposit that pays more fee.
+    deposit_tx = bitcoind.rpc.gettransaction(txid, False, True)["decoded"]
+    bitcoind.rpc.lockunspent(
+        False,
+        [
+            {"txid": deposit_tx["txid"], "vout": i}
+            for i in range(len(deposit_tx["vout"]))
+        ],
+    )
+    res = bitcoind.rpc.walletcreatefundedpsbt(
+        [
+            {"txid": txin["txid"], "vout": txin["vout"], "sequence": 0xFF_FF_FF_FD}
+            for txin in deposit_tx["vin"]
+        ],
+        [
+            {bitcoind.rpc.getnewaddress(): txout["value"]}
+            for txout in deposit_tx["vout"]
+        ],
+        0,
+        {"fee_rate": 10, "add_inputs": True},
+    )
+    res = bitcoind.rpc.walletprocesspsbt(res["psbt"])
+    assert res["complete"]
+    conflicting_tx = bitcoind.rpc.finalizepsbt(res["psbt"])["hex"]
+
+    # Make sure we registered the unconfirmed coin. Then RBF the deposit tx.
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
+    txid = bitcoind.rpc.sendrawtransaction(conflicting_tx)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+
+    # We must forget about the deposit.
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
