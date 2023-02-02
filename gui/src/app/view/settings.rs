@@ -24,6 +24,7 @@ use crate::{
 };
 
 pub fn list<'a>(
+    lianad_version: Option<&'a String>,
     cache: &'a Cache,
     warning: Option<&Error>,
     settings: Vec<Element<'a, Message>>,
@@ -54,7 +55,28 @@ pub fn list<'a>(
                             .push(Space::with_width(Length::Fill))
                             .push(button::primary(None, "Recover funds").on_press(Message::Menu(Menu::Recovery))),
                     ),
-            )),
+            ))
+            .push(
+                card::simple(
+                    Column::new()
+                        .push(
+                            Row::new()
+                                .push(badge::Badge::new(icon::tooltip_icon()))
+                                .push(text("About").bold())
+                                .padding(10)
+                                .spacing(20)
+                                .align_items(Alignment::Center)
+                                .width(Length::Fill),
+                        )
+                        .push(separation().width(Length::Fill))
+                        .push(Space::with_height(Length::Units(10)))
+                        .push(
+                            Row::new().push(Space::with_width(Length::Fill)).push(Column::new()
+                                .push(text(format!("liana-gui v{}", crate::VERSION)))
+                                .push_maybe(lianad_version.map(|version| text(format!("lianad v{}", version)))))
+                        )
+                ).width(Length::Fill)
+            )
     )
 }
 

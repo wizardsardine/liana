@@ -31,6 +31,7 @@ pub struct SettingsState {
     warning: Option<Error>,
     config_updated: bool,
     daemon_is_external: bool,
+    daemon_version: Option<String>,
 
     settings: Vec<Box<dyn Setting>>,
     current: Option<usize>,
@@ -52,6 +53,11 @@ impl SettingsState {
         };
 
         SettingsState {
+            daemon_version: if !daemon_is_external {
+                Some(liana::VERSION.to_string())
+            } else {
+                None
+            },
             daemon_is_external,
             warning: None,
             config_updated: false,
@@ -94,6 +100,7 @@ impl State for SettingsState {
             Message::Info(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(info) => {
+                    self.daemon_version = Some(info.version);
                     if info.rescan_progress == Some(1.0) {
                         self.settings[1].edited(true);
                     }
@@ -117,6 +124,7 @@ impl State for SettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let can_edit = self.current.is_none() && !self.daemon_is_external;
         view::settings::list(
+            self.daemon_version.as_ref(),
             cache,
             self.warning.as_ref(),
             self.settings
@@ -129,6 +137,17 @@ impl State for SettingsState {
                 })
                 .collect(),
         )
+    }
+
+    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+        if self.daemon_version.is_none() {
+            Command::perform(
+                async move { daemon.get_info().map_err(|e| e.into()) },
+                Message::Info,
+            )
+        } else {
+            Command::none()
+        }
     }
 }
 
