@@ -35,11 +35,19 @@ RUSTC_BOOTSTRAP=1 cargo -vvv \
     --release \
     --target-dir "/out"
 
-# Assume 64bits. Even bitcoind doesn't ship 32bits binaries for x86.
-# FIXME: is there a cleaner way than using patchelf for this?
-patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 "/out/release/$BINARY_NAME"
+if [ "$IS_GUI" = "1" ]; then
+    BIN_NAMES="liana-gui"
+else
+    BIN_NAMES="lianad liana-cli"
+fi
 
-# FIXME: Find a way to use GUIX_LD_WRAPPER_DISABLE_RPATH=yes instead
-patchelf --remove-rpath "/out/release/$BINARY_NAME"
+for bin_name in $BIN_NAMES; do
+    # Assume 64bits. Even bitcoind doesn't ship 32bits binaries for x86.
+    # FIXME: is there a cleaner way than using patchelf for this?
+    patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 "/out/release/$bin_name"
+
+    # FIXME: Find a way to use GUIX_LD_WRAPPER_DISABLE_RPATH=yes instead
+    patchelf --remove-rpath "/out/release/$bin_name"
+done
 
 set +ex
