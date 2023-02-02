@@ -1,9 +1,9 @@
 /// modal widget from https://github.com/iced-rs/iced/blob/master/examples/modal/
-use iced_native::alignment::Alignment;
-use iced_native::widget::{self, Tree};
 use iced_native::{
-    event, layout, mouse, overlay, renderer, Clipboard, Color, Element, Event, Layout, Length,
-    Point, Rectangle, Shell, Size, Widget,
+    alignment::Alignment,
+    event, layout, mouse, overlay, renderer,
+    widget::{self, Tree},
+    Clipboard, Color, Element, Event, Layout, Length, Point, Rectangle, Shell, Size, Widget,
 };
 
 /// A widget that centers a modal element over some base element

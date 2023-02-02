@@ -1,8 +1,3 @@
-use std::str::FromStr;
-use std::sync::Arc;
-
-use iced::{Command, Element};
-
 use crate::{
     app::{
         cache::Cache,
@@ -20,8 +15,9 @@ use crate::{
     },
     ui::component::form,
 };
-
+use iced::{Command, Element};
 use liana::miniscript::bitcoin::{Address, Amount, Network};
+use std::{str::FromStr, sync::Arc};
 
 pub struct RecoveryPanel {
     wallet: Arc<Wallet>,

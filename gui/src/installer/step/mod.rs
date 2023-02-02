@@ -1,21 +1,20 @@
 mod descriptor;
+
 pub use descriptor::{
     BackupDescriptor, DefineDescriptor, ImportDescriptor, ParticipateXpub, RegisterDescriptor,
 };
 
-use std::path::PathBuf;
-use std::str::FromStr;
-
+use crate::{
+    installer::{
+        context::Context,
+        message::{self, Message},
+        view,
+    },
+    ui::component::form,
+};
 use iced::{Command, Element};
 use liana::{config::BitcoindConfig, miniscript::bitcoin};
-
-use crate::ui::component::form;
-
-use crate::installer::{
-    context::Context,
-    message::{self, Message},
-    view,
-};
+use std::{path::PathBuf, str::FromStr};
 
 pub trait Step {
     fn update(&mut self, _message: Message) -> Command<Message> {

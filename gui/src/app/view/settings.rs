@@ -1,18 +1,7 @@
-use std::str::FromStr;
-
-use iced::{
-    alignment,
-    widget::{self, Column, Container, ProgressBar, Row, Space},
-    Alignment, Element, Length,
-};
-
-use liana::miniscript::bitcoin;
-
 use super::{
     dashboard,
     message::{Message, SettingsMessage},
 };
-
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu},
     ui::{
@@ -22,6 +11,13 @@ use crate::{
         util::Collection,
     },
 };
+use iced::{
+    alignment,
+    widget::{self, Column, Container, ProgressBar, Row, Space},
+    Alignment, Element, Length,
+};
+use liana::miniscript::bitcoin;
+use std::str::FromStr;
 
 pub fn list<'a>(
     cache: &'a Cache,

@@ -1,9 +1,8 @@
+use crate::ui::{color, component::text::text, icon};
 use iced::{
     widget::{self, Container, Row, Tooltip},
     Element,
 };
-
-use crate::ui::{color, component::text::text, icon};
 
 pub fn simple<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> widget::Container<'a, T> {
     Container::new(content).padding(15).style(SimpleCardStyle)

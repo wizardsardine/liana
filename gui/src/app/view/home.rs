@@ -1,19 +1,9 @@
-use chrono::NaiveDateTime;
-
-use iced::{
-    alignment,
-    widget::{Button, Column, Container, Row},
-    Alignment, Element, Length,
-};
-
 use crate::ui::{
     color,
     component::{badge, button::Style, card, text::*},
     icon,
     util::Collection,
 };
-use liana::miniscript::bitcoin;
-
 use crate::{
     app::{
         cache::Cache,
@@ -21,6 +11,13 @@ use crate::{
     },
     daemon::model::HistoryTransaction,
 };
+use chrono::NaiveDateTime;
+use iced::{
+    alignment,
+    widget::{Button, Column, Container, Row},
+    Alignment, Element, Length,
+};
+use liana::miniscript::bitcoin;
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 

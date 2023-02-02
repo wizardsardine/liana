@@ -1,7 +1,3 @@
-mod message;
-mod util;
-mod warning;
-
 pub mod coins;
 pub mod home;
 pub mod hw;
@@ -10,21 +6,25 @@ pub mod recovery;
 pub mod settings;
 pub mod spend;
 
-pub use message::*;
-use warning::warn;
+mod message;
+mod util;
+mod warning;
 
+pub use message::*;
+
+use crate::{
+    app::{cache::Cache, error::Error, menu::Menu},
+    ui::{
+        component::{badge, button, container, separation, text::*},
+        icon::{coin_icon, cross_icon, home_icon, receive_icon, send_icon, settings_icon},
+        util::Collection,
+    },
+};
 use iced::{
     widget::{self, scrollable, Button, Column, Container, Row},
     Element, Length,
 };
-
-use crate::ui::{
-    component::{badge, button, container, separation, text::*},
-    icon::{coin_icon, cross_icon, home_icon, receive_icon, send_icon, settings_icon},
-    util::Collection,
-};
-
-use crate::app::{cache::Cache, error::Error, menu::Menu};
+use warning::warn;
 
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Message> {
     let home_button = if *menu == Menu::Home {

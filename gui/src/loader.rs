@@ -1,21 +1,3 @@
-use std::convert::From;
-use std::io::ErrorKind;
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use iced::{
-    widget::{Column, Container, ProgressBar, Row},
-    Element,
-};
-use iced::{Alignment, Command, Length, Subscription};
-use log::{debug, info};
-
-use liana::{
-    config::{Config, ConfigError},
-    miniscript::bitcoin,
-    StartupError,
-};
-
 use crate::{
     app::{
         cache::Cache,
@@ -30,6 +12,17 @@ use crate::{
         util::Collection,
     },
 };
+use iced::{
+    widget::{Column, Container, ProgressBar, Row},
+    Alignment, Command, Element, Length, Subscription,
+};
+use liana::{
+    config::{Config, ConfigError},
+    miniscript::bitcoin,
+    StartupError,
+};
+use log::{debug, info};
+use std::{convert::From, io::ErrorKind, path::PathBuf, sync::Arc};
 
 type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
 

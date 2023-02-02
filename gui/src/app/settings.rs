@@ -1,10 +1,7 @@
-use std::collections::HashMap;
-use std::path::Path;
-
+use crate::hw::HardwareWalletConfig;
 use liana::miniscript::bitcoin::util::bip32::Fingerprint;
 use serde::{Deserialize, Serialize};
-
-use crate::hw::HardwareWalletConfig;
+use std::{collections::HashMap, path::Path};
 
 ///! Settings is the module to handle the GUI settings file.
 ///! The settings file is used by the GUI to store useful information.

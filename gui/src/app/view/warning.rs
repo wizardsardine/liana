@@ -1,15 +1,13 @@
-use std::convert::From;
-
-use iced::{
-    widget::{self, Column, Container},
-    Length,
-};
-
 use crate::{
     app::error::Error,
     daemon::{client::error::RpcErrorCode, DaemonError},
     ui::component::notification,
 };
+use iced::{
+    widget::{self, Column, Container},
+    Length,
+};
+use std::convert::From;
 
 /// Simple warning message displayed to non technical user.
 pub struct WarningMessage(String);

@@ -1,7 +1,13 @@
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::str::FromStr;
-
+use crate::{
+    app::settings::KeySetting,
+    hw::{list_hardware_wallets, HardwareWallet},
+    installer::{
+        message::{self, Message},
+        step::{Context, Step},
+        view, Error,
+    },
+    ui::component::{form, modal::Modal},
+};
 use iced::{Command, Element};
 use liana::{
     descriptors::{LianaDescKeys, MultipathDescriptor},
@@ -13,16 +19,10 @@ use liana::{
         descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
     },
 };
-
-use crate::{
-    app::settings::KeySetting,
-    hw::{list_hardware_wallets, HardwareWallet},
-    installer::{
-        message::{self, Message},
-        step::{Context, Step},
-        view, Error,
-    },
-    ui::component::{form, modal::Modal},
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    str::FromStr,
 };
 
 pub trait DescriptorKeyModal {

@@ -1,15 +1,3 @@
-use std::collections::HashMap;
-
-use iced::{
-    widget::{scrollable, tooltip, Button, Column, Container, Row, Scrollable, Space},
-    Alignment, Element, Length,
-};
-
-use liana::{
-    descriptors::{LianaDescInfo, PathInfo, PathSpendInfo},
-    miniscript::bitcoin::{util::bip32::Fingerprint, Address, Amount, Network, Transaction},
-};
-
 use crate::{
     app::{
         error::Error,
@@ -29,6 +17,15 @@ use crate::{
         util::Collection,
     },
 };
+use iced::{
+    widget::{scrollable, tooltip, Button, Column, Container, Row, Scrollable, Space},
+    Alignment, Element, Length,
+};
+use liana::{
+    descriptors::{LianaDescInfo, PathInfo, PathSpendInfo},
+    miniscript::bitcoin::{util::bip32::Fingerprint, Address, Amount, Network, Transaction},
+};
+use std::collections::HashMap;
 
 pub fn spend_view<'a>(
     tx: &'a SpendTx,

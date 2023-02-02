@@ -4,16 +4,13 @@ mod prompt;
 mod step;
 mod view;
 
-use iced::{clipboard, Command, Element, Subscription};
-use liana::miniscript::bitcoin;
-
-use context::Context;
-use std::io::Write;
-use std::path::PathBuf;
+pub use message::Message;
 
 use crate::app::{config as gui_config, settings as gui_settings};
-
-pub use message::Message;
+use context::Context;
+use iced::{clipboard, Command, Element, Subscription};
+use liana::miniscript::bitcoin;
+use std::{io::Write, path::PathBuf};
 use step::{
     BackupDescriptor, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor, ParticipateXpub,
     RegisterDescriptor, Step, Welcome,

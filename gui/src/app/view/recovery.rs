@@ -1,10 +1,3 @@
-use iced::{
-    widget::{Column, Container, Row, Space},
-    Alignment, Element, Length,
-};
-
-use liana::miniscript::bitcoin::Amount;
-
 use crate::{
     app::view::message::{CreateSpendMessage, Message},
     ui::{
@@ -13,6 +6,11 @@ use crate::{
         util::Collection,
     },
 };
+use iced::{
+    widget::{Column, Container, Row, Space},
+    Alignment, Element, Length,
+};
+use liana::miniscript::bitcoin::Amount;
 
 #[allow(clippy::too_many_arguments)]
 pub fn recovery<'a>(

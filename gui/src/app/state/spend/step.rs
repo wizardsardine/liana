@@ -1,15 +1,3 @@
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::sync::Arc;
-
-use iced::{Command, Element};
-use liana::{
-    descriptors::MultipathDescriptor,
-    miniscript::bitcoin::{
-        self, util::psbt::Psbt, Address, Amount, Denomination, Network, OutPoint,
-    },
-};
-
 use crate::{
     app::{
         cache::Cache, error::Error, message::Message, state::spend::detail, view, wallet::Wallet,
@@ -20,6 +8,14 @@ use crate::{
     },
     ui::component::form,
 };
+use iced::{Command, Element};
+use liana::{
+    descriptors::MultipathDescriptor,
+    miniscript::bitcoin::{
+        self, util::psbt::Psbt, Address, Amount, Denomination, Network, OutPoint,
+    },
+};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 /// See: https://github.com/wizardsardine/liana/blob/master/src/commands/mod.rs#L32
 const DUST_OUTPUT_SATS: u64 = 5_000;

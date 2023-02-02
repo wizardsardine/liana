@@ -17,10 +17,8 @@
 //! Some useful methods for creating Error objects
 //!
 
-use std::io;
-use std::{error, fmt};
-
 use serde::{Deserialize, Serialize};
+use std::{error, fmt, io};
 
 #[allow(dead_code)]
 #[derive(Debug)]

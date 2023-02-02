@@ -1,7 +1,6 @@
 use crate::daemon::DaemonError;
 use liana::config::ConfigError;
-use std::convert::From;
-use std::io::ErrorKind;
+use std::{convert::From, io::ErrorKind};
 
 #[derive(Debug)]
 pub enum Error {

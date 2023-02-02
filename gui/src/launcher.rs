@@ -1,16 +1,13 @@
-use std::path::PathBuf;
-
-use iced::{
-    widget::{Button, Column, Container, Row},
-    Alignment, Element, Length, Subscription,
-};
-
-use liana::miniscript::bitcoin::Network;
-
 use crate::ui::{
     component::{badge, button, text::*},
     icon,
 };
+use iced::{
+    widget::{Button, Column, Container, Row},
+    Alignment, Element, Length, Subscription,
+};
+use liana::miniscript::bitcoin::Network;
+use std::path::PathBuf;
 
 pub struct Launcher {
     choices: Vec<Network>,

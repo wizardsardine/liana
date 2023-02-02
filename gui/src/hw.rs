@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use async_hwi::{ledger, specter, DeviceKind, Error as HWIError, HWI};
 use liana::miniscript::bitcoin::{
     hashes::hex::{FromHex, ToHex},
@@ -7,6 +5,7 @@ use liana::miniscript::bitcoin::{
 };
 use log::debug;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct HardwareWallet {

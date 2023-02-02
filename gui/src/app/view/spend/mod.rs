@@ -1,11 +1,6 @@
 pub mod detail;
 pub mod step;
 
-use iced::{
-    widget::{Button, Column, Container, Row, Space},
-    Alignment, Element, Length,
-};
-
 use crate::{
     app::{error::Error, menu::Menu, view::util::*},
     daemon::model::{SpendStatus, SpendTx},
@@ -15,6 +10,10 @@ use crate::{
         icon,
         util::Collection,
     },
+};
+use iced::{
+    widget::{Button, Column, Container, Row, Space},
+    Alignment, Element, Length,
 };
 
 use super::{message::*, warning::warn};

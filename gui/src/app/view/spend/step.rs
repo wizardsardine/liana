@@ -1,10 +1,3 @@
-use iced::{
-    widget::{self, Button, Column, Container, Row},
-    Alignment, Element, Length,
-};
-
-use liana::miniscript::bitcoin::Amount;
-
 use crate::{
     app::{
         cache::Cache,
@@ -22,6 +15,11 @@ use crate::{
         util::Collection,
     },
 };
+use iced::{
+    widget::{self, Button, Column, Container, Row},
+    Alignment, Element, Length,
+};
+use liana::miniscript::bitcoin::Amount;
 
 pub fn choose_recipients_view<'a>(
     balance_available: &'a Amount,

@@ -1,13 +1,14 @@
 use crate::daemon::{client::Client, DaemonError};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
-use std::fmt::Debug;
-use std::sync::{
-    mpsc::{channel, Receiver, Sender},
-    Mutex,
+use std::{
+    fmt::Debug,
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Mutex,
+    },
+    thread,
 };
-use std::thread;
-
 type TransportReceiver = Receiver<Result<Value, DaemonError>>;
 
 #[derive(Debug)]

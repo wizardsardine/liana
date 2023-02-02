@@ -1,8 +1,9 @@
-use iced::widget::{button, container, Container, Row, Text};
-use iced::{Alignment, Color, Length, Vector};
-
 use super::text::text;
 use crate::ui::color;
+use iced::{
+    widget::{button, container, Container, Row, Text},
+    Alignment, Color, Length, Vector,
+};
 
 pub fn alert<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> button::Button<'a, T> {
     button::Button::new(content(icon, t)).style(Style::Destructive.into())

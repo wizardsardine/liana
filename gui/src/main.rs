@@ -1,13 +1,10 @@
 #![windows_subsystem = "windows"]
 
-use std::{error::Error, path::PathBuf, str::FromStr};
-
 use iced::{executor, Application, Command, Element, Settings, Subscription};
+use std::{error::Error, path::PathBuf, str::FromStr};
 extern crate serde;
 extern crate serde_json;
-
 use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
-
 use liana_gui::{
     app::{
         self,

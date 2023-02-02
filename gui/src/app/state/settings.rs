@@ -1,19 +1,12 @@
-use std::convert::From;
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::Arc;
-
-use chrono::prelude::*;
-use iced::{Command, Element};
-
-use liana::config::{BitcoinConfig, BitcoindConfig, Config};
-
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::State, view},
     daemon::Daemon,
     ui::component::form,
 };
+use chrono::prelude::*;
+use iced::{Command, Element};
+use liana::config::{BitcoinConfig, BitcoindConfig, Config};
+use std::{convert::From, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
 
 trait Setting: std::fmt::Debug {
     fn edited(&mut self, success: bool);

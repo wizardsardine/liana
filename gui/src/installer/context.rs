@@ -1,6 +1,3 @@
-use std::path::PathBuf;
-use std::time::Duration;
-
 use crate::{
     app::{
         settings::{KeySetting, Settings, WalletSetting},
@@ -15,6 +12,7 @@ use liana::{
     descriptors::MultipathDescriptor,
     miniscript::bitcoin,
 };
+use std::{path::PathBuf, time::Duration};
 
 #[derive(Clone)]
 pub struct Context {

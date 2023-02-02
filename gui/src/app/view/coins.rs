@@ -1,8 +1,3 @@
-use iced::{
-    widget::{Button, Column, Container, Row},
-    Alignment, Element, Length,
-};
-
 use crate::{
     app::{
         cache::Cache,
@@ -15,6 +10,10 @@ use crate::{
         icon,
         util::Collection,
     },
+};
+use iced::{
+    widget::{Button, Column, Container, Row},
+    Alignment, Element, Length,
 };
 
 pub fn coins_view<'a>(

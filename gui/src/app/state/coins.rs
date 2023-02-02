@@ -1,12 +1,10 @@
-use std::cmp::Ordering;
-use std::sync::Arc;
-
-use iced::{Command, Element};
-
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, message::Message, state::State, view},
     daemon::{model::Coin, Daemon},
 };
+use iced::{Command, Element};
+use std::cmp::Ordering;
+use std::sync::Arc;
 
 pub struct CoinsPanel {
     coins: Vec<Coin>,

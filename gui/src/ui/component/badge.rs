@@ -1,9 +1,8 @@
+use crate::ui::{color, icon};
 use iced::{
     widget::{self, Container},
     Element, Length,
 };
-
-use crate::ui::{color, icon};
 
 pub enum Style {
     Standard,

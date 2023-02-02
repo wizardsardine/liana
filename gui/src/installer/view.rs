@@ -1,10 +1,3 @@
-use iced::widget::{
-    scrollable::Properties, Button, Checkbox, Column, Container, PickList, Row, Scrollable, Space,
-};
-use iced::{alignment, Alignment, Element, Length};
-
-use liana::miniscript::bitcoin;
-
 use crate::{
     hw::HardwareWallet,
     installer::{
@@ -23,6 +16,15 @@ use crate::{
         util::Collection,
     },
 };
+use iced::{
+    alignment,
+    widget::{
+        scrollable::Properties, Button, Checkbox, Column, Container, PickList, Row, Scrollable,
+        Space,
+    },
+    Alignment, Element, Length,
+};
+use liana::miniscript::bitcoin;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Network {

@@ -21,17 +21,16 @@
 #[cfg(not(windows))]
 use std::os::unix::net::UnixStream;
 
-use std::fmt::Debug;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
-use std::{error, fmt, io};
-
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use serde_json::Deserializer;
-
 use log::debug;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Deserializer;
+use std::{
+    error,
+    fmt::{self, Debug},
+    io::{self, Write},
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 /// A handle to a remote JSONRPC server
 #[derive(Debug, Clone)]

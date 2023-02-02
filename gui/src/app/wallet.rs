@@ -1,9 +1,6 @@
-use std::collections::HashMap;
-
 use crate::hw::HardwareWalletConfig;
-
-use liana::descriptors::MultipathDescriptor;
-use liana::miniscript::bitcoin::util::bip32::Fingerprint;
+use liana::{descriptors::MultipathDescriptor, miniscript::bitcoin::util::bip32::Fingerprint};
+use std::collections::HashMap;
 
 pub const DEFAULT_WALLET_NAME: &str = "Liana";
 

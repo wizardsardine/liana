@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-use std::sync::RwLock;
-
 use super::{model::*, Daemon, DaemonError};
 use liana::{
     config::Config,
     miniscript::bitcoin::{util::psbt::Psbt, Address, OutPoint, Txid},
     DaemonHandle,
 };
+use std::{collections::HashMap, sync::RwLock};
 
 pub struct EmbeddedDaemon {
     config: Config,

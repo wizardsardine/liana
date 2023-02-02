@@ -2,15 +2,12 @@ pub mod client;
 pub mod embedded;
 pub mod model;
 
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::io::ErrorKind;
-
 use liana::{
     config::Config,
     miniscript::bitcoin::{util::psbt::Psbt, Address, OutPoint, Txid},
     StartupError,
 };
+use std::{collections::HashMap, fmt::Debug, io::ErrorKind};
 
 #[derive(Debug)]
 pub enum DaemonError {

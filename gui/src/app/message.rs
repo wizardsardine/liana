@@ -1,15 +1,14 @@
+use crate::{
+    app::{error::Error, view},
+    daemon::model::*,
+    hw::HardwareWallet,
+};
 use liana::{
     config::Config as DaemonConfig,
     miniscript::bitcoin::{
         util::{bip32::Fingerprint, psbt::Psbt},
         Address,
     },
-};
-
-use crate::{
-    app::{error::Error, view},
-    daemon::model::*,
-    hw::HardwareWallet,
 };
 
 #[derive(Debug)]

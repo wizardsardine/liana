@@ -3,24 +3,22 @@ mod recovery;
 mod settings;
 mod spend;
 
-use std::convert::TryInto;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use iced::{widget::qr_code, Command, Subscription};
-use iced::{widget::Column, Element};
-use liana::miniscript::bitcoin::{Address, Amount};
-
-use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet};
-
-use crate::daemon::{
-    model::{remaining_sequence, Coin, HistoryTransaction},
-    Daemon,
-};
 pub use coins::CoinsPanel;
 pub use recovery::RecoveryPanel;
 pub use settings::SettingsState;
 pub use spend::{CreateSpendPanel, SpendPanel};
+
+use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet};
+use crate::daemon::{
+    model::{remaining_sequence, Coin, HistoryTransaction},
+    Daemon,
+};
+use iced::{widget::qr_code, Command, Subscription};
+use iced::{widget::Column, Element};
+use liana::miniscript::bitcoin::{Address, Amount};
+use std::convert::TryInto;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub trait State {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;

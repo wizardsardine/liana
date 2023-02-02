@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
-use iced_native::command::Action;
-
 use crate::{
     app::{cache::Cache, message::Message, state::State},
     daemon::Daemon,
 };
+use iced_native::command::Action;
+use std::sync::Arc;
 
 pub struct Sandbox<S: State> {
     state: S,

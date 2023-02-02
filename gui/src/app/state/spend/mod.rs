@@ -1,10 +1,5 @@
 pub mod detail;
 mod step;
-use std::sync::Arc;
-
-use iced::{Command, Element};
-
-use liana::miniscript::bitcoin::{consensus, util::psbt::Psbt};
 
 use super::{redirect, State};
 use crate::{
@@ -15,6 +10,9 @@ use crate::{
     },
     ui::component::{form, modal},
 };
+use iced::{Command, Element};
+use liana::miniscript::bitcoin::{consensus, util::psbt::Psbt};
+use std::sync::Arc;
 
 pub struct SpendPanel {
     wallet: Arc<Wallet>,

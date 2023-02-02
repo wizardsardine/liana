@@ -9,24 +9,17 @@ pub mod wallet;
 
 mod error;
 
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::sync::Arc;
-use std::time::Duration;
-
-use iced::{clipboard, time, Command, Element, Subscription};
-
-pub use liana::config::Config as DaemonConfig;
-
 pub use config::Config;
+pub use liana::config::Config as DaemonConfig;
 pub use message::Message;
-
-use state::{CoinsPanel, CreateSpendPanel, Home, ReceivePanel, RecoveryPanel, SpendPanel, State};
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
     daemon::Daemon,
 };
+use iced::{clipboard, time, Command, Element, Subscription};
+use state::{CoinsPanel, CreateSpendPanel, Home, ReceivePanel, RecoveryPanel, SpendPanel, State};
+use std::{fs::OpenOptions, io::Write, sync::Arc, time::Duration};
 
 pub struct App {
     state: Box<dyn State>,

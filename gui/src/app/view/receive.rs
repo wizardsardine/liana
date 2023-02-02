@@ -1,3 +1,8 @@
+use super::message::Message;
+use crate::ui::{
+    component::{button, card, text::*},
+    icon,
+};
 use iced::{
     widget::{
         qr_code::{self, QRCode},
@@ -5,15 +10,7 @@ use iced::{
     },
     Alignment, Element,
 };
-
 use liana::miniscript::bitcoin;
-
-use crate::ui::{
-    component::{button, card, text::*},
-    icon,
-};
-
-use super::message::Message;
 
 pub fn receive<'a>(address: &'a bitcoin::Address, qr: &'a qr_code::State) -> Element<'a, Message> {
     card::simple(

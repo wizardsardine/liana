@@ -11,10 +11,11 @@ pub mod tooltip;
 
 pub use tooltip::tooltip;
 
-use iced::widget::{Column, Container, Text};
-use iced::Length;
-
 use crate::ui::color;
+use iced::{
+    widget::{Column, Container, Text},
+    Length,
+};
 
 pub fn separation<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Column::new().push(Text::new(" ")))

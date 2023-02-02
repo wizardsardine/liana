@@ -1,14 +1,3 @@
-use std::sync::Arc;
-
-use iced::{Command, Element};
-use liana::{
-    descriptors::LianaDescInfo,
-    miniscript::bitcoin::{
-        consensus,
-        util::{bip32::Fingerprint, psbt::Psbt},
-    },
-};
-
 use crate::{
     app::{
         cache::Cache, error::Error, message::Message, view, view::spend::detail, wallet::Wallet,
@@ -20,6 +9,15 @@ use crate::{
     hw::{list_hardware_wallets, HardwareWallet},
     ui::component::{form, modal},
 };
+use iced::{Command, Element};
+use liana::{
+    descriptors::LianaDescInfo,
+    miniscript::bitcoin::{
+        consensus,
+        util::{bip32::Fingerprint, psbt::Psbt},
+    },
+};
+use std::sync::Arc;
 
 trait Action {
     fn warning(&self) -> Option<&Error> {

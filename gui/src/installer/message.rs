@@ -1,11 +1,10 @@
+use super::Error;
+use crate::hw::HardwareWallet;
 use liana::miniscript::{
     bitcoin::{util::bip32::Fingerprint, Network},
     DescriptorPublicKey,
 };
 use std::path::PathBuf;
-
-use super::Error;
-use crate::hw::HardwareWallet;
 
 #[derive(Debug, Clone)]
 pub enum Message {

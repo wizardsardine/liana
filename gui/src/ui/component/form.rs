@@ -1,3 +1,4 @@
+use crate::ui::{color, component::text::*, util::Collection};
 use iced::{
     widget::{
         text_input::{Appearance, StyleSheet, TextInput},
@@ -5,8 +6,6 @@ use iced::{
     },
     Element, Length,
 };
-
-use crate::ui::{color, component::text::*, util::Collection};
 
 #[derive(Debug, Clone)]
 pub struct Value<T> {
