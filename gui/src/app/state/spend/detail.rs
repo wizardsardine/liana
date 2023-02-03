@@ -345,6 +345,9 @@ impl Action for SignAction {
                 }
             }
             Message::View(view::Message::Reload) => {
+                self.hws = Vec::new();
+                self.chosen_hw = None;
+                self.error = None;
                 return self.load(wallet, daemon);
             }
             _ => {}
