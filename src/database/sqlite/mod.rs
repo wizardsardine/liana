@@ -363,6 +363,21 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
+    /// Remove a set of coins from the database.
+    pub fn remove_coins(&mut self, outpoints: &[bitcoin::OutPoint]) {
+        db_exec(&mut self.conn, |db_tx| {
+            for outpoint in outpoints {
+                db_tx.execute(
+                    "DELETE FROM coins WHERE txid = ?1 AND vout = ?2",
+                    rusqlite::params![outpoint.txid.to_vec(), outpoint.vout,],
+                )?;
+            }
+
+            Ok(())
+        })
+        .expect("Database must be available")
+    }
+
     /// Mark a set of coins as confirmed.
     pub fn confirm_coins<'a>(
         &mut self,
@@ -704,6 +719,13 @@ mod tests {
             };
             conn.new_unspent_coins(&[coin_a]);
             assert_eq!(conn.coins(CoinType::All)[0].outpoint, coin_a.outpoint);
+
+            // We can also remove it. Say the unconfirmed tx that created it got replaced.
+            conn.remove_coins(&[coin_a.outpoint]);
+            assert!(conn.coins(CoinType::All).is_empty());
+
+            // Add it back for the rest of the test.
+            conn.new_unspent_coins(&[coin_a]);
 
             // We can query it by its outpoint
             let coins = conn.db_coins(&[coin_a.outpoint]);

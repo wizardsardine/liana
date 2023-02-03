@@ -65,8 +65,11 @@ impl BitcoinInterface for DummyBitcoind {
         Vec::new()
     }
 
-    fn confirmed_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, i32, u32)> {
-        Vec::new()
+    fn confirmed_coins(
+        &self,
+        _: &[bitcoin::OutPoint],
+    ) -> (Vec<(bitcoin::OutPoint, i32, u32)>, Vec<bitcoin::OutPoint>) {
+        (Vec::new(), Vec::new())
     }
 
     fn spending_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
@@ -217,6 +220,12 @@ impl DatabaseConnection for DummyDatabase {
     fn new_unspent_coins<'a>(&mut self, coins: &[Coin]) {
         for coin in coins {
             self.db.write().unwrap().coins.insert(coin.outpoint, *coin);
+        }
+    }
+
+    fn remove_coins(&mut self, outpoints: &[bitcoin::OutPoint]) {
+        for op in outpoints {
+            self.db.write().unwrap().coins.remove(op);
         }
     }
 

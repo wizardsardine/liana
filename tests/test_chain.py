@@ -1,14 +1,10 @@
-import time
-
 from fixtures import *
 from test_framework.utils import wait_for, get_txid, spend_coins
 
 
 def get_coin(lianad, outpoint_or_txid):
     return next(
-        c
-        for c in lianad.rpc.listcoins()["coins"]
-        if outpoint_or_txid in c["outpoint"]
+        c for c in lianad.rpc.listcoins()["coins"] if outpoint_or_txid in c["outpoint"]
     )
 
 
@@ -80,13 +76,10 @@ def test_reorg_exclusion(lianad, bitcoind):
     bitcoind.simple_reorg(initial_height, shift=-1)
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == current_height + 1)
 
-    # They must all be marked as unconfirmed.
-    new_coin_a = get_coin(lianad, coin_a["outpoint"])
-    assert new_coin_a["block_height"] is None
-    new_coin_b = get_coin(lianad, coin_b["outpoint"])
-    assert new_coin_b["block_height"] is None
-    new_coin_c = get_coin(lianad, coin_c["outpoint"])
-    assert new_coin_c["block_height"] is None
+    # For a too deep reorg bitcoind doesn't update the mempool. The deposit transactions were
+    # dropped. And we discard the unconfirmed coins whose deposit tx isn't part of our mempool
+    # anymore: the coins must have been marked as unconfirmed and subsequently discarded.
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 0)
 
     # And if we now confirm everything, they'll be marked as such. The one that was 'spending'
     # will now be spent (its spending transaction will be confirmed) and the one that was spent
@@ -257,3 +250,50 @@ def test_rescan_edge_cases(lianad, bitcoind):
     wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
     assert len(sorted_coins()) == len(coins_before)
     assert all(c["outpoint"] in outpoints_before for c in list_coins())
+
+
+def test_deposit_replacement(lianad, bitcoind):
+    """Test we discard an unconfirmed deposit that was replaced."""
+    # Get some more coins.
+    bitcoind.generate_block(1)
+
+    # Create a new unconfirmed deposit.
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 1)
+
+    # Create a transaction conflicting with the deposit that pays more fee.
+    deposit_tx = bitcoind.rpc.gettransaction(txid, False, True)["decoded"]
+    bitcoind.rpc.lockunspent(
+        False,
+        [
+            {"txid": deposit_tx["txid"], "vout": i}
+            for i in range(len(deposit_tx["vout"]))
+        ],
+    )
+    res = bitcoind.rpc.walletcreatefundedpsbt(
+        [
+            {"txid": txin["txid"], "vout": txin["vout"], "sequence": 0xFF_FF_FF_FD}
+            for txin in deposit_tx["vin"]
+        ],
+        [
+            {bitcoind.rpc.getnewaddress(): txout["value"]}
+            for txout in deposit_tx["vout"]
+        ],
+        0,
+        {"fee_rate": 10, "add_inputs": True},
+    )
+    res = bitcoind.rpc.walletprocesspsbt(res["psbt"])
+    assert res["complete"]
+    conflicting_tx = bitcoind.rpc.finalizepsbt(res["psbt"])["hex"]
+
+    # Make sure we registered the unconfirmed coin. Then RBF the deposit tx.
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
+    txid = bitcoind.rpc.sendrawtransaction(conflicting_tx)
+
+    # We must forget about the deposit.
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 0)
+
+    # Send a new one, it'll be detected.
+    addr = lianad.rpc.getnewaddress()["address"]
+    bitcoind.rpc.sendtoaddress(addr, 2)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
