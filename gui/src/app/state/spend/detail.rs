@@ -297,13 +297,17 @@ impl Action for SignAction {
     ) -> Command<Message> {
         match message {
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectHardwareWallet(i))) => {
-                if let Some(hw) = self.hws.get(i) {
-                    let device = hw.device.clone();
+                if let Some(HardwareWallet::Supported {
+                    fingerprint,
+                    device,
+                    ..
+                }) = self.hws.get(i)
+                {
                     self.chosen_hw = Some(i);
                     self.processing = true;
                     let psbt = tx.psbt.clone();
                     return Command::perform(
-                        sign_psbt(device, hw.fingerprint, psbt),
+                        sign_psbt(device.clone(), *fingerprint, psbt),
                         Message::Signed,
                     );
                 }
@@ -331,7 +335,11 @@ impl Action for SignAction {
             // We add the new hws without dropping the reference of the previous ones.
             Message::ConnectedHardwareWallets(hws) => {
                 for h in hws {
-                    if !self.hws.iter().any(|hw| hw.fingerprint == h.fingerprint) {
+                    if !self
+                        .hws
+                        .iter()
+                        .any(|hw| hw.fingerprint() == hw.fingerprint() && hw.kind() == h.kind())
+                    {
                         self.hws.push(h);
                     }
                 }

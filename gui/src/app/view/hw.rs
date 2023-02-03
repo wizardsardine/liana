@@ -1,5 +1,5 @@
 use iced::{
-    widget::{Button, Column, Container, Row},
+    widget::{tooltip, Button, Column, Container, Row},
     Alignment, Element, Length,
 };
 
@@ -17,19 +17,49 @@ use crate::{
     },
 };
 
-pub fn hw_list_view<'a>(
+pub fn hw_list_view(
     i: usize,
     hw: &HardwareWallet,
     chosen: bool,
     processing: bool,
     signed: bool,
-) -> Element<'a, Message> {
+) -> Element<Message> {
     let mut bttn = Button::new(
         Row::new()
             .push(
                 Column::new()
-                    .push(text(format!("{}", hw.kind)).bold())
-                    .push(text(format!("fingerprint: {}", hw.fingerprint)).small())
+                    .push(text(format!("{}", hw.kind())).bold())
+                    .push(match hw {
+                        HardwareWallet::Supported {
+                            fingerprint,
+                            version,
+                            ..
+                        } => Row::new()
+                            .spacing(5)
+                            .push(text(format!("fingerprint: {}", fingerprint)).small())
+                            .push_maybe(
+                                version
+                                    .as_ref()
+                                    .map(|v| text(format!("version: {}", v)).small()),
+                            ),
+                        HardwareWallet::Unsupported {
+                            version, message, ..
+                        } => Row::new()
+                            .spacing(5)
+                            .push_maybe(
+                                version
+                                    .as_ref()
+                                    .map(|v| text(format!("version: {}", v)).small()),
+                            )
+                            .push(
+                                tooltip::Tooltip::new(
+                                    icon::warning_icon(),
+                                    message,
+                                    tooltip::Position::Bottom,
+                                )
+                                .style(card::SimpleCardStyle),
+                            ),
+                    })
                     .spacing(5)
                     .width(Length::Fill),
             )
@@ -60,7 +90,7 @@ pub fn hw_list_view<'a>(
     .padding(10)
     .style(button::Style::Border.into())
     .width(Length::Fill);
-    if !processing {
+    if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Spend(SpendTxMessage::SelectHardwareWallet(i)));
     }
     Container::new(bttn)
