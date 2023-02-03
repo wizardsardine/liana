@@ -30,9 +30,11 @@ panel.
 In order to be able to install the latest Bitcoin application on mainnet, one more step is required.
 Go to "settings" (top-right corner), then "Experimental features", enable "My Ledger provider" and
 insert "4" in the field. You may then go to "My Ledger" and install the 2.1.0 Bitcoin application
-for mainnet.
+for mainnet. *Do not* download any other app from the provider 4. **Make sure to disable** the "My
+Ledger provider" setting once you installed the Bitcoin app.
 
 It's worth noting that although you need to tweak with the "Experimental features" settings, the
 Bitcoin application is not experimental anymore. It was just downgraded in Ledger live from released
 to experimental in order to prevent people from upgrading by mistake and not be able to keep using
-applications not compatible with the new interface
+applications not compatible with the new interface. It is however not safe to use it for installing
+any other application.
