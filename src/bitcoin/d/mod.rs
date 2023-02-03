@@ -564,10 +564,9 @@ impl BitcoinD {
         Ok(())
     }
 
-    /// Perform various sanity checks on the bitcoind instance.
-    pub fn sanity_check(
+    /// Perform various non-wallet-related sanity checks on the bitcoind instance.
+    pub fn node_sanity_checks(
         &self,
-        main_descriptor: &MultipathDescriptor,
         config_network: bitcoin::Network,
     ) -> Result<(), BitcoindError> {
         // Check the minimum supported bitcoind version
@@ -591,6 +590,14 @@ impl BitcoinD {
             ));
         }
 
+        Ok(())
+    }
+
+    /// Perform various sanity checks of our watchonly wallet.
+    pub fn wallet_sanity_checks(
+        &self,
+        main_descriptor: &MultipathDescriptor,
+    ) -> Result<(), BitcoindError> {
         // Check our watchonly wallet is loaded
         if self
             .list_wallets()

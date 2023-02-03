@@ -211,12 +211,13 @@ fn setup_bitcoind(
             .ok_or(StartupError::MissingBitcoindConfig)?,
         wo_path.to_str().expect("Must be valid unicode").to_string(),
     )?;
+    bitcoind.node_sanity_checks(config.bitcoin_config.network)?;
     if fresh_data_dir {
         bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
         log::info!("Created a new watchonly wallet on bitcoind.");
     }
     bitcoind.maybe_load_watchonly_wallet()?;
-    bitcoind.sanity_check(&config.main_descriptor, config.bitcoin_config.network)?;
+    bitcoind.wallet_sanity_checks(&config.main_descriptor)?;
     log::info!("Connection to bitcoind established and checked.");
 
     Ok(bitcoind)
@@ -640,10 +641,10 @@ mod tests {
             }
         });
         complete_sanity_check(&server);
-        complete_wallet_creation(&server);
-        complete_wallet_loading(&server);
         complete_version_check(&server);
         complete_network_check(&server);
+        complete_wallet_creation(&server);
+        complete_wallet_loading(&server);
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
         complete_tip_init(&server);
@@ -656,9 +657,9 @@ mod tests {
             handle.shutdown();
         });
         complete_sanity_check(&server);
-        complete_wallet_loading(&server);
         complete_version_check(&server);
         complete_network_check(&server);
+        complete_wallet_loading(&server);
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
         complete_sync_check(&server);
