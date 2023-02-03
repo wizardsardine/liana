@@ -14,6 +14,8 @@ use liana::{
     },
 };
 
+use async_hwi::DeviceKind;
+
 use crate::{
     app::settings::KeySetting,
     hw::{list_hardware_wallets, HardwareWallet},
@@ -635,6 +637,7 @@ impl DescriptorKeyModal for EditXpubModal {
                 self.hws = hws;
             }
             Message::Reload => {
+                self.hws = Vec::new();
                 return self.load();
             }
             Message::DefineDescriptor(message::DefineDescriptor::HWXpubImported(res)) => {
@@ -873,7 +876,8 @@ impl Step for ParticipateXpub {
             Message::ConnectedHardwareWallets(hws) => {
                 for hw in hws {
                     if let Some(xpub_hw) = self.xpubs_hw.iter_mut().find(|h| {
-                        h.hw.fingerprint() == hw.fingerprint() && h.hw.kind() == hw.kind()
+                        h.hw.kind() == hw.kind()
+                            && (h.hw.fingerprint() == hw.fingerprint() || !h.hw.is_supported())
                     }) {
                         xpub_hw.hw = hw;
                     } else {
@@ -1026,7 +1030,9 @@ pub struct RegisterDescriptor {
     descriptor: Option<MultipathDescriptor>,
     processing: bool,
     chosen_hw: Option<usize>,
-    hws: Vec<(HardwareWallet, Option<[u8; 32]>, bool)>,
+    hws: Vec<HardwareWallet>,
+    hmacs: Vec<(Fingerprint, DeviceKind, Option<[u8; 32]>)>,
+    registered: HashSet<Fingerprint>,
     error: Option<Error>,
 }
 
@@ -1037,17 +1043,13 @@ impl Step for RegisterDescriptor {
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Select(i) => {
-                if let Some((
-                    HardwareWallet::Supported {
-                        device,
-                        fingerprint,
-                        ..
-                    },
-                    hmac,
-                    _,
-                )) = self.hws.get(i)
+                if let Some(HardwareWallet::Supported {
+                    device,
+                    fingerprint,
+                    ..
+                }) = self.hws.get(i)
                 {
-                    if hmac.is_none() {
+                    if !self.registered.contains(fingerprint) {
                         let descriptor = self.descriptor.as_ref().unwrap().to_string();
                         self.chosen_hw = Some(i);
                         self.processing = true;
@@ -1066,26 +1068,21 @@ impl Step for RegisterDescriptor {
                     Ok((fingerprint, hmac)) => {
                         if let Some(hw_h) = self
                             .hws
-                            .iter_mut()
-                            .find(|hw_h| hw_h.0.fingerprint() == Some(fingerprint))
+                            .iter()
+                            .find(|hw_h| hw_h.fingerprint() == Some(fingerprint))
                         {
-                            hw_h.1 = hmac;
-                            hw_h.2 = true;
+                            self.registered.insert(fingerprint);
+                            self.hmacs.push((fingerprint, *hw_h.kind(), hmac));
                         }
                     }
                     Err(e) => self.error = Some(e),
                 }
             }
             Message::ConnectedHardwareWallets(hws) => {
-                for hw in hws {
-                    if !self.hws.iter().any(|(h, _, _)| {
-                        h.fingerprint() == hw.fingerprint() && h.kind() == hw.kind()
-                    }) {
-                        self.hws.push((hw, None, false));
-                    }
-                }
+                self.hws = hws;
             }
             Message::Reload => {
+                self.hws = Vec::new();
                 return self.load();
             }
             _ => {}
@@ -1093,11 +1090,8 @@ impl Step for RegisterDescriptor {
         Command::none()
     }
     fn apply(&mut self, ctx: &mut Context) -> bool {
-        for (hw, token, registered) in &self.hws {
-            if *registered {
-                ctx.hws
-                    .push((*hw.kind(), hw.fingerprint().unwrap(), *token));
-            }
+        for (fingerprint, kind, token) in &self.hmacs {
+            ctx.hws.push((*kind, *fingerprint, *token));
         }
         true
     }
@@ -1113,6 +1107,7 @@ impl Step for RegisterDescriptor {
             progress,
             desc.to_string(),
             &self.hws,
+            &self.registered,
             self.error.as_ref(),
             self.processing,
             self.chosen_hw,

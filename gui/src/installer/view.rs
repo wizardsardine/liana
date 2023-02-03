@@ -3,6 +3,8 @@ use iced::widget::{
 };
 use iced::{alignment, Alignment, Element, Length};
 
+use std::collections::HashSet;
+
 use liana::miniscript::bitcoin;
 
 use crate::{
@@ -606,7 +608,8 @@ pub fn participate_xpub(
 pub fn register_descriptor<'a>(
     progress: (usize, usize),
     descriptor: String,
-    hws: &'a [(HardwareWallet, Option<[u8; 32]>, bool)],
+    hws: &'a [HardwareWallet],
+    registered: &HashSet<bitcoin::util::bip32::Fingerprint>,
     error: Option<&Error>,
     processing: bool,
     chosen_hw: Option<usize>,
@@ -654,10 +657,12 @@ pub fn register_descriptor<'a>(
                             .fold(Column::new().spacing(10), |col, (i, hw)| {
                                 col.push(hw_list_view(
                                     i,
-                                    &hw.0,
+                                    hw,
                                     Some(i) == chosen_hw,
                                     processing,
-                                    hw.2,
+                                    hw.fingerprint()
+                                        .map(|fg| registered.contains(&fg))
+                                        .unwrap_or(false),
                                 ))
                             }),
                     )
