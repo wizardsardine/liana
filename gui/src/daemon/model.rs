@@ -3,7 +3,7 @@ pub use liana::{
         CreateSpendResult, GetAddressResult, GetInfoResult, ListCoinsEntry, ListCoinsResult,
         ListSpendEntry, ListSpendResult, ListTransactionsResult, TransactionInfo,
     },
-    descriptors::PartialSpendInfo,
+    descriptors::{PartialSpendInfo, PathSpendInfo},
     miniscript::bitcoin::{util::psbt::Psbt, Amount, Transaction},
 };
 
@@ -78,17 +78,18 @@ impl SpendTx {
         }
     }
 
-    pub fn is_ready(&self) -> bool {
+    /// Returns the path ready if it exists.
+    pub fn path_ready(&self) -> Option<&PathSpendInfo> {
         let path = self.sigs.primary_path();
-        if path.signed_pubkeys.len() >= path.threshold {
-            return true;
+        if path.sigs_count >= path.threshold {
+            return Some(path);
         }
         if let Some(path) = self.sigs.recovery_path() {
-            if path.signed_pubkeys.len() >= path.threshold {
-                return true;
+            if path.sigs_count >= path.threshold {
+                return Some(path);
             }
         }
-        false
+        None
     }
 }
 

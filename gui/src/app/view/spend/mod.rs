@@ -121,8 +121,8 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                                         .align_items(Alignment::Center)
                                         .push(text(format!(
                                             "{}/{}",
-                                            if sigs.signed_pubkeys.len() <= sigs.threshold {
-                                                sigs.signed_pubkeys.len()
+                                            if sigs.sigs_count <= sigs.threshold {
+                                                sigs.sigs_count
                                             } else {
                                                 sigs.threshold
                                             },
@@ -142,8 +142,8 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                                 .align_items(Alignment::Center)
                                 .push(text(format!(
                                     "{}/{}",
-                                    if sigs.signed_pubkeys.len() <= sigs.threshold {
-                                        sigs.signed_pubkeys.len()
+                                    if sigs.sigs_count <= sigs.threshold {
+                                        sigs.sigs_count
                                     } else {
                                         sigs.threshold
                                     },

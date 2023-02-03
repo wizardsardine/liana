@@ -287,26 +287,54 @@ pub fn signatures<'a>(
     keys_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(Collapse::new(
+        .push(
+            if let Some(sigs) = tx.path_ready() {
+            Container::new(
+                Scrollable::new(
+                    Row::new()
+                        .spacing(5)
+                        .align_items(Alignment::Center)
+                        .push(icon::circle_check_icon().style(color::SUCCESS))
+                        .push(text("Ready").bold().style(color::SUCCESS))
+                        .push(text(", signed by"))
+                        .push(
+                            sigs.signed_pubkeys
+                            .keys()
+                            .fold(Row::new().spacing(5), |row, value| {
+                                row.push(if let Some(alias) = keys_aliases.get(value) {
+                                Container::new(
+                                    tooltip::Tooltip::new(
+                                        Container::new(text(alias))
+                                            .padding(3)
+                                            .style(badge::PillStyle::Simple),
+                                            value.to_string(),
+                                            tooltip::Position::Bottom,
+                                    )
+                                    .style(card::SimpleCardStyle),
+                                )
+                            } else {
+                                Container::new(text(value.to_string()))
+                                    .padding(3)
+                                    .style(badge::PillStyle::Simple)
+                            })
+                            }),
+                    )
+                ).horizontal_scroll(scrollable::Properties::new().width(2).scroller_width(2))
+            ).padding(15)
+        } else{
+            Container::new(
+            Collapse::new(
             move || {
                 Button::new(
                     Row::new()
                         .align_items(Alignment::Center)
-                        .push(if tx.is_ready() {
-                            Row::new()
-                                .spacing(5)
-                                .align_items(Alignment::Center)
-                                .push(icon::circle_check_icon().style(color::SUCCESS))
-                                .push(text("Ready").bold().style(color::SUCCESS))
-                                .width(Length::Fill)
-                        } else {
-                            Row::new()
+                        .push(Row::new()
                                 .spacing(5)
                                 .align_items(Alignment::Center)
                                 .push(icon::circle_cross_icon())
                                 .push(text("Not ready").bold())
                                 .width(Length::Fill)
-                        })
+                        )
                         .push(icon::collapse_icon()),
                 )
                 .padding(15)
@@ -317,21 +345,14 @@ pub fn signatures<'a>(
                 Button::new(
                     Row::new()
                         .align_items(Alignment::Center)
-                        .push(if tx.is_ready() {
-                            Row::new()
-                                .spacing(5)
-                                .align_items(Alignment::Center)
-                                .push(icon::circle_check_icon().style(color::SUCCESS))
-                                .push(text("Ready").bold().style(color::SUCCESS))
-                                .width(Length::Fill)
-                        } else {
+                        .push(
                             Row::new()
                                 .spacing(5)
                                 .align_items(Alignment::Center)
                                 .push(icon::circle_cross_icon())
                                 .push(text("Not ready").bold())
                                 .width(Length::Fill)
-                        })
+                        )
                         .push(icon::collapsed_icon()),
                 )
                 .padding(15)
@@ -344,6 +365,11 @@ pub fn signatures<'a>(
                         Column::new()
                             .padding(15)
                             .spacing(10)
+                            .push(text(if tx.sigs.recovery_path().is_some() {
+                                "2 spending paths available. Finalizing this transaction requires either:"
+                            } else {
+                                "1 spending path available. Finalizing this transaction requires:"
+                            }))
                             .push(path_view(
                                 desc_info.primary_path(),
                                 tx.sigs.primary_path(),
@@ -356,14 +382,14 @@ pub fn signatures<'a>(
                     ),
                 )
             },
-        ))
+        ))})
         .push_maybe(if tx.status == SpendStatus::Pending {
             Some(
                 Column::new().push(separation().width(Length::Fill)).push(
                     Container::new(
                         Row::new()
                             .push(Space::with_width(Length::Fill))
-                            .push_maybe(if !tx.is_ready() {
+                            .push_maybe(if tx.path_ready().is_some() {
                                 Some(
                                     button::primary(None, "Sign")
                                         .on_press(Message::Spend(SpendTxMessage::Sign))
@@ -394,29 +420,62 @@ pub fn path_view<'a>(
     key_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
     let mut keys: Vec<Fingerprint> = path.thresh_fingerprints().1.into_iter().collect();
+    let missing_signatures = if sigs.sigs_count >= sigs.threshold {
+        0
+    } else {
+        sigs.threshold - sigs.sigs_count
+    };
     keys.sort();
     Scrollable::new(
         Row::new()
-            .spacing(5)
             .align_items(Alignment::Center)
-            .push(if sigs.signed_pubkeys.len() >= sigs.threshold {
+            .push(if sigs.sigs_count >= sigs.threshold {
                 icon::circle_check_icon().style(color::SUCCESS)
             } else {
                 icon::circle_cross_icon()
             })
-            .push(
-                Container::new(text(format!("  {}  ", sigs.threshold))).style(
-                    if sigs.signed_pubkeys.len() >= sigs.threshold {
-                        badge::PillStyle::Success
-                    } else {
-                        badge::PillStyle::Simple
-                    },
-                ),
-            )
+            .push(text(format!(" {}", missing_signatures)).bold())
             .push(text(format!(
-                "signature{} out of",
-                if sigs.threshold > 1 { "s" } else { "" }
+                " more signature{}",
+                if missing_signatures > 1 {
+                    "s from "
+                } else if missing_signatures == 0 {
+                    ""
+                } else {
+                    " from "
+                }
             )))
+            .push_maybe(if keys.is_empty() {
+                None
+            } else {
+                Some(keys.iter().fold(Row::new().spacing(5), |row, &value| {
+                    row.push_maybe(if !sigs.signed_pubkeys.contains_key(&value) {
+                        Some(if let Some(alias) = key_aliases.get(&value) {
+                            Container::new(
+                                tooltip::Tooltip::new(
+                                    Container::new(text(alias))
+                                        .padding(3)
+                                        .style(badge::PillStyle::Simple),
+                                    value.to_string(),
+                                    tooltip::Position::Bottom,
+                                )
+                                .style(card::SimpleCardStyle),
+                            )
+                        } else {
+                            Container::new(text(value.to_string()))
+                                .padding(3)
+                                .style(badge::PillStyle::Simple)
+                        })
+                    } else {
+                        None
+                    })
+                }))
+            })
+            .push_maybe(if sigs.signed_pubkeys.is_empty() {
+                None
+            } else {
+                Some(text(", already signed by "))
+            })
             .push(
                 sigs.signed_pubkeys
                     .keys()
@@ -426,7 +485,7 @@ pub fn path_view<'a>(
                                 tooltip::Tooltip::new(
                                     Container::new(text(alias))
                                         .padding(3)
-                                        .style(badge::PillStyle::Success),
+                                        .style(badge::PillStyle::Simple),
                                     value.to_string(),
                                     tooltip::Position::Bottom,
                                 )
@@ -435,32 +494,10 @@ pub fn path_view<'a>(
                         } else {
                             Container::new(text(value.to_string()))
                                 .padding(3)
-                                .style(badge::PillStyle::Success)
+                                .style(badge::PillStyle::Simple)
                         })
                     }),
-            )
-            .push(keys.iter().fold(Row::new().spacing(5), |row, &value| {
-                row.push_maybe(if !sigs.signed_pubkeys.contains_key(&value) {
-                    Some(if let Some(alias) = key_aliases.get(&value) {
-                        Container::new(
-                            tooltip::Tooltip::new(
-                                Container::new(text(alias))
-                                    .padding(3)
-                                    .style(badge::PillStyle::Simple),
-                                value.to_string(),
-                                tooltip::Position::Bottom,
-                            )
-                            .style(card::SimpleCardStyle),
-                        )
-                    } else {
-                        Container::new(text(value.to_string()))
-                            .padding(3)
-                            .style(badge::PillStyle::Simple)
-                    })
-                } else {
-                    None
-                })
-            })),
+            ),
     )
     .horizontal_scroll(scrollable::Properties::new().width(2).scroller_width(2))
     .into()
