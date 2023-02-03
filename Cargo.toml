@@ -1,6 +1,6 @@
 [package]
 name = "liana"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Antoine Poinsot <darosior@protonmail.com>"]
 edition = "2018"
 repository = "https://github.com/revault/liana"
