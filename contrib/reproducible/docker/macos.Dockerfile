@@ -9,8 +9,8 @@ RUN apt update && apt install -y \
                     make=4.3-4.1 \
                     libssl-dev=1.1.1n-0+deb11u3 \
                     liblzma-dev=5.2.5-2.1~deb11u1 \
-                    libxml2=2.9.10+dfsg-6.7+deb11u2 \
-                    libxml2-dev=2.9.10+dfsg-6.7+deb11u2 \
+                    libxml2=2.9.10+dfsg-6.7+deb11u3 \
+                    libxml2-dev=2.9.10+dfsg-6.7+deb11u3 \
                     cmake=3.18.4-2+deb11u1 \
                     git=1:2.30.2-1 \
                     patch=2.7.6-7 \
@@ -21,7 +21,7 @@ RUN apt update && apt install -y \
                     libbz2-dev=1.0.8-4 \
                     xz-utils=5.2.5-2.1~deb11u1 \
                     bzip2=1.0.8-4 \
-                    curl=7.74.0-1.3+deb11u3
+                    curl=7.74.0-1.3+deb11u5
 
 # Download the cargo binary and compiled stdlib from the distributed releases to make sure to build with
 # the very same toolchain. We use 1.65.0 because it is unfortunately the MSRV of the GUI.

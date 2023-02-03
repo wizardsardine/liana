@@ -18,8 +18,8 @@ git = "https://github.com/darosior/rust-miniscript"
 branch = "multipath_descriptors_on_9.0"
 replace-with = "vendored_sources"
 
-[source."https://github.com/revault/liana"]
-git = "https://github.com/revault/liana"
+[source."https://github.com/wizardsardine/liana"]
+git = "https://github.com/wizardsardine/liana"
 branch = "master"
 replace-with = "vendored_sources"
 EOF
