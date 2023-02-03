@@ -6,7 +6,7 @@ WORKDIR /liana
 # out of our way to pin the whole tree of deps. Instead invest time in getting Guix cross-compilation.
 RUN apt update && apt install -y \
                     gcc-mingw-w64-x86-64=10.2.1-6+24.2 \
-                    curl=7.74.0-1.3+deb11u3 \
+                    curl=7.74.0-1.3+deb11u5 \
                     gcc=4:10.2.1-1
 
 # Download the cargo binary and compiled stdlib from the distributed releases to make sure to build with
