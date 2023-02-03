@@ -42,7 +42,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: cargo test --verbose --no-default-features
       - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
-        # See issue https://github.com/revault/liana/issues/69
+        # See issue https://github.com/wizardsardine/liana/issues/69
         if: matrix.os != 'windows-latest' && (matrix.os != 'macOS-latest' || matrix.toolchain != '1.48')
         run: cargo test --verbose --color always -- --nocapture
 

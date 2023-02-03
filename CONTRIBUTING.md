@@ -19,7 +19,7 @@ Github issue before going forward with the implementation.
 ## Looking for contributions
 
 If you are looking for first time contributions, you can `git grep` for `FIXME`s and `TODO`s
-as well as checking out the [good first issues](https://github.com/revault/liana/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+as well as checking out the [good first issues](https://github.com/wizardsardine/liana/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 on the issue tracker.
 
 

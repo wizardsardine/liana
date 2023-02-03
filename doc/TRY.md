@@ -126,7 +126,7 @@ Keep the Specter simulator open and move on to the next step.
 
 ## Step 3: start Liana
 
-Head to the [release page](https://github.com/revault/liana/releases) and download the right
+Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
 executable for your platform. If you are not sure what is the "right" executable for your platform,
 choose `liana-0.1.exe` if you are on Windows, `liana-0.1.dmg` if you are on MacOS and
 `liana-0.1-x86_64-linux-gnu.tar.gz` if you are on Linux.
