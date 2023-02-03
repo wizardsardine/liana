@@ -58,7 +58,7 @@ impl std::fmt::Display for LianaDescError {
             Self::InvalidKey(key) => {
                 write!(
                     f,
-                    "Invalid key '{}'. Need a wildcard ('ranged') xpub with a multipath for (and only for) deriving change addresses. That is, an xpub of the form 'xpub.../<0;1>/*'.",
+                    "Invalid key '{}'. Need a wildcard ('ranged') xpub with an origin and a multipath for (and only for) deriving change addresses. That is, an xpub of the form '[aaff0099]xpub.../<0;1>/*'.",
                     key
                     )
             }
