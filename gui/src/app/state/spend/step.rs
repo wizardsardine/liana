@@ -192,9 +192,7 @@ impl Recipient {
             view::CreateSpendMessage::RecipientEdited(_, "address", address) => {
                 self.address.value = address;
                 if let Ok(address) = Address::from_str(&self.address.value) {
-                    self.address.valid = address.network == network
-                        || (address.network == bitcoin::Network::Testnet
-                            && network == bitcoin::Network::Signet);
+                    self.address.valid = address.is_valid_for_network(network);
                     if !self.amount.value.is_empty() {
                         self.amount.valid = self.amount().is_ok();
                     }
