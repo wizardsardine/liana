@@ -21,7 +21,7 @@ use crate::{
     ui::component::form,
 };
 
-use liana::miniscript::bitcoin::{Address, Amount, Network};
+use liana::miniscript::bitcoin::{Address, Amount};
 
 pub struct RecoveryPanel {
     wallet: Arc<Wallet>,
@@ -128,11 +128,7 @@ impl State for RecoveryPanel {
                 )) => {
                     self.recipient.value = address;
                     if let Ok(address) = Address::from_str(&self.recipient.value) {
-                        if cache.network == Network::Bitcoin {
-                            self.recipient.valid = address.network == Network::Bitcoin;
-                        } else {
-                            self.recipient.valid = address.network == Network::Testnet;
-                        }
+                        self.recipient.valid = address.is_valid_for_network(cache.network);
                     } else {
                         self.recipient.valid = false;
                     }
