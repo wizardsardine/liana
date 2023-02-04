@@ -6,3 +6,4 @@ pub const DEFINE_DESCRIPTOR_SEQUENCE_TOOLTIP: &str =
     "Number of blocks after a coin is received \nfor which the recovery path is not available";
 pub const DEFINE_DESCRIPTOR_FINGERPRINT_TOOLTIP: &str =
     "The alias is applied on all the keys derived from the same seed";
+pub const REGISTER_DESCRIPTOR_HELP: &str = "To be used with the wallet, a device needs the descriptor. Registration on a device is not a substitute for backing up the descriptor.";
