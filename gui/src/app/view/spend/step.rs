@@ -100,7 +100,7 @@ pub fn recipient_view<'a>(
                 form::Form::new("Amount", amount, move |msg| {
                     CreateSpendMessage::RecipientEdited(index, "amount", msg)
                 })
-                .warning("Please enter correct amount (> 5000 sats)")
+                .warning("Please enter correct amount (> 0.00005000 btc)")
                 .size(20)
                 .padding(10),
             )
