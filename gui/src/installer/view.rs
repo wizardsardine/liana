@@ -605,6 +605,7 @@ pub fn participate_xpub(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn register_descriptor<'a>(
     progress: (usize, usize),
     descriptor: String,
@@ -613,10 +614,12 @@ pub fn register_descriptor<'a>(
     error: Option<&Error>,
     processing: bool,
     chosen_hw: Option<usize>,
+    done: bool,
 ) -> Element<'a, Message> {
     layout(
         progress,
         Column::new()
+            .max_width(1000)
             .push(text("Register descriptor").bold().size(50))
             .push(card::simple(
                 Column::new()
@@ -628,9 +631,9 @@ pub fn register_descriptor<'a>(
                                 .on_press(Message::Clibpboard(descriptor)),
                         ),
                     )
-                    .spacing(10)
-                    .max_width(1000),
+                    .spacing(10),
             ))
+            .push(text(prompt::REGISTER_DESCRIPTOR_HELP))
             .push_maybe(error.map(|e| card::error("Failed to register descriptor", e.to_string())))
             .push(
                 Column::new()
@@ -640,7 +643,7 @@ pub fn register_descriptor<'a>(
                             .align_items(Alignment::Center)
                             .push(
                                 Container::new(
-                                    text(format!("{} hardware wallets connected", hws.len()))
+                                    text("Select hardware wallet to register descriptor on:")
                                         .bold(),
                                 )
                                 .width(Length::Fill),
@@ -668,12 +671,17 @@ pub fn register_descriptor<'a>(
                     )
                     .width(Length::Fill),
             )
-            .push(if processing {
-                button::primary(None, "Next").width(Length::Units(200))
-            } else {
+            .push(Checkbox::new(
+                "I have registered the descriptor on my device(s)",
+                done,
+                Message::UserActionDone,
+            ))
+            .push(if done && !processing {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
                     .width(Length::Units(200))
+            } else {
+                button::primary(None, "Next").width(Length::Units(200))
             })
             .width(Length::Fill)
             .height(Length::Fill)

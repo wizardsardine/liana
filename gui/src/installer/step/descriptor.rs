@@ -1034,6 +1034,7 @@ pub struct RegisterDescriptor {
     hmacs: Vec<(Fingerprint, DeviceKind, Option<[u8; 32]>)>,
     registered: HashSet<Fingerprint>,
     error: Option<Error>,
+    done: bool,
 }
 
 impl Step for RegisterDescriptor {
@@ -1085,6 +1086,9 @@ impl Step for RegisterDescriptor {
                 self.hws = Vec::new();
                 return self.load();
             }
+            Message::UserActionDone(done) => {
+                self.done = done;
+            }
             _ => {}
         };
         Command::none()
@@ -1111,6 +1115,7 @@ impl Step for RegisterDescriptor {
             self.error.as_ref(),
             self.processing,
             self.chosen_hw,
+            self.done,
         )
     }
 }
