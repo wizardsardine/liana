@@ -72,3 +72,17 @@ def test_multisig(lianad_multisig, bitcoind):
     signed_psbt = lianad.signer.sign_psbt(reco_psbt, [1, 4], recovery=True)
     lianad.rpc.updatespend(signed_psbt.to_base64())
     lianad.rpc.broadcastspend(txid)
+
+
+def test_coinbase_deposit(lianad, bitcoind):
+    """Check we detect deposits from (mature) coinbase transactions."""
+    # Create a new deposit in a coinbase transaction.
+    addr = lianad.rpc.getnewaddress()["address"]
+    bitcoind.rpc.generatetoaddress(1, addr)
+    assert len(lianad.rpc.listcoins()["coins"]) == 0
+
+    # Generate 100 blocks to make the coinbase mature.
+    bitcoind.generate_block(100)
+
+    # We must have detected a new deposit.
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)

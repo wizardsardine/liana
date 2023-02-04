@@ -1073,11 +1073,17 @@ impl From<Json> for LSBlockRes {
             .expect("Array must be present")
             .iter()
             .filter_map(|j| {
-                if j.get("category")
+                // From 'listunspent' help:
+                //   "send"                  Transactions sent.
+                //   "receive"               Non-coinbase transactions received.
+                //   "generate"              Coinbase transactions received with more than 100 confirmations.
+                //   "immature"              Coinbase transactions received with 100 or fewer confirmations.
+                //   "orphan"                Orphaned coinbase transactions received.
+                let category = j
+                    .get("category")
                     .and_then(Json::as_str)
-                    .expect("must be present")
-                    == "receive"
-                {
+                    .expect("must be present");
+                if category == "receive" || category == "generate" {
                     let lsb_entry: LSBlockEntry = j.into();
                     Some(lsb_entry)
                 } else {
