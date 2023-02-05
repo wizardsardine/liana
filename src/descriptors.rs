@@ -232,16 +232,13 @@ fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
     }
 }
 
-// Get the fingerprint for the key in a multipath descriptors.
+// Get the origin of a key in a multipath descriptors.
 // Returns None if the given key isn't a multixpub.
-fn key_fingerprint(key: &descriptor::DescriptorPublicKey) -> Option<bip32::Fingerprint> {
+fn key_origin(
+    key: &descriptor::DescriptorPublicKey,
+) -> Option<&(bip32::Fingerprint, bip32::DerivationPath)> {
     match key {
-        descriptor::DescriptorPublicKey::MultiXPub(ref xpub) => Some(
-            xpub.origin
-                .as_ref()
-                .map(|o| o.0)
-                .unwrap_or_else(|| xpub.xkey.fingerprint()),
-        ),
+        descriptor::DescriptorPublicKey::MultiXPub(ref xpub) => xpub.origin.as_ref(),
         _ => None,
     }
 }
@@ -513,17 +510,25 @@ impl PathInfo {
 
     /// Get the required number of keys for spending through this path, and the set of keys
     /// that can be used to provide a signature for this path.
-    pub fn thresh_fingerprints(&self) -> (usize, HashSet<bip32::Fingerprint>) {
+    pub fn thresh_origins(&self) -> (usize, HashSet<(bip32::Fingerprint, bip32::DerivationPath)>) {
         match self {
             PathInfo::Single(key) => {
-                let mut fingerprints = HashSet::with_capacity(1);
-                fingerprints.insert(key_fingerprint(key).expect("Must be a multixpub."));
-                (1, fingerprints)
+                let mut origins = HashSet::with_capacity(1);
+                origins.insert(
+                    key_origin(key)
+                        .expect("Must be a multixpub with an origin.")
+                        .clone(),
+                );
+                (1, origins)
             }
             PathInfo::Multi(k, keys) => (
                 *k,
                 keys.iter()
-                    .map(|key| key_fingerprint(key).expect("Must be a multixpub."))
+                    .map(|key| {
+                        key_origin(key)
+                            .expect("Must be a multixpub with an origin.")
+                            .clone()
+                    })
                     .collect(),
             ),
         }
@@ -531,22 +536,34 @@ impl PathInfo {
 
     /// Get the spend information for this descriptor based from the list of all pubkeys that
     /// signed the transaction.
-    pub fn spend_info(
+    pub fn spend_info<'a>(
         &self,
-        all_pubkeys_signed: impl Iterator<Item = bip32::Fingerprint>,
+        all_pubkeys_signed: impl Iterator<Item = &'a (bip32::Fingerprint, bip32::DerivationPath)>,
     ) -> PathSpendInfo {
         let mut signed_pubkeys = HashMap::new();
         let mut sigs_count = 0;
-        let (threshold, fingerprints) = self.thresh_fingerprints();
+        let (threshold, origins) = self.thresh_origins();
 
         // For all existing signatures, pick those that are from one of our pubkeys.
-        for fingerprint in all_pubkeys_signed {
-            if fingerprints.contains(&fingerprint) {
+        for (fg, der_path) in all_pubkeys_signed {
+            // For all xpubs in the descriptor, we derive at /0/* or /1/*, so the xpub's origin's
+            // derivation path is the key's one without the last two derivation indexes.
+            if der_path.len() < 2 {
+                continue;
+            }
+            let parent_der_path: bip32::DerivationPath = der_path[..der_path.len() - 2].into();
+            let parent_origin = (*fg, parent_der_path);
+
+            // Now if the origin of this key without the two final derivation indexes is part of
+            // the set of our keys, count it as a signature for it. Note it won't mixup keys
+            // between spending paths, since we can't have duplicate xpubs in the descriptor and
+            // the (fingerprint, der_path) tuple is a UID for an xpub.
+            if origins.contains(&parent_origin) {
                 sigs_count += 1;
-                if let Some(count) = signed_pubkeys.get_mut(&fingerprint) {
+                if let Some(count) = signed_pubkeys.get_mut(&parent_origin) {
                     *count += 1;
                 } else {
-                    signed_pubkeys.insert(fingerprint, 1);
+                    signed_pubkeys.insert(parent_origin, 1);
                 }
             }
         }
@@ -594,7 +611,7 @@ pub struct PathSpendInfo {
     pub sigs_count: usize,
     /// The keys for which a signature was provided and the number (always >=1) of
     /// signatures provided for this key.
-    pub signed_pubkeys: HashMap<bip32::Fingerprint, usize>,
+    pub signed_pubkeys: HashMap<(bip32::Fingerprint, bip32::DerivationPath), usize>,
 }
 
 /// Information about a partial spend of Liana coins
@@ -820,7 +837,7 @@ impl MultipathDescriptor {
         let pubkeys_signed = psbt_in
             .partial_sigs
             .iter()
-            .filter_map(|(pk, _)| psbt_in.bip32_derivation.get(&pk.inner).map(|(fg, _)| *fg));
+            .filter_map(|(pk, _)| psbt_in.bip32_derivation.get(&pk.inner));
 
         // Determine the structure of the descriptor. Then compute the spend info for the primary
         // and recovery paths. Only provide the spend info for the recovery path if it is available
@@ -1205,8 +1222,14 @@ mod tests {
         // A simple descriptor with 1 keys as primary path and 1 recovery key.
         let desc = MultipathDescriptor::from_str("wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr").unwrap();
         let desc_info = desc.info();
-        let prim_key_fg = bip32::Fingerprint::from_str("f5acc2fd").unwrap();
-        let recov_key_fg = bip32::Fingerprint::from_str("8a64f2a9").unwrap();
+        let prim_key_origin = (
+            bip32::Fingerprint::from_str("f5acc2fd").unwrap(),
+            Vec::new().into(),
+        );
+        let recov_key_origin: (_, bip32::DerivationPath) = (
+            bip32::Fingerprint::from_str("8a64f2a9").unwrap(),
+            Vec::new().into(),
+        );
 
         // A PSBT with a single input and output, no signature. nSequence is not set to use the
         // recovery path.
@@ -1246,7 +1269,10 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
+                && info
+                    .primary_path
+                    .signed_pubkeys
+                    .contains_key(&prim_key_origin)
         );
         assert!(info.recovery_path.is_none());
 
@@ -1258,7 +1284,10 @@ mod tests {
             inner: *signed_single_psbt.inputs[0]
                 .bip32_derivation
                 .iter()
-                .find(|(_, (fg, _))| fg == &recov_key_fg)
+                .find(|(_, (fg, der_path))| {
+                    fg == &recov_key_origin.0
+                        && der_path[..der_path.len() - 2] == recov_key_origin.1[..]
+                })
                 .unwrap()
                 .0,
         };
@@ -1285,7 +1314,7 @@ mod tests {
         assert_eq!(recov_info.sigs_count, 1);
         assert!(
             recov_info.signed_pubkeys.len() == 1
-                && recov_info.signed_pubkeys.contains_key(&recov_key_fg)
+                && recov_info.signed_pubkeys.contains_key(&recov_key_origin)
         );
 
         // A PSBT with multiple inputs, all signed for the primary path.
@@ -1299,7 +1328,10 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
+                && info
+                    .primary_path
+                    .signed_pubkeys
+                    .contains_key(&prim_key_origin)
         );
         assert!(info.recovery_path.is_none());
 
@@ -1317,7 +1349,10 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
+                && info
+                    .primary_path
+                    .signed_pubkeys
+                    .contains_key(&prim_key_origin)
         );
         let recov_info = info.recovery_path.unwrap();
         assert_eq!(recov_info.threshold, 1);
@@ -1355,7 +1390,10 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
+                && info
+                    .primary_path
+                    .signed_pubkeys
+                    .contains_key(&prim_key_origin)
         );
         assert!(info.recovery_path.is_none());
 
@@ -1375,7 +1413,12 @@ mod tests {
                 descriptor::DescriptorPublicKey::from_str("[ffd63c8d/48'/1'/1'/2']tpubDFMs44FD4kFt3M7Z317cFh5tdKEGN8tyQRY6Q5gcSha4NtxZfGmTVRMbsD1bWN469LstXU4aVSARDxrvxFCUjHeegfEY2cLSazMBkNCmDPD/<0;1>/*").unwrap(),
             ],
         )));
-        // TODO: fix the partial spend info..
+        let psbt = psbt_from_str("cHNidP8BAIkCAAAAAWi3OFgkj1CqCDT3Swm8kbxZS9lxz4L3i4W2v9KGC7nqAQAAAAD9////AkANAwAAAAAAIgAg27lNc1rog+dOq80ohRuds4Hgg/RcpxVun2XwgpuLSrFYMwwAAAAAACIAIDyWveqaElWmFGkTbFojg1zXWHODtiipSNjfgi2DqBy9AAAAAAABAOoCAAAAAAEBsRWl70USoAFFozxc86pC7Dovttdg4kvja//3WMEJskEBAAAAAP7///8CWKmCIk4GAAAWABRKBWYWkCNS46jgF0r69Ehdnq+7T0BCDwAAAAAAIgAgTt5fs+CiB+FRzNC8lHcgWLH205sNjz1pT59ghXlG5tQCRzBEAiBXK9MF8z3bX/VnY2aefgBBmiAHPL4tyDbUOe7+KpYA4AIgL5kU0DFG8szKd+szRzz/OTUWJ0tZqij41h2eU9rSe1IBIQNBB1hy+jKsg1TihMT0dXw7etpu9TkO3NuvhBDFJlBj1cP2AQABAStAQg8AAAAAACIAIE7eX7PgogfhUczQvJR3IFix9tObDY89aU+fYIV5RubUIgICSKJsNs0zFJN58yd2aYQ+C3vhMbi0x7k0FV3wBhR4THlIMEUCIQCPWWWOhs2lThxOq/G8X2fYBRvM9MXSm7qPH+dRVYQZEwIgfut2vx3RvwZWcgEj4ohQJD5lNJlwOkA4PAiN1fjx6dABIgID3mvj1zerZKohOVhKCiskYk+3qrCum6PIwDhQ16ePACpHMEQCICZNR+0/1hPkrDQwPFmg5VjUHkh6aK9cXUu3kPbM8hirAiAyE/5NUXKfmFKij30isuyysJbq8HrURjivd+S9vdRGKQEBBZNSIQJIomw2zTMUk3nzJ3ZphD4Le+ExuLTHuTQVXfAGFHhMeSEC9OfCXl+sJOrxUFLBuMV4ZUlJYjuzNGZSld5ioY14y8FSrnNkUSED3mvj1zerZKohOVhKCiskYk+3qrCum6PIwDhQ16ePACohA+ECH+HlR+8Sf3pumaXH3IwSsoqSLCH7H1THiBP93z3ZUq9SsmgiBgJIomw2zTMUk3nzJ3ZphD4Le+ExuLTHuTQVXfAGFHhMeRxjat8/MAAAgAEAAIAAAACAAgAAgAAAAAABAAAAIgYC9OfCXl+sJOrxUFLBuMV4ZUlJYjuzNGZSld5ioY14y8Ec/9Y8jTAAAIABAACAAAAAgAIAAIAAAAAAAQAAACIGA95r49c3q2SqITlYSgorJGJPt6qwrpujyMA4UNenjwAqHGNq3z8wAACAAQAAgAEAAIACAACAAAAAAAEAAAAiBgPhAh/h5UfvEn96bpmlx9yMErKKkiwh+x9Ux4gT/d892Rz/1jyNMAAAgAEAAIABAACAAgAAgAAAAAABAAAAACICAlBQ7gGocg7eF3sXrCio+zusAC9+xfoyIV95AeR69DWvHGNq3z8wAACAAQAAgAEAAIACAACAAAAAAAMAAAAiAgMvVy984eg8Kgvj058PBHetFayWbRGb7L0DMnS9KHSJzBxjat8/MAAAgAEAAIAAAACAAgAAgAAAAAADAAAAIgIDSRIG1dn6njdjsDXenHa2lUvQHWGPLKBVrSzbQOhiIxgc/9Y8jTAAAIABAACAAAAAgAIAAIAAAAAAAwAAACICA0/epE59sVEj7Et0I4R9qJQNuX23RNvDZKCRL7eUps9FHP/WPI0wAACAAQAAgAEAAIACAACAAAAAAAMAAAAAIgICgldCOK6iHscv//2NipgaMABLV5TICU/zlP7HlQmlg08cY2rfPzAAAIABAACAAQAAgAIAAIABAAAAAQAAACICApb0p9rfpJshB3J186PGWrvzQdixcwQZWmebOUMdkquZHP/WPI0wAACAAQAAgAAAAIACAACAAQAAAAEAAAAiAgLY5q+unoDxC/HI5BaNiPq12ei1REZIcUAN304JfKXUwxz/1jyNMAAAgAEAAIABAACAAgAAgAEAAAABAAAAIgIDg6cUVCJB79cMcofiURHojxFARWyS4YEhJNRixuOZZRgcY2rfPzAAAIABAACAAAAAgAIAAIABAAAAAQAAAAA=");
+        let partial_info = desc.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial_info.primary_path.threshold, 2);
+        assert_eq!(partial_info.primary_path.sigs_count, 1);
+        assert_eq!(partial_info.primary_path.signed_pubkeys.len(), 1);
+        assert!(partial_info.recovery_path.is_none());
     }
 
     // TODO: test error conditions of deserialization.
