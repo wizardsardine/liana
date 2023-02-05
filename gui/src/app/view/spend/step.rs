@@ -170,7 +170,7 @@ pub fn choose_coins_view<'a>(
                                 .push(text("Amount left to select:"))
                                 .push(text(amount_left.to_string()).bold())
                         } else {
-                            Row::new().push(text("Please, define feerate"))
+                            Row::new().push(text("Feerate needs to be set."))
                         })
                         .width(Length::Fill),
                     )
