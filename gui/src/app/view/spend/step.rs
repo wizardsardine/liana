@@ -91,7 +91,7 @@ pub fn recipient_view<'a>(
             form::Form::new("Address", address, move |msg| {
                 CreateSpendMessage::RecipientEdited(index, "address", msg)
             })
-            .warning("Please enter correct bitcoin address for the current network")
+            .warning("Invalid address (maybe it is for another network?)")
             .size(20)
             .padding(10),
         )
@@ -100,7 +100,7 @@ pub fn recipient_view<'a>(
                 form::Form::new("Amount", amount, move |msg| {
                     CreateSpendMessage::RecipientEdited(index, "amount", msg)
                 })
-                .warning("Please enter correct amount (> 0.00005000 btc)")
+                .warning("Invalid amount. Must be > 0.00005000 BTC.")
                 .size(20)
                 .padding(10),
             )
@@ -134,7 +134,7 @@ pub fn choose_coins_view<'a>(
                     form::Form::new("Feerate (sat/vbyte)", feerate, move |msg| {
                         Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
                     })
-                    .warning("Please enter correct feerate (sat/vbyte)")
+                    .warning("Invalid feerate")
                     .size(20)
                     .padding(10),
                 )
