@@ -197,11 +197,12 @@ impl ToPublicKey for DerivedPublicKey {
 //
 // All this is achieved simply through asking for a 16-bit integer, since all the
 // above are signaled in leftmost bits.
-fn csv_check(csv_value: u32) -> Result<(), LianaDescError> {
-    if csv_value > 0 && u16::try_from(csv_value).is_ok() {
-        return Ok(());
+fn csv_check(csv_value: u32) -> Result<u16, LianaDescError> {
+    if csv_value > 0 {
+        u16::try_from(csv_value).map_err(|_| LianaDescError::InsaneTimelock(csv_value))
+    } else {
+        Err(LianaDescError::InsaneTimelock(csv_value))
     }
-    Err(LianaDescError::InsaneTimelock(csv_value))
 }
 
 // We require the descriptor key to:
@@ -330,7 +331,7 @@ impl fmt::Display for MultipathDescriptor {
     }
 }
 
-fn is_single_key_or_multisig(policy: &&SemanticPolicy<descriptor::DescriptorPublicKey>) -> bool {
+fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorPublicKey>) -> bool {
     match policy {
         SemanticPolicy::Key(..) => true,
         SemanticPolicy::Threshold(_, subs) => {
@@ -376,47 +377,15 @@ impl str::FromStr for MultipathDescriptor {
             return Err(LianaDescError::IncompatibleDesc);
         }
 
-        // Non-timelocked spending path may be either a single key check or a multisig.
-        subs.iter()
-            .find(is_single_key_or_multisig)
-            .ok_or(LianaDescError::IncompatibleDesc)?;
-
-        // The recovery spending path is always a 2-of-2 between a timelock and a set of
-        // keys.
-        let recov_subs = subs
-            .iter()
-            .find_map(|s| match s {
-                SemanticPolicy::Threshold(2, subs) => {
-                    if subs.len() == 2
-                        && subs
-                            .iter()
-                            .any(|sub| matches!(sub, SemanticPolicy::Older(_)))
-                    {
-                        Some(subs)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .ok_or(LianaDescError::IncompatibleDesc)?;
-        if recov_subs.len() != 2 {
-            return Err(LianaDescError::IncompatibleDesc);
+        // Must always contain a non-timelocked primary spending path and a timelocked recovery
+        // path. The PathInfo constructors perform the checks that each path is well formed.
+        for sub in subs {
+            if is_single_key_or_multisig(&sub) {
+                PathInfo::from_primary_path(sub)?;
+            } else {
+                PathInfo::from_recovery_path(sub)?;
+            }
         }
-        // Must be timelocked
-        let csv_value = recov_subs
-            .iter()
-            .find_map(|s| match s {
-                SemanticPolicy::Older(csv) => Some(csv),
-                _ => None,
-            })
-            .ok_or(LianaDescError::IncompatibleDesc)?;
-        csv_check(csv_value.to_consensus_u32())?;
-        // The timelocked spending path may have a single key check or a multisig.
-        recov_subs
-            .iter()
-            .find(is_single_key_or_multisig)
-            .ok_or(LianaDescError::IncompatibleDesc)?;
 
         // All good, construct the multipath descriptor.
         let multi_desc = descriptor::Descriptor::Wsh(wsh_desc);
@@ -462,24 +431,83 @@ pub enum PathInfo {
 }
 
 impl PathInfo {
-    /// Get the spending path info from a policy describing a single key or a multisig.
-    /// Will return None if the policy isn't a key or a multisig.
-    pub fn from_single_key_or_multisig(
+    /// Get the information about the primary spending path.
+    /// Returns None if the policy does not describe the primary spending path of a Liana
+    /// descriptor (that is, a set of keys).
+    pub fn from_primary_path(
         policy: SemanticPolicy<descriptor::DescriptorPublicKey>,
-    ) -> Option<PathInfo> {
+    ) -> Result<PathInfo, LianaDescError> {
         match policy {
-            SemanticPolicy::Key(key) => Some(PathInfo::Single(key)),
+            SemanticPolicy::Key(key) => Ok(PathInfo::Single(key)),
             SemanticPolicy::Threshold(k, subs) => {
-                let keys: Option<Vec<descriptor::DescriptorPublicKey>> = subs
+                let keys: Result<_, LianaDescError> = subs
                     .into_iter()
                     .map(|sub| match sub {
-                        SemanticPolicy::Key(key) => Some(key),
-                        _ => None,
+                        SemanticPolicy::Key(key) => Ok(key),
+                        _ => Err(LianaDescError::IncompatibleDesc),
                     })
                     .collect();
-                Some(PathInfo::Multi(k, keys?))
+                Ok(PathInfo::Multi(k, keys?))
             }
-            _ => None,
+            _ => Err(LianaDescError::IncompatibleDesc),
+        }
+    }
+
+    /// Get the information about the recovery spending path.
+    /// Returns None if the policy does not describe the recovery spending path of a Liana
+    /// descriptor (that is, a set of keys after a timelock).
+    pub fn from_recovery_path(
+        policy: SemanticPolicy<descriptor::DescriptorPublicKey>,
+    ) -> Result<(u16, PathInfo), LianaDescError> {
+        // The recovery spending path must always be a policy of type `thresh(2, older(x), thresh(n, key1,
+        // key2, ..))`. In the special case n == 1, it is only `thresh(2, older(x), key)`. In the
+        // special case n == len(keys) (i.e. it's an N-of-N multisig), it is normalized as
+        // `thresh(n+1, older(x), key1, key2, ...)`.
+        let (k, subs) = match policy {
+            SemanticPolicy::Threshold(k, subs) => (k, subs),
+            _ => return Err(LianaDescError::IncompatibleDesc),
+        };
+        if k == 2 && subs.len() == 2 {
+            // The general case (as well as the n == 1 case). The sub that is not the timelock is
+            // of the same form as a primary path.
+            let tl_value = subs
+                .iter()
+                .find_map(|s| match s {
+                    SemanticPolicy::Older(val) => Some(csv_check(val.0)),
+                    _ => None,
+                })
+                .ok_or(LianaDescError::IncompatibleDesc)??;
+            let keys_sub = subs
+                .into_iter()
+                .find(is_single_key_or_multisig)
+                .ok_or(LianaDescError::IncompatibleDesc)?;
+            PathInfo::from_primary_path(keys_sub).map(|info| (tl_value, info))
+        } else if k == subs.len() && subs.len() > 2 {
+            // The N-of-N case. All subs but the threshold must be keys (if one had been thresh()
+            // of keys it would have been normalized).
+            let mut tl_value = None;
+            let mut keys = Vec::with_capacity(subs.len());
+            for sub in subs {
+                match sub {
+                    SemanticPolicy::Key(key) => keys.push(key),
+                    SemanticPolicy::Older(val) => {
+                        if tl_value.is_some() {
+                            return Err(LianaDescError::IncompatibleDesc);
+                        }
+                        tl_value = Some(csv_check(val.0)?);
+                    }
+                    _ => return Err(LianaDescError::IncompatibleDesc),
+                }
+            }
+            assert!(keys.len() > 1); // At least 3 subs, only one of which may be older().
+            Ok((
+                tl_value.ok_or(LianaDescError::IncompatibleDesc)?,
+                PathInfo::Multi(k - 1, keys),
+            ))
+        } else {
+            // If there is less than 2 subs, there can't be both a timelock and keys. If the
+            // threshold is not equal to the number of subs, the timelock can't be mandatory.
+            Err(LianaDescError::IncompatibleDesc)
         }
     }
 
@@ -722,43 +750,30 @@ impl MultipathDescriptor {
         // For now we only ever allow a single recovery path.
         assert_eq!(subs.len(), 2);
 
-        // Fetch the primary, non-timelocked path from the two sub-policies. Then parse information
-        // about it.
-        let prim_path_pos = subs
-            .iter()
-            .position(|sub| is_single_key_or_multisig(&sub))
-            .expect(
-                "One of the two available paths must always be a set of keys without timelock.",
-            );
-        let primary_path = PathInfo::from_single_key_or_multisig(subs[prim_path_pos].clone())
+        // Fetch the two spending paths' semantic policies. The primary path is identified as the
+        // only one that isn't timelocked.
+        let (prim_path_sub, reco_path_sub) =
+            subs.into_iter()
+                .fold((None, None), |(mut prim_sub, mut reco_sub), sub| {
+                    if is_single_key_or_multisig(&sub) {
+                        prim_sub = Some(sub);
+                    } else {
+                        reco_sub = Some(sub);
+                    }
+                    (prim_sub, reco_sub)
+                });
+        let (prim_path_sub, reco_path_sub) = (
+            prim_path_sub.expect("Must be present"),
+            reco_path_sub.expect("Must be present"),
+        );
+
+        // Now parse information about each spending path.
+        let primary_path = PathInfo::from_primary_path(prim_path_sub)
             .expect("Must always be a set of keys without timelock");
+        let reco_path = PathInfo::from_recovery_path(reco_path_sub)
+            .expect("The recovery path policy must always be a timelock along with a set of keys.");
 
-        // Since there is only two subs, the timelocked recovery path must be the other sub. From
-        // the recovery sub policy fetch the timelock policy on the one hand, and the set of keys
-        // on the other one.
-        let reco_path_pos = prim_path_pos ^ 1;
-        let reco_subs = match subs[reco_path_pos] {
-            SemanticPolicy::Threshold(2, ref subs) => subs,
-            _ => unreachable!(
-                "The recovery path policy must be two subs: a timelock + a set of keys."
-            ),
-        };
-        let (csv_pos, csv) = reco_subs
-            .iter()
-            .enumerate()
-            .find_map(|(i, s)| match s {
-                SemanticPolicy::Older(csv) => Some((
-                    i,
-                    u16::try_from(csv.0).expect("Must always be a 'clean' block height"),
-                )),
-                _ => None,
-            })
-            .expect("A relative timelock policy is always present in the recovery path.");
-        let recovery_keys = PathInfo::from_single_key_or_multisig(reco_subs[csv_pos ^ 1].clone())
-            .expect("Must always be a set of keys alongside the timelock");
-        let recovery_path = (csv, recovery_keys);
-
-        LianaDescInfo::new(primary_path, recovery_path)
+        LianaDescInfo::new(primary_path, reco_path)
     }
 
     /// Get the value (in blocks) of the relative timelock for the heir's spending path.
@@ -1186,7 +1201,7 @@ mod tests {
     }
 
     #[test]
-    fn repro() {
+    fn partial_spend_info() {
         // A simple descriptor with 1 keys as primary path and 1 recovery key.
         let desc = MultipathDescriptor::from_str("wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr").unwrap();
         let desc_info = desc.info();
@@ -1343,6 +1358,24 @@ mod tests {
                 && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
         );
         assert!(info.recovery_path.is_none());
+
+        let desc = MultipathDescriptor::from_str("wsh(or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*),and_v(v:multi(2,[636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/<0;1>/*,[ffd63c8d/48'/1'/1'/2']tpubDFMs44FD4kFt3M7Z317cFh5tdKEGN8tyQRY6Q5gcSha4NtxZfGmTVRMbsD1bWN469LstXU4aVSARDxrvxFCUjHeegfEY2cLSazMBkNCmDPD/<0;1>/*),older(2))))#xcf6jr2r").unwrap();
+        let info = desc.info();
+        assert_eq!(info.primary_path, PathInfo::Multi(
+            2,
+            vec![
+                descriptor::DescriptorPublicKey::from_str("[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*").unwrap(),
+                descriptor::DescriptorPublicKey::from_str("[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*").unwrap(),
+            ],
+        ));
+        assert_eq!(info.recovery_path, (2, PathInfo::Multi(
+            2,
+            vec![
+                descriptor::DescriptorPublicKey::from_str("[636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/<0;1>/*").unwrap(),
+                descriptor::DescriptorPublicKey::from_str("[ffd63c8d/48'/1'/1'/2']tpubDFMs44FD4kFt3M7Z317cFh5tdKEGN8tyQRY6Q5gcSha4NtxZfGmTVRMbsD1bWN469LstXU4aVSARDxrvxFCUjHeegfEY2cLSazMBkNCmDPD/<0;1>/*").unwrap(),
+            ],
+        )));
+        // TODO: fix the partial spend info..
     }
 
     // TODO: test error conditions of deserialization.
