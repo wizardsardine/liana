@@ -61,7 +61,7 @@ pub fn recovery<'a>(
                                 0, "address", msg,
                             ))
                         })
-                        .warning("Please enter correct bitcoin address")
+                        .warning("Invalid Bitcoin address")
                         .size(20)
                         .padding(10),
                     )
@@ -72,7 +72,7 @@ pub fn recovery<'a>(
                         form::Form::new("Feerate (sat/vbyte)", feerate, move |msg| {
                             Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
                         })
-                        .warning("Please enter correct feerate (sat/vbyte)")
+                        .warning("Invalid feerate")
                         .size(20)
                         .padding(10),
                     )

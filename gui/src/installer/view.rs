@@ -1133,11 +1133,7 @@ pub fn edit_key_modal<'a>(
                             Row::new()
                                 .spacing(15)
                                 .width(Length::Fill)
-                                .push(
-                                    text("Or connect a hardware wallet")
-                                        .bold()
-                                        .width(Length::Fill),
-                                )
+                                .push(text("Connect a hardware wallet").bold().width(Length::Fill))
                                 .push(button::border(None, "Refresh").on_press(Message::Reload))
                                 .align_items(Alignment::Center),
                         )
