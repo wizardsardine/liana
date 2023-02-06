@@ -392,7 +392,7 @@ pub fn signatures<'a>(
                     Container::new(
                         Row::new()
                             .push(Space::with_width(Length::Fill))
-                            .push_maybe(if tx.path_ready().is_some() {
+                            .push_maybe(if tx.path_ready().is_none() {
                                 Some(
                                     button::primary(None, "Sign")
                                         .on_press(Message::Spend(SpendTxMessage::Sign))
