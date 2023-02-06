@@ -197,11 +197,12 @@ impl ToPublicKey for DerivedPublicKey {
 //
 // All this is achieved simply through asking for a 16-bit integer, since all the
 // above are signaled in leftmost bits.
-fn csv_check(csv_value: u32) -> Result<(), LianaDescError> {
-    if csv_value > 0 && u16::try_from(csv_value).is_ok() {
-        return Ok(());
+fn csv_check(csv_value: u32) -> Result<u16, LianaDescError> {
+    if csv_value > 0 {
+        u16::try_from(csv_value).map_err(|_| LianaDescError::InsaneTimelock(csv_value))
+    } else {
+        Err(LianaDescError::InsaneTimelock(csv_value))
     }
-    Err(LianaDescError::InsaneTimelock(csv_value))
 }
 
 // We require the descriptor key to:
@@ -231,16 +232,13 @@ fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
     }
 }
 
-// Get the fingerprint for the key in a multipath descriptors.
+// Get the origin of a key in a multipath descriptors.
 // Returns None if the given key isn't a multixpub.
-fn key_fingerprint(key: &descriptor::DescriptorPublicKey) -> Option<bip32::Fingerprint> {
+fn key_origin(
+    key: &descriptor::DescriptorPublicKey,
+) -> Option<&(bip32::Fingerprint, bip32::DerivationPath)> {
     match key {
-        descriptor::DescriptorPublicKey::MultiXPub(ref xpub) => Some(
-            xpub.origin
-                .as_ref()
-                .map(|o| o.0)
-                .unwrap_or_else(|| xpub.xkey.fingerprint()),
-        ),
+        descriptor::DescriptorPublicKey::MultiXPub(ref xpub) => xpub.origin.as_ref(),
         _ => None,
     }
 }
@@ -330,7 +328,7 @@ impl fmt::Display for MultipathDescriptor {
     }
 }
 
-fn is_single_key_or_multisig(policy: &&SemanticPolicy<descriptor::DescriptorPublicKey>) -> bool {
+fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorPublicKey>) -> bool {
     match policy {
         SemanticPolicy::Key(..) => true,
         SemanticPolicy::Threshold(_, subs) => {
@@ -376,47 +374,15 @@ impl str::FromStr for MultipathDescriptor {
             return Err(LianaDescError::IncompatibleDesc);
         }
 
-        // Non-timelocked spending path may be either a single key check or a multisig.
-        subs.iter()
-            .find(is_single_key_or_multisig)
-            .ok_or(LianaDescError::IncompatibleDesc)?;
-
-        // The recovery spending path is always a 2-of-2 between a timelock and a set of
-        // keys.
-        let recov_subs = subs
-            .iter()
-            .find_map(|s| match s {
-                SemanticPolicy::Threshold(2, subs) => {
-                    if subs.len() == 2
-                        && subs
-                            .iter()
-                            .any(|sub| matches!(sub, SemanticPolicy::Older(_)))
-                    {
-                        Some(subs)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .ok_or(LianaDescError::IncompatibleDesc)?;
-        if recov_subs.len() != 2 {
-            return Err(LianaDescError::IncompatibleDesc);
+        // Must always contain a non-timelocked primary spending path and a timelocked recovery
+        // path. The PathInfo constructors perform the checks that each path is well formed.
+        for sub in subs {
+            if is_single_key_or_multisig(&sub) {
+                PathInfo::from_primary_path(sub)?;
+            } else {
+                PathInfo::from_recovery_path(sub)?;
+            }
         }
-        // Must be timelocked
-        let csv_value = recov_subs
-            .iter()
-            .find_map(|s| match s {
-                SemanticPolicy::Older(csv) => Some(csv),
-                _ => None,
-            })
-            .ok_or(LianaDescError::IncompatibleDesc)?;
-        csv_check(csv_value.to_consensus_u32())?;
-        // The timelocked spending path may have a single key check or a multisig.
-        recov_subs
-            .iter()
-            .find(is_single_key_or_multisig)
-            .ok_or(LianaDescError::IncompatibleDesc)?;
 
         // All good, construct the multipath descriptor.
         let multi_desc = descriptor::Descriptor::Wsh(wsh_desc);
@@ -462,40 +428,107 @@ pub enum PathInfo {
 }
 
 impl PathInfo {
-    /// Get the spending path info from a policy describing a single key or a multisig.
-    /// Will return None if the policy isn't a key or a multisig.
-    pub fn from_single_key_or_multisig(
+    /// Get the information about the primary spending path.
+    /// Returns None if the policy does not describe the primary spending path of a Liana
+    /// descriptor (that is, a set of keys).
+    pub fn from_primary_path(
         policy: SemanticPolicy<descriptor::DescriptorPublicKey>,
-    ) -> Option<PathInfo> {
+    ) -> Result<PathInfo, LianaDescError> {
         match policy {
-            SemanticPolicy::Key(key) => Some(PathInfo::Single(key)),
+            SemanticPolicy::Key(key) => Ok(PathInfo::Single(key)),
             SemanticPolicy::Threshold(k, subs) => {
-                let keys: Option<Vec<descriptor::DescriptorPublicKey>> = subs
+                let keys: Result<_, LianaDescError> = subs
                     .into_iter()
                     .map(|sub| match sub {
-                        SemanticPolicy::Key(key) => Some(key),
-                        _ => None,
+                        SemanticPolicy::Key(key) => Ok(key),
+                        _ => Err(LianaDescError::IncompatibleDesc),
                     })
                     .collect();
-                Some(PathInfo::Multi(k, keys?))
+                Ok(PathInfo::Multi(k, keys?))
             }
-            _ => None,
+            _ => Err(LianaDescError::IncompatibleDesc),
+        }
+    }
+
+    /// Get the information about the recovery spending path.
+    /// Returns None if the policy does not describe the recovery spending path of a Liana
+    /// descriptor (that is, a set of keys after a timelock).
+    pub fn from_recovery_path(
+        policy: SemanticPolicy<descriptor::DescriptorPublicKey>,
+    ) -> Result<(u16, PathInfo), LianaDescError> {
+        // The recovery spending path must always be a policy of type `thresh(2, older(x), thresh(n, key1,
+        // key2, ..))`. In the special case n == 1, it is only `thresh(2, older(x), key)`. In the
+        // special case n == len(keys) (i.e. it's an N-of-N multisig), it is normalized as
+        // `thresh(n+1, older(x), key1, key2, ...)`.
+        let (k, subs) = match policy {
+            SemanticPolicy::Threshold(k, subs) => (k, subs),
+            _ => return Err(LianaDescError::IncompatibleDesc),
+        };
+        if k == 2 && subs.len() == 2 {
+            // The general case (as well as the n == 1 case). The sub that is not the timelock is
+            // of the same form as a primary path.
+            let tl_value = subs
+                .iter()
+                .find_map(|s| match s {
+                    SemanticPolicy::Older(val) => Some(csv_check(val.0)),
+                    _ => None,
+                })
+                .ok_or(LianaDescError::IncompatibleDesc)??;
+            let keys_sub = subs
+                .into_iter()
+                .find(is_single_key_or_multisig)
+                .ok_or(LianaDescError::IncompatibleDesc)?;
+            PathInfo::from_primary_path(keys_sub).map(|info| (tl_value, info))
+        } else if k == subs.len() && subs.len() > 2 {
+            // The N-of-N case. All subs but the threshold must be keys (if one had been thresh()
+            // of keys it would have been normalized).
+            let mut tl_value = None;
+            let mut keys = Vec::with_capacity(subs.len());
+            for sub in subs {
+                match sub {
+                    SemanticPolicy::Key(key) => keys.push(key),
+                    SemanticPolicy::Older(val) => {
+                        if tl_value.is_some() {
+                            return Err(LianaDescError::IncompatibleDesc);
+                        }
+                        tl_value = Some(csv_check(val.0)?);
+                    }
+                    _ => return Err(LianaDescError::IncompatibleDesc),
+                }
+            }
+            assert!(keys.len() > 1); // At least 3 subs, only one of which may be older().
+            Ok((
+                tl_value.ok_or(LianaDescError::IncompatibleDesc)?,
+                PathInfo::Multi(k - 1, keys),
+            ))
+        } else {
+            // If there is less than 2 subs, there can't be both a timelock and keys. If the
+            // threshold is not equal to the number of subs, the timelock can't be mandatory.
+            Err(LianaDescError::IncompatibleDesc)
         }
     }
 
     /// Get the required number of keys for spending through this path, and the set of keys
     /// that can be used to provide a signature for this path.
-    pub fn thresh_fingerprints(&self) -> (usize, HashSet<bip32::Fingerprint>) {
+    pub fn thresh_origins(&self) -> (usize, HashSet<(bip32::Fingerprint, bip32::DerivationPath)>) {
         match self {
             PathInfo::Single(key) => {
-                let mut fingerprints = HashSet::with_capacity(1);
-                fingerprints.insert(key_fingerprint(key).expect("Must be a multixpub."));
-                (1, fingerprints)
+                let mut origins = HashSet::with_capacity(1);
+                origins.insert(
+                    key_origin(key)
+                        .expect("Must be a multixpub with an origin.")
+                        .clone(),
+                );
+                (1, origins)
             }
             PathInfo::Multi(k, keys) => (
                 *k,
                 keys.iter()
-                    .map(|key| key_fingerprint(key).expect("Must be a multixpub."))
+                    .map(|key| {
+                        key_origin(key)
+                            .expect("Must be a multixpub with an origin.")
+                            .clone()
+                    })
                     .collect(),
             ),
         }
@@ -503,22 +536,34 @@ impl PathInfo {
 
     /// Get the spend information for this descriptor based from the list of all pubkeys that
     /// signed the transaction.
-    pub fn spend_info(
+    pub fn spend_info<'a>(
         &self,
-        all_pubkeys_signed: impl Iterator<Item = bip32::Fingerprint>,
+        all_pubkeys_signed: impl Iterator<Item = &'a (bip32::Fingerprint, bip32::DerivationPath)>,
     ) -> PathSpendInfo {
         let mut signed_pubkeys = HashMap::new();
         let mut sigs_count = 0;
-        let (threshold, fingerprints) = self.thresh_fingerprints();
+        let (threshold, origins) = self.thresh_origins();
 
         // For all existing signatures, pick those that are from one of our pubkeys.
-        for fingerprint in all_pubkeys_signed {
-            if fingerprints.contains(&fingerprint) {
+        for (fg, der_path) in all_pubkeys_signed {
+            // For all xpubs in the descriptor, we derive at /0/* or /1/*, so the xpub's origin's
+            // derivation path is the key's one without the last two derivation indexes.
+            if der_path.len() < 2 {
+                continue;
+            }
+            let parent_der_path: bip32::DerivationPath = der_path[..der_path.len() - 2].into();
+            let parent_origin = (*fg, parent_der_path);
+
+            // Now if the origin of this key without the two final derivation indexes is part of
+            // the set of our keys, count it as a signature for it. Note it won't mixup keys
+            // between spending paths, since we can't have duplicate xpubs in the descriptor and
+            // the (fingerprint, der_path) tuple is a UID for an xpub.
+            if origins.contains(&parent_origin) {
                 sigs_count += 1;
-                if let Some(count) = signed_pubkeys.get_mut(&fingerprint) {
+                if let Some(count) = signed_pubkeys.get_mut(&parent_origin) {
                     *count += 1;
                 } else {
-                    signed_pubkeys.insert(fingerprint, 1);
+                    signed_pubkeys.insert(parent_origin, 1);
                 }
             }
         }
@@ -566,7 +611,7 @@ pub struct PathSpendInfo {
     pub sigs_count: usize,
     /// The keys for which a signature was provided and the number (always >=1) of
     /// signatures provided for this key.
-    pub signed_pubkeys: HashMap<bip32::Fingerprint, usize>,
+    pub signed_pubkeys: HashMap<(bip32::Fingerprint, bip32::DerivationPath), usize>,
 }
 
 /// Information about a partial spend of Liana coins
@@ -722,43 +767,30 @@ impl MultipathDescriptor {
         // For now we only ever allow a single recovery path.
         assert_eq!(subs.len(), 2);
 
-        // Fetch the primary, non-timelocked path from the two sub-policies. Then parse information
-        // about it.
-        let prim_path_pos = subs
-            .iter()
-            .position(|sub| is_single_key_or_multisig(&sub))
-            .expect(
-                "One of the two available paths must always be a set of keys without timelock.",
-            );
-        let primary_path = PathInfo::from_single_key_or_multisig(subs[prim_path_pos].clone())
+        // Fetch the two spending paths' semantic policies. The primary path is identified as the
+        // only one that isn't timelocked.
+        let (prim_path_sub, reco_path_sub) =
+            subs.into_iter()
+                .fold((None, None), |(mut prim_sub, mut reco_sub), sub| {
+                    if is_single_key_or_multisig(&sub) {
+                        prim_sub = Some(sub);
+                    } else {
+                        reco_sub = Some(sub);
+                    }
+                    (prim_sub, reco_sub)
+                });
+        let (prim_path_sub, reco_path_sub) = (
+            prim_path_sub.expect("Must be present"),
+            reco_path_sub.expect("Must be present"),
+        );
+
+        // Now parse information about each spending path.
+        let primary_path = PathInfo::from_primary_path(prim_path_sub)
             .expect("Must always be a set of keys without timelock");
+        let reco_path = PathInfo::from_recovery_path(reco_path_sub)
+            .expect("The recovery path policy must always be a timelock along with a set of keys.");
 
-        // Since there is only two subs, the timelocked recovery path must be the other sub. From
-        // the recovery sub policy fetch the timelock policy on the one hand, and the set of keys
-        // on the other one.
-        let reco_path_pos = prim_path_pos ^ 1;
-        let reco_subs = match subs[reco_path_pos] {
-            SemanticPolicy::Threshold(2, ref subs) => subs,
-            _ => unreachable!(
-                "The recovery path policy must be two subs: a timelock + a set of keys."
-            ),
-        };
-        let (csv_pos, csv) = reco_subs
-            .iter()
-            .enumerate()
-            .find_map(|(i, s)| match s {
-                SemanticPolicy::Older(csv) => Some((
-                    i,
-                    u16::try_from(csv.0).expect("Must always be a 'clean' block height"),
-                )),
-                _ => None,
-            })
-            .expect("A relative timelock policy is always present in the recovery path.");
-        let recovery_keys = PathInfo::from_single_key_or_multisig(reco_subs[csv_pos ^ 1].clone())
-            .expect("Must always be a set of keys alongside the timelock");
-        let recovery_path = (csv, recovery_keys);
-
-        LianaDescInfo::new(primary_path, recovery_path)
+        LianaDescInfo::new(primary_path, reco_path)
     }
 
     /// Get the value (in blocks) of the relative timelock for the heir's spending path.
@@ -805,7 +837,7 @@ impl MultipathDescriptor {
         let pubkeys_signed = psbt_in
             .partial_sigs
             .iter()
-            .filter_map(|(pk, _)| psbt_in.bip32_derivation.get(&pk.inner).map(|(fg, _)| *fg));
+            .filter_map(|(pk, _)| psbt_in.bip32_derivation.get(&pk.inner));
 
         // Determine the structure of the descriptor. Then compute the spend info for the primary
         // and recovery paths. Only provide the spend info for the recovery path if it is available
@@ -1186,12 +1218,18 @@ mod tests {
     }
 
     #[test]
-    fn repro() {
+    fn partial_spend_info() {
         // A simple descriptor with 1 keys as primary path and 1 recovery key.
         let desc = MultipathDescriptor::from_str("wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr").unwrap();
         let desc_info = desc.info();
-        let prim_key_fg = bip32::Fingerprint::from_str("f5acc2fd").unwrap();
-        let recov_key_fg = bip32::Fingerprint::from_str("8a64f2a9").unwrap();
+        let prim_key_origin = (
+            bip32::Fingerprint::from_str("f5acc2fd").unwrap(),
+            Vec::new().into(),
+        );
+        let recov_key_origin: (_, bip32::DerivationPath) = (
+            bip32::Fingerprint::from_str("8a64f2a9").unwrap(),
+            Vec::new().into(),
+        );
 
         // A PSBT with a single input and output, no signature. nSequence is not set to use the
         // recovery path.
@@ -1231,7 +1269,10 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
+                && info
+                    .primary_path
+                    .signed_pubkeys
+                    .contains_key(&prim_key_origin)
         );
         assert!(info.recovery_path.is_none());
 
@@ -1243,7 +1284,10 @@ mod tests {
             inner: *signed_single_psbt.inputs[0]
                 .bip32_derivation
                 .iter()
-                .find(|(_, (fg, _))| fg == &recov_key_fg)
+                .find(|(_, (fg, der_path))| {
+                    fg == &recov_key_origin.0
+                        && der_path[..der_path.len() - 2] == recov_key_origin.1[..]
+                })
                 .unwrap()
                 .0,
         };
@@ -1270,7 +1314,7 @@ mod tests {
         assert_eq!(recov_info.sigs_count, 1);
         assert!(
             recov_info.signed_pubkeys.len() == 1
-                && recov_info.signed_pubkeys.contains_key(&recov_key_fg)
+                && recov_info.signed_pubkeys.contains_key(&recov_key_origin)
         );
 
         // A PSBT with multiple inputs, all signed for the primary path.
@@ -1284,7 +1328,10 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
+                && info
+                    .primary_path
+                    .signed_pubkeys
+                    .contains_key(&prim_key_origin)
         );
         assert!(info.recovery_path.is_none());
 
@@ -1302,7 +1349,10 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
+                && info
+                    .primary_path
+                    .signed_pubkeys
+                    .contains_key(&prim_key_origin)
         );
         let recov_info = info.recovery_path.unwrap();
         assert_eq!(recov_info.threshold, 1);
@@ -1340,9 +1390,35 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
+                && info
+                    .primary_path
+                    .signed_pubkeys
+                    .contains_key(&prim_key_origin)
         );
         assert!(info.recovery_path.is_none());
+
+        let desc = MultipathDescriptor::from_str("wsh(or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*),and_v(v:multi(2,[636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/<0;1>/*,[ffd63c8d/48'/1'/1'/2']tpubDFMs44FD4kFt3M7Z317cFh5tdKEGN8tyQRY6Q5gcSha4NtxZfGmTVRMbsD1bWN469LstXU4aVSARDxrvxFCUjHeegfEY2cLSazMBkNCmDPD/<0;1>/*),older(2))))#xcf6jr2r").unwrap();
+        let info = desc.info();
+        assert_eq!(info.primary_path, PathInfo::Multi(
+            2,
+            vec![
+                descriptor::DescriptorPublicKey::from_str("[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*").unwrap(),
+                descriptor::DescriptorPublicKey::from_str("[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*").unwrap(),
+            ],
+        ));
+        assert_eq!(info.recovery_path, (2, PathInfo::Multi(
+            2,
+            vec![
+                descriptor::DescriptorPublicKey::from_str("[636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/<0;1>/*").unwrap(),
+                descriptor::DescriptorPublicKey::from_str("[ffd63c8d/48'/1'/1'/2']tpubDFMs44FD4kFt3M7Z317cFh5tdKEGN8tyQRY6Q5gcSha4NtxZfGmTVRMbsD1bWN469LstXU4aVSARDxrvxFCUjHeegfEY2cLSazMBkNCmDPD/<0;1>/*").unwrap(),
+            ],
+        )));
+        let psbt = psbt_from_str("cHNidP8BAIkCAAAAAWi3OFgkj1CqCDT3Swm8kbxZS9lxz4L3i4W2v9KGC7nqAQAAAAD9////AkANAwAAAAAAIgAg27lNc1rog+dOq80ohRuds4Hgg/RcpxVun2XwgpuLSrFYMwwAAAAAACIAIDyWveqaElWmFGkTbFojg1zXWHODtiipSNjfgi2DqBy9AAAAAAABAOoCAAAAAAEBsRWl70USoAFFozxc86pC7Dovttdg4kvja//3WMEJskEBAAAAAP7///8CWKmCIk4GAAAWABRKBWYWkCNS46jgF0r69Ehdnq+7T0BCDwAAAAAAIgAgTt5fs+CiB+FRzNC8lHcgWLH205sNjz1pT59ghXlG5tQCRzBEAiBXK9MF8z3bX/VnY2aefgBBmiAHPL4tyDbUOe7+KpYA4AIgL5kU0DFG8szKd+szRzz/OTUWJ0tZqij41h2eU9rSe1IBIQNBB1hy+jKsg1TihMT0dXw7etpu9TkO3NuvhBDFJlBj1cP2AQABAStAQg8AAAAAACIAIE7eX7PgogfhUczQvJR3IFix9tObDY89aU+fYIV5RubUIgICSKJsNs0zFJN58yd2aYQ+C3vhMbi0x7k0FV3wBhR4THlIMEUCIQCPWWWOhs2lThxOq/G8X2fYBRvM9MXSm7qPH+dRVYQZEwIgfut2vx3RvwZWcgEj4ohQJD5lNJlwOkA4PAiN1fjx6dABIgID3mvj1zerZKohOVhKCiskYk+3qrCum6PIwDhQ16ePACpHMEQCICZNR+0/1hPkrDQwPFmg5VjUHkh6aK9cXUu3kPbM8hirAiAyE/5NUXKfmFKij30isuyysJbq8HrURjivd+S9vdRGKQEBBZNSIQJIomw2zTMUk3nzJ3ZphD4Le+ExuLTHuTQVXfAGFHhMeSEC9OfCXl+sJOrxUFLBuMV4ZUlJYjuzNGZSld5ioY14y8FSrnNkUSED3mvj1zerZKohOVhKCiskYk+3qrCum6PIwDhQ16ePACohA+ECH+HlR+8Sf3pumaXH3IwSsoqSLCH7H1THiBP93z3ZUq9SsmgiBgJIomw2zTMUk3nzJ3ZphD4Le+ExuLTHuTQVXfAGFHhMeRxjat8/MAAAgAEAAIAAAACAAgAAgAAAAAABAAAAIgYC9OfCXl+sJOrxUFLBuMV4ZUlJYjuzNGZSld5ioY14y8Ec/9Y8jTAAAIABAACAAAAAgAIAAIAAAAAAAQAAACIGA95r49c3q2SqITlYSgorJGJPt6qwrpujyMA4UNenjwAqHGNq3z8wAACAAQAAgAEAAIACAACAAAAAAAEAAAAiBgPhAh/h5UfvEn96bpmlx9yMErKKkiwh+x9Ux4gT/d892Rz/1jyNMAAAgAEAAIABAACAAgAAgAAAAAABAAAAACICAlBQ7gGocg7eF3sXrCio+zusAC9+xfoyIV95AeR69DWvHGNq3z8wAACAAQAAgAEAAIACAACAAAAAAAMAAAAiAgMvVy984eg8Kgvj058PBHetFayWbRGb7L0DMnS9KHSJzBxjat8/MAAAgAEAAIAAAACAAgAAgAAAAAADAAAAIgIDSRIG1dn6njdjsDXenHa2lUvQHWGPLKBVrSzbQOhiIxgc/9Y8jTAAAIABAACAAAAAgAIAAIAAAAAAAwAAACICA0/epE59sVEj7Et0I4R9qJQNuX23RNvDZKCRL7eUps9FHP/WPI0wAACAAQAAgAEAAIACAACAAAAAAAMAAAAAIgICgldCOK6iHscv//2NipgaMABLV5TICU/zlP7HlQmlg08cY2rfPzAAAIABAACAAQAAgAIAAIABAAAAAQAAACICApb0p9rfpJshB3J186PGWrvzQdixcwQZWmebOUMdkquZHP/WPI0wAACAAQAAgAAAAIACAACAAQAAAAEAAAAiAgLY5q+unoDxC/HI5BaNiPq12ei1REZIcUAN304JfKXUwxz/1jyNMAAAgAEAAIABAACAAgAAgAEAAAABAAAAIgIDg6cUVCJB79cMcofiURHojxFARWyS4YEhJNRixuOZZRgcY2rfPzAAAIABAACAAAAAgAIAAIABAAAAAQAAAAA=");
+        let partial_info = desc.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial_info.primary_path.threshold, 2);
+        assert_eq!(partial_info.primary_path.sigs_count, 1);
+        assert_eq!(partial_info.primary_path.signed_pubkeys.len(), 1);
+        assert!(partial_info.recovery_path.is_none());
     }
 
     // TODO: test error conditions of deserialization.
