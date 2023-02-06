@@ -65,7 +65,7 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
     pip install ds_store mac_alias
     python3 ../contrib/release/macos/gen_dstore.py
     mv .DS_Store "$DMG_DIR/"
-    cp "$BUILD_DIR/gui/x86_64-apple-darwin/release/liana-gui" "$DMG_DIR/Liana.app/Contents/MacOS/"
+    cp "$BUILD_DIR/gui/x86_64-apple-darwin/release/liana-gui" "$DMG_DIR/Liana.app/Contents/MacOS/Liana"
     DMG_FILE="liana-$VERSION.dmg"
     xorrisofs -D -l -V Liana -no-pad -r -dir-mode 0755 -o "$DMG_FILE" "$DMG_DIR"
     cp "$DMG_FILE" "$RELEASE_DIR/"
