@@ -910,6 +910,8 @@ impl Step for ParticipateXpub {
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
         ctx.bitcoin_config.network = self.network;
+        // Drop connections to hardware wallets.
+        self.xpubs_hw = Vec::new();
         true
     }
 
