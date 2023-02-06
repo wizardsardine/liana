@@ -7,7 +7,10 @@ use iced::{
 
 use liana::{
     descriptors::{LianaDescInfo, PathInfo, PathSpendInfo},
-    miniscript::bitcoin::{util::bip32::Fingerprint, Address, Amount, Network, Transaction},
+    miniscript::bitcoin::{
+        util::bip32::{DerivationPath, Fingerprint},
+        Address, Amount, Network, Transaction,
+    },
 };
 
 use crate::{
@@ -301,19 +304,19 @@ pub fn signatures<'a>(
                             sigs.signed_pubkeys
                             .keys()
                             .fold(Row::new().spacing(5), |row, value| {
-                                row.push(if let Some(alias) = keys_aliases.get(value) {
+                                row.push(if let Some(alias) = keys_aliases.get(&value.0) {
                                 Container::new(
                                     tooltip::Tooltip::new(
                                         Container::new(text(alias))
                                             .padding(3)
                                             .style(badge::PillStyle::Simple),
-                                            value.to_string(),
+                                            value.0.to_string(),
                                             tooltip::Position::Bottom,
                                     )
                                     .style(card::SimpleCardStyle),
                                 )
                             } else {
-                                Container::new(text(value.to_string()))
+                                Container::new(text(value.0.to_string()))
                                     .padding(3)
                                     .style(badge::PillStyle::Simple)
                             })
@@ -419,7 +422,8 @@ pub fn path_view<'a>(
     sigs: &'a PathSpendInfo,
     key_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
-    let mut keys: Vec<Fingerprint> = path.thresh_fingerprints().1.into_iter().collect();
+    let mut keys: Vec<(Fingerprint, DerivationPath)> =
+        path.thresh_origins().1.into_iter().collect();
     let missing_signatures = if sigs.sigs_count >= sigs.threshold {
         0
     } else {
@@ -448,21 +452,21 @@ pub fn path_view<'a>(
             .push_maybe(if keys.is_empty() {
                 None
             } else {
-                Some(keys.iter().fold(Row::new().spacing(5), |row, &value| {
-                    row.push_maybe(if !sigs.signed_pubkeys.contains_key(&value) {
-                        Some(if let Some(alias) = key_aliases.get(&value) {
+                Some(keys.iter().fold(Row::new().spacing(5), |row, value| {
+                    row.push_maybe(if !sigs.signed_pubkeys.contains_key(value) {
+                        Some(if let Some(alias) = key_aliases.get(&value.0) {
                             Container::new(
                                 tooltip::Tooltip::new(
                                     Container::new(text(alias))
                                         .padding(3)
                                         .style(badge::PillStyle::Simple),
-                                    value.to_string(),
+                                    value.0.to_string(),
                                     tooltip::Position::Bottom,
                                 )
                                 .style(card::SimpleCardStyle),
                             )
                         } else {
-                            Container::new(text(value.to_string()))
+                            Container::new(text(value.0.to_string()))
                                 .padding(3)
                                 .style(badge::PillStyle::Simple)
                         })
@@ -480,19 +484,19 @@ pub fn path_view<'a>(
                 sigs.signed_pubkeys
                     .keys()
                     .fold(Row::new().spacing(5), |row, value| {
-                        row.push(if let Some(alias) = key_aliases.get(value) {
+                        row.push(if let Some(alias) = key_aliases.get(&value.0) {
                             Container::new(
                                 tooltip::Tooltip::new(
                                     Container::new(text(alias))
                                         .padding(3)
                                         .style(badge::PillStyle::Simple),
-                                    value.to_string(),
+                                    value.0.to_string(),
                                     tooltip::Position::Bottom,
                                 )
                                 .style(card::SimpleCardStyle),
                             )
                         } else {
-                            Container::new(text(value.to_string()))
+                            Container::new(text(value.0.to_string()))
                                 .padding(3)
                                 .style(badge::PillStyle::Simple)
                         })
