@@ -30,3 +30,5 @@ either, or both, of the spending paths.
 - Various wording fixes on the UI.
 - Amounts are now updated when moving between steps in the Spend creation flow.
 - Coins are now sorted by age when displayed as a list.
+- Some flakiness in the connection to a signing device were fixed.
+- The descriptor registration on a signing device step in the installer was made clearer.
