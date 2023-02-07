@@ -2,19 +2,24 @@ use std::path::PathBuf;
 
 use iced::{
     widget::{Button, Column, Container, Row},
-    Alignment, Element, Length, Subscription,
+    Alignment, Command, Element, Length, Subscription,
 };
 
-use liana::miniscript::bitcoin::Network;
+use liana::{config::ConfigError, miniscript::bitcoin::Network};
 
-use crate::ui::{
-    component::{badge, button, text::*},
-    icon,
+use crate::{
+    app,
+    ui::{
+        component::{badge, button, card, text::*},
+        icon,
+        util::*,
+    },
 };
 
 pub struct Launcher {
     choices: Vec<Network>,
-    pub datadir_path: PathBuf,
+    datadir_path: PathBuf,
+    error: Option<String>,
 }
 
 impl Launcher {
@@ -33,6 +38,7 @@ impl Launcher {
         Self {
             datadir_path,
             choices,
+            error: None,
         }
     }
 
@@ -42,71 +48,163 @@ impl Launcher {
         Subscription::none()
     }
 
+    pub fn update(&mut self, message: Message) -> Command<Message> {
+        match message {
+            Message::View(ViewMessage::StartInstall) => {
+                let datadir_path = self.datadir_path.clone();
+                Command::perform(async move { datadir_path }, Message::Install)
+            }
+            Message::View(ViewMessage::Check(network)) => Command::perform(
+                check_network_datadir(self.datadir_path.clone(), network),
+                Message::Checked,
+            ),
+            Message::Checked(res) => match res {
+                Err(e) => {
+                    self.error = Some(e);
+                    Command::none()
+                }
+                Ok(network) => {
+                    let datadir_path = self.datadir_path.clone();
+                    let mut path = self.datadir_path.clone();
+                    path.push(network.to_string());
+                    path.push(app::config::DEFAULT_FILE_NAME);
+                    let cfg = app::Config::from_file(&path).expect("Already checked");
+                    let daemon_cfg =
+                        liana::config::Config::from_file(Some(cfg.daemon_config_path.clone()))
+                            .expect("Already checked");
+                    Command::perform(
+                        async move { (datadir_path.clone(), cfg, daemon_cfg) },
+                        |m| Message::Run(m.0, m.1, m.2),
+                    )
+                }
+            },
+            _ => Command::none(),
+        }
+    }
+
     pub fn view(&self) -> Element<Message> {
-        Container::new(
-            Column::new()
-                .spacing(30)
-                .push(text("Welcome back").size(50).bold())
-                .push(
-                    self.choices
-                        .iter()
-                        .fold(
-                            Column::new()
-                                .push(text("Select network:").small().bold())
-                                .spacing(10),
-                            |col, choice| {
-                                col.push(
-                                    Button::new(
-                                        Row::new()
-                                            .spacing(20)
-                                            .align_items(Alignment::Center)
-                                            .push(badge::Badge::new(icon::bitcoin_icon()).style(
-                                                match choice {
-                                                    Network::Bitcoin => badge::Style::Bitcoin,
-                                                    _ => badge::Style::Standard,
-                                                },
-                                            ))
-                                            .push(text(match choice {
-                                                Network::Bitcoin => "Bitcoin Mainnet",
-                                                Network::Testnet => "Bitcoin Testnet",
-                                                Network::Signet => "Bitcoin Signet",
-                                                Network::Regtest => "Bitcoin Regtest",
-                                            })),
+        Into::<Element<ViewMessage>>::into(
+            Container::new(
+                Column::new()
+                    .spacing(30)
+                    .push(text("Welcome back").size(50).bold())
+                    .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
+                    .push(
+                        self.choices
+                            .iter()
+                            .fold(
+                                Column::new()
+                                    .push(text("Select network:").small().bold())
+                                    .spacing(10),
+                                |col, choice| {
+                                    col.push(
+                                        Button::new(
+                                            Row::new()
+                                                .spacing(20)
+                                                .align_items(Alignment::Center)
+                                                .push(
+                                                    badge::Badge::new(icon::bitcoin_icon()).style(
+                                                        match choice {
+                                                            Network::Bitcoin => {
+                                                                badge::Style::Bitcoin
+                                                            }
+                                                            _ => badge::Style::Standard,
+                                                        },
+                                                    ),
+                                                )
+                                                .push(text(match choice {
+                                                    Network::Bitcoin => "Bitcoin Mainnet",
+                                                    Network::Testnet => "Bitcoin Testnet",
+                                                    Network::Signet => "Bitcoin Signet",
+                                                    Network::Regtest => "Bitcoin Regtest",
+                                                })),
+                                        )
+                                        .on_press(ViewMessage::Check(*choice))
+                                        .padding(10)
+                                        .width(Length::Fill)
+                                        .style(button::Style::Border.into()),
                                     )
-                                    .on_press(Message::Run(*choice))
-                                    .padding(10)
-                                    .width(Length::Fill)
-                                    .style(button::Style::Border.into()),
-                                )
-                            },
-                        )
-                        .push(
-                            Button::new(
-                                Row::new()
-                                    .spacing(20)
-                                    .align_items(Alignment::Center)
-                                    .push(badge::Badge::new(icon::plus_icon()))
-                                    .push(text("Install Liana on another network")),
+                                },
                             )
-                            .on_press(Message::Install)
-                            .padding(10)
-                            .width(Length::Fill)
-                            .style(button::Style::TransparentBorder.into()),
-                        ),
-                )
-                .max_width(500)
-                .align_items(Alignment::Center),
+                            .push(
+                                Button::new(
+                                    Row::new()
+                                        .spacing(20)
+                                        .align_items(Alignment::Center)
+                                        .push(badge::Badge::new(icon::plus_icon()))
+                                        .push(text("Install Liana on another network")),
+                                )
+                                .on_press(ViewMessage::StartInstall)
+                                .padding(10)
+                                .width(Length::Fill)
+                                .style(button::Style::TransparentBorder.into()),
+                            ),
+                    )
+                    .max_width(500)
+                    .align_items(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x()
+            .center_y(),
         )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x()
-        .center_y()
-        .into()
+        .map(Message::View)
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Message {
-    Install,
-    Run(Network),
+    View(ViewMessage),
+    Install(PathBuf),
+    Checked(Result<Network, String>),
+    Run(PathBuf, app::config::Config, liana::config::Config),
+}
+
+#[derive(Debug, Clone)]
+pub enum ViewMessage {
+    StartInstall,
+    Check(Network),
+}
+
+async fn check_network_datadir(mut path: PathBuf, network: Network) -> Result<Network, String> {
+    path.push(network.to_string());
+    path.push(app::config::DEFAULT_FILE_NAME);
+
+    let cfg = app::Config::from_file(&path).map_err(|_| {
+        format!(
+            "Failed to read GUI configuration file in the directory: {}",
+            path.to_string_lossy()
+        )
+    })?;
+
+    liana::config::Config::from_file(Some(cfg.daemon_config_path.clone())).map_err(|e| match e {
+        ConfigError::FileNotFound
+        | ConfigError::DatadirNotFound => {
+            format!(
+                "Failed to read daemon configuration file in the directory: {}",
+                cfg.daemon_config_path.to_string_lossy()
+            )
+        }
+        ConfigError::ReadingFile(e) => {
+            if e.starts_with("Parsing configuration file: Error parsing descriptor") {
+                "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1.".to_string()
+            } else {
+                format!(
+                    "Failed to read daemon configuration file in the directory: {}",
+                    cfg.daemon_config_path.to_string_lossy()
+                )
+            }
+        }
+        ConfigError::UnexpectedDescriptor(_) => {
+            "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1.".to_string()
+        }
+        ConfigError::Unexpected(e) => {
+            format!(
+                "Unexpected {}",
+                e,
+            )
+        }
+    })?;
+
+    Ok(network)
 }
