@@ -376,7 +376,7 @@ pub fn import_descriptor<'a>(
             form::Form::new("Descriptor", imported_descriptor, |msg| {
                 Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(msg))
             })
-            .warning("Please enter correct descriptor")
+            .warning("Incompatible descriptor. Note that starting from v0.2 Liana requires extended keys in a descriptor to have an origin.")
             .size(20)
             .padding(10),
         )
