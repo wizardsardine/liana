@@ -24,6 +24,13 @@ either, or both, of the spending paths.
   ELF binary.
 - We now check the `bitcoind` version before trying to import a Miniscript descriptor.
 - We now discard unconfirmed incoming payments that were dropped from our mempool.
+- **Breaking change**: the first version of Liana mistakenly accepted extended keys without origin
+  in descriptors. This meant that unless this extended key was the master extended key of a chain,
+  it would not be possible to sign with it (since signing devices need to know the origin). Starting
+  from version 2 Liana forces extended keys to contain an origin (of the form `[a1b2c3d4]`) to avoid
+  this footgun. This means that existing descriptors might have to be migrated, but it's very likely
+  only for test configurations where an xpub wasn't gathered from a signing device (which prepends
+  an origin) but generated (probably imported from Coleman's website) and pasted without origin.
 
 #### GUI-specific
 
