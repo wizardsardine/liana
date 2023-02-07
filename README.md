@@ -106,7 +106,8 @@ at least once every `N` blocks. (With `N` the configured value of the timelock.)
 For now, only the Ledger and Specter DIY signing devices are supported, as Miniscript compatibility
 of the signer is a must. We expect more signing devices to implement Miniscript capability. We may
 add the possibility to use Liana as a "hot" wallet in the future (i.e. with a private key directly
-on the laptop).
+on the laptop). For more information, please read the
+[signing devices documentation](./doc/signing_devices.md).
 
 If you are using a Ledger device, make sure to install the currently latest version of the Bitcoin
 application: `2.1.0`. This is the minimum supported version, as it's the first one to introduce

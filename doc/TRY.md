@@ -109,6 +109,9 @@ Liana does not support "hot keys" at the moment. It needs a connection to a sign
 signing transactions.
 
 We will be using a [Specter](https://github.com/cryptoadvance/specter-diy) simulator.
+In case the Specter DIY simulator is not usable on your machine 
+(for instance it was reported to us that > M1 apple computers do not
+support it), you can use the [Ledger simulator "Speculos"](https://speculos.ledger.com/ ).
 
 ```
 git clone https://github.com/cryptoadvance/specter-diy
