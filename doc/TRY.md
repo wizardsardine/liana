@@ -4,7 +4,9 @@
 
 This document is a short set of instructions for trying out Liana on Bitcoin signet. It does not attempt to
 give any nuance, details or describe alternative configurations.
-This guide uses an emulator of the Specter hardware signer.
+This guide uses an emulator of the Specter hardware signer. (If it is not available on your
+platform, checkout the [Ledger "Speculos" emulator](https://github.com/LedgerHQ/speculos).
+Documentation [here](https://speculos.ledger.com/).)
 
 This guide mostly assumes you are running a 64-bit Linux.
 
@@ -109,9 +111,10 @@ Liana does not support "hot keys" at the moment. It needs a connection to a sign
 signing transactions.
 
 We will be using a [Specter](https://github.com/cryptoadvance/specter-diy) simulator.
-In case the Specter DIY simulator is not usable on your machine 
-(for instance it was reported to us that > M1 apple computers do not
-support it), you can use the [Ledger simulator "Speculos"](https://speculos.ledger.com/ ).
+In case the Specter DIY simulator is not usable on your machine (for instance it was reported to us
+that >M1 Macs do not support it), you can use the [Ledger simulator
+"Speculos"](https://github.com/LedgerHQ/speculos) [Documentation
+here](https://speculos.ledger.com/).
 
 ```
 git clone https://github.com/cryptoadvance/specter-diy

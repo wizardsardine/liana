@@ -38,6 +38,3 @@ Bitcoin application is not experimental anymore. It was just downgraded in Ledge
 to experimental in order to prevent people from upgrading by mistake and not be able to keep using
 applications not compatible with the new interface. It is however not safe to use it for installing
 any other application.
-
-Ledger enterprise provides for testing an app emulator named [Speculos](https://github.com/LedgerHQ/speculos)
-compatible with apple M1 CPU.
