@@ -109,6 +109,9 @@ Liana does not support "hot keys" at the moment. It needs a connection to a sign
 signing transactions.
 
 We will be using a [Specter](https://github.com/cryptoadvance/specter-diy) simulator.
+In case the Specter DIY simulator is not usable on your machine 
+(for instance it was reported to us that > M1 apple computers do not
+support it), you can use the [Ledger simulator "Speculos"](https://speculos.ledger.com/ ).
 
 ```
 git clone https://github.com/cryptoadvance/specter-diy
@@ -128,8 +131,8 @@ Keep the Specter simulator open and move on to the next step.
 
 Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
 executable for your platform. If you are not sure what is the "right" executable for your platform,
-choose `liana-0.1.exe` if you are on Windows, `liana-0.1.dmg` if you are on MacOS and
-`liana-0.1-x86_64-linux-gnu.tar.gz` if you are on Linux.
+choose `liana-0.2.exe` if you are on Windows, `liana-0.2.dmg` if you are on MacOS and
+`liana-0.2-x86_64-linux-gnu.tar.gz` if you are on Linux.
 
 For every file available on the release page, there is an accompanying `.asc` file with the same
 name. This is a GPG signature made with Antoine Poinsot's key:

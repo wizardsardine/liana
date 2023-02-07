@@ -44,8 +44,8 @@ build the project from source, see [`doc/BUILD.md`](doc/BUILD.md) instead.
 
 Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
 executable for your platform. If you are not sure what is the "right" executable for your platform,
-choose `liana-0.1.exe` if you are on Windows, `liana-0.1.dmg` if you are on MacOS and
-`liana-0.1-x86_64-linux-gnu.tar.gz` if you are on Linux.
+choose `liana-0.2.exe` if you are on Windows, `liana-0.2.dmg` if you are on MacOS and
+`liana-0.2-x86_64-linux-gnu.tar.gz` if you are on Linux.
 
 For every file available on the release page, there is an accompanying `.asc` file with the same
 name. This is a GPG signature made with Antoine Poinsot's key:
@@ -106,7 +106,8 @@ at least once every `N` blocks. (With `N` the configured value of the timelock.)
 For now, only the Ledger and Specter DIY signing devices are supported, as Miniscript compatibility
 of the signer is a must. We expect more signing devices to implement Miniscript capability. We may
 add the possibility to use Liana as a "hot" wallet in the future (i.e. with a private key directly
-on the laptop).
+on the laptop). For more information, please read the
+[signing devices documentation](./doc/signing_devices.md).
 
 If you are using a Ledger device, make sure to install the currently latest version of the Bitcoin
 application: `2.1.0`. This is the minimum supported version, as it's the first one to introduce
@@ -133,7 +134,7 @@ $ liana-cli --conf ./testnet_config.toml getinfo
     "network": "testnet",
     "rescan_progress": null,
     "sync": 1.0,
-    "version": "0.1"
+    "version": "0.2"
   }
 }
 ```
