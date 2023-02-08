@@ -165,24 +165,18 @@ impl Application for GUI {
                 iced::window::close()
             }
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
-                launcher::Message::Install => {
+                launcher::Message::Install(datadir_path) => {
                     let (install, command) =
-                        Installer::new(l.datadir_path.clone(), bitcoin::Network::Bitcoin);
+                        Installer::new(datadir_path, bitcoin::Network::Bitcoin);
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
-                launcher::Message::Run(network) => {
-                    let mut path = l.datadir_path.clone();
-                    path.push(network.to_string());
-                    path.push(app::config::DEFAULT_FILE_NAME);
-                    let cfg = app::Config::from_file(&path).unwrap();
-                    let daemon_cfg =
-                        DaemonConfig::from_file(Some(cfg.daemon_config_path.clone())).unwrap();
-                    let (loader, command) =
-                        Loader::new(Some(l.datadir_path.clone()), cfg, daemon_cfg);
+                launcher::Message::Run(datadir_path, cfg, daemon_cfg) => {
+                    let (loader, command) = Loader::new(Some(datadir_path), cfg, daemon_cfg);
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 }
+                _ => l.update(*msg).map(|msg| Message::Launch(Box::new(msg))),
             },
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(path) = *msg {
