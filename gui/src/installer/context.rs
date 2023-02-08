@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
@@ -7,6 +8,7 @@ use crate::{
         wallet::DEFAULT_WALLET_NAME,
     },
     hw::HardwareWalletConfig,
+    signer::Signer,
 };
 use async_hwi::DeviceKind;
 use liana::{
@@ -28,6 +30,7 @@ pub struct Context {
         Option<[u8; 32]>,
     )>,
     pub data_dir: PathBuf,
+    pub signer: Option<Arc<Signer>>,
 }
 
 impl Context {
@@ -42,6 +45,7 @@ impl Context {
             bitcoind_config: None,
             descriptor: None,
             data_dir,
+            signer: None,
         }
     }
 

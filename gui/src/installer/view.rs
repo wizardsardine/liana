@@ -1086,6 +1086,7 @@ pub fn edit_key_modal<'a>(
     error: Option<&Error>,
     processing: bool,
     chosen_hw: Option<usize>,
+    chosen_signer: bool,
     form_xpub: &form::Value<String>,
     form_name: &'a form::Value<String>,
     edit_name: bool,
@@ -1095,14 +1096,14 @@ pub fn edit_key_modal<'a>(
         .push(card::simple(
             Column::new()
                 .spacing(25)
-                .push(if !hws.is_empty() {
+                .push(
                     Column::new()
                         .push(
                             Row::new()
                                 .spacing(10)
                                 .align_items(Alignment::Center)
                                 .push(
-                                    Container::new(text("Select a hardware wallet:").bold())
+                                    Container::new(text("Select a signing device:").bold())
                                         .width(Length::Fill),
                                 )
                                 .push(
@@ -1126,19 +1127,36 @@ pub fn edit_key_modal<'a>(
                                 ))
                             },
                         ))
-                        .width(Length::Fill)
-                } else {
-                    Column::new()
                         .push(
-                            Row::new()
-                                .spacing(15)
-                                .width(Length::Fill)
-                                .push(text("Connect a hardware wallet").bold().width(Length::Fill))
-                                .push(button::border(None, "Refresh").on_press(Message::Reload))
-                                .align_items(Alignment::Center),
+                            Button::new(
+                                Row::new()
+                                    .padding(5)
+                                    .width(Length::Fill)
+                                    .align_items(Alignment::Center)
+                                    .push(
+                                        Column::new()
+                                            .spacing(5)
+                                            .push(text("This computer").bold())
+                                            .push(
+                                                text("Derive a key from a mnemonic stored on the computer").small(),
+                                            )
+                                            .width(Length::Fill),
+                                    )
+                                    .push_maybe(if chosen_signer {
+                                        Some(icon::circle_check_icon().style(color::SUCCESS))
+                                    } else {
+                                        None
+                                    })
+                                    .spacing(10),
+                            )
+                            .width(Length::Fill)
+                            .on_press(Message::DefineDescriptor(
+                                message::DefineDescriptor::UseHotSigner,
+                            ))
+                            .style(button::Style::Border.into()),
                         )
-                        .width(Length::Fill)
-                })
+                        .width(Length::Fill),
+                )
                 .push(
                     Column::new()
                         .spacing(5)

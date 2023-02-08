@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use iced::{Command, Element};
 use liana::{
@@ -24,6 +25,7 @@ use crate::{
         step::{Context, Step},
         view, Error,
     },
+    signer::Signer,
     ui::component::{form, modal::Modal},
 };
 
@@ -47,6 +49,7 @@ pub struct DefineDescriptor {
     recovery_threshold: usize,
     sequence: form::Value<String>,
     modal: Option<Box<dyn DescriptorKeyModal>>,
+    signer: Arc<Signer>,
 
     error: Option<String>,
 }
@@ -63,6 +66,7 @@ impl DefineDescriptor {
             recovery_threshold: 1,
             sequence: form::Value::default(),
             modal: None,
+            signer: Arc::new(Signer::generate(Network::Bitcoin).unwrap()),
             error: None,
         }
     }
@@ -73,6 +77,23 @@ impl DefineDescriptor {
             && !self.sequence.value.is_empty()
             && !self.spending_keys.iter().any(|k| k.key.is_none())
             && !self.spending_keys.iter().any(|k| k.key.is_none())
+    }
+
+    fn set_network(&mut self, network: Network) {
+        self.network = network;
+        if let Some(signer) = Arc::get_mut(&mut self.signer) {
+            signer.set_network(network);
+        }
+        if let Some(mut network_datadir) = self.data_dir.clone() {
+            network_datadir.push(self.network.to_string());
+            self.network_valid = !network_datadir.exists();
+        }
+        for key in self.spending_keys.iter_mut() {
+            key.check_network(self.network);
+        }
+        for key in self.recovery_keys.iter_mut() {
+            key.check_network(self.network);
+        }
     }
 
     // TODO: Improve algo
@@ -201,18 +222,7 @@ impl Step for DefineDescriptor {
             Message::Close => {
                 self.modal = None;
             }
-            Message::Network(network) => {
-                self.network = network;
-                let mut network_datadir = self.data_dir.clone().unwrap();
-                network_datadir.push(self.network.to_string());
-                self.network_valid = !network_datadir.exists();
-                for key in self.spending_keys.iter_mut() {
-                    key.check_network(self.network);
-                }
-                for key in self.recovery_keys.iter_mut() {
-                    key.check_network(self.network);
-                }
-            }
+            Message::Network(network) => self.set_network(network),
             Message::DefineDescriptor(msg) => {
                 match msg {
                     message::DefineDescriptor::ThresholdEdited(is_recovery, value) => {
@@ -263,42 +273,30 @@ impl Step for DefineDescriptor {
                         message::DefineKey::Edit => {
                             if is_recovery {
                                 if let Some(recovery_key) = self.recovery_keys.get(i) {
-                                    let name = recovery_key.name.clone();
-                                    let key = recovery_key
-                                        .key
-                                        .as_ref()
-                                        .map(|k| {
-                                            k.to_string().trim_end_matches("/<0;1>/*").to_string()
-                                        })
-                                        .unwrap_or_else(|| "".to_string());
                                     let modal = EditXpubModal::new(
-                                        name,
-                                        key,
+                                        recovery_key.name.clone(),
+                                        recovery_key.key.as_ref(),
                                         i,
                                         is_recovery,
                                         self.network,
                                         self.fingerprint_account_index_mappping(),
                                         self.keys_aliases(),
+                                        self.signer.clone(),
                                     );
                                     let cmd = modal.load();
                                     self.modal = Some(Box::new(modal));
                                     return cmd;
                                 }
                             } else if let Some(spending_key) = self.spending_keys.get(i) {
-                                let name = spending_key.name.clone();
-                                let key = spending_key
-                                    .key
-                                    .as_ref()
-                                    .map(|k| k.to_string().trim_end_matches("/<0;1>/*").to_string())
-                                    .unwrap_or_else(|| "".to_string());
                                 let modal = EditXpubModal::new(
-                                    name,
-                                    key,
+                                    spending_key.name.clone(),
+                                    spending_key.key.as_ref(),
                                     i,
                                     is_recovery,
                                     self.network,
                                     self.fingerprint_account_index_mappping(),
                                     self.keys_aliases(),
+                                    self.signer.clone(),
                                 );
                                 let cmd = modal.load();
                                 self.modal = Some(Box::new(modal));
@@ -337,16 +335,14 @@ impl Step for DefineDescriptor {
     }
 
     fn load_context(&mut self, ctx: &Context) {
-        self.network = ctx.bitcoin_config.network;
         self.data_dir = Some(ctx.data_dir.clone());
-        let mut network_datadir = ctx.data_dir.clone();
-        network_datadir.push(self.network.to_string());
-        self.network_valid = !network_datadir.exists();
+        self.set_network(ctx.bitcoin_config.network)
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
         ctx.bitcoin_config.network = self.network;
         ctx.keys = Vec::new();
+        let mut signer_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
         for spending_key in self.spending_keys.iter().clone() {
             if let Some(key) = spending_key.key.as_ref() {
@@ -371,6 +367,9 @@ impl Step for DefineDescriptor {
                             master_fingerprint,
                             name: recovery_key.name.clone(),
                         });
+                        if master_fingerprint == self.signer.fingerprint() {
+                            signer_is_used = true;
+                        }
                     }
                 }
                 recovery_keys.push(key.clone());
@@ -421,6 +420,9 @@ impl Step for DefineDescriptor {
         };
 
         ctx.descriptor = Some(desc);
+        if signer_is_used {
+            ctx.signer = Some(self.signer.clone());
+        }
         true
     }
 
@@ -555,17 +557,22 @@ pub struct EditXpubModal {
 
     chosen_hw: Option<usize>,
     hws: Vec<HardwareWallet>,
+
+    signer: Arc<Signer>,
+    chosen_signer: bool,
 }
 
 impl EditXpubModal {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         name: String,
-        key: String,
+        key: Option<&DescriptorPublicKey>,
         key_index: usize,
         is_recovery: bool,
         network: Network,
         account_indexes: HashMap<Fingerprint, ChildNumber>,
         keys_aliases: HashMap<Fingerprint, String>,
+        signer: Arc<Signer>,
     ) -> Self {
         Self {
             form_name: form::Value {
@@ -574,7 +581,9 @@ impl EditXpubModal {
             },
             form_xpub: form::Value {
                 valid: true,
-                value: key,
+                value: key
+                    .map(|k| k.to_string().trim_end_matches("/<0;1>/*").to_string())
+                    .unwrap_or_else(|| "".to_string()),
             },
             keys_aliases,
             account_indexes,
@@ -586,6 +595,8 @@ impl EditXpubModal {
             error: None,
             network,
             edit_name: false,
+            chosen_signer: Some(signer.fingerprint()) == key.map(|k| k.master_fingerprint()),
+            signer,
         }
     }
     fn load(&self) -> Command<Message> {
@@ -622,8 +633,7 @@ impl DescriptorKeyModal for EditXpubModal {
                         get_extended_pubkey(
                             device.clone(),
                             *fingerprint,
-                            self.network,
-                            account_index,
+                            generate_derivation_path(self.network, account_index),
                         ),
                         |res| {
                             Message::DefineDescriptor(message::DefineDescriptor::HWXpubImported(
@@ -635,10 +645,44 @@ impl DescriptorKeyModal for EditXpubModal {
             }
             Message::ConnectedHardwareWallets(hws) => {
                 self.hws = hws;
+                if let Ok(key) =
+                    DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", self.form_xpub.value))
+                {
+                    self.chosen_hw = self
+                        .hws
+                        .iter()
+                        .position(|hw| hw.fingerprint() == Some(key.master_fingerprint()));
+                }
             }
             Message::Reload => {
                 self.hws = Vec::new();
                 return self.load();
+            }
+            Message::DefineDescriptor(message::DefineDescriptor::UseHotSigner) => {
+                self.chosen_hw = None;
+                self.chosen_signer = true;
+                self.form_xpub.valid = true;
+                let fingerprint = self.signer.fingerprint();
+                if let Some(alias) = self.keys_aliases.get(&fingerprint) {
+                    self.form_name.valid = true;
+                    self.form_name.value = alias.clone();
+                    self.edit_name = false;
+                } else {
+                    self.edit_name = true;
+                    self.form_name.value = String::new();
+                }
+                let account_index = self
+                    .account_indexes
+                    .get(&fingerprint)
+                    .map(|account_index| account_index.increment().unwrap())
+                    .unwrap_or_else(|| ChildNumber::from_hardened_idx(0).unwrap());
+                let derivation_path = generate_derivation_path(self.network, account_index);
+                self.form_xpub.value = format!(
+                    "[{}{}]{}",
+                    fingerprint,
+                    derivation_path.to_string().trim_start_matches('m'),
+                    self.signer.get_extended_pubkey(&derivation_path)
+                );
             }
             Message::DefineDescriptor(message::DefineDescriptor::HWXpubImported(res)) => {
                 self.processing = false;
@@ -651,11 +695,13 @@ impl DescriptorKeyModal for EditXpubModal {
                         } else {
                             self.edit_name = true;
                         }
+                        self.chosen_signer = false;
                         self.form_xpub.valid = true;
                         self.form_xpub.value =
                             key.to_string().trim_end_matches("/<0;1>/*").to_string();
                     }
                     Err(e) => {
+                        self.chosen_hw = None;
                         self.error = Some(e);
                     }
                 }
@@ -719,6 +765,7 @@ impl DescriptorKeyModal for EditXpubModal {
             self.error.as_ref(),
             self.processing,
             self.chosen_hw,
+            self.chosen_signer,
             &self.form_xpub,
             &self.form_name,
             self.edit_name,
@@ -726,22 +773,24 @@ impl DescriptorKeyModal for EditXpubModal {
     }
 }
 
-/// LIANA_STANDARD_PATH: m/48'/0'/0'/2';
-/// LIANA_TESTNET_STANDARD_PATH: m/48'/1'/0'/2';
-async fn get_extended_pubkey(
-    hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
-    fingerprint: Fingerprint,
-    network: Network,
-    account_index: ChildNumber,
-) -> Result<DescriptorPublicKey, Error> {
-    let derivation_path = DerivationPath::from_str(&{
+fn generate_derivation_path(network: Network, account_index: ChildNumber) -> DerivationPath {
+    DerivationPath::from_str(&{
         if network == Network::Bitcoin {
             format!("m/48'/0'/{}/2'", account_index)
         } else {
             format!("m/48'/1'/{}/2'", account_index)
         }
     })
-    .unwrap();
+    .unwrap()
+}
+
+/// LIANA_STANDARD_PATH: m/48'/0'/0'/2';
+/// LIANA_TESTNET_STANDARD_PATH: m/48'/1'/0'/2';
+async fn get_extended_pubkey(
+    hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
+    fingerprint: Fingerprint,
+    derivation_path: DerivationPath,
+) -> Result<DescriptorPublicKey, Error> {
     let xkey = hw
         .get_extended_pubkey(&derivation_path, false)
         .await
@@ -803,12 +852,12 @@ impl HardwareWalletXpubs {
             let fingerprint = *fingerprint;
             self.processing = true;
             self.error = None;
-            let next_account = self.next_account;
+            let derivation_path = generate_derivation_path(network, self.next_account);
             Command::perform(
                 async move {
                     (
                         i,
-                        get_extended_pubkey(device, fingerprint, network, next_account).await,
+                        get_extended_pubkey(device, fingerprint, derivation_path).await,
                     )
                 },
                 |(i, res)| Message::ImportXpub(i, res),

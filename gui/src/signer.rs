@@ -29,6 +29,14 @@ impl Signer {
         }
     }
 
+    pub fn set_network(&mut self, network: Network) {
+        self.key.set_network(network)
+    }
+
+    pub fn mnemonic(&self) -> [&'static str; 12] {
+        self.key.words()
+    }
+
     pub fn generate(network: Network) -> Result<Self, SignerError> {
         Ok(Self::new(HotSigner::generate(network)?))
     }

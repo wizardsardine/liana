@@ -45,6 +45,7 @@ pub enum DefineDescriptor {
     HWXpubImported(Result<DescriptorPublicKey, Error>),
     XPubEdited(String),
     EditName,
+    UseHotSigner,
     NameEdited(String),
     SequenceEdited(String),
     ThresholdEdited(bool, usize),
