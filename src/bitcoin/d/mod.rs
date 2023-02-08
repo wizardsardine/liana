@@ -51,13 +51,10 @@ pub enum BitcoindError {
     Server(jsonrpc::error::Error),
     /// They replied to a batch request omitting some responses.
     BatchMissingResponse,
-    WalletCreation(String),
-    DescriptorImport(String),
-    WalletLoading(String),
-    MissingOrTooManyWallet,
+    /// Error while managing wallet.
+    Wallet(String /* watchonly wallet path */, WalletError),
     InvalidVersion(u64),
     NetworkMismatch(String /*config*/, String /*bitcoind*/),
-    MissingDescriptor,
     StartRescan,
 }
 
@@ -98,14 +95,8 @@ impl std::fmt::Display for BitcoindError {
                 f,
                 "Bitcoind server replied without enough responses to our batched request"
             ),
-            BitcoindError::WalletCreation(s) => write!(f, "Error creating watchonly wallet: {}", s),
-            BitcoindError::DescriptorImport(s) => write!(
-                f,
-                "Error importing descriptor. Response from bitcoind: '{}'",
-                s
-            ),
-            BitcoindError::WalletLoading(s) => {
-                write!(f, "Error when loading watchonly wallet: '{}'.", s)
+            BitcoindError::Wallet(path, e) => {
+                write!(f, "Watchonly wallet (path: {}) error: {}", path, e)
             }
             BitcoindError::InvalidVersion(v) => {
                 write!(
@@ -120,15 +111,6 @@ impl std::fmt::Display for BitcoindError {
                     "Network mismatch. We are supposed to run on '{}' but bitcoind is on '{}'.",
                     conf_net, bitcoind_net
                 )
-            }
-            BitcoindError::MissingOrTooManyWallet => {
-                write!(
-                    f,
-                    "No, or too many, watchonly wallet(s) loaded on bitcoind."
-                )
-            }
-            BitcoindError::MissingDescriptor => {
-                write!(f, "The watchonly wallet loaded on bitcoind does not have the main descriptor imported.")
             }
             BitcoindError::StartRescan => {
                 write!(
@@ -151,6 +133,42 @@ impl From<jsonrpc::error::Error> for BitcoindError {
 impl From<simple_http::Error> for BitcoindError {
     fn from(e: simple_http::Error) -> Self {
         jsonrpc::error::Error::Transport(Box::new(e)).into()
+    }
+}
+
+#[derive(Debug)]
+pub enum WalletError {
+    Creating(String),
+    ImportingDescriptor(String),
+    Loading(String),
+    MissingOrTooManyWallet,
+    MissingDescriptor,
+}
+
+impl std::fmt::Display for WalletError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            WalletError::Creating(s) => {
+                write!(f, "Error creating watchonly wallet: {}", s)
+            }
+            WalletError::ImportingDescriptor(s) => write!(
+                f,
+                "Error importing descriptor. Response from bitcoind: '{}'",
+                s
+            ),
+            WalletError::Loading(s) => {
+                write!(f, "Error when loading watchonly wallet: '{}'.", s)
+            }
+            WalletError::MissingOrTooManyWallet => {
+                write!(
+                    f,
+                    "No, or too many, watchonly wallet(s) loaded on bitcoind."
+                )
+            }
+            WalletError::MissingDescriptor => {
+                write!(f, "The watchonly wallet loaded on bitcoind does not have the main descriptor imported.")
+            }
+        }
     }
 }
 
@@ -550,10 +568,16 @@ impl BitcoinD {
 
         // Now create the wallet and import the main descriptor.
         if let Some(err) = self.create_wallet(self.watchonly_wallet_path.clone()) {
-            return Err(BitcoindError::WalletCreation(err));
+            return Err(BitcoindError::Wallet(
+                self.watchonly_wallet_path.clone(),
+                WalletError::Creating(err),
+            ));
         }
         if let Some(err) = self.import_descriptor(main_descriptor) {
-            return Err(BitcoindError::DescriptorImport(err));
+            return Err(BitcoindError::Wallet(
+                self.watchonly_wallet_path.clone(),
+                WalletError::ImportingDescriptor(err),
+            ));
         }
 
         Ok(())
@@ -612,7 +636,10 @@ impl BitcoinD {
             .count()
             != 1
         {
-            return Err(BitcoindError::MissingOrTooManyWallet);
+            return Err(BitcoindError::Wallet(
+                self.watchonly_wallet_path.clone(),
+                WalletError::MissingOrTooManyWallet,
+            ));
         }
 
         // Check our main descriptor is imported in this wallet.
@@ -626,7 +653,10 @@ impl BitcoinD {
         if !desc_list.contains(&receive_desc.to_string())
             || !desc_list.contains(&change_desc.to_string())
         {
-            return Err(BitcoindError::MissingDescriptor);
+            return Err(BitcoindError::Wallet(
+                self.watchonly_wallet_path.clone(),
+                WalletError::MissingDescriptor,
+            ));
         }
 
         Ok(())
