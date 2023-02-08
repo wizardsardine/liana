@@ -948,7 +948,6 @@ pub struct ImportDescriptor {
     change_network: bool,
     data_dir: Option<PathBuf>,
     imported_descriptor: form::Value<String>,
-    error: Option<String>,
 }
 
 impl ImportDescriptor {
@@ -959,7 +958,6 @@ impl ImportDescriptor {
             network_valid: true,
             data_dir: None,
             imported_descriptor: form::Value::default(),
-            error: None,
         }
     }
 }
@@ -996,7 +994,8 @@ impl Step for ImportDescriptor {
         ctx.bitcoin_config.network = self.network;
         // descriptor forms for import or creation cannot be both empty or filled.
         if !self.imported_descriptor.value.is_empty() {
-            if let Ok(desc) = MultipathDescriptor::from_str(&self.imported_descriptor.value) {
+            let value = self.imported_descriptor.value.trim();
+            if let Ok(desc) = MultipathDescriptor::from_str(value) {
                 self.imported_descriptor.valid = true;
                 ctx.descriptor = Some(desc);
                 true
@@ -1016,7 +1015,6 @@ impl Step for ImportDescriptor {
             self.network,
             self.network_valid,
             &self.imported_descriptor,
-            self.error.as_ref(),
         )
     }
 }

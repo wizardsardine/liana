@@ -351,7 +351,6 @@ pub fn import_descriptor<'a>(
     network: bitcoin::Network,
     network_valid: bool,
     imported_descriptor: &form::Value<String>,
-    error: Option<&String>,
 ) -> Element<'a, Message> {
     let row_network = Row::new()
         .spacing(10)
@@ -402,7 +401,6 @@ pub fn import_descriptor<'a>(
                     .width(Length::Units(200))
                     .on_press(Message::Next)
             })
-            .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(100)
