@@ -138,7 +138,19 @@ impl Installer {
                 data_dir.push(self.context.bitcoin_config.network.to_string());
                 // In case of failure during install, block the thread to
                 // deleted the data_dir/network directory in order to start clean again.
-                std::fs::remove_dir_all(data_dir).expect("Correctly deleted");
+                log::warn!("Installation failed. Cleaning up the leftover data directory.");
+                if let Err(e) = std::fs::remove_dir_all(&data_dir) {
+                    log::error!(
+                        "Failed to completely delete the data directory (path: '{}'): {}",
+                        data_dir.to_string_lossy(),
+                        e
+                    );
+                } else {
+                    log::warn!(
+                        "Successfully deleted data directory at '{}'.",
+                        data_dir.to_string_lossy()
+                    );
+                };
                 self.steps
                     .get_mut(self.current)
                     .expect("There is always a step")
@@ -161,13 +173,25 @@ impl Installer {
     }
 }
 
-pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
-    let mut cfg: liana::config::Config = ctx.extract_daemon_config();
+pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
     // Start Daemon to check correctness of installation
-    let daemon = liana::DaemonHandle::start_default(cfg.clone()).map_err(|e| {
-        Error::Unexpected(format!("Failed to start daemon with entered config: {}", e))
-    })?;
-    daemon.shutdown();
+    match liana::DaemonHandle::start_default(cfg) {
+        Ok(daemon) => {
+            daemon.shutdown();
+            Ok(())
+        }
+        Err(e) => Err(Error::Unexpected(format!(
+            "Failed to start Liana daemon: {}",
+            e
+        ))),
+    }
+}
+
+pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
+    log::info!("installing");
+    let mut cfg: liana::config::Config = ctx.extract_daemon_config();
+    daemon_check(cfg.clone())?;
+    log::info!("daemon checked");
 
     cfg.data_dir =
         Some(cfg.data_dir.unwrap().canonicalize().map_err(|e| {
@@ -178,8 +202,8 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
     datadir_path.push(cfg.bitcoin_config.network.to_string());
 
     // Step needed because of ValueAfterTable error in the toml serialize implementation.
-    let daemon_config =
-        toml::Value::try_from(&cfg).expect("daemon::Config has a proper Serialize implementation");
+    let daemon_config = toml::Value::try_from(&cfg)
+        .map_err(|e| Error::Unexpected(format!("Failed to serialize daemon config: {}", e)))?;
 
     // create lianad configuration file
     let daemon_config_path = create_and_write_file(
@@ -187,6 +211,8 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
         "daemon.toml",
         daemon_config.to_string().as_bytes(),
     )?;
+
+    log::info!("Daemon config file created");
 
     // create liana GUI configuration file
     let gui_config_path = create_and_write_file(
@@ -197,17 +223,23 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
                 Error::Unexpected(format!("Failed to canonicalize daemon config path: {}", e))
             })?,
         ))
-        .unwrap()
+        .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
         .as_bytes(),
     )?;
+
+    log::info!("Gui config file created");
 
     // create liana GUI settings file
     let settings: gui_settings::Settings = ctx.extract_gui_settings();
     create_and_write_file(
         datadir_path,
         gui_settings::DEFAULT_FILE_NAME,
-        serde_json::to_string_pretty(&settings).unwrap().as_bytes(),
+        serde_json::to_string_pretty(&settings)
+            .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
+            .as_bytes(),
     )?;
+
+    log::info!("Settings file created");
 
     Ok(gui_config_path)
 }
