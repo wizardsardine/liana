@@ -294,6 +294,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         log::LevelFilter::Info
     };
     setup_logger(level)?;
+    setup_panic_hook();
 
     let mut settings = Settings::with_flags(config);
     settings.exit_on_close_request = false;
@@ -302,6 +303,36 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(format!("Failed to launch UI: {}", e).into());
     };
     Ok(())
+}
+
+// A panic in any thread should stop the main thread, and print the panic.
+fn setup_panic_hook() {
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let file = panic_info
+            .location()
+            .map(|l| l.file())
+            .unwrap_or_else(|| "'unknown'");
+        let line = panic_info
+            .location()
+            .map(|l| l.line().to_string())
+            .unwrap_or_else(|| "'unknown'".to_string());
+
+        let bt = backtrace::Backtrace::new();
+        let info = panic_info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| panic_info.payload().downcast_ref::<String>().cloned());
+        log::error!(
+            "panic occurred at line {} of file {}: {:?}\n{:?}",
+            line,
+            file,
+            info,
+            bt
+        );
+
+        std::process::exit(1);
+    }));
 }
 
 // This creates the log file automagically if it doesn't exist, and logs on stdout
