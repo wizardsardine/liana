@@ -460,26 +460,28 @@ impl BitcoinD {
             })
     }
 
-    fn create_wallet(&self, wallet_path: String) -> Option<String> {
-        let res = self.make_node_request(
-            "createwallet",
-            &params!(
-                Json::String(wallet_path),
-                Json::Bool(true), // watchonly
-                Json::Bool(true), // blank
-            ),
-        );
+    fn create_wallet(&self, wallet_path: String) -> Result<(), String> {
+        let res = self
+            .make_fallible_node_request(
+                "createwallet",
+                &params!(
+                    Json::String(wallet_path),
+                    Json::Bool(true), // watchonly
+                    Json::Bool(true), // blank
+                ),
+            )
+            .map_err(|e| e.to_string())?;
 
         if let Some(warning) = res.get("warning").and_then(Json::as_str) {
             if !warning.is_empty() {
-                return Some(warning.to_string());
+                return Err(warning.to_string());
             }
         }
         if res.get("name").is_none() {
-            return Some("Unknown error when create watchonly wallet".to_string());
+            return Err("Unknown error when create watchonly wallet".to_string());
         }
 
-        None
+        Ok(())
     }
 
     // Import the receive and change descriptors from the multipath descriptor to bitcoind.
@@ -567,12 +569,11 @@ impl BitcoinD {
         }
 
         // Now create the wallet and import the main descriptor.
-        if let Some(err) = self.create_wallet(self.watchonly_wallet_path.clone()) {
-            return Err(BitcoindError::Wallet(
-                self.watchonly_wallet_path.clone(),
-                WalletError::Creating(err),
-            ));
-        }
+        self.create_wallet(self.watchonly_wallet_path.clone())
+            .map_err(|e| {
+                BitcoindError::Wallet(self.watchonly_wallet_path.clone(), WalletError::Creating(e))
+            })?;
+        // TODO: make it return an error instead of an option.
         if let Some(err) = self.import_descriptor(main_descriptor) {
             return Err(BitcoindError::Wallet(
                 self.watchonly_wallet_path.clone(),
