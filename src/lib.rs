@@ -86,6 +86,8 @@ pub enum StartupError {
     DefaultDataDirNotFound,
     DatadirCreation(path::PathBuf, io::Error),
     MissingBitcoindConfig,
+    WindowsCantGuessBitcoindDatadir(path::PathBuf),
+    WindowsBitcoindWatchonlyDeletion(path::PathBuf, io::Error),
     Database(SqliteDbError),
     Bitcoind(BitcoindError),
     #[cfg(unix)]
@@ -107,6 +109,15 @@ impl fmt::Display for StartupError {
             Self::MissingBitcoindConfig => write!(
                 f,
                 "Our Bitcoin interface is bitcoind but we have no 'bitcoind_config' entry in the configuration."
+            ),
+            Self::WindowsCantGuessBitcoindDatadir(cookie_path) => write!(
+                f,
+                "Cannot guess the path to the bitcoind data directory from the cookie file whose path is '{}'.",
+                cookie_path.as_path().to_string_lossy()
+            ),
+            Self::WindowsBitcoindWatchonlyDeletion(path, e) => write!(
+                f,
+                "Error deleting bitcoind watchonly wallet at '{}': {}", path.as_path().to_string_lossy(), e
             ),
             Self::Database(e) => write!(f, "Error initializing database: '{}'.", e),
             Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
@@ -184,6 +195,48 @@ fn setup_sqlite(
     Ok(sqlite)
 }
 
+// Windows-specific utility to remove a leftover watchonly wallet within bitcoind's datadir.
+#[cfg(windows)]
+fn maybe_delete_watchonly_wallet(
+    bitcoind_cookie_path: &path::Path,
+    bitcoin_net: miniscript::bitcoin::Network,
+    wallet_name: &str,
+) -> Result<(), StartupError> {
+    log::info!(
+        "Trying to guess where the watchonly wallet would be stored in bitcoind's data directory from the cookie path. \
+        This might not work if you are using a custom path for the cookie file (very unlikely). In this case please delete the \
+        leftover watchonly wallet in bitcoind's datadir by hand if there is any."
+    );
+    // For the main network both the wallet and the cookie file are stored at the root of the
+    // datadir. For test networks the wallet is in "<datadir>/<network>/wallets/<wallet_name>/" and
+    // the cookie file in "<datadir>/<network>/".
+    let parent_dir = bitcoind_cookie_path.parent().ok_or_else(|| {
+        StartupError::WindowsCantGuessBitcoindDatadir(bitcoind_cookie_path.to_path_buf())
+    })?;
+    let wallet_path = match bitcoin_net {
+        miniscript::bitcoin::Network::Bitcoin => parent_dir.join(wallet_name),
+        miniscript::bitcoin::Network::Testnet
+        | miniscript::bitcoin::Network::Signet
+        | miniscript::bitcoin::Network::Regtest => parent_dir.join("wallets").join(wallet_name),
+    };
+
+    if wallet_path.exists() {
+        log::info!(
+            "Found a leftover watchonly wallet at '{}'. Deleting it.",
+            wallet_path.as_path().to_string_lossy()
+        );
+        fs::remove_dir_all(&wallet_path)
+            .map_err(|e| StartupError::WindowsBitcoindWatchonlyDeletion(wallet_path, e))?;
+    } else {
+        log::info!(
+            "No leftover watchonly wallet found at '{}'.",
+            wallet_path.as_path().to_string_lossy()
+        );
+    }
+
+    Ok(())
+}
+
 // Connect to bitcoind. Setup the watchonly wallet, and do some sanity checks.
 // If all went well, returns the interface to bitcoind.
 fn setup_bitcoind(
@@ -200,17 +253,30 @@ fn setup_bitcoind(
         .iter()
         .collect();
     #[cfg(windows)]
-    let wo_path = path::Path::new("lianad_watchonly_wallet");
+    let wo_name = "lianad_watchonly_wallet";
+    #[cfg(windows)]
+    let wo_path = path::Path::new(wo_name);
 
+    let bitcoind_config = config
+        .bitcoind_config
+        .as_ref()
+        .ok_or(StartupError::MissingBitcoindConfig)?;
     let bitcoind = BitcoinD::new(
-        config
-            .bitcoind_config
-            .as_ref()
-            .ok_or(StartupError::MissingBitcoindConfig)?,
+        bitcoind_config,
         wo_path.to_str().expect("Must be valid unicode").to_string(),
     )?;
     bitcoind.node_sanity_checks(config.bitcoin_config.network)?;
     if fresh_data_dir {
+        // Because of the hack above, the assumption that whenever the data directory is fresh a
+        // watchonly wallet doesn't exist doesn't hold for Windows. Make sure it does by removing
+        // any leftover Liana watchonly wallet from bitcoind's data dir.
+        #[cfg(windows)]
+        maybe_delete_watchonly_wallet(
+            &bitcoind_config.cookie_path,
+            config.bitcoin_config.network,
+            wo_name,
+        )?;
+
         bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
         log::info!("Created a new watchonly wallet on bitcoind.");
     }
