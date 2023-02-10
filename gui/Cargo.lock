@@ -217,6 +217,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d86b93f97252c47b41663388e6d155714a9d0c398b99f1005cbc5f978b29f445"
 
 [[package]]
+name = "bip39"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9e89470017230c38e52b82b3ee3f530db1856ba1d434e3a67a3456a8a8dec5f"
+dependencies = [
+ "bitcoin_hashes 0.9.7",
+ "rand_core 0.4.2",
+ "serde",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -239,12 +251,18 @@ checksum = "9cb36de3b18ad25f396f9168302e36fb7e1e8923298ab3127da252d288d5af9d"
 dependencies = [
  "base64",
  "bech32",
- "bitcoin_hashes",
+ "bitcoin_hashes 0.11.0",
  "core2",
  "hashbrown 0.8.2",
  "secp256k1",
  "serde",
 ]
+
+[[package]]
+name = "bitcoin_hashes"
+version = "0.9.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ce18265ec2324ad075345d5814fbeed4f41f0a660055dc78840b74d19b874b1"
 
 [[package]]
 name = "bitcoin_hashes"
@@ -1640,16 +1658,19 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "0.2.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#88e5977166373437169ea00e54f365085afd03c0"
+source = "git+https://github.com/wizardsardine/liana?branch=master#200d3777e0fe89d3b73d296eb31c83b6272dc490"
 dependencies = [
  "backtrace",
  "base64",
+ "bip39",
  "dirs",
  "fern",
+ "getrandom",
  "jsonrpc",
  "libc",
  "log",
  "miniscript",
+ "rdrand",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1839,6 +1860,12 @@ name = "matches"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3e378b66a060d48947b590737b30a1be76706c8dd7b8ba0f2fe3989c68a853f"
+
+[[package]]
+name = "maybe-uninit"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60302e4db3a61da70c0cb7991976248362f30319e88850c487b9b95bbf059e00"
 
 [[package]]
 name = "memchr"
@@ -2291,7 +2318,7 @@ dependencies = [
  "instant",
  "libc",
  "redox_syscall",
- "smallvec",
+ "smallvec 1.9.0",
  "winapi",
 ]
 
@@ -2304,7 +2331,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall",
- "smallvec",
+ "smallvec 1.9.0",
  "windows-sys 0.42.0",
 ]
 
@@ -2473,7 +2500,7 @@ checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
 dependencies = [
  "libc",
  "rand_chacha",
- "rand_core",
+ "rand_core 0.6.3",
 ]
 
 [[package]]
@@ -2483,8 +2510,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
 dependencies = [
  "ppv-lite86",
- "rand_core",
+ "rand_core 0.6.3",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c33a3c44ca05fa6f1807d8e6743f3824e8509beca625669633be0acbdf509dc"
 
 [[package]]
 name = "rand_core"
@@ -2558,6 +2591,15 @@ name = "rctree"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ae028b272a6e99d9f8260ceefa3caa09300a8d6c8d2b2001316474bc52122e9"
+
+[[package]]
+name = "rdrand"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e233b642160555c1aa1ff7a78443c6139342f411b6fa6602af2ebbfee9e166bb"
+dependencies = [
+ "rand_core 0.6.3",
+]
 
 [[package]]
 name = "redox_syscall"
@@ -2648,7 +2690,7 @@ dependencies = [
  "hashlink",
  "libsqlite3-sys",
  "memchr",
- "smallvec",
+ "smallvec 1.9.0",
 ]
 
 [[package]]
@@ -2671,7 +2713,7 @@ checksum = "44561062e583c4873162861261f16fd1d85fe927c4904d71329a4fe43dc355ef"
 dependencies = [
  "bitflags",
  "bytemuck",
- "smallvec",
+ "smallvec 1.9.0",
  "ttf-parser 0.12.3",
  "unicode-bidi-mirroring",
  "unicode-ccc",
@@ -2724,7 +2766,7 @@ version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7649a0b3ffb32636e60c7ce0d70511eda9c52c658cd0634e194d5a19943aeff"
 dependencies = [
- "bitcoin_hashes",
+ "bitcoin_hashes 0.11.0",
  "secp256k1-sys",
  "serde",
 ]
@@ -2857,6 +2899,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1e08e261d0e8f5c43123b7adf3e4ca1690d655377ac93a03b2c9d3e98de1342"
 dependencies = [
  "version_check",
+]
+
+[[package]]
+name = "smallvec"
+version = "0.6.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97fcaeba89edba30f044a10c6a3cc39df9c3f17d7cd829dd1446cab35f890e0"
+dependencies = [
+ "maybe-uninit",
 ]
 
 [[package]]
@@ -3181,6 +3232,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "15c61ba63f9235225a22310255a29b806b907c9b8c964bcbd0a2c70f3f2deea7"
 
 [[package]]
+name = "unicode-normalization"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09c8070a9942f5e7cfccd93f490fdebd230ee3c3c9f107cb25bad5351ef671cf"
+dependencies = [
+ "smallvec 0.6.14",
+]
+
+[[package]]
 name = "unicode-script"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3372,7 +3432,7 @@ checksum = "94f6e5e340d7c13490eca867898c4cec5af56c27a5ffe5c80c6fc4708e22d33e"
 dependencies = [
  "nix 0.22.3",
  "once_cell",
- "smallvec",
+ "smallvec 1.9.0",
  "wayland-sys",
 ]
 
@@ -3453,7 +3513,7 @@ dependencies = [
  "naga",
  "parking_lot 0.12.1",
  "raw-window-handle 0.5.0",
- "smallvec",
+ "smallvec 1.9.0",
  "static_assertions",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -3480,7 +3540,7 @@ dependencies = [
  "parking_lot 0.12.1",
  "profiling",
  "raw-window-handle 0.5.0",
- "smallvec",
+ "smallvec 1.9.0",
  "thiserror",
  "web-sys",
  "wgpu-hal",
@@ -3518,7 +3578,7 @@ dependencies = [
  "range-alloc",
  "raw-window-handle 0.5.0",
  "renderdoc-sys",
- "smallvec",
+ "smallvec 1.9.0",
  "thiserror",
  "wasm-bindgen",
  "web-sys",
