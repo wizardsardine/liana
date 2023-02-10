@@ -1319,6 +1319,52 @@ fn hw_list_view(
         .into()
 }
 
+pub fn backup_mnemonic<'a>(
+    progress: (usize, usize),
+    words: &'a [&'static str; 12],
+    done: bool,
+) -> Element<'a, Message> {
+    layout(
+        progress,
+        Column::new()
+            .push(text("Backup your mnemonic").bold().size(50))
+            .push(text(prompt::MNEMONIC_HELP))
+            .push(
+                words
+                    .iter()
+                    .enumerate()
+                    .fold(Column::new().spacing(5), |acc, (i, w)| {
+                        acc.push(
+                            Row::new()
+                                .align_items(Alignment::End)
+                                .push(
+                                    Container::new(text(format!("#{}", i + 1)).small())
+                                        .width(Length::Units(50)),
+                                )
+                                .push(text(*w).bold()),
+                        )
+                    }),
+            )
+            .push(Checkbox::new(
+                "I have backed up my mnemonic",
+                done,
+                Message::UserActionDone,
+            ))
+            .push(if done {
+                button::primary(None, "Next")
+                    .on_press(Message::Next)
+                    .width(Length::Units(200))
+            } else {
+                button::primary(None, "Next").width(Length::Units(200))
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(100)
+            .spacing(50)
+            .align_items(Alignment::Center),
+    )
+}
+
 fn layout<'a>(
     progress: (usize, usize),
     content: impl Into<Element<'a, Message>>,

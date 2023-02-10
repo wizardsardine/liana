@@ -1,7 +1,11 @@
 mod descriptor;
+mod mnemonic;
+
 pub use descriptor::{
     BackupDescriptor, DefineDescriptor, ImportDescriptor, ParticipateXpub, RegisterDescriptor,
 };
+
+pub use mnemonic::BackupMnemonic;
 
 use std::path::PathBuf;
 use std::str::FromStr;

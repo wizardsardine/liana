@@ -15,8 +15,8 @@ use crate::app::{config as gui_config, settings as gui_settings};
 
 pub use message::Message;
 use step::{
-    BackupDescriptor, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor, ParticipateXpub,
-    RegisterDescriptor, Step, Welcome,
+    BackupDescriptor, BackupMnemonic, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor,
+    ParticipateXpub, RegisterDescriptor, Step, Welcome,
 };
 
 pub struct Installer {
@@ -91,6 +91,7 @@ impl Installer {
                 self.steps = vec![
                     Welcome::default().into(),
                     DefineDescriptor::new().into(),
+                    BackupMnemonic::default().into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
@@ -103,6 +104,7 @@ impl Installer {
                     Welcome::default().into(),
                     ParticipateXpub::new().into(),
                     ImportDescriptor::new(false).into(),
+                    BackupMnemonic::default().into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
@@ -165,11 +167,28 @@ impl Installer {
         }
     }
 
+    /// Some steps are skipped because of contextual choice of the user, this
+    /// code is giving a correct progress summary to the user.
+    fn progress(&self) -> (usize, usize) {
+        let mut current = self.current;
+        let mut total = 0;
+        for (i, step) in self.steps.iter().enumerate() {
+            if step.skip(&self.context) {
+                if i < self.current {
+                    current -= 1;
+                }
+            } else {
+                total += 1
+            }
+        }
+        (current, total - 1)
+    }
+
     pub fn view(&self) -> Element<Message> {
         self.steps
             .get(self.current)
             .expect("There is always a step")
-            .view((self.current, self.steps.len() - 1))
+            .view(self.progress())
     }
 }
 
