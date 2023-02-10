@@ -411,6 +411,76 @@ pub fn import_descriptor<'a>(
     )
 }
 
+pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
+    Container::new(
+        Column::new()
+            .push(
+                Button::new(
+                    Row::new().align_items(Alignment::Center).push(
+                        Column::new()
+                            .push(text("This computer").bold())
+                            .push(
+                                text("Derive a key from a mnemonic stored on this computer")
+                                    .small(),
+                            )
+                            .spacing(5)
+                            .width(Length::Fill),
+                    ),
+                )
+                .on_press(Message::UseHotSigner)
+                .padding(10)
+                .style(button::Style::TransparentBorder.into())
+                .width(Length::Fill),
+            )
+            .push_maybe(if xpubs.is_empty() {
+                None
+            } else {
+                Some(separation().width(Length::Fill))
+            })
+            .push_maybe(if xpubs.is_empty() {
+                None
+            } else {
+                Some(xpubs.iter().fold(Column::new().padding(15), |col, xpub| {
+                    col.push(
+                        Row::new()
+                            .spacing(5)
+                            .align_items(Alignment::Center)
+                            .push(
+                                Container::new(
+                                    Scrollable::new(Container::new(text(xpub).small()).padding(10))
+                                        .horizontal_scroll(
+                                            Properties::new().width(2).scroller_width(2),
+                                        ),
+                                )
+                                .width(Length::Fill),
+                            )
+                            .push(
+                                Container::new(
+                                    button::border(Some(icon::clipboard_icon()), "Copy")
+                                        .on_press(Message::Clibpboard(xpub.clone()))
+                                        .width(Length::Shrink),
+                                )
+                                .padding(10),
+                            ),
+                    )
+                }))
+            })
+            .push_maybe(if !xpubs.is_empty() {
+                Some(
+                    Container::new(
+                        button::border(Some(icon::plus_icon()), "New public key")
+                            .on_press(Message::UseHotSigner),
+                    )
+                    .padding(10),
+                )
+            } else {
+                None
+            }),
+    )
+    .style(card::SimpleCardStyle)
+    .into()
+}
+
 pub fn hardware_wallet_xpubs<'a>(
     i: usize,
     xpubs: &'a Vec<String>,
@@ -531,13 +601,14 @@ pub fn hardware_wallet_xpubs<'a>(
     .into()
 }
 
-pub fn participate_xpub(
+pub fn participate_xpub<'a>(
     progress: (usize, usize),
     network: bitcoin::Network,
     network_valid: bool,
-    hws: Vec<Element<Message>>,
+    hws: Vec<Element<'a, Message>>,
+    signer: Element<'a, Message>,
     shared: bool,
-) -> Element<Message> {
+) -> Element<'a, Message> {
     let row_network = Row::new()
         .spacing(10)
         .align_items(Alignment::Center)
@@ -583,6 +654,7 @@ pub fn participate_xpub(
                     )
                     .spacing(10)
                     .push(Column::with_children(hws).spacing(10))
+                    .push(signer)
                     .width(Length::Fill),
             )
             .push(Checkbox::new(
@@ -1138,7 +1210,7 @@ pub fn edit_key_modal<'a>(
                                             .spacing(5)
                                             .push(text("This computer").bold())
                                             .push(
-                                                text("Derive a key from a mnemonic stored on the computer").small(),
+                                                text("Derive a key from a mnemonic stored on this computer").small(),
                                             )
                                             .width(Length::Fill),
                                     )
@@ -1150,9 +1222,7 @@ pub fn edit_key_modal<'a>(
                                     .spacing(10),
                             )
                             .width(Length::Fill)
-                            .on_press(Message::DefineDescriptor(
-                                message::DefineDescriptor::UseHotSigner,
-                            ))
+                            .on_press(Message::UseHotSigner)
                             .style(button::Style::Border.into()),
                         )
                         .width(Length::Fill),

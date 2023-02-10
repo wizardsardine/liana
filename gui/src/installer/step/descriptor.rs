@@ -658,7 +658,7 @@ impl DescriptorKeyModal for EditXpubModal {
                 self.hws = Vec::new();
                 return self.load();
             }
-            Message::DefineDescriptor(message::DefineDescriptor::UseHotSigner) => {
+            Message::UseHotSigner => {
                 self.chosen_hw = None;
                 self.chosen_signer = true;
                 self.form_xpub.valid = true;
@@ -841,6 +841,12 @@ impl HardwareWalletXpubs {
         }
     }
 
+    fn reset(&mut self) {
+        self.error = None;
+        self.next_account = ChildNumber::from_hardened_idx(0).unwrap();
+        self.xpubs = Vec::new();
+    }
+
     fn select(&mut self, i: usize, network: Network) -> Command<Message> {
         if let HardwareWallet::Supported {
             device,
@@ -878,6 +884,42 @@ impl HardwareWalletXpubs {
     }
 }
 
+pub struct SignerXpubs {
+    signer: Arc<Signer>,
+    xpubs: Vec<String>,
+    next_account: ChildNumber,
+}
+
+impl SignerXpubs {
+    fn new(signer: Arc<Signer>) -> Self {
+        Self {
+            signer,
+            xpubs: Vec::new(),
+            next_account: ChildNumber::from_hardened_idx(0).unwrap(),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.xpubs = Vec::new();
+        self.next_account = ChildNumber::from_hardened_idx(0).unwrap();
+    }
+
+    fn select(&mut self, network: Network) {
+        let derivation_path = generate_derivation_path(network, self.next_account);
+        self.next_account = self.next_account.increment().unwrap();
+        self.xpubs.push(format!(
+            "[{}{}]{}/<0;1>/*",
+            self.signer.fingerprint(),
+            derivation_path.to_string().trim_start_matches('m'),
+            self.signer.get_extended_pubkey(&derivation_path)
+        ));
+    }
+
+    pub fn view(&self) -> Element<Message> {
+        view::signer_xpubs(&self.xpubs)
+    }
+}
+
 pub struct ParticipateXpub {
     network: Network,
     network_valid: bool,
@@ -886,6 +928,7 @@ pub struct ParticipateXpub {
     shared: bool,
 
     xpubs_hw: Vec<HardwareWalletXpubs>,
+    xpubs_signer: SignerXpubs,
 }
 
 impl ParticipateXpub {
@@ -896,7 +939,29 @@ impl ParticipateXpub {
             data_dir: None,
             xpubs_hw: Vec::new(),
             shared: false,
+            xpubs_signer: SignerXpubs::new(Arc::new(Signer::generate(Network::Bitcoin).unwrap())),
         }
+    }
+
+    fn set_network(&mut self, network: Network) {
+        if network != self.network {
+            self.xpubs_hw.iter_mut().for_each(|hw| hw.reset());
+            self.xpubs_signer.reset();
+        }
+        self.network = network;
+        if let Some(signer) = Arc::get_mut(&mut self.xpubs_signer.signer) {
+            signer.set_network(network);
+        }
+        if let Some(mut network_datadir) = self.data_dir.clone() {
+            network_datadir.push(self.network.to_string());
+            self.network_valid = !network_datadir.exists();
+        }
+    }
+}
+
+impl Default for ParticipateXpub {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -906,16 +971,16 @@ impl Step for ParticipateXpub {
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Network(network) => {
-                self.network = network;
-                let mut network_datadir = self.data_dir.clone().unwrap();
-                network_datadir.push(self.network.to_string());
-                self.network_valid = !network_datadir.exists();
+                self.set_network(network);
             }
             Message::UserActionDone(shared) => self.shared = shared,
             Message::ImportXpub(i, res) => {
                 if let Some(hw) = self.xpubs_hw.get_mut(i) {
                     hw.update(res);
                 }
+            }
+            Message::UseHotSigner => {
+                self.xpubs_signer.select(self.network);
             }
             Message::Select(i) => {
                 if let Some(hw) = self.xpubs_hw.get_mut(i) {
@@ -943,11 +1008,8 @@ impl Step for ParticipateXpub {
     }
 
     fn load_context(&mut self, ctx: &Context) {
-        self.network = ctx.bitcoin_config.network;
         self.data_dir = Some(ctx.data_dir.clone());
-        let mut network_datadir = ctx.data_dir.clone();
-        network_datadir.push(self.network.to_string());
-        self.network_valid = !network_datadir.exists();
+        self.set_network(ctx.bitcoin_config.network);
     }
 
     fn load(&self) -> Command<Message> {
@@ -961,6 +1023,11 @@ impl Step for ParticipateXpub {
         ctx.bitcoin_config.network = self.network;
         // Drop connections to hardware wallets.
         self.xpubs_hw = Vec::new();
+        if !self.xpubs_signer.xpubs.is_empty() {
+            ctx.signer = Some(self.xpubs_signer.signer.clone());
+        } else {
+            ctx.signer = None;
+        }
         true
     }
 
@@ -974,14 +1041,9 @@ impl Step for ParticipateXpub {
                 .enumerate()
                 .map(|(i, hw)| hw.view(i))
                 .collect(),
+            self.xpubs_signer.view(),
             self.shared,
         )
-    }
-}
-
-impl Default for ParticipateXpub {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
