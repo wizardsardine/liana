@@ -16,7 +16,7 @@ use crate::app::{config as gui_config, settings as gui_settings};
 pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor,
-    ParticipateXpub, RegisterDescriptor, Step, Welcome,
+    ParticipateXpub, RecoverMnemonic, RegisterDescriptor, Step, Welcome,
 };
 
 pub struct Installer {
@@ -116,6 +116,7 @@ impl Installer {
                 self.steps = vec![
                     Welcome::default().into(),
                     ImportDescriptor::new(true).into(),
+                    RecoverMnemonic::default().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
                     Final::new().into(),

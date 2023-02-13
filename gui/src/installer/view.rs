@@ -1,5 +1,6 @@
 use iced::widget::{
     scrollable::Properties, Button, Checkbox, Column, Container, PickList, Row, Scrollable, Space,
+    TextInput,
 };
 use iced::{alignment, Alignment, Element, Length};
 
@@ -1426,6 +1427,111 @@ pub fn backup_mnemonic<'a>(
                     .width(Length::Units(200))
             } else {
                 button::primary(None, "Next").width(Length::Units(200))
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(100)
+            .spacing(50)
+            .align_items(Alignment::Center),
+    )
+}
+
+pub fn recover_mnemonic<'a>(
+    progress: (usize, usize),
+    words: &'a [(String, bool); 12],
+    current: usize,
+    suggestions: &'a Vec<String>,
+    recover: bool,
+    error: Option<&'a String>,
+) -> Element<'a, Message> {
+    layout(
+        progress,
+        Column::new()
+            .push(text("Mnemonics import").bold().size(50))
+            .push(text(prompt::RECOVER_MNEMONIC_HELP))
+            .push_maybe(if recover {
+                Some(
+                    Column::new()
+                        .align_items(Alignment::Center)
+                        .push(
+                            Container::new(if !suggestions.is_empty() {
+                                suggestions.iter().fold(Row::new().spacing(5), |row, sugg| {
+                                    row.push(
+                                        Button::new(text(sugg))
+                                            .style(button::Style::Border.into())
+                                            .on_press(Message::MnemonicWord(
+                                                current,
+                                                sugg.to_string(),
+                                            )),
+                                    )
+                                })
+                            } else {
+                                Row::new()
+                            })
+                            // Fixed height in order to not move words list
+                            .height(Length::Units(50)),
+                        )
+                        .push(words.iter().enumerate().fold(
+                            Column::new().spacing(5),
+                            |acc, (i, (word, valid))| {
+                                acc.push(
+                                    Row::new()
+                                        .spacing(10)
+                                        .align_items(Alignment::Center)
+                                        .push(
+                                            Container::new(text(format!("#{}", i + 1)).small())
+                                                .width(Length::Units(50)),
+                                        )
+                                        .push(
+                                            Container::new(TextInput::new("", word, move |msg| {
+                                                Message::MnemonicWord(i, msg)
+                                            }))
+                                            .width(Length::Units(100)),
+                                        )
+                                        .push_maybe(if *valid {
+                                            Some(icon::circle_check_icon().style(color::SUCCESS))
+                                        } else {
+                                            None
+                                        }),
+                                )
+                            },
+                        ))
+                        .push(Space::with_height(Length::Units(50)))
+                        .push_maybe(error.map(|e| card::invalid(text(e).style(color::ALERT)))),
+                )
+            } else {
+                None
+            })
+            .push(if !recover {
+                Row::new()
+                    .spacing(10)
+                    .push(
+                        button::border(None, "Import mnemonic")
+                            .on_press(Message::ImportMnemonic(true))
+                            .width(Length::Units(200)),
+                    )
+                    .push(
+                        button::primary(None, "Skip")
+                            .on_press(Message::Skip)
+                            .width(Length::Units(200)),
+                    )
+            } else {
+                Row::new()
+                    .spacing(10)
+                    .push(
+                        button::border(None, "Cancel")
+                            .on_press(Message::ImportMnemonic(false))
+                            .width(Length::Units(200)),
+                    )
+                    .push(
+                        if words.iter().any(|(_, valid)| !valid) || error.is_some() {
+                            button::primary(None, "Next").width(Length::Units(200))
+                        } else {
+                            button::primary(None, "Next")
+                                .on_press(Message::Next)
+                                .width(Length::Units(200))
+                        },
+                    )
             })
             .width(Length::Fill)
             .height(Length::Fill)

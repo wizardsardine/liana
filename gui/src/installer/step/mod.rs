@@ -5,7 +5,7 @@ pub use descriptor::{
     BackupDescriptor, DefineDescriptor, ImportDescriptor, ParticipateXpub, RegisterDescriptor,
 };
 
-pub use mnemonic::BackupMnemonic;
+pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
 
 use std::path::PathBuf;
 use std::str::FromStr;
