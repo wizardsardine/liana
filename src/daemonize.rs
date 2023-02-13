@@ -10,8 +10,8 @@ use std::path::Path;
 // MIT licensed according to https://github.com/jedisct1/rust-daemonize-simple/blob/master/Cargo.toml
 pub unsafe fn daemonize(
     chdir: &Path,
-    pid_file: &Path,
     log_file: &Path,
+    pid_file: &Path,
 ) -> Result<(), &'static str> {
     match libc::fork() {
         -1 => return Err("fork() failed"),
