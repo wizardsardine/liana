@@ -287,6 +287,13 @@ impl HotSigner {
 
         Ok(psbt)
     }
+
+    /// Change the network of generated extended keys. Note this value only has to do with the
+    /// BIP32 encoding of those keys (xpubs, tpubs, ..) but does not affect any data (whether it is
+    /// the keys or the mnemonics).
+    pub fn set_network(&mut self, network: bitcoin::Network) {
+        self.master_xpriv.network = network;
+    }
 }
 
 #[cfg(test)]
@@ -568,5 +575,31 @@ mod tests {
         let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
         assert!(psbt.inputs[0].partial_sigs.is_empty());
         assert_eq!(psbt.inputs[1].partial_sigs.len(), 2);
+    }
+
+    #[test]
+    fn signer_set_net() {
+        let secp = secp256k1::Secp256k1::signing_only();
+        let mut signer = HotSigner::from_str(
+            bitcoin::Network::Bitcoin,
+            "burger ball theme dog light account produce chest warrior swarm flip equip",
+        )
+        .unwrap();
+        assert_eq!(signer.xpub_at(&bip32::DerivationPath::master(), &secp).to_string(), "xpub661MyMwAqRbcGKvR8dChsA92AHfJS6fJMR41jAASu5S79v65dac244iBd7PwqnfMQ9jWsmg8SqnNz3MjkwYF8Edzr2ttxt171Cr5RyJrvF2");
+
+        let tpub = "tpubD6NzVbkrYhZ4Y87GapBo55UPVQkxRVAMu3eK5iDbEzBzuCknhoT7CWP1s9UjNHcbC4GRVMBzywcRgDrM9oPV1g6HudeCeQfLbASVBxpNJV3";
+        for net in &[
+            bitcoin::Network::Testnet,
+            bitcoin::Network::Signet,
+            bitcoin::Network::Regtest,
+        ] {
+            signer.set_network(*net);
+            assert_eq!(
+                signer
+                    .xpub_at(&bip32::DerivationPath::master(), &secp)
+                    .to_string(),
+                tpub
+            );
+        }
     }
 }
