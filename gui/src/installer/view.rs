@@ -902,115 +902,142 @@ pub fn install<'a>(
     config_path: Option<&std::path::PathBuf>,
     warning: Option<&'a String>,
 ) -> Element<'a, Message> {
-    let mut col = Column::new()
-        .push(
-            Container::new(
-                Column::new()
-                    .spacing(10)
-                    .push(
-                        card::simple(
-                            Column::new()
-                                .spacing(5)
-                                .push(text("Descriptor:").small().bold())
-                                .push(text(descriptor).small()),
+    layout(
+        progress,
+        Column::new()
+            .push(Space::with_height(Length::Units(50)))
+            .push(text("Final step").bold().size(50))
+            .push(Space::with_height(Length::Units(50)))
+            .push(text(
+                "Check your information before finalizing the install process:",
+            ))
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(10)
+                        .push(
+                            card::simple(
+                                Column::new()
+                                    .spacing(5)
+                                    .push(text("Descriptor:").small().bold())
+                                    .push(text(descriptor).small()),
+                            )
+                            .width(Length::Fill),
                         )
-                        .width(Length::Fill),
-                    )
-                    .push(
-                        card::simple(
-                            Column::new()
-                                .spacing(5)
-                                .push(text("Hardware devices:").small().bold())
-                                .push(context.hws.iter().fold(Column::new(), |acc, hw| {
-                                    acc.push(
+                        .push_maybe(if context.hws.is_empty() && context.signer.is_none() {
+                            None
+                        } else {
+                            Some(
+                                card::simple(
+                                    Column::new()
+                                        .spacing(5)
+                                        .push(text("Registered signing devices:").small().bold())
+                                        .push_maybe(if context.hws.is_empty() {
+                                            None
+                                        } else {
+                                            Some(context.hws.iter().fold(
+                                                Column::new(),
+                                                |acc, hw| {
+                                                    acc.push(
+                                                        Row::new()
+                                                            .spacing(5)
+                                                            .push(text(hw.0.to_string()).small())
+                                                            .push(
+                                                                text(format!(
+                                                                    "(fingerprint: {})",
+                                                                    hw.1
+                                                                ))
+                                                                .small(),
+                                                            ),
+                                                    )
+                                                },
+                                            ))
+                                        })
+                                        .push_maybe(context.signer.as_ref().map(|signer| {
+                                            Row::new().push(text("This computer").small()).push(
+                                                text(format!(
+                                                    "(fingerprint: {})",
+                                                    signer.fingerprint()
+                                                ))
+                                                .small(),
+                                            )
+                                        })),
+                                )
+                                .width(Length::Fill),
+                            )
+                        })
+                        .push(
+                            card::simple(
+                                Column::new()
+                                    .push(text("Bitcoind:").small().bold())
+                                    .push(
                                         Row::new()
                                             .spacing(5)
-                                            .push(text(hw.0.to_string()).small())
-                                            .push(text(format!("(fingerprint: {})", hw.1)).small()),
+                                            .align_items(Alignment::Center)
+                                            .push(text("Cookie path:").small())
+                                            .push(
+                                                text(format!(
+                                                    "{}",
+                                                    context
+                                                        .bitcoind_config
+                                                        .as_ref()
+                                                        .unwrap()
+                                                        .cookie_path
+                                                        .to_string_lossy()
+                                                ))
+                                                .small(),
+                                            ),
                                     )
-                                })),
-                        )
-                        .width(Length::Fill),
-                    )
-                    .push(
-                        card::simple(
-                            Column::new()
-                                .push(text("Bitcoind:").small().bold())
-                                .push(
-                                    Row::new()
-                                        .spacing(5)
-                                        .align_items(Alignment::Center)
-                                        .push(text("Cookie path:").small())
-                                        .push(
-                                            text(format!(
-                                                "{}",
-                                                context
-                                                    .bitcoind_config
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .cookie_path
-                                                    .to_string_lossy()
-                                            ))
-                                            .small(),
-                                        ),
-                                )
-                                .push(
-                                    Row::new()
-                                        .spacing(5)
-                                        .align_items(Alignment::Center)
-                                        .push(text("Address:").small())
-                                        .push(
-                                            text(format!(
-                                                "{}",
-                                                context.bitcoind_config.as_ref().unwrap().addr
-                                            ))
-                                            .small(),
-                                        ),
-                                ),
-                        )
-                        .width(Length::Fill),
-                    ),
+                                    .push(
+                                        Row::new()
+                                            .spacing(5)
+                                            .align_items(Alignment::Center)
+                                            .push(text("Address:").small())
+                                            .push(
+                                                text(format!(
+                                                    "{}",
+                                                    context.bitcoind_config.as_ref().unwrap().addr
+                                                ))
+                                                .small(),
+                                            ),
+                                    ),
+                            )
+                            .width(Length::Fill),
+                        ),
+                )
+                .max_width(1000),
             )
-            .padding(50)
-            .max_width(1000),
-        )
-        .spacing(50)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_items(Alignment::Center);
-
-    if let Some(error) = warning {
-        col = col.push(text(error));
-    }
-
-    if generating {
-        col = col.push(button::primary(None, "Installing ...").width(Length::Units(200)))
-    } else if let Some(path) = config_path {
-        col = col.push(
-            Container::new(
-                Column::new()
-                    .push(Container::new(text("Installed !")))
-                    .push(Container::new(
-                        button::primary(None, "Start")
-                            .on_press(Message::Exit(path.clone()))
-                            .width(Length::Units(200)),
-                    ))
-                    .align_items(Alignment::Center)
-                    .spacing(20),
-            )
-            .padding(50)
+            .push(Space::with_height(Length::Units(50)))
+            .push_maybe(warning.map(|e| card::invalid(text(e))))
+            .push(if generating {
+                Container::new(button::primary(None, "Installing ...").width(Length::Units(200)))
+            } else if let Some(path) = config_path {
+                Container::new(
+                    Column::new()
+                        .push(Container::new(text("Installed !")))
+                        .push(Container::new(
+                            button::primary(None, "Start")
+                                .on_press(Message::Exit(path.clone()))
+                                .width(Length::Units(200)),
+                        ))
+                        .align_items(Alignment::Center)
+                        .spacing(20),
+                )
+                .padding(50)
+                .width(Length::Fill)
+                .center_x()
+            } else {
+                Container::new(
+                    button::primary(None, "Finalize installation")
+                        .on_press(Message::Install)
+                        .width(Length::Units(200)),
+                )
+            })
+            .spacing(10)
             .width(Length::Fill)
-            .center_x(),
-        );
-    } else {
-        col = col.push(
-            button::primary(None, "Finalize installation")
-                .on_press(Message::Install)
-                .width(Length::Units(200)),
-        );
-    }
-
-    layout(progress, col)
+            .height(Length::Fill)
+            .align_items(Alignment::Center),
+    )
 }
 
 pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
