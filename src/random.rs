@@ -109,4 +109,20 @@ mod tests {
             set.insert(rand);
         }
     }
+
+    // I used this to perform statistical tests of the random generation function using ENT
+    // (https://fourmilab.ch/random/).
+    //#[test]
+    //fn write_to_file() {
+    //use std::io::Write;
+    //let mut f = std::fs::OpenOptions::new()
+    //.write(true)
+    //.create(true)
+    //.append(true)
+    //.open("random_out")
+    //.unwrap();
+    //for _ in 0..10_000_000 {
+    //f.write(&random_bytes().unwrap()).unwrap();
+    //}
+    //}
 }
