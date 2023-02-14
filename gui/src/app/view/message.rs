@@ -40,6 +40,7 @@ pub enum SpendTxMessage {
     Save,
     Confirm,
     Cancel,
+    SelectHotSigner,
     SelectHardwareWallet(usize),
     EditPsbt,
     PsbtEdited(String),

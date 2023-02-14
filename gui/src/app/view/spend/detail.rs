@@ -714,6 +714,7 @@ pub fn inputs_and_outputs_view<'a>(
 pub fn sign_action<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
+    signer: Option<Fingerprint>,
     processing: bool,
     chosen_hw: Option<usize>,
     signed: &[Fingerprint],
@@ -722,12 +723,12 @@ pub fn sign_action<'a>(
         .push_maybe(warning.map(|w| warn(Some(w))))
         .push(card::simple(
             Column::new()
-                .push(if !hws.is_empty() {
+                .push(
                     Column::new()
                         .push(
                             Row::new()
                                 .push(
-                                    text("Select hardware wallet to sign with:")
+                                    text("Select signing device to sign with:")
                                         .bold()
                                         .width(Length::Fill),
                                 )
@@ -749,19 +750,42 @@ pub fn sign_action<'a>(
                                 ))
                             },
                         ))
-                        .width(Length::Fill)
-                } else {
-                    Column::new()
-                        .push(
-                            Column::new()
-                                .spacing(15)
-                                .width(Length::Fill)
-                                .push("Please connect a hardware wallet")
-                                .push(button::border(None, "Refresh").on_press(Message::Reload))
-                                .align_items(Alignment::Center),
-                        )
-                        .width(Length::Fill)
-                })
+                        .push_maybe(signer.map(|fingerprint| {
+                            Button::new(
+                                Row::new()
+                                    .align_items(Alignment::Center)
+                                    .push(
+                                        Column::new()
+                                            .width(Length::Fill)
+                                            .push(text("This computer").bold())
+                                            .push(
+                                                text(format!("fingerprint: {}", fingerprint))
+                                                    .small(),
+                                            )
+                                            .spacing(5)
+                                            .width(Length::Fill),
+                                    )
+                                    .push_maybe(if signed.contains(&fingerprint) {
+                                        Some(
+                                            Row::new()
+                                                .align_items(Alignment::Center)
+                                                .spacing(5)
+                                                .push(
+                                                    icon::circle_check_icon().style(color::SUCCESS),
+                                                )
+                                                .push(text("Signed").style(color::SUCCESS)),
+                                        )
+                                    } else {
+                                        None
+                                    }),
+                            )
+                            .on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
+                            .padding(10)
+                            .style(button::Style::Border.into())
+                            .width(Length::Fill)
+                        }))
+                        .width(Length::Fill),
+                )
                 .spacing(20)
                 .width(Length::Fill)
                 .align_items(Alignment::Center),
