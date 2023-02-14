@@ -12,6 +12,7 @@ pub mod signer;
 #[cfg(test)]
 mod testutils;
 
+pub use bip39;
 pub use miniscript;
 
 pub use crate::bitcoin::d::{BitcoindError, WalletError};
