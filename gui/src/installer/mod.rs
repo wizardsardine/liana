@@ -232,7 +232,18 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
         daemon_config.to_string().as_bytes(),
     )?;
 
-    log::info!("Daemon config file created");
+    log::info!("Daemon configuration file created");
+
+    if let Some(signer) = &ctx.signer {
+        signer
+            .store(
+                &cfg.data_dir().expect("Already checked"),
+                cfg.bitcoin_config.network,
+            )
+            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+
+        log::info!("Hot signer mnemonic stored");
+    }
 
     // create liana GUI configuration file
     let gui_config_path = create_and_write_file(
@@ -247,7 +258,7 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
         .as_bytes(),
     )?;
 
-    log::info!("Gui config file created");
+    log::info!("Gui configuration file created");
 
     // create liana GUI settings file
     let settings: gui_settings::Settings = ctx.extract_gui_settings();
