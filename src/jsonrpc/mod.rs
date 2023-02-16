@@ -159,6 +159,7 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::AddressNetwork(..)
             | commands::CommandError::InvalidOutputValue(..)
             | commands::CommandError::InsufficientFunds(..)
+            | commands::CommandError::InsaneFees(..)
             | commands::CommandError::UnknownSpend(..)
             | commands::CommandError::SpendFinalization(..)
             | commands::CommandError::InsaneRescanTimestamp(..)
