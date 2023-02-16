@@ -206,11 +206,7 @@ fn coin_list_view<'a>(
                         })
                         .push(badge::coin())
                         .push_maybe(if coin.spend_info.is_some() {
-                            Some(
-                                Container::new(text("  Spent  ").small())
-                                    .padding(3)
-                                    .style(badge::PillStyle::Success),
-                            )
+                            Some(badge::spent())
                         } else {
                             let seq = remaining_sequence(coin, blockheight, timelock);
                             if seq == 0 {
@@ -244,11 +240,7 @@ fn coin_list_view<'a>(
                             }
                         })
                         .push_maybe(if coin.block_height.is_none() {
-                            Some(
-                                Container::new(text("  Unconfirmed  ").small())
-                                    .padding(3)
-                                    .style(badge::PillStyle::Simple),
-                            )
+                            Some(badge::unconfirmed())
                         } else {
                             None
                         })
