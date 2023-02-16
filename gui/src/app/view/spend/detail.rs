@@ -210,16 +210,9 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
                 .align_items(Alignment::Center),
         )
         .push_maybe(match tx.status {
-            SpendStatus::Deprecated => Some(
-                Container::new(text("  Deprecated  ").small())
-                    .padding(3)
-                    .style(badge::PillStyle::Simple),
-            ),
-            SpendStatus::Broadcast => Some(
-                Container::new(text("  Broadcast  ").small())
-                    .padding(3)
-                    .style(badge::PillStyle::Success),
-            ),
+            SpendStatus::Deprecated => Some(badge::deprecated()),
+            SpendStatus::Broadcast => Some(badge::unconfirmed()),
+            SpendStatus::Spent => Some(badge::spent()),
             _ => None,
         })
         .push(

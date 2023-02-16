@@ -130,9 +130,7 @@ fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Element<'a, Mess
                                     .small(),
                             )
                         } else {
-                            Container::new(text("  Pending  ").small())
-                                .padding(3)
-                                .style(badge::PillStyle::Success)
+                            badge::unconfirmed()
                         })
                         .spacing(10)
                         .align_items(Alignment::Center)

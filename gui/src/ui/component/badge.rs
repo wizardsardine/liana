@@ -1,9 +1,13 @@
 use iced::{
-    widget::{self, Container},
+    widget::{self, tooltip, Container},
     Element, Length,
 };
 
-use crate::ui::{color, icon};
+use crate::ui::{
+    color,
+    component::{card, text::*},
+    icon,
+};
 
 pub enum Style {
     Standard,
@@ -163,4 +167,43 @@ impl From<PillStyle> for iced::theme::Container {
     fn from(i: PillStyle) -> iced::theme::Container {
         iced::theme::Container::Custom(i.into())
     }
+}
+
+pub fn unconfirmed<'a, T: 'a>() -> widget::container::Container<'a, T> {
+    Container::new(
+        tooltip::Tooltip::new(
+            Container::new(text("  Unconfirmed  ").small())
+                .padding(3)
+                .style(PillStyle::Simple),
+            "Do not treat this as a payment until it is confirmed",
+            tooltip::Position::Top,
+        )
+        .style(card::SimpleCardStyle),
+    )
+}
+
+pub fn deprecated<'a, T: 'a>() -> widget::container::Container<'a, T> {
+    Container::new(
+        tooltip::Tooltip::new(
+            Container::new(text("  Deprecated  ").small())
+                .padding(3)
+                .style(PillStyle::Simple),
+            "This spend cannot be included anymore in the blockchain",
+            tooltip::Position::Top,
+        )
+        .style(card::SimpleCardStyle),
+    )
+}
+
+pub fn spent<'a, T: 'a>() -> widget::container::Container<'a, T> {
+    Container::new(
+        tooltip::Tooltip::new(
+            Container::new(text("  Spent  ").small())
+                .padding(3)
+                .style(PillStyle::Simple),
+            "The spend transaction was included in the blockchain",
+            tooltip::Position::Top,
+        )
+        .style(card::SimpleCardStyle),
+    )
 }

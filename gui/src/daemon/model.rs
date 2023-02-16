@@ -37,6 +37,7 @@ pub enum SpendStatus {
     Pending,
     Deprecated,
     Broadcast,
+    Spent,
 }
 
 impl SpendTx {
@@ -60,7 +61,11 @@ impl SpendTx {
             inputs_amount += coin.amount;
             if let Some(info) = coin.spend_info {
                 if info.txid == psbt.unsigned_tx.txid() {
-                    status = SpendStatus::Broadcast
+                    if info.height.is_some() {
+                        status = SpendStatus::Spent
+                    } else {
+                        status = SpendStatus::Broadcast
+                    }
                 } else {
                     status = SpendStatus::Deprecated
                 }
