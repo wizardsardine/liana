@@ -10,7 +10,10 @@ use crate::{
     descriptors, DaemonControl, VERSION,
 };
 
-use utils::{deser_amount_from_sats, deser_base64, deser_hex, ser_amount, ser_base64, ser_hex};
+use utils::{
+    deser_amount_from_sats, deser_base64, deser_hex, ser_amount, ser_base64, ser_hex,
+    to_base64_string,
+};
 
 use std::{
     collections::{hash_map, BTreeMap, HashMap},
@@ -105,8 +108,8 @@ impl fmt::Display for CommandError {
             }
             Self::SanityCheckFailure(psbt) => write!(
                 f,
-                "BUG! Please report this. Failed sanity checks for PSBT '{:?}'.",
-                psbt
+                "BUG! Please report this. Failed sanity checks for PSBT '{}'.",
+                to_base64_string(psbt)
             ),
             Self::UnknownSpend(txid) => write!(f, "Unknown spend transaction '{}'.", txid),
             Self::SpendFinalization(e) => {
