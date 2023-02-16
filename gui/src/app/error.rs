@@ -9,6 +9,7 @@ pub enum Error {
     Daemon(DaemonError),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
+    HotSigner(String),
 }
 
 impl std::fmt::Display for Error {
@@ -40,6 +41,7 @@ impl std::fmt::Display for Error {
             },
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
             Self::HardwareWallet(e) => write!(f, "{}", e),
+            Self::HotSigner(e) => write!(f, "{}", e),
         }
     }
 }

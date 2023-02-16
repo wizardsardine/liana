@@ -13,6 +13,7 @@ use log::{debug, info};
 use liana::{
     config::{Config, ConfigError},
     miniscript::bitcoin,
+    signer::HotSigner,
     StartupError,
 };
 
@@ -24,6 +25,7 @@ use crate::{
         wallet::Wallet,
     },
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
+    signer::Signer,
     ui::{
         component::{button, notification, text::*},
         icon,
@@ -143,47 +145,14 @@ impl Loader {
                 match res {
                     Ok(info) => {
                         if (info.sync - 1.0_f64).abs() < f64::EPSILON {
-                            let daemon = daemon.clone();
-                            let settings_path =
-                                settings_path(&self.datadir_path, self.network).unwrap();
-                            let gui_config_hws = self
-                                .gui_config
-                                .hardware_wallets
-                                .as_ref()
-                                .cloned()
-                                .unwrap_or_default();
                             return Command::perform(
-                                async move {
-                                    let coins = daemon.list_coins().map(|res| res.coins)?;
-                                    let spend_txs = daemon.list_spend_transactions()?;
-                                    let cache = Cache {
-                                        network: info.network,
-                                        blockheight: info.block_height,
-                                        coins,
-                                        spend_txs,
-                                        ..Default::default()
-                                    };
-                                    let wallet = match Settings::from_file(&settings_path) {
-                                        Ok(settings) => {
-                                            if let Some(wallet_setting) = settings.wallets.first() {
-                                                Wallet::legacy(info.descriptors.main)
-                                                    .with_harware_wallets(
-                                                        wallet_setting.hardware_wallets.clone(),
-                                                    )
-                                                    .with_key_aliases(wallet_setting.keys_aliases())
-                                            } else {
-                                                Wallet::legacy(info.descriptors.main)
-                                                    .with_harware_wallets(gui_config_hws)
-                                            }
-                                        }
-                                        Err(settings::SettingsError::NotFound) => {
-                                            Wallet::legacy(info.descriptors.main)
-                                                .with_harware_wallets(gui_config_hws)
-                                        }
-                                        Err(e) => return Err(e.into()),
-                                    };
-                                    Ok((Arc::new(wallet), cache, daemon))
-                                },
+                                load_application(
+                                    daemon.clone(),
+                                    info,
+                                    self.gui_config.clone(),
+                                    self.datadir_path.clone(),
+                                    self.network,
+                                ),
                                 Message::Synced,
                             );
                         } else {
@@ -229,6 +198,10 @@ impl Loader {
             Message::Started(res) => self.on_start(res),
             Message::Loaded(res) => self.on_load(res),
             Message::Syncing(res) => self.on_sync(res),
+            Message::Synced(Err(e)) => {
+                self.step = Step::Error(Box::new(e));
+                Command::none()
+            }
             Message::Failure(_) => {
                 self.daemon_started = false;
                 Command::none()
@@ -244,6 +217,71 @@ impl Loader {
     pub fn view(&self) -> Element<Message> {
         view(self.datadir_path.as_ref(), &self.step).map(Message::View)
     }
+}
+
+pub async fn load_application(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    info: GetInfoResult,
+    gui_config: GUIConfig,
+    datadir_path: Option<PathBuf>,
+    network: bitcoin::Network,
+) -> Result<(Arc<Wallet>, Cache, Arc<dyn Daemon + Sync + Send>), Error> {
+    let coins = daemon.list_coins().map(|res| res.coins)?;
+    let spend_txs = daemon.list_spend_transactions()?;
+    let cache = Cache {
+        network: info.network,
+        blockheight: info.block_height,
+        coins,
+        spend_txs,
+        ..Default::default()
+    };
+    let settings_path = settings_path(&datadir_path, network).unwrap();
+    let gui_config_hws = gui_config
+        .hardware_wallets
+        .as_ref()
+        .cloned()
+        .unwrap_or_default();
+
+    let mut wallet = match Settings::from_file(&settings_path) {
+        Ok(settings) => {
+            if let Some(wallet_setting) = settings.wallets.first() {
+                Wallet::new(wallet_setting.name.clone(), info.descriptors.main)
+                    .with_hardware_wallets(wallet_setting.hardware_wallets.clone())
+                    .with_key_aliases(wallet_setting.keys_aliases())
+            } else {
+                Wallet::legacy(info.descriptors.main).with_hardware_wallets(gui_config_hws)
+            }
+        }
+        Err(settings::SettingsError::NotFound) => {
+            Wallet::legacy(info.descriptors.main).with_hardware_wallets(gui_config_hws)
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    let hot_signers = match HotSigner::from_datadir(&get_datadir_path(&datadir_path)?, network) {
+        Ok(signers) => signers,
+        Err(e) => match e {
+            liana::signer::SignerError::MnemonicStorage(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Vec::new()
+                } else {
+                    return Err(Error::HotSigner(e.to_string()));
+                }
+            }
+            _ => return Err(Error::HotSigner(e.to_string())),
+        },
+    };
+
+    let curve = bitcoin::secp256k1::Secp256k1::signing_only();
+    let keys = wallet.descriptor_keys();
+    if let Some(hot_signer) = hot_signers
+        .into_iter()
+        .find(|s| keys.contains(&s.fingerprint(&curve)))
+    {
+        wallet = wallet.with_signer(Signer::new(hot_signer));
+    }
+
+    Ok((Arc::new(wallet), cache, daemon))
 }
 
 #[derive(Clone, Debug)]
@@ -368,6 +406,7 @@ pub enum Error {
     Settings(settings::SettingsError),
     Config(ConfigError),
     Daemon(DaemonError),
+    HotSigner(String),
 }
 
 impl std::fmt::Display for Error {
@@ -376,6 +415,7 @@ impl std::fmt::Display for Error {
             Self::Settings(e) => write!(f, "Settings error: {}", e),
             Self::Config(e) => write!(f, "Config error: {}", e),
             Self::Daemon(e) => write!(f, "Liana daemon error: {}", e),
+            Self::HotSigner(e) => write!(f, "Failed to load hot signer: {}", e),
         }
     }
 }
@@ -398,16 +438,20 @@ impl From<DaemonError> for Error {
     }
 }
 
+fn get_datadir_path(datadir_path: &Option<PathBuf>) -> Result<PathBuf, ConfigError> {
+    if let Some(ref datadir) = datadir_path {
+        Ok(datadir.clone())
+    } else {
+        default_datadir().map_err(|_| ConfigError::DatadirNotFound)
+    }
+}
+
 /// default lianad socket path is .liana/bitcoin/lianad_rpc
 fn socket_path(
     datadir: &Option<PathBuf>,
     network: bitcoin::Network,
 ) -> Result<PathBuf, ConfigError> {
-    let mut path = if let Some(ref datadir) = datadir {
-        datadir.clone()
-    } else {
-        default_datadir().map_err(|_| ConfigError::DatadirNotFound)?
-    };
+    let mut path = get_datadir_path(datadir)?;
     path.push(network.to_string());
     path.push("lianad_rpc");
     Ok(path)
@@ -418,11 +462,7 @@ fn settings_path(
     datadir: &Option<PathBuf>,
     network: bitcoin::Network,
 ) -> Result<PathBuf, ConfigError> {
-    let mut path = if let Some(ref datadir) = datadir {
-        datadir.clone()
-    } else {
-        default_datadir().map_err(|_| ConfigError::DatadirNotFound)?
-    };
+    let mut path = get_datadir_path(datadir)?;
     path.push(network.to_string());
     path.push(settings::DEFAULT_FILE_NAME);
     Ok(path)

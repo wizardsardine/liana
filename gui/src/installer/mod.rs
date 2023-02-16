@@ -15,8 +15,8 @@ use crate::app::{config as gui_config, settings as gui_settings};
 
 pub use message::Message;
 use step::{
-    BackupDescriptor, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor, ParticipateXpub,
-    RegisterDescriptor, Step, Welcome,
+    BackupDescriptor, BackupMnemonic, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor,
+    ParticipateXpub, RecoverMnemonic, RegisterDescriptor, Step, Welcome,
 };
 
 pub struct Installer {
@@ -91,6 +91,7 @@ impl Installer {
                 self.steps = vec![
                     Welcome::default().into(),
                     DefineDescriptor::new().into(),
+                    BackupMnemonic::default().into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
@@ -103,6 +104,7 @@ impl Installer {
                     Welcome::default().into(),
                     ParticipateXpub::new().into(),
                     ImportDescriptor::new(false).into(),
+                    BackupMnemonic::default().into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
@@ -114,6 +116,7 @@ impl Installer {
                 self.steps = vec![
                     Welcome::default().into(),
                     ImportDescriptor::new(true).into(),
+                    RecoverMnemonic::default().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
                     Final::new().into(),
@@ -165,11 +168,28 @@ impl Installer {
         }
     }
 
+    /// Some steps are skipped because of contextual choice of the user, this
+    /// code is giving a correct progress summary to the user.
+    fn progress(&self) -> (usize, usize) {
+        let mut current = self.current;
+        let mut total = 0;
+        for (i, step) in self.steps.iter().enumerate() {
+            if step.skip(&self.context) {
+                if i < self.current {
+                    current -= 1;
+                }
+            } else {
+                total += 1
+            }
+        }
+        (current, total - 1)
+    }
+
     pub fn view(&self) -> Element<Message> {
         self.steps
             .get(self.current)
             .expect("There is always a step")
-            .view((self.current, self.steps.len() - 1))
+            .view(self.progress())
     }
 }
 
@@ -212,7 +232,18 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
         daemon_config.to_string().as_bytes(),
     )?;
 
-    log::info!("Daemon config file created");
+    log::info!("Daemon configuration file created");
+
+    if let Some(signer) = &ctx.signer {
+        signer
+            .store(
+                &cfg.data_dir().expect("Already checked"),
+                cfg.bitcoin_config.network,
+            )
+            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+
+        log::info!("Hot signer mnemonic stored");
+    }
 
     // create liana GUI configuration file
     let gui_config_path = create_and_write_file(
@@ -227,7 +258,7 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
         .as_bytes(),
     )?;
 
-    log::info!("Gui config file created");
+    log::info!("Gui configuration file created");
 
     // create liana GUI settings file
     let settings: gui_settings::Settings = ctx.extract_gui_settings();

@@ -1,5 +1,6 @@
 use iced::widget::{
     scrollable::Properties, Button, Checkbox, Column, Container, PickList, Row, Scrollable, Space,
+    TextInput,
 };
 use iced::{alignment, Alignment, Element, Length};
 
@@ -411,6 +412,76 @@ pub fn import_descriptor<'a>(
     )
 }
 
+pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
+    Container::new(
+        Column::new()
+            .push(
+                Button::new(
+                    Row::new().align_items(Alignment::Center).push(
+                        Column::new()
+                            .push(text("This computer").bold())
+                            .push(
+                                text("Derive a key from a mnemonic stored on this computer")
+                                    .small(),
+                            )
+                            .spacing(5)
+                            .width(Length::Fill),
+                    ),
+                )
+                .on_press(Message::UseHotSigner)
+                .padding(10)
+                .style(button::Style::TransparentBorder.into())
+                .width(Length::Fill),
+            )
+            .push_maybe(if xpubs.is_empty() {
+                None
+            } else {
+                Some(separation().width(Length::Fill))
+            })
+            .push_maybe(if xpubs.is_empty() {
+                None
+            } else {
+                Some(xpubs.iter().fold(Column::new().padding(15), |col, xpub| {
+                    col.push(
+                        Row::new()
+                            .spacing(5)
+                            .align_items(Alignment::Center)
+                            .push(
+                                Container::new(
+                                    Scrollable::new(Container::new(text(xpub).small()).padding(10))
+                                        .horizontal_scroll(
+                                            Properties::new().width(2).scroller_width(2),
+                                        ),
+                                )
+                                .width(Length::Fill),
+                            )
+                            .push(
+                                Container::new(
+                                    button::border(Some(icon::clipboard_icon()), "Copy")
+                                        .on_press(Message::Clibpboard(xpub.clone()))
+                                        .width(Length::Shrink),
+                                )
+                                .padding(10),
+                            ),
+                    )
+                }))
+            })
+            .push_maybe(if !xpubs.is_empty() {
+                Some(
+                    Container::new(
+                        button::border(Some(icon::plus_icon()), "New public key")
+                            .on_press(Message::UseHotSigner),
+                    )
+                    .padding(10),
+                )
+            } else {
+                None
+            }),
+    )
+    .style(card::SimpleCardStyle)
+    .into()
+}
+
 pub fn hardware_wallet_xpubs<'a>(
     i: usize,
     xpubs: &'a Vec<String>,
@@ -531,13 +602,14 @@ pub fn hardware_wallet_xpubs<'a>(
     .into()
 }
 
-pub fn participate_xpub(
+pub fn participate_xpub<'a>(
     progress: (usize, usize),
     network: bitcoin::Network,
     network_valid: bool,
-    hws: Vec<Element<Message>>,
+    hws: Vec<Element<'a, Message>>,
+    signer: Element<'a, Message>,
     shared: bool,
-) -> Element<Message> {
+) -> Element<'a, Message> {
     let row_network = Row::new()
         .spacing(10)
         .align_items(Alignment::Center)
@@ -583,6 +655,7 @@ pub fn participate_xpub(
                     )
                     .spacing(10)
                     .push(Column::with_children(hws).spacing(10))
+                    .push(signer)
                     .width(Length::Fill),
             )
             .push(Checkbox::new(
@@ -829,115 +902,142 @@ pub fn install<'a>(
     config_path: Option<&std::path::PathBuf>,
     warning: Option<&'a String>,
 ) -> Element<'a, Message> {
-    let mut col = Column::new()
-        .push(
-            Container::new(
-                Column::new()
-                    .spacing(10)
-                    .push(
-                        card::simple(
-                            Column::new()
-                                .spacing(5)
-                                .push(text("Descriptor:").small().bold())
-                                .push(text(descriptor).small()),
+    layout(
+        progress,
+        Column::new()
+            .push(Space::with_height(Length::Units(50)))
+            .push(text("Final step").bold().size(50))
+            .push(Space::with_height(Length::Units(50)))
+            .push(text(
+                "Check your information before finalizing the install process:",
+            ))
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(10)
+                        .push(
+                            card::simple(
+                                Column::new()
+                                    .spacing(5)
+                                    .push(text("Descriptor:").small().bold())
+                                    .push(text(descriptor).small()),
+                            )
+                            .width(Length::Fill),
                         )
-                        .width(Length::Fill),
-                    )
-                    .push(
-                        card::simple(
-                            Column::new()
-                                .spacing(5)
-                                .push(text("Hardware devices:").small().bold())
-                                .push(context.hws.iter().fold(Column::new(), |acc, hw| {
-                                    acc.push(
+                        .push_maybe(if context.hws.is_empty() && context.signer.is_none() {
+                            None
+                        } else {
+                            Some(
+                                card::simple(
+                                    Column::new()
+                                        .spacing(5)
+                                        .push(text("Registered signing devices:").small().bold())
+                                        .push_maybe(if context.hws.is_empty() {
+                                            None
+                                        } else {
+                                            Some(context.hws.iter().fold(
+                                                Column::new(),
+                                                |acc, hw| {
+                                                    acc.push(
+                                                        Row::new()
+                                                            .spacing(5)
+                                                            .push(text(hw.0.to_string()).small())
+                                                            .push(
+                                                                text(format!(
+                                                                    "(fingerprint: {})",
+                                                                    hw.1
+                                                                ))
+                                                                .small(),
+                                                            ),
+                                                    )
+                                                },
+                                            ))
+                                        })
+                                        .push_maybe(context.signer.as_ref().map(|signer| {
+                                            Row::new().push(text("This computer").small()).push(
+                                                text(format!(
+                                                    "(fingerprint: {})",
+                                                    signer.fingerprint()
+                                                ))
+                                                .small(),
+                                            )
+                                        })),
+                                )
+                                .width(Length::Fill),
+                            )
+                        })
+                        .push(
+                            card::simple(
+                                Column::new()
+                                    .push(text("Bitcoind:").small().bold())
+                                    .push(
                                         Row::new()
                                             .spacing(5)
-                                            .push(text(hw.0.to_string()).small())
-                                            .push(text(format!("(fingerprint: {})", hw.1)).small()),
+                                            .align_items(Alignment::Center)
+                                            .push(text("Cookie path:").small())
+                                            .push(
+                                                text(format!(
+                                                    "{}",
+                                                    context
+                                                        .bitcoind_config
+                                                        .as_ref()
+                                                        .unwrap()
+                                                        .cookie_path
+                                                        .to_string_lossy()
+                                                ))
+                                                .small(),
+                                            ),
                                     )
-                                })),
-                        )
-                        .width(Length::Fill),
-                    )
-                    .push(
-                        card::simple(
-                            Column::new()
-                                .push(text("Bitcoind:").small().bold())
-                                .push(
-                                    Row::new()
-                                        .spacing(5)
-                                        .align_items(Alignment::Center)
-                                        .push(text("Cookie path:").small())
-                                        .push(
-                                            text(format!(
-                                                "{}",
-                                                context
-                                                    .bitcoind_config
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .cookie_path
-                                                    .to_string_lossy()
-                                            ))
-                                            .small(),
-                                        ),
-                                )
-                                .push(
-                                    Row::new()
-                                        .spacing(5)
-                                        .align_items(Alignment::Center)
-                                        .push(text("Address:").small())
-                                        .push(
-                                            text(format!(
-                                                "{}",
-                                                context.bitcoind_config.as_ref().unwrap().addr
-                                            ))
-                                            .small(),
-                                        ),
-                                ),
-                        )
-                        .width(Length::Fill),
-                    ),
+                                    .push(
+                                        Row::new()
+                                            .spacing(5)
+                                            .align_items(Alignment::Center)
+                                            .push(text("Address:").small())
+                                            .push(
+                                                text(format!(
+                                                    "{}",
+                                                    context.bitcoind_config.as_ref().unwrap().addr
+                                                ))
+                                                .small(),
+                                            ),
+                                    ),
+                            )
+                            .width(Length::Fill),
+                        ),
+                )
+                .max_width(1000),
             )
-            .padding(50)
-            .max_width(1000),
-        )
-        .spacing(50)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_items(Alignment::Center);
-
-    if let Some(error) = warning {
-        col = col.push(text(error));
-    }
-
-    if generating {
-        col = col.push(button::primary(None, "Installing ...").width(Length::Units(200)))
-    } else if let Some(path) = config_path {
-        col = col.push(
-            Container::new(
-                Column::new()
-                    .push(Container::new(text("Installed !")))
-                    .push(Container::new(
-                        button::primary(None, "Start")
-                            .on_press(Message::Exit(path.clone()))
-                            .width(Length::Units(200)),
-                    ))
-                    .align_items(Alignment::Center)
-                    .spacing(20),
-            )
-            .padding(50)
+            .push(Space::with_height(Length::Units(50)))
+            .push_maybe(warning.map(|e| card::invalid(text(e))))
+            .push(if generating {
+                Container::new(button::primary(None, "Installing ...").width(Length::Units(200)))
+            } else if let Some(path) = config_path {
+                Container::new(
+                    Column::new()
+                        .push(Container::new(text("Installed !")))
+                        .push(Container::new(
+                            button::primary(None, "Start")
+                                .on_press(Message::Exit(path.clone()))
+                                .width(Length::Units(200)),
+                        ))
+                        .align_items(Alignment::Center)
+                        .spacing(20),
+                )
+                .padding(50)
+                .width(Length::Fill)
+                .center_x()
+            } else {
+                Container::new(
+                    button::primary(None, "Finalize installation")
+                        .on_press(Message::Install)
+                        .width(Length::Units(200)),
+                )
+            })
+            .spacing(10)
             .width(Length::Fill)
-            .center_x(),
-        );
-    } else {
-        col = col.push(
-            button::primary(None, "Finalize installation")
-                .on_press(Message::Install)
-                .width(Length::Units(200)),
-        );
-    }
-
-    layout(progress, col)
+            .height(Length::Fill)
+            .align_items(Alignment::Center),
+    )
 }
 
 pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
@@ -1086,6 +1186,7 @@ pub fn edit_key_modal<'a>(
     error: Option<&Error>,
     processing: bool,
     chosen_hw: Option<usize>,
+    chosen_signer: bool,
     form_xpub: &form::Value<String>,
     form_name: &'a form::Value<String>,
     edit_name: bool,
@@ -1095,14 +1196,14 @@ pub fn edit_key_modal<'a>(
         .push(card::simple(
             Column::new()
                 .spacing(25)
-                .push(if !hws.is_empty() {
+                .push(
                     Column::new()
                         .push(
                             Row::new()
                                 .spacing(10)
                                 .align_items(Alignment::Center)
                                 .push(
-                                    Container::new(text("Select a hardware wallet:").bold())
+                                    Container::new(text("Select a signing device:").bold())
                                         .width(Length::Fill),
                                 )
                                 .push(
@@ -1126,19 +1227,34 @@ pub fn edit_key_modal<'a>(
                                 ))
                             },
                         ))
-                        .width(Length::Fill)
-                } else {
-                    Column::new()
                         .push(
-                            Row::new()
-                                .spacing(15)
-                                .width(Length::Fill)
-                                .push(text("Connect a hardware wallet").bold().width(Length::Fill))
-                                .push(button::border(None, "Refresh").on_press(Message::Reload))
-                                .align_items(Alignment::Center),
+                            Button::new(
+                                Row::new()
+                                    .padding(5)
+                                    .width(Length::Fill)
+                                    .align_items(Alignment::Center)
+                                    .push(
+                                        Column::new()
+                                            .spacing(5)
+                                            .push(text("This computer").bold())
+                                            .push(
+                                                text("Derive a key from a mnemonic stored on this computer").small(),
+                                            )
+                                            .width(Length::Fill),
+                                    )
+                                    .push_maybe(if chosen_signer {
+                                        Some(icon::circle_check_icon().style(color::SUCCESS))
+                                    } else {
+                                        None
+                                    })
+                                    .spacing(10),
+                            )
+                            .width(Length::Fill)
+                            .on_press(Message::UseHotSigner)
+                            .style(button::Style::Border.into()),
                         )
-                        .width(Length::Fill)
-                })
+                        .width(Length::Fill),
+                )
                 .push(
                     Column::new()
                         .spacing(5)
@@ -1299,6 +1415,157 @@ fn hw_list_view(
         .width(Length::Fill)
         .style(card::SimpleCardStyle)
         .into()
+}
+
+pub fn backup_mnemonic<'a>(
+    progress: (usize, usize),
+    words: &'a [&'static str; 12],
+    done: bool,
+) -> Element<'a, Message> {
+    layout(
+        progress,
+        Column::new()
+            .push(text("Backup your mnemonic").bold().size(50))
+            .push(text(prompt::MNEMONIC_HELP))
+            .push(
+                words
+                    .iter()
+                    .enumerate()
+                    .fold(Column::new().spacing(5), |acc, (i, w)| {
+                        acc.push(
+                            Row::new()
+                                .align_items(Alignment::End)
+                                .push(
+                                    Container::new(text(format!("#{}", i + 1)).small())
+                                        .width(Length::Units(50)),
+                                )
+                                .push(text(*w).bold()),
+                        )
+                    }),
+            )
+            .push(Checkbox::new(
+                "I have backed up my mnemonic",
+                done,
+                Message::UserActionDone,
+            ))
+            .push(if done {
+                button::primary(None, "Next")
+                    .on_press(Message::Next)
+                    .width(Length::Units(200))
+            } else {
+                button::primary(None, "Next").width(Length::Units(200))
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(100)
+            .spacing(50)
+            .align_items(Alignment::Center),
+    )
+}
+
+pub fn recover_mnemonic<'a>(
+    progress: (usize, usize),
+    words: &'a [(String, bool); 12],
+    current: usize,
+    suggestions: &'a Vec<String>,
+    recover: bool,
+    error: Option<&'a String>,
+) -> Element<'a, Message> {
+    layout(
+        progress,
+        Column::new()
+            .push(text("Mnemonics import").bold().size(50))
+            .push(text(prompt::RECOVER_MNEMONIC_HELP))
+            .push_maybe(if recover {
+                Some(
+                    Column::new()
+                        .align_items(Alignment::Center)
+                        .push(
+                            Container::new(if !suggestions.is_empty() {
+                                suggestions.iter().fold(Row::new().spacing(5), |row, sugg| {
+                                    row.push(
+                                        Button::new(text(sugg))
+                                            .style(button::Style::Border.into())
+                                            .on_press(Message::MnemonicWord(
+                                                current,
+                                                sugg.to_string(),
+                                            )),
+                                    )
+                                })
+                            } else {
+                                Row::new()
+                            })
+                            // Fixed height in order to not move words list
+                            .height(Length::Units(50)),
+                        )
+                        .push(words.iter().enumerate().fold(
+                            Column::new().spacing(5),
+                            |acc, (i, (word, valid))| {
+                                acc.push(
+                                    Row::new()
+                                        .spacing(10)
+                                        .align_items(Alignment::Center)
+                                        .push(
+                                            Container::new(text(format!("#{}", i + 1)).small())
+                                                .width(Length::Units(50)),
+                                        )
+                                        .push(
+                                            Container::new(TextInput::new("", word, move |msg| {
+                                                Message::MnemonicWord(i, msg)
+                                            }))
+                                            .width(Length::Units(100)),
+                                        )
+                                        .push_maybe(if *valid {
+                                            Some(icon::circle_check_icon().style(color::SUCCESS))
+                                        } else {
+                                            None
+                                        }),
+                                )
+                            },
+                        ))
+                        .push(Space::with_height(Length::Units(50)))
+                        .push_maybe(error.map(|e| card::invalid(text(e).style(color::ALERT)))),
+                )
+            } else {
+                None
+            })
+            .push(if !recover {
+                Row::new()
+                    .spacing(10)
+                    .push(
+                        button::border(None, "Import mnemonic")
+                            .on_press(Message::ImportMnemonic(true))
+                            .width(Length::Units(200)),
+                    )
+                    .push(
+                        button::primary(None, "Skip")
+                            .on_press(Message::Skip)
+                            .width(Length::Units(200)),
+                    )
+            } else {
+                Row::new()
+                    .spacing(10)
+                    .push(
+                        button::border(None, "Cancel")
+                            .on_press(Message::ImportMnemonic(false))
+                            .width(Length::Units(200)),
+                    )
+                    .push(
+                        if words.iter().any(|(_, valid)| !valid) || error.is_some() {
+                            button::primary(None, "Next").width(Length::Units(200))
+                        } else {
+                            button::primary(None, "Next")
+                                .on_press(Message::Next)
+                                .width(Length::Units(200))
+                        },
+                    )
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(100)
+            .spacing(50)
+            .align_items(Alignment::Center),
+    )
 }
 
 fn layout<'a>(

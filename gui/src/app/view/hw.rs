@@ -74,12 +74,11 @@ pub fn hw_list_view(
             })
             .push_maybe(if signed {
                 Some(
-                    Column::new().push(
-                        Row::new()
-                            .spacing(5)
-                            .push(icon::circle_check_icon().style(color::SUCCESS))
-                            .push(text("Signed").style(color::SUCCESS)),
-                    ),
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .spacing(5)
+                        .push(icon::circle_check_icon().style(color::SUCCESS))
+                        .push(text("Signed").style(color::SUCCESS)),
                 )
             } else {
                 None

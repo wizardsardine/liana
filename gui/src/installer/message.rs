@@ -16,11 +16,13 @@ pub enum Message {
     Exit(PathBuf),
     Clibpboard(String),
     Next,
+    Skip,
     Previous,
     Install,
     Close,
     Reload,
     Select(usize),
+    UseHotSigner,
     Installed(Result<PathBuf, Error>),
     Network(Network),
     DefineBitcoind(DefineBitcoind),
@@ -28,6 +30,8 @@ pub enum Message {
     ImportXpub(usize, Result<DescriptorPublicKey, Error>),
     ConnectedHardwareWallets(Vec<HardwareWallet>),
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
+    MnemonicWord(usize, String),
+    ImportMnemonic(bool),
 }
 
 #[derive(Debug, Clone)]
