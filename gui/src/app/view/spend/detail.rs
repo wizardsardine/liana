@@ -212,6 +212,7 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
         .push_maybe(match tx.status {
             SpendStatus::Deprecated => Some(badge::deprecated()),
             SpendStatus::Broadcast => Some(badge::unconfirmed()),
+            SpendStatus::Spent => Some(badge::spent()),
             _ => None,
         })
         .push(

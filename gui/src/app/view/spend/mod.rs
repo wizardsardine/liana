@@ -158,6 +158,7 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                 .push_maybe(match tx.status {
                     SpendStatus::Deprecated => Some(badge::deprecated()),
                     SpendStatus::Broadcast => Some(badge::unconfirmed()),
+                    SpendStatus::Spent => Some(badge::spent()),
                     _ => None,
                 })
                 .push(
