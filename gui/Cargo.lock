@@ -145,9 +145,9 @@ dependencies = [
 
 [[package]]
 name = "async-hwi"
-version = "0.0.3"
+version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5df769ed2ee66f45f290602647bfb48f7c652d6d8bb9dd8eb104fdfb0ac48919"
+checksum = "b3b6805d43fc4b11c8f2a16f0aa8dca5b8b8702c3a23aa0a1a2ec1b42c98ebb7"
 dependencies = [
  "async-trait",
  "base64",

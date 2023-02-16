@@ -151,48 +151,57 @@ pub async fn list_hardware_wallets(
             debug!("{}", e);
         }
     }
-    match ledger::Ledger::try_connect_hid() {
-        Ok(mut device) => match device.get_master_fingerprint().await {
-            Ok(fingerprint) => {
-                if let Some((name, descriptor)) = wallet {
-                    device
-                        .load_wallet(
-                            name,
-                            descriptor,
-                            cfg.iter()
-                                .find(|cfg| cfg.fingerprint == fingerprint.to_string())
-                                .map(|cfg| cfg.token()),
-                        )
-                        .expect("Configuration must be correct");
-                }
-
-                let version = device.get_version().await.ok();
-                if ledger_version_supported(version.as_ref()) {
-                    hws.push(HardwareWallet::Supported {
-                        kind: device.device_kind(),
-                        fingerprint,
-                        device: Arc::new(device),
-                        version,
-                    });
-                } else {
-                    hws.push(HardwareWallet::Unsupported {
-                        kind: device.device_kind(),
-                        version,
-                        message: "Minimal supported app version is 2.1.0".to_string(),
-                    });
-                }
-            }
-            Err(_) => {
-                hws.push(HardwareWallet::Unsupported {
-                    kind: device.device_kind(),
-                    version: None,
-                    message: "Minimal supported app version is 2.1.0".to_string(),
-                });
-            }
-        },
-        Err(HWIError::DeviceNotFound) => {}
+    match ledger::HidApi::new() {
         Err(e) => {
             debug!("{}", e);
+        }
+        Ok(api) => {
+            for detected in ledger::Ledger::<ledger::TransportHID>::enumerate(&api) {
+                match ledger::Ledger::<ledger::TransportHID>::connect(&api, detected) {
+                    Ok(mut device) => match device.get_master_fingerprint().await {
+                        Ok(fingerprint) => {
+                            if let Some((name, descriptor)) = wallet {
+                                device
+                                    .load_wallet(
+                                        name,
+                                        descriptor,
+                                        cfg.iter()
+                                            .find(|cfg| cfg.fingerprint == fingerprint.to_string())
+                                            .map(|cfg| cfg.token()),
+                                    )
+                                    .expect("Configuration must be correct");
+                            }
+
+                            let version = device.get_version().await.ok();
+                            if ledger_version_supported(version.as_ref()) {
+                                hws.push(HardwareWallet::Supported {
+                                    kind: device.device_kind(),
+                                    fingerprint,
+                                    device: Arc::new(device),
+                                    version,
+                                });
+                            } else {
+                                hws.push(HardwareWallet::Unsupported {
+                                    kind: device.device_kind(),
+                                    version,
+                                    message: "Minimal supported app version is 2.1.0".to_string(),
+                                });
+                            }
+                        }
+                        Err(_) => {
+                            hws.push(HardwareWallet::Unsupported {
+                                kind: device.device_kind(),
+                                version: None,
+                                message: "Minimal supported app version is 2.1.0".to_string(),
+                            });
+                        }
+                    },
+                    Err(HWIError::DeviceNotFound) => {}
+                    Err(e) => {
+                        debug!("{}", e);
+                    }
+                }
+            }
         }
     }
     hws
