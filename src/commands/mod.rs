@@ -129,7 +129,10 @@ fn check_output_value(value: bitcoin::Amount) -> Result<(), CommandError> {
 
 // Apply some sanity checks on a created transaction's PSBT.
 // TODO: add more sanity checks from revault_tx
-fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
+fn sanity_check_psbt(
+    spent_desc: &descriptors::MultipathDescriptor,
+    psbt: &Psbt,
+) -> Result<(), CommandError> {
     let tx = &psbt.unsigned_tx;
 
     // Must have as many in/out in the PSBT and Bitcoin tx.
@@ -161,7 +164,7 @@ fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
     }
 
     // Check the feerate isn't insane.
-    let tx_vb = tx.vsize() as u64;
+    let tx_vb = (tx.vsize() + spent_desc.max_sat_vbytes() * tx.input.len()) as u64;
     let feerate_sats_vb = abs_fee
         .checked_div(tx_vb)
         .ok_or_else(|| CommandError::SanityCheckFailure(psbt.clone()))?;
@@ -466,7 +469,7 @@ impl DaemonControl {
             inputs: psbt_ins,
             outputs: psbt_outs,
         };
-        sanity_check_psbt(&psbt)?;
+        sanity_check_psbt(&self.config.main_descriptor, &psbt)?;
         // TODO: maybe check for common standardness rules (max size, ..)?
 
         Ok(CreateSpendResult { psbt })
@@ -742,7 +745,7 @@ impl DaemonControl {
         })?;
         psbt.unsigned_tx.output[0].value = output_value.to_sat();
 
-        sanity_check_psbt(&psbt)?;
+        sanity_check_psbt(&self.config.main_descriptor, &psbt)?;
 
         Ok(CreateRecoveryResult { psbt })
     }
@@ -949,6 +952,10 @@ mod tests {
         let res = control.create_spend(&destinations, &[dummy_op], 2).unwrap();
         let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.output[1].value, 89_658);
+
+        // A feerate of 555 won't trigger the sanity checks (they were previously not taking the
+        // satisfaction size into account and overestimating the feerate).
+        control.create_spend(&destinations, &[dummy_op], 555).unwrap();
 
         // If we ask for a too high feerate, or a too large/too small output, it'll fail.
         assert_eq!(
