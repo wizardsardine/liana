@@ -6,6 +6,7 @@ mod view;
 
 use iced::{clipboard, Command, Element, Subscription};
 use liana::miniscript::bitcoin;
+use tracing::{error, info, warn};
 
 use context::Context;
 use std::io::Write;
@@ -141,15 +142,15 @@ impl Installer {
                 data_dir.push(self.context.bitcoin_config.network.to_string());
                 // In case of failure during install, block the thread to
                 // deleted the data_dir/network directory in order to start clean again.
-                log::warn!("Installation failed. Cleaning up the leftover data directory.");
+                warn!("Installation failed. Cleaning up the leftover data directory.");
                 if let Err(e) = std::fs::remove_dir_all(&data_dir) {
-                    log::error!(
+                    error!(
                         "Failed to completely delete the data directory (path: '{}'): {}",
                         data_dir.to_string_lossy(),
                         e
                     );
                 } else {
-                    log::warn!(
+                    warn!(
                         "Successfully deleted data directory at '{}'.",
                         data_dir.to_string_lossy()
                     );
@@ -208,18 +209,19 @@ pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
 }
 
 pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
-    log::info!("installing");
     let mut cfg: liana::config::Config = ctx.extract_daemon_config();
-    daemon_check(cfg.clone())?;
-    log::info!("daemon checked");
-
-    cfg.data_dir =
-        Some(cfg.data_dir.unwrap().canonicalize().map_err(|e| {
+    let data_dir =
+        cfg.data_dir.unwrap().canonicalize().map_err(|e| {
             Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e))
-        })?);
+        })?;
+    cfg.data_dir = Some(data_dir.clone());
 
-    let mut datadir_path = cfg.data_dir.clone().unwrap();
-    datadir_path.push(cfg.bitcoin_config.network.to_string());
+    daemon_check(cfg.clone())?;
+
+    info!("daemon checked");
+
+    let mut network_datadir_path = data_dir;
+    network_datadir_path.push(cfg.bitcoin_config.network.to_string());
 
     // Step needed because of ValueAfterTable error in the toml serialize implementation.
     let daemon_config = toml::Value::try_from(&cfg)
@@ -227,12 +229,12 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
 
     // create lianad configuration file
     let daemon_config_path = create_and_write_file(
-        datadir_path.clone(),
+        network_datadir_path.clone(),
         "daemon.toml",
         daemon_config.to_string().as_bytes(),
     )?;
 
-    log::info!("Daemon configuration file created");
+    info!("Daemon configuration file created");
 
     if let Some(signer) = &ctx.signer {
         signer
@@ -242,12 +244,12 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
             )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
-        log::info!("Hot signer mnemonic stored");
+        info!("Hot signer mnemonic stored");
     }
 
     // create liana GUI configuration file
     let gui_config_path = create_and_write_file(
-        datadir_path.clone(),
+        network_datadir_path.clone(),
         gui_config::DEFAULT_FILE_NAME,
         toml::to_string(&gui_config::Config::new(
             daemon_config_path.canonicalize().map_err(|e| {
@@ -258,19 +260,19 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
         .as_bytes(),
     )?;
 
-    log::info!("Gui configuration file created");
+    info!("Gui configuration file created");
 
     // create liana GUI settings file
     let settings: gui_settings::Settings = ctx.extract_gui_settings();
     create_and_write_file(
-        datadir_path,
+        network_datadir_path,
         gui_settings::DEFAULT_FILE_NAME,
         serde_json::to_string_pretty(&settings)
             .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
             .as_bytes(),
     )?;
 
-    log::info!("Settings file created");
+    info!("Settings file created");
 
     Ok(gui_config_path)
 }

@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::{clipboard, time, Command, Element, Subscription};
+use tracing::{info, warn};
 
 pub use liana::config::Config as DaemonConfig;
 
@@ -98,12 +99,12 @@ impl App {
     }
 
     pub fn stop(&mut self) {
-        log::info!("Close requested");
+        info!("Close requested");
         if !self.daemon.is_external() {
-            log::info!("Stopping internal daemon...");
+            info!("Stopping internal daemon...");
             if let Some(d) = Arc::get_mut(&mut self.daemon) {
                 d.stop().expect("Daemon is internal");
-                log::info!("Internal daemon stopped");
+                info!("Internal daemon stopped");
             }
         }
     }
@@ -165,7 +166,7 @@ impl App {
         daemon_config_file
             .write_all(content.as_bytes())
             .map_err(|e| {
-                log::warn!("failed to write to file: {:?}", e);
+                warn!("failed to write to file: {:?}", e);
                 Error::Config(e.to_string())
             })?;
 
