@@ -172,7 +172,7 @@ impl State for Home {
             Message::View(view::Message::Next) => {
                 if let Some(last) = self.events.last() {
                     let daemon = daemon.clone();
-                    let last_event_date = last.time.unwrap() as u32;
+                    let last_event_date = last.time.unwrap();
                     return Command::perform(
                         async move {
                             let mut limit = view::home::HISTORY_EVENT_PAGE_SIZE;
@@ -284,7 +284,7 @@ impl State for ReceivePanel {
             match res {
                 Ok(address) => {
                     self.warning = None;
-                    self.qr_code = Some(qr_code::State::new(&address.to_qr_uri()).unwrap());
+                    self.qr_code = Some(qr_code::State::new(address.to_qr_uri()).unwrap());
                     self.address = Some(address);
                 }
                 Err(e) => self.warning = Some(e),
