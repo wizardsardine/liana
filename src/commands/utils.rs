@@ -15,12 +15,16 @@ where
     Ok(bitcoin::Amount::from_sat(a))
 }
 
+pub fn to_base64_string<T: consensus::Encodable>(t: T) -> String {
+    base64::encode(consensus::serialize(&t))
+}
+
 pub fn ser_base64<S, T>(t: T, s: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
     T: consensus::Encodable,
 {
-    s.serialize_str(&base64::encode(consensus::serialize(&t)))
+    s.serialize_str(&to_base64_string(t))
 }
 
 pub fn deser_base64<'de, D, T>(d: D) -> Result<T, D::Error>

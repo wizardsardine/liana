@@ -10,7 +10,10 @@ use crate::{
     descriptors, DaemonControl, VERSION,
 };
 
-use utils::{deser_amount_from_sats, deser_base64, deser_hex, ser_amount, ser_base64, ser_hex};
+use utils::{
+    deser_amount_from_sats, deser_base64, deser_hex, ser_amount, ser_base64, ser_hex,
+    to_base64_string,
+};
 
 use std::{
     collections::{hash_map, BTreeMap, HashMap},
@@ -54,6 +57,7 @@ pub enum CommandError {
         /* out value */ bitcoin::Amount,
         /* target feerate */ u64,
     ),
+    InsaneFees(InsaneFeeInfo),
     FetchingTransaction(bitcoin::OutPoint),
     SanityCheckFailure(Psbt),
     UnknownSpend(bitcoin::Txid),
@@ -86,13 +90,26 @@ impl fmt::Display for CommandError {
                 "Cannot create a {} sat/vb transaction with input value {} and output value {}",
                 feerate, in_val, out_val
             ),
+            Self::InsaneFees(info) => write!(
+                f,
+                "We assume transactions with a fee larger than {} sats or a feerate larger than {} sats/vb are a mistake. \
+                The created transaction {}.",
+                MAX_FEE,
+                MAX_FEERATE,
+                match info {
+                    InsaneFeeInfo::NegativeFee => "would have a negative fee".to_string(),
+                    InsaneFeeInfo::TooHighFee(f) => format!("{} sats in fees", f),
+                    InsaneFeeInfo::InvalidFeerate => "would have an invalid feerate".to_string(),
+                    InsaneFeeInfo::TooHighFeerate(r) => format!("has a feerate of {} sats/vb", r),
+                },
+            ),
             Self::FetchingTransaction(op) => {
                 write!(f, "Could not fetch transaction for coin {}", op)
             }
             Self::SanityCheckFailure(psbt) => write!(
                 f,
-                "BUG! Please report this. Failed sanity checks for PSBT '{:?}'.",
-                psbt
+                "BUG! Please report this. Failed sanity checks for PSBT '{}'.",
+                to_base64_string(psbt)
             ),
             Self::UnknownSpend(txid) => write!(f, "Unknown spend transaction '{}'.", txid),
             Self::SpendFinalization(e) => {
@@ -127,9 +144,20 @@ fn check_output_value(value: bitcoin::Amount) -> Result<(), CommandError> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InsaneFeeInfo {
+    NegativeFee,
+    InvalidFeerate,
+    TooHighFee(u64),
+    TooHighFeerate(u64),
+}
+
 // Apply some sanity checks on a created transaction's PSBT.
 // TODO: add more sanity checks from revault_tx
-fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
+fn sanity_check_psbt(
+    spent_desc: &descriptors::MultipathDescriptor,
+    psbt: &Psbt,
+) -> Result<(), CommandError> {
     let tx = &psbt.unsigned_tx;
 
     // Must have as many in/out in the PSBT and Bitcoin tx.
@@ -155,18 +183,20 @@ fn sanity_check_psbt(psbt: &Psbt) -> Result<(), CommandError> {
     let value_out: u64 = tx.output.iter().map(|o| o.value).sum();
     let abs_fee = value_in
         .checked_sub(value_out)
-        .ok_or_else(|| CommandError::SanityCheckFailure(psbt.clone()))?;
+        .ok_or_else(|| CommandError::InsaneFees(InsaneFeeInfo::NegativeFee))?;
     if abs_fee > MAX_FEE {
-        return Err(CommandError::SanityCheckFailure(psbt.clone()));
+        return Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFee(abs_fee)));
     }
 
     // Check the feerate isn't insane.
-    let tx_vb = tx.vsize() as u64;
+    let tx_vb = (tx.vsize() + spent_desc.max_sat_vbytes() * tx.input.len()) as u64;
     let feerate_sats_vb = abs_fee
         .checked_div(tx_vb)
-        .ok_or_else(|| CommandError::SanityCheckFailure(psbt.clone()))?;
+        .ok_or_else(|| CommandError::InsaneFees(InsaneFeeInfo::InvalidFeerate))?;
     if !(1..=MAX_FEERATE).contains(&feerate_sats_vb) {
-        return Err(CommandError::SanityCheckFailure(psbt.clone()));
+        return Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(
+            feerate_sats_vb,
+        )));
     }
 
     // Check for dust outputs
@@ -439,6 +469,9 @@ impl DaemonControl {
             let with_change_feerate_vb = absolute_fee.to_sat().checked_div(with_change_vb).unwrap();
 
             if with_change_feerate_vb > feerate_vb {
+                // TODO: try first with the exact feerate, then try again with 90% of the feerate
+                // if it fails. Otherwise with small transactions and large feerates it's possible
+                // the feerate increase from the target be dramatically higher.
                 let target_fee = with_change_vb.checked_mul(feerate_vb).unwrap();
                 let change_amount = absolute_fee
                     .checked_sub(bitcoin::Amount::from_sat(target_fee))
@@ -466,7 +499,7 @@ impl DaemonControl {
             inputs: psbt_ins,
             outputs: psbt_outs,
         };
-        sanity_check_psbt(&psbt)?;
+        sanity_check_psbt(&self.config.main_descriptor, &psbt)?;
         // TODO: maybe check for common standardness rules (max size, ..)?
 
         Ok(CreateSpendResult { psbt })
@@ -742,7 +775,7 @@ impl DaemonControl {
         })?;
         psbt.unsigned_tx.output[0].value = output_value.to_sat();
 
-        sanity_check_psbt(&psbt)?;
+        sanity_check_psbt(&self.config.main_descriptor, &psbt)?;
 
         Ok(CreateRecoveryResult { psbt })
     }
@@ -950,6 +983,12 @@ mod tests {
         let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.output[1].value, 89_658);
 
+        // A feerate of 555 won't trigger the sanity checks (they were previously not taking the
+        // satisfaction size into account and overestimating the feerate).
+        control
+            .create_spend(&destinations, &[dummy_op], 555)
+            .unwrap();
+
         // If we ask for a too high feerate, or a too large/too small output, it'll fail.
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 10_000),
@@ -1017,6 +1056,28 @@ mod tests {
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 1),
             Err(CommandError::AlreadySpent(dummy_op))
+        );
+
+        // We'd bail out if they tried to create a transaction with a too high feerate.
+        let dummy_op_dup = bitcoin::OutPoint {
+            txid: dummy_op.txid,
+            vout: dummy_op.vout + 10,
+        };
+        db_conn.new_unspent_coins(&[Coin {
+            outpoint: dummy_op_dup,
+            block_height: None,
+            block_time: None,
+            amount: bitcoin::Amount::from_sat(400_000),
+            derivation_index: bip32::ChildNumber::from(42),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+        }]);
+        assert_eq!(
+            control.create_spend(&destinations, &[dummy_op_dup], 1_001),
+            Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(
+                1001
+            )))
         );
 
         ms.shutdown();
