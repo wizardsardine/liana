@@ -11,7 +11,9 @@ use liana::{
             util::bip32::{ChildNumber, DerivationPath, Fingerprint},
             Network,
         },
-        descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
+        descriptor::{
+            DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, DescriptorXKey, Wildcard,
+        },
     },
 };
 
@@ -168,7 +170,7 @@ impl DefineDescriptor {
         let update_mapping =
             |keys: &[DescriptorKey], mapping: &mut HashMap<Fingerprint, ChildNumber>| {
                 for key in keys {
-                    if let Some(DescriptorPublicKey::MultiXPub(key)) = key.key.as_ref() {
+                    if let Some(DescriptorPublicKey::XPub(key)) = key.key.as_ref() {
                         if let Some((fingerprint, derivation_path)) = key.origin.as_ref() {
                             let index = if derivation_path.len() >= 4 {
                                 if derivation_path[0].to_string() == "48'" {
@@ -345,34 +347,50 @@ impl Step for DefineDescriptor {
         let mut signer_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
         for spending_key in self.spending_keys.iter().clone() {
-            if let Some(key) = spending_key.key.as_ref() {
-                if let DescriptorPublicKey::MultiXPub(xpub) = key {
-                    if let Some((master_fingerprint, _)) = xpub.origin {
-                        ctx.keys.push(KeySetting {
-                            master_fingerprint,
-                            name: spending_key.name.clone(),
-                        });
-                    }
+            if let Some(DescriptorPublicKey::XPub(xpub)) = spending_key.key.as_ref() {
+                if let Some((master_fingerprint, _)) = xpub.origin {
+                    ctx.keys.push(KeySetting {
+                        master_fingerprint,
+                        name: spending_key.name.clone(),
+                    });
                 }
-                spending_keys.push(key.clone());
+                let xpub = DescriptorMultiXKey {
+                    origin: xpub.origin.clone(),
+                    xkey: xpub.xkey,
+                    derivation_paths: DerivPaths::new(vec![
+                        DerivationPath::from_str("m/0").unwrap(),
+                        DerivationPath::from_str("m/1").unwrap(),
+                    ])
+                    .unwrap(),
+                    wildcard: Wildcard::Unhardened,
+                };
+                spending_keys.push(DescriptorPublicKey::MultiXPub(xpub));
             }
         }
 
         let mut recovery_keys: Vec<DescriptorPublicKey> = Vec::new();
         for recovery_key in self.recovery_keys.iter().clone() {
-            if let Some(key) = recovery_key.key.as_ref() {
-                if let DescriptorPublicKey::MultiXPub(xpub) = key {
-                    if let Some((master_fingerprint, _)) = xpub.origin {
-                        ctx.keys.push(KeySetting {
-                            master_fingerprint,
-                            name: recovery_key.name.clone(),
-                        });
-                        if master_fingerprint == self.signer.fingerprint() {
-                            signer_is_used = true;
-                        }
+            if let Some(DescriptorPublicKey::XPub(xpub)) = recovery_key.key.as_ref() {
+                if let Some((master_fingerprint, _)) = xpub.origin {
+                    ctx.keys.push(KeySetting {
+                        master_fingerprint,
+                        name: recovery_key.name.clone(),
+                    });
+                    if master_fingerprint == self.signer.fingerprint() {
+                        signer_is_used = true;
                     }
                 }
-                recovery_keys.push(key.clone());
+                let xpub = DescriptorMultiXKey {
+                    origin: xpub.origin.clone(),
+                    xkey: xpub.xkey,
+                    derivation_paths: DerivPaths::new(vec![
+                        DerivationPath::from_str("m/0").unwrap(),
+                        DerivationPath::from_str("m/1").unwrap(),
+                    ])
+                    .unwrap(),
+                    wildcard: Wildcard::Unhardened,
+                };
+                recovery_keys.push(DescriptorPublicKey::MultiXPub(xpub));
             }
         }
 
@@ -581,9 +599,7 @@ impl EditXpubModal {
             },
             form_xpub: form::Value {
                 valid: true,
-                value: key
-                    .map(|k| k.to_string().trim_end_matches("/<0;1>/*").to_string())
-                    .unwrap_or_else(|| "".to_string()),
+                value: key.map(|k| k.to_string()).unwrap_or_else(String::new),
             },
             keys_aliases,
             account_indexes,
@@ -645,9 +661,7 @@ impl DescriptorKeyModal for EditXpubModal {
             }
             Message::ConnectedHardwareWallets(hws) => {
                 self.hws = hws;
-                if let Ok(key) =
-                    DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", self.form_xpub.value))
-                {
+                if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
                     self.chosen_hw = self
                         .hws
                         .iter()
@@ -697,8 +711,7 @@ impl DescriptorKeyModal for EditXpubModal {
                         }
                         self.chosen_signer = false;
                         self.form_xpub.valid = true;
-                        self.form_xpub.value =
-                            key.to_string().trim_end_matches("/<0;1>/*").to_string();
+                        self.form_xpub.value = key.to_string();
                     }
                     Err(e) => {
                         self.chosen_hw = None;
@@ -714,9 +727,7 @@ impl DescriptorKeyModal for EditXpubModal {
                 self.form_name.value = name;
             }
             Message::DefineDescriptor(message::DefineDescriptor::XPubEdited(s)) => {
-                if let Ok(DescriptorPublicKey::MultiXPub(key)) =
-                    DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", s))
-                {
+                if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&s) {
                     if let Some((fingerprint, _)) = key.origin {
                         self.form_xpub.valid = true;
                         if let Some(alias) = self.keys_aliases.get(&fingerprint) {
@@ -735,9 +746,7 @@ impl DescriptorKeyModal for EditXpubModal {
                 self.form_xpub.value = s;
             }
             Message::DefineDescriptor(message::DefineDescriptor::ConfirmXpub) => {
-                if let Ok(key) =
-                    DescriptorPublicKey::from_str(&format!("{}/<0;1>/*", self.form_xpub.value))
-                {
+                if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
                     let key_index = self.key_index;
                     let is_recovery = self.is_recovery;
                     let name = self.form_name.value.clone();
@@ -795,14 +804,10 @@ async fn get_extended_pubkey(
         .get_extended_pubkey(&derivation_path, false)
         .await
         .map_err(Error::from)?;
-    Ok(DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
+    Ok(DescriptorPublicKey::XPub(DescriptorXKey {
         origin: Some((fingerprint, derivation_path)),
-        derivation_paths: DerivPaths::new(vec![
-            DerivationPath::from_str("m/0").unwrap(),
-            DerivationPath::from_str("m/1").unwrap(),
-        ])
-        .unwrap(),
-        wildcard: Wildcard::Unhardened,
+        derivation_path: DerivationPath::master(),
+        wildcard: Wildcard::None,
         xkey,
     }))
 }
@@ -835,8 +840,7 @@ impl HardwareWalletXpubs {
             Ok(xpub) => {
                 self.error = None;
                 self.next_account = self.next_account.increment().unwrap();
-                self.xpubs
-                    .push(xpub.to_string().trim_end_matches("/<0;1>/*").to_string());
+                self.xpubs.push(xpub.to_string());
             }
         }
     }
@@ -908,7 +912,7 @@ impl SignerXpubs {
         let derivation_path = generate_derivation_path(network, self.next_account);
         self.next_account = self.next_account.increment().unwrap();
         self.xpubs.push(format!(
-            "[{}{}]{}/<0;1>/*",
+            "[{}{}]{}",
             self.signer.fingerprint(),
             derivation_path.to_string().trim_start_matches('m'),
             self.signer.get_extended_pubkey(&derivation_path)
