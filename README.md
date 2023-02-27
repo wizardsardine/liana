@@ -14,10 +14,14 @@ heir the secondary one. It can also be leveraged for recovery where a single per
 but different tradeoffs can be made between the backup(s) of the directly accessible and timelocked
 keys.
 
-Liana is still under heavy development. Apart from the regular wallet features that are planned, we
-intend to implement the possibility to have multiple keys per spending path (multisig) as well as
-multiple timelocked paths (for instance for decaying multisigs). We also intend to switch to using
-Taproot as soon as possible, for enhanced privacy.
+Learn more about Liana from our [announcement blog
+post](https://wizardsardine.com/blog/liana-announcement/) and about how it was enhanced with
+Multisig from our [second release post](https://wizardsardine.com/blog/liana-0.2-release/).
+
+Liana is still under heavy development. Multisig support was implemented in the second release.
+Regular wallet features are also planned. In addition we intend to implement the possibility to have
+multiple timelocked paths (for instance for more powerful decaying multisigs). We also intend to
+switch to using Taproot as soon as possible, for enhanced privacy.
 
 **As such please consider Liana to be beta software.**
 
@@ -44,8 +48,8 @@ build the project from source, see [`doc/BUILD.md`](doc/BUILD.md) instead.
 
 Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
 executable for your platform. If you are not sure what is the "right" executable for your platform,
-choose `liana-0.2.exe` if you are on Windows, `liana-0.2.dmg` if you are on MacOS and
-`liana-0.2-x86_64-linux-gnu.tar.gz` if you are on Linux.
+choose `liana-0.3.exe` if you are on Windows, `liana-0.3.dmg` if you are on MacOS and
+`liana-0.3-x86_64-linux-gnu.tar.gz` if you are on Linux.
 
 For every file available on the release page, there is an accompanying `.asc` file with the same
 name. This is a GPG signature made with Antoine Poinsot's key:
@@ -54,8 +58,8 @@ as on [his Twitter profile](https://twitter.com/darosior) or his [personal
 website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
 against this key.
 
-Note that we do not codesign ("notarize") the released binaries for now. Windows or macOS may
-prevent you from installing the software. On macOS, you would get a warning saying the developer of
+Note that we do not codesign ("notarize") the released binaries for now. Windows or MacOS may
+prevent you from installing the software. On MacOS, you would get a warning saying the developer of
 this application couldn't be verified. This is because we didn't register with Apple prior to
 releasing the application. Make sure you verified the GPG signature of the download, then add an
 exception for Liana by following the steps from [this Apple support
@@ -103,18 +107,19 @@ timelock (the only type of timelocks supported for now), time starts ticking whe
 payment. That is if you want the recovery path to never be available, each coin must be spent
 at least once every `N` blocks. (With `N` the configured value of the timelock.)
 
-For now, only the Ledger and Specter DIY signing devices are supported, as Miniscript compatibility
-of the signer is a must. We expect more signing devices to implement Miniscript capability. We may
-add the possibility to use Liana as a "hot" wallet in the future (i.e. with a private key directly
-on the laptop). For more information, please read the
-[signing devices documentation](./doc/signing_devices.md).
+Liana can be used as a hot wallet. Note that mnemonics would be stored in clear on your drive. We
+strongly recommend using a hardware signing device for any non-trivial amount.
 
-If you are using a Ledger device, make sure to install the currently latest version of the Bitcoin
-application: `2.1.0`. This is the minimum supported version, as it's the first one to introduce
-support for Miniscript.
+For now, only the Ledger and Specter DIY signing devices are supported, as Miniscript compatibility
+of the signer is a must. We expect more signing devices to implement Miniscript capability. For more
+information, please read the [signing devices documentation](./doc/signing_devices.md).
+
+If you are using a Ledger device, the minimum supported version of the Bitcoin application is
+`2.1.0`. You may have to tweak with the Ledger Live options in order to install it for now, see the
+instructions [here](./doc/signing_devices.md).
 
 If you are using the GUI, it should be intuitive what menu to use depending on your intention. If it
-is not, bug report are very welcome so [feel free to report it](https://github.com/wizardsardine/liana/issues)! :)
+is not, bug reports are very welcome so [feel free to report it](https://github.com/wizardsardine/liana/issues)! :)
 
 If you are using the daemon, you can use the `liana-cli` binary to send commands to it. It will need
 the path to the same configuration as the daemon. You can find a full documentation of the JSONRPC
@@ -123,18 +128,18 @@ API exposed by `lianad` at [`doc/API.md`](doc/API.md). For instance:
 $ liana-cli --conf ./testnet_config.toml getinfo
 {
   "result": {
-    "blockheight": 2406973,
+    "block_height": 131880,
     "descriptors": {
       "main": {
-        "change_desc": "wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/1/*),and_v(v:pkh(tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/1/*),older(2))))#5rx53ql7",
-        "multi_desc": "wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/<0;1>/*),and_v(v:pkh(tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/<0;1>/*),older(2))))#uact7s3g",
-        "receive_desc": "wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/0/*),and_v(v:pkh(tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/0/*),older(2))))#d693mvvd"
+        "change_desc": "wsh(or_d(pk([0bb79a6c/48'/1'/0'/2']tpubDEfKGhwubP97F3gqfvrSHmqEqLTaeBJvyY5byWuzFTuShnj7WWrG4bZMWxAiva2qoGc9DZWERczuvBqbRAB7vEiyEHqjLLctZ7Tif27EGu3/1/*),and_v(v:pkh([0bb79a6c/48'/1'/1'/2']tpubDFYpQER7bt8M2ByvNBmhThcVp5p4QrEV72dHVczXukDbjFPPMFVPy5hYqHKp3TtLaESbYpM2FCH1oECai6GKiMuv5bkomPy9zhtBGgBRkQs/1/*),older(2))))#x0xv2zce",
+        "multi_desc": "wsh(or_d(pk([0bb79a6c/48'/1'/0'/2']tpubDEfKGhwubP97F3gqfvrSHmqEqLTaeBJvyY5byWuzFTuShnj7WWrG4bZMWxAiva2qoGc9DZWERczuvBqbRAB7vEiyEHqjLLctZ7Tif27EGu3/<0;1>/*),and_v(v:pkh([0bb79a6c/48'/1'/1'/2']tpubDFYpQER7bt8M2ByvNBmhThcVp5p4QrEV72dHVczXukDbjFPPMFVPy5hYqHKp3TtLaESbYpM2FCH1oECai6GKiMuv5bkomPy9zhtBGgBRkQs/<0;1>/*),older(2))))#jqhwaq75",
+        "receive_desc": "wsh(or_d(pk([0bb79a6c/48'/1'/0'/2']tpubDEfKGhwubP97F3gqfvrSHmqEqLTaeBJvyY5byWuzFTuShnj7WWrG4bZMWxAiva2qoGc9DZWERczuvBqbRAB7vEiyEHqjLLctZ7Tif27EGu3/0/*),and_v(v:pkh([0bb79a6c/48'/1'/1'/2']tpubDFYpQER7bt8M2ByvNBmhThcVp5p4QrEV72dHVczXukDbjFPPMFVPy5hYqHKp3TtLaESbYpM2FCH1oECai6GKiMuv5bkomPy9zhtBGgBRkQs/0/*),older(2))))#eesy8k0q"
       }
     },
-    "network": "testnet",
+    "network": "signet",
     "rescan_progress": null,
     "sync": 1.0,
-    "version": "0.2"
+    "version": "0.3.0"
   }
 }
 ```
