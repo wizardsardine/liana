@@ -14,10 +14,14 @@ heir the secondary one. It can also be leveraged for recovery where a single per
 but different tradeoffs can be made between the backup(s) of the directly accessible and timelocked
 keys.
 
-Liana is still under heavy development. Apart from the regular wallet features that are planned, we
-intend to implement the possibility to have multiple keys per spending path (multisig) as well as
-multiple timelocked paths (for instance for decaying multisigs). We also intend to switch to using
-Taproot as soon as possible, for enhanced privacy.
+Learn more about Liana from our [announcement blog
+post](https://wizardsardine.com/blog/liana-announcement/) and about how it was enhanced with
+Multisig from our [second release post](https://wizardsardine.com/blog/liana-0.2-release/).
+
+Liana is still under heavy development. Multisig support was implemented in the second release.
+Regular wallet features are also planned. In addition we intend to implement the possibility to have
+multiple timelocked paths (for instance for more powerful decaying multisigs). We also intend to
+switch to using Taproot as soon as possible, for enhanced privacy.
 
 **As such please consider Liana to be beta software.**
 
