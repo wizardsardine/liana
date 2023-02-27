@@ -1,5 +1,28 @@
 # Liana daemon and GUI release notes
 
+## 0.3
+
+A small release which brings some fixes as well as the possibility to use Liana as a "hot wallet".
+
+### Features
+
+- Hot keys: users can now generate and sign with keys that are stored on the device. It is
+  recommended to be only used for testing for now.
+
+#### GUI-specific
+
+- It is now possible to use multiple signing device of the same type without having to first connect
+  one then the other.
+
+### Fixes
+
+- When used as a daemon the `lianad` process had its PID and logs file mixed up. This is now fixed.
+- We fixed the transaction creation sanity check that was overestimating the transaction fee.
+
+#### GUI-specific
+
+- In the installer flow, extended keys are now shared without the `/<0;1>/*` suffix.
+
 ## 0.2
 
 The second release of Liana brings various fixes as well as the possibility to use a multisig in
