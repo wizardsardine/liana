@@ -10,17 +10,13 @@ hardware signing device you can use the [Specter
 simulator](https://github.com/cryptoadvance/specter-diy/blob/master/docs/simulator.md) or the
 [Ledger "Speculos" emulator](https://github.com/LedgerHQ/speculos).
 
-This guide mostly assumes you are running a 64-bit Linux.
-
-TODO: adapt the guide to Windows and MacOS.
-
 
 ## Step 0: preparation
 
 ### System dependencies
 
 Here is a list of the system dependencies: the tools and libraries you need to have installed on
-your system to follow the guide.
+your system to follow the guide if you are running Linux.
 
 TL;DR:
 - Debian/Ubuntu: `apt install curl gpg libfontconfig1-dev libudev-dev`
@@ -43,7 +39,7 @@ To run the GUI you will need some additional libraries:
 ### Throwaway folder
 
 You can follow the guide from any folder of your choice. We recommend using a dedicated folder you
-can wipe easily:
+can wipe easily. On Linux:
 ```
 mkdir liana_quicktry
 cd liana_quicktry
@@ -55,6 +51,10 @@ cd liana_quicktry
 Liana needs `bitcoind` to communicate with the Bitcoin network. Minimum supported version is 24.0.1.
 
 ### Download
+
+The following instructions are specific to Linux (they may work on MacOS but i'm not sure). For
+other platforms refer to
+[https://bitcoincore.org/en/download/#verify-your-download](https://bitcoincore.org/en/download).
 
 1. Download the `bitcoind` binary from [the official website of the Bitcoin Core
 project](https://bitcoincore.org/bin/bitcoin-core-24.0.1/) according to your platform (in the context
@@ -81,25 +81,21 @@ gpg --verify SHA256SUMS.asc
 tar -xzf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
 ```
 
-For details on verifying your download, or for verifying the download on a non-Linux machine refer
-to
-[https://bitcoincore.org/en/download/#verify-your-download](https://bitcoincore.org/en/download/#verify-your-download).
-
 ### Start `bitcoind` on signet
 
-Run `bitcoind` in the background on the public signet network.
+Run `bitcoind` in the background on the public signet network. On Linux:
 ```
 ./bitcoin-24.0.1/bin/bitcoind -signet -daemon
 ```
 
 If it is the first time you start a signet Bitcoin on this machine it will take a few minutes to
 synchronize (depends on your connection and hardware of course, but it shouldn't take longer than a
-handful of minutes). You can track the progress using the `getblockchaininfo` command:
+handful of minutes). You can track the progress using the `getblockchaininfo` command. On Linux:
 ```
 ./bitcoin-24.0.1/bin/bitcoin-cli -signet getblockchaininfo
 ```
 
-You do not need to wait for full synchronisation before moving on to the next step.
+**You do not need to wait for full synchronisation before moving on to the next step.**
 
 
 ## Step 2: start Liana
