@@ -125,7 +125,7 @@ If you are using the daemon, you can use the `liana-cli` binary to send commands
 the path to the same configuration as the daemon. You can find a full documentation of the JSONRPC
 API exposed by `lianad` at [`doc/API.md`](doc/API.md). For instance:
 ```
-$ liana-cli --conf ./testnet_config.toml getinfo
+$ liana-cli --conf ./signet_config.toml getinfo
 {
   "result": {
     "block_height": 131880,

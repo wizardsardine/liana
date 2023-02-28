@@ -2,6 +2,8 @@
 
 > *Just give me the TL;DR!*
 
+*(Updated on February the 28th of 2023)*
+
 This document is a short set of instructions for trying out Liana on Bitcoin signet. It does not attempt to
 give any nuance, details or describe alternative configurations.
 
@@ -21,7 +23,7 @@ your system to follow the guide if you are running Linux.
 TL;DR:
 - Debian/Ubuntu: `apt install curl gpg libfontconfig1-dev libudev-dev`
 - Arch Linux: check if you have all the required packages: `pacman -Q coreutils tar curl gnupg fontconfig systemd-libs`.
-If any is listed as "was not found", get it with `pacman -Sy [missing package name]`
+If any is listed as "was not found", get it with `pacman -S [missing package name]`
 - Other distribution: see the link to projects below to search for the name of your distribution's packages.
 
 We'll use basic tools which should already be present on your system, such as:
