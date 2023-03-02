@@ -70,9 +70,9 @@ curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-li
 sha256sum --ignore-missing --check SHA256SUMS
 ```
 
-3. Verify the signature against a key you trust. The Bitcoin Core Github repo contains [a
-list](https://github.com/bitcoin/bitcoin/blob/master/contrib/builder-keys/keys.txt) of frequent
-signers. Mine is `590B7292695AFFA5B672CBB2E13FC145CD3F4304`.
+3. Verify the signature against a key you trust. The Bitcoin Core Guix Attestations Github repo contains [a
+folder](https://github.com/bitcoin-core/guix.sigs) of signers for each release and a folder of their keys.
+Mine is `590B7292695AFFA5B672CBB2E13FC145CD3F4304`.
 ```
 gpg --keyserver hkps://keys.openpgp.org --receive 590B7292695AFFA5B672CBB2E13FC145CD3F4304
 gpg --verify SHA256SUMS.asc
