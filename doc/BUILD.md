@@ -78,6 +78,8 @@ $ ls target/release/
 build  deps  examples  incremental  liana-cli  liana-cli.d  lianad  lianad.d  libliana.d  libliana.rlib
 ```
 
+Depencies needed for build GUI can be found [there](https://github.com/wizardsardine/liana/tree/master/gui#dependencies)
+
 To build the GUI, do the same but in the [`gui/`](../gui/) folder present at the root of the
 repository:
 ```
@@ -86,3 +88,4 @@ $ cargo build --release
 $ ls target/release/
 build  deps  examples  incremental  liana-gui  liana-gui.d  libliana_gui.d  libliana_gui.rlib
 ```
+
