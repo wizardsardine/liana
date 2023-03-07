@@ -95,6 +95,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update &&
-          sudo apt-get install --allow-downgrades libudev-dev pkg-config libvulkan-dev &&
+          sudo apt-get install libudev-dev libfontconfig1-dev &&
           cd gui &&
           cargo test --verbose --color always -- --nocapture
