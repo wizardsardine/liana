@@ -5,8 +5,8 @@ use liana::miniscript::bitcoin::{
     hashes::hex::{FromHex, ToHex},
     util::bip32::Fingerprint,
 };
-use log::debug;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub enum HardwareWallet {

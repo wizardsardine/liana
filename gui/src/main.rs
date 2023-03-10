@@ -1,8 +1,10 @@
 #![windows_subsystem = "windows"]
 
-use std::{error::Error, path::PathBuf, str::FromStr};
+use std::{error::Error, io::Write, path::PathBuf, str::FromStr};
 
 use iced::{executor, Application, Command, Element, Settings, Subscription};
+use tracing::{error, info};
+use tracing_subscriber::filter::LevelFilter;
 extern crate serde;
 extern crate serde_json;
 
@@ -17,6 +19,7 @@ use liana_gui::{
     installer::{self, Installer},
     launcher::{self, Launcher},
     loader::{self, Loader},
+    logger::Logger,
 };
 
 #[derive(Debug, PartialEq)]
@@ -50,23 +53,9 @@ fn parse_args(args: Vec<String>) -> Result<Vec<Arg>, Box<dyn Error>> {
     Ok(res)
 }
 
-fn log_level_from_config(config: &app::Config) -> Result<log::LevelFilter, Box<dyn Error>> {
-    if let Some(level) = &config.log_level {
-        match level.as_ref() {
-            "info" => Ok(log::LevelFilter::Info),
-            "debug" => Ok(log::LevelFilter::Debug),
-            "trace" => Ok(log::LevelFilter::Trace),
-            _ => Err(format!("Unknown loglevel '{:?}'.", level).into()),
-        }
-    } else if let Some(true) = config.debug {
-        Ok(log::LevelFilter::Debug)
-    } else {
-        Ok(log::LevelFilter::Info)
-    }
-}
-
 pub struct GUI {
     state: State,
+    logger: Logger,
 }
 
 enum State {
@@ -88,9 +77,9 @@ pub enum Message {
 
 async fn ctrl_c() -> Result<(), ()> {
     if let Err(e) = tokio::signal::ctrl_c().await {
-        log::error!("{}", e);
+        error!("{}", e);
     };
-    log::info!("Signal received, exiting");
+    info!("Signal received, exiting");
     Ok(())
 }
 
@@ -108,21 +97,25 @@ impl Application for GUI {
     }
 
     fn new(config: Config) -> (GUI, Command<Self::Message>) {
+        let logger = Logger::setup(LevelFilter::INFO);
         match config {
             Config::Launcher(datadir_path) => {
                 let launcher = Launcher::new(datadir_path);
                 (
                     Self {
                         state: State::Launcher(Box::new(launcher)),
+                        logger,
                     },
                     Command::perform(ctrl_c(), |_| Message::CtrlC),
                 )
             }
             Config::Install(datadir_path, network) => {
+                logger.set_installer_mode(datadir_path.clone(), LevelFilter::INFO);
                 let (install, command) = Installer::new(datadir_path, network);
                 (
                     Self {
                         state: State::Installer(Box::new(install)),
+                        logger,
                     },
                     Command::batch(vec![
                         command.map(|msg| Message::Install(Box::new(msg))),
@@ -133,10 +126,16 @@ impl Application for GUI {
             Config::Run(datadir_path, cfg) => {
                 let daemon_cfg =
                     DaemonConfig::from_file(Some(cfg.daemon_config_path.clone())).unwrap();
+                logger.set_running_mode(
+                    datadir_path.clone(),
+                    daemon_cfg.bitcoin_config.network,
+                    cfg.log_level().unwrap_or(LevelFilter::INFO),
+                );
                 let (loader, command) = Loader::new(datadir_path, cfg, daemon_cfg);
                 (
                     Self {
                         state: State::Loader(Box::new(loader)),
+                        logger,
                     },
                     Command::batch(vec![
                         command.map(|msg| Message::Load(Box::new(msg))),
@@ -166,13 +165,20 @@ impl Application for GUI {
             }
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
                 launcher::Message::Install(datadir_path) => {
+                    self.logger
+                        .set_installer_mode(datadir_path.clone(), LevelFilter::INFO);
                     let (install, command) =
                         Installer::new(datadir_path, bitcoin::Network::Bitcoin);
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
                 launcher::Message::Run(datadir_path, cfg, daemon_cfg) => {
-                    let (loader, command) = Loader::new(Some(datadir_path), cfg, daemon_cfg);
+                    self.logger.set_running_mode(
+                        datadir_path.clone(),
+                        daemon_cfg.bitcoin_config.network,
+                        cfg.log_level().unwrap_or(LevelFilter::INFO),
+                    );
+                    let (loader, command) = Loader::new(datadir_path, cfg, daemon_cfg);
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 }
@@ -183,7 +189,19 @@ impl Application for GUI {
                     let cfg = app::Config::from_file(&path).unwrap();
                     let daemon_cfg =
                         DaemonConfig::from_file(Some(cfg.daemon_config_path.clone())).unwrap();
-                    let (loader, command) = Loader::new(None, cfg, daemon_cfg);
+                    let datadir_path = daemon_cfg
+                        .data_dir
+                        .as_ref()
+                        .expect("Installer must have set it")
+                        .clone();
+
+                    self.logger.set_running_mode(
+                        datadir_path.clone(),
+                        daemon_cfg.bitcoin_config.network,
+                        cfg.log_level().unwrap_or(LevelFilter::INFO),
+                    );
+                    self.logger.remove_install_log_file(datadir_path.clone());
+                    let (loader, command) = Loader::new(datadir_path, cfg, daemon_cfg);
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 } else {
@@ -192,9 +210,8 @@ impl Application for GUI {
             }
             (State::Loader(loader), Message::Load(msg)) => match *msg {
                 loader::Message::View(loader::ViewMessage::SwitchNetwork) => {
-                    self.state = State::Launcher(Box::new(Launcher::new(
-                        loader.datadir_path.clone().unwrap(),
-                    )));
+                    self.state =
+                        State::Launcher(Box::new(Launcher::new(loader.datadir_path.clone())));
                     Command::none()
                 }
                 loader::Message::Synced(Ok((wallet, cache, daemon))) => {
@@ -238,8 +255,7 @@ impl Application for GUI {
 }
 
 pub enum Config {
-    /// Datadir is optional because app can run with the config path only.
-    Run(Option<PathBuf>, app::Config),
+    Run(PathBuf, app::Config),
     Launcher(PathBuf),
     Install(PathBuf, bitcoin::Network),
 }
@@ -254,7 +270,7 @@ impl Config {
             path.push(network.to_string());
             path.push(app::config::DEFAULT_FILE_NAME);
             match app::Config::from_file(&path) {
-                Ok(cfg) => Ok(Config::Run(Some(datadir_path), cfg)),
+                Ok(cfg) => Ok(Config::Run(datadir_path, cfg)),
                 Err(ConfigError::NotFound) => Ok(Config::Install(datadir_path, network)),
                 Err(e) => Err(format!("Failed to read configuration file: {}", e).into()),
             }
@@ -277,7 +293,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             let datadir_path = default_datadir().unwrap();
             Config::new(datadir_path, Some(*network))
         }
-        [Arg::ConfigPath(path)] => Ok(Config::Run(None, app::Config::from_file(path)?)),
+        [Arg::ConfigPath(path)] => {
+            let cfg = app::Config::from_file(path)?;
+            let daemon_cfg = DaemonConfig::from_file(Some(cfg.daemon_config_path.clone()))?;
+            let datadir_path = daemon_cfg
+                .data_dir
+                .unwrap_or_else(|| default_datadir().unwrap());
+            Ok(Config::Run(datadir_path, cfg))
+        }
         [Arg::DatadirPath(datadir_path)] => Config::new(datadir_path.clone(), None),
         [Arg::DatadirPath(datadir_path), Arg::Network(network)]
         | [Arg::Network(network), Arg::DatadirPath(datadir_path)] => {
@@ -288,12 +311,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }?;
 
-    let level = if let Config::Run(_, cfg) = &config {
-        log_level_from_config(cfg)?
-    } else {
-        log::LevelFilter::Info
-    };
-    setup_logger(level)?;
+    setup_panic_hook();
 
     let mut settings = Settings::with_flags(config);
     settings.exit_on_close_request = false;
@@ -304,48 +322,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// This creates the log file automagically if it doesn't exist, and logs on stdout
-// if None is given
-pub fn setup_logger(log_level: log::LevelFilter) -> Result<(), fern::InitError> {
-    let dispatcher = fern::Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "[{}][{}][{}] {}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_else(|e| {
-                        println!("Can't get time since epoch: '{}'. Using a dummy value.", e);
-                        std::time::Duration::from_secs(0)
-                    })
-                    .as_secs(),
-                record.target(),
-                record.level(),
-                message
-            ))
-        })
-        .level(log_level)
-        .level_for("iced_wgpu", log::LevelFilter::Off)
-        .level_for("iced_winit", log::LevelFilter::Off)
-        .level_for("wgpu_core", log::LevelFilter::Off)
-        .level_for("wgpu_hal", log::LevelFilter::Off)
-        .level_for("gfx_backend_vulkan", log::LevelFilter::Off)
-        .level_for("iced_glutin", log::LevelFilter::Off)
-        .level_for("iced_glow", log::LevelFilter::Off)
-        .level_for("glow_glyph", log::LevelFilter::Off)
-        .level_for("naga", log::LevelFilter::Off)
-        .level_for(
-            "ledger_transport_hid",
-            if log_level == log::LevelFilter::Info {
-                log::LevelFilter::Off
-            } else {
-                log_level
-            },
-        )
-        .level_for("mio", log::LevelFilter::Off);
+// A panic in any thread should stop the main thread, and print the panic.
+fn setup_panic_hook() {
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let file = panic_info
+            .location()
+            .map(|l| l.file())
+            .unwrap_or_else(|| "'unknown'");
+        let line = panic_info
+            .location()
+            .map(|l| l.line().to_string())
+            .unwrap_or_else(|| "'unknown'".to_string());
 
-    dispatcher.chain(std::io::stdout()).apply()?;
+        let bt = backtrace::Backtrace::new();
+        let info = panic_info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| panic_info.payload().downcast_ref::<String>().cloned());
+        error!(
+            "panic occurred at line {} of file {}: {:?}\n{:?}",
+            line, file, info, bt
+        );
 
-    Ok(())
+        std::io::stdout().flush().expect("Flushing stdout");
+        std::process::exit(1);
+    }));
 }
 
 #[cfg(test)]

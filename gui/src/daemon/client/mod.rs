@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use log::{error, info};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tracing::{error, info};
 
 pub mod error;
 pub mod jsonrpc;

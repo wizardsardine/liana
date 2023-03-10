@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use chrono::prelude::*;
 use iced::{Command, Element};
+use tracing::info;
 
 use liana::config::{BitcoinConfig, BitcoindConfig, Config};
 
@@ -338,7 +339,7 @@ impl Setting for RescanSetting {
                 .and_hms(0, 0, 0);
                 let t = date_time.timestamp() as u32;
                 self.processing = true;
-                log::info!("Asking deamon to rescan with timestamp: {}", t);
+                info!("Asking deamon to rescan with timestamp: {}", t);
                 return Command::perform(
                     async move { daemon.start_rescan(t).map_err(|e| e.into()) },
                     Message::StartRescan,

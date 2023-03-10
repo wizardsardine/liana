@@ -1,6 +1,7 @@
 use crate::hw::HardwareWalletConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use tracing_subscriber::filter;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -38,12 +39,35 @@ impl Config {
                     ConfigError::ReadingFile(format!("Parsing configuration file: {}", e))
                 })
             })?;
+
+        // check if log_level field is valid
+        config.log_level()?;
         Ok(config)
+    }
+
+    /// TODO: Deserialize directly in the struct.
+    pub fn log_level(&self) -> Result<filter::LevelFilter, ConfigError> {
+        if let Some(level) = &self.log_level {
+            match level.as_ref() {
+                "info" => Ok(filter::LevelFilter::INFO),
+                "debug" => Ok(filter::LevelFilter::DEBUG),
+                "trace" => Ok(filter::LevelFilter::TRACE),
+                _ => Err(ConfigError::InvalidField(
+                    "log_level",
+                    format!("Unknown value '{}'", level),
+                )),
+            }
+        } else if let Some(true) = self.debug {
+            Ok(filter::LevelFilter::DEBUG)
+        } else {
+            Ok(filter::LevelFilter::INFO)
+        }
     }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum ConfigError {
+    InvalidField(&'static str, String),
     NotFound,
     ReadingFile(String),
     Unexpected(String),
@@ -53,6 +77,9 @@ impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::NotFound => write!(f, "Config file not found"),
+            Self::InvalidField(field, message) => {
+                write!(f, "Config field {} is invalid: {}", field, message)
+            }
             Self::ReadingFile(e) => write!(f, "Error while reading file: {}", e),
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
         }

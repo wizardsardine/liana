@@ -1,6 +1,6 @@
 use std::convert::From;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use iced::{
@@ -8,7 +8,7 @@ use iced::{
     Element,
 };
 use iced::{Alignment, Command, Length, Subscription};
-use log::{debug, info};
+use tracing::{debug, info};
 
 use liana::{
     config::{Config, ConfigError},
@@ -20,7 +20,7 @@ use liana::{
 use crate::{
     app::{
         cache::Cache,
-        config::{default_datadir, Config as GUIConfig},
+        config::Config as GUIConfig,
         settings::{self, Settings},
         wallet::Wallet,
     },
@@ -36,7 +36,7 @@ use crate::{
 type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
 
 pub struct Loader {
-    pub datadir_path: Option<PathBuf>,
+    pub datadir_path: PathBuf,
     pub network: bitcoin::Network,
     pub gui_config: GUIConfig,
     pub daemon_started: bool,
@@ -68,18 +68,15 @@ pub enum Message {
 
 impl Loader {
     pub fn new(
-        datadir_path: Option<PathBuf>,
+        datadir_path: PathBuf,
         gui_config: GUIConfig,
         daemon_config: Config,
     ) -> (Self, Command<Message>) {
-        let path = socket_path(
-            &daemon_config.data_dir,
-            daemon_config.bitcoin_config.network,
-        )
-        .unwrap();
+        let path = socket_path(&datadir_path, daemon_config.bitcoin_config.network);
+        let network = daemon_config.bitcoin_config.network;
         (
             Loader {
-                network: daemon_config.bitcoin_config.network,
+                network,
                 datadir_path,
                 daemon_config: daemon_config.clone(),
                 gui_config,
@@ -171,13 +168,13 @@ impl Loader {
     }
 
     pub fn stop(&mut self) {
-        log::info!("Close requested");
+        info!("Close requested");
         if let Step::Syncing { daemon, .. } = &mut self.step {
             if !daemon.is_external() {
-                log::info!("Stopping internal daemon...");
+                info!("Stopping internal daemon...");
                 if let Some(d) = Arc::get_mut(daemon) {
                     d.stop().expect("Daemon is internal");
-                    log::info!("Internal daemon stopped");
+                    info!("Internal daemon stopped");
                 } else {
                 }
             }
@@ -215,7 +212,7 @@ impl Loader {
     }
 
     pub fn view(&self) -> Element<Message> {
-        view(self.datadir_path.as_ref(), &self.step).map(Message::View)
+        view(&self.step).map(Message::View)
     }
 }
 
@@ -223,7 +220,7 @@ pub async fn load_application(
     daemon: Arc<dyn Daemon + Sync + Send>,
     info: GetInfoResult,
     gui_config: GUIConfig,
-    datadir_path: Option<PathBuf>,
+    datadir_path: PathBuf,
     network: bitcoin::Network,
 ) -> Result<(Arc<Wallet>, Cache, Arc<dyn Daemon + Sync + Send>), Error> {
     let coins = daemon.list_coins().map(|res| res.coins)?;
@@ -235,7 +232,7 @@ pub async fn load_application(
         spend_txs,
         ..Default::default()
     };
-    let settings_path = settings_path(&datadir_path, network).unwrap();
+    let settings_path = settings_path(&datadir_path, network);
     let gui_config_hws = gui_config
         .hardware_wallets
         .as_ref()
@@ -258,7 +255,7 @@ pub async fn load_application(
         Err(e) => return Err(e.into()),
     };
 
-    let hot_signers = match HotSigner::from_datadir(&get_datadir_path(&datadir_path)?, network) {
+    let hot_signers = match HotSigner::from_datadir(&datadir_path, network) {
         Ok(signers) => signers,
         Err(e) => match e {
             liana::signer::SignerError::MnemonicStorage(e) => {
@@ -290,7 +287,7 @@ pub enum ViewMessage {
     SwitchNetwork,
 }
 
-pub fn view<'a>(datadir_path: Option<&'a PathBuf>, step: &'a Step) -> Element<'a, ViewMessage> {
+pub fn view(step: &Step) -> Element<ViewMessage> {
     match &step {
         Step::StartingDaemon => cover(
             None,
@@ -333,10 +330,10 @@ pub fn view<'a>(datadir_path: Option<&'a PathBuf>, step: &'a Step) -> Element<'a
                 .push(
                     Row::new()
                         .spacing(10)
-                        .push_maybe(datadir_path.map(|_| {
+                        .push(
                             button::border(None, "Use another Bitcoin network")
-                                .on_press(ViewMessage::SwitchNetwork)
-                        }))
+                                .on_press(ViewMessage::SwitchNetwork),
+                        )
                         .push(
                             button::primary(None, "Retry")
                                 .width(Length::Units(200))
@@ -438,32 +435,18 @@ impl From<DaemonError> for Error {
     }
 }
 
-fn get_datadir_path(datadir_path: &Option<PathBuf>) -> Result<PathBuf, ConfigError> {
-    if let Some(ref datadir) = datadir_path {
-        Ok(datadir.clone())
-    } else {
-        default_datadir().map_err(|_| ConfigError::DatadirNotFound)
-    }
-}
-
 /// default lianad socket path is .liana/bitcoin/lianad_rpc
-fn socket_path(
-    datadir: &Option<PathBuf>,
-    network: bitcoin::Network,
-) -> Result<PathBuf, ConfigError> {
-    let mut path = get_datadir_path(datadir)?;
+fn socket_path(datadir: &Path, network: bitcoin::Network) -> PathBuf {
+    let mut path = datadir.to_path_buf();
     path.push(network.to_string());
     path.push("lianad_rpc");
-    Ok(path)
+    path
 }
 
 /// default liana settings path is .liana/bitcoin/settings.json
-fn settings_path(
-    datadir: &Option<PathBuf>,
-    network: bitcoin::Network,
-) -> Result<PathBuf, ConfigError> {
-    let mut path = get_datadir_path(datadir)?;
+fn settings_path(datadir: &Path, network: bitcoin::Network) -> PathBuf {
+    let mut path = datadir.to_path_buf();
     path.push(network.to_string());
     path.push(settings::DEFAULT_FILE_NAME);
-    Ok(path)
+    path
 }

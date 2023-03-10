@@ -31,7 +31,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
 
-use log::debug;
+use tracing::debug;
 
 /// A handle to a remote JSONRPC server
 #[derive(Debug, Clone)]
