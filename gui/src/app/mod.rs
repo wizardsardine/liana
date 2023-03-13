@@ -11,6 +11,7 @@ mod error;
 
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -138,7 +139,10 @@ impl App {
                 )
             }
             Message::LoadDaemonConfig(cfg) => {
-                let res = self.load_daemon_config(*cfg);
+                let path = self.config.daemon_config_path.clone().expect(
+                    "Application config must have a daemon configuration file path at this point.",
+                );
+                let res = self.load_daemon_config(&path, *cfg);
                 self.update(Message::DaemonConfigLoaded(res))
             }
             Message::View(view::Message::Menu(menu)) => self.load_state(&menu),
@@ -147,7 +151,11 @@ impl App {
         }
     }
 
-    pub fn load_daemon_config(&mut self, cfg: DaemonConfig) -> Result<(), Error> {
+    pub fn load_daemon_config(
+        &mut self,
+        daemon_config_path: &PathBuf,
+        cfg: DaemonConfig,
+    ) -> Result<(), Error> {
         loop {
             if let Some(daemon) = Arc::get_mut(&mut self.daemon) {
                 daemon.load_config(cfg)?;
@@ -157,7 +165,7 @@ impl App {
 
         let mut daemon_config_file = OpenOptions::new()
             .write(true)
-            .open(&self.config.daemon_config_path)
+            .open(daemon_config_path)
             .map_err(|e| Error::Config(e.to_string()))?;
 
         let content =

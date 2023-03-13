@@ -69,13 +69,9 @@ impl Launcher {
                     path.push(network.to_string());
                     path.push(app::config::DEFAULT_FILE_NAME);
                     let cfg = app::Config::from_file(&path).expect("Already checked");
-                    let daemon_cfg =
-                        liana::config::Config::from_file(Some(cfg.daemon_config_path.clone()))
-                            .expect("Already checked");
-                    Command::perform(
-                        async move { (datadir_path.clone(), cfg, daemon_cfg) },
-                        |m| Message::Run(m.0, m.1, m.2),
-                    )
+                    Command::perform(async move { (datadir_path.clone(), cfg, network) }, |m| {
+                        Message::Run(m.0, m.1, m.2)
+                    })
                 }
             },
             _ => Command::none(),
@@ -157,7 +153,7 @@ pub enum Message {
     View(ViewMessage),
     Install(PathBuf),
     Checked(Result<Network, String>),
-    Run(PathBuf, app::config::Config, liana::config::Config),
+    Run(PathBuf, app::config::Config, Network),
 }
 
 #[derive(Debug, Clone)]
@@ -177,12 +173,13 @@ async fn check_network_datadir(mut path: PathBuf, network: Network) -> Result<Ne
         )
     })?;
 
-    liana::config::Config::from_file(Some(cfg.daemon_config_path.clone())).map_err(|e| match e {
+    if let Some(daemon_config_path) = cfg.daemon_config_path {
+        liana::config::Config::from_file(Some(daemon_config_path.clone())).map_err(|e| match e {
         ConfigError::FileNotFound
         | ConfigError::DatadirNotFound => {
             format!(
                 "Failed to read daemon configuration file in the directory: {}",
-                cfg.daemon_config_path.to_string_lossy()
+                daemon_config_path.to_string_lossy()
             )
         }
         ConfigError::ReadingFile(e) => {
@@ -191,7 +188,7 @@ async fn check_network_datadir(mut path: PathBuf, network: Network) -> Result<Ne
             } else {
                 format!(
                     "Failed to read daemon configuration file in the directory: {}",
-                    cfg.daemon_config_path.to_string_lossy()
+                    daemon_config_path.to_string_lossy()
                 )
             }
         }
@@ -205,6 +202,7 @@ async fn check_network_datadir(mut path: PathBuf, network: Network) -> Result<Ne
             )
         }
     })?;
+    }
 
     Ok(network)
 }

@@ -41,7 +41,6 @@ pub struct Loader {
     pub gui_config: GUIConfig,
     pub daemon_started: bool,
 
-    daemon_config: Config,
     step: Step,
 }
 
@@ -70,20 +69,22 @@ impl Loader {
     pub fn new(
         datadir_path: PathBuf,
         gui_config: GUIConfig,
-        daemon_config: Config,
+        network: bitcoin::Network,
     ) -> (Self, Command<Message>) {
-        let path = socket_path(&datadir_path, daemon_config.bitcoin_config.network);
-        let network = daemon_config.bitcoin_config.network;
+        let path = gui_config
+            .daemon_rpc_path
+            .clone()
+            .unwrap_or_else(|| socket_path(&datadir_path, network));
+        let network = network;
         (
             Loader {
                 network,
                 datadir_path,
-                daemon_config: daemon_config.clone(),
                 gui_config,
                 step: Step::Connecting,
                 daemon_started: false,
             },
-            Command::perform(connect(path, daemon_config), Message::Loaded),
+            Command::perform(connect(path), Message::Loaded),
         )
     }
 
@@ -103,12 +104,16 @@ impl Loader {
                 Error::Daemon(DaemonError::ClientNotSupported)
                 | Error::Daemon(DaemonError::Transport(Some(ErrorKind::ConnectionRefused), _))
                 | Error::Daemon(DaemonError::Transport(Some(ErrorKind::NotFound), _)) => {
-                    self.step = Step::StartingDaemon;
-                    self.daemon_started = true;
-                    return Command::perform(
-                        start_daemon(self.gui_config.daemon_config_path.clone()),
-                        Message::Started,
-                    );
+                    if let Some(daemon_config_path) = self.gui_config.daemon_config_path.clone() {
+                        self.step = Step::StartingDaemon;
+                        self.daemon_started = true;
+                        return Command::perform(
+                            start_daemon(daemon_config_path),
+                            Message::Started,
+                        );
+                    } else {
+                        self.step = Step::Error(Box::new(e));
+                    }
                 }
                 _ => {
                     self.step = Step::Error(Box::new(e));
@@ -187,7 +192,7 @@ impl Loader {
                 let (loader, cmd) = Self::new(
                     self.datadir_path.clone(),
                     self.gui_config.clone(),
-                    self.daemon_config.clone(),
+                    self.network,
                 );
                 *self = loader;
                 cmd
@@ -361,10 +366,7 @@ pub fn cover<'a, T: 'a + Clone, C: Into<Element<'a, T>>>(
         .into()
 }
 
-async fn connect(
-    socket_path: PathBuf,
-    _config: Config,
-) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
+async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
     let client = client::jsonrpc::JsonRPCClient::new(socket_path);
     let daemon = Lianad::new(client);
 
