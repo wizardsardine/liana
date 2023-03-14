@@ -123,15 +123,13 @@ impl Application for GUI {
                     ]),
                 )
             }
-            Config::Run(datadir_path, cfg) => {
-                let daemon_cfg =
-                    DaemonConfig::from_file(Some(cfg.daemon_config_path.clone())).unwrap();
+            Config::Run(datadir_path, cfg, network) => {
                 logger.set_running_mode(
                     datadir_path.clone(),
-                    daemon_cfg.bitcoin_config.network,
+                    network,
                     cfg.log_level().unwrap_or(LevelFilter::INFO),
                 );
-                let (loader, command) = Loader::new(datadir_path, cfg, daemon_cfg);
+                let (loader, command) = Loader::new(datadir_path, cfg, network);
                 (
                     Self {
                         state: State::Loader(Box::new(loader)),
@@ -172,13 +170,13 @@ impl Application for GUI {
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
-                launcher::Message::Run(datadir_path, cfg, daemon_cfg) => {
+                launcher::Message::Run(datadir_path, cfg, network) => {
                     self.logger.set_running_mode(
                         datadir_path.clone(),
-                        daemon_cfg.bitcoin_config.network,
+                        network,
                         cfg.log_level().unwrap_or(LevelFilter::INFO),
                     );
-                    let (loader, command) = Loader::new(datadir_path, cfg, daemon_cfg);
+                    let (loader, command) = Loader::new(datadir_path, cfg, network);
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 }
@@ -188,7 +186,7 @@ impl Application for GUI {
                 if let installer::Message::Exit(path) = *msg {
                     let cfg = app::Config::from_file(&path).unwrap();
                     let daemon_cfg =
-                        DaemonConfig::from_file(Some(cfg.daemon_config_path.clone())).unwrap();
+                        DaemonConfig::from_file(cfg.daemon_config_path.clone()).unwrap();
                     let datadir_path = daemon_cfg
                         .data_dir
                         .as_ref()
@@ -201,7 +199,8 @@ impl Application for GUI {
                         cfg.log_level().unwrap_or(LevelFilter::INFO),
                     );
                     self.logger.remove_install_log_file(datadir_path.clone());
-                    let (loader, command) = Loader::new(datadir_path, cfg, daemon_cfg);
+                    let (loader, command) =
+                        Loader::new(datadir_path, cfg, daemon_cfg.bitcoin_config.network);
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 } else {
@@ -255,7 +254,7 @@ impl Application for GUI {
 }
 
 pub enum Config {
-    Run(PathBuf, app::Config),
+    Run(PathBuf, app::Config, bitcoin::Network),
     Launcher(PathBuf),
     Install(PathBuf, bitcoin::Network),
 }
@@ -270,7 +269,7 @@ impl Config {
             path.push(network.to_string());
             path.push(app::config::DEFAULT_FILE_NAME);
             match app::Config::from_file(&path) {
-                Ok(cfg) => Ok(Config::Run(datadir_path, cfg)),
+                Ok(cfg) => Ok(Config::Run(datadir_path, cfg, network)),
                 Err(ConfigError::NotFound) => Ok(Config::Install(datadir_path, network)),
                 Err(e) => Err(format!("Failed to read configuration file: {}", e).into()),
             }
@@ -295,11 +294,36 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         [Arg::ConfigPath(path)] => {
             let cfg = app::Config::from_file(path)?;
-            let daemon_cfg = DaemonConfig::from_file(Some(cfg.daemon_config_path.clone()))?;
-            let datadir_path = daemon_cfg
-                .data_dir
-                .unwrap_or_else(|| default_datadir().unwrap());
-            Ok(Config::Run(datadir_path, cfg))
+            if let Some(daemon_config_path) = cfg.daemon_config_path.clone() {
+                let daemon_cfg = DaemonConfig::from_file(Some(daemon_config_path))?;
+                let datadir_path = daemon_cfg
+                    .data_dir
+                    .unwrap_or_else(|| default_datadir().unwrap());
+                Ok(Config::Run(
+                    datadir_path,
+                    cfg,
+                    daemon_cfg.bitcoin_config.network,
+                ))
+            } else {
+                Err("Application cannot guess network".into())
+            }
+        }
+        [Arg::ConfigPath(path), Arg::Network(network)]
+        | [Arg::Network(network), Arg::ConfigPath(path)] => {
+            let cfg = app::Config::from_file(path)?;
+            if let Some(daemon_config_path) = cfg.daemon_config_path.clone() {
+                let daemon_cfg = DaemonConfig::from_file(Some(daemon_config_path))?;
+                let datadir_path = daemon_cfg
+                    .data_dir
+                    .unwrap_or_else(|| default_datadir().unwrap());
+                Ok(Config::Run(
+                    datadir_path,
+                    cfg,
+                    daemon_cfg.bitcoin_config.network,
+                ))
+            } else {
+                Ok(Config::Run(default_datadir().unwrap(), cfg, *network))
+            }
         }
         [Arg::DatadirPath(datadir_path)] => Config::new(datadir_path.clone(), None),
         [Arg::DatadirPath(datadir_path), Arg::Network(network)]

@@ -6,7 +6,9 @@ use tracing_subscriber::filter;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     /// Path to lianad configuration file.
-    pub daemon_config_path: PathBuf,
+    pub daemon_config_path: Option<PathBuf>,
+    /// Path to lianad_rpc socket file.
+    pub daemon_rpc_path: Option<PathBuf>,
     /// log level, can be "info", "debug", "trace".
     pub log_level: Option<String>,
     /// Use iced debug feature if true.
@@ -21,7 +23,8 @@ pub const DEFAULT_FILE_NAME: &str = "gui.toml";
 impl Config {
     pub fn new(daemon_config_path: PathBuf) -> Self {
         Self {
-            daemon_config_path,
+            daemon_config_path: Some(daemon_config_path),
+            daemon_rpc_path: None,
             log_level: None,
             debug: None,
             hardware_wallets: None,
