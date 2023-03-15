@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use liana::{
     config::Config as DaemonConfig,
     miniscript::bitcoin::{
@@ -7,7 +9,7 @@ use liana::{
 };
 
 use crate::{
-    app::{error::Error, view},
+    app::{error::Error, view, wallet::Wallet},
     daemon::model::*,
     hw::HardwareWallet,
 };
@@ -18,6 +20,8 @@ pub enum Message {
     View(view::Message),
     LoadDaemonConfig(Box<DaemonConfig>),
     DaemonConfigLoaded(Result<(), Error>),
+    LoadWallet,
+    WalletLoaded(Result<Arc<Wallet>, Error>),
     Info(Result<GetInfoResult, Error>),
     ReceiveAddress(Result<Address, Error>),
     Coins(Result<Vec<Coin>, Error>),
@@ -25,6 +29,7 @@ pub enum Message {
     Psbt(Result<Psbt, Error>),
     Recovery(Result<SpendTx, Error>),
     Signed(Result<(Psbt, Fingerprint), Error>),
+    WalletRegistered(Result<Fingerprint, Error>),
     Updated(Result<(), Error>),
     Saved(Result<(), Error>),
     StartRescan(Result<(), Error>),

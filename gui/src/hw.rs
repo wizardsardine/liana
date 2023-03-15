@@ -58,15 +58,15 @@ impl HardwareWallet {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HardwareWalletConfig {
     pub kind: String,
-    pub fingerprint: String,
+    pub fingerprint: Fingerprint,
     pub token: String,
 }
 
 impl HardwareWalletConfig {
-    pub fn new(kind: &async_hwi::DeviceKind, fingerprint: &Fingerprint, token: &[u8; 32]) -> Self {
+    pub fn new(kind: &async_hwi::DeviceKind, fingerprint: Fingerprint, token: &[u8; 32]) -> Self {
         Self {
             kind: kind.to_string(),
-            fingerprint: fingerprint.to_string(),
+            fingerprint,
             token: token.to_hex(),
         }
     }
@@ -116,7 +116,7 @@ pub async fn list_hardware_wallets(
                             name,
                             descriptor,
                             cfg.iter()
-                                .find(|cfg| cfg.fingerprint == fingerprint.to_string())
+                                .find(|cfg| cfg.fingerprint == fingerprint)
                                 .map(|cfg| cfg.token()),
                         )
                         .expect("Configuration must be correct");
@@ -166,7 +166,7 @@ pub async fn list_hardware_wallets(
                                         name,
                                         descriptor,
                                         cfg.iter()
-                                            .find(|cfg| cfg.fingerprint == fingerprint.to_string())
+                                            .find(|cfg| cfg.fingerprint == fingerprint)
                                             .map(|cfg| cfg.token()),
                                     )
                                     .expect("Configuration must be correct");

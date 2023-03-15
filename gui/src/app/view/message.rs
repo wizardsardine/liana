@@ -7,12 +7,13 @@ pub enum Message {
     Menu(Menu),
     Close,
     Select(usize),
-    Settings(usize, SettingsMessage),
+    Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
     Spend(SpendTxMessage),
     Next,
     Previous,
+    SelectHardwareWallet(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -41,7 +42,6 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectHotSigner,
-    SelectHardwareWallet(usize),
     EditPsbt,
     PsbtEdited(String),
     Next,
@@ -49,8 +49,17 @@ pub enum SpendTxMessage {
 
 #[derive(Debug, Clone)]
 pub enum SettingsMessage {
-    Edit,
+    EditBitcoindSettings,
+    EditWalletSettings,
+    AboutSection,
+    RegisterWallet,
+    Edit(usize, SettingsEditMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum SettingsEditMessage {
+    Select,
     FieldEdited(&'static str, String),
-    CancelEdit,
-    ConfirmEdit,
+    Cancel,
+    Confirm,
 }

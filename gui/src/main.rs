@@ -214,7 +214,13 @@ impl Application for GUI {
                     Command::none()
                 }
                 loader::Message::Synced(Ok((wallet, cache, daemon))) => {
-                    let (app, command) = App::new(cache, wallet, loader.gui_config.clone(), daemon);
+                    let (app, command) = App::new(
+                        cache,
+                        wallet,
+                        loader.gui_config.clone(),
+                        daemon,
+                        loader.datadir_path.clone(),
+                    );
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
                 }

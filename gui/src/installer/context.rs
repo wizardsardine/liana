@@ -56,7 +56,7 @@ impl Context {
             .filter_map(|(kind, fingerprint, token)| {
                 token
                     .as_ref()
-                    .map(|token| HardwareWalletConfig::new(kind, fingerprint, token))
+                    .map(|token| HardwareWalletConfig::new(kind, *fingerprint, token))
             })
             .collect();
         Settings {

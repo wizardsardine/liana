@@ -1,6 +1,13 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
-use crate::{hw::HardwareWalletConfig, signer::Signer};
+use crate::{
+    app::{config::Config, settings},
+    hw::HardwareWalletConfig,
+    signer::Signer,
+};
+
+use liana::{miniscript::bitcoin, signer::HotSigner};
 
 use liana::descriptors::MultipathDescriptor;
 use liana::miniscript::bitcoin::util::bip32::Fingerprint;
@@ -17,17 +24,7 @@ pub struct Wallet {
 }
 
 impl Wallet {
-    pub fn new(name: String, main_descriptor: MultipathDescriptor) -> Self {
-        Self {
-            name,
-            main_descriptor,
-            keys_aliases: HashMap::new(),
-            hardware_wallets: Vec::new(),
-            signer: None,
-        }
-    }
-
-    pub fn legacy(main_descriptor: MultipathDescriptor) -> Self {
+    pub fn new(main_descriptor: MultipathDescriptor) -> Self {
         Self {
             name: DEFAULT_WALLET_NAME.to_string(),
             main_descriptor,
@@ -62,5 +59,87 @@ impl Wallet {
             descriptor_keys.insert(*fingerprint);
         }
         descriptor_keys
+    }
+
+    pub fn descriptor_checksum(&self) -> String {
+        self.main_descriptor
+            .to_string()
+            .split_once('#')
+            .map(|(_, checksum)| checksum)
+            .unwrap()
+            .to_string()
+    }
+
+    pub fn load_settings(
+        self,
+        gui_config: &Config,
+        datadir_path: &Path,
+        network: bitcoin::Network,
+    ) -> Result<Self, WalletError> {
+        let gui_config_hws = gui_config
+            .hardware_wallets
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+
+        let mut wallet = match settings::Settings::from_file(datadir_path.to_path_buf(), network) {
+            Ok(settings) => {
+                if let Some(wallet_setting) = settings.wallets.first() {
+                    self.with_hardware_wallets(wallet_setting.hardware_wallets.clone())
+                        .with_key_aliases(wallet_setting.keys_aliases())
+                } else {
+                    self.with_hardware_wallets(gui_config_hws)
+                }
+            }
+            Err(settings::SettingsError::NotFound) => self.with_hardware_wallets(gui_config_hws),
+            Err(e) => return Err(e.into()),
+        };
+
+        let hot_signers = match HotSigner::from_datadir(datadir_path, network) {
+            Ok(signers) => signers,
+            Err(e) => match e {
+                liana::signer::SignerError::MnemonicStorage(e) => {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        Vec::new()
+                    } else {
+                        return Err(WalletError::HotSigner(e.to_string()));
+                    }
+                }
+                _ => return Err(WalletError::HotSigner(e.to_string())),
+            },
+        };
+
+        let curve = bitcoin::secp256k1::Secp256k1::signing_only();
+        let keys = wallet.descriptor_keys();
+        if let Some(hot_signer) = hot_signers
+            .into_iter()
+            .find(|s| keys.contains(&s.fingerprint(&curve)))
+        {
+            wallet = wallet.with_signer(Signer::new(hot_signer));
+        }
+
+        Ok(wallet)
+    }
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub enum WalletError {
+    Settings(settings::SettingsError),
+    HotSigner(String),
+}
+
+impl std::fmt::Display for WalletError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Settings(e) => write!(f, "Failed to load settings: {}", e),
+            Self::HotSigner(e) => write!(f, "Failed to load hot signer: {}", e),
+        }
+    }
+}
+
+impl From<settings::SettingsError> for WalletError {
+    fn from(error: settings::SettingsError) -> Self {
+        WalletError::Settings(error)
     }
 }

@@ -1,30 +1,120 @@
+use std::collections::HashSet;
 use std::str::FromStr;
 
 use iced::{
     alignment,
-    widget::{self, Column, Container, ProgressBar, Row, Space},
+    widget::{self, Button, Column, Container, ProgressBar, Row, Space},
     Alignment, Element, Length,
 };
 
-use liana::miniscript::bitcoin;
+use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Network};
 
-use super::{
-    dashboard,
-    message::{Message, SettingsMessage},
-};
+use super::{dashboard, message::*};
 
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu},
+    app::{
+        cache::Cache,
+        error::Error,
+        menu::Menu,
+        view::{hw, warning::warn},
+    },
+    hw::HardwareWallet,
     ui::{
         color,
-        component::{badge, button, card, form, separation, text::*},
+        component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
         icon,
         util::Collection,
     },
 };
 
-pub fn list<'a>(
-    lianad_version: Option<&'a String>,
+pub fn list(cache: &Cache) -> Element<Message> {
+    dashboard(
+        &Menu::Settings,
+        cache,
+        None,
+        Column::new()
+            .spacing(20)
+            .width(Length::Fill)
+            .push(
+                Button::new(text("Settings").size(30).bold())
+                    .style(button::Style::Transparent.into())
+                    .on_press(Message::Menu(Menu::Settings)))
+            .push(
+                Container::new(
+                    Button::new(
+                        Row::new()
+                            .push(badge::Badge::new(icon::bitcoin_icon()))
+                            .push(text("Bitcoind").bold())
+                            .padding(10)
+                            .spacing(20)
+                            .align_items(Alignment::Center)
+                            .width(Length::Fill),
+                    )
+                    .width(Length::Fill)
+                    .style(button::Style::Border.into())
+                    .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings))
+                )
+                .width(Length::Fill)
+                .style(card::SimpleCardStyle)
+            )
+            .push(
+                Container::new(
+                    Button::new(
+                        Row::new()
+                            .push(badge::Badge::new(icon::wallet_icon()))
+                            .push(text("Wallet").bold())
+                            .padding(10)
+                            .spacing(20)
+                            .align_items(Alignment::Center)
+                            .width(Length::Fill),
+                    )
+                    .width(Length::Fill)
+                    .style(button::Style::Border.into())
+                    .on_press(Message::Settings(SettingsMessage::EditWalletSettings))
+                )
+                .width(Length::Fill)
+                .style(card::SimpleCardStyle)
+            )
+            .push(
+                Container::new(
+                    Button::new(
+                        Row::new()
+                            .push(badge::Badge::new(icon::recovery_icon()))
+                            .push(text("Recovery").bold())
+                            .push(tooltip("In case of loss of the main key, the recovery key can move the funds after a certain time."))
+                            .padding(10)
+                            .spacing(20)
+                            .align_items(Alignment::Center)
+                            .width(Length::Fill),
+                    )
+                    .width(Length::Fill)
+                    .style(button::Style::Border.into())
+                    .on_press(Message::Menu(Menu::Recovery))
+                )
+                .width(Length::Fill)
+                .style(card::SimpleCardStyle)
+            )
+            .push(
+                Container::new(
+                    Button::new(
+                        Row::new()
+                            .push(badge::Badge::new(icon::tooltip_icon()))
+                            .push(text("About").bold())
+                            .padding(10)
+                            .spacing(20)
+                            .align_items(Alignment::Center)
+                            .width(Length::Fill),
+                    )
+                    .width(Length::Fill)
+                    .style(button::Style::Border.into())
+                    .on_press(Message::Settings(SettingsMessage::AboutSection))
+                )
+                .width(Length::Fill)
+                .style(card::SimpleCardStyle)
+            )
+    )
+}
+pub fn bitcoind_settings<'a>(
     cache: &'a Cache,
     warning: Option<&Error>,
     settings: Vec<Element<'a, Message>>,
@@ -33,36 +123,62 @@ pub fn list<'a>(
         &Menu::Settings,
         cache,
         warning,
-        widget::Column::with_children(settings)
+        Column::new()
             .spacing(20)
-            .push(card::simple(
-                Column::new()
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
                     .push(
-                        Row::new()
-                            .push(badge::Badge::new(icon::recovery_icon()))
-                            .push(text("Recovery").bold())
-                            .padding(10)
-                            .spacing(20)
-                            .align_items(Alignment::Center)
-                            .width(Length::Fill),
+                        Button::new(text("Settings").size(30).bold())
+                            .style(button::Style::Transparent.into())
+                            .on_press(Message::Menu(Menu::Settings)),
                     )
-                    .push(separation().width(Length::Fill))
-                    .push(Space::with_height(Length::Units(10)))
-                    .push(text("In case of loss of the main key, the recovery key can move the funds after a certain time."))
-                    .push(Space::with_height(Length::Units(10)))
+                    .push(icon::chevron_right().size(30))
                     .push(
-                        Row::new()
-                            .push(Space::with_width(Length::Fill))
-                            .push(button::primary(None, "Recover funds").on_press(Message::Menu(Menu::Recovery))),
+                        Button::new(text("Bitcoind").size(30).bold())
+                            .style(button::Style::Transparent.into())
+                            .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings)),
                     ),
-            ))
+            )
+            .push(widget::Column::with_children(settings).spacing(20)),
+    )
+}
+
+pub fn about_section<'a>(
+    cache: &'a Cache,
+    warning: Option<&Error>,
+    lianad_version: Option<&String>,
+) -> Element<'a, Message> {
+    dashboard(
+        &Menu::Settings,
+        cache,
+        warning,
+        Column::new()
+            .spacing(20)
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(
+                        Button::new(text("Settings").size(30).bold())
+                            .style(button::Style::Transparent.into())
+                            .on_press(Message::Menu(Menu::Settings)),
+                    )
+                    .push(icon::chevron_right().size(30))
+                    .push(
+                        Button::new(text("About").size(30).bold())
+                            .style(button::Style::Transparent.into())
+                            .on_press(Message::Settings(SettingsMessage::AboutSection)),
+                    ),
+            )
             .push(
                 card::simple(
                     Column::new()
                         .push(
                             Row::new()
                                 .push(badge::Badge::new(icon::tooltip_icon()))
-                                .push(text("About").bold())
+                                .push(text("Version").bold())
                                 .padding(10)
                                 .spacing(20)
                                 .align_items(Alignment::Center)
@@ -71,22 +187,28 @@ pub fn list<'a>(
                         .push(separation().width(Length::Fill))
                         .push(Space::with_height(Length::Units(10)))
                         .push(
-                            Row::new().push(Space::with_width(Length::Fill)).push(Column::new()
-                                .push(text(format!("liana-gui v{}", crate::VERSION)))
-                                .push_maybe(lianad_version.map(|version| text(format!("lianad v{}", version)))))
-                        )
-                ).width(Length::Fill)
-            )
+                            Row::new().push(Space::with_width(Length::Fill)).push(
+                                Column::new()
+                                    .push(text(format!("liana-gui v{}", crate::VERSION)))
+                                    .push_maybe(
+                                        lianad_version
+                                            .map(|version| text(format!("lianad v{}", version))),
+                                    ),
+                            ),
+                        ),
+                )
+                .width(Length::Fill),
+            ),
     )
 }
 
 pub fn bitcoind_edit<'a>(
-    network: bitcoin::Network,
+    network: Network,
     blockheight: i32,
     addr: &form::Value<String>,
     cookie_path: &form::Value<String>,
     processing: bool,
-) -> Element<'a, SettingsMessage> {
+) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
     if blockheight != 0 {
         col = col
@@ -124,7 +246,7 @@ pub fn bitcoind_edit<'a>(
                 .push(text("Cookie file path:").bold().small())
                 .push(
                     form::Form::new("Cookie file path", cookie_path, |value| {
-                        SettingsMessage::FieldEdited("cookie_file_path", value)
+                        SettingsEditMessage::FieldEdited("cookie_file_path", value)
                     })
                     .warning("Please enter a valid filesystem path")
                     .size(20)
@@ -137,7 +259,7 @@ pub fn bitcoind_edit<'a>(
                 .push(text("Socket address:").bold().small())
                 .push(
                     form::Form::new("Socket address:", addr, |value| {
-                        SettingsMessage::FieldEdited("socket_address", value)
+                        SettingsEditMessage::FieldEdited("socket_address", value)
                     })
                     .warning("Please enter a valid address")
                     .size(20)
@@ -149,8 +271,8 @@ pub fn bitcoind_edit<'a>(
     let mut cancel_button = button::transparent(None, " Cancel ").padding(5);
     let mut confirm_button = button::primary(None, " Save ").padding(5);
     if !processing {
-        cancel_button = cancel_button.on_press(SettingsMessage::CancelEdit);
-        confirm_button = confirm_button.on_press(SettingsMessage::ConfirmEdit);
+        cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
+        confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
     }
 
     card::simple(Container::new(
@@ -184,12 +306,12 @@ pub fn bitcoind_edit<'a>(
 }
 
 pub fn bitcoind<'a>(
-    network: bitcoin::Network,
+    network: Network,
     config: &liana::config::BitcoindConfig,
     blockheight: i32,
     is_running: Option<bool>,
     can_edit: bool,
-) -> Element<'a, SettingsMessage> {
+) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
     if blockheight != 0 {
         col = col
@@ -254,7 +376,7 @@ pub fn bitcoind<'a>(
                     .push(if can_edit {
                         widget::Button::new(icon::pencil_icon())
                             .style(button::Style::TransparentBorder.into())
-                            .on_press(SettingsMessage::Edit)
+                            .on_press(SettingsEditMessage::Select)
                     } else {
                         widget::Button::new(icon::pencil_icon())
                             .style(button::Style::TransparentBorder.into())
@@ -299,7 +421,7 @@ pub fn rescan<'a>(
     success: bool,
     processing: bool,
     can_edit: bool,
-) -> Element<'a, SettingsMessage> {
+) -> Element<'a, SettingsEditMessage> {
     card::simple(Container::new(
         Column::new()
             .push(
@@ -332,7 +454,7 @@ pub fn rescan<'a>(
                                 .push(text("Year:").bold().small())
                                 .push(
                                     form::Form::new("2022", year, |value| {
-                                        SettingsMessage::FieldEdited("rescan_year", value)
+                                        SettingsEditMessage::FieldEdited("rescan_year", value)
                                     })
                                     .size(20)
                                     .padding(5),
@@ -340,7 +462,7 @@ pub fn rescan<'a>(
                                 .push(text("Month:").bold().small())
                                 .push(
                                     form::Form::new("12", month, |value| {
-                                        SettingsMessage::FieldEdited("rescan_month", value)
+                                        SettingsEditMessage::FieldEdited("rescan_month", value)
                                     })
                                     .size(20)
                                     .padding(5),
@@ -348,7 +470,7 @@ pub fn rescan<'a>(
                                 .push(text("Day:").bold().small())
                                 .push(
                                     form::Form::new("31", day, |value| {
-                                        SettingsMessage::FieldEdited("rescan_day", value)
+                                        SettingsEditMessage::FieldEdited("rescan_day", value)
                                     })
                                     .size(20)
                                     .padding(5),
@@ -367,7 +489,7 @@ pub fn rescan<'a>(
                             {
                                 Row::new().push(Column::new().width(Length::Fill)).push(
                                     button::primary(None, "Start rescan")
-                                        .on_press(SettingsMessage::ConfirmEdit)
+                                        .on_press(SettingsEditMessage::Confirm)
                                         .width(Length::Shrink),
                                 )
                             } else if processing {
@@ -395,4 +517,104 @@ fn is_ok_and<T, E>(res: &Result<T, E>, f: impl FnOnce(&T) -> bool) -> bool {
     } else {
         false
     }
+}
+
+pub fn wallet_settings<'a>(
+    cache: &'a Cache,
+    warning: Option<&Error>,
+    descriptor: &'a str,
+) -> Element<'a, Message> {
+    dashboard(
+        &Menu::Settings,
+        cache,
+        warning,
+        Column::new()
+            .spacing(20)
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(
+                        Button::new(text("Settings").size(30).bold())
+                            .style(button::Style::Transparent.into())
+                            .on_press(Message::Menu(Menu::Settings)),
+                    )
+                    .push(icon::chevron_right().size(30))
+                    .push(
+                        Button::new(text("Wallet").size(30).bold())
+                            .style(button::Style::Transparent.into())
+                            .on_press(Message::Settings(SettingsMessage::AboutSection)),
+                    ),
+            )
+            .push(card::simple(
+                Column::new()
+                    .push(text("Wallet descriptor:").small().bold())
+                    .push(text(descriptor.to_owned()).small())
+                    .push(
+                        Row::new()
+                            .spacing(10)
+                            .push(Column::new().width(Length::Fill))
+                            .push(
+                                button::border(Some(icon::clipboard_icon()), "Copy")
+                                    .on_press(Message::Clipboard(descriptor.to_owned())),
+                            )
+                            .push(
+                                button::primary(
+                                    Some(icon::chip_icon()),
+                                    "Register on hardware device",
+                                )
+                                .on_press(Message::Settings(SettingsMessage::RegisterWallet)),
+                            ),
+                    )
+                    .spacing(10),
+            )),
+    )
+}
+
+pub fn register_wallet_modal<'a>(
+    warning: Option<&Error>,
+    hws: &'a [HardwareWallet],
+    processing: bool,
+    chosen_hw: Option<usize>,
+    registered: &HashSet<Fingerprint>,
+) -> Element<'a, Message> {
+    Column::new()
+        .push_maybe(warning.map(|w| warn(Some(w))))
+        .push(card::simple(
+            Column::new()
+                .push(
+                    Column::new()
+                        .push(
+                            Row::new()
+                                .push(text("Select device:").bold().width(Length::Fill))
+                                .push(button::border(None, "Refresh").on_press(Message::Reload))
+                                .align_items(Alignment::Center),
+                        )
+                        .spacing(10)
+                        .push(hws.iter().enumerate().fold(
+                            Column::new().spacing(10),
+                            |col, (i, hw)| {
+                                col.push(hw::hw_list_view(
+                                    i,
+                                    hw,
+                                    Some(i) == chosen_hw,
+                                    processing,
+                                    hw.fingerprint().and_then(|f| {
+                                        if registered.contains(&f) {
+                                            Some("Registered")
+                                        } else {
+                                            None
+                                        }
+                                    }),
+                                ))
+                            },
+                        ))
+                        .width(Length::Fill),
+                )
+                .spacing(20)
+                .width(Length::Fill)
+                .align_items(Alignment::Center),
+        ))
+        .width(Length::Units(500))
+        .into()
 }

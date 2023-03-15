@@ -26,10 +26,12 @@ pub trait State {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        cache: &Cache,
-        message: Message,
-    ) -> Command<Message>;
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        _message: Message,
+    ) -> Command<Message> {
+        Command::none()
+    }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
     }

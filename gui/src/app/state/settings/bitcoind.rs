@@ -11,34 +11,22 @@ use tracing::info;
 use liana::config::{BitcoinConfig, BitcoindConfig, Config};
 
 use crate::{
-    app::{cache::Cache, error::Error, message::Message, state::State, view},
+    app::{cache::Cache, error::Error, message::Message, state::settings::Setting, view, State},
     daemon::Daemon,
     ui::component::form,
 };
 
-trait Setting: std::fmt::Debug {
-    fn edited(&mut self, success: bool);
-    fn update(
-        &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        cache: &Cache,
-        message: view::SettingsMessage,
-    ) -> Command<Message>;
-    fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsMessage>;
-}
-
 #[derive(Debug)]
-pub struct SettingsState {
+pub struct BitcoindSettingsState {
     warning: Option<Error>,
     config_updated: bool,
     daemon_is_external: bool,
-    daemon_version: Option<String>,
 
     settings: Vec<Box<dyn Setting>>,
     current: Option<usize>,
 }
 
-impl SettingsState {
+impl BitcoindSettingsState {
     pub fn new(config: Option<Config>, cache: &Cache, daemon_is_external: bool) -> Self {
         let settings = if let Some(config) = &config {
             vec![
@@ -53,12 +41,7 @@ impl SettingsState {
             vec![RescanSetting::new(cache.rescan_progress).into()]
         };
 
-        SettingsState {
-            daemon_version: if !daemon_is_external {
-                Some(liana::VERSION.to_string())
-            } else {
-                None
-            },
+        BitcoindSettingsState {
             daemon_is_external,
             warning: None,
             config_updated: false,
@@ -69,7 +52,7 @@ impl SettingsState {
     }
 }
 
-impl State for SettingsState {
+impl State for BitcoindSettingsState {
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -101,17 +84,16 @@ impl State for SettingsState {
             Message::Info(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(info) => {
-                    self.daemon_version = Some(info.version);
                     if info.rescan_progress == Some(1.0) {
                         self.settings[1].edited(true);
                     }
                 }
             },
-            Message::View(view::Message::Settings(i, msg)) => {
+            Message::View(view::Message::Settings(view::SettingsMessage::Edit(i, msg))) => {
                 if let Some(setting) = self.settings.get_mut(i) {
                     match msg {
-                        view::SettingsMessage::Edit => self.current = Some(i),
-                        view::SettingsMessage::CancelEdit => self.current = None,
+                        view::SettingsEditMessage::Select => self.current = Some(i),
+                        view::SettingsEditMessage::Cancel => self.current = None,
                         _ => {}
                     };
                     return setting.update(daemon, cache, msg);
@@ -124,36 +106,24 @@ impl State for SettingsState {
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let can_edit = self.current.is_none() && !self.daemon_is_external;
-        view::settings::list(
-            self.daemon_version.as_ref(),
+        view::settings::bitcoind_settings(
             cache,
             self.warning.as_ref(),
             self.settings
                 .iter()
                 .enumerate()
                 .map(|(i, setting)| {
-                    setting
-                        .view(cache, can_edit)
-                        .map(move |msg| view::Message::Settings(i, msg))
+                    setting.view(cache, can_edit).map(move |msg| {
+                        view::Message::Settings(view::SettingsMessage::Edit(i, msg))
+                    })
                 })
                 .collect(),
         )
     }
-
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        if self.daemon_version.is_none() {
-            Command::perform(
-                async move { daemon.get_info().map_err(|e| e.into()) },
-                Message::Info,
-            )
-        } else {
-            Command::none()
-        }
-    }
 }
 
-impl From<SettingsState> for Box<dyn State> {
-    fn from(s: SettingsState) -> Box<dyn State> {
+impl From<BitcoindSettingsState> for Box<dyn State> {
+    fn from(s: BitcoindSettingsState) -> Box<dyn State> {
         Box::new(s)
     }
 }
@@ -207,20 +177,20 @@ impl Setting for BitcoindSettings {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
-        message: view::SettingsMessage,
+        message: view::SettingsEditMessage,
     ) -> Command<Message> {
         match message {
-            view::SettingsMessage::Edit => {
+            view::SettingsEditMessage::Select => {
                 if !self.processing {
                     self.edit = true;
                 }
             }
-            view::SettingsMessage::CancelEdit => {
+            view::SettingsEditMessage::Cancel => {
                 if !self.processing {
                     self.edit = false;
                 }
             }
-            view::SettingsMessage::FieldEdited(field, value) => {
+            view::SettingsEditMessage::FieldEdited(field, value) => {
                 if !self.processing {
                     match field {
                         "socket_address" => self.addr.value = value,
@@ -229,7 +199,7 @@ impl Setting for BitcoindSettings {
                     }
                 }
             }
-            view::SettingsMessage::ConfirmEdit => {
+            view::SettingsEditMessage::Confirm => {
                 let new_addr = SocketAddr::from_str(&self.addr.value);
                 self.addr.valid = new_addr.is_ok();
                 let new_path = PathBuf::from_str(&self.cookie_path.value);
@@ -251,7 +221,7 @@ impl Setting for BitcoindSettings {
         Command::none()
     }
 
-    fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsMessage> {
+    fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
         if self.edit {
             view::settings::bitcoind_edit(
                 self.bitcoin_config.network,
@@ -307,20 +277,20 @@ impl Setting for RescanSetting {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
-        message: view::SettingsMessage,
+        message: view::SettingsEditMessage,
     ) -> Command<Message> {
         match message {
-            view::SettingsMessage::Edit => {
+            view::SettingsEditMessage::Select => {
                 if !self.processing {
                     self.edit = true;
                 }
             }
-            view::SettingsMessage::CancelEdit => {
+            view::SettingsEditMessage::Cancel => {
                 if !self.processing {
                     self.edit = false;
                 }
             }
-            view::SettingsMessage::FieldEdited(field, value) => {
+            view::SettingsEditMessage::FieldEdited(field, value) => {
                 if !self.processing && (value.is_empty() || u32::from_str(&value).is_ok()) {
                     match field {
                         "rescan_year" => self.year.value = value,
@@ -330,7 +300,7 @@ impl Setting for RescanSetting {
                     }
                 }
             }
-            view::SettingsMessage::ConfirmEdit => {
+            view::SettingsEditMessage::Confirm => {
                 let date_time = NaiveDate::from_ymd(
                     i32::from_str(&self.year.value).unwrap_or(1),
                     u32::from_str(&self.month.value).unwrap_or(1),
@@ -349,7 +319,7 @@ impl Setting for RescanSetting {
         Command::none()
     }
 
-    fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsMessage> {
+    fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
         view::settings::rescan(
             &self.year,
             &self.month,
