@@ -523,6 +523,9 @@ pub fn wallet_settings<'a>(
     cache: &'a Cache,
     warning: Option<&Error>,
     descriptor: &'a str,
+    keys_aliases: &[(Fingerprint, form::Value<String>)],
+    processing: bool,
+    updated: bool,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::Settings,
@@ -548,7 +551,7 @@ pub fn wallet_settings<'a>(
             )
             .push(card::simple(
                 Column::new()
-                    .push(text("Wallet descriptor:").small().bold())
+                    .push(text("Wallet descriptor:").bold())
                     .push(text(descriptor.to_owned()).small())
                     .push(
                         Row::new()
@@ -565,6 +568,54 @@ pub fn wallet_settings<'a>(
                                 )
                                 .on_press(Message::Settings(SettingsMessage::RegisterWallet)),
                             ),
+                    )
+                    .spacing(10),
+            ))
+            .push(card::simple(
+                Column::new()
+                    .push(text("Fingerprint aliases:").bold())
+                    .push(keys_aliases.iter().fold(
+                        Column::new().spacing(10),
+                        |col, (fingerprint, name)| {
+                            let fg = *fingerprint;
+                            col.push(
+                                Row::new()
+                                    .spacing(10)
+                                    .align_items(Alignment::Center)
+                                    .push(text(fg.to_string()).bold().width(Length::Units(100)))
+                                    .push(
+                                        form::Form::new("Alias", name, move |msg| {
+                                            Message::Settings(
+                                                SettingsMessage::FingerprintAliasEdited(fg, msg),
+                                            )
+                                        })
+                                        .warning("Please enter correct alias")
+                                        .size(20)
+                                        .padding(10),
+                                    ),
+                            )
+                        },
+                    ))
+                    .push(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .push(Space::with_width(Length::Fill))
+                            .push_maybe(if updated {
+                                Some(
+                                    Row::new()
+                                        .align_items(Alignment::Center)
+                                        .push(icon::circle_check_icon().style(color::SUCCESS))
+                                        .push(text("Updated").style(color::SUCCESS)),
+                                )
+                            } else {
+                                None
+                            })
+                            .push(if !processing {
+                                button::primary(None, "Update")
+                                    .on_press(Message::Settings(SettingsMessage::Save))
+                            } else {
+                                button::primary(None, "Updating")
+                            }),
                     )
                     .spacing(10),
             )),

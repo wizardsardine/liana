@@ -1,4 +1,5 @@
 use crate::app::menu::Menu;
+use liana::miniscript::bitcoin::util::bip32::Fingerprint;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -53,6 +54,8 @@ pub enum SettingsMessage {
     EditWalletSettings,
     AboutSection,
     RegisterWallet,
+    FingerprintAliasEdited(Fingerprint, String),
+    Save,
     Edit(usize, SettingsEditMessage),
 }
 

@@ -13,15 +13,18 @@ use crate::{
     },
     daemon::Daemon,
     hw::{list_hardware_wallets, HardwareWallet, HardwareWalletConfig},
-    ui::component::modal,
+    ui::component::{form, modal},
 };
 
 pub struct WalletSettingsState {
     data_dir: PathBuf,
     warning: Option<Error>,
     descriptor: String,
+    keys_aliases: Vec<(Fingerprint, form::Value<String>)>,
     wallet: Arc<Wallet>,
     modal: Option<RegisterWalletModal>,
+    processing: bool,
+    updated: bool,
 }
 
 impl WalletSettingsState {
@@ -29,17 +32,52 @@ impl WalletSettingsState {
         WalletSettingsState {
             data_dir,
             descriptor: wallet.main_descriptor.to_string(),
+            keys_aliases: Self::keys_aliases(&wallet),
             wallet,
             warning: None,
             modal: None,
+            processing: false,
+            updated: false,
         }
+    }
+
+    fn keys_aliases(wallet: &Wallet) -> Vec<(Fingerprint, form::Value<String>)> {
+        let mut keys_aliases: Vec<(Fingerprint, form::Value<String>)> = wallet
+            .keys_aliases
+            .clone()
+            .into_iter()
+            .map(|(fg, name)| {
+                (
+                    fg,
+                    form::Value {
+                        value: name,
+                        valid: true,
+                    },
+                )
+            })
+            .collect();
+
+        for fingerprint in wallet.descriptor_keys().into_iter() {
+            if wallet.keys_aliases.get(&fingerprint).is_none() {
+                keys_aliases.push((fingerprint, form::Value::default()));
+            }
+        }
+
+        keys_aliases.sort_by(|(fg1, _), (fg2, _)| fg1.cmp(fg2));
+        keys_aliases
     }
 }
 
 impl State for WalletSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content =
-            view::settings::wallet_settings(cache, self.warning.as_ref(), &self.descriptor);
+        let content = view::settings::wallet_settings(
+            cache,
+            self.warning.as_ref(),
+            &self.descriptor,
+            &self.keys_aliases,
+            self.processing,
+            self.updated,
+        );
         if let Some(m) = &self.modal {
             modal::Modal::new(content, m.view())
                 .on_blur(Some(view::Message::Close))
@@ -56,17 +94,59 @@ impl State for WalletSettingsState {
         message: Message,
     ) -> Command<Message> {
         match message {
+            Message::Updated(res) => match res {
+                Ok(()) => {
+                    self.processing = false;
+                    self.updated = true;
+                    Command::perform(async {}, |_| Message::LoadWallet)
+                }
+                Err(e) => {
+                    self.processing = false;
+                    self.warning = Some(e);
+                    Command::none()
+                }
+            },
             Message::WalletLoaded(res) => {
                 match res {
                     Ok(wallet) => {
                         if let Some(modal) = &mut self.modal {
                             modal.wallet = wallet.clone();
                         }
+                        self.keys_aliases = Self::keys_aliases(&wallet);
                         self.wallet = wallet;
                     }
                     Err(e) => self.warning = Some(e),
                 };
                 Command::none()
+            }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::FingerprintAliasEdited(fg, value),
+            )) => {
+                if let Some((_, name)) = self
+                    .keys_aliases
+                    .iter_mut()
+                    .find(|(fingerprint, _)| fg == *fingerprint)
+                {
+                    name.value = value;
+                }
+                Command::none()
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::Save)) => {
+                self.modal = None;
+                self.processing = true;
+                self.updated = false;
+                Command::perform(
+                    update_keys_aliases(
+                        self.data_dir.clone(),
+                        cache.network,
+                        self.wallet.clone(),
+                        self.keys_aliases
+                            .iter()
+                            .map(|(fg, name)| (*fg, name.value.to_owned()))
+                            .collect(),
+                    ),
+                    Message::Updated,
+                )
             }
             Message::View(view::Message::Close) => {
                 self.modal = None;
@@ -247,6 +327,33 @@ async fn register_wallet(
     }
 
     Ok(fingerprint)
+}
+
+async fn update_keys_aliases(
+    data_dir: PathBuf,
+    network: Network,
+    wallet: Arc<Wallet>,
+    keys_aliases: Vec<(Fingerprint, String)>,
+) -> Result<(), Error> {
+    let mut settings = settings::Settings::from_file(data_dir.clone(), network)?;
+    let checksum = wallet.descriptor_checksum();
+    if let Some(wallet_setting) = settings
+        .wallets
+        .iter_mut()
+        .find(|w| w.descriptor_checksum == checksum)
+    {
+        wallet_setting.keys = keys_aliases
+            .into_iter()
+            .map(|(master_fingerprint, name)| settings::KeySetting {
+                master_fingerprint,
+                name,
+            })
+            .collect();
+    }
+
+    settings.to_file(data_dir, network)?;
+
+    Ok(())
 }
 
 async fn list_hws(wallet: Arc<Wallet>) -> Vec<HardwareWallet> {
