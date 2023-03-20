@@ -44,7 +44,7 @@ pub fn list(cache: &Cache) -> Element<Message> {
                     Button::new(
                         Row::new()
                             .push(badge::Badge::new(icon::bitcoin_icon()))
-                            .push(text("Bitcoind").bold())
+                            .push(text("Bitcoin Core").bold())
                             .padding(10)
                             .spacing(20)
                             .align_items(Alignment::Center)
@@ -136,7 +136,7 @@ pub fn bitcoind_settings<'a>(
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
-                        Button::new(text("Bitcoind").size(30).bold())
+                        Button::new(text("Bitcoin Core").size(30).bold())
                             .style(button::Style::Transparent.into())
                             .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings)),
                     ),
@@ -280,7 +280,7 @@ pub fn bitcoind_edit<'a>(
             .push(
                 Row::new()
                     .push(badge::Badge::new(icon::bitcoin_icon()))
-                    .push(text("Bitcoind").bold())
+                    .push(text("Bitcoin Core").bold())
                     .padding(10)
                     .spacing(20)
                     .align_items(Alignment::Center)
@@ -367,7 +367,7 @@ pub fn bitcoind<'a>(
                     .push(
                         Row::new()
                             .push(badge::Badge::new(icon::bitcoin_icon()))
-                            .push(text("Bitcoind").bold())
+                            .push(text("Bitcoin Core").bold())
                             .push(is_running_label(is_running))
                             .spacing(20)
                             .align_items(Alignment::Center)
