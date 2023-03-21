@@ -343,11 +343,11 @@ impl BitcoinD {
         }
     }
 
-    fn make_request_inner<'a, 'b>(
+    fn make_request_inner(
         &self,
         client: &Client,
-        method: &'a str,
-        params: &'b [Box<serde_json::value::RawValue>],
+        method: &str,
+        params: &[Box<serde_json::value::RawValue>],
         retry: bool,
     ) -> Result<Json, BitcoindError> {
         let req = client.build_request(method, params);
@@ -358,11 +358,11 @@ impl BitcoinD {
         }
     }
 
-    fn make_request<'a, 'b>(
+    fn make_request(
         &self,
         client: &Client,
-        method: &'a str,
-        params: &'b [Box<serde_json::value::RawValue>],
+        method: &str,
+        params: &[Box<serde_json::value::RawValue>],
     ) -> Result<Json, BitcoindError> {
         self.make_request_inner(client, method, params, true)
     }
