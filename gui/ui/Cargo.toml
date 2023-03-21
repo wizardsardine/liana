@@ -1,0 +1,16 @@
+[package]
+name = "liana_ui"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+iced = "0.7"
+iced_native = "0.8"
+iced_lazy = { version = "0.4"}
+
+[workspace]
+members = [
+  "examples/*"
+]
