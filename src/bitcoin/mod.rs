@@ -133,7 +133,6 @@ impl BitcoinInterface for d::BitcoinD {
         tip: &BlockChainTip,
         descs: &[descriptors::InheritanceDescriptor],
     ) -> Vec<UTxO> {
-        // TODO: don't assume only a single descriptor is loaded on the wo wallet
         let lsb_res = self.list_since_block(&tip.hash);
 
         lsb_res
