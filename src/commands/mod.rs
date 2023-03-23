@@ -216,7 +216,7 @@ fn serializable_size<T: bitcoin::consensus::Encodable + ?Sized>(t: &T) -> u64 {
 
 impl DaemonControl {
     // Get the derived descriptor for this coin
-    fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedInheritanceDescriptor {
+    fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedSinglePathLianaDesc {
         let desc = if coin.is_change {
             self.config.main_descriptor.change_descriptor()
         } else {

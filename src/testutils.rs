@@ -60,7 +60,7 @@ impl BitcoinInterface for DummyBitcoind {
     fn received_coins(
         &self,
         _: &BlockChainTip,
-        _: &[descriptors::InheritanceDescriptor],
+        _: &[descriptors::SinglePathLianaDesc],
     ) -> Vec<UTxO> {
         Vec::new()
     }

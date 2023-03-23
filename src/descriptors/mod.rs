@@ -59,23 +59,23 @@ impl From<LianaPolicyError> for LianaDescError {
     }
 }
 
-/// An [InheritanceDescriptor] that contains multipath keys for (and only for) the receive keychain
+/// An [SinglePathLianaDesc] that contains multipath keys for (and only for) the receive keychain
 /// and the change keychain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LianaDescriptor {
     multi_desc: descriptor::Descriptor<descriptor::DescriptorPublicKey>,
-    receive_desc: InheritanceDescriptor,
-    change_desc: InheritanceDescriptor,
+    receive_desc: SinglePathLianaDesc,
+    change_desc: SinglePathLianaDesc,
 }
 
 /// A Miniscript descriptor with a main, unencombered, branch (the main owner of the coins)
 /// and a timelocked branch (the heir). All keys in this descriptor are singlepath.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InheritanceDescriptor(descriptor::Descriptor<descriptor::DescriptorPublicKey>);
+pub struct SinglePathLianaDesc(descriptor::Descriptor<descriptor::DescriptorPublicKey>);
 
 /// Derived (containing only raw Bitcoin public keys) version of the inheritance descriptor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DerivedInheritanceDescriptor(descriptor::Descriptor<DerivedPublicKey>);
+pub struct DerivedSinglePathLianaDesc(descriptor::Descriptor<DerivedPublicKey>);
 
 impl fmt::Display for LianaDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -103,8 +103,8 @@ impl str::FromStr for LianaDescriptor {
             .expect("Can't error, all paths have the same length")
             .into_iter();
         assert_eq!(singlepath_descs.len(), 2);
-        let receive_desc = InheritanceDescriptor(singlepath_descs.next().expect("First of 2"));
-        let change_desc = InheritanceDescriptor(singlepath_descs.next().expect("Second of 2"));
+        let receive_desc = SinglePathLianaDesc(singlepath_descs.next().expect("First of 2"));
+        let change_desc = SinglePathLianaDesc(singlepath_descs.next().expect("Second of 2"));
 
         Ok(LianaDescriptor {
             multi_desc: desc,
@@ -114,13 +114,13 @@ impl str::FromStr for LianaDescriptor {
     }
 }
 
-impl fmt::Display for InheritanceDescriptor {
+impl fmt::Display for SinglePathLianaDesc {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl PartialEq<descriptor::Descriptor<descriptor::DescriptorPublicKey>> for InheritanceDescriptor {
+impl PartialEq<descriptor::Descriptor<descriptor::DescriptorPublicKey>> for SinglePathLianaDesc {
     fn eq(&self, other: &descriptor::Descriptor<descriptor::DescriptorPublicKey>) -> bool {
         self.0.eq(other)
     }
@@ -141,8 +141,8 @@ impl LianaDescriptor {
             .expect("Can't error, all paths have the same length")
             .into_iter();
         assert_eq!(singlepath_descs.len(), 2);
-        let receive_desc = InheritanceDescriptor(singlepath_descs.next().expect("First of 2"));
-        let change_desc = InheritanceDescriptor(singlepath_descs.next().expect("Second of 2"));
+        let receive_desc = SinglePathLianaDesc(singlepath_descs.next().expect("First of 2"));
+        let change_desc = SinglePathLianaDesc(singlepath_descs.next().expect("Second of 2"));
 
         LianaDescriptor {
             multi_desc,
@@ -163,12 +163,12 @@ impl LianaDescriptor {
     }
 
     /// Get the descriptor for receiving addresses.
-    pub fn receive_descriptor(&self) -> &InheritanceDescriptor {
+    pub fn receive_descriptor(&self) -> &SinglePathLianaDesc {
         &self.receive_desc
     }
 
     /// Get the descriptor for change addresses.
-    pub fn change_descriptor(&self) -> &InheritanceDescriptor {
+    pub fn change_descriptor(&self) -> &SinglePathLianaDesc {
         &self.change_desc
     }
 
@@ -289,7 +289,7 @@ impl LianaDescriptor {
     }
 }
 
-impl InheritanceDescriptor {
+impl SinglePathLianaDesc {
     /// Derive this descriptor at a given index for a receiving address.
     ///
     /// # Panics
@@ -298,7 +298,7 @@ impl InheritanceDescriptor {
         &self,
         index: bip32::ChildNumber,
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
-    ) -> DerivedInheritanceDescriptor {
+    ) -> DerivedSinglePathLianaDesc {
         assert!(index.is_normal());
 
         // Unfortunately we can't just use `self.0.at_derivation_index().derived_descriptor()`
@@ -338,7 +338,7 @@ impl InheritanceDescriptor {
             );
         }
 
-        DerivedInheritanceDescriptor(
+        DerivedSinglePathLianaDesc(
             self.0
                 .translate_pk(&mut Derivator(index.into(), secp))
                 .expect(
@@ -351,7 +351,7 @@ impl InheritanceDescriptor {
 /// Map of a raw public key to the xpub used to derive it and its derivation path
 pub type Bip32Deriv = BTreeMap<secp256k1::PublicKey, (bip32::Fingerprint, bip32::DerivationPath)>;
 
-impl DerivedInheritanceDescriptor {
+impl DerivedSinglePathLianaDesc {
     pub fn address(&self, network: bitcoin::Network) -> bitcoin::Address {
         self.0
             .address(network)

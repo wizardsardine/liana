@@ -55,7 +55,7 @@ pub trait BitcoinInterface: Send {
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        descs: &[descriptors::InheritanceDescriptor],
+        descs: &[descriptors::SinglePathLianaDesc],
     ) -> Vec<UTxO>;
 
     /// Get all coins that were confirmed, and at what height and time. Along with "expired"
@@ -131,7 +131,7 @@ impl BitcoinInterface for d::BitcoinD {
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        descs: &[descriptors::InheritanceDescriptor],
+        descs: &[descriptors::SinglePathLianaDesc],
     ) -> Vec<UTxO> {
         let lsb_res = self.list_since_block(&tip.hash);
 
@@ -338,7 +338,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        descs: &[descriptors::InheritanceDescriptor],
+        descs: &[descriptors::SinglePathLianaDesc],
     ) -> Vec<UTxO> {
         self.lock().unwrap().received_coins(tip, descs)
     }
