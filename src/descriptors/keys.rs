@@ -4,10 +4,10 @@ use miniscript::{
         hashes::{hash160, ripemd160, sha256},
         util::bip32,
     },
-    descriptor, hash256, Miniscript, MiniscriptKey, Terminal, ToPublicKey,
+    hash256, MiniscriptKey, ToPublicKey,
 };
 
-use std::{error, fmt, str, sync};
+use std::{error, fmt, str};
 
 #[derive(Debug)]
 pub enum DescKeyError {
@@ -137,66 +137,5 @@ impl ToPublicKey for DerivedPublicKey {
 
     fn to_hash160(hash: &hash160::Hash) -> hash160::Hash {
         *hash
-    }
-}
-
-/// The keys in one of the two spending paths of a Liana descriptor.
-/// May either be a single key, or between 2 and 20 keys along with a threshold (between two and
-/// the number of keys).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LianaDescKeys {
-    thresh: Option<usize>,
-    keys: Vec<descriptor::DescriptorPublicKey>,
-}
-
-impl LianaDescKeys {
-    pub fn from_single(key: descriptor::DescriptorPublicKey) -> LianaDescKeys {
-        LianaDescKeys {
-            thresh: None,
-            keys: vec![key],
-        }
-    }
-
-    pub fn from_multi(
-        thresh: usize,
-        keys: Vec<descriptor::DescriptorPublicKey>,
-    ) -> Result<LianaDescKeys, DescKeyError> {
-        if keys.len() < 2 || keys.len() > 20 {
-            return Err(DescKeyError::InvalidMultiKeys(keys.len()));
-        }
-        if thresh == 0 || thresh > keys.len() {
-            return Err(DescKeyError::InvalidMultiThresh(thresh));
-        }
-        Ok(LianaDescKeys {
-            thresh: Some(thresh),
-            keys,
-        })
-    }
-
-    pub fn keys(&self) -> &Vec<descriptor::DescriptorPublicKey> {
-        &self.keys
-    }
-
-    pub fn into_miniscript(
-        mut self,
-        as_hash: bool,
-    ) -> Miniscript<descriptor::DescriptorPublicKey, miniscript::Segwitv0> {
-        if let Some(thresh) = self.thresh {
-            assert!(self.keys.len() >= 2 && self.keys.len() <= 20);
-            Miniscript::from_ast(Terminal::Multi(thresh, self.keys))
-                .expect("multi is a valid Miniscript")
-        } else {
-            assert_eq!(self.keys.len(), 1);
-            let key = self.keys.pop().expect("Length was just asserted");
-            Miniscript::from_ast(Terminal::Check(sync::Arc::from(
-                Miniscript::from_ast(if as_hash {
-                    Terminal::PkH(key)
-                } else {
-                    Terminal::PkK(key)
-                })
-                .expect("pk_k is a valid Miniscript"),
-            )))
-            .expect("Well typed")
-        }
     }
 }

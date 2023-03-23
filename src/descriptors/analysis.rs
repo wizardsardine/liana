@@ -1,18 +1,20 @@
 use miniscript::{
-    bitcoin::util::bip32,
+    bitcoin::{util::bip32, Sequence},
     descriptor,
     policy::{Liftable, Semantic as SemanticPolicy},
+    Miniscript, ScriptContext, Terminal,
 };
 
 use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
+    sync,
 };
 
-use crate::descriptors::LianaDescError;
+use crate::descriptors::{keys::DescKeyError, LianaDescError};
 
-/// Whether a Miniscript policy node represents a key check (or several of them).
-pub fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorPublicKey>) -> bool {
+// Whether a Miniscript policy node represents a key check (or several of them).
+fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorPublicKey>) -> bool {
     match policy {
         SemanticPolicy::Key(..) => true,
         SemanticPolicy::Threshold(_, subs) => {
@@ -22,12 +24,12 @@ pub fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorP
     }
 }
 
-/// We require the descriptor key to:
-///  - Be deriveable (to contain a wildcard)
-///  - Be multipath (to contain a step in the derivation path with multiple indexes)
-///  - The multipath step to only contain two indexes, 0 and 1.
-///  - Be 'signable' by an external signer (to contain an origin)
-pub fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
+// We require the descriptor key to:
+//  - Be deriveable (to contain a wildcard)
+//  - Be multipath (to contain a step in the derivation path with multiple indexes)
+//  - The multipath step to only contain two indexes, 0 and 1.
+//  - Be 'signable' by an external signer (to contain an origin)
+fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
     match *key {
         descriptor::DescriptorPublicKey::Single(..) | descriptor::DescriptorPublicKey::XPub(..) => {
             false
@@ -229,9 +231,50 @@ impl PathInfo {
             signed_pubkeys,
         }
     }
+
+    // TODO: avoid using a vec...
+    /// Get the keys contained in this spending path.
+    pub fn keys(&self) -> Vec<descriptor::DescriptorPublicKey> {
+        match self {
+            PathInfo::Single(ref key) => vec![key.clone()],
+            PathInfo::Multi(_, keys) => keys.clone(),
+        }
+    }
+
+    /// Returns `None` if it is a multisig that does not fit inside a CHECKMULTISIG.
+    pub fn into_miniscript(
+        self,
+        as_hash: bool,
+    ) -> Option<Miniscript<descriptor::DescriptorPublicKey, miniscript::Segwitv0>> {
+        match self {
+            PathInfo::Single(key) => Some(
+                Miniscript::from_ast(Terminal::Check(sync::Arc::from(
+                    Miniscript::from_ast(if as_hash {
+                        Terminal::PkH(key)
+                    } else {
+                        Terminal::PkK(key)
+                    })
+                    .expect("pk_k is a valid Miniscript"),
+                )))
+                .expect("Well typed"),
+            ),
+            PathInfo::Multi(thresh, keys) => {
+                if thresh < 1 || keys.len() > 20 || thresh > keys.len() {
+                    None
+                } else {
+                    Some(
+                        Miniscript::from_ast(Terminal::Multi(thresh, keys))
+                            .expect("multi is a valid Miniscript"),
+                    )
+                }
+            }
+        }
+    }
 }
 
-/// A Liana spending policy. Can be inferred from a Miniscript semantic policy.
+/// A Liana spending policy. Can be created from some settings (the primary and recovery keys, the
+/// timelock(s)) and be used to derive a descriptor. It can also be inferred from a descriptor and
+/// be used to retrieve the settings.
 #[derive(Debug, Eq, PartialEq, Clone, Ord, PartialOrd, Hash)]
 pub struct LianaPolicy {
     pub(super) primary_path: PathInfo,
@@ -239,6 +282,66 @@ pub struct LianaPolicy {
 }
 
 impl LianaPolicy {
+    /// Create a new Liana policy from a given configuration.
+    pub fn new(
+        primary_path: PathInfo,
+        recovery_path: PathInfo,
+        recovery_timelock: u16,
+    ) -> Result<LianaPolicy, LianaDescError> {
+        // We require the locktime to:
+        //  - not be disabled
+        //  - be in number of blocks
+        //  - be 'clean' / minimal, ie all bits without consensus meaning should be 0
+        //  - be positive (Miniscript requires it not to be 0)
+        //
+        // All this is achieved through asking for a 16-bit integer.
+        if recovery_timelock == 0 {
+            return Err(LianaDescError::InsaneTimelock(recovery_timelock as u32));
+        }
+
+        // If any of the paths is a multisig, make sure they are within the CHECKMULTISIG bounds.
+        for path_info in &[&primary_path, &recovery_path] {
+            if let PathInfo::Multi(thresh, keys) = path_info {
+                if keys.len() < 2 || keys.len() > 20 {
+                    return Err(LianaDescError::DescKey(DescKeyError::InvalidMultiKeys(
+                        keys.len(),
+                    )));
+                }
+                if thresh == &0 || thresh > &keys.len() {
+                    return Err(LianaDescError::DescKey(DescKeyError::InvalidMultiThresh(
+                        *thresh,
+                    )));
+                }
+            }
+        }
+
+        // Check all keys are valid according to our standard (this checks all are multipath keys).
+        let (prim_keys, rec_keys) = (primary_path.keys(), recovery_path.keys());
+        let all_keys = prim_keys.iter().chain(rec_keys.iter());
+        if let Some(key) = all_keys.clone().find(|k| !is_valid_desc_key(k)) {
+            return Err(LianaDescError::InvalidKey((*key).clone().into()));
+        }
+
+        // Check for key duplicates. They are invalid in (nonmalleable) miniscripts.
+        let mut key_set = HashSet::new();
+        for key in all_keys {
+            let xpub = match key {
+                descriptor::DescriptorPublicKey::MultiXPub(ref multi_xpub) => multi_xpub.xkey,
+                _ => unreachable!("Just checked it was a multixpub above"),
+            };
+            if key_set.contains(&xpub) {
+                return Err(LianaDescError::DuplicateKey(key.clone().into()));
+            }
+            key_set.insert(xpub);
+        }
+        assert!(!key_set.is_empty());
+
+        Ok(LianaPolicy {
+            primary_path,
+            recovery_path: (recovery_timelock, recovery_path),
+        })
+    }
+
     /// Create a Liana policy from a descriptor. This will check the descriptor is correctly formed
     /// (P2WSH, multipath, ..) and has a valid Liana semantic.
     pub fn from_multipath_descriptor(
@@ -318,6 +421,49 @@ impl LianaPolicy {
     /// Timelock and path info for the recovery path.
     pub fn recovery_path(&self) -> (u16, &PathInfo) {
         (self.recovery_path.0, &self.recovery_path.1)
+    }
+
+    /// Create a descriptor from this spending policy with multipath key expressions.
+    ///
+    /// Although for now this function is deterministic, it **will not** be in the future.
+    pub fn into_multipath_descriptor(
+        self,
+    ) -> descriptor::Descriptor<descriptor::DescriptorPublicKey> {
+        let LianaPolicy {
+            primary_path,
+            recovery_path: (timelock, recovery_path),
+        } = self;
+
+        // Create the timelocked spending path. If there is a single key we make it a pk_h() in
+        // order to save on the script size (since we assume the timelocked recovery path will
+        // seldom be used).
+        let recovery_timelock = Terminal::Older(Sequence::from_height(timelock));
+        let recovery_keys = recovery_path
+            .into_miniscript(true)
+            .expect("We check the multisig never overflows in our constructors.");
+        let recovery_branch = Miniscript::from_ast(Terminal::AndV(
+            Miniscript::from_ast(Terminal::Verify(recovery_keys.into()))
+                .expect("Well typed")
+                .into(),
+            Miniscript::from_ast(recovery_timelock)
+                .expect("Well typed")
+                .into(),
+        ))
+        .expect("Well typed");
+
+        // Combine the timelocked spending path with the simple "primary" path. For the primary key
+        // we don't use a pkh since it's the one that will likely always be used.
+        let primary_keys = primary_path
+            .into_miniscript(false)
+            .expect("We check the multisig never overflows in our constructors.");
+        let tl_miniscript =
+            Miniscript::from_ast(Terminal::OrD(primary_keys.into(), recovery_branch.into()))
+                .expect("Well typed");
+        miniscript::Segwitv0::check_local_validity(&tl_miniscript)
+            .expect("Miniscript must be sane");
+        descriptor::Descriptor::Wsh(
+            descriptor::Wsh::new(tl_miniscript).expect("Must pass sanity checks"),
+        )
     }
 }
 

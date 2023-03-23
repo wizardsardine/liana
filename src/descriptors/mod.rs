@@ -1,22 +1,15 @@
 use miniscript::{
     bitcoin::{
-        self,
-        blockdata::transaction::Sequence,
-        secp256k1,
+        self, secp256k1,
         util::{
             bip32,
             psbt::{Input as PsbtIn, Psbt},
         },
     },
-    descriptor,
-    miniscript::{decode::Terminal, Miniscript},
-    translate_hash_clone, ForEachKey, ScriptContext, TranslatePk, Translator,
+    descriptor, translate_hash_clone, ForEachKey, TranslatePk, Translator,
 };
 
-use std::{
-    collections::{BTreeMap, HashSet},
-    error, fmt, str,
-};
+use std::{collections::BTreeMap, error, fmt, str};
 
 use serde::{Deserialize, Serialize};
 
@@ -144,69 +137,9 @@ impl PartialEq<descriptor::Descriptor<descriptor::DescriptorPublicKey>> for Inhe
 }
 
 impl MultipathDescriptor {
-    pub fn new(
-        owner_keys: LianaDescKeys,
-        heir_keys: LianaDescKeys,
-        timelock: u16,
-    ) -> Result<MultipathDescriptor, LianaDescError> {
-        // We require the locktime to:
-        //  - not be disabled
-        //  - be in number of blocks
-        //  - be 'clean' / minimal, ie all bits without consensus meaning should be 0
-        //  - be positive (Miniscript requires it not to be 0)
-        //
-        // All this is achieved through asking for a 16-bit integer.
-        if timelock == 0 {
-            return Err(LianaDescError::InsaneTimelock(timelock as u32));
-        }
-        let timelock = Sequence::from_height(timelock);
-
-        // Check all keys are valid according to our standard (this checks all are multipath keys).
-        let all_keys = owner_keys.keys().iter().chain(heir_keys.keys().iter());
-        if let Some(key) = all_keys.clone().find(|k| !is_valid_desc_key(k)) {
-            return Err(LianaDescError::InvalidKey((*key).clone().into()));
-        }
-
-        // Check for key duplicates. They are invalid in (nonmalleable) miniscripts.
-        let mut key_set = HashSet::new();
-        for key in all_keys {
-            let xpub = match key {
-                descriptor::DescriptorPublicKey::MultiXPub(ref multi_xpub) => multi_xpub.xkey,
-                _ => unreachable!("Just checked it was a multixpub above"),
-            };
-            if key_set.contains(&xpub) {
-                return Err(LianaDescError::DuplicateKey(key.clone().into()));
-            }
-            key_set.insert(xpub);
-        }
-        assert!(!key_set.is_empty());
-
-        // Create the timelocked spending path. If there is a single key we make it a pk_h() in
-        // order to save on the script size (since we assume the timelocked recovery path will
-        // seldom be used).
-        let heir_timelock = Terminal::Older(timelock);
-        let heir_branch = Miniscript::from_ast(Terminal::AndV(
-            Miniscript::from_ast(Terminal::Verify(heir_keys.into_miniscript(true).into()))
-                .expect("Well typed")
-                .into(),
-            Miniscript::from_ast(heir_timelock)
-                .expect("Well typed")
-                .into(),
-        ))
-        .expect("Well typed");
-
-        // Combine the timelocked spending path with the simple "primary" path. For the primary key
-        // we don't use a pkh since it's the one that will likely always be used.
-        let tl_miniscript = Miniscript::from_ast(Terminal::OrD(
-            owner_keys.into_miniscript(false).into(),
-            heir_branch.into(),
-        ))
-        .expect("Well typed");
-        miniscript::Segwitv0::check_local_validity(&tl_miniscript)
-            .expect("Miniscript must be sane");
-        let multi_desc = descriptor::Descriptor::Wsh(
-            descriptor::Wsh::new(tl_miniscript).expect("Must pass sanity checks"),
-        );
+    pub fn new(spending_policy: LianaPolicy) -> MultipathDescriptor {
+        // Get the descriptor from the chosen spending policy.
+        let multi_desc = spending_policy.into_multipath_descriptor();
 
         // Compute the receive and change "sub" descriptors right away. According to our pubkey
         // check above, there must be only two of those, 0 and 1.
@@ -221,11 +154,11 @@ impl MultipathDescriptor {
         let receive_desc = InheritanceDescriptor(singlepath_descs.next().expect("First of 2"));
         let change_desc = InheritanceDescriptor(singlepath_descs.next().expect("Second of 2"));
 
-        Ok(MultipathDescriptor {
+        MultipathDescriptor {
             multi_desc,
             receive_desc,
             change_desc,
-        })
+        }
     }
 
     /// Whether all xpubs contained in this descriptor are for the passed expected network.
@@ -465,126 +398,127 @@ impl DerivedInheritanceDescriptor {
 mod tests {
     use super::*;
 
+    use bitcoin::Sequence;
+
     use std::str::FromStr;
+
+    use crate::signer::HotSigner;
 
     #[test]
     fn descriptor_creation() {
-        let owner_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        let heir_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*").unwrap());
+        let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*").unwrap());
         let timelock = 52560;
-        assert_eq!(MultipathDescriptor::new(owner_key.clone(), heir_key.clone(), timelock).unwrap().to_string(), "wsh(or_d(pk([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#g7vk9r5l");
+        let policy = LianaPolicy::new(owner_key.clone(), heir_key.clone(), timelock).unwrap();
+        assert_eq!(MultipathDescriptor::new(policy).to_string(), "wsh(or_d(pk([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#g7vk9r5l");
 
         // A decaying multisig after 6 months. Note we can't duplicate the keys, so different ones
         // are used. In practice they would both be controlled by the same entity.
-        let primary_keys = LianaDescKeys::from_multi(
+        let primary_keys = PathInfo::Multi(
             3,
             vec![
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap(),
                 descriptor::DescriptorPublicKey::from_str("[aabb0011/10/4893]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*").unwrap(),
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*").unwrap()
             ]
-        )
-        .unwrap();
-        let recovery_keys = LianaDescKeys::from_multi(
+        );
+        let recovery_keys = PathInfo::Multi(
             2,
             vec![
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*").unwrap(),
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*").unwrap(),
                 descriptor::DescriptorPublicKey::from_str("[aabb0011/10/4893]xpub6AyxexvxizZJffF153evmfqHcE9MV88fCNCAtP3jQjXJHwrAKri71Tq9jWUkPxj9pja4u6AkCPHY7atgxzSEa2HtDwJfrRWKK4fsfQg4o77/<0;1>/*").unwrap(),
             ],
-        )
-        .unwrap();
-        assert_eq!(MultipathDescriptor::new(primary_keys, recovery_keys, 26352).unwrap().to_string(), "wsh(or_d(multi(3,[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0011/10/4893]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[abcdef01]xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*),and_v(v:multi(2,[abcdef01]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*,[abcdef01]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*,[aabb0011/10/4893]xpub6AyxexvxizZJffF153evmfqHcE9MV88fCNCAtP3jQjXJHwrAKri71Tq9jWUkPxj9pja4u6AkCPHY7atgxzSEa2HtDwJfrRWKK4fsfQg4o77/<0;1>/*),older(26352))))#s0zsa6uc");
+        );
+        let policy = LianaPolicy::new(primary_keys, recovery_keys, 26352).unwrap();
+        assert_eq!(MultipathDescriptor::new(policy).to_string(), "wsh(or_d(multi(3,[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0011/10/4893]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[abcdef01]xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*),and_v(v:multi(2,[abcdef01]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*,[abcdef01]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*,[aabb0011/10/4893]xpub6AyxexvxizZJffF153evmfqHcE9MV88fCNCAtP3jQjXJHwrAKri71Tq9jWUkPxj9pja4u6AkCPHY7atgxzSEa2HtDwJfrRWKK4fsfQg4o77/<0;1>/*),older(26352))))#s0zsa6uc");
 
         // We prevent footguns with timelocks by requiring a u16. Note how the following wouldn't
         // compile:
-        //MultipathDescriptor::new(owner_key.clone(), heir_key.clone(), 0x00_01_0f_00).unwrap_err();
-        //MultipathDescriptor::new(owner_key.clone(), heir_key.clone(), (1 << 31) + 1).unwrap_err();
-        //MultipathDescriptor::new(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
+        //LianaPolicy::new(owner_key.clone(), heir_key.clone(), 0x00_01_0f_00).unwrap_err();
+        //LianaPolicy::new(owner_key.clone(), heir_key.clone(), (1 << 31) + 1).unwrap_err();
+        //LianaPolicy::new(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
 
         // You can't use a null timelock in Miniscript.
-        MultipathDescriptor::new(owner_key, heir_key, 0).unwrap_err();
+        LianaPolicy::new(owner_key, heir_key, 0).unwrap_err();
 
-        let owner_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*").unwrap());
-        let heir_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*").unwrap());
+        let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*").unwrap());
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*").unwrap());
         let timelock = 57600;
-        assert_eq!(MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap().to_string(), "wsh(or_d(pk([aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*),and_v(v:pkh([abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*),older(57600))))#ak4cm093");
+        let policy = LianaPolicy::new(owner_key.clone(), heir_key, timelock).unwrap();
+        assert_eq!(MultipathDescriptor::new(policy).to_string(), "wsh(or_d(pk([aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*),and_v(v:pkh([abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*),older(57600))))#ak4cm093");
 
         // We can't pass a raw key, an xpub that is not deriveable, only hardened derivable,
         // without both the change and receive derivation paths, or with more than 2 different
         // derivation paths.
-        let heir_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/<0;1>/354").unwrap());
-        MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
-        let heir_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/<0;1>/*'").unwrap());
-        MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
-        let heir_key = LianaDescKeys::from_single(
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/<0;1>/354").unwrap());
+        LianaPolicy::new(owner_key.clone(), heir_key, timelock).unwrap_err();
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/<0;1>/*'").unwrap());
+        LianaPolicy::new(owner_key.clone(), heir_key, timelock).unwrap_err();
+        let heir_key = PathInfo::Single(
             descriptor::DescriptorPublicKey::from_str(
                 "[abcdef01]02e24913be26dbcfdf8e8e94870b28725cdae09b448b6c127767bf0154e3a3c8e5",
             )
             .unwrap(),
         );
-        MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
-        let heir_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/*'").unwrap());
-        MultipathDescriptor::new(owner_key.clone(), heir_key, timelock).unwrap_err();
-        let heir_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/<0;1;2>/*'").unwrap());
-        MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
+        LianaPolicy::new(owner_key.clone(), heir_key, timelock).unwrap_err();
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/*'").unwrap());
+        LianaPolicy::new(owner_key.clone(), heir_key, timelock).unwrap_err();
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/<0;1;2>/*'").unwrap());
+        LianaPolicy::new(owner_key, heir_key, timelock).unwrap_err();
 
         // And it's checked even in a multisig. For instance:
-        let primary_keys = LianaDescKeys::from_multi(
+        let primary_keys = PathInfo::Multi(
             1,
             vec![
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap(),
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/<0;1>/354").unwrap(),
             ]
-        )
-        .unwrap();
-        let recovery_keys = LianaDescKeys::from_multi(
+        );
+        let recovery_keys = PathInfo::Multi(
             1,
             vec![
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*").unwrap(),
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*").unwrap(),
             ],
-        )
-        .unwrap();
-        MultipathDescriptor::new(primary_keys, recovery_keys, 26352).unwrap_err();
+        );
+        LianaPolicy::new(primary_keys, recovery_keys, 26352).unwrap_err();
 
         // You can't pass duplicate keys, even if they are encoded differently.
-        let owner_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        let heir_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
-        let owner_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[00aabb44]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        let heir_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
-        let owner_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[00aabb44]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        let heir_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[11223344/2/98]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
+        let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
+        LianaPolicy::new(owner_key, heir_key, timelock).unwrap_err();
+        let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[00aabb44]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
+        LianaPolicy::new(owner_key, heir_key, timelock).unwrap_err();
+        let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[00aabb44]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[11223344/2/98]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
+        LianaPolicy::new(owner_key, heir_key, timelock).unwrap_err();
 
         // You can't pass duplicate keys, even across multisigs.
-        let primary_keys = LianaDescKeys::from_multi(
+        let primary_keys = PathInfo::Multi(
             3,
             vec![
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap(),
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*").unwrap(),
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*").unwrap()
             ]
-        )
-        .unwrap();
-        let recovery_keys = LianaDescKeys::from_multi(
+        );
+        let recovery_keys = PathInfo::Multi(
             2,
             vec![
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*").unwrap(),
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*").unwrap(),
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*").unwrap(),
             ],
-        )
-        .unwrap();
-        MultipathDescriptor::new(primary_keys, recovery_keys, 26352).unwrap_err();
+        );
+        LianaPolicy::new(primary_keys, recovery_keys, 26352).unwrap_err();
 
         // No origin in one of the keys
-        let owner_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        let heir_key = LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*").unwrap());
+        let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*").unwrap());
         let timelock = 52560;
-        MultipathDescriptor::new(owner_key, heir_key, timelock).unwrap_err();
+        LianaPolicy::new(owner_key, heir_key, timelock).unwrap_err();
     }
 
     #[test]
@@ -646,19 +580,66 @@ mod tests {
 
     #[test]
     fn liana_desc_keys() {
-        let desc_key_a = descriptor::DescriptorPublicKey::from_str("[aabbccdd]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap();
-        let desc_key_b = descriptor::DescriptorPublicKey::from_str("[aabbccdd]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*").unwrap();
-        LianaDescKeys::from_single(desc_key_a.clone());
+        let secp = secp256k1::Secp256k1::signing_only();
+        let random_desc_key = || {
+            let xpub_str = format!(
+                "[aabbccdd]{}/<0;1>/*",
+                HotSigner::generate(bitcoin::Network::Bitcoin)
+                    .unwrap()
+                    .xpub_at(&bip32::DerivationPath::from_str("m").unwrap(), &secp)
+            );
+            descriptor::DescriptorPublicKey::from_str(&xpub_str).unwrap()
+        };
+        let prim_path = PathInfo::Single(random_desc_key());
+        let twenty_keys: Vec<descriptor::DescriptorPublicKey> =
+            (0..20).map(|_| random_desc_key()).collect();
+        let mut twenty_one_keys = twenty_keys.clone();
+        twenty_one_keys.push(random_desc_key());
 
-        LianaDescKeys::from_multi(1, vec![desc_key_a.clone()]).unwrap_err();
-        LianaDescKeys::from_multi(2, vec![desc_key_a.clone()]).unwrap_err();
-        LianaDescKeys::from_multi(1, vec![desc_key_a.clone(), desc_key_b.clone()]).unwrap();
-        LianaDescKeys::from_multi(0, vec![desc_key_a.clone(), desc_key_b.clone()]).unwrap_err();
-        LianaDescKeys::from_multi(2, vec![desc_key_a.clone(), desc_key_b.clone()]).unwrap();
-        LianaDescKeys::from_multi(3, vec![desc_key_a.clone(), desc_key_b]).unwrap_err();
-        LianaDescKeys::from_multi(3, (0..20).map(|_| desc_key_a.clone()).collect()).unwrap();
-        LianaDescKeys::from_multi(20, (0..20).map(|_| desc_key_a.clone()).collect()).unwrap();
-        LianaDescKeys::from_multi(20, (0..21).map(|_| desc_key_a.clone()).collect()).unwrap_err();
+        LianaPolicy::new(
+            prim_path.clone(),
+            PathInfo::Multi(1, vec![random_desc_key()]),
+            1,
+        )
+        .unwrap_err();
+        LianaPolicy::new(
+            prim_path.clone(),
+            PathInfo::Multi(2, vec![random_desc_key()]),
+            1,
+        )
+        .unwrap_err();
+        LianaPolicy::new(
+            prim_path.clone(),
+            PathInfo::Multi(1, vec![random_desc_key(), random_desc_key()]),
+            1,
+        )
+        .unwrap();
+        LianaPolicy::new(
+            prim_path.clone(),
+            PathInfo::Multi(0, vec![random_desc_key(), random_desc_key()]),
+            1,
+        )
+        .unwrap_err();
+        LianaPolicy::new(
+            prim_path.clone(),
+            PathInfo::Multi(2, vec![random_desc_key(), random_desc_key()]),
+            1,
+        )
+        .unwrap();
+        LianaPolicy::new(
+            prim_path.clone(),
+            PathInfo::Multi(3, vec![random_desc_key(), random_desc_key()]),
+            1,
+        )
+        .unwrap_err();
+        LianaPolicy::new(
+            prim_path.clone(),
+            PathInfo::Multi(3, twenty_keys.clone()),
+            1,
+        )
+        .unwrap();
+        LianaPolicy::new(prim_path.clone(), PathInfo::Multi(20, twenty_keys), 1).unwrap();
+        LianaPolicy::new(prim_path, PathInfo::Multi(20, twenty_one_keys), 1).unwrap_err();
     }
 
     fn roundtrip(desc_str: &str) {

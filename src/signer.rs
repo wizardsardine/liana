@@ -409,9 +409,7 @@ mod tests {
             .unwrap(),
             wildcard: Wildcard::Unhardened,
         });
-        let prim_keys =
-            descriptors::LianaDescKeys::from_multi(2, vec![prim_key_a, prim_key_b, prim_key_c])
-                .unwrap();
+        let prim_keys = descriptors::PathInfo::Multi(2, vec![prim_key_a, prim_key_b, prim_key_c]);
         let origin_der = bip32::DerivationPath::from_str("m/1/2'/3/4'").unwrap();
         let xkey = recov_signer.xpub_at(&origin_der, &secp);
         let recov_key = DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
@@ -424,8 +422,9 @@ mod tests {
             .unwrap(),
             wildcard: Wildcard::Unhardened,
         });
-        let recov_keys = descriptors::LianaDescKeys::from_single(recov_key);
-        let desc = descriptors::MultipathDescriptor::new(prim_keys, recov_keys, 42).unwrap();
+        let recov_keys = descriptors::PathInfo::Single(recov_key);
+        let policy = descriptors::LianaPolicy::new(prim_keys, recov_keys, 42).unwrap();
+        let desc = descriptors::MultipathDescriptor::new(policy);
 
         // Create a dummy PSBT spending a coin from this descriptor with a single input and single
         // (external) output. We'll be modifying it as we go.
