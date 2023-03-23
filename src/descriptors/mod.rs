@@ -291,8 +291,8 @@ impl MultipathDescriptor {
         &self.change_desc
     }
 
-    /// Parse information about this descriptor
-    pub fn info(&self) -> LianaDescInfo {
+    /// Get the spending policy of this descriptor.
+    pub fn policy(&self) -> LianaPolicy {
         // Get the Miniscript
         let wsh_desc = match &self.multi_desc {
             descriptor::Descriptor::Wsh(desc) => desc,
@@ -338,13 +338,13 @@ impl MultipathDescriptor {
         let reco_path = PathInfo::from_recovery_path(reco_path_sub)
             .expect("The recovery path policy must always be a timelock along with a set of keys.");
 
-        LianaDescInfo::new(primary_path, reco_path)
+        LianaPolicy::new(primary_path, reco_path)
     }
 
     /// Get the value (in blocks) of the relative timelock for the heir's spending path.
     pub fn timelock_value(&self) -> u32 {
         // TODO: make it return a u16
-        self.info().recovery_path.0 as u32
+        self.policy().recovery_path.0 as u32
     }
 
     /// Get the maximum size in WU of a satisfaction for this descriptor.
@@ -390,7 +390,7 @@ impl MultipathDescriptor {
         // Determine the structure of the descriptor. Then compute the spend info for the primary
         // and recovery paths. Only provide the spend info for the recovery path if it is available
         // (ie if the nSequence is >= to the chosen CSV value).
-        let desc_info = self.info();
+        let desc_info = self.policy();
         let primary_path = desc_info.primary_path.spend_info(pubkeys_signed.clone());
         let recovery_path = if txin.sequence.is_height_locked()
             && txin.sequence.0 >= desc_info.recovery_path.0 as u32
@@ -772,7 +772,7 @@ mod tests {
     fn partial_spend_info() {
         // A simple descriptor with 1 keys as primary path and 1 recovery key.
         let desc = MultipathDescriptor::from_str("wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr").unwrap();
-        let desc_info = desc.info();
+        let desc_info = desc.policy();
         let prim_key_origin = (
             bip32::Fingerprint::from_str("f5acc2fd").unwrap(),
             Vec::new().into(),
@@ -949,7 +949,7 @@ mod tests {
         assert!(info.recovery_path.is_none());
 
         let desc = MultipathDescriptor::from_str("wsh(or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*),and_v(v:multi(2,[636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/<0;1>/*,[ffd63c8d/48'/1'/1'/2']tpubDFMs44FD4kFt3M7Z317cFh5tdKEGN8tyQRY6Q5gcSha4NtxZfGmTVRMbsD1bWN469LstXU4aVSARDxrvxFCUjHeegfEY2cLSazMBkNCmDPD/<0;1>/*),older(2))))#xcf6jr2r").unwrap();
-        let info = desc.info();
+        let info = desc.policy();
         assert_eq!(info.primary_path, PathInfo::Multi(
             2,
             vec![

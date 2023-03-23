@@ -200,17 +200,16 @@ impl PathInfo {
     }
 }
 
-/// Information about the descriptor: how many keys are present in each path, what's the timelock
-/// of the recovery path, what's the threshold if there are multiple keys, etc..
+/// A Liana spending policy.
 #[derive(Debug, Eq, PartialEq, Clone, Ord, PartialOrd, Hash)]
-pub struct LianaDescInfo {
+pub struct LianaPolicy {
     pub(super) primary_path: PathInfo,
     pub(super) recovery_path: (u16, PathInfo),
 }
 
-impl LianaDescInfo {
-    pub(super) fn new(primary_path: PathInfo, recovery_path: (u16, PathInfo)) -> LianaDescInfo {
-        LianaDescInfo {
+impl LianaPolicy {
+    pub(super) fn new(primary_path: PathInfo, recovery_path: (u16, PathInfo)) -> LianaPolicy {
+        LianaPolicy {
             primary_path,
             recovery_path,
         }
