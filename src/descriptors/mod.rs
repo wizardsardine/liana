@@ -139,9 +139,11 @@ impl str::FromStr for MultipathDescriptor {
 
         // Must always contain a non-timelocked primary spending path and a timelocked recovery
         // path. The PathInfo constructors perform the checks that each path is well formed.
+        let mut primary_path_seen = false;
         for sub in subs {
-            if is_single_key_or_multisig(&sub) {
+            if !primary_path_seen && is_single_key_or_multisig(&sub) {
                 PathInfo::from_primary_path(sub)?;
+                primary_path_seen = true;
             } else {
                 PathInfo::from_recovery_path(sub)?;
             }
@@ -689,6 +691,9 @@ mod tests {
 
     #[test]
     fn inheritance_descriptor_tl_value() {
+        // Must always contain at least one timelocked path.
+        MultipathDescriptor::from_str("wsh(or_i(pk([abcdef01]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),pk([abcdef01]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap_err();
+
         let desc = MultipathDescriptor::from_str("wsh(andor(pk([abcdef01]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(1),pk([abcdef01]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
         assert_eq!(desc.timelock_value(), 1);
 
