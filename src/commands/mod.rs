@@ -155,7 +155,7 @@ pub enum InsaneFeeInfo {
 // Apply some sanity checks on a created transaction's PSBT.
 // TODO: add more sanity checks from revault_tx
 fn sanity_check_psbt(
-    spent_desc: &descriptors::MultipathDescriptor,
+    spent_desc: &descriptors::LianaDescriptor,
     psbt: &Psbt,
 ) -> Result<(), CommandError> {
     let tx = &psbt.unsigned_tx;
@@ -783,7 +783,7 @@ impl DaemonControl {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetInfoDescriptors {
-    pub main: descriptors::MultipathDescriptor,
+    pub main: descriptors::LianaDescriptor,
 }
 
 /// Information about the daemon

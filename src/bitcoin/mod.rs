@@ -87,7 +87,7 @@ pub trait BitcoinInterface: Send {
     /// the given date.
     fn start_rescan(
         &self,
-        desc: &descriptors::MultipathDescriptor,
+        desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String>;
 
@@ -288,7 +288,7 @@ impl BitcoinInterface for d::BitcoinD {
 
     fn start_rescan(
         &self,
-        desc: &descriptors::MultipathDescriptor,
+        desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String> {
         // FIXME: in theory i think this could potentially fail to actually start the rescan.
@@ -374,7 +374,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn start_rescan(
         &self,
-        desc: &descriptors::MultipathDescriptor,
+        desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String> {
         self.lock().unwrap().start_rescan(desc, timestamp)

@@ -424,7 +424,7 @@ mod tests {
         });
         let recov_keys = descriptors::PathInfo::Single(recov_key);
         let policy = descriptors::LianaPolicy::new(prim_keys, recov_keys, 42).unwrap();
-        let desc = descriptors::MultipathDescriptor::new(policy);
+        let desc = descriptors::LianaDescriptor::new(policy);
 
         // Create a dummy PSBT spending a coin from this descriptor with a single input and single
         // (external) output. We'll be modifying it as we go.

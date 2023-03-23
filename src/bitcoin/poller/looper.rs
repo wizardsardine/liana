@@ -300,7 +300,7 @@ pub fn looper(
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     shutdown: sync::Arc<atomic::AtomicBool>,
     poll_interval: time::Duration,
-    desc: descriptors::MultipathDescriptor,
+    desc: descriptors::LianaDescriptor,
 ) {
     let mut last_poll = None;
     let mut synced = false;

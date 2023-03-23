@@ -464,7 +464,7 @@ mod tests {
     use super::*;
     use crate::{
         config::{BitcoinConfig, BitcoindConfig},
-        descriptors::MultipathDescriptor,
+        descriptors::LianaDescriptor,
         testutils::*,
     };
 
@@ -686,7 +686,7 @@ mod tests {
 
         // Create a dummy config with this bitcoind
         let desc_str = "wsh(andor(pk([aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/<0;1>/*),older(10000),pk([aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*)))#3xh8xmhn";
-        let desc = MultipathDescriptor::from_str(desc_str).unwrap();
+        let desc = LianaDescriptor::from_str(desc_str).unwrap();
         let receive_desc = desc.receive_descriptor().clone();
         let change_desc = desc.change_descriptor().clone();
         let config = Config {
