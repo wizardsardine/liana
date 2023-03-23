@@ -8,10 +8,46 @@ use miniscript::{
 use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
-    sync,
+    error, fmt, sync,
 };
 
-use crate::descriptors::{keys::DescKeyError, LianaDescError};
+#[derive(Debug)]
+pub enum LianaPolicyError {
+    InsaneTimelock(u32),
+    InvalidKey(Box<descriptor::DescriptorPublicKey>),
+    DuplicateKey(Box<descriptor::DescriptorPublicKey>),
+    InvalidMultiThresh(usize),
+    InvalidMultiKeys(usize),
+    IncompatibleDesc,
+}
+
+impl std::fmt::Display for LianaPolicyError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::InsaneTimelock(tl) => {
+                write!(f, "Timelock value '{}' isn't valid or safe to use", tl)
+            }
+            Self::InvalidKey(key) => {
+                write!(
+                    f,
+                    "Invalid key '{}'. Need a wildcard ('ranged') xpub with an origin and a multipath for (and only for) deriving change addresses. That is, an xpub of the form '[aaff0099]xpub.../<0;1>/*'.",
+                    key
+                    )
+            }
+            Self::InvalidMultiThresh(thresh) => write!(f, "Invalid multisig threshold value '{}'. The threshold must be > to 0 and <= to the number of keys.", thresh),
+            Self::InvalidMultiKeys(n_keys) => write!(f, "Invalid number of keys '{}'. Between 2 and 20 keys must be given to use multiple keys in a specific path.", n_keys),
+            Self::DuplicateKey(key) => {
+                write!(f, "Duplicate key '{}'.", key)
+            }
+            Self::IncompatibleDesc => write!(
+                f,
+                "Descriptor is not compatible with a Liana spending policy."
+            ),
+        }
+    }
+}
+
+impl error::Error for LianaPolicyError {}
 
 // Whether a Miniscript policy node represents a key check (or several of them).
 fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorPublicKey>) -> bool {
@@ -58,11 +94,11 @@ fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
 //
 // All this is achieved simply through asking for a 16-bit integer, since all the
 // above are signaled in leftmost bits.
-fn csv_check(csv_value: u32) -> Result<u16, LianaDescError> {
+fn csv_check(csv_value: u32) -> Result<u16, LianaPolicyError> {
     if csv_value > 0 {
-        u16::try_from(csv_value).map_err(|_| LianaDescError::InsaneTimelock(csv_value))
+        u16::try_from(csv_value).map_err(|_| LianaPolicyError::InsaneTimelock(csv_value))
     } else {
-        Err(LianaDescError::InsaneTimelock(csv_value))
+        Err(LianaPolicyError::InsaneTimelock(csv_value))
     }
 }
 
@@ -90,20 +126,20 @@ impl PathInfo {
     /// descriptor (that is, a set of keys).
     pub fn from_primary_path(
         policy: SemanticPolicy<descriptor::DescriptorPublicKey>,
-    ) -> Result<PathInfo, LianaDescError> {
+    ) -> Result<PathInfo, LianaPolicyError> {
         match policy {
             SemanticPolicy::Key(key) => Ok(PathInfo::Single(key)),
             SemanticPolicy::Threshold(k, subs) => {
-                let keys: Result<_, LianaDescError> = subs
+                let keys: Result<_, LianaPolicyError> = subs
                     .into_iter()
                     .map(|sub| match sub {
                         SemanticPolicy::Key(key) => Ok(key),
-                        _ => Err(LianaDescError::IncompatibleDesc),
+                        _ => Err(LianaPolicyError::IncompatibleDesc),
                     })
                     .collect();
                 Ok(PathInfo::Multi(k, keys?))
             }
-            _ => Err(LianaDescError::IncompatibleDesc),
+            _ => Err(LianaPolicyError::IncompatibleDesc),
         }
     }
 
@@ -112,14 +148,14 @@ impl PathInfo {
     /// descriptor (that is, a set of keys after a timelock).
     pub fn from_recovery_path(
         policy: SemanticPolicy<descriptor::DescriptorPublicKey>,
-    ) -> Result<(u16, PathInfo), LianaDescError> {
+    ) -> Result<(u16, PathInfo), LianaPolicyError> {
         // The recovery spending path must always be a policy of type `thresh(2, older(x), thresh(n, key1,
         // key2, ..))`. In the special case n == 1, it is only `thresh(2, older(x), key)`. In the
         // special case n == len(keys) (i.e. it's an N-of-N multisig), it is normalized as
         // `thresh(n+1, older(x), key1, key2, ...)`.
         let (k, subs) = match policy {
             SemanticPolicy::Threshold(k, subs) => (k, subs),
-            _ => return Err(LianaDescError::IncompatibleDesc),
+            _ => return Err(LianaPolicyError::IncompatibleDesc),
         };
         if k == 2 && subs.len() == 2 {
             // The general case (as well as the n == 1 case). The sub that is not the timelock is
@@ -130,11 +166,11 @@ impl PathInfo {
                     SemanticPolicy::Older(val) => Some(csv_check(val.0)),
                     _ => None,
                 })
-                .ok_or(LianaDescError::IncompatibleDesc)??;
+                .ok_or(LianaPolicyError::IncompatibleDesc)??;
             let keys_sub = subs
                 .into_iter()
                 .find(is_single_key_or_multisig)
-                .ok_or(LianaDescError::IncompatibleDesc)?;
+                .ok_or(LianaPolicyError::IncompatibleDesc)?;
             PathInfo::from_primary_path(keys_sub).map(|info| (tl_value, info))
         } else if k == subs.len() && subs.len() > 2 {
             // The N-of-N case. All subs but the threshold must be keys (if one had been thresh()
@@ -146,22 +182,22 @@ impl PathInfo {
                     SemanticPolicy::Key(key) => keys.push(key),
                     SemanticPolicy::Older(val) => {
                         if tl_value.is_some() {
-                            return Err(LianaDescError::IncompatibleDesc);
+                            return Err(LianaPolicyError::IncompatibleDesc);
                         }
                         tl_value = Some(csv_check(val.0)?);
                     }
-                    _ => return Err(LianaDescError::IncompatibleDesc),
+                    _ => return Err(LianaPolicyError::IncompatibleDesc),
                 }
             }
             assert!(keys.len() > 1); // At least 3 subs, only one of which may be older().
             Ok((
-                tl_value.ok_or(LianaDescError::IncompatibleDesc)?,
+                tl_value.ok_or(LianaPolicyError::IncompatibleDesc)?,
                 PathInfo::Multi(k - 1, keys),
             ))
         } else {
             // If there is less than 2 subs, there can't be both a timelock and keys. If the
             // threshold is not equal to the number of subs, the timelock can't be mandatory.
-            Err(LianaDescError::IncompatibleDesc)
+            Err(LianaPolicyError::IncompatibleDesc)
         }
     }
 
@@ -287,7 +323,7 @@ impl LianaPolicy {
         primary_path: PathInfo,
         recovery_path: PathInfo,
         recovery_timelock: u16,
-    ) -> Result<LianaPolicy, LianaDescError> {
+    ) -> Result<LianaPolicy, LianaPolicyError> {
         // We require the locktime to:
         //  - not be disabled
         //  - be in number of blocks
@@ -296,21 +332,17 @@ impl LianaPolicy {
         //
         // All this is achieved through asking for a 16-bit integer.
         if recovery_timelock == 0 {
-            return Err(LianaDescError::InsaneTimelock(recovery_timelock as u32));
+            return Err(LianaPolicyError::InsaneTimelock(recovery_timelock as u32));
         }
 
         // If any of the paths is a multisig, make sure they are within the CHECKMULTISIG bounds.
         for path_info in &[&primary_path, &recovery_path] {
             if let PathInfo::Multi(thresh, keys) = path_info {
                 if keys.len() < 2 || keys.len() > 20 {
-                    return Err(LianaDescError::DescKey(DescKeyError::InvalidMultiKeys(
-                        keys.len(),
-                    )));
+                    return Err(LianaPolicyError::InvalidMultiKeys(keys.len()));
                 }
                 if thresh == &0 || thresh > &keys.len() {
-                    return Err(LianaDescError::DescKey(DescKeyError::InvalidMultiThresh(
-                        *thresh,
-                    )));
+                    return Err(LianaPolicyError::InvalidMultiThresh(*thresh));
                 }
             }
         }
@@ -319,7 +351,7 @@ impl LianaPolicy {
         let (prim_keys, rec_keys) = (primary_path.keys(), recovery_path.keys());
         let all_keys = prim_keys.iter().chain(rec_keys.iter());
         if let Some(key) = all_keys.clone().find(|k| !is_valid_desc_key(k)) {
-            return Err(LianaDescError::InvalidKey((*key).clone().into()));
+            return Err(LianaPolicyError::InvalidKey((*key).clone().into()));
         }
 
         // Check for key duplicates. They are invalid in (nonmalleable) miniscripts.
@@ -330,7 +362,7 @@ impl LianaPolicy {
                 _ => unreachable!("Just checked it was a multixpub above"),
             };
             if key_set.contains(&xpub) {
-                return Err(LianaDescError::DuplicateKey(key.clone().into()));
+                return Err(LianaPolicyError::DuplicateKey(key.clone().into()));
             }
             key_set.insert(xpub);
         }
@@ -346,18 +378,18 @@ impl LianaPolicy {
     /// (P2WSH, multipath, ..) and has a valid Liana semantic.
     pub fn from_multipath_descriptor(
         desc: &descriptor::Descriptor<descriptor::DescriptorPublicKey>,
-    ) -> Result<LianaPolicy, LianaDescError> {
+    ) -> Result<LianaPolicy, LianaPolicyError> {
         // For now we only allow P2WSH descriptors.
         let wsh_desc = match &desc {
             descriptor::Descriptor::Wsh(desc) => desc,
-            _ => return Err(LianaDescError::IncompatibleDesc),
+            _ => return Err(LianaPolicyError::IncompatibleDesc),
         };
 
         // Get the Miniscript from the descriptor and make sure it only contains valid multipath
         // descriptor keys.
         let ms = match wsh_desc.as_inner() {
             descriptor::WshInner::Ms(ms) => ms,
-            _ => return Err(LianaDescError::IncompatibleDesc),
+            _ => return Err(LianaPolicyError::IncompatibleDesc),
         };
         let invalid_key = ms.iter_pk().find_map(|pk| {
             if is_valid_desc_key(&pk) {
@@ -367,7 +399,7 @@ impl LianaPolicy {
             }
         });
         if let Some(key) = invalid_key {
-            return Err(LianaDescError::InvalidKey(key.into()));
+            return Err(LianaPolicyError::InvalidKey(key.into()));
         }
 
         // Now lift a semantic policy out of this Miniscript and normalize it to make sure we
@@ -382,9 +414,9 @@ impl LianaPolicy {
             SemanticPolicy::Threshold(1, subs) => Some(subs),
             _ => None,
         }
-        .ok_or(LianaDescError::IncompatibleDesc)?;
+        .ok_or(LianaPolicyError::IncompatibleDesc)?;
         if subs.len() != 2 {
-            return Err(LianaDescError::IncompatibleDesc);
+            return Err(LianaPolicyError::IncompatibleDesc);
         }
 
         // Fetch the two spending paths' semantic policies. The primary path is identified as the
@@ -400,8 +432,8 @@ impl LianaPolicy {
                     (prim_sub, reco_sub)
                 });
         let (prim_path_sub, reco_path_sub) = (
-            prim_path_sub.ok_or(LianaDescError::IncompatibleDesc)?,
-            reco_path_sub.ok_or(LianaDescError::IncompatibleDesc)?,
+            prim_path_sub.ok_or(LianaPolicyError::IncompatibleDesc)?,
+            reco_path_sub.ok_or(LianaPolicyError::IncompatibleDesc)?,
         );
 
         // Now parse information about each spending path.

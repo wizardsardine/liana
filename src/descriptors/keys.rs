@@ -12,16 +12,12 @@ use std::{error, fmt, str};
 #[derive(Debug)]
 pub enum DescKeyError {
     DerivedKeyParsing,
-    InvalidMultiThresh(usize),
-    InvalidMultiKeys(usize),
 }
 
 impl std::fmt::Display for DescKeyError {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
             DescKeyError::DerivedKeyParsing => write!(f, "Parsing derived key"),
-            Self::InvalidMultiThresh(thresh) => write!(f, "Invalid threshold value '{}'. The threshold must be > to 0 and <= to the number of keys.", thresh),
-            Self::InvalidMultiKeys(n_keys) => write!(f, "Invalid number of keys '{}'. Between 2 and 20 keys must be given to use multiple keys in a specific path.", n_keys),
         }
     }
 }

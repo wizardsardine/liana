@@ -30,12 +30,9 @@ fn wu_to_vb(vb: usize) -> usize {
 
 #[derive(Debug)]
 pub enum LianaDescError {
-    InsaneTimelock(u32),
-    InvalidKey(Box<descriptor::DescriptorPublicKey>),
-    DuplicateKey(Box<descriptor::DescriptorPublicKey>),
     Miniscript(miniscript::Error),
-    IncompatibleDesc,
     DescKey(DescKeyError),
+    Policy(LianaPolicyError),
     /// Different number of PSBT vs tx inputs, etc..
     InsanePsbt,
     /// Not all inputs' sequence the same, not all inputs signed with the same key, ..
@@ -45,22 +42,9 @@ pub enum LianaDescError {
 impl std::fmt::Display for LianaDescError {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::InsaneTimelock(tl) => {
-                write!(f, "Timelock value '{}' isn't valid or safe to use", tl)
-            }
-            Self::InvalidKey(key) => {
-                write!(
-                    f,
-                    "Invalid key '{}'. Need a wildcard ('ranged') xpub with an origin and a multipath for (and only for) deriving change addresses. That is, an xpub of the form '[aaff0099]xpub.../<0;1>/*'.",
-                    key
-                    )
-            }
-            Self::DuplicateKey(key) => {
-                write!(f, "Duplicate key '{}'.", key)
-            }
             Self::Miniscript(e) => write!(f, "Miniscript error: '{}'.", e),
-            Self::IncompatibleDesc => write!(f, "Descriptor is not compatible."),
             Self::DescKey(e) => write!(f, "{}", e),
+            Self::Policy(e) => write!(f, "{}", e),
             Self::InsanePsbt => write!(f, "Analyzed PSBT is empty or malformed."),
             Self::InconsistentPsbt => write!(f, "Analyzed PSBT is inconsistent across inputs."),
         }
@@ -68,6 +52,12 @@ impl std::fmt::Display for LianaDescError {
 }
 
 impl error::Error for LianaDescError {}
+
+impl From<LianaPolicyError> for LianaDescError {
+    fn from(e: LianaPolicyError) -> LianaDescError {
+        LianaDescError::Policy(e)
+    }
+}
 
 /// An [InheritanceDescriptor] that contains multipath keys for (and only for) the receive keychain
 /// and the change keychain.
