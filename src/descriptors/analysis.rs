@@ -1,4 +1,8 @@
-use miniscript::{bitcoin::util::bip32, descriptor, policy::Semantic as SemanticPolicy};
+use miniscript::{
+    bitcoin::util::bip32,
+    descriptor,
+    policy::{Liftable, Semantic as SemanticPolicy},
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -15,6 +19,33 @@ pub fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorP
             subs.iter().all(|sub| matches!(sub, SemanticPolicy::Key(_)))
         }
         _ => false,
+    }
+}
+
+/// We require the descriptor key to:
+///  - Be deriveable (to contain a wildcard)
+///  - Be multipath (to contain a step in the derivation path with multiple indexes)
+///  - The multipath step to only contain two indexes, 0 and 1.
+///  - Be 'signable' by an external signer (to contain an origin)
+pub fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
+    match *key {
+        descriptor::DescriptorPublicKey::Single(..) | descriptor::DescriptorPublicKey::XPub(..) => {
+            false
+        }
+        descriptor::DescriptorPublicKey::MultiXPub(ref xpub) => {
+            let der_paths = xpub.derivation_paths.paths();
+            // Rust-miniscript enforces BIP389 which states that all paths must have the same len.
+            let len = der_paths.get(0).expect("Cannot be empty").len();
+            // Technically the xpub could be for the master xpub and not have an origin. But it's
+            // no unlikely (and easily fixable) while users shooting themselves in the foot by
+            // forgetting to provide the origin is so likely that it's worth ruling out xpubs
+            // without origin entirely.
+            xpub.origin.is_some()
+                && xpub.wildcard == descriptor::Wildcard::Unhardened
+                && der_paths.len() == 2
+                && der_paths[0][len - 1] == 0.into()
+                && der_paths[1][len - 1] == 1.into()
+        }
     }
 }
 
@@ -200,7 +231,7 @@ impl PathInfo {
     }
 }
 
-/// A Liana spending policy.
+/// A Liana spending policy. Can be inferred from a Miniscript semantic policy.
 #[derive(Debug, Eq, PartialEq, Clone, Ord, PartialOrd, Hash)]
 pub struct LianaPolicy {
     pub(super) primary_path: PathInfo,
@@ -208,11 +239,76 @@ pub struct LianaPolicy {
 }
 
 impl LianaPolicy {
-    pub(super) fn new(primary_path: PathInfo, recovery_path: (u16, PathInfo)) -> LianaPolicy {
-        LianaPolicy {
+    /// Create a Liana policy from a descriptor. This will check the descriptor is correctly formed
+    /// (P2WSH, multipath, ..) and has a valid Liana semantic.
+    pub fn from_multipath_descriptor(
+        desc: &descriptor::Descriptor<descriptor::DescriptorPublicKey>,
+    ) -> Result<LianaPolicy, LianaDescError> {
+        // For now we only allow P2WSH descriptors.
+        let wsh_desc = match &desc {
+            descriptor::Descriptor::Wsh(desc) => desc,
+            _ => return Err(LianaDescError::IncompatibleDesc),
+        };
+
+        // Get the Miniscript from the descriptor and make sure it only contains valid multipath
+        // descriptor keys.
+        let ms = match wsh_desc.as_inner() {
+            descriptor::WshInner::Ms(ms) => ms,
+            _ => return Err(LianaDescError::IncompatibleDesc),
+        };
+        let invalid_key = ms.iter_pk().find_map(|pk| {
+            if is_valid_desc_key(&pk) {
+                None
+            } else {
+                Some(pk)
+            }
+        });
+        if let Some(key) = invalid_key {
+            return Err(LianaDescError::InvalidKey(key.into()));
+        }
+
+        // Now lift a semantic policy out of this Miniscript and normalize it to make sure we
+        // compare apples to apples below.
+        let policy = ms
+            .lift()
+            .expect("Lifting can't fail on a Miniscript")
+            .normalized();
+
+        // For now we only accept a single timelocked recovery path.
+        let subs = match policy {
+            SemanticPolicy::Threshold(1, subs) => Some(subs),
+            _ => None,
+        }
+        .ok_or(LianaDescError::IncompatibleDesc)?;
+        if subs.len() != 2 {
+            return Err(LianaDescError::IncompatibleDesc);
+        }
+
+        // Fetch the two spending paths' semantic policies. The primary path is identified as the
+        // only one that isn't timelocked.
+        let (prim_path_sub, reco_path_sub) =
+            subs.into_iter()
+                .fold((None, None), |(mut prim_sub, mut reco_sub), sub| {
+                    if is_single_key_or_multisig(&sub) {
+                        prim_sub = Some(sub);
+                    } else {
+                        reco_sub = Some(sub);
+                    }
+                    (prim_sub, reco_sub)
+                });
+        let (prim_path_sub, reco_path_sub) = (
+            prim_path_sub.ok_or(LianaDescError::IncompatibleDesc)?,
+            reco_path_sub.ok_or(LianaDescError::IncompatibleDesc)?,
+        );
+
+        // Now parse information about each spending path.
+        let primary_path = PathInfo::from_primary_path(prim_path_sub)?;
+        let recovery_path = PathInfo::from_recovery_path(reco_path_sub)?;
+
+        Ok(LianaPolicy {
             primary_path,
             recovery_path,
-        }
+        })
     }
 
     pub fn primary_path(&self) -> &PathInfo {

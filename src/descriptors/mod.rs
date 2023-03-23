@@ -10,7 +10,6 @@ use miniscript::{
     },
     descriptor,
     miniscript::{decode::Terminal, Miniscript},
-    policy::{Liftable, Semantic as SemanticPolicy},
     translate_hash_clone, ForEachKey, ScriptContext, TranslatePk, Translator,
 };
 
@@ -105,58 +104,17 @@ impl str::FromStr for MultipathDescriptor {
     type Err = LianaDescError;
 
     fn from_str(s: &str) -> Result<MultipathDescriptor, Self::Err> {
-        let wsh_desc = descriptor::Wsh::<descriptor::DescriptorPublicKey>::from_str(s)
+        // Parse a descriptor and check it is a multipath descriptor corresponding to a valid Liana
+        // spending policy.
+        let desc = descriptor::Descriptor::<descriptor::DescriptorPublicKey>::from_str(s)
             .map_err(LianaDescError::Miniscript)?;
-        let ms = match wsh_desc.as_inner() {
-            descriptor::WshInner::Ms(ms) => ms,
-            _ => return Err(LianaDescError::IncompatibleDesc),
-        };
-        let invalid_key = ms.iter_pk().find_map(|pk| {
-            if is_valid_desc_key(&pk) {
-                None
-            } else {
-                Some(pk)
-            }
-        });
-        if let Some(key) = invalid_key {
-            return Err(LianaDescError::InvalidKey(key.into()));
-        }
-
-        // Semantic of the Miniscript must be either the owner now, or the heir after
-        // a timelock.
-        let policy = ms
-            .lift()
-            .expect("Lifting can't fail on a Miniscript")
-            .normalized();
-        let subs = match policy {
-            SemanticPolicy::Threshold(1, subs) => Some(subs),
-            _ => None,
-        }
-        .ok_or(LianaDescError::IncompatibleDesc)?;
-        if subs.len() != 2 {
-            return Err(LianaDescError::IncompatibleDesc);
-        }
-
-        // Must always contain a non-timelocked primary spending path and a timelocked recovery
-        // path. The PathInfo constructors perform the checks that each path is well formed.
-        let mut primary_path_seen = false;
-        for sub in subs {
-            if !primary_path_seen && is_single_key_or_multisig(&sub) {
-                PathInfo::from_primary_path(sub)?;
-                primary_path_seen = true;
-            } else {
-                PathInfo::from_recovery_path(sub)?;
-            }
-        }
-
-        // All good, construct the multipath descriptor.
-        let multi_desc = descriptor::Descriptor::Wsh(wsh_desc);
+        LianaPolicy::from_multipath_descriptor(&desc)?;
 
         // Compute the receive and change "sub" descriptors right away. According to our pubkey
         // check above, there must be only two of those, 0 and 1.
         // We use /0/* for receiving and /1/* for change.
         // FIXME: don't rely on into_single_descs()'s ordering.
-        let mut singlepath_descs = multi_desc
+        let mut singlepath_descs = desc
             .clone()
             .into_single_descriptors()
             .expect("Can't error, all paths have the same length")
@@ -166,7 +124,7 @@ impl str::FromStr for MultipathDescriptor {
         let change_desc = InheritanceDescriptor(singlepath_descs.next().expect("Second of 2"));
 
         Ok(MultipathDescriptor {
-            multi_desc,
+            multi_desc: desc,
             receive_desc,
             change_desc,
         })
@@ -293,52 +251,8 @@ impl MultipathDescriptor {
 
     /// Get the spending policy of this descriptor.
     pub fn policy(&self) -> LianaPolicy {
-        // Get the Miniscript
-        let wsh_desc = match &self.multi_desc {
-            descriptor::Descriptor::Wsh(desc) => desc,
-            _ => unreachable!(),
-        };
-        let ms = match wsh_desc.as_inner() {
-            descriptor::WshInner::Ms(ms) => ms,
-            _ => unreachable!(),
-        };
-
-        // Lift the semantic policy from the Miniscript
-        let policy = ms
-            .lift()
-            .expect("Lifting can't fail on a Miniscript")
-            .normalized();
-        let subs = match policy {
-            SemanticPolicy::Threshold(1, subs) => subs,
-            _ => unreachable!("The policy is always 'one of the primary or the recovery path'"),
-        };
-        // For now we only ever allow a single recovery path.
-        assert_eq!(subs.len(), 2);
-
-        // Fetch the two spending paths' semantic policies. The primary path is identified as the
-        // only one that isn't timelocked.
-        let (prim_path_sub, reco_path_sub) =
-            subs.into_iter()
-                .fold((None, None), |(mut prim_sub, mut reco_sub), sub| {
-                    if is_single_key_or_multisig(&sub) {
-                        prim_sub = Some(sub);
-                    } else {
-                        reco_sub = Some(sub);
-                    }
-                    (prim_sub, reco_sub)
-                });
-        let (prim_path_sub, reco_path_sub) = (
-            prim_path_sub.expect("Must be present"),
-            reco_path_sub.expect("Must be present"),
-        );
-
-        // Now parse information about each spending path.
-        let primary_path = PathInfo::from_primary_path(prim_path_sub)
-            .expect("Must always be a set of keys without timelock");
-        let reco_path = PathInfo::from_recovery_path(reco_path_sub)
-            .expect("The recovery path policy must always be a timelock along with a set of keys.");
-
-        LianaPolicy::new(primary_path, reco_path)
+        LianaPolicy::from_multipath_descriptor(&self.multi_desc)
+            .expect("We never create a Liana descriptor with an invalid Liana policy.")
     }
 
     /// Get the value (in blocks) of the relative timelock for the heir's spending path.
