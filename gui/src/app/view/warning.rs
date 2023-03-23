@@ -18,6 +18,7 @@ impl From<&Error> for WarningMessage {
     fn from(error: &Error) -> WarningMessage {
         match error {
             Error::Config(e) => WarningMessage(e.to_owned()),
+            Error::Wallet(_) => WarningMessage("Wallet error".to_string()),
             Error::Daemon(e) => match e {
                 DaemonError::Rpc(code, _) => {
                     if *code == RpcErrorCode::JSONRPC2_INVALID_PARAMS as i32 {
@@ -37,7 +38,6 @@ impl From<&Error> for WarningMessage {
             },
             Error::Unexpected(_) => WarningMessage("Unknown error".to_string()),
             Error::HardwareWallet(_) => WarningMessage("Hardware wallet error".to_string()),
-            Error::HotSigner(_) => WarningMessage("Hot signer error".to_string()),
         }
     }
 }

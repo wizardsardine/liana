@@ -18,7 +18,7 @@ use std::time::Duration;
 use iced::{clipboard, time, Command, Element, Subscription};
 use tracing::{info, warn};
 
-pub use liana::config::Config as DaemonConfig;
+pub use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
 
 pub use config::Config;
 pub use message::Message;
@@ -31,6 +31,7 @@ use crate::{
 };
 
 pub struct App {
+    data_dir: PathBuf,
     state: Box<dyn State>,
     cache: Cache,
     config: Config,
@@ -44,11 +45,13 @@ impl App {
         wallet: Arc<Wallet>,
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
+        data_dir: PathBuf,
     ) -> (App, Command<Message>) {
         let state: Box<dyn State> = Home::new(wallet.clone(), &cache.coins).into();
         let cmd = state.load(daemon.clone());
         (
             Self {
+                data_dir,
                 state,
                 cache,
                 config,
@@ -61,12 +64,9 @@ impl App {
 
     fn load_state(&mut self, menu: &Menu) -> Command<Message> {
         self.state = match menu {
-            menu::Menu::Settings => state::SettingsState::new(
-                self.daemon.config().cloned(),
-                &self.cache,
-                self.daemon.is_external(),
-            )
-            .into(),
+            menu::Menu::Settings => {
+                state::SettingsState::new(self.data_dir.clone(), self.wallet.clone()).into()
+            }
             menu::Menu::Home => Home::new(self.wallet.clone(), &self.cache.coins).into(),
             menu::Menu::Coins => CoinsPanel::new(
                 &self.cache.coins,
@@ -145,6 +145,10 @@ impl App {
                 let res = self.load_daemon_config(&path, *cfg);
                 self.update(Message::DaemonConfigLoaded(res))
             }
+            Message::LoadWallet => {
+                let res = self.load_wallet();
+                self.update(Message::WalletLoaded(res))
+            }
             Message::View(view::Message::Menu(menu)) => self.load_state(&menu),
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
             _ => self.state.update(self.daemon.clone(), &self.cache, message),
@@ -179,6 +183,18 @@ impl App {
             })?;
 
         Ok(())
+    }
+
+    pub fn load_wallet(&mut self) -> Result<Arc<Wallet>, Error> {
+        let wallet = Wallet::new(self.wallet.main_descriptor.clone()).load_settings(
+            &self.config,
+            &self.data_dir,
+            self.cache.network,
+        )?;
+
+        self.wallet = Arc::new(wallet);
+
+        Ok(self.wallet.clone())
     }
 
     pub fn view(&self) -> Element<Message> {

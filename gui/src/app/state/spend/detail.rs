@@ -11,7 +11,12 @@ use liana::{
 
 use crate::{
     app::{
-        cache::Cache, error::Error, message::Message, view, view::spend::detail, wallet::Wallet,
+        cache::Cache,
+        error::Error,
+        message::Message,
+        view,
+        view::spend::detail,
+        wallet::{Wallet, WalletError},
     },
     daemon::{
         model::{SpendStatus, SpendTx},
@@ -295,7 +300,7 @@ impl Action for SignAction {
         tx: &mut SpendTx,
     ) -> Command<Message> {
         match message {
-            Message::View(view::Message::Spend(view::SpendTxMessage::SelectHardwareWallet(i))) => {
+            Message::View(view::Message::SelectHardwareWallet(i)) => {
                 if let Some(HardwareWallet::Supported {
                     fingerprint,
                     device,
@@ -389,12 +394,12 @@ async fn sign_psbt_with_hot_signer(
     psbt: Psbt,
 ) -> Result<(Psbt, Fingerprint), Error> {
     if let Some(signer) = &wallet.signer {
-        let psbt = signer
-            .sign_psbt(psbt)
-            .map_err(|e| Error::HotSigner(format!("Hot signer failed to sign psbt: {}", e)))?;
+        let psbt = signer.sign_psbt(psbt).map_err(|e| {
+            WalletError::HotSigner(format!("Hot signer failed to sign psbt: {}", e))
+        })?;
         Ok((psbt, signer.fingerprint()))
     } else {
-        Err(Error::HotSigner("Hot signer not loaded".to_string()))
+        Err(WalletError::HotSigner("Hot signer not loaded".to_string()).into())
     }
 }
 

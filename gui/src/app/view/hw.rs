@@ -17,13 +17,13 @@ use crate::{
     },
 };
 
-pub fn hw_list_view(
+pub fn hw_list_view<'a>(
     i: usize,
-    hw: &HardwareWallet,
+    hw: &'a HardwareWallet,
     chosen: bool,
     processing: bool,
-    signed: bool,
-) -> Element<Message> {
+    status: Option<&'a str>,
+) -> Element<'a, Message> {
     let mut bttn = Button::new(
         Row::new()
             .push(
@@ -72,17 +72,13 @@ pub fn hw_list_view(
             } else {
                 None
             })
-            .push_maybe(if signed {
-                Some(
-                    Row::new()
-                        .align_items(Alignment::Center)
-                        .spacing(5)
-                        .push(icon::circle_check_icon().style(color::SUCCESS))
-                        .push(text("Signed").style(color::SUCCESS)),
-                )
-            } else {
-                None
-            })
+            .push_maybe(status.map(|v| {
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .spacing(5)
+                    .push(icon::circle_check_icon().style(color::SUCCESS))
+                    .push(text(v).style(color::SUCCESS))
+            }))
             .align_items(Alignment::Center)
             .width(Length::Fill),
     )
@@ -90,7 +86,7 @@ pub fn hw_list_view(
     .style(button::Style::Border.into())
     .width(Length::Fill);
     if !processing && hw.is_supported() {
-        bttn = bttn.on_press(Message::Spend(SpendTxMessage::SelectHardwareWallet(i)));
+        bttn = bttn.on_press(Message::SelectHardwareWallet(i));
     }
     Container::new(bttn)
         .width(Length::Fill)

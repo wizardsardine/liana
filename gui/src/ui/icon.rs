@@ -17,6 +17,10 @@ pub fn arrow_down() -> Text<'static> {
     icon('\u{F128}')
 }
 
+pub fn chevron_right() -> Text<'static> {
+    icon('\u{F285}')
+}
+
 pub fn recovery_icon() -> Text<'static> {
     icon('\u{F467}')
 }

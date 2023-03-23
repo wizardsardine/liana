@@ -737,9 +737,13 @@ pub fn sign_action<'a>(
                                     hw,
                                     Some(i) == chosen_hw,
                                     processing,
-                                    hw.fingerprint()
-                                        .map(|f| signed.contains(&f))
-                                        .unwrap_or(false),
+                                    hw.fingerprint().and_then(|f| {
+                                        if signed.contains(&f) {
+                                            Some("Signed")
+                                        } else {
+                                            None
+                                        }
+                                    }),
                                 ))
                             },
                         ))
