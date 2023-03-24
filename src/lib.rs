@@ -5,7 +5,7 @@ pub mod config;
 mod daemonize;
 mod database;
 pub mod descriptors;
-#[cfg(feature = "jsonrpc_server")]
+#[cfg(feature = "daemon")]
 mod jsonrpc;
 mod random;
 pub mod signer;
@@ -16,7 +16,7 @@ pub use bip39;
 pub use miniscript;
 
 pub use crate::bitcoin::d::{BitcoindError, WalletError};
-#[cfg(feature = "jsonrpc_server")]
+#[cfg(feature = "daemon")]
 use crate::jsonrpc::server::{rpcserver_loop, rpcserver_setup};
 use crate::{
     bitcoin::{d::BitcoinD, poller, BitcoinInterface},
@@ -417,7 +417,7 @@ impl DaemonHandle {
 
     /// Start the JSONRPC server and listen for incoming commands until we die.
     /// Like DaemonHandle::shutdown(), this stops the Bitcoin poller at teardown.
-    #[cfg(feature = "jsonrpc_server")]
+    #[cfg(feature = "daemon")]
     pub fn rpc_server(self) -> Result<(), io::Error> {
         let DaemonHandle {
             control,
