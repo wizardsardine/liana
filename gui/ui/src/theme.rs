@@ -1,15 +1,17 @@
 use iced::{
     application,
-    widget::{button, container, radio, text, text_input},
+    widget::{
+        button, checkbox, container, pick_list, progress_bar, radio, scrollable, text, text_input,
+    },
 };
 
 use super::color;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum Theme {
-    #[default]
     Dark,
     Light,
+    #[default]
     Legacy,
 }
 
@@ -31,6 +33,32 @@ impl application::StyleSheet for Theme {
                 text_color: color::BLACK,
             },
         }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub enum Overlay {
+    #[default]
+    Default,
+}
+impl iced::overlay::menu::StyleSheet for Theme {
+    type Style = Overlay;
+
+    fn appearance(&self, _style: &Self::Style) -> iced::overlay::menu::Appearance {
+        iced::overlay::menu::Appearance {
+            text_color: color::BLACK,
+            background: color::LIGHT_GREY.into(),
+            border_width: 1.0,
+            border_radius: 0.0,
+            border_color: color::GREEN,
+            selected_text_color: color::BLACK,
+            selected_background: color::GREEN.into(),
+        }
+    }
+}
+impl From<PickList> for Overlay {
+    fn from(_p: PickList) -> Overlay {
+        Overlay::Default
     }
 }
 
@@ -91,7 +119,7 @@ impl container::StyleSheet for Theme {
                 Container::Border => container::Appearance {
                     background: iced::Color::TRANSPARENT.into(),
                     border_width: 1.0,
-                    border_color: color::LIGHT_BLACK.into(),
+                    border_color: color::LIGHT_BLACK,
                     ..container::Appearance::default()
                 },
                 Container::Card(c) => c.appearance(self),
@@ -118,7 +146,7 @@ impl container::StyleSheet for Theme {
                 Container::Border => container::Appearance {
                     background: iced::Color::TRANSPARENT.into(),
                     border_width: 1.0,
-                    border_color: color::LIGHT_GREY.into(),
+                    border_color: color::LIGHT_GREY,
                     ..container::Appearance::default()
                 },
                 Container::Card(c) => c.appearance(self),
@@ -145,7 +173,7 @@ impl container::StyleSheet for Theme {
                 Container::Border => container::Appearance {
                     background: iced::Color::TRANSPARENT.into(),
                     border_width: 1.0,
-                    border_color: color::legacy::BORDER_GREY.into(),
+                    border_color: color::legacy::BORDER_GREY,
                     ..container::Appearance::default()
                 },
                 Container::Card(c) => c.appearance(self),
@@ -157,6 +185,24 @@ impl container::StyleSheet for Theme {
                 },
             },
         }
+    }
+}
+
+impl From<Card> for Container {
+    fn from(c: Card) -> Container {
+        Container::Card(c)
+    }
+}
+
+impl From<Badge> for Container {
+    fn from(c: Badge) -> Container {
+        Container::Badge(c)
+    }
+}
+
+impl From<Pill> for Container {
+    fn from(c: Pill) -> Container {
+        Container::Pill(c)
     }
 }
 
@@ -236,7 +282,6 @@ impl Card {
                     border_width: 1.0,
                     border_radius: 10.0,
                     border_color: color::legacy::ALERT,
-                    ..container::Appearance::default()
                 },
                 Card::Error => container::Appearance {
                     background: color::legacy::FOREGROUND.into(),
@@ -244,7 +289,6 @@ impl Card {
                     border_width: 1.0,
                     border_radius: 10.0,
                     border_color: color::legacy::ALERT,
-                    ..container::Appearance::default()
                 },
                 Card::Warning => container::Appearance {
                     border_radius: 0.0,
@@ -345,6 +389,80 @@ impl radio::StyleSheet for Theme {
             background: iced::Color::TRANSPARENT.into(),
             ..active
         }
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct Scrollable {}
+impl scrollable::StyleSheet for Theme {
+    type Style = Scrollable;
+
+    fn active(&self, _style: &Self::Style) -> scrollable::Scrollbar {
+        scrollable::Scrollbar {
+            background: None,
+            border_width: 0.0,
+            border_color: color::legacy::BORDER_GREY,
+            border_radius: 10.0,
+            scroller: scrollable::Scroller {
+                color: color::legacy::BORDER_GREY,
+                border_radius: 10.0,
+                border_width: 0.0,
+                border_color: iced::Color::TRANSPARENT,
+            },
+        }
+    }
+
+    fn hovered(&self, style: &Self::Style) -> scrollable::Scrollbar {
+        let active = self.active(style);
+        scrollable::Scrollbar { ..active }
+    }
+}
+
+#[derive(Default, Clone)]
+pub enum PickList {
+    #[default]
+    Simple,
+}
+impl pick_list::StyleSheet for Theme {
+    type Style = PickList;
+
+    fn active(&self, _style: &Self::Style) -> pick_list::Appearance {
+        pick_list::Appearance {
+            placeholder_color: color::legacy::FOREGROUND,
+            handle_color: color::legacy::FOREGROUND,
+            background: color::legacy::FOREGROUND.into(),
+            border_width: 1.0,
+            border_color: color::legacy::BORDER_GREY,
+            border_radius: 10.0,
+            text_color: iced::Color::BLACK,
+        }
+    }
+
+    fn hovered(&self, style: &Self::Style) -> pick_list::Appearance {
+        let active = self.active(style);
+        pick_list::Appearance { ..active }
+    }
+}
+
+#[derive(Default)]
+pub struct CheckBox {}
+impl checkbox::StyleSheet for Theme {
+    type Style = CheckBox;
+
+    fn active(&self, _style: &Self::Style, _is_selected: bool) -> checkbox::Appearance {
+        checkbox::Appearance {
+            background: iced::Color::TRANSPARENT.into(),
+            border_width: 1.0,
+            border_color: color::GREY,
+            checkmark_color: color::GREEN,
+            text_color: None,
+            border_radius: 0.0,
+        }
+    }
+
+    fn hovered(&self, style: &Self::Style, is_selected: bool) -> checkbox::Appearance {
+        let active = self.active(style, is_selected);
+        checkbox::Appearance { ..active }
     }
 }
 
@@ -642,5 +760,22 @@ impl text_input::StyleSheet for Theme {
 
     fn selection_color(&self, _style: &Self::Style) -> iced::Color {
         iced::Color::from_rgb(0.8, 0.8, 1.0)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+pub enum ProgressBar {
+    #[default]
+    Simple,
+}
+
+impl progress_bar::StyleSheet for Theme {
+    type Style = ProgressBar;
+    fn appearance(&self, _style: &Self::Style) -> progress_bar::Appearance {
+        progress_bar::Appearance {
+            background: iced::Color::TRANSPARENT.into(),
+            bar: color::GREEN.into(),
+            border_radius: 10.0,
+        }
     }
 }

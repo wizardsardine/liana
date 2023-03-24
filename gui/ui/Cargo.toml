@@ -9,8 +9,3 @@ edition = "2021"
 iced = "0.7"
 iced_native = "0.8"
 iced_lazy = { version = "0.4"}
-
-[workspace]
-members = [
-  "examples/*"
-]

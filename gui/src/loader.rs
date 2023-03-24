@@ -3,10 +3,6 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use iced::{
-    widget::{Column, Container, ProgressBar, Row},
-    Element,
-};
 use iced::{Alignment, Command, Length, Subscription};
 use tracing::{debug, info};
 
@@ -14,6 +10,12 @@ use liana::{
     config::{Config, ConfigError},
     miniscript::bitcoin,
     StartupError,
+};
+use liana_ui::{
+    component::{button, notification, text::*},
+    icon,
+    util::Collection,
+    widget::*,
 };
 
 use crate::{
@@ -23,11 +25,6 @@ use crate::{
         wallet::{Wallet, WalletError},
     },
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
-    ui::{
-        component::{button, notification, text::*},
-        icon,
-        util::Collection,
-    },
 };
 
 type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::{widget::qr_code, Command, Subscription};
-use iced::{widget::Column, Element};
 use liana::miniscript::bitcoin::{Address, Amount};
+use liana_ui::widget::*;
 
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet};
 

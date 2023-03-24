@@ -1,14 +1,12 @@
 use std::convert::From;
 
-use iced::{
-    widget::{self, Column, Container},
-    Length,
-};
+use iced::Length;
+
+use liana_ui::{component::notification, widget::*};
 
 use crate::{
     app::error::Error,
     daemon::{client::error::RpcErrorCode, DaemonError},
-    ui::component::notification,
 };
 
 /// Simple warning message displayed to non technical user.
@@ -48,7 +46,7 @@ impl std::fmt::Display for WarningMessage {
     }
 }
 
-pub fn warn<'a, T: 'a + Clone>(error: Option<&Error>) -> widget::Container<'a, T> {
+pub fn warn<'a, T: 'a + Clone>(error: Option<&Error>) -> Container<'a, T> {
     if let Some(w) = error {
         let message: WarningMessage = w.into();
         notification::warning(message.to_string(), w.to_string()).width(Length::Fill)

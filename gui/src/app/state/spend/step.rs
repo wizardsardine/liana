@@ -2,13 +2,15 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use iced::{Command, Element};
+use iced::Command;
 use liana::{
     descriptors::MultipathDescriptor,
     miniscript::bitcoin::{
         self, util::psbt::Psbt, Address, Amount, Denomination, Network, OutPoint,
     },
 };
+
+use liana_ui::{component::form, widget::Element};
 
 use crate::{
     app::{
@@ -18,7 +20,6 @@ use crate::{
         model::{remaining_sequence, Coin, SpendTx},
         Daemon,
     },
-    ui::component::form,
 };
 
 /// See: https://github.com/wizardsardine/liana/blob/master/src/commands/mod.rs#L32

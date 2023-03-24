@@ -1,12 +1,22 @@
 use iced::widget::{
-    scrollable::Properties, Button, Checkbox, Column, Container, PickList, Row, Scrollable, Space,
-    TextInput,
+    checkbox, container, pick_list, scrollable, scrollable::Properties, Space, TextInput,
 };
-use iced::{alignment, Alignment, Element, Length};
+use iced::{alignment, Alignment, Length};
 
 use std::collections::HashSet;
 
 use liana::miniscript::bitcoin;
+use liana_ui::{
+    color,
+    component::{
+        button, card, collapse, form, separation,
+        text::{text, Text},
+        tooltip,
+    },
+    icon, theme,
+    util::Collection,
+    widget::*,
+};
 
 use crate::{
     hw::HardwareWallet,
@@ -14,16 +24,6 @@ use crate::{
         context::Context,
         message::{self, Message},
         prompt, Error,
-    },
-    ui::{
-        color,
-        component::{
-            button, card, collapse, container, form, separation,
-            text::{text, Text},
-            tooltip,
-        },
-        icon,
-        util::Collection,
     },
 };
 
@@ -92,7 +92,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                             )
                             .padding(20),
                         )
-                        .style(button::Style::Border.into())
+                        .style(theme::Button::Secondary)
                         .on_press(Message::CreateWallet),
                     )
                     .push(
@@ -106,7 +106,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                             )
                             .padding(20),
                         )
-                        .style(button::Style::Border.into())
+                        .style(theme::Button::Secondary)
                         .on_press(Message::ParticipateWallet),
                     )
                     .push(
@@ -120,7 +120,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                             )
                             .padding(20),
                         )
-                        .style(button::Style::Border.into())
+                        .style(theme::Button::Secondary)
                         .on_press(Message::ImportWallet),
                     ),
             )
@@ -153,10 +153,11 @@ pub fn define_descriptor<'a>(
         .spacing(10)
         .align_items(Alignment::Center)
         .push(text("Network:").bold())
-        .push(Container::new(
-            PickList::new(&NETWORKS[..], Some(Network::from(network)), |net| {
+        .push(container(
+            pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
                 Message::Network(net.into())
             })
+            .style(theme::PickList::Simple)
             .padding(10),
         ))
         .push_maybe(if network_valid {
@@ -195,7 +196,7 @@ pub fn define_descriptor<'a>(
                         None
                     })
                     .push(
-                        Scrollable::new(
+                        scrollable(
                             Row::new()
                                 .spacing(5)
                                 .align_items(Alignment::Center)
@@ -210,7 +211,7 @@ pub fn define_descriptor<'a>(
                                     )
                                     .width(Length::Units(200))
                                     .height(Length::Units(200))
-                                    .style(button::Style::TransparentBorder.into())
+                                    .style(theme::Button::TransparentBorder)
                                     .on_press(
                                         Message::DefineDescriptor(
                                             message::DefineDescriptor::AddKey(false),
@@ -252,7 +253,7 @@ pub fn define_descriptor<'a>(
                         None
                     })
                     .push(
-                        Scrollable::new(
+                        scrollable(
                             Row::new()
                                 .spacing(5)
                                 .align_items(Alignment::Center)
@@ -267,7 +268,7 @@ pub fn define_descriptor<'a>(
                                     )
                                     .width(Length::Units(200))
                                     .height(Length::Units(200))
-                                    .style(button::Style::TransparentBorder.into())
+                                    .style(theme::Button::TransparentBorder)
                                     .on_press(
                                         Message::DefineDescriptor(
                                             message::DefineDescriptor::AddKey(true),
@@ -359,7 +360,7 @@ pub fn import_descriptor<'a>(
         .align_items(Alignment::Center)
         .push(text("Network:").bold())
         .push(Container::new(
-            PickList::new(&NETWORKS[..], Some(Network::from(network)), |net| {
+            pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
                 Message::Network(net.into())
             })
             .padding(10),
@@ -430,7 +431,7 @@ pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
                 )
                 .on_press(Message::UseHotSigner)
                 .padding(10)
-                .style(button::Style::TransparentBorder.into())
+                .style(theme::Button::TransparentBorder)
                 .width(Length::Fill),
             )
             .push_maybe(if xpubs.is_empty() {
@@ -448,7 +449,7 @@ pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
                             .align_items(Alignment::Center)
                             .push(
                                 Container::new(
-                                    Scrollable::new(Container::new(text(xpub).small()).padding(10))
+                                    scrollable(Container::new(text(xpub).small()).padding(10))
                                         .horizontal_scroll(
                                             Properties::new().width(2).scroller_width(2),
                                         ),
@@ -478,7 +479,7 @@ pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
                 None
             }),
     )
-    .style(card::SimpleCardStyle)
+    .style(theme::Container::Card(theme::Card::Simple))
     .into()
 }
 
@@ -523,7 +524,7 @@ pub fn hardware_wallet_xpubs<'a>(
                                     message,
                                     iced::widget::tooltip::Position::Bottom,
                                 )
-                                .style(card::SimpleCardStyle),
+                                .style(theme::Container::Card(theme::Card::Simple)),
                             ),
                     })
                     .spacing(5)
@@ -534,16 +535,16 @@ pub fn hardware_wallet_xpubs<'a>(
                     Row::new()
                         .spacing(5)
                         .align_items(Alignment::Center)
-                        .push(icon::warning_icon().style(color::ALERT))
-                        .push(text("An error occured").style(color::ALERT)),
+                        .push(icon::warning_icon().style(color::legacy::ALERT))
+                        .push(text("An error occured").style(color::legacy::ALERT)),
                     e,
                     iced::widget::tooltip::Position::Bottom,
                 )
-                .style(card::ErrorCardStyle)
+                .style(theme::Container::Card(theme::Card::Error))
             })),
     )
     .padding(10)
-    .style(button::Style::TransparentBorder.into())
+    .style(theme::Button::TransparentBorder)
     .width(Length::Fill);
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Select(i));
@@ -566,7 +567,7 @@ pub fn hardware_wallet_xpubs<'a>(
                             .align_items(Alignment::Center)
                             .push(
                                 Container::new(
-                                    Scrollable::new(Container::new(text(xpub).small()).padding(10))
+                                    scrollable(Container::new(text(xpub).small()).padding(10))
                                         .horizontal_scroll(
                                             Properties::new().width(2).scroller_width(2),
                                         ),
@@ -598,7 +599,7 @@ pub fn hardware_wallet_xpubs<'a>(
                 None
             }),
     )
-    .style(card::SimpleCardStyle)
+    .style(theme::Container::Card(theme::Card::Simple))
     .into()
 }
 
@@ -615,7 +616,7 @@ pub fn participate_xpub<'a>(
         .align_items(Alignment::Center)
         .push(text("Network:").bold())
         .push(Container::new(
-            PickList::new(&NETWORKS[..], Some(Network::from(network)), |net| {
+            pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
                 Message::Network(net.into())
             })
             .padding(10),
@@ -658,7 +659,7 @@ pub fn participate_xpub<'a>(
                     .push(signer)
                     .width(Length::Fill),
             )
-            .push(Checkbox::new(
+            .push(checkbox(
                 "I have shared my public keys",
                 shared,
                 Message::UserActionDone,
@@ -744,7 +745,7 @@ pub fn register_descriptor<'a>(
                     )
                     .width(Length::Fill),
             )
-            .push(Checkbox::new(
+            .push(checkbox(
                 "I have registered the descriptor on my device(s)",
                 done,
                 Message::UserActionDone,
@@ -789,7 +790,7 @@ pub fn backup_descriptor<'a>(
                                     .push(text("Learn more").small().bold())
                                     .push(icon::collapse_icon()),
                             )
-                            .style(button::Style::Transparent.into())
+                            .style(theme::Button::Transparent)
                         },
                         || {
                             Button::new(
@@ -799,7 +800,7 @@ pub fn backup_descriptor<'a>(
                                     .push(text("Learn more").small().bold())
                                     .push(icon::collapsed_icon()),
                             )
-                            .style(button::Style::Transparent.into())
+                            .style(theme::Button::Transparent)
                         },
                         help_backup,
                     ))
@@ -818,7 +819,7 @@ pub fn backup_descriptor<'a>(
                     .spacing(10)
                     .max_width(1000),
             ))
-            .push(Checkbox::new(
+            .push(checkbox(
                 "I have backed up my descriptor",
                 done,
                 Message::UserActionDone,
@@ -1051,7 +1052,7 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
                     .push(Space::with_width(Length::Fill))
                     .push(
                         Button::new(icon::cross_icon())
-                            .style(button::Style::Transparent.into())
+                            .style(theme::Button::Transparent)
                             .on_press(message::DefineKey::Delete),
                     ),
             )
@@ -1061,7 +1062,7 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
                         .spacing(15)
                         .align_items(Alignment::Center)
                         .push(
-                            Scrollable::new(
+                            scrollable(
                                 icon::key_icon()
                                     .style(color::DARK_GREY)
                                     .size(50)
@@ -1069,7 +1070,11 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
                             )
                             .horizontal_scroll(Properties::new().width(2).scroller_width(2)),
                         )
-                        .push(icon::circle_check_icon().style(color::FOREGROUND).size(50)),
+                        .push(
+                            icon::circle_check_icon()
+                                .style(color::legacy::FOREGROUND)
+                                .size(50),
+                        ),
                 )
                 .height(Length::Fill)
                 .align_y(alignment::Vertical::Center),
@@ -1100,7 +1105,7 @@ pub fn defined_descriptor_key(
                 .push(Space::with_width(Length::Fill))
                 .push(
                     Button::new(icon::cross_icon())
-                        .style(button::Style::Transparent.into())
+                        .style(theme::Button::Transparent)
                         .on_press(message::DefineKey::Delete),
                 ),
         )
@@ -1114,13 +1119,13 @@ pub fn defined_descriptor_key(
                             .spacing(15)
                             .align_items(Alignment::Center)
                             .push(
-                                Scrollable::new(text(name).bold()).horizontal_scroll(
+                                scrollable(text(name).bold()).horizontal_scroll(
                                     Properties::new().width(2).scroller_width(2),
                                 ),
                             )
                             .push(
                                 icon::circle_check_icon()
-                                    .style(color::SUCCESS)
+                                    .style(color::legacy::SUCCESS)
                                     .size(40)
                                     .width(Length::Units(50)),
                             ),
@@ -1145,7 +1150,7 @@ pub fn defined_descriptor_key(
             .push(
                 text("Key is for a different network")
                     .small()
-                    .style(color::ALERT),
+                    .style(color::legacy::ALERT),
             )
             .into()
     } else if duplicate_key {
@@ -1157,7 +1162,7 @@ pub fn defined_descriptor_key(
                     .height(Length::Units(200))
                     .width(Length::Units(200)),
             )
-            .push(text("Duplicate key").small().style(color::ALERT))
+            .push(text("Duplicate key").small().style(color::legacy::ALERT))
             .into()
     } else if duplicate_name {
         Column::new()
@@ -1168,7 +1173,7 @@ pub fn defined_descriptor_key(
                     .height(Length::Units(200))
                     .width(Length::Units(200)),
             )
-            .push(text("Duplicate name").small().style(color::ALERT))
+            .push(text("Duplicate name").small().style(color::legacy::ALERT))
             .into()
     } else {
         card::simple(col)
@@ -1243,7 +1248,7 @@ pub fn edit_key_modal<'a>(
                                             .width(Length::Fill),
                                     )
                                     .push_maybe(if chosen_signer {
-                                        Some(icon::circle_check_icon().style(color::SUCCESS))
+                                        Some(icon::circle_check_icon().style(color::legacy::SUCCESS))
                                     } else {
                                         None
                                     })
@@ -1251,7 +1256,7 @@ pub fn edit_key_modal<'a>(
                             )
                             .width(Length::Fill)
                             .on_press(Message::UseHotSigner)
-                            .style(button::Style::Border.into()),
+                            .style(theme::Button::Secondary),
                         )
                         .width(Length::Fill),
                 )
@@ -1382,7 +1387,7 @@ fn hw_list_view(
                                     message,
                                     iced::widget::tooltip::Position::Bottom,
                                 )
-                                .style(card::SimpleCardStyle),
+                                .style(theme::Container::Card(theme::Card::Simple)),
                             ),
                     })
                     .spacing(5)
@@ -1398,7 +1403,7 @@ fn hw_list_view(
                 None
             })
             .push_maybe(if registered {
-                Some(Column::new().push(icon::circle_check_icon().style(color::SUCCESS)))
+                Some(Column::new().push(icon::circle_check_icon().style(color::legacy::SUCCESS)))
             } else {
                 None
             })
@@ -1406,14 +1411,14 @@ fn hw_list_view(
             .width(Length::Fill),
     )
     .padding(10)
-    .style(button::Style::TransparentBorder.into())
+    .style(theme::Button::TransparentBorder)
     .width(Length::Fill);
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Select(i));
     }
     Container::new(bttn)
         .width(Length::Fill)
-        .style(card::SimpleCardStyle)
+        .style(theme::Container::Card(theme::Card::Simple))
         .into()
 }
 
@@ -1443,7 +1448,7 @@ pub fn backup_mnemonic<'a>(
                         )
                     }),
             )
-            .push(Checkbox::new(
+            .push(checkbox(
                 "I have backed up my mnemonic",
                 done,
                 Message::UserActionDone,
@@ -1485,7 +1490,7 @@ pub fn recover_mnemonic<'a>(
                                 suggestions.iter().fold(Row::new().spacing(5), |row, sugg| {
                                     row.push(
                                         Button::new(text(sugg))
-                                            .style(button::Style::Border.into())
+                                            .style(theme::Button::Secondary)
                                             .on_press(Message::MnemonicWord(
                                                 current,
                                                 sugg.to_string(),
@@ -1516,7 +1521,10 @@ pub fn recover_mnemonic<'a>(
                                             .width(Length::Units(100)),
                                         )
                                         .push_maybe(if *valid {
-                                            Some(icon::circle_check_icon().style(color::SUCCESS))
+                                            Some(
+                                                icon::circle_check_icon()
+                                                    .style(color::legacy::SUCCESS),
+                                            )
                                         } else {
                                             None
                                         }),
@@ -1524,7 +1532,9 @@ pub fn recover_mnemonic<'a>(
                             },
                         ))
                         .push(Space::with_height(Length::Units(50)))
-                        .push_maybe(error.map(|e| card::invalid(text(e).style(color::ALERT)))),
+                        .push_maybe(
+                            error.map(|e| card::invalid(text(e).style(color::legacy::ALERT))),
+                        ),
                 )
             } else {
                 None
@@ -1572,7 +1582,7 @@ fn layout<'a>(
     progress: (usize, usize),
     content: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    Container::new(Scrollable::new(
+    Container::new(scrollable(
         Column::new()
             .push(
                 Container::new(button::transparent(None, "< Previous").on_press(Message::Previous))
@@ -1588,19 +1598,15 @@ fn layout<'a>(
     .center_x()
     .height(Length::Fill)
     .width(Length::Fill)
-    .style(container::Style::Background)
+    .style(theme::Container::Background)
     .into()
 }
 
 mod threshsold_input {
-    use crate::ui::{
-        component::{button, text::*},
-        icon,
-    };
     use iced::alignment::{self, Alignment};
-    use iced::widget::{Button, Column, Container};
-    use iced::{Element, Length};
+    use iced::Length;
     use iced_lazy::{self, Component};
+    use liana_ui::{component::text::*, icon, theme, widget::*};
 
     pub struct ThresholdInput<Message> {
         value: usize,
@@ -1636,7 +1642,7 @@ mod threshsold_input {
         }
     }
 
-    impl<Message> Component<Message, iced::Renderer> for ThresholdInput<Message> {
+    impl<Message> Component<Message, iced::Renderer<theme::Theme>> for ThresholdInput<Message> {
         type State = ();
         type Event = Event;
 
@@ -1662,7 +1668,7 @@ mod threshsold_input {
         fn view(&self, _state: &Self::State) -> Element<Self::Event> {
             let button = |label, on_press| {
                 Button::new(label)
-                    .style(button::Style::Transparent.into())
+                    .style(theme::Button::Transparent)
                     .width(Length::Units(50))
                     .on_press(on_press)
             };

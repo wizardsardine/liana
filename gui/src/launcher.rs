@@ -1,20 +1,16 @@
 use std::path::PathBuf;
 
-use iced::{
-    widget::{Button, Column, Container, Row},
-    Alignment, Command, Element, Length, Subscription,
-};
+use iced::{Alignment, Command, Length, Subscription};
 
 use liana::{config::ConfigError, miniscript::bitcoin::Network};
-
-use crate::{
-    app,
-    ui::{
-        component::{badge, button, card, text::*},
-        icon,
-        util::*,
-    },
+use liana_ui::{
+    component::{badge, card, text::*},
+    icon, theme,
+    util::*,
+    widget::*,
 };
+
+use crate::app;
 
 pub struct Launcher {
     choices: Vec<Network>,
@@ -102,9 +98,9 @@ impl Launcher {
                                                     badge::Badge::new(icon::bitcoin_icon()).style(
                                                         match choice {
                                                             Network::Bitcoin => {
-                                                                badge::Style::Bitcoin
+                                                                theme::Badge::Bitcoin
                                                             }
-                                                            _ => badge::Style::Standard,
+                                                            _ => theme::Badge::Standard,
                                                         },
                                                     ),
                                                 )
@@ -118,7 +114,7 @@ impl Launcher {
                                         .on_press(ViewMessage::Check(*choice))
                                         .padding(10)
                                         .width(Length::Fill)
-                                        .style(button::Style::Border.into()),
+                                        .style(theme::Button::Secondary),
                                     )
                                 },
                             )
@@ -133,7 +129,7 @@ impl Launcher {
                                 .on_press(ViewMessage::StartInstall)
                                 .padding(10)
                                 .width(Length::Fill)
-                                .style(button::Style::TransparentBorder.into()),
+                                .style(theme::Button::TransparentBorder),
                             ),
                     )
                     .max_width(500)

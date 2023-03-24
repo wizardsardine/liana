@@ -5,23 +5,23 @@ use iced::{Alignment, Length};
 use super::text::text;
 
 pub fn alert<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button::Button::new(content(icon, t)).style(theme::Button::Destructive.into())
+    button::Button::new(content(icon, t)).style(theme::Button::Destructive)
 }
 
 pub fn primary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button::Button::new(content(icon, t)).style(theme::Button::Primary.into())
+    button::Button::new(content(icon, t)).style(theme::Button::Primary)
 }
 
 pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button::Button::new(content(icon, t)).style(theme::Button::Transparent.into())
+    button::Button::new(content(icon, t)).style(theme::Button::Transparent)
 }
 
 pub fn border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button::Button::new(content(icon, t)).style(theme::Button::Secondary.into())
+    button::Button::new(content(icon, t)).style(theme::Button::Secondary)
 }
 
 pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button(content(icon, t)).style(theme::Button::TransparentBorder.into())
+    button(content(icon, t)).style(theme::Button::TransparentBorder)
 }
 
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Container<'a, T> {

@@ -5,15 +5,16 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::prelude::*;
-use iced::{Command, Element};
+use iced::Command;
 use tracing::info;
 
 use liana::config::{BitcoinConfig, BitcoindConfig, Config};
 
+use liana_ui::{component::form, widget::Element};
+
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::settings::Setting, view, State},
     daemon::Daemon,
-    ui::component::form,
 };
 
 #[derive(Debug)]

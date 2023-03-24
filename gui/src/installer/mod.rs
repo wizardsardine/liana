@@ -4,8 +4,9 @@ mod prompt;
 mod step;
 mod view;
 
-use iced::{clipboard, Command, Element, Subscription};
+use iced::{clipboard, Command, Subscription};
 use liana::miniscript::bitcoin;
+use liana_ui::widget::Element;
 use tracing::{error, info, warn};
 
 use context::Context;

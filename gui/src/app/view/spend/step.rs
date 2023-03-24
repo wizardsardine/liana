@@ -1,9 +1,17 @@
-use iced::{
-    widget::{self, Button, Column, Container, Row},
-    Alignment, Element, Length,
-};
+use iced::{Alignment, Length};
 
 use liana::miniscript::bitcoin::Amount;
+
+use liana_ui::{
+    color,
+    component::{
+        badge, button, form,
+        text::{text, Text},
+    },
+    icon, theme,
+    util::Collection,
+    widget::*,
+};
 
 use crate::{
     app::{
@@ -12,15 +20,6 @@ use crate::{
         view::{message::*, modal, util::amount},
     },
     daemon::model::{remaining_sequence, Coin},
-    ui::{
-        color,
-        component::{
-            badge, button, card, form,
-            text::{text, Text},
-        },
-        icon,
-        util::Collection,
-    },
 };
 
 pub fn choose_recipients_view<'a>(
@@ -37,7 +36,7 @@ pub fn choose_recipients_view<'a>(
             .push(text("Choose recipients").bold().size(50))
             .push(
                 Column::new()
-                    .push(widget::Column::with_children(recipients).spacing(10))
+                    .push(Column::with_children(recipients).spacing(10))
                     .push(
                         button::transparent(Some(icon::plus_icon()), "Add recipient")
                             .on_press(Message::CreateSpend(CreateSpendMessage::AddRecipient)),
@@ -64,7 +63,10 @@ pub fn choose_recipients_view<'a>(
                         .width(Length::Fill),
                     )
                     .push_maybe(if duplicate {
-                        Some(text("Two recipient addresses are the same").style(color::WARNING))
+                        Some(
+                            text("Two recipient addresses are the same")
+                                .style(color::legacy::WARNING),
+                        )
                     } else {
                         None
                     })
@@ -213,9 +215,11 @@ fn coin_list_view<'a>(
                                 Some(Container::new(
                                     Row::new()
                                         .spacing(5)
-                                        .push(text(" 0").small().style(color::ALERT))
+                                        .push(text(" 0").small().style(color::legacy::ALERT))
                                         .push(
-                                            icon::hourglass_done_icon().small().style(color::ALERT),
+                                            icon::hourglass_done_icon()
+                                                .small()
+                                                .style(color::legacy::ALERT),
                                         )
                                         .align_items(Alignment::Center),
                                 ))
@@ -224,9 +228,15 @@ fn coin_list_view<'a>(
                                     Row::new()
                                         .spacing(5)
                                         .push(
-                                            text(format!(" {}", seq)).small().style(color::WARNING),
+                                            text(format!(" {}", seq))
+                                                .small()
+                                                .style(color::legacy::WARNING),
                                         )
-                                        .push(icon::hourglass_icon().small().style(color::WARNING))
+                                        .push(
+                                            icon::hourglass_icon()
+                                                .small()
+                                                .style(color::legacy::WARNING),
+                                        )
                                         .align_items(Alignment::Center),
                                 ))
                             } else {
@@ -254,8 +264,8 @@ fn coin_list_view<'a>(
         )
         .padding(10)
         .on_press(Message::CreateSpend(CreateSpendMessage::SelectCoin(i)))
-        .style(button::Style::TransparentBorder.into()),
+        .style(theme::Button::TransparentBorder),
     )
-    .style(card::SimpleCardStyle)
+    .style(theme::Container::Card(theme::Card::Simple))
     .into()
 }

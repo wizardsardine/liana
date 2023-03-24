@@ -1,20 +1,19 @@
 pub mod detail;
 pub mod step;
 
-use iced::{
-    widget::{Button, Column, Container, Row, Space},
-    Alignment, Element, Length,
+use iced::{widget::Space, Alignment, Length};
+
+use liana_ui::{
+    color,
+    component::{badge, button, card, form, text::*},
+    icon, theme,
+    util::Collection,
+    widget::*,
 };
 
 use crate::{
     app::{error::Error, menu::Menu, view::util::*},
     daemon::model::{SpendStatus, SpendTx},
-    ui::{
-        color,
-        component::{badge, button, card, form, text::*},
-        icon,
-        util::Collection,
-    },
 };
 
 use super::{message::*, warning::warn};
@@ -57,7 +56,7 @@ pub fn import_spend_success_view<'a>() -> Element<'a, Message> {
     Column::new()
         .push(
             card::simple(Container::new(
-                text("PSBT is imported").style(color::SUCCESS),
+                text("PSBT is imported").style(color::legacy::SUCCESS),
             ))
             .padding(50),
         )
@@ -133,7 +132,7 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                                 .push(
                                     Container::new(text(" Recovery ").small())
                                         .padding(3)
-                                        .style(badge::PillStyle::Simple),
+                                        .style(theme::Container::Pill(theme::Pill::Simple)),
                                 )
                         } else {
                             let sigs = tx.sigs.primary_path();
@@ -172,8 +171,8 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
         )
         .padding(10)
         .on_press(Message::Select(i))
-        .style(button::Style::TransparentBorder.into()),
+        .style(theme::Button::TransparentBorder),
     )
-    .style(card::SimpleCardStyle)
+    .style(theme::Container::Card(theme::Card::Simple))
     .into()
 }

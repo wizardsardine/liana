@@ -13,20 +13,19 @@ pub mod spend;
 pub use message::*;
 use warning::warn;
 
-use iced::{
-    widget::{self, scrollable, Button, Column, Container, Row},
-    Element, Length,
-};
+use iced::{widget::scrollable, Length};
 
-use crate::ui::{
-    component::{badge, button, container, separation, text::*},
+use liana_ui::{
+    component::{button, separation, text::*},
     icon::{coin_icon, cross_icon, home_icon, receive_icon, send_icon, settings_icon},
+    theme,
     util::Collection,
+    widget::*,
 };
 
 use crate::app::{cache::Cache, error::Error, menu::Menu};
 
-pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Message> {
+pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let home_button = if *menu == Menu::Home {
         button::primary(Some(home_icon()), "Home")
             .on_press(Message::Reload)
@@ -63,7 +62,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                             .small()
                             .bold(),
                         )
-                        .style(badge::PillStyle::InversePrimary),
+                        .style(theme::Container::Pill(theme::Pill::InversePrimary)),
                     )
                     .spacing(10)
                     .width(iced::Length::Fill)
@@ -73,7 +72,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
             .padding(5)
             .center_x(),
         )
-        .style(button::Style::Primary.into())
+        .style(theme::Button::Primary)
         .on_press(Message::Reload)
         .width(iced::Length::Units(200))
     } else {
@@ -102,7 +101,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                             .small()
                             .bold(),
                         )
-                        .style(badge::PillStyle::Primary),
+                        .style(theme::Pill::Primary),
                     )
                     .spacing(10)
                     .width(iced::Length::Fill)
@@ -112,7 +111,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
             .padding(5)
             .center_x(),
         )
-        .style(button::Style::Transparent.into())
+        .style(theme::Button::Transparent)
         .on_press(Message::Menu(Menu::Coins))
         .width(iced::Length::Units(200))
     };
@@ -138,7 +137,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                                     .small()
                                     .bold(),
                             )
-                            .style(badge::PillStyle::InversePrimary),
+                            .style(theme::Pill::InversePrimary),
                         )
                     })
                     .spacing(10)
@@ -149,7 +148,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
             .padding(5)
             .center_x(),
         )
-        .style(button::Style::Primary.into())
+        .style(theme::Button::Primary)
         .on_press(Message::Reload)
         .width(iced::Length::Units(200))
     } else {
@@ -173,7 +172,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                                     .small()
                                     .bold(),
                             )
-                            .style(badge::PillStyle::Primary),
+                            .style(theme::Pill::Primary),
                         )
                     })
                     .spacing(10)
@@ -184,7 +183,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
             .padding(5)
             .center_x(),
         )
-        .style(button::Style::Transparent.into())
+        .style(theme::Button::Transparent)
         .on_press(Message::Menu(Menu::Spend))
         .width(iced::Length::Units(200))
     };
@@ -234,14 +233,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> widget::Container<'a, Messa
                         .push_maybe(cache.rescan_progress.map(|p| {
                             Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
                                 .padding(5)
-                                .style(badge::PillStyle::Simple)
+                                .style(theme::Pill::Simple)
                         }))
                         .push(settings_button),
                 )
                 .height(Length::Shrink),
             ),
     )
-    .style(container::Style::Sidebar)
+    .style(theme::Container::Foreground)
 }
 
 pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
@@ -268,9 +267,9 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
         .into()
 }
 
-fn main_section<'a, T: 'a>(menu: widget::Container<'a, T>) -> widget::Container<'a, T> {
+fn main_section<'a, T: 'a>(menu: Container<'a, T>) -> Container<'a, T> {
     Container::new(menu.max_width(1500))
-        .style(container::Style::Background)
+        .style(theme::Container::Background)
         .center_x()
         .width(Length::Fill)
         .height(Length::Fill)
@@ -300,7 +299,7 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
                     .push(button::primary(Some(cross_icon()), "Close").on_press(Message::Close)),
             )
             .padding(10)
-            .style(container::Style::Background),
+            .style(theme::Container::Background),
         )
         .push(modal_section(Container::new(scrollable(content))))
         .push_maybe(fixed_footer)
@@ -309,9 +308,9 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
         .into()
 }
 
-fn modal_section<'a, T: 'a>(menu: widget::Container<'a, T>) -> widget::Container<'a, T> {
+fn modal_section<'a, T: 'a>(menu: Container<'a, T>) -> Container<'a, T> {
     Container::new(menu.max_width(1500))
-        .style(container::Style::Background)
+        .style(theme::Container::Background)
         .center_x()
         .width(Length::Fill)
         .height(Length::Fill)

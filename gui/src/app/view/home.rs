@@ -1,18 +1,15 @@
 use chrono::NaiveDateTime;
 
-use iced::{
-    alignment,
-    widget::{Button, Column, Container, Row},
-    Alignment, Element, Length,
-};
+use iced::{alignment, Alignment, Length};
 
-use crate::ui::{
-    color,
-    component::{badge, button::Style, card, text::*},
-    icon,
-    util::Collection,
-};
 use liana::miniscript::bitcoin;
+use liana_ui::{
+    color,
+    component::{badge, card, text::*},
+    icon, theme,
+    util::Collection,
+    widget::*,
+};
 
 use crate::{
     app::{
@@ -38,7 +35,11 @@ pub fn home_view<'a>(
             Row::new()
                 .spacing(15)
                 .align_items(Alignment::Center)
-                .push(icon::hourglass_icon().size(30).style(color::WARNING))
+                .push(
+                    icon::hourglass_icon()
+                        .size(30)
+                        .style(color::legacy::WARNING),
+                )
                 .push(
                     Row::new()
                         .spacing(5)
@@ -56,7 +57,7 @@ pub fn home_view<'a>(
             Row::new()
                 .spacing(15)
                 .align_items(Alignment::Center)
-                .push(icon::hourglass_done_icon().style(color::ALERT))
+                .push(icon::hourglass_done_icon().style(color::legacy::ALERT))
                 .push(
                     Row::new()
                         .spacing(5)
@@ -97,11 +98,11 @@ pub fn home_view<'a>(
                                 )
                                 .width(Length::Fill)
                                 .padding(15)
-                                .style(Style::TransparentBorder.into())
+                                .style(theme::Button::TransparentBorder)
                                 .on_press(Message::Next),
                             )
                             .width(Length::Fill)
-                            .style(card::SimpleCardStyle),
+                            .style(theme::Container::Card(theme::Card::Simple)),
                         )
                     } else {
                         None
@@ -154,9 +155,9 @@ fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Element<'a, Mess
         )
         .padding(10)
         .on_press(Message::Select(i))
-        .style(Style::TransparentBorder.into()),
+        .style(theme::Button::TransparentBorder),
     )
-    .style(card::SimpleCardStyle)
+    .style(theme::Container::Card(theme::Card::Simple))
     .into()
 }
 
@@ -203,7 +204,7 @@ pub fn event_view<'a>(cache: &Cache, event: &'a HistoryTransaction) -> Element<'
                                 .push(
                                     Button::new(icon::clipboard_icon())
                                         .on_press(Message::Clipboard(event.tx.txid().to_string()))
-                                        .style(Style::TransparentBorder.into()),
+                                        .style(theme::Button::TransparentBorder),
                                 )
                                 .width(Length::Shrink),
                         ),

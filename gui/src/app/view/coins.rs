@@ -1,6 +1,11 @@
-use iced::{
-    widget::{Button, Column, Container, Row},
-    Alignment, Element, Length,
+use iced::{Alignment, Length};
+
+use liana_ui::{
+    color,
+    component::{badge, separation, text::*},
+    icon, theme,
+    util::Collection,
+    widget::*,
 };
 
 use crate::{
@@ -9,12 +14,6 @@ use crate::{
         view::{message::Message, util::*},
     },
     daemon::model::{remaining_sequence, Coin},
-    ui::{
-        color,
-        component::{badge, button, card, separation, text::*},
-        icon,
-        util::Collection,
-    },
 };
 
 pub fn coins_view<'a>(
@@ -77,11 +76,11 @@ fn coin_list_view(
                                         Some(Container::new(
                                             Row::new()
                                                 .spacing(5)
-                                                .push(text(" 0").small().style(color::ALERT))
+                                                .push(text(" 0").small().style(color::legacy::ALERT))
                                                 .push(
                                                     icon::hourglass_done_icon()
                                                         .small()
-                                                        .style(color::ALERT),
+                                                        .style(color::legacy::ALERT),
                                                 )
                                                 .align_items(Alignment::Center),
                                         ))
@@ -92,12 +91,12 @@ fn coin_list_view(
                                                 .push(
                                                     text(format!(" {}", seq))
                                                         .small()
-                                                        .style(color::WARNING),
+                                                        .style(color::legacy::WARNING),
                                                 )
                                                 .push(
                                                     icon::hourglass_icon()
                                                         .small()
-                                                        .style(color::WARNING),
+                                                        .style(color::legacy::WARNING),
                                                 )
                                                 .align_items(Alignment::Center),
                                         ))
@@ -124,7 +123,7 @@ fn coin_list_view(
                         .align_items(Alignment::Center)
                         .spacing(20),
                 )
-                .style(button::Style::TransparentBorder.into())
+                .style(theme::Button::TransparentBorder)
                 .padding(10)
                 .on_press(Message::Select(index)),
             )
@@ -144,7 +143,7 @@ fn coin_list_view(
                                                 text("The recovery path is available")
                                                     .bold()
                                                     .small()
-                                                    .style(color::ALERT),
+                                                    .style(color::legacy::ALERT),
                                             ))
                                         } else {
                                             Some(Container::new(
@@ -169,7 +168,7 @@ fn coin_list_view(
                                                     .push(text(format!("{}", coin.outpoint)).small())
                                                     .push(Button::new(icon::clipboard_icon())
                                                         .on_press(Message::Clipboard(coin.outpoint.to_string()))
-                                                        .style(button::Style::TransparentBorder.into())
+                                                        .style(theme::Button::TransparentBorder)
                                                     ))
                                                 .spacing(5),
                                         )
@@ -204,5 +203,5 @@ fn coin_list_view(
                 None
             }),
     )
-    .style(card::SimpleCardStyle)
+    .style(theme::Container::Card(theme::Card::Simple))
 }

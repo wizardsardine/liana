@@ -1,15 +1,19 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use iced::{
-    alignment,
-    widget::{self, Button, Column, Container, ProgressBar, Row, Space},
-    Alignment, Element, Length,
-};
+use iced::{alignment, widget::Space, Alignment, Length};
 
 use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Network};
 
 use super::{dashboard, message::*};
+
+use liana_ui::{
+    color,
+    component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
+    icon, theme,
+    util::Collection,
+    widget::*,
+};
 
 use crate::{
     app::{
@@ -19,12 +23,6 @@ use crate::{
         view::{hw, warning::warn},
     },
     hw::HardwareWallet,
-    ui::{
-        color,
-        component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
-        icon,
-        util::Collection,
-    },
 };
 
 pub fn list(cache: &Cache) -> Element<Message> {
@@ -37,7 +35,7 @@ pub fn list(cache: &Cache) -> Element<Message> {
             .width(Length::Fill)
             .push(
                 Button::new(text("Settings").size(30).bold())
-                    .style(button::Style::Transparent.into())
+                    .style(theme::Button::Transparent)
                     .on_press(Message::Menu(Menu::Settings)))
             .push(
                 Container::new(
@@ -51,11 +49,11 @@ pub fn list(cache: &Cache) -> Element<Message> {
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(button::Style::Border.into())
+                    .style(theme::Button::Secondary)
                     .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings))
                 )
                 .width(Length::Fill)
-                .style(card::SimpleCardStyle)
+                .style(theme::Container::Card(theme::Card::Simple))
             )
             .push(
                 Container::new(
@@ -69,11 +67,11 @@ pub fn list(cache: &Cache) -> Element<Message> {
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(button::Style::Border.into())
+                    .style(theme::Button::Secondary)
                     .on_press(Message::Settings(SettingsMessage::EditWalletSettings))
                 )
                 .width(Length::Fill)
-                .style(card::SimpleCardStyle)
+                .style(theme::Container::Card(theme::Card::Simple))
             )
             .push(
                 Container::new(
@@ -88,11 +86,11 @@ pub fn list(cache: &Cache) -> Element<Message> {
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(button::Style::Border.into())
+                    .style(theme::Button::Secondary)
                     .on_press(Message::Menu(Menu::Recovery))
                 )
                 .width(Length::Fill)
-                .style(card::SimpleCardStyle)
+                .style(theme::Container::Card(theme::Card::Simple))
             )
             .push(
                 Container::new(
@@ -106,11 +104,11 @@ pub fn list(cache: &Cache) -> Element<Message> {
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(button::Style::Border.into())
+                    .style(theme::Button::Secondary)
                     .on_press(Message::Settings(SettingsMessage::AboutSection))
                 )
                 .width(Length::Fill)
-                .style(card::SimpleCardStyle)
+                .style(theme::Container::Card(theme::Card::Simple))
             )
     )
 }
@@ -131,17 +129,17 @@ pub fn bitcoind_settings<'a>(
                     .align_items(Alignment::Center)
                     .push(
                         Button::new(text("Settings").size(30).bold())
-                            .style(button::Style::Transparent.into())
+                            .style(theme::Button::Transparent)
                             .on_press(Message::Menu(Menu::Settings)),
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
                         Button::new(text("Bitcoin Core").size(30).bold())
-                            .style(button::Style::Transparent.into())
+                            .style(theme::Button::Transparent)
                             .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings)),
                     ),
             )
-            .push(widget::Column::with_children(settings).spacing(20)),
+            .push(Column::with_children(settings).spacing(20)),
     )
 }
 
@@ -162,13 +160,13 @@ pub fn about_section<'a>(
                     .align_items(Alignment::Center)
                     .push(
                         Button::new(text("Settings").size(30).bold())
-                            .style(button::Style::Transparent.into())
+                            .style(theme::Button::Transparent)
                             .on_press(Message::Menu(Menu::Settings)),
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
                         Button::new(text("About").size(30).bold())
-                            .style(button::Style::Transparent.into())
+                            .style(theme::Button::Transparent)
                             .on_press(Message::Settings(SettingsMessage::AboutSection)),
                     ),
             )
@@ -374,12 +372,11 @@ pub fn bitcoind<'a>(
                             .width(Length::Fill),
                     )
                     .push(if can_edit {
-                        widget::Button::new(icon::pencil_icon())
-                            .style(button::Style::TransparentBorder.into())
+                        Button::new(icon::pencil_icon())
+                            .style(theme::Button::TransparentBorder)
                             .on_press(SettingsEditMessage::Select)
                     } else {
-                        widget::Button::new(icon::pencil_icon())
-                            .style(button::Style::TransparentBorder.into())
+                        Button::new(icon::pencil_icon()).style(theme::Button::TransparentBorder)
                     })
                     .align_items(Alignment::Center),
             )
@@ -391,20 +388,20 @@ pub fn bitcoind<'a>(
     .into()
 }
 
-pub fn is_running_label<'a, T: 'a>(is_running: Option<bool>) -> widget::Container<'a, T> {
+pub fn is_running_label<'a, T: 'a>(is_running: Option<bool>) -> Container<'a, T> {
     if let Some(running) = is_running {
         if running {
             Container::new(
                 Row::new()
-                    .push(icon::dot_icon().size(5).style(color::SUCCESS))
-                    .push(text("Running").small().style(color::SUCCESS))
+                    .push(icon::dot_icon().size(5).style(color::legacy::SUCCESS))
+                    .push(text("Running").small().style(color::legacy::SUCCESS))
                     .align_items(Alignment::Center),
             )
         } else {
             Container::new(
                 Row::new()
-                    .push(icon::dot_icon().size(5).style(color::ALERT))
-                    .push(text("Not running").small().style(color::ALERT))
+                    .push(icon::dot_icon().size(5).style(color::legacy::ALERT))
+                    .push(text("Not running").small().style(color::legacy::ALERT))
                     .align_items(Alignment::Center),
             )
         }
@@ -429,7 +426,7 @@ pub fn rescan<'a>(
                     .push(badge::Badge::new(icon::block_icon()))
                     .push(text("Rescan blockchain").bold().width(Length::Fill))
                     .push_maybe(if success {
-                        Some(text("Rescan was successful").style(color::SUCCESS))
+                        Some(text("Rescan was successful").style(color::legacy::SUCCESS))
                     } else {
                         None
                     })
@@ -539,13 +536,13 @@ pub fn wallet_settings<'a>(
                     .align_items(Alignment::Center)
                     .push(
                         Button::new(text("Settings").size(30).bold())
-                            .style(button::Style::Transparent.into())
+                            .style(theme::Button::Transparent)
                             .on_press(Message::Menu(Menu::Settings)),
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
                         Button::new(text("Wallet").size(30).bold())
-                            .style(button::Style::Transparent.into())
+                            .style(theme::Button::Transparent)
                             .on_press(Message::Settings(SettingsMessage::AboutSection)),
                     ),
             )
@@ -604,8 +601,10 @@ pub fn wallet_settings<'a>(
                                 Some(
                                     Row::new()
                                         .align_items(Alignment::Center)
-                                        .push(icon::circle_check_icon().style(color::SUCCESS))
-                                        .push(text("Updated").style(color::SUCCESS)),
+                                        .push(
+                                            icon::circle_check_icon().style(color::legacy::SUCCESS),
+                                        )
+                                        .push(text("Updated").style(color::legacy::SUCCESS)),
                                 )
                             } else {
                                 None
