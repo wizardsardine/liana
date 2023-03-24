@@ -584,17 +584,11 @@ mod tests {
             descriptor::DescriptorPublicKey::from_str(&xpub_str).unwrap()
         };
         let prim_path = PathInfo::Single(random_desc_key());
-        let twenty_keys: Vec<descriptor::DescriptorPublicKey> =
-            (0..20).map(|_| random_desc_key()).collect();
-        let mut twenty_one_keys = twenty_keys.clone();
-        twenty_one_keys.push(random_desc_key());
+        let twenty_eight_keys: Vec<descriptor::DescriptorPublicKey> =
+            (0..28).map(|_| random_desc_key()).collect();
+        let mut twenty_nine_keys = twenty_eight_keys.clone();
+        twenty_nine_keys.push(random_desc_key());
 
-        LianaPolicy::new(
-            prim_path.clone(),
-            PathInfo::Multi(1, vec![random_desc_key()]),
-            1,
-        )
-        .unwrap_err();
         LianaPolicy::new(
             prim_path.clone(),
             PathInfo::Multi(2, vec![random_desc_key()]),
@@ -627,12 +621,12 @@ mod tests {
         .unwrap_err();
         LianaPolicy::new(
             prim_path.clone(),
-            PathInfo::Multi(3, twenty_keys.clone()),
+            PathInfo::Multi(3, twenty_eight_keys.clone()),
             1,
         )
         .unwrap();
-        LianaPolicy::new(prim_path.clone(), PathInfo::Multi(20, twenty_keys), 1).unwrap();
-        LianaPolicy::new(prim_path, PathInfo::Multi(20, twenty_one_keys), 1).unwrap_err();
+        LianaPolicy::new(prim_path.clone(), PathInfo::Multi(20, twenty_eight_keys), 1).unwrap();
+        LianaPolicy::new(prim_path, PathInfo::Multi(20, twenty_nine_keys), 1).unwrap_err();
     }
 
     fn roundtrip(desc_str: &str) {
@@ -649,7 +643,7 @@ mod tests {
         // A single key as primary path, a multisig as recovery
         roundtrip("wsh(or_d(pk([aabbccdd]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:multi(2,[aabbccdd]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*,[aabbccdd]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*,[aabb0011/10/4893]xpub6AyxexvxizZJffF153evmfqHcE9MV88fCNCAtP3jQjXJHwrAKri71Tq9jWUkPxj9pja4u6AkCPHY7atgxzSEa2HtDwJfrRWKK4fsfQg4o77/<0;1>/*),older(26352))))#7du8x4v7");
         // The other way around
-        roundtrip("wsh(or_d(multi(3,[aabbccdd]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0011/10/4893]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[aabbccdd]xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*),and_v(v:pk([aabbccdd]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),older(26352))))#y9l4ldvr");
+        roundtrip("wsh(or_d(multi(3,[aabbccdd]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0011/10/4893]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[aabbccdd]xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*),and_v(v:pk([aabbccdd]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*),older(26352))))#0y77q9d6");
     }
 
     fn psbt_from_str(psbt_str: &str) -> Psbt {

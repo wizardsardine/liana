@@ -1,7 +1,7 @@
 use miniscript::{
     bitcoin::{util::bip32, Sequence},
     descriptor,
-    policy::{Concrete as ConcretePolicy, Liftable, Semantic as SemanticPolicy},
+    policy::{compiler, Concrete as ConcretePolicy, Liftable, Semantic as SemanticPolicy},
     ScriptContext,
 };
 
@@ -19,6 +19,9 @@ pub enum LianaPolicyError {
     InvalidMultiThresh(usize),
     InvalidMultiKeys(usize),
     IncompatibleDesc,
+    /// The spending policy is not a valid Miniscript policy: it may for instance be malleable, or
+    /// overflow some limit.
+    InvalidPolicy(compiler::CompilerError),
 }
 
 impl std::fmt::Display for LianaPolicyError {
@@ -43,6 +46,7 @@ impl std::fmt::Display for LianaPolicyError {
                 f,
                 "Descriptor is not compatible with a Liana spending policy."
             ),
+            Self::InvalidPolicy(e) => write!(f, "Invalid Miniscript policy: {}", e),
         }
     }
 }
@@ -303,6 +307,8 @@ impl PathInfo {
 /// A Liana spending policy. Can be created from some settings (the primary and recovery keys, the
 /// timelock(s)) and be used to derive a descriptor. It can also be inferred from a descriptor and
 /// be used to retrieve the settings.
+/// Do note however that the descriptor generation process is not deterministic, therefore you
+/// **cannot roundtrip** a descriptor through a `LianaPolicy`.
 #[derive(Debug, Eq, PartialEq, Clone, Ord, PartialOrd, Hash)]
 pub struct LianaPolicy {
     pub(super) primary_path: PathInfo,
@@ -327,18 +333,6 @@ impl LianaPolicy {
             return Err(LianaPolicyError::InsaneTimelock(recovery_timelock as u32));
         }
 
-        // If any of the paths is a multisig, make sure they are within the CHECKMULTISIG bounds.
-        for path_info in &[&primary_path, &recovery_path] {
-            if let PathInfo::Multi(thresh, keys) = path_info {
-                if keys.len() < 2 || keys.len() > 20 {
-                    return Err(LianaPolicyError::InvalidMultiKeys(keys.len()));
-                }
-                if thresh == &0 || thresh > &keys.len() {
-                    return Err(LianaPolicyError::InvalidMultiThresh(*thresh));
-                }
-            }
-        }
-
         // Check all keys are valid according to our standard (this checks all are multipath keys).
         let (prim_keys, rec_keys) = (primary_path.keys(), recovery_path.keys());
         let all_keys = prim_keys.iter().chain(rec_keys.iter());
@@ -346,7 +340,8 @@ impl LianaPolicy {
             return Err(LianaPolicyError::InvalidKey((*key).clone().into()));
         }
 
-        // Check for key duplicates. They are invalid in (nonmalleable) miniscripts.
+        // Check for key duplicates. They are invalid in (nonmalleable) miniscripts. This is
+        // checked by the Miniscript policy compiler too but not at the raw xpub level.
         let mut key_set = HashSet::new();
         for key in all_keys {
             let xpub = match key {
@@ -360,10 +355,13 @@ impl LianaPolicy {
         }
         assert!(!key_set.is_empty());
 
-        Ok(LianaPolicy {
+        // Make sure it is a valid Miniscript policy by (ab)using the compiler.
+        let policy = LianaPolicy {
             primary_path,
             recovery_path: (recovery_timelock, recovery_path),
-        })
+        };
+        policy.clone().into_miniscript()?;
+        Ok(policy)
     }
 
     /// Create a Liana policy from a descriptor. This will check the descriptor is correctly formed
@@ -439,10 +437,10 @@ impl LianaPolicy {
             }
         }
 
-        Ok(LianaPolicy {
-            primary_path: primary_path.ok_or(LianaPolicyError::IncompatibleDesc)?,
-            recovery_path: recovery_path.ok_or(LianaPolicyError::IncompatibleDesc)?,
-        })
+        // Use the constructor for the sanity checks (especially around the Miniscript policy).
+        let prim_path = primary_path.ok_or(LianaPolicyError::IncompatibleDesc)?;
+        let (timelock, reco_path) = recovery_path.ok_or(LianaPolicyError::IncompatibleDesc)?;
+        LianaPolicy::new(prim_path, reco_path, timelock)
     }
 
     pub fn primary_path(&self) -> &PathInfo {
@@ -454,12 +452,12 @@ impl LianaPolicy {
         (self.recovery_path.0, &self.recovery_path.1)
     }
 
-    /// Create a descriptor from this spending policy with multipath key expressions.
-    ///
-    /// Although for now this function is deterministic, it **will not** be in the future.
-    pub fn into_multipath_descriptor(
+    fn into_miniscript(
         self,
-    ) -> descriptor::Descriptor<descriptor::DescriptorPublicKey> {
+    ) -> Result<
+        miniscript::Miniscript<descriptor::DescriptorPublicKey, miniscript::Segwitv0>,
+        LianaPolicyError,
+    > {
         let LianaPolicy {
             primary_path,
             recovery_path: (timelock, recovery_path),
@@ -475,9 +473,21 @@ impl LianaPolicy {
         let primary_keys = primary_path.into_ms_policy();
         let tl_policy = ConcretePolicy::Or(vec![(99, primary_keys), (1, recovery_branch)]);
 
-        let ms = tl_policy
+        tl_policy
             .compile::<miniscript::Segwitv0>()
-            .expect("Compilation must never fail, nothing overflows.");
+            .map_err(LianaPolicyError::InvalidPolicy)
+    }
+
+    /// Create a descriptor from this spending policy with multipath key expressions. Note this
+    /// involves a Miniscript policy compilation: this function is **not deterministic**. If you
+    /// are inferring a `LianaPolicy` from a descriptor, generating a descriptor from this
+    /// `LianaPolicy` may not yield the same descriptor.
+    pub fn into_multipath_descriptor(
+        self,
+    ) -> descriptor::Descriptor<descriptor::DescriptorPublicKey> {
+        let ms = self
+            .into_miniscript()
+            .expect("This is always checked when creating a LianaPolicy.");
         miniscript::Segwitv0::check_local_validity(&ms).expect("Miniscript must be sane");
         descriptor::Descriptor::Wsh(descriptor::Wsh::new(ms).expect("Must pass sanity checks"))
     }
