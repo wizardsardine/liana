@@ -1,11 +1,11 @@
 mod bitcoin;
 pub mod commands;
 pub mod config;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "daemon"))]
 mod daemonize;
 mod database;
 pub mod descriptors;
-#[cfg(feature = "jsonrpc_server")]
+#[cfg(feature = "daemon")]
 mod jsonrpc;
 mod random;
 pub mod signer;
@@ -16,7 +16,7 @@ pub use bip39;
 pub use miniscript;
 
 pub use crate::bitcoin::d::{BitcoindError, WalletError};
-#[cfg(feature = "jsonrpc_server")]
+#[cfg(feature = "daemon")]
 use crate::jsonrpc::server::{rpcserver_loop, rpcserver_setup};
 use crate::{
     bitcoin::{d::BitcoinD, poller, BitcoinInterface},
@@ -381,7 +381,7 @@ impl DaemonHandle {
         // If we are on a UNIX system and they told us to daemonize, do it now.
         // NOTE: it's safe to daemonize now, as we don't carry any open DB connection
         // https://www.sqlite.org/howtocorrupt.html#_carrying_an_open_database_connection_across_a_fork_
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "daemon"))]
         if config.daemon {
             log::info!("Daemonizing");
             let log_file = data_dir.as_path().join("log");
@@ -417,7 +417,7 @@ impl DaemonHandle {
 
     /// Start the JSONRPC server and listen for incoming commands until we die.
     /// Like DaemonHandle::shutdown(), this stops the Bitcoin poller at teardown.
-    #[cfg(feature = "jsonrpc_server")]
+    #[cfg(feature = "daemon")]
     pub fn rpc_server(self) -> Result<(), io::Error> {
         let DaemonHandle {
             control,

@@ -416,7 +416,7 @@ impl DummyLiana {
         DummyLiana { tmp_dir, handle }
     }
 
-    #[cfg(feature = "jsonrpc_server")]
+    #[cfg(feature = "daemon")]
     pub fn rpc_server(self) -> Result<(), io::Error> {
         self.handle.rpc_server()?;
         fs::remove_dir_all(&self.tmp_dir)?;
