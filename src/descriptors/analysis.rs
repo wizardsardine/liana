@@ -1,14 +1,14 @@
 use miniscript::{
     bitcoin::{util::bip32, Sequence},
     descriptor,
-    policy::{Liftable, Semantic as SemanticPolicy},
-    Miniscript, ScriptContext, Terminal,
+    policy::{Concrete as ConcretePolicy, Liftable, Semantic as SemanticPolicy},
+    ScriptContext,
 };
 
 use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
-    error, fmt, sync,
+    error, fmt,
 };
 
 #[derive(Debug)]
@@ -288,33 +288,14 @@ impl PathInfo {
         }
     }
 
-    /// Returns `None` if it is a multisig that does not fit inside a CHECKMULTISIG.
-    pub fn into_miniscript(
-        self,
-        as_hash: bool,
-    ) -> Option<Miniscript<descriptor::DescriptorPublicKey, miniscript::Segwitv0>> {
+    /// Get a Miniscript Policy for this path.
+    pub fn into_ms_policy(self) -> ConcretePolicy<descriptor::DescriptorPublicKey> {
         match self {
-            PathInfo::Single(key) => Some(
-                Miniscript::from_ast(Terminal::Check(sync::Arc::from(
-                    Miniscript::from_ast(if as_hash {
-                        Terminal::PkH(key)
-                    } else {
-                        Terminal::PkK(key)
-                    })
-                    .expect("pk_k is a valid Miniscript"),
-                )))
-                .expect("Well typed"),
+            PathInfo::Single(key) => ConcretePolicy::Key(key),
+            PathInfo::Multi(thresh, keys) => ConcretePolicy::Threshold(
+                thresh,
+                keys.into_iter().map(ConcretePolicy::Key).collect(),
             ),
-            PathInfo::Multi(thresh, keys) => {
-                if thresh < 1 || keys.len() > 20 || thresh > keys.len() {
-                    None
-                } else {
-                    Some(
-                        Miniscript::from_ast(Terminal::Multi(thresh, keys))
-                            .expect("multi is a valid Miniscript"),
-                    )
-                }
-            }
         }
     }
 }
@@ -484,36 +465,21 @@ impl LianaPolicy {
             recovery_path: (timelock, recovery_path),
         } = self;
 
-        // Create the timelocked spending path. If there is a single key we make it a pk_h() in
-        // order to save on the script size (since we assume the timelocked recovery path will
-        // seldom be used).
-        let recovery_timelock = Terminal::Older(Sequence::from_height(timelock));
-        let recovery_keys = recovery_path
-            .into_miniscript(true)
-            .expect("We check the multisig never overflows in our constructors.");
-        let recovery_branch = Miniscript::from_ast(Terminal::AndV(
-            Miniscript::from_ast(Terminal::Verify(recovery_keys.into()))
-                .expect("Well typed")
-                .into(),
-            Miniscript::from_ast(recovery_timelock)
-                .expect("Well typed")
-                .into(),
-        ))
-        .expect("Well typed");
+        // Create the timelocked recovery spending path.
+        let recovery_timelock = ConcretePolicy::Older(Sequence::from_height(timelock));
+        let recovery_keys = recovery_path.into_ms_policy();
+        let recovery_branch = ConcretePolicy::And(vec![recovery_keys, recovery_timelock]);
 
-        // Combine the timelocked spending path with the simple "primary" path. For the primary key
-        // we don't use a pkh since it's the one that will likely always be used.
-        let primary_keys = primary_path
-            .into_miniscript(false)
-            .expect("We check the multisig never overflows in our constructors.");
-        let tl_miniscript =
-            Miniscript::from_ast(Terminal::OrD(primary_keys.into(), recovery_branch.into()))
-                .expect("Well typed");
-        miniscript::Segwitv0::check_local_validity(&tl_miniscript)
-            .expect("Miniscript must be sane");
-        descriptor::Descriptor::Wsh(
-            descriptor::Wsh::new(tl_miniscript).expect("Must pass sanity checks"),
-        )
+        // Create the primary spending path and combine both, assuming the recovery path will
+        // seldom be used.
+        let primary_keys = primary_path.into_ms_policy();
+        let tl_policy = ConcretePolicy::Or(vec![(99, primary_keys), (1, recovery_branch)]);
+
+        let ms = tl_policy
+            .compile::<miniscript::Segwitv0>()
+            .expect("Compilation must never fail, nothing overflows.");
+        miniscript::Segwitv0::check_local_validity(&ms).expect("Miniscript must be sane");
+        descriptor::Descriptor::Wsh(descriptor::Wsh::new(ms).expect("Must pass sanity checks"))
     }
 }
 
