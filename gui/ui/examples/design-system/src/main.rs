@@ -1,8 +1,8 @@
 mod section;
 
-use iced::widget::{button, column, container, radio, row, text, Column, Space};
+use iced::widget::{button, column, container, radio, row, text, Space};
 use iced::{executor, Application, Command, Length, Settings, Subscription};
-use liana_ui::{theme, widget::Element};
+use liana_ui::{theme, widget::*};
 
 pub fn main() -> iced::Result {
     DesignSystem::run(Settings::with_flags(Config {}))
@@ -21,6 +21,7 @@ struct DesignSystem {
 pub enum ThemeType {
     Light,
     Dark,
+    Legacy,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +78,7 @@ impl Application for DesignSystem {
                 self.theme = match theme {
                     ThemeType::Light => theme::Theme::Light,
                     ThemeType::Dark => theme::Theme::Dark,
+                    ThemeType::Legacy => theme::Theme::Legacy,
                 }
             }
             Message::Section(i) => {
@@ -118,6 +120,7 @@ impl Application for DesignSystem {
                             Some(match self.theme {
                                 theme::Theme::Light => ThemeType::Light,
                                 theme::Theme::Dark => ThemeType::Dark,
+                                theme::Theme::Legacy => ThemeType::Legacy,
                             }),
                             Message::ThemeChanged,
                         ))

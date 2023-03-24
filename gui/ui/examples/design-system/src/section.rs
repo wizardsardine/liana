@@ -3,7 +3,7 @@ use iced::{
     widget::{button, column, container, row, Space},
     Alignment, Length,
 };
-use liana_ui::{color, text::*, theme, widget::Element};
+use liana_ui::{color, component::text::*, theme, widget::Element};
 
 use super::{Message, Section};
 
