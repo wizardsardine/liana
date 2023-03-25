@@ -704,7 +704,7 @@ impl DaemonControl {
 
         // Query the coins that we can spend through the recovery path from the database.
         let current_height = self.bitcoin.chain_tip().height;
-        let desc_timelock = self.config.main_descriptor.timelock_value();
+        let desc_timelock = self.config.main_descriptor.first_timelock_value();
         let timelock: i32 = desc_timelock
             .try_into()
             .expect("Must fit, it's effectively a u16");

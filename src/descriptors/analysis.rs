@@ -6,13 +6,14 @@ use miniscript::{
 };
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     convert::TryFrom,
     error, fmt,
 };
 
 #[derive(Debug)]
 pub enum LianaPolicyError {
+    MissingRecoveryPath,
     InsaneTimelock(u32),
     InvalidKey(Box<descriptor::DescriptorPublicKey>),
     DuplicateKey(Box<descriptor::DescriptorPublicKey>),
@@ -27,6 +28,7 @@ pub enum LianaPolicyError {
 impl std::fmt::Display for LianaPolicyError {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
+            Self::MissingRecoveryPath => write!(f, "A Liana policy requires at least one recovery path."),
             Self::InsaneTimelock(tl) => {
                 write!(f, "Timelock value '{}' isn't valid or safe to use", tl)
             }
@@ -64,17 +66,31 @@ fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorPubli
     }
 }
 
-// We require the descriptor key to:
-//  - Be deriveable (to contain a wildcard)
-//  - Be multipath (to contain a step in the derivation path with multiple indexes)
-//  - The multipath step to only contain two indexes, 0 and 1.
-//  - Be 'signable' by an external signer (to contain an origin)
-fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
-    match *key {
-        descriptor::DescriptorPublicKey::Single(..) | descriptor::DescriptorPublicKey::XPub(..) => {
-            false
+struct DescKeyChecker {
+    keys_set: HashSet<bip32::ExtendedPubKey>,
+}
+
+impl DescKeyChecker {
+    pub fn new() -> DescKeyChecker {
+        DescKeyChecker {
+            keys_set: HashSet::new(),
         }
-        descriptor::DescriptorPublicKey::MultiXPub(ref xpub) => {
+    }
+
+    /// We require the descriptor key to:
+    ///  - Be deriveable (to contain a wildcard)
+    ///  - Be multipath (to contain a step in the derivation path with multiple indexes)
+    ///  - The multipath step to only contain two indexes, 0 and 1.
+    ///  - Be 'signable' by an external signer (to contain an origin)
+    ///  - Have an xpub that is not a duplicate.
+    pub fn check(&mut self, key: &descriptor::DescriptorPublicKey) -> Result<(), LianaPolicyError> {
+        if let descriptor::DescriptorPublicKey::MultiXPub(ref xpub) = *key {
+            // First make sure it's not a duplicate and record seeing it.
+            if self.keys_set.contains(&xpub.xkey) {
+                return Err(LianaPolicyError::DuplicateKey(key.clone().into()));
+            }
+            self.keys_set.insert(xpub.xkey);
+            // Then perform the contextless checks.
             let der_paths = xpub.derivation_paths.paths();
             // Rust-miniscript enforces BIP389 which states that all paths must have the same len.
             let len = der_paths.get(0).expect("Cannot be empty").len();
@@ -82,12 +98,16 @@ fn is_valid_desc_key(key: &descriptor::DescriptorPublicKey) -> bool {
             // no unlikely (and easily fixable) while users shooting themselves in the foot by
             // forgetting to provide the origin is so likely that it's worth ruling out xpubs
             // without origin entirely.
-            xpub.origin.is_some()
+            let valid = xpub.origin.is_some()
                 && xpub.wildcard == descriptor::Wildcard::Unhardened
                 && der_paths.len() == 2
                 && der_paths[0][len - 1] == 0.into()
-                && der_paths[1][len - 1] == 1.into()
+                && der_paths[1][len - 1] == 1.into();
+            if valid {
+                return Ok(());
+            }
         }
+        Err(LianaPolicyError::InvalidKey(key.clone().into()))
     }
 }
 
@@ -283,15 +303,6 @@ impl PathInfo {
         }
     }
 
-    // TODO: avoid using a vec...
-    /// Get the keys contained in this spending path.
-    pub fn keys(&self) -> Vec<descriptor::DescriptorPublicKey> {
-        match self {
-            PathInfo::Single(ref key) => vec![key.clone()],
-            PathInfo::Multi(_, keys) => keys.clone(),
-        }
-    }
-
     /// Get a Miniscript Policy for this path.
     pub fn into_ms_policy(self) -> ConcretePolicy<descriptor::DescriptorPublicKey> {
         match self {
@@ -304,24 +315,31 @@ impl PathInfo {
     }
 }
 
-/// A Liana spending policy. Can be created from some settings (the primary and recovery keys, the
+/// A Liana spending policy is one composed of at least two spending paths:
+///     - A directly available path with any number of keys checks; or
+///     - One or more recovery paths with any number of keys checks, behind increasing relative
+///     timelocks. No two recovery paths may have the same timelock.
+/// A Liana policy can be created from some settings (the primary and recovery keys, the
 /// timelock(s)) and be used to derive a descriptor. It can also be inferred from a descriptor and
 /// be used to retrieve the settings.
 /// Do note however that the descriptor generation process is not deterministic, therefore you
 /// **cannot roundtrip** a descriptor through a `LianaPolicy`.
-#[derive(Debug, Eq, PartialEq, Clone, Ord, PartialOrd, Hash)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct LianaPolicy {
     pub(super) primary_path: PathInfo,
-    pub(super) recovery_path: (u16, PathInfo),
+    pub(super) recovery_paths: BTreeMap<u16, PathInfo>,
 }
 
 impl LianaPolicy {
     /// Create a new Liana policy from a given configuration.
     pub fn new(
         primary_path: PathInfo,
-        recovery_path: PathInfo,
-        recovery_timelock: u16,
+        recovery_paths: BTreeMap<u16, PathInfo>,
     ) -> Result<LianaPolicy, LianaPolicyError> {
+        if recovery_paths.is_empty() {
+            return Err(LianaPolicyError::MissingRecoveryPath);
+        }
+
         // We require the locktime to:
         //  - not be disabled
         //  - be in number of blocks
@@ -329,36 +347,33 @@ impl LianaPolicy {
         //  - be positive (Miniscript requires it not to be 0)
         //
         // All this is achieved through asking for a 16-bit integer.
-        if recovery_timelock == 0 {
-            return Err(LianaPolicyError::InsaneTimelock(recovery_timelock as u32));
+        if recovery_paths.contains_key(&0) {
+            return Err(LianaPolicyError::InsaneTimelock(0));
         }
 
         // Check all keys are valid according to our standard (this checks all are multipath keys).
-        let (prim_keys, rec_keys) = (primary_path.keys(), recovery_path.keys());
-        let all_keys = prim_keys.iter().chain(rec_keys.iter());
-        if let Some(key) = all_keys.clone().find(|k| !is_valid_desc_key(k)) {
-            return Err(LianaPolicyError::InvalidKey((*key).clone().into()));
-        }
-
-        // Check for key duplicates. They are invalid in (nonmalleable) miniscripts. This is
-        // checked by the Miniscript policy compiler too but not at the raw xpub level.
-        let mut key_set = HashSet::new();
-        for key in all_keys {
-            let xpub = match key {
-                descriptor::DescriptorPublicKey::MultiXPub(ref multi_xpub) => multi_xpub.xkey,
-                _ => unreachable!("Just checked it was a multixpub above"),
-            };
-            if key_set.contains(&xpub) {
-                return Err(LianaPolicyError::DuplicateKey(key.clone().into()));
+        // Note while the Miniscript compiler does check for duplicate, it does so at the
+        // "descriptor key expression" level. We don't want duplicate xpubs at all so we do it
+        // ourselves here.
+        let spending_paths = recovery_paths
+            .values()
+            .chain(std::iter::once(&primary_path));
+        let mut key_checker = DescKeyChecker::new();
+        for path in spending_paths {
+            match path {
+                PathInfo::Single(ref key) => key_checker.check(key)?,
+                PathInfo::Multi(_, ref keys) => {
+                    for key in keys {
+                        key_checker.check(key)?
+                    }
+                }
             }
-            key_set.insert(xpub);
         }
-        assert!(!key_set.is_empty());
 
         // Make sure it is a valid Miniscript policy by (ab)using the compiler.
         let policy = LianaPolicy {
             primary_path,
-            recovery_path: (recovery_timelock, recovery_path),
+            recovery_paths,
         };
         policy.clone().into_miniscript()?;
         Ok(policy)
@@ -375,25 +390,12 @@ impl LianaPolicy {
             _ => return Err(LianaPolicyError::IncompatibleDesc),
         };
 
-        // Get the Miniscript from the descriptor and make sure it only contains valid multipath
-        // descriptor keys.
+        // Lift a semantic policy out of this Miniscript and normalize it to make sure we compare
+        // apples to apples below.
         let ms = match wsh_desc.as_inner() {
             descriptor::WshInner::Ms(ms) => ms,
             _ => return Err(LianaPolicyError::IncompatibleDesc),
         };
-        let invalid_key = ms.iter_pk().find_map(|pk| {
-            if is_valid_desc_key(&pk) {
-                None
-            } else {
-                Some(pk)
-            }
-        });
-        if let Some(key) = invalid_key {
-            return Err(LianaPolicyError::InvalidKey(key.into()));
-        }
-
-        // Now lift a semantic policy out of this Miniscript and normalize it to make sure we
-        // compare apples to apples below.
         let policy = ms
             .lift()
             .expect("Lifting can't fail on a Miniscript")
@@ -410,7 +412,7 @@ impl LianaPolicy {
 
         // Fetch the two spending paths' semantic policies. The primary path is identified as the
         // only one that isn't timelocked.
-        let (mut primary_path, mut recovery_path) = (None::<PathInfo>, None);
+        let (mut primary_path, mut recovery_paths) = (None::<PathInfo>, BTreeMap::new());
         for sub in subs {
             // This is a (multi)key check. It must be the primary path.
             if is_single_key_or_multisig(&sub) {
@@ -429,27 +431,29 @@ impl LianaPolicy {
                 }
             } else {
                 // If it's not a simple (multi)key check, it must be the timelocked recovery path.
-                // For now, we only support a single recovery path.
-                if recovery_path.is_some() {
+                let (timelock, path_info) = PathInfo::from_recovery_path(sub)?;
+                if recovery_paths.contains_key(&timelock) {
                     return Err(LianaPolicyError::IncompatibleDesc);
                 }
-                recovery_path = Some(PathInfo::from_recovery_path(sub)?);
+                recovery_paths.insert(timelock, path_info);
             }
         }
 
-        // Use the constructor for the sanity checks (especially around the Miniscript policy).
+        // Use the constructor for sanity checking the keys and the Miniscript policy. Note this
+        // makes sure the recovery paths mapping isn't empty, too.
         let prim_path = primary_path.ok_or(LianaPolicyError::IncompatibleDesc)?;
-        let (timelock, reco_path) = recovery_path.ok_or(LianaPolicyError::IncompatibleDesc)?;
-        LianaPolicy::new(prim_path, reco_path, timelock)
+        LianaPolicy::new(prim_path, recovery_paths)
     }
 
     pub fn primary_path(&self) -> &PathInfo {
         &self.primary_path
     }
 
-    /// Timelock and path info for the recovery path.
-    pub fn recovery_path(&self) -> (u16, &PathInfo) {
-        (self.recovery_path.0, &self.recovery_path.1)
+    /// Timelocks and path info of the recovery paths. Note we guarantee this mapping is never
+    /// empty, as there is always at least one recovery path.
+    pub fn recovery_paths(&self) -> &BTreeMap<u16, PathInfo> {
+        assert!(!self.recovery_paths.is_empty());
+        &self.recovery_paths
     }
 
     fn into_miniscript(
@@ -460,18 +464,24 @@ impl LianaPolicy {
     > {
         let LianaPolicy {
             primary_path,
-            recovery_path: (timelock, recovery_path),
+            recovery_paths,
         } = self;
 
-        // Create the timelocked recovery spending path.
-        let recovery_timelock = ConcretePolicy::Older(Sequence::from_height(timelock));
-        let recovery_keys = recovery_path.into_ms_policy();
-        let recovery_branch = ConcretePolicy::And(vec![recovery_keys, recovery_timelock]);
-
-        // Create the primary spending path and combine both, assuming the recovery path will
-        // seldom be used.
+        // Start with the primary spending path. We'll then or() all the recovery paths to it.
         let primary_keys = primary_path.into_ms_policy();
-        let tl_policy = ConcretePolicy::Or(vec![(99, primary_keys), (1, recovery_branch)]);
+
+        // Incrementally create the top-level policy using all recovery paths.
+        assert!(!recovery_paths.is_empty());
+        let tl_policy =
+            recovery_paths
+                .into_iter()
+                .fold(primary_keys, |tl_policy, (timelock, path_info)| {
+                    let timelock = ConcretePolicy::Older(Sequence::from_height(timelock));
+                    let keys = path_info.into_ms_policy();
+                    let recovery_branch = ConcretePolicy::And(vec![keys, timelock]);
+                    // We assume the larger the timelock the less likely a branch would be used.
+                    ConcretePolicy::Or(vec![(99, tl_policy), (1, recovery_branch)])
+                });
 
         tl_policy
             .compile::<miniscript::Segwitv0>()
@@ -510,9 +520,9 @@ pub struct PathSpendInfo {
 pub struct PartialSpendInfo {
     /// Number of signatures present for the primary path
     pub(super) primary_path: PathSpendInfo,
-    /// Number of signatures present for the recovery path, only present if the path is available
-    /// in the first place.
-    pub(super) recovery_path: Option<PathSpendInfo>,
+    /// Number of signatures present for the recovery path, only present for the recovery paths
+    /// that are available.
+    pub(super) recovery_paths: BTreeMap<u16, PathSpendInfo>,
 }
 
 impl PartialSpendInfo {
@@ -521,9 +531,9 @@ impl PartialSpendInfo {
         &self.primary_path
     }
 
-    /// Get the number of signatures present for the recovery path. Only present if the path is
-    /// available in the first place.
-    pub fn recovery_path(&self) -> &Option<PathSpendInfo> {
-        &self.recovery_path
+    /// Get the number of signatures present for each recovery path. Only present for available
+    /// paths.
+    pub fn recovery_paths(&self) -> &BTreeMap<u16, PathSpendInfo> {
+        &self.recovery_paths
     }
 }
