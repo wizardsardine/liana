@@ -241,7 +241,17 @@ impl Application for GUI {
                 State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
                 State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
             },
-            iced_native::subscription::events().map(Self::Message::Event),
+            iced_native::subscription::events_with(|event, _status| {
+                if matches!(
+                    event,
+                    iced::Event::Window(iced_native::window::Event::CloseRequested)
+                ) {
+                    Some(event)
+                } else {
+                    None
+                }
+            })
+            .map(Self::Message::Event),
         ])
     }
 
