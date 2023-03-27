@@ -47,6 +47,7 @@ impl Settings {
 
         let mut settings_file = OpenOptions::new()
             .write(true)
+            .truncate(true)
             .open(path)
             .map_err(|e| SettingsError::WritingFile(e.to_string()))?;
 
@@ -70,8 +71,8 @@ pub struct WalletSetting {
 impl WalletSetting {
     pub fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
         let mut map = HashMap::new();
-        for key in self.keys.clone() {
-            map.insert(key.master_fingerprint, key.name);
+        for key in self.keys.iter().filter(|k| !k.name.is_empty()) {
+            map.insert(key.master_fingerprint, key.name.clone());
         }
         map
     }
