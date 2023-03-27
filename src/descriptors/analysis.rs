@@ -201,6 +201,17 @@ impl PathInfo {
         }
     }
 
+    /// Add another available key to this `PathInfo`. Note this doesn't change the threshold.
+    pub fn with_added_key(mut self, key: descriptor::DescriptorPublicKey) -> Self {
+        match self {
+            Self::Single(curr_key) => Self::Multi(1, vec![curr_key, key]),
+            Self::Multi(_, ref mut keys) => {
+                keys.push(key);
+                self
+            }
+        }
+    }
+
     /// Get the required number of keys for spending through this path, and the set of keys
     /// that can be used to provide a signature for this path.
     pub fn thresh_origins(&self) -> (usize, HashSet<(bip32::Fingerprint, bip32::DerivationPath)>) {
@@ -409,40 +420,47 @@ impl LianaPolicy {
             .expect("Lifting can't fail on a Miniscript")
             .normalized();
 
-        // For now we only accept a single timelocked recovery path.
+        // The policy must always be "1 of N spending paths" with at least an always-available
+        // primary path with at least one key, and at least one timelocked recovery path with at
+        // least one key.
         let subs = match policy {
             SemanticPolicy::Threshold(1, subs) => Some(subs),
             _ => None,
         }
         .ok_or(LianaPolicyError::IncompatibleDesc)?;
-        if subs.len() != 2 {
-            return Err(LianaPolicyError::IncompatibleDesc);
-        }
 
         // Fetch the two spending paths' semantic policies. The primary path is identified as the
         // only one that isn't timelocked.
-        let (prim_path_sub, reco_path_sub) =
-            subs.into_iter()
-                .fold((None, None), |(mut prim_sub, mut reco_sub), sub| {
-                    if is_single_key_or_multisig(&sub) {
-                        prim_sub = Some(sub);
+        let (mut primary_path, mut recovery_path) = (None::<PathInfo>, None);
+        for sub in subs {
+            // This is a (multi)key check. It must be the primary path.
+            if is_single_key_or_multisig(&sub) {
+                // We only support a single primary path. But it may be that the primary path is a
+                // 1-of-N multisig. In this case the policy is normalized from `thresh(1, thresh(1,
+                // pk(A), pk(B)), thresh(2, older(42), pk(C)))` to `thresh(1, pk(A), pk(B),
+                // thresh(2, older(42), pk(C)))`.
+                if let Some(prim_path) = primary_path {
+                    if let SemanticPolicy::Key(key) = sub {
+                        primary_path = Some(prim_path.with_added_key(key));
                     } else {
-                        reco_sub = Some(sub);
+                        return Err(LianaPolicyError::IncompatibleDesc);
                     }
-                    (prim_sub, reco_sub)
-                });
-        let (prim_path_sub, reco_path_sub) = (
-            prim_path_sub.ok_or(LianaPolicyError::IncompatibleDesc)?,
-            reco_path_sub.ok_or(LianaPolicyError::IncompatibleDesc)?,
-        );
-
-        // Now parse information about each spending path.
-        let primary_path = PathInfo::from_primary_path(prim_path_sub)?;
-        let recovery_path = PathInfo::from_recovery_path(reco_path_sub)?;
+                } else {
+                    primary_path = Some(PathInfo::from_primary_path(sub)?);
+                }
+            } else {
+                // If it's not a simple (multi)key check, it must be the timelocked recovery path.
+                // For now, we only support a single recovery path.
+                if recovery_path.is_some() {
+                    return Err(LianaPolicyError::IncompatibleDesc);
+                }
+                recovery_path = Some(PathInfo::from_recovery_path(sub)?);
+            }
+        }
 
         Ok(LianaPolicy {
-            primary_path,
-            recovery_path,
+            primary_path: primary_path.ok_or(LianaPolicyError::IncompatibleDesc)?,
+            recovery_path: recovery_path.ok_or(LianaPolicyError::IncompatibleDesc)?,
         })
     }
 
