@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use iced::Command;
 use liana::{
-    descriptors::MultipathDescriptor,
+    descriptors::LianaDescriptor,
     miniscript::bitcoin::{
         self, util::psbt::Psbt, Address, Amount, Denomination, Network, OutPoint,
     },
@@ -223,7 +223,7 @@ impl Recipient {
 }
 
 pub struct ChooseCoins {
-    descriptor: MultipathDescriptor,
+    descriptor: LianaDescriptor,
     timelock: u32,
     coins: Vec<(Coin, bool)>,
     recipients: Vec<(Address, Amount)>,
@@ -236,7 +236,7 @@ pub struct ChooseCoins {
 
 impl ChooseCoins {
     pub fn new(
-        descriptor: MultipathDescriptor,
+        descriptor: LianaDescriptor,
         coins: Vec<Coin>,
         timelock: u32,
         blockheight: u32,

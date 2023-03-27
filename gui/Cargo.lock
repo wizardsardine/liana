@@ -1658,7 +1658,7 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "0.3.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#fbde855ede57c2bfebd6e0a53adf396c5c65df30"
+source = "git+https://github.com/wizardsardine/liana?branch=master#9c6059c9969c8f258854f2aad47b4c20ca4079af"
 dependencies = [
  "backtrace",
  "base64",
@@ -1667,7 +1667,6 @@ dependencies = [
  "fern",
  "getrandom",
  "jsonrpc",
- "libc",
  "log",
  "miniscript",
  "rdrand",

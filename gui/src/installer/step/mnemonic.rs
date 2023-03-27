@@ -131,7 +131,7 @@ impl Step for RecoverMnemonic {
         let fingerprint = signer.fingerprint();
 
         if let Some(descriptor) = &ctx.descriptor {
-            let info = descriptor.info();
+            let info = descriptor.policy();
             let mut descriptor_keys = HashSet::new();
             for (fingerprint, _) in info.primary_path().thresh_origins().1.iter() {
                 descriptor_keys.insert(*fingerprint);

@@ -6,7 +6,7 @@ use iced::{
 };
 
 use liana::{
-    descriptors::{LianaDescInfo, PathInfo, PathSpendInfo},
+    descriptors::{LianaPolicy, PathInfo, PathSpendInfo},
     miniscript::bitcoin::{
         util::bip32::{DerivationPath, Fingerprint},
         Address, Amount, Network, Transaction,
@@ -38,7 +38,7 @@ use crate::{
 pub fn spend_view<'a>(
     tx: &'a SpendTx,
     saved: bool,
-    desc_info: &'a LianaDescInfo,
+    desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     network: Network,
 ) -> Element<'a, Message> {
@@ -232,7 +232,7 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
 
 fn spend_overview_view<'a>(
     tx: &'a SpendTx,
-    desc_info: &'a LianaDescInfo,
+    desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
     Container::new(
@@ -281,7 +281,7 @@ fn spend_overview_view<'a>(
 
 pub fn signatures<'a>(
     tx: &'a SpendTx,
-    desc_info: &'a LianaDescInfo,
+    desc_info: &'a LianaPolicy,
     keys_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
     Column::new()
