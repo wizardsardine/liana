@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use iced::{Command, Element};
+use iced::Command;
 use liana::{
     descriptors::{LianaDescKeys, MultipathDescriptor},
     miniscript::{
@@ -17,6 +17,11 @@ use liana::{
     },
 };
 
+use liana_ui::{
+    component::{form, modal::Modal},
+    widget::Element,
+};
+
 use async_hwi::DeviceKind;
 
 use crate::{
@@ -28,7 +33,6 @@ use crate::{
         view, Error,
     },
     signer::Signer,
-    ui::component::{form, modal::Modal},
 };
 
 pub trait DescriptorKeyModal {

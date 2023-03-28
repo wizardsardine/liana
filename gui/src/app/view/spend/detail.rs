@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use iced::{
-    widget::{scrollable, tooltip, Button, Column, Container, Row, Scrollable, Space},
-    Alignment, Element, Length,
+    widget::{scrollable, tooltip, Space},
+    Alignment, Length,
 };
 
 use liana::{
@@ -13,6 +13,19 @@ use liana::{
     },
 };
 
+use liana_ui::{
+    color,
+    component::{
+        badge, button, card,
+        collapse::Collapse,
+        form, separation,
+        text::{text, Text},
+    },
+    icon, theme,
+    util::Collection,
+    widget::*,
+};
+
 use crate::{
     app::{
         error::Error,
@@ -20,17 +33,6 @@ use crate::{
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
-    ui::{
-        color,
-        component::{
-            badge, button, card,
-            collapse::Collapse,
-            container, form, separation,
-            text::{text, Text},
-        },
-        icon,
-        util::Collection,
-    },
 };
 
 pub fn spend_view<'a>(
@@ -178,16 +180,16 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
                     }),
             )
             .padding(10)
-            .style(container::Style::Background),
+            .style(theme::Container::Background),
         )
         .push(
-            Container::new(Scrollable::new(
+            Container::new(scrollable(
                 Container::new(Container::new(content).max_width(800))
                     .width(Length::Fill)
                     .center_x(),
             ))
             .height(Length::Fill)
-            .style(container::Style::Background),
+            .style(theme::Container::Background),
         )
         .width(Length::Fill)
         .height(Length::Fill)
@@ -200,7 +202,7 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
         .align_items(Alignment::Center)
         .push(
             Row::new()
-                .push(badge::Badge::new(icon::send_icon()).style(badge::Style::Standard))
+                .push(badge::Badge::new(icon::send_icon()).style(theme::Badge::Standard))
                 .push(if tx.sigs.recovery_path().is_some() {
                     text("Recovery").bold()
                 } else {
@@ -266,14 +268,14 @@ fn spend_overview_view<'a>(
                                     .on_press(Message::Clipboard(
                                         tx.psbt.unsigned_tx.txid().to_string(),
                                     ))
-                                    .style(button::Style::TransparentBorder.into()),
+                                    .style(theme::Button::TransparentBorder),
                             )
                             .align_items(Alignment::Center),
                     ),
             )
             .push(signatures(tx, desc_info, key_aliases)),
     )
-    .style(card::SimpleCardStyle)
+    .style(theme::Container::Card(theme::Card::Simple))
     .into()
 }
 
@@ -286,12 +288,12 @@ pub fn signatures<'a>(
         .push(
             if let Some(sigs) = tx.path_ready() {
             Container::new(
-                Scrollable::new(
+                scrollable(
                     Row::new()
                         .spacing(5)
                         .align_items(Alignment::Center)
-                        .push(icon::circle_check_icon().style(color::SUCCESS))
-                        .push(text("Ready").bold().style(color::SUCCESS))
+                        .push(icon::circle_check_icon().style(color::legacy::SUCCESS))
+                        .push(text("Ready").bold().style(color::legacy::SUCCESS))
                         .push(text(", signed by"))
                         .push(
                             sigs.signed_pubkeys
@@ -302,16 +304,16 @@ pub fn signatures<'a>(
                                     tooltip::Tooltip::new(
                                         Container::new(text(alias))
                                             .padding(3)
-                                            .style(badge::PillStyle::Simple),
+                                            .style(theme::Container::Pill(theme::Pill::Simple)),
                                             value.0.to_string(),
                                             tooltip::Position::Bottom,
                                     )
-                                    .style(card::SimpleCardStyle),
+                                    .style(theme::Container::Card(theme::Card::Simple)),
                                 )
                             } else {
                                 Container::new(text(value.0.to_string()))
                                     .padding(3)
-                                    .style(badge::PillStyle::Simple)
+                                    .style(theme::Container::Pill(theme::Pill::Simple))
                             })
                             }),
                     )
@@ -335,7 +337,7 @@ pub fn signatures<'a>(
                 )
                 .padding(15)
                 .width(Length::Fill)
-                .style(button::Style::TransparentBorder.into())
+                .style(theme::Button::TransparentBorder)
             },
             move || {
                 Button::new(
@@ -353,7 +355,7 @@ pub fn signatures<'a>(
                 )
                 .padding(15)
                 .width(Length::Fill)
-                .style(button::Style::TransparentBorder.into())
+                .style(theme::Button::TransparentBorder)
             },
             move || {
                 Into::<Element<'a, Message>>::into(
@@ -423,11 +425,11 @@ pub fn path_view<'a>(
         sigs.threshold - sigs.sigs_count
     };
     keys.sort();
-    Scrollable::new(
+    scrollable(
         Row::new()
             .align_items(Alignment::Center)
             .push(if sigs.sigs_count >= sigs.threshold {
-                icon::circle_check_icon().style(color::SUCCESS)
+                icon::circle_check_icon().style(color::legacy::SUCCESS)
             } else {
                 icon::circle_cross_icon()
             })
@@ -452,16 +454,16 @@ pub fn path_view<'a>(
                                 tooltip::Tooltip::new(
                                     Container::new(text(alias))
                                         .padding(3)
-                                        .style(badge::PillStyle::Simple),
+                                        .style(theme::Container::Pill(theme::Pill::Simple)),
                                     value.0.to_string(),
                                     tooltip::Position::Bottom,
                                 )
-                                .style(card::SimpleCardStyle),
+                                .style(theme::Container::Card(theme::Card::Simple)),
                             )
                         } else {
                             Container::new(text(value.0.to_string()))
                                 .padding(3)
-                                .style(badge::PillStyle::Simple)
+                                .style(theme::Container::Pill(theme::Pill::Simple))
                         })
                     } else {
                         None
@@ -482,16 +484,16 @@ pub fn path_view<'a>(
                                 tooltip::Tooltip::new(
                                     Container::new(text(alias))
                                         .padding(3)
-                                        .style(badge::PillStyle::Simple),
+                                        .style(theme::Container::Pill(theme::Pill::Simple)),
                                     value.0.to_string(),
                                     tooltip::Position::Bottom,
                                 )
-                                .style(card::SimpleCardStyle),
+                                .style(theme::Container::Card(theme::Card::Simple)),
                             )
                         } else {
                             Container::new(text(value.0.to_string()))
                                 .padding(3)
-                                .style(badge::PillStyle::Simple)
+                                .style(theme::Container::Pill(theme::Pill::Simple))
                         })
                     }),
             ),
@@ -531,7 +533,7 @@ pub fn inputs_and_outputs_view<'a>(
                                 )
                                 .padding(15)
                                 .width(Length::Fill)
-                                .style(button::Style::TransparentBorder.into())
+                                .style(theme::Button::TransparentBorder)
                             },
                             move || {
                                 Button::new(
@@ -550,7 +552,7 @@ pub fn inputs_and_outputs_view<'a>(
                                 )
                                 .padding(15)
                                 .width(Length::Fill)
-                                .style(button::Style::TransparentBorder.into())
+                                .style(theme::Button::TransparentBorder)
                             },
                             move || {
                                 coins
@@ -575,7 +577,7 @@ pub fn inputs_and_outputs_view<'a>(
                                                                     coin.outpoint.to_string(),
                                                                 ))
                                                                 .style(
-                                                                    button::Style::TransparentBorder.into(),
+                                                                    theme::Button::TransparentBorder,
                                                                 ),
                                                         ),
                                                 )
@@ -585,7 +587,7 @@ pub fn inputs_and_outputs_view<'a>(
                                     .into()
                             },
                         ))
-                        .style(card::SimpleCardStyle),
+                        .style(theme::Container::Card(theme::Card::Simple)),
                     )
                 } else {
                     None
@@ -609,7 +611,7 @@ pub fn inputs_and_outputs_view<'a>(
                             )
                             .padding(15)
                             .width(Length::Fill)
-                            .style(button::Style::TransparentBorder.into())
+                            .style(theme::Button::TransparentBorder)
                         },
                         move || {
                             Button::new(
@@ -628,7 +630,7 @@ pub fn inputs_and_outputs_view<'a>(
                             )
                             .padding(15)
                             .width(Length::Fill)
-                            .style(button::Style::TransparentBorder.into())
+                            .style(theme::Button::TransparentBorder)
                         },
                         move || {
                             tx.output
@@ -655,7 +657,7 @@ pub fn inputs_and_outputs_view<'a>(
                                                                     addr.to_string(),
                                                                 ))
                                                                 .style(
-                                                                    button::Style::TransparentBorder.into(),
+                                                                    theme::Button::TransparentBorder,
                                                                 ),
                                                         ),
                                                     )
@@ -669,7 +671,7 @@ pub fn inputs_and_outputs_view<'a>(
                                                         Some(
                                                             Container::new(text("Change"))
                                                                 .padding(5)
-                                                                .style(badge::PillStyle::Success),
+                                                                .style(theme::Container::Pill(theme::Pill::Success)),
                                                         )
                                                     } else {
                                                         None
@@ -684,7 +686,7 @@ pub fn inputs_and_outputs_view<'a>(
                                                         Some(
                                                             Container::new(text("Deposit"))
                                                                 .padding(5)
-                                                                .style(badge::PillStyle::Success),
+                                                                .style(theme::Container::Pill(theme::Pill::Success)),
                                                         )
                                                     } else {
                                                         None
@@ -698,7 +700,7 @@ pub fn inputs_and_outputs_view<'a>(
                                 .into()
                         },
                     ))
-                    .style(card::SimpleCardStyle),
+                    .style(theme::Container::Card(theme::Card::Simple)),
                 ),
         )
         .into()
@@ -768,9 +770,10 @@ pub fn sign_action<'a>(
                                                 .align_items(Alignment::Center)
                                                 .spacing(5)
                                                 .push(
-                                                    icon::circle_check_icon().style(color::SUCCESS),
+                                                    icon::circle_check_icon()
+                                                        .style(color::legacy::SUCCESS),
                                                 )
-                                                .push(text("Signed").style(color::SUCCESS)),
+                                                .push(text("Signed").style(color::legacy::SUCCESS)),
                                         )
                                     } else {
                                         None
@@ -778,7 +781,7 @@ pub fn sign_action<'a>(
                             )
                             .on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
                             .padding(10)
-                            .style(button::Style::Border.into())
+                            .style(theme::Button::Secondary)
                             .width(Length::Fill)
                         }))
                         .width(Length::Fill),
@@ -844,7 +847,7 @@ pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
     Column::new()
         .push(
             card::simple(Container::new(
-                text("Spend transaction is updated").style(color::SUCCESS),
+                text("Spend transaction is updated").style(color::legacy::SUCCESS),
             ))
             .padding(50),
         )

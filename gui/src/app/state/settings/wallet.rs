@@ -3,9 +3,14 @@ use std::convert::From;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iced::{Command, Element};
+use iced::Command;
 
 use liana::miniscript::bitcoin::{hashes::hex::ToHex, util::bip32::Fingerprint, Network};
+
+use liana_ui::{
+    component::{form, modal},
+    widget::Element,
+};
 
 use crate::{
     app::{
@@ -13,7 +18,6 @@ use crate::{
     },
     daemon::Daemon,
     hw::{list_hardware_wallets, HardwareWallet, HardwareWalletConfig},
-    ui::component::{form, modal},
 };
 
 pub struct WalletSettingsState {

@@ -1,12 +1,9 @@
-use crate::ui::{
-    color,
-    component::{button, collapse, text::*},
-    icon,
+use crate::{
+    component::{collapse, text::*},
+    icon, theme,
+    widget::*,
 };
-use iced::{
-    widget::{container, Button, Container, Row},
-    Alignment, Element, Length,
-};
+use iced::{Alignment, Length};
 
 pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'a, T> {
     let message_clone = message.clone();
@@ -26,7 +23,7 @@ pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'
                             .push(icon::collapse_icon()),
                     ),
             )
-            .style(button::Style::Transparent.into())
+            .style(theme::Button::Transparent)
         },
         move || {
             Button::new(
@@ -42,37 +39,11 @@ pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'
                             .push(icon::collapsed_icon()),
                     ),
             )
-            .style(button::Style::Transparent.into())
+            .style(theme::Button::Transparent)
         },
         move || Element::<'a, T>::from(text(error.to_owned()).small()),
     )))
     .padding(15)
-    .style(WarningStyle)
+    .style(theme::Container::Card(theme::Card::Warning))
     .width(Length::Fill)
-}
-
-pub struct WarningStyle;
-impl container::StyleSheet for WarningStyle {
-    type Style = iced::Theme;
-    fn appearance(&self, _style: &Self::Style) -> container::Appearance {
-        container::Appearance {
-            border_radius: 0.0,
-            text_color: iced::Color::BLACK.into(),
-            background: color::WARNING.into(),
-            border_color: color::WARNING,
-            ..container::Appearance::default()
-        }
-    }
-}
-
-impl From<WarningStyle> for Box<dyn container::StyleSheet<Style = iced::Theme>> {
-    fn from(s: WarningStyle) -> Box<dyn container::StyleSheet<Style = iced::Theme>> {
-        Box::new(s)
-    }
-}
-
-impl From<WarningStyle> for iced::theme::Container {
-    fn from(i: WarningStyle) -> iced::theme::Container {
-        iced::theme::Container::Custom(i.into())
-    }
 }

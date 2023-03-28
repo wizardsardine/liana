@@ -1,12 +1,17 @@
 use std::sync::Arc;
 
-use iced::{Command, Element};
+use iced::Command;
 use liana::{
     descriptors::LianaDescInfo,
     miniscript::bitcoin::{
         consensus,
         util::{bip32::Fingerprint, psbt::Psbt},
     },
+};
+
+use liana_ui::{
+    component::{form, modal},
+    widget::Element,
 };
 
 use crate::{
@@ -23,7 +28,6 @@ use crate::{
         Daemon,
     },
     hw::{list_hardware_wallets, HardwareWallet},
-    ui::component::{form, modal},
 };
 
 trait Action {

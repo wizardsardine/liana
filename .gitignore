@@ -8,3 +8,6 @@ venv/
 pytest.log
 TODO
 **/target
+**/dist
+gui/ui/Cargo.lock
+gui/ui/examples/design-system/Cargo.lock

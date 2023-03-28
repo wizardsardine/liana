@@ -1,18 +1,15 @@
-use iced::{
-    widget::{Column, Container, Row, Space},
-    Alignment, Element, Length,
-};
+use iced::{widget::Space, Alignment, Length};
 
 use liana::miniscript::bitcoin::Amount;
 
-use crate::{
-    app::view::message::{CreateSpendMessage, Message},
-    ui::{
-        component::{button, form, text::*},
-        icon,
-        util::Collection,
-    },
+use liana_ui::{
+    component::{button, form, text::*},
+    icon,
+    util::Collection,
+    widget::*,
 };
+
+use crate::app::view::message::{CreateSpendMessage, Message};
 
 #[allow(clippy::too_many_arguments)]
 pub fn recovery<'a>(

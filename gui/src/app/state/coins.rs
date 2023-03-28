@@ -1,7 +1,9 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-use iced::{Command, Element};
+use iced::Command;
+
+use liana_ui::widget::Element;
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, message::Message, state::State, view},

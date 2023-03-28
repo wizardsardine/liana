@@ -1,8 +1,10 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use iced::{Command, Element};
+use iced::Command;
 use liana::{bip39, signer::HotSigner};
+
+use liana_ui::widget::Element;
 
 use crate::{
     installer::{context::Context, message::Message, step::Step, view},

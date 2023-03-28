@@ -5,7 +5,9 @@ use std::convert::From;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iced::{Command, Element};
+use iced::Command;
+
+use liana_ui::widget::Element;
 
 use bitcoind::BitcoindSettingsState;
 use wallet::WalletSettingsState;

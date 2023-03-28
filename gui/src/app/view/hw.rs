@@ -1,21 +1,14 @@
-use iced::{
-    widget::{tooltip, Button, Column, Container, Row},
-    Alignment, Element, Length,
+use iced::{widget::tooltip, Alignment, Length};
+
+use liana_ui::{
+    color,
+    component::text::{text, Text},
+    icon, theme,
+    util::Collection,
+    widget::*,
 };
 
-use crate::{
-    app::view::message::*,
-    hw::HardwareWallet,
-    ui::{
-        color,
-        component::{
-            button, card,
-            text::{text, Text},
-        },
-        icon,
-        util::Collection,
-    },
-};
+use crate::{app::view::message::*, hw::HardwareWallet};
 
 pub fn hw_list_view<'a>(
     i: usize,
@@ -57,7 +50,7 @@ pub fn hw_list_view<'a>(
                                     message,
                                     tooltip::Position::Bottom,
                                 )
-                                .style(card::SimpleCardStyle),
+                                .style(theme::Container::Card(theme::Card::Simple)),
                             ),
                     })
                     .spacing(5)
@@ -76,20 +69,20 @@ pub fn hw_list_view<'a>(
                 Row::new()
                     .align_items(Alignment::Center)
                     .spacing(5)
-                    .push(icon::circle_check_icon().style(color::SUCCESS))
-                    .push(text(v).style(color::SUCCESS))
+                    .push(icon::circle_check_icon().style(color::legacy::SUCCESS))
+                    .push(text(v).style(color::legacy::SUCCESS))
             }))
             .align_items(Alignment::Center)
             .width(Length::Fill),
     )
     .padding(10)
-    .style(button::Style::Border.into())
+    .style(theme::Button::Secondary)
     .width(Length::Fill);
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::SelectHardwareWallet(i));
     }
     Container::new(bttn)
         .width(Length::Fill)
-        .style(card::SimpleCardStyle)
+        .style(theme::Container::Card(theme::Card::Simple))
         .into()
 }

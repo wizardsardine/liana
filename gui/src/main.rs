@@ -2,13 +2,14 @@
 
 use std::{error::Error, io::Write, path::PathBuf, str::FromStr};
 
-use iced::{executor, Application, Command, Element, Settings, Subscription};
+use iced::{executor, Application, Command, Settings, Subscription};
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
 extern crate serde;
 extern crate serde_json;
 
 use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
+use liana_ui::{theme, widget::Element};
 
 use liana_gui::{
     app::{
@@ -87,7 +88,7 @@ impl Application for GUI {
     type Executor = executor::Default;
     type Message = Message;
     type Flags = Config;
-    type Theme = iced::Theme;
+    type Theme = theme::Theme;
 
     fn title(&self) -> String {
         match self.state {

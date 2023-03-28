@@ -10,10 +10,10 @@ pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use iced::{Command, Element};
+use iced::Command;
 use liana::{config::BitcoindConfig, miniscript::bitcoin};
 
-use crate::ui::component::form;
+use liana_ui::{component::form, widget::*};
 
 use crate::installer::{
     context::Context,

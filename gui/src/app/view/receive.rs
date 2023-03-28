@@ -1,16 +1,14 @@
 use iced::{
-    widget::{
-        qr_code::{self, QRCode},
-        Button, Column, Row,
-    },
-    Alignment, Element,
+    widget::qr_code::{self, QRCode},
+    Alignment,
 };
 
 use liana::miniscript::bitcoin;
 
-use crate::ui::{
-    component::{button, card, text::*},
-    icon,
+use liana_ui::{
+    component::{card, text::*},
+    icon, theme,
+    widget::*,
 };
 
 use super::message::Message;
@@ -25,7 +23,7 @@ pub fn receive<'a>(address: &'a bitcoin::Address, qr: &'a qr_code::State) -> Ele
                     .push(
                         Button::new(icon::clipboard_icon())
                             .on_press(Message::Clipboard(address.to_string()))
-                            .style(button::Style::TransparentBorder.into()),
+                            .style(theme::Button::TransparentBorder),
                     )
                     .align_items(Alignment::Center),
             )

@@ -2,9 +2,13 @@ pub mod detail;
 mod step;
 use std::sync::Arc;
 
-use iced::{Command, Element};
+use iced::Command;
 
 use liana::miniscript::bitcoin::{consensus, util::psbt::Psbt};
+use liana_ui::{
+    component::{form, modal},
+    widget::Element,
+};
 
 use super::{redirect, State};
 use crate::{
@@ -13,7 +17,6 @@ use crate::{
         model::{Coin, SpendTx},
         Daemon,
     },
-    ui::component::{form, modal},
 };
 
 pub struct SpendPanel {

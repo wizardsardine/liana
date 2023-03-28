@@ -1,7 +1,9 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use iced::{Command, Element};
+use iced::Command;
+
+use liana_ui::{component::form, widget::Element};
 
 use crate::{
     app::{
@@ -18,7 +20,6 @@ use crate::{
         model::{remaining_sequence, Coin, SpendTx},
         Daemon,
     },
-    ui::component::form,
 };
 
 use liana::miniscript::bitcoin::{Address, Amount};

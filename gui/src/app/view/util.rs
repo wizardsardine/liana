@@ -1,7 +1,6 @@
-use iced::{widget::Row, Element};
 use liana::miniscript::bitcoin::Amount;
 
-use crate::ui::{color, component::text::*, util::Collection};
+use liana_ui::{color, component::text::*, util::Collection, widget::*};
 
 pub fn amount<'a, T: 'a>(a: &Amount) -> impl Into<Element<'a, T>> {
     amount_with_size(a, TEXT_REGULAR_SIZE)

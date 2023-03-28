@@ -1,8 +1,5 @@
 /// from hecjr idea on Discord
-use iced::{
-    widget::{Column, Row},
-    Element,
-};
+use crate::widget::*;
 
 pub trait Collection<'a, Message>: Sized {
     fn push(self, element: impl Into<Element<'a, Message>>) -> Self;

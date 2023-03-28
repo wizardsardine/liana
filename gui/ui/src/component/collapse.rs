@@ -1,7 +1,5 @@
-use iced::{
-    widget::{Button, Column},
-    Element,
-};
+use crate::widget::*;
+use iced::widget::column;
 use iced_lazy::{self, Component};
 use std::marker::PhantomData;
 
@@ -36,7 +34,8 @@ pub enum Event<T> {
     Collapse(bool),
 }
 
-impl<'a, Message, T, H, F, C> Component<Message, iced::Renderer> for Collapse<'a, Message, H, F, C>
+impl<'a, Message, T, H, F, C> Component<Message, iced::Renderer<crate::theme::Theme>>
+    for Collapse<'a, Message, H, F, C>
 where
     T: Into<Message> + Clone + 'a,
     H: Fn() -> Button<'a, Event<T>>,
@@ -58,14 +57,13 @@ where
 
     fn view(&self, state: &Self::State) -> Element<Self::Event> {
         if *state {
-            Column::new()
-                .push((self.after)().on_press(Event::Collapse(false)))
-                .push((self.content)().map(Event::Internal))
-                .into()
+            column![
+                (self.after)().on_press(Event::Collapse(false)),
+                (self.content)().map(Event::Internal)
+            ]
+            .into()
         } else {
-            Column::new()
-                .push((self.before)().on_press(Event::Collapse(true)))
-                .into()
+            column![(self.before)().on_press(Event::Collapse(true))].into()
         }
     }
 }
@@ -75,9 +73,9 @@ impl<'a, Message, T, H: 'a, F: 'a, C: 'a> From<Collapse<'a, Message, H, F, C>>
 where
     Message: 'a,
     T: Into<Message> + Clone + 'a,
-    H: Fn() -> Button<'a, Event<T>, iced::Renderer>,
-    F: Fn() -> Button<'a, Event<T>, iced::Renderer>,
-    C: Fn() -> Element<'a, T, iced::Renderer>,
+    H: Fn() -> Button<'a, Event<T>>,
+    F: Fn() -> Button<'a, Event<T>>,
+    C: Fn() -> Element<'a, T>,
 {
     fn from(c: Collapse<'a, Message, H, F, C>) -> Self {
         iced_lazy::component(c)

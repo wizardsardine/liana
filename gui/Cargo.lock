@@ -1690,6 +1690,7 @@ dependencies = [
  "iced_lazy",
  "iced_native",
  "liana",
+ "liana_ui",
  "log",
  "serde",
  "serde_json",
@@ -1697,6 +1698,15 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "liana_ui"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "iced_lazy",
+ "iced_native",
 ]
 
 [[package]]

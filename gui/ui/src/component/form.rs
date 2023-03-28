@@ -1,12 +1,6 @@
-use iced::{
-    widget::{
-        text_input::{Appearance, StyleSheet, TextInput},
-        Column, Container,
-    },
-    Element, Length,
-};
+use iced::{widget::text_input, Length};
 
-use crate::ui::{color, component::text::*, util::Collection};
+use crate::{color, component::text::*, theme, util::Collection, widget::*};
 
 #[derive(Debug, Clone)]
 pub struct Value<T> {
@@ -24,7 +18,7 @@ impl std::default::Default for Value<String> {
 }
 
 pub struct Form<'a, Message> {
-    input: TextInput<'a, Message>,
+    input: text_input::TextInput<'a, Message, iced::Renderer<theme::Theme>>,
     warning: Option<&'a str>,
     valid: bool,
 }
@@ -44,7 +38,7 @@ where
         F: 'static + Fn(String) -> Message,
     {
         Self {
-            input: TextInput::new(placeholder, &value.value, on_change),
+            input: text_input::TextInput::new(placeholder, &value.value, on_change),
             warning: None,
             valid: value.valid,
         }
@@ -74,13 +68,13 @@ impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
         Container::new(
             Column::new()
                 .push(if !form.valid {
-                    form.input.style(InvalidFormStyle)
+                    form.input.style(theme::Form::Invalid)
                 } else {
                     form.input
                 })
                 .push_maybe(if !form.valid {
                     form.warning
-                        .map(|message| text(message).style(color::ALERT).small())
+                        .map(|message| text(message).style(color::legacy::ALERT).small())
                 } else {
                     None
                 })
@@ -89,49 +83,5 @@ impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
         )
         .width(Length::Fill)
         .into()
-    }
-}
-
-struct InvalidFormStyle;
-impl StyleSheet for InvalidFormStyle {
-    type Style = iced::Theme;
-    fn active(&self, _style: &Self::Style) -> Appearance {
-        Appearance {
-            background: iced::Background::Color(color::FOREGROUND),
-            border_radius: 5.0,
-            border_width: 1.0,
-            border_color: color::ALERT,
-        }
-    }
-
-    fn focused(&self, style: &Self::Style) -> Appearance {
-        Appearance {
-            border_color: color::ALERT,
-            ..self.active(style)
-        }
-    }
-
-    fn placeholder_color(&self, _style: &Self::Style) -> iced::Color {
-        iced::Color::from_rgb(0.7, 0.7, 0.7)
-    }
-
-    fn value_color(&self, _style: &Self::Style) -> iced::Color {
-        iced::Color::from_rgb(0.3, 0.3, 0.3)
-    }
-
-    fn selection_color(&self, _style: &Self::Style) -> iced::Color {
-        iced::Color::from_rgb(0.8, 0.8, 1.0)
-    }
-}
-
-impl From<InvalidFormStyle> for Box<dyn StyleSheet<Style = iced::Theme>> {
-    fn from(s: InvalidFormStyle) -> Box<dyn StyleSheet<Style = iced::Theme>> {
-        Box::new(s)
-    }
-}
-
-impl From<InvalidFormStyle> for iced::theme::TextInput {
-    fn from(i: InvalidFormStyle) -> iced::theme::TextInput {
-        iced::theme::TextInput::Custom(i.into())
     }
 }

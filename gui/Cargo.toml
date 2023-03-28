@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 async-hwi = "0.0.4"
 liana = { git = "https://github.com/wizardsardine/liana", branch = "master", default-features = false }
+liana_ui = { path = "ui" }
 backtrace = "0.3"
 base64 = "0.13"
 
@@ -39,3 +40,6 @@ chrono = "0.4"
 
 [dev-dependencies]
 tokio = {version = "1.9.0", features = ["rt", "macros"]}
+
+[workspace]
+members = ["ui"]

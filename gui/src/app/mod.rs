@@ -15,10 +15,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::{clipboard, time, Command, Element, Subscription};
+use iced::{clipboard, time, Command, Subscription};
 use tracing::{info, warn};
 
 pub use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
+use liana_ui::widget::Element;
 
 pub use config::Config;
 pub use message::Message;

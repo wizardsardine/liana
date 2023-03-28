@@ -1,8 +1,9 @@
-use iced::{alignment, widget::Text, Font, Length};
+use crate::widget::*;
+use iced::{alignment, Font, Length};
 
 const ICONS: Font = Font::External {
     name: "Icons",
-    bytes: include_bytes!("../../static/icons/bootstrap-icons.ttf"),
+    bytes: include_bytes!("../static/icons/bootstrap-icons.ttf"),
 };
 
 fn icon(unicode: char) -> Text<'static> {
