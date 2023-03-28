@@ -75,6 +75,12 @@ def test_multisig(lianad_multisig, bitcoind):
     lianad_multisig.rpc.broadcastspend(txid)
 
 
+def test_multipath(lianad_multipath, bitcoind):
+    """Exercise various commands as well as recovery with a descriptor with multiple
+    recovery paths."""
+    receive_and_send(lianad_multipath, bitcoind)
+
+
 def test_coinbase_deposit(lianad, bitcoind):
     """Check we detect deposits from (mature) coinbase transactions."""
     # Create a new deposit in a coinbase transaction.
