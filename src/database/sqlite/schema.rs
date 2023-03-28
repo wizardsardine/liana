@@ -1,4 +1,4 @@
-use crate::descriptors::MultipathDescriptor;
+use crate::descriptors::LianaDescriptor;
 
 use std::{convert::TryFrom, str::FromStr};
 
@@ -112,7 +112,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbTip {
 pub struct DbWallet {
     pub id: i64,
     pub timestamp: u32,
-    pub main_descriptor: MultipathDescriptor,
+    pub main_descriptor: LianaDescriptor,
     pub deposit_derivation_index: bip32::ChildNumber,
     pub change_derivation_index: bip32::ChildNumber,
     pub rescan_timestamp: Option<u32>,
@@ -126,7 +126,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
         let timestamp = row.get(1)?;
 
         let desc_str: String = row.get(2)?;
-        let main_descriptor = MultipathDescriptor::from_str(&desc_str)
+        let main_descriptor = LianaDescriptor::from_str(&desc_str)
             .expect("Insane database: can't parse deposit descriptor");
 
         let der_idx: u32 = row.get(3)?;

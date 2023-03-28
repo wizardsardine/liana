@@ -5,7 +5,7 @@ mod utils;
 use crate::{
     bitcoin::{Block, BlockChainTip},
     config,
-    descriptors::MultipathDescriptor,
+    descriptors::LianaDescriptor,
 };
 use utils::{block_before_date, roundup_progress};
 
@@ -485,7 +485,7 @@ impl BitcoinD {
     }
 
     // Import the receive and change descriptors from the multipath descriptor to bitcoind.
-    fn import_descriptor(&self, desc: &MultipathDescriptor) -> Option<String> {
+    fn import_descriptor(&self, desc: &LianaDescriptor) -> Option<String> {
         let descriptors = [desc.receive_descriptor(), desc.change_descriptor()]
             .iter()
             .map(|desc| {
@@ -553,7 +553,7 @@ impl BitcoinD {
     /// Create the watchonly wallet on bitcoind, and import it the main descriptor.
     pub fn create_watchonly_wallet(
         &self,
-        main_descriptor: &MultipathDescriptor,
+        main_descriptor: &LianaDescriptor,
     ) -> Result<(), BitcoindError> {
         // Remove any leftover. This can happen if we delete the watchonly wallet but don't restart
         // bitcoind.
@@ -627,7 +627,7 @@ impl BitcoinD {
     /// Perform various sanity checks of our watchonly wallet.
     pub fn wallet_sanity_checks(
         &self,
-        main_descriptor: &MultipathDescriptor,
+        main_descriptor: &LianaDescriptor,
     ) -> Result<(), BitcoindError> {
         // Check our watchonly wallet is loaded
         if self
@@ -919,7 +919,7 @@ impl BitcoinD {
 
     pub fn start_rescan(
         &self,
-        desc: &MultipathDescriptor,
+        desc: &LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), BitcoindError> {
         // Re-import the receive and change descriptors to the watchonly wallet for the purpose of

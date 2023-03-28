@@ -18,7 +18,7 @@ use crate::{
         },
         Coin, CoinType,
     },
-    descriptors::MultipathDescriptor,
+    descriptors::LianaDescriptor,
 };
 
 use std::{cmp, convert::TryInto, fmt, io, path};
@@ -39,7 +39,7 @@ pub enum SqliteDbError {
     FileNotFound(path::PathBuf),
     UnsupportedVersion(i64),
     InvalidNetwork(bitcoin::Network),
-    DescriptorMismatch(Box<MultipathDescriptor>),
+    DescriptorMismatch(Box<LianaDescriptor>),
     Rusqlite(rusqlite::Error),
 }
 
@@ -83,7 +83,7 @@ impl From<rusqlite::Error> for SqliteDbError {
 #[derive(Debug, Clone)]
 pub struct FreshDbOptions {
     pub bitcoind_network: bitcoin::Network,
-    pub main_descriptor: MultipathDescriptor,
+    pub main_descriptor: LianaDescriptor,
 }
 
 #[derive(Debug, Clone)]
@@ -122,7 +122,7 @@ impl SqliteDb {
     pub fn sanity_check(
         &self,
         bitcoind_network: bitcoin::Network,
-        main_descriptor: &MultipathDescriptor,
+        main_descriptor: &LianaDescriptor,
     ) -> Result<(), SqliteDbError> {
         let mut conn = self.connection()?;
 
@@ -597,7 +597,7 @@ mod tests {
 
     fn dummy_options() -> FreshDbOptions {
         let desc_str = "wsh(andor(pk([aabbccdd]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk([aabbccdd]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#dw4ulnrs";
-        let main_descriptor = MultipathDescriptor::from_str(desc_str).unwrap();
+        let main_descriptor = LianaDescriptor::from_str(desc_str).unwrap();
         FreshDbOptions {
             bitcoind_network: bitcoin::Network::Bitcoin,
             main_descriptor,
@@ -646,7 +646,7 @@ mod tests {
             .contains("Database was created for network");
         fs::remove_file(&db_path).unwrap();
         let other_desc_str = "wsh(andor(pk([aabbccdd]tpubDExU4YLJkyQ9RRbVScQq2brFxWWha7WmAUByPWyaWYwmcTv3Shx8aHp6mVwuE5n4TeM4z5DTWGf2YhNPmXtfvyr8cUDVvA3txdrFnFgNdF7/<0;1>/*),older(10000),pk([aabbccdd]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))";
-        let other_desc = MultipathDescriptor::from_str(other_desc_str).unwrap();
+        let other_desc = LianaDescriptor::from_str(other_desc_str).unwrap();
         let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &other_desc)
             .unwrap_err()

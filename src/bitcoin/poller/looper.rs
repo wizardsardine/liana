@@ -28,7 +28,7 @@ fn update_coins(
     bit: &impl BitcoinInterface,
     db_conn: &mut Box<dyn DatabaseConnection>,
     previous_tip: &BlockChainTip,
-    descs: &[descriptors::InheritanceDescriptor],
+    descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> UpdatedCoins {
     let curr_coins = db_conn.coins(CoinType::All);
@@ -189,7 +189,7 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
 fn updates(
     bit: &impl BitcoinInterface,
     db: &impl DatabaseInterface,
-    descs: &[descriptors::InheritanceDescriptor],
+    descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
     let mut db_conn = db.connection();
@@ -238,7 +238,7 @@ fn updates(
 fn rescan_check(
     bit: &impl BitcoinInterface,
     db: &impl DatabaseInterface,
-    descs: &[descriptors::InheritanceDescriptor],
+    descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
     log::debug!("Checking the state of an ongoing rescan if there is any");
@@ -300,7 +300,7 @@ pub fn looper(
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     shutdown: sync::Arc<atomic::AtomicBool>,
     poll_interval: time::Duration,
-    desc: descriptors::MultipathDescriptor,
+    desc: descriptors::LianaDescriptor,
 ) {
     let mut last_poll = None;
     let mut synced = false;

@@ -60,7 +60,7 @@ impl BitcoinInterface for DummyBitcoind {
     fn received_coins(
         &self,
         _: &BlockChainTip,
-        _: &[descriptors::InheritanceDescriptor],
+        _: &[descriptors::SinglePathLianaDesc],
     ) -> Vec<UTxO> {
         Vec::new()
     }
@@ -91,7 +91,7 @@ impl BitcoinInterface for DummyBitcoind {
         todo!()
     }
 
-    fn start_rescan(&self, _: &descriptors::MultipathDescriptor, _: u32) -> Result<(), String> {
+    fn start_rescan(&self, _: &descriptors::LianaDescriptor, _: u32) -> Result<(), String> {
         todo!()
     }
 
@@ -399,9 +399,10 @@ impl DummyLiana {
             poll_interval_secs: time::Duration::from_secs(2),
         };
 
-        let owner_key = descriptors::LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/<0;1>/*").unwrap());
-        let heir_key = descriptors::LianaDescKeys::from_single(descriptor::DescriptorPublicKey::from_str("[aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*").unwrap());
-        let desc = descriptors::MultipathDescriptor::new(owner_key, heir_key, 10_000).unwrap();
+        let owner_key = descriptors::PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/<0;1>/*").unwrap());
+        let heir_key = descriptors::PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*").unwrap());
+        let policy = descriptors::LianaPolicy::new(owner_key, heir_key, 10_000).unwrap();
+        let desc = descriptors::LianaDescriptor::new(policy);
         let config = Config {
             bitcoin_config,
             bitcoind_config: None,

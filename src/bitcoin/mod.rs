@@ -55,7 +55,7 @@ pub trait BitcoinInterface: Send {
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        descs: &[descriptors::InheritanceDescriptor],
+        descs: &[descriptors::SinglePathLianaDesc],
     ) -> Vec<UTxO>;
 
     /// Get all coins that were confirmed, and at what height and time. Along with "expired"
@@ -87,7 +87,7 @@ pub trait BitcoinInterface: Send {
     /// the given date.
     fn start_rescan(
         &self,
-        desc: &descriptors::MultipathDescriptor,
+        desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String>;
 
@@ -131,7 +131,7 @@ impl BitcoinInterface for d::BitcoinD {
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        descs: &[descriptors::InheritanceDescriptor],
+        descs: &[descriptors::SinglePathLianaDesc],
     ) -> Vec<UTxO> {
         let lsb_res = self.list_since_block(&tip.hash);
 
@@ -288,7 +288,7 @@ impl BitcoinInterface for d::BitcoinD {
 
     fn start_rescan(
         &self,
-        desc: &descriptors::MultipathDescriptor,
+        desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String> {
         // FIXME: in theory i think this could potentially fail to actually start the rescan.
@@ -338,7 +338,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        descs: &[descriptors::InheritanceDescriptor],
+        descs: &[descriptors::SinglePathLianaDesc],
     ) -> Vec<UTxO> {
         self.lock().unwrap().received_coins(tip, descs)
     }
@@ -374,7 +374,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn start_rescan(
         &self,
-        desc: &descriptors::MultipathDescriptor,
+        desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String> {
         self.lock().unwrap().start_rescan(desc, timestamp)

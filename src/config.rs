@@ -1,4 +1,4 @@
-use crate::descriptors::MultipathDescriptor;
+use crate::descriptors::LianaDescriptor;
 
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
@@ -91,7 +91,7 @@ pub struct Config {
         deserialize_with = "deserialize_fromstr",
         serialize_with = "serialize_to_string"
     )]
-    pub main_descriptor: MultipathDescriptor,
+    pub main_descriptor: LianaDescriptor,
     /// Settings for the Bitcoin interface
     pub bitcoin_config: BitcoinConfig,
     /// Settings specific to bitcoind as the Bitcoin interface
@@ -112,7 +112,7 @@ pub enum ConfigError {
     DatadirNotFound,
     FileNotFound,
     ReadingFile(String),
-    UnexpectedDescriptor(Box<MultipathDescriptor>),
+    UnexpectedDescriptor(Box<LianaDescriptor>),
     Unexpected(String),
 }
 

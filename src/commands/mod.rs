@@ -155,7 +155,7 @@ pub enum InsaneFeeInfo {
 // Apply some sanity checks on a created transaction's PSBT.
 // TODO: add more sanity checks from revault_tx
 fn sanity_check_psbt(
-    spent_desc: &descriptors::MultipathDescriptor,
+    spent_desc: &descriptors::LianaDescriptor,
     psbt: &Psbt,
 ) -> Result<(), CommandError> {
     let tx = &psbt.unsigned_tx;
@@ -216,7 +216,7 @@ fn serializable_size<T: bitcoin::consensus::Encodable + ?Sized>(t: &T) -> u64 {
 
 impl DaemonControl {
     // Get the derived descriptor for this coin
-    fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedInheritanceDescriptor {
+    fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedSinglePathLianaDesc {
         let desc = if coin.is_change {
             self.config.main_descriptor.change_descriptor()
         } else {
@@ -783,7 +783,7 @@ impl DaemonControl {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetInfoDescriptors {
-    pub main: descriptors::MultipathDescriptor,
+    pub main: descriptors::LianaDescriptor,
 }
 
 /// Information about the daemon
