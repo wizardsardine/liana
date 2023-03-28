@@ -124,8 +124,8 @@ impl fmt::Display for CommandError {
             Self::RescanTrigger(s) => write!(f, "Error while starting rescan: '{}'", s),
             Self::RecoveryNotAvailable => write!(
                 f,
-                "No coin currently available through the timelocked recovery path."
-            ),
+                "No coin currently spendable through this timelocked recovery path."
+           ),
         }
     }
 }
@@ -668,14 +668,18 @@ impl DaemonControl {
         ListTransactionsResult { transactions }
     }
 
-    /// Create a transaction that sweeps all coins whose timelocked recovery path is currently
-    /// available to a provided address with the provided feerate.
+    /// Create a transaction that sweeps all coins for which a timelocked recovery path is
+    /// currently available to a provided address with the provided feerate.
     ///
-    /// Note that not all coins may be spendable through the recovery path at the same time.
+    /// The `timelock` parameter can be used to specify which recovery path to use. By default,
+    /// we'll use the first recovery path available.
+    ///
+    /// Note that not all coins may be spendable through a single recovery path at the same time.
     pub fn create_recovery(
         &self,
         address: bitcoin::Address,
         feerate_vb: u64,
+        timelock: Option<u16>,
     ) -> Result<CreateRecoveryResult, CommandError> {
         if feerate_vb < 1 {
             return Err(CommandError::InvalidFeerate(feerate_vb));
@@ -702,27 +706,24 @@ impl DaemonControl {
             outputs: vec![PsbtOut::default()],
         };
 
-        // Query the coins that we can spend through the recovery path from the database.
+        // Query the coins that we can spend through the specified recovery path (if no recovery
+        // path specified, use the first available one) from the database.
         let current_height = self.bitcoin.chain_tip().height;
-        let desc_timelock = self.config.main_descriptor.first_timelock_value();
-        let timelock: i32 = desc_timelock
-            .try_into()
-            .expect("Must fit, it's effectively a u16");
+        let timelock =
+            timelock.unwrap_or_else(|| self.config.main_descriptor.first_timelock_value());
+        let height_delta: i32 = timelock.try_into().expect("Must fit, it's a u16");
         let sweepable_coins = db_conn
             .coins(CoinType::Unspent)
             .into_iter()
             .filter(|(_, c)| {
                 // We are interested in coins available at the *next* block
                 c.block_info
-                    .map(|b| current_height + 1 >= b.height + timelock)
+                    .map(|b| current_height + 1 >= b.height + height_delta)
                     .unwrap_or(false)
             });
 
         // Fill-in the transaction inputs and PSBT inputs information. Record the value
         // that is fed to the transaction while doing so, to compute the fees afterward.
-        let csv_value: u16 = desc_timelock
-            .try_into()
-            .expect("Must fit, it's effectively a u16");
         let mut in_value = bitcoin::Amount::from_sat(0);
         let txin_sat_vb = self.config.main_descriptor.max_sat_vbytes();
         let mut sat_vb = 0;
@@ -731,7 +732,7 @@ impl DaemonControl {
             in_value += coin.amount;
             psbt.unsigned_tx.input.push(bitcoin::TxIn {
                 previous_output: coin.outpoint,
-                sequence: bitcoin::Sequence::from_height(csv_value),
+                sequence: bitcoin::Sequence::from_height(timelock),
                 // TODO: once we move to Taproot, anti-fee-sniping using nSequence
                 ..bitcoin::TxIn::default()
             });

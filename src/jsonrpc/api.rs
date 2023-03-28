@@ -148,8 +148,16 @@ fn create_recovery(control: &DaemonControl, params: Params) -> Result<serde_json
         .ok_or_else(|| Error::invalid_params("Missing 'feerate' parameter."))?
         .as_u64()
         .ok_or_else(|| Error::invalid_params("Invalid 'feerate' parameter."))?;
+    let timelock: Option<u16> = params
+        .get(2, "timelock")
+        .map(|tl| {
+            tl.as_u64()
+                .and_then(|tl| tl.try_into().ok())
+                .ok_or_else(|| Error::invalid_params("Invalid 'timelock' parameter."))
+        })
+        .transpose()?;
 
-    let res = control.create_recovery(address, feerate)?;
+    let res = control.create_recovery(address, feerate, timelock)?;
     Ok(serde_json::json!(&res))
 }
 
