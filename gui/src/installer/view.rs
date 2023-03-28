@@ -157,15 +157,20 @@ pub fn define_descriptor<'a>(
             pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
                 Message::Network(net.into())
             })
-            .style(theme::PickList::Simple)
+            .style(if network_valid {
+                theme::PickList::Simple
+            } else {
+                theme::PickList::Invalid
+            })
             .padding(10),
         ))
         .push_maybe(if network_valid {
             None
         } else {
-            Some(card::warning(
-                "A data directory already exists for this network".to_string(),
-            ))
+            Some(
+                text("A data directory already exists for this network")
+                    .style(color::legacy::ALERT),
+            )
         })
         .padding(50);
 
@@ -363,14 +368,20 @@ pub fn import_descriptor<'a>(
             pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
                 Message::Network(net.into())
             })
+            .style(if network_valid {
+                theme::PickList::Simple
+            } else {
+                theme::PickList::Invalid
+            })
             .padding(10),
         ))
         .push_maybe(if network_valid {
             None
         } else {
-            Some(card::warning(
-                "A data directory already exists for this network".to_string(),
-            ))
+            Some(
+                text("A data directory already exists for this network")
+                    .style(color::legacy::ALERT),
+            )
         });
     let col_descriptor = Column::new()
         .push(text("Descriptor:").bold())
@@ -619,14 +630,20 @@ pub fn participate_xpub<'a>(
             pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
                 Message::Network(net.into())
             })
+            .style(if network_valid {
+                theme::PickList::Simple
+            } else {
+                theme::PickList::Invalid
+            })
             .padding(10),
         ))
         .push_maybe(if network_valid {
             None
         } else {
-            Some(card::warning(
-                "A data directory already exists for this network".to_string(),
-            ))
+            Some(
+                text("A data directory already exists for this network")
+                    .style(color::legacy::ALERT),
+            )
         });
 
     layout(
