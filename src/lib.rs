@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-use std::{error, fmt, fs, io, path, sync};
+use std::{convert::TryInto, error, fmt, fs, io, path, sync, time};
 
 use miniscript::bitcoin::secp256k1;
 
@@ -187,6 +187,14 @@ fn setup_sqlite(
         Some(FreshDbOptions {
             bitcoind_network: config.bitcoin_config.network,
             main_descriptor: config.main_descriptor.clone(),
+            timestamp: time::SystemTime::now()
+                .duration_since(time::UNIX_EPOCH)
+                .map(|dur| {
+                    dur.as_secs()
+                        .try_into()
+                        .expect("Is this the year 2106 yet? Misconfigured system clock.")
+                })
+                .expect("System clock went backward the epoch?"),
         })
     } else {
         None

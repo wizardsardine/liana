@@ -1,6 +1,8 @@
-use crate::database::sqlite::{schema::SCHEMA, FreshDbOptions, SqliteDbError, DB_VERSION};
+use crate::database::sqlite::{
+    migration::DB_VERSION, schema::SCHEMA, FreshDbOptions, SqliteDbError,
+};
 
-use std::{convert::TryInto, fs, path, time};
+use std::{fs, path};
 
 use miniscript::bitcoin::secp256k1;
 
@@ -50,14 +52,6 @@ where
         .collect::<rusqlite::Result<Vec<T>>>()
 }
 
-// Sqlite supports up to i64, thus rusqlite prevents us from inserting u64's.
-// We use this to panic rather than inserting a truncated integer into the database (as we'd have
-// done by using `n as u32`).
-fn timestamp_to_u32(n: u64) -> u32 {
-    n.try_into()
-        .expect("Is this the year 2106 yet? Misconfigured system clock.")
-}
-
 // Create the db file with RW permissions only for the user
 pub fn create_db_file(db_path: &path::Path) -> Result<(), std::io::Error> {
     let mut options = fs::OpenOptions::new();
@@ -85,11 +79,6 @@ pub fn create_fresh_db(
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> Result<(), SqliteDbError> {
     create_db_file(db_path)?;
-
-    let timestamp = time::SystemTime::now()
-        .duration_since(time::UNIX_EPOCH)
-        .map(|dur| timestamp_to_u32(dur.as_secs()))
-        .expect("System clock went backward the epoch?");
 
     // Fill the initial addresses. On a fresh database, the deposit_derivation_index is
     // necessarily 0.
@@ -125,7 +114,7 @@ pub fn create_fresh_db(
         tx.execute(
             "INSERT INTO wallets (timestamp, main_descriptor, deposit_derivation_index, change_derivation_index) \
                      VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![timestamp, options.main_descriptor.to_string(), 0, 0],
+            rusqlite::params![options.timestamp, options.main_descriptor.to_string(), 0, 0],
         )?;
         tx.execute_batch(&query)?;
 

@@ -1,3 +1,4 @@
+mod migration;
 ///! Implementation of the database interface using SQLite.
 ///!
 ///! We use a bundled SQLite that is compiled with SQLITE_THREADSAFE. Sqlite.org states:
@@ -13,6 +14,7 @@ use crate::{
     bitcoin::BlockChainTip,
     database::{
         sqlite::{
+            migration::DB_VERSION,
             schema::{DbAddress, DbCoin, DbSpendTransaction, DbTip, DbWallet},
             utils::{create_fresh_db, db_exec, db_query, db_tx_query, LOOK_AHEAD_LIMIT},
         },
@@ -30,8 +32,6 @@ use miniscript::bitcoin::{
     secp256k1,
     util::{bip32, psbt::PartiallySignedTransaction as Psbt},
 };
-
-const DB_VERSION: i64 = 0;
 
 #[derive(Debug)]
 pub enum SqliteDbError {
@@ -84,6 +84,7 @@ impl From<rusqlite::Error> for SqliteDbError {
 pub struct FreshDbOptions {
     pub bitcoind_network: bitcoin::Network,
     pub main_descriptor: LianaDescriptor,
+    pub timestamp: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -585,12 +586,16 @@ impl SqliteConn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::SpendBlock;
+    use crate::database::{sqlite::migration::*, SpendBlock};
+
     use crate::testutils::*;
     use std::{
         collections::{HashMap, HashSet},
-        fs, path,
+        fs,
+        io::Write,
+        path, process,
         str::FromStr,
+        time,
     };
 
     use bitcoin::{hashes::Hash, util::bip32};
@@ -601,6 +606,10 @@ mod tests {
         FreshDbOptions {
             bitcoind_network: bitcoin::Network::Bitcoin,
             main_descriptor,
+            timestamp: time::SystemTime::now()
+                .duration_since(time::UNIX_EPOCH)
+                .map(|dur| dur.as_secs().try_into().unwrap())
+                .expect("System clock went backward the epoch?"),
         }
     }
 
@@ -621,6 +630,58 @@ mod tests {
         let db = SqliteDb::new(db_path, Some(options.clone()), &secp).unwrap();
 
         (tmp_dir, options, secp, db)
+    }
+
+    #[test]
+    fn db_migrations() {
+        let tmp_dir = tmp_dir();
+        fs::create_dir_all(&tmp_dir).unwrap();
+        let secp = secp256k1::Secp256k1::verification_only();
+        let options = dummy_options();
+        let migration_db_path: path::PathBuf = [
+            tmp_dir.as_path(),
+            path::Path::new("migration_lianad.sqlite3"),
+        ]
+        .iter()
+        .collect();
+
+        let migration = MigrationV0::new(&migration_db_path, options.clone(), &secp);
+        migration.apply().unwrap();
+
+        eprintln!("{}", tmp_dir.to_string_lossy());
+        // rusqlite does not support .dump or .schema command, sqlite3 is called externally to
+        // create the dump files.
+        let output = process::Command::new("sqlite3")
+            .arg(migration_db_path)
+            .arg(".dump")
+            .output()
+            .expect("failed to execute process");
+        assert!(output.status.success());
+
+        let mut buf1 = Vec::<u8>::new();
+        buf1.write_all(&output.stdout).unwrap();
+
+        let new_db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("new_lianad.sqlite3")]
+            .iter()
+            .collect();
+        SqliteDb::new(new_db_path.clone(), Some(options), &secp).unwrap();
+
+        let output = process::Command::new("sqlite3")
+            .arg(new_db_path)
+            .arg(".dump")
+            .output()
+            .expect("failed to execute process");
+        assert!(output.status.success());
+
+        let mut buf2 = Vec::<u8>::new();
+        buf2.write_all(&output.stdout).unwrap();
+
+        assert_eq!(
+            String::from_utf8_lossy(&buf1),
+            String::from_utf8_lossy(&buf2)
+        );
+
+        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
