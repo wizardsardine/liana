@@ -77,14 +77,12 @@ class SingleSigner:
 
 class MultiSigner:
     def __init__(
-        self, primary_thresh, primary_hds_count, recovery_thresh, recovery_hds_count
+        self, primary_hds_count, recovery_hds_count
     ):
-        self.prim_thresh = primary_thresh
         self.prim_hds = [
             BIP32.from_seed(os.urandom(32), network="test")
             for _ in range(primary_hds_count)
         ]
-        self.recov_thresh = recovery_thresh
         self.recov_hds = [
             BIP32.from_seed(os.urandom(32), network="test")
             for _ in range(recovery_hds_count)

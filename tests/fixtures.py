@@ -163,11 +163,11 @@ def lianad_multisig(bitcoind, directory):
     bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
 
     # A 3-of-4 that degrades into a 2-of-5 after 10 blocks
-    signer = MultiSigner(3, 4, 2, 5)
+    signer = MultiSigner(4, 5)
     csv_value = 10
     prim_multi, recov_multi = (
-        multi_expression(signer.prim_thresh, signer.prim_hds),
-        multi_expression(signer.recov_thresh, signer.recov_hds),
+        multi_expression(3, signer.prim_hds),
+        multi_expression(2, signer.recov_hds),
     )
     main_desc = Descriptor.from_str(
         f"wsh(or_d({prim_multi},and_v(v:{recov_multi},older({csv_value}))))"
