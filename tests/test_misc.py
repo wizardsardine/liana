@@ -5,11 +5,7 @@ from test_framework.serializations import PSBT
 from test_framework.utils import wait_for, RpcError
 
 
-def test_multisig(lianad_multisig, bitcoind):
-    """Test using lianad with a descriptor that contains multiple keys for both
-    the primary and recovery paths."""
-    lianad = lianad_multisig
-
+def receive_and_send(lianad, bitcoind):
     # Receive 3 coins in different blocks on different addresses.
     for _ in range(3):
         addr = lianad.rpc.getnewaddress()["address"]
@@ -17,7 +13,6 @@ def test_multisig(lianad_multisig, bitcoind):
         bitcoind.generate_block(1, wait_for_mempool=txid)
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 3)
 
-    print(lianad.rpc.listcoins())
     # Create a spend that will create a change output, sign and broadcast it.
     outpoints = [lianad.rpc.listcoins()["coins"][0]["outpoint"]]
     destinations = {
@@ -64,14 +59,20 @@ def test_multisig(lianad_multisig, bitcoind):
         lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
     )
 
+
+def test_multisig(lianad_multisig, bitcoind):
+    """Test using lianad with a descriptor that contains multiple keys for both
+    the primary and recovery paths."""
+    receive_and_send(lianad_multisig, bitcoind)
+
     # Sweep all coins through the recovery path. It needs 2 signatures out of
     # 5 keys. Sign with the second and the fifth ones.
-    res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
+    res = lianad_multisig.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
     reco_psbt = PSBT.from_base64(res["psbt"])
     txid = reco_psbt.tx.txid().hex()
-    signed_psbt = lianad.signer.sign_psbt(reco_psbt, [1, 4], recovery=True)
-    lianad.rpc.updatespend(signed_psbt.to_base64())
-    lianad.rpc.broadcastspend(txid)
+    signed_psbt = lianad_multisig.signer.sign_psbt(reco_psbt, [1, 4], recovery=True)
+    lianad_multisig.rpc.updatespend(signed_psbt.to_base64())
+    lianad_multisig.rpc.broadcastspend(txid)
 
 
 def test_coinbase_deposit(lianad, bitcoind):
