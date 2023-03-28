@@ -50,7 +50,7 @@ impl iced::overlay::menu::StyleSheet for Theme {
             background: color::LIGHT_GREY.into(),
             border_width: 1.0,
             border_radius: 0.0,
-            border_color: color::GREEN,
+            border_color: color::LIGHT_GREY,
             selected_text_color: color::BLACK,
             selected_background: color::GREEN.into(),
         }
@@ -422,19 +422,31 @@ impl scrollable::StyleSheet for Theme {
 pub enum PickList {
     #[default]
     Simple,
+    Invalid,
 }
 impl pick_list::StyleSheet for Theme {
     type Style = PickList;
 
-    fn active(&self, _style: &Self::Style) -> pick_list::Appearance {
-        pick_list::Appearance {
-            placeholder_color: color::legacy::FOREGROUND,
-            handle_color: color::legacy::FOREGROUND,
-            background: color::legacy::FOREGROUND.into(),
-            border_width: 1.0,
-            border_color: color::legacy::BORDER_GREY,
-            border_radius: 10.0,
-            text_color: iced::Color::BLACK,
+    fn active(&self, style: &Self::Style) -> pick_list::Appearance {
+        match style {
+            PickList::Simple => pick_list::Appearance {
+                placeholder_color: color::legacy::FOREGROUND,
+                handle_color: color::legacy::FOREGROUND,
+                background: color::legacy::FOREGROUND.into(),
+                border_width: 1.0,
+                border_color: color::legacy::BORDER_GREY,
+                border_radius: 10.0,
+                text_color: iced::Color::BLACK,
+            },
+            PickList::Invalid => pick_list::Appearance {
+                placeholder_color: color::legacy::FOREGROUND,
+                handle_color: color::legacy::FOREGROUND,
+                background: color::legacy::FOREGROUND.into(),
+                border_width: 1.0,
+                border_color: color::legacy::ALERT,
+                border_radius: 10.0,
+                text_color: iced::Color::BLACK,
+            },
         }
     }
 

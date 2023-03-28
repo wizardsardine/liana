@@ -18,8 +18,8 @@ pub fn warning<'a, T: 'a>(message: String) -> Container<'a, T> {
         Row::new()
             .spacing(20)
             .align_items(iced::Alignment::Center)
-            .push(icon::warning_octagon_icon().style(color::legacy::WARNING))
-            .push(text(message).style(color::legacy::WARNING)),
+            .push(icon::warning_octagon_icon())
+            .push(text(message)),
     )
     .padding(15)
     .style(theme::Container::Card(theme::Card::Warning))
