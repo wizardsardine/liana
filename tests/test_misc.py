@@ -70,7 +70,7 @@ def test_multisig(lianad_multisig, bitcoind):
     res = lianad_multisig.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
     reco_psbt = PSBT.from_base64(res["psbt"])
     txid = reco_psbt.tx.txid().hex()
-    signed_psbt = lianad_multisig.signer.sign_psbt(reco_psbt, [1, 4], recovery=True)
+    signed_psbt = lianad_multisig.signer.sign_psbt(reco_psbt, {10: [1, 4]})
     lianad_multisig.rpc.updatespend(signed_psbt.to_base64())
     lianad_multisig.rpc.broadcastspend(txid)
 

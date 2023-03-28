@@ -59,6 +59,8 @@ def sign_psbt(psbt, hds):
 
 
 class SingleSigner:
+    """Assumes a simple 1-primary path 1-recovery path Liana descriptor."""
+
     def __init__(self):
         self.primary_hd = BIP32.from_seed(os.urandom(32), network="test")
         self.recovery_hd = BIP32.from_seed(os.urandom(32), network="test")
@@ -76,20 +78,31 @@ class SingleSigner:
 
 
 class MultiSigner:
-    def __init__(
-        self, primary_hds_count, recovery_hds_count
-    ):
+    """A signer that has multiple keys and may have multiple recovery path."""
+
+    def __init__(self, primary_hds_count, recovery_hds_counts):
         self.prim_hds = [
             BIP32.from_seed(os.urandom(32), network="test")
             for _ in range(primary_hds_count)
         ]
-        self.recov_hds = [
-            BIP32.from_seed(os.urandom(32), network="test")
-            for _ in range(recovery_hds_count)
-        ]
+        self.recov_hds = {}
+        for timelock, count in recovery_hds_counts.items():
+            self.recov_hds[timelock] = [
+                BIP32.from_seed(os.urandom(32), network="test") for _ in range(count)
+            ]
 
-    def sign_psbt(self, psbt, key_indices, recovery=False):
-        """Sign a transaction with the keys at the specified indices."""
-        hds = self.recov_hds if recovery else self.prim_hds
-        hds = [hds[i] for i in key_indices]
+    def sign_psbt(self, psbt, key_indices):
+        """Sign a transaction with the keys at the specified indices.
+
+        The key indices may be specified as a mapping from timelock value to list of
+        indices to sign with the keys of a specific recovery path.
+        """
+        if isinstance(key_indices, dict):
+            hds = [
+                self.recov_hds[timelock][i]
+                for timelock, indices in key_indices.items()
+                for i in indices
+            ]
+        else:
+            hds = [self.prim_hds[i] for i in key_indices]
         return sign_psbt(psbt, hds)
