@@ -1,7 +1,8 @@
 use iced::{
     application,
     widget::{
-        button, checkbox, container, pick_list, progress_bar, radio, scrollable, text, text_input,
+        button, checkbox, container, pick_list, progress_bar, radio, scrollable, slider, text,
+        text_input,
     },
 };
 
@@ -210,6 +211,7 @@ impl From<Pill> for Container {
 pub enum Card {
     #[default]
     Simple,
+    Border,
     Invalid,
     Warning,
     Error,
@@ -221,6 +223,13 @@ impl Card {
             Theme::Light => match self {
                 Card::Simple => container::Appearance {
                     background: color::GREY.into(),
+                    ..container::Appearance::default()
+                },
+                Card::Border => container::Appearance {
+                    background: iced::Color::TRANSPARENT.into(),
+                    border_radius: 10.0,
+                    border_color: color::GREY,
+                    border_width: 1.0,
                     ..container::Appearance::default()
                 },
                 Card::Invalid => container::Appearance {
@@ -248,6 +257,13 @@ impl Card {
                     background: color::LIGHT_BLACK.into(),
                     ..container::Appearance::default()
                 },
+                Card::Border => container::Appearance {
+                    background: iced::Color::TRANSPARENT.into(),
+                    border_radius: 10.0,
+                    border_color: color::LIGHT_GREY,
+                    border_width: 1.0,
+                    ..container::Appearance::default()
+                },
                 Card::Invalid => container::Appearance {
                     background: color::LIGHT_BLACK.into(),
                     text_color: color::BLACK.into(),
@@ -271,6 +287,13 @@ impl Card {
             Theme::Legacy => match self {
                 Card::Simple => container::Appearance {
                     background: color::legacy::FOREGROUND.into(),
+                    border_radius: 10.0,
+                    border_color: color::legacy::BORDER_GREY,
+                    border_width: 1.0,
+                    ..container::Appearance::default()
+                },
+                Card::Border => container::Appearance {
+                    background: iced::Color::TRANSPARENT.into(),
                     border_radius: 10.0,
                     border_color: color::legacy::BORDER_GREY,
                     border_width: 1.0,
@@ -788,6 +811,61 @@ impl progress_bar::StyleSheet for Theme {
             background: iced::Color::TRANSPARENT.into(),
             bar: color::GREEN.into(),
             border_radius: 10.0,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+pub enum Slider {
+    #[default]
+    Simple,
+}
+
+impl slider::StyleSheet for Theme {
+    type Style = Slider;
+    fn active(&self, _style: &Self::Style) -> slider::Appearance {
+        let handle = slider::Handle {
+            shape: slider::HandleShape::Rectangle {
+                width: 8,
+                border_radius: 4.0,
+            },
+            color: color::legacy::FOREGROUND,
+            border_color: color::GREEN,
+            border_width: 1.0,
+        };
+        slider::Appearance {
+            rail_colors: (color::GREEN, iced::Color::TRANSPARENT),
+            handle,
+        }
+    }
+    fn hovered(&self, _style: &Self::Style) -> slider::Appearance {
+        let handle = slider::Handle {
+            shape: slider::HandleShape::Rectangle {
+                width: 8,
+                border_radius: 4.0,
+            },
+            color: color::GREEN,
+            border_color: color::GREEN,
+            border_width: 1.0,
+        };
+        slider::Appearance {
+            rail_colors: (color::GREEN, iced::Color::TRANSPARENT),
+            handle,
+        }
+    }
+    fn dragging(&self, _style: &Self::Style) -> slider::Appearance {
+        let handle = slider::Handle {
+            shape: slider::HandleShape::Rectangle {
+                width: 8,
+                border_radius: 4.0,
+            },
+            color: color::GREEN,
+            border_color: color::GREEN,
+            border_width: 1.0,
+        };
+        slider::Appearance {
+            rail_colors: (color::GREEN, iced::Color::TRANSPARENT),
+            handle,
         }
     }
 }

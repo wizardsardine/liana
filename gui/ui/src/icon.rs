@@ -18,6 +18,14 @@ pub fn arrow_down() -> Text<'static> {
     icon('\u{F128}')
 }
 
+pub fn arrow_right() -> Text<'static> {
+    icon('\u{F138}')
+}
+
+pub fn arrow_return_right() -> Text<'static> {
+    icon('\u{F132}')
+}
+
 pub fn chevron_right() -> Text<'static> {
     icon('\u{F285}')
 }

@@ -1,9 +1,9 @@
 use iced::widget::{
-    checkbox, container, pick_list, scrollable, scrollable::Properties, Space, TextInput,
+    checkbox, container, pick_list, scrollable, scrollable::Properties, slider, Space, TextInput,
 };
 use iced::{alignment, Alignment, Length};
 
-use std::collections::HashSet;
+use std::{collections::HashSet, str::FromStr};
 
 use liana::miniscript::bitcoin;
 use liana_ui::{
@@ -142,10 +142,8 @@ pub fn define_descriptor<'a>(
     network: bitcoin::Network,
     network_valid: bool,
     spending_keys: Vec<Element<'a, Message>>,
-    recovery_keys: Vec<Element<'a, Message>>,
-    sequence: &form::Value<String>,
     spending_threshold: usize,
-    recovery_threshold: usize,
+    recovery_paths: Vec<Element<'a, Message>>,
     valid: bool,
     error: Option<&String>,
 ) -> Element<'a, Message> {
@@ -178,150 +176,57 @@ pub fn define_descriptor<'a>(
         .push(
             Row::new()
                 .spacing(10)
-                .push(Space::with_width(Length::Units(40)))
+                .push(Space::with_width(Length::Units(5)))
                 .push(text("Primary path:").bold())
-                .push(tooltip(prompt::DEFINE_DESCRIPTOR_PRIMATRY_PATH_TOOLTIP)),
+                .push(tooltip(prompt::DEFINE_DESCRIPTOR_PRIMARY_PATH_TOOLTIP)),
         )
-        .push(separation().width(Length::Fill))
-        .push(
-            Container::new(
-                Row::new()
-                    .align_items(Alignment::Center)
-                    .push_maybe(if spending_keys.len() > 1 {
-                        Some(threshsold_input::threshsold_input(
-                            spending_threshold,
-                            spending_keys.len(),
-                            |value| {
-                                Message::DefineDescriptor(
-                                    message::DefineDescriptor::ThresholdEdited(false, value),
-                                )
-                            },
-                        ))
-                    } else {
-                        None
-                    })
-                    .push(
-                        scrollable(
-                            Row::new()
-                                .spacing(5)
-                                .align_items(Alignment::Center)
-                                .push(Row::with_children(spending_keys).spacing(5))
-                                .push(
-                                    Button::new(
-                                        Container::new(icon::plus_icon().size(50))
-                                            .width(Length::Units(200))
-                                            .height(Length::Units(200))
-                                            .align_y(alignment::Vertical::Center)
-                                            .align_x(alignment::Horizontal::Center),
-                                    )
-                                    .width(Length::Units(200))
-                                    .height(Length::Units(200))
-                                    .style(theme::Button::TransparentBorder)
-                                    .on_press(
-                                        Message::DefineDescriptor(
-                                            message::DefineDescriptor::AddKey(false),
-                                        ),
-                                    ),
-                                )
-                                .padding(5),
-                        )
-                        .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
-                    ),
-            )
-            .width(Length::Fill)
-            .align_x(alignment::Horizontal::Center),
-        )
-        .spacing(10);
-
-    let col_recovery_keys = Column::new()
-        .push(
+        .push(Container::new(
             Row::new()
-                .push(Space::with_width(Length::Units(50)))
-                .push(text("Recovery path:").bold()),
-        )
-        .push(separation().width(Length::Fill))
-        .push(
-            Container::new(
-                Row::new()
-                    .align_items(Alignment::Center)
-                    .push_maybe(if recovery_keys.len() > 1 {
-                        Some(threshsold_input::threshsold_input(
-                            recovery_threshold,
-                            recovery_keys.len(),
-                            |value| {
-                                Message::DefineDescriptor(
-                                    message::DefineDescriptor::ThresholdEdited(true, value),
+                .align_items(Alignment::Center)
+                .push_maybe(if spending_keys.len() > 1 {
+                    Some(threshsold_input::threshsold_input(
+                        spending_threshold,
+                        spending_keys.len(),
+                        |value| {
+                            Message::DefineDescriptor(message::DefineDescriptor::PrimaryPath(
+                                message::DefinePath::ThresholdEdited(value),
+                            ))
+                        },
+                    ))
+                } else {
+                    None
+                })
+                .push(
+                    scrollable(
+                        Row::new()
+                            .spacing(5)
+                            .align_items(Alignment::Center)
+                            .push(Row::with_children(spending_keys).spacing(5))
+                            .push(
+                                Button::new(
+                                    Container::new(icon::plus_icon().size(50))
+                                        .width(Length::Units(150))
+                                        .height(Length::Units(150))
+                                        .align_y(alignment::Vertical::Center)
+                                        .align_x(alignment::Horizontal::Center),
                                 )
-                            },
-                        ))
-                    } else {
-                        None
-                    })
-                    .push(
-                        scrollable(
-                            Row::new()
-                                .spacing(5)
-                                .align_items(Alignment::Center)
-                                .push(Row::with_children(recovery_keys).spacing(5))
-                                .push(
-                                    Button::new(
-                                        Container::new(icon::plus_icon().size(50))
-                                            .width(Length::Units(200))
-                                            .height(Length::Units(200))
-                                            .align_y(alignment::Vertical::Center)
-                                            .align_x(alignment::Horizontal::Center),
-                                    )
-                                    .width(Length::Units(200))
-                                    .height(Length::Units(200))
-                                    .style(theme::Button::TransparentBorder)
-                                    .on_press(
-                                        Message::DefineDescriptor(
-                                            message::DefineDescriptor::AddKey(true),
+                                .width(Length::Units(150))
+                                .height(Length::Units(150))
+                                .style(theme::Button::TransparentBorder)
+                                .on_press(
+                                    Message::DefineDescriptor(
+                                        message::DefineDescriptor::PrimaryPath(
+                                            message::DefinePath::AddKey,
                                         ),
                                     ),
-                                )
-                                .padding(5),
-                        )
-                        .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
-                    ),
-            )
-            .width(Length::Fill)
-            .align_x(alignment::Horizontal::Center),
-        )
+                                ),
+                            )
+                            .padding(5),
+                    )
+                    .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
+                ),
+        ))
         .spacing(10);
-
-    let col_sequence = Container::new(
-        Row::new()
-            .spacing(50)
-            .align_items(Alignment::Center)
-            .push(Container::new(icon::arrow_down().size(50)).align_x(alignment::Horizontal::Right))
-            .push(
-                Column::new()
-                    .push(
-                        Row::new()
-                            .spacing(10)
-                            .push(text("Blocks before recovery:").bold())
-                            .push(tooltip(prompt::DEFINE_DESCRIPTOR_SEQUENCE_TOOLTIP)),
-                    )
-                    .push(
-                        Container::new(
-                            form::Form::new("Number of blocks", sequence, |msg| {
-                                Message::DefineDescriptor(
-                                    message::DefineDescriptor::SequenceEdited(msg),
-                                )
-                            })
-                            .warning("Please enter correct block number")
-                            .size(20)
-                            .padding(10),
-                        )
-                        .width(Length::Units(150)),
-                    )
-                    .spacing(10),
-            )
-            .padding(20),
-    )
-    .width(Length::Fill)
-    .align_x(alignment::Horizontal::Center);
 
     layout(
         progress,
@@ -330,19 +235,38 @@ pub fn define_descriptor<'a>(
             .push(text("Create the wallet").bold().size(50))
             .push(
                 Column::new()
+                    .width(Length::Fill)
+                    .align_items(Alignment::Center)
                     .push(row_network)
-                    .push(col_spending_keys)
-                    .push(col_sequence)
-                    .push(col_recovery_keys)
+                    .push(
+                        Column::new()
+                            .spacing(25)
+                            .push(col_spending_keys)
+                            .push(
+                                Row::new()
+                                    .spacing(10)
+                                    .push(Space::with_width(Length::Units(5)))
+                                    .push(text("Recovery paths:").bold())
+                                    .push(tooltip(prompt::DEFINE_DESCRIPTOR_RECOVERY_PATH_TOOLTIP)),
+                            )
+                            .push(Column::with_children(recovery_paths).spacing(10)),
+                    )
                     .spacing(25),
             )
-            .push(if !valid {
-                button::primary(None, "Next").width(Length::Units(200))
-            } else {
-                button::primary(None, "Next")
-                    .width(Length::Units(200))
-                    .on_press(Message::Next)
-            })
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(button::border(None, "Add a recovery path").on_press(
+                        Message::DefineDescriptor(message::DefineDescriptor::AddRecoveryPath),
+                    ))
+                    .push(if !valid {
+                        button::primary(None, "Next").width(Length::Units(200))
+                    } else {
+                        button::primary(None, "Next")
+                            .width(Length::Units(200))
+                            .on_press(Message::Next)
+                    }),
+            )
             .push_maybe(error.map(|e| card::error("Failed to create descriptor", e.to_string())))
             .push(Space::with_height(Length::Units(20)))
             .width(Length::Fill)
@@ -350,6 +274,54 @@ pub fn define_descriptor<'a>(
             .spacing(50)
             .align_items(Alignment::Center),
     )
+}
+
+pub fn recovery_path_view(
+    sequence: u16,
+    recovery_threshold: usize,
+    recovery_keys: Vec<Element<message::DefinePath>>,
+) -> Element<message::DefinePath> {
+    Container::new(
+        Column::new().push(defined_sequence(sequence)).push(
+            Row::new()
+                .align_items(Alignment::Center)
+                .push_maybe(if recovery_keys.len() > 1 {
+                    Some(threshsold_input::threshsold_input(
+                        recovery_threshold,
+                        recovery_keys.len(),
+                        message::DefinePath::ThresholdEdited,
+                    ))
+                } else {
+                    None
+                })
+                .push(
+                    scrollable(
+                        Row::new()
+                            .spacing(5)
+                            .align_items(Alignment::Center)
+                            .push(Row::with_children(recovery_keys).spacing(5))
+                            .push(
+                                Button::new(
+                                    Container::new(icon::plus_icon().size(50))
+                                        .width(Length::Units(150))
+                                        .height(Length::Units(150))
+                                        .align_y(alignment::Vertical::Center)
+                                        .align_x(alignment::Horizontal::Center),
+                                )
+                                .width(Length::Units(150))
+                                .height(Length::Units(150))
+                                .style(theme::Button::TransparentBorder)
+                                .on_press(message::DefinePath::AddKey),
+                            )
+                            .padding(5),
+                    )
+                    .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
+                ),
+        ),
+    )
+    .padding(5)
+    .style(theme::Container::Card(theme::Card::Border))
+    .into()
 }
 
 pub fn import_descriptor<'a>(
@@ -1058,6 +1030,51 @@ pub fn install<'a>(
     )
 }
 
+pub fn defined_sequence<'a>(sequence: u16) -> Element<'a, message::DefinePath> {
+    let (n_years, n_months, n_days, n_hours, n_minutes) = duration_from_sequence(sequence);
+    Container::new(
+        Row::new()
+            .width(Length::Fill)
+            .align_items(Alignment::Center)
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(5)
+                        .push(text(format!("Available after {} blocks", sequence)).bold())
+                        .push(
+                            [
+                                (n_years, "y"),
+                                (n_months, "m"),
+                                (n_days, "d"),
+                                (n_hours, "h"),
+                                (n_minutes, "mn"),
+                            ]
+                            .iter()
+                            .fold(
+                                Row::new().spacing(5),
+                                |row, (n, unit)| {
+                                    row.push_maybe(if *n > 0 {
+                                        Some(text(format!("{}{}", n, unit,)))
+                                    } else {
+                                        None
+                                    })
+                                },
+                            ),
+                        ),
+                )
+                .padding(5)
+                .align_y(alignment::Vertical::Center),
+            )
+            .push(
+                button::border(Some(icon::pencil_icon()), "Edit")
+                    .on_press(message::DefinePath::EditSequence),
+            )
+            .spacing(15),
+    )
+    .padding(5)
+    .into()
+}
+
 pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
     card::simple(
         Column::new()
@@ -1079,18 +1096,10 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
                         .spacing(15)
                         .align_items(Alignment::Center)
                         .push(
-                            scrollable(
-                                icon::key_icon()
-                                    .style(color::DARK_GREY)
-                                    .size(50)
-                                    .width(Length::Units(50)),
-                            )
-                            .horizontal_scroll(Properties::new().width(2).scroller_width(2)),
-                        )
-                        .push(
-                            icon::circle_check_icon()
-                                .style(color::legacy::FOREGROUND)
-                                .size(50),
+                            icon::key_icon()
+                                .style(color::DARK_GREY)
+                                .size(30)
+                                .width(Length::Units(50)),
                         ),
                 )
                 .height(Length::Fill)
@@ -1102,8 +1111,8 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
             .push(Space::with_height(Length::Units(5))),
     )
     .padding(5)
-    .height(Length::Units(200))
-    .width(Length::Units(200))
+    .height(Length::Units(150))
+    .width(Length::Units(150))
     .into()
 }
 
@@ -1133,7 +1142,7 @@ pub fn defined_descriptor_key(
                 .push(
                     Container::new(
                         Column::new()
-                            .spacing(15)
+                            .spacing(5)
                             .align_items(Alignment::Center)
                             .push(
                                 scrollable(text(name).bold()).horizontal_scroll(
@@ -1143,7 +1152,7 @@ pub fn defined_descriptor_key(
                             .push(
                                 icon::circle_check_icon()
                                     .style(color::legacy::SUCCESS)
-                                    .size(40)
+                                    .size(20)
                                     .width(Length::Units(50)),
                             ),
                     )
@@ -1161,8 +1170,8 @@ pub fn defined_descriptor_key(
             .push(
                 card::invalid(col)
                     .padding(5)
-                    .height(Length::Units(200))
-                    .width(Length::Units(200)),
+                    .height(Length::Units(150))
+                    .width(Length::Units(150)),
             )
             .push(
                 text("Key is for a different network")
@@ -1176,8 +1185,8 @@ pub fn defined_descriptor_key(
             .push(
                 card::invalid(col)
                     .padding(5)
-                    .height(Length::Units(200))
-                    .width(Length::Units(200)),
+                    .height(Length::Units(150))
+                    .width(Length::Units(150)),
             )
             .push(text("Duplicate key").small().style(color::legacy::ALERT))
             .into()
@@ -1187,16 +1196,16 @@ pub fn defined_descriptor_key(
             .push(
                 card::invalid(col)
                     .padding(5)
-                    .height(Length::Units(200))
-                    .width(Length::Units(200)),
+                    .height(Length::Units(150))
+                    .width(Length::Units(150)),
             )
             .push(text("Duplicate name").small().style(color::legacy::ALERT))
             .into()
     } else {
         card::simple(col)
             .padding(5)
-            .height(Length::Units(200))
-            .width(Length::Units(200))
+            .height(Length::Units(150))
+            .width(Length::Units(150))
             .into()
     }
 }
@@ -1286,7 +1295,7 @@ pub fn edit_key_modal<'a>(
                                 .push(
                                     form::Form::new("Extended public key", form_xpub, |msg| {
                                         Message::DefineDescriptor(
-                                            message::DefineDescriptor::XPubEdited(msg),
+                                            message::DefineDescriptor::KeyModal(message::ImportKeyModal::XPubEdited(msg)),
                                         )
                                     })
                                     .warning(if network == bitcoin::Network::Bitcoin {
@@ -1320,7 +1329,9 @@ pub fn edit_key_modal<'a>(
                                         .push(text(&form_name.value)),
                                 )
                                 .push(button::border(Some(icon::pencil_icon()), "Edit").on_press(
-                                    Message::DefineDescriptor(message::DefineDescriptor::EditName),
+                                        Message::DefineDescriptor(
+                                            message::DefineDescriptor::KeyModal(message::ImportKeyModal::EditName),
+                                        )
                                 )),
                         )
                     } else if !form_xpub.value.is_empty() && form_xpub.valid {
@@ -1335,8 +1346,8 @@ pub fn edit_key_modal<'a>(
                             .push(
                                 form::Form::new("Alias", form_name, |msg| {
                                     Message::DefineDescriptor(
-                                        message::DefineDescriptor::NameEdited(msg),
-                                    )
+                                            message::DefineDescriptor::KeyModal(message::ImportKeyModal::NameEdited(msg)),
+                                        )
                                 })
                                 .warning("Please enter correct alias")
                                 .size(20)
@@ -1350,9 +1361,11 @@ pub fn edit_key_modal<'a>(
                     if form_xpub.valid && !form_xpub.value.is_empty() && !form_name.value.is_empty()
                     {
                         button::primary(None, "Apply")
-                            .on_press(Message::DefineDescriptor(
-                                message::DefineDescriptor::ConfirmXpub,
-                            ))
+                            .on_press(
+                                Message::DefineDescriptor(
+                                    message::DefineDescriptor::KeyModal(message::ImportKeyModal::ConfirmXpub),
+                                )
+                            )
                             .width(Length::Units(200))
                     } else {
                         button::primary(None, "Apply").width(Length::Units(100))
@@ -1362,6 +1375,92 @@ pub fn edit_key_modal<'a>(
         ))
         .width(Length::Units(600))
         .into()
+}
+
+/// returns y,m,d,h,m
+fn duration_from_sequence(sequence: u16) -> (u32, u32, u32, u32, u32) {
+    let mut n_minutes = sequence as u32 * 10;
+    let n_years = n_minutes / 525960;
+    n_minutes -= n_years * 525960;
+    let n_months = n_minutes / 43830;
+    n_minutes -= n_months * 43830;
+    let n_days = n_minutes / 1440;
+    n_minutes -= n_days * 1440;
+    let n_hours = n_minutes / 60;
+    n_minutes -= n_hours * 60;
+
+    (n_years, n_months, n_days, n_hours, n_minutes)
+}
+
+pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Message> {
+    let mut col = Column::new()
+        .width(Length::Fill)
+        .spacing(20)
+        .align_items(Alignment::Center)
+        .push(text("Activate recovery path after:"))
+        .push(
+            Row::new()
+                .push(
+                    Container::new(
+                        form::Form::new("ex: 1000", sequence, |v| {
+                            Message::DefineDescriptor(message::DefineDescriptor::SequenceModal(
+                                message::SequenceModal::SequenceEdited(v),
+                            ))
+                        })
+                        .warning("Sequence must be superior to 0 and inferior to 65535"),
+                    )
+                    .width(Length::Units(200)),
+                )
+                .spacing(10)
+                .push(text("blocks").bold()),
+        );
+
+    if sequence.valid {
+        if let Ok(sequence) = u16::from_str(&sequence.value) {
+            let (n_years, n_months, n_days, n_hours, n_minutes) = duration_from_sequence(sequence);
+            col = col
+                .push(
+                    [
+                        (n_years, "year"),
+                        (n_months, "month"),
+                        (n_days, "day"),
+                        (n_hours, "hour"),
+                        (n_minutes, "minute"),
+                    ]
+                    .iter()
+                    .fold(Row::new().spacing(5), |row, (n, unit)| {
+                        row.push_maybe(if *n > 0 {
+                            Some(
+                                text(format!("{} {}{}", n, unit, if *n > 1 { "s" } else { "" }))
+                                    .bold(),
+                            )
+                        } else {
+                            None
+                        })
+                    }),
+                )
+                .push(
+                    Container::new(slider(1..=u16::MAX, sequence, |v| {
+                        Message::DefineDescriptor(message::DefineDescriptor::SequenceModal(
+                            message::SequenceModal::SequenceEdited(v.to_string()),
+                        ))
+                    }))
+                    .width(Length::Units(500)),
+                );
+        }
+    }
+
+    card::simple(col.push(if sequence.valid {
+        button::primary(None, "Apply")
+            .on_press(Message::DefineDescriptor(
+                message::DefineDescriptor::SequenceModal(message::SequenceModal::ConfirmSequence),
+            ))
+            .width(Length::Units(200))
+    } else {
+        button::primary(None, "Apply").width(Length::Units(200))
+    }))
+    .width(Length::Units(800))
+    .into()
 }
 
 fn hw_list_view(
@@ -1691,16 +1790,14 @@ mod threshsold_input {
             };
 
             Column::new()
-                .height(Length::Units(200))
-                .width(Length::Units(100))
-                .push(button(icon::up_icon().size(40), Event::IncrementPressed))
+                .width(Length::Units(150))
+                .push(button(icon::up_icon().size(30), Event::IncrementPressed))
                 .push(text("Threshold:").small().bold())
                 .push(
-                    Container::new(text(format!("{}/{}", self.value, self.max)).size(50))
-                        .height(Length::Fill)
+                    Container::new(text(format!("{}/{}", self.value, self.max)).size(30))
                         .align_y(alignment::Vertical::Center),
                 )
-                .push(button(icon::down_icon().size(40), Event::DecrementPressed))
+                .push(button(icon::down_icon().size(30), Event::DecrementPressed))
                 .align_items(Alignment::Center)
                 .into()
         }

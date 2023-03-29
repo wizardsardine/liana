@@ -35,7 +35,7 @@ use crate::{
     signer::Signer,
 };
 
-pub trait DescriptorKeyModal {
+pub trait DescriptorEditModal {
     fn processing(&self) -> bool {
         false
     }
@@ -45,16 +45,53 @@ pub trait DescriptorKeyModal {
     fn view(&self) -> Element<Message>;
 }
 
+pub struct RecoveryPath {
+    keys: Vec<DescriptorKey>,
+    threshold: usize,
+    sequence: u16,
+}
+
+impl RecoveryPath {
+    pub fn new() -> Self {
+        Self {
+            keys: vec![DescriptorKey::default()],
+            threshold: 1,
+            sequence: u16::MAX,
+        }
+    }
+
+    fn valid(&self) -> bool {
+        !self.keys.is_empty() && !self.keys.iter().any(|k| k.key.is_none())
+    }
+
+    fn check_network(&mut self, network: Network) {
+        for key in self.keys.iter_mut() {
+            key.check_network(network);
+        }
+    }
+
+    fn view(&self) -> Element<message::DefinePath> {
+        view::recovery_path_view(
+            self.sequence,
+            self.threshold,
+            self.keys
+                .iter()
+                .enumerate()
+                .map(|(i, key)| key.view().map(move |msg| message::DefinePath::Key(i, msg)))
+                .collect(),
+        )
+    }
+}
+
 pub struct DefineDescriptor {
     network: Network,
     network_valid: bool,
     data_dir: Option<PathBuf>,
     spending_keys: Vec<DescriptorKey>,
     spending_threshold: usize,
-    recovery_keys: Vec<DescriptorKey>,
-    recovery_threshold: usize,
-    sequence: form::Value<String>,
-    modal: Option<Box<dyn DescriptorKeyModal>>,
+    recovery_paths: Vec<RecoveryPath>,
+
+    modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Signer>,
 
     error: Option<String>,
@@ -68,9 +105,7 @@ impl DefineDescriptor {
             network_valid: true,
             spending_keys: vec![DescriptorKey::default()],
             spending_threshold: 1,
-            recovery_keys: vec![DescriptorKey::default()],
-            recovery_threshold: 1,
-            sequence: form::Value::default(),
+            recovery_paths: vec![RecoveryPath::new()],
             modal: None,
             signer: Arc::new(Signer::generate(Network::Bitcoin).unwrap()),
             error: None,
@@ -79,10 +114,8 @@ impl DefineDescriptor {
 
     fn valid(&self) -> bool {
         !self.spending_keys.is_empty()
-            && !self.recovery_keys.is_empty()
-            && !self.sequence.value.is_empty()
             && !self.spending_keys.iter().any(|k| k.key.is_none())
-            && !self.spending_keys.iter().any(|k| k.key.is_none())
+            && !self.recovery_paths.iter().any(|path| !path.valid())
     }
 
     fn set_network(&mut self, network: Network) {
@@ -97,8 +130,8 @@ impl DefineDescriptor {
         for key in self.spending_keys.iter_mut() {
             key.check_network(self.network);
         }
-        for key in self.recovery_keys.iter_mut() {
-            key.check_network(self.network);
+        for path in self.recovery_paths.iter_mut() {
+            path.check_network(self.network);
         }
     }
 
@@ -126,19 +159,21 @@ impl DefineDescriptor {
                 }
             }
         }
-        for recovery_key in &self.recovery_keys {
-            if let Some(key) = &recovery_key.key {
-                if let Some(fg) = all_names.get(&recovery_key.name) {
-                    if fg != &key.master_fingerprint() {
-                        duplicate_names.insert(recovery_key.name.clone());
+        for path in &self.recovery_paths {
+            for recovery_key in &path.keys {
+                if let Some(key) = &recovery_key.key {
+                    if let Some(fg) = all_names.get(&recovery_key.name) {
+                        if fg != &key.master_fingerprint() {
+                            duplicate_names.insert(recovery_key.name.clone());
+                        }
+                    } else {
+                        all_names.insert(recovery_key.name.clone(), key.master_fingerprint());
                     }
-                } else {
-                    all_names.insert(recovery_key.name.clone(), key.master_fingerprint());
-                }
-                if all_keys.contains(key) {
-                    duplicate_keys.insert(key.clone());
-                } else {
-                    all_keys.insert(key.clone());
+                    if all_keys.contains(key) {
+                        duplicate_keys.insert(key.clone());
+                    } else {
+                        all_keys.insert(key.clone());
+                    }
                 }
             }
         }
@@ -148,9 +183,12 @@ impl DefineDescriptor {
                 spending_key.duplicate_key = duplicate_keys.contains(key);
             }
         }
-        for recovery_key in self.recovery_keys.iter_mut() {
-            if let Some(key) = &recovery_key.key {
-                recovery_key.duplicate_key = duplicate_keys.contains(key);
+
+        for path in &mut self.recovery_paths {
+            for recovery_key in path.keys.iter_mut() {
+                if let Some(key) = &recovery_key.key {
+                    recovery_key.duplicate_key = duplicate_keys.contains(key);
+                }
             }
         }
     }
@@ -161,9 +199,11 @@ impl DefineDescriptor {
                 spending_key.name = name.clone();
             }
         }
-        for recovery_key in &mut self.recovery_keys {
-            if recovery_key.key.as_ref().map(|k| k.master_fingerprint()) == Some(fingerprint) {
-                recovery_key.name = name.clone();
+        for path in &mut self.recovery_paths {
+            for recovery_key in &mut path.keys {
+                if recovery_key.key.as_ref().map(|k| k.master_fingerprint()) == Some(fingerprint) {
+                    recovery_key.name = name.clone();
+                }
             }
         }
     }
@@ -199,7 +239,10 @@ impl DefineDescriptor {
                 }
             };
         update_mapping(&self.spending_keys, &mut mapping);
-        update_mapping(&self.recovery_keys, &mut mapping);
+
+        for path in &self.recovery_paths {
+            update_mapping(&path.keys, &mut mapping);
+        }
         mapping
     }
 
@@ -210,9 +253,11 @@ impl DefineDescriptor {
                 map.insert(key.master_fingerprint(), spending_key.name.clone());
             }
         }
-        for recovery_key in &self.recovery_keys {
-            if let Some(key) = recovery_key.key.as_ref() {
-                map.insert(key.master_fingerprint(), recovery_key.name.clone());
+        for path in &self.recovery_paths {
+            for recovery_key in &path.keys {
+                if let Some(key) = recovery_key.key.as_ref() {
+                    map.insert(key.master_fingerprint(), recovery_key.name.clone());
+                }
             }
         }
         map
@@ -229,108 +274,146 @@ impl Step for DefineDescriptor {
                 self.modal = None;
             }
             Message::Network(network) => self.set_network(network),
-            Message::DefineDescriptor(msg) => {
-                match msg {
-                    message::DefineDescriptor::ThresholdEdited(is_recovery, value) => {
-                        if is_recovery {
-                            self.recovery_threshold = value;
-                        } else {
-                            self.spending_threshold = value;
-                        }
-                    }
-                    message::DefineDescriptor::SequenceEdited(seq) => {
-                        self.sequence.valid = true;
-                        if seq.is_empty() || seq.parse::<u16>().is_ok() {
-                            self.sequence.value = seq;
-                        }
-                    }
-                    message::DefineDescriptor::AddKey(is_recovery) => {
-                        if is_recovery {
-                            self.recovery_keys.push(DescriptorKey::default());
-                            self.recovery_threshold += 1;
-                        } else {
-                            self.spending_keys.push(DescriptorKey::default());
-                            self.spending_threshold += 1;
-                        }
-                    }
-                    message::DefineDescriptor::Key(is_recovery, i, msg) => match msg {
-                        message::DefineKey::Clipboard(key) => {
-                            return Command::perform(async move { key }, Message::Clibpboard);
-                        }
-                        message::DefineKey::Edited(name, imported_key) => {
-                            self.edit_alias_for_key_with_same_fingerprint(
-                                name.clone(),
-                                imported_key.master_fingerprint(),
-                            );
-                            if is_recovery {
-                                if let Some(recovery_key) = self.recovery_keys.get_mut(i) {
-                                    recovery_key.name = name;
-                                    recovery_key.key = Some(imported_key);
-                                    recovery_key.check_network(self.network);
-                                }
-                            } else if let Some(spending_key) = self.spending_keys.get_mut(i) {
-                                spending_key.name = name;
-                                spending_key.key = Some(imported_key);
-                                spending_key.check_network(self.network);
-                            }
-                            self.modal = None;
-                            self.check_for_duplicate();
-                        }
-                        message::DefineKey::Edit => {
-                            if is_recovery {
-                                if let Some(recovery_key) = self.recovery_keys.get(i) {
-                                    let modal = EditXpubModal::new(
-                                        recovery_key.name.clone(),
-                                        recovery_key.key.as_ref(),
-                                        i,
-                                        is_recovery,
-                                        self.network,
-                                        self.fingerprint_account_index_mappping(),
-                                        self.keys_aliases(),
-                                        self.signer.clone(),
-                                    );
-                                    let cmd = modal.load();
-                                    self.modal = Some(Box::new(modal));
-                                    return cmd;
-                                }
-                            } else if let Some(spending_key) = self.spending_keys.get(i) {
-                                let modal = EditXpubModal::new(
-                                    spending_key.name.clone(),
-                                    spending_key.key.as_ref(),
-                                    i,
-                                    is_recovery,
-                                    self.network,
-                                    self.fingerprint_account_index_mappping(),
-                                    self.keys_aliases(),
-                                    self.signer.clone(),
-                                );
-                                let cmd = modal.load();
-                                self.modal = Some(Box::new(modal));
-                                return cmd;
-                            }
-                        }
-                        message::DefineKey::Delete => {
-                            if is_recovery {
-                                self.recovery_keys.remove(i);
-                                if self.recovery_threshold > self.recovery_keys.len() {
-                                    self.recovery_threshold -= 1;
-                                }
-                            } else {
-                                self.spending_keys.remove(i);
-                                if self.spending_threshold > self.spending_keys.len() {
-                                    self.spending_threshold -= 1;
-                                }
-                            }
-                            self.check_for_duplicate();
-                        }
-                    },
-                    _ => {
-                        if let Some(modal) = &mut self.modal {
-                            return modal.update(Message::DefineDescriptor(msg));
-                        }
-                    }
-                };
+            Message::DefineDescriptor(message::DefineDescriptor::AddRecoveryPath) => {
+                self.recovery_paths.push(RecoveryPath::new());
             }
+            Message::DefineDescriptor(message::DefineDescriptor::PrimaryPath(msg)) => match msg {
+                message::DefinePath::ThresholdEdited(value) => {
+                    self.spending_threshold = value;
+                }
+                message::DefinePath::AddKey => {
+                    self.spending_keys.push(DescriptorKey::default());
+                    self.spending_threshold += 1;
+                }
+                message::DefinePath::Key(i, msg) => match msg {
+                    message::DefineKey::Clipboard(key) => {
+                        return Command::perform(async move { key }, Message::Clibpboard);
+                    }
+                    message::DefineKey::Edited(name, imported_key) => {
+                        self.edit_alias_for_key_with_same_fingerprint(
+                            name.clone(),
+                            imported_key.master_fingerprint(),
+                        );
+
+                        if let Some(spending_key) = self.spending_keys.get_mut(i) {
+                            spending_key.name = name;
+                            spending_key.key = Some(imported_key);
+                            spending_key.check_network(self.network);
+                        }
+                        self.modal = None;
+                        self.check_for_duplicate();
+                    }
+                    message::DefineKey::Edit => {
+                        if let Some(spending_key) = self.spending_keys.get(i) {
+                            let modal = EditXpubModal::new(
+                                spending_key.name.clone(),
+                                spending_key.key.as_ref(),
+                                None,
+                                i,
+                                self.network,
+                                self.fingerprint_account_index_mappping(),
+                                self.keys_aliases(),
+                                self.signer.clone(),
+                            );
+                            let cmd = modal.load();
+                            self.modal = Some(Box::new(modal));
+                            return cmd;
+                        }
+                    }
+                    message::DefineKey::Delete => {
+                        self.spending_keys.remove(i);
+                        if self.spending_threshold > self.spending_keys.len() {
+                            self.spending_threshold -= 1;
+                        }
+                        self.check_for_duplicate();
+                    }
+                },
+                _ => {}
+            },
+            Message::DefineDescriptor(message::DefineDescriptor::RecoveryPath(i, msg)) => match msg
+            {
+                message::DefinePath::ThresholdEdited(value) => {
+                    if let Some(path) = self.recovery_paths.get_mut(i) {
+                        path.threshold = value;
+                    }
+                }
+                message::DefinePath::SequenceEdited(seq) => {
+                    self.modal = None;
+                    if let Some(path) = self.recovery_paths.get_mut(i) {
+                        path.sequence = seq;
+                    }
+                }
+                message::DefinePath::EditSequence => {
+                    if let Some(path) = self.recovery_paths.get(i) {
+                        self.modal = Some(Box::new(EditSequenceModal::new(i, path.sequence)));
+                    }
+                }
+                message::DefinePath::AddKey => {
+                    if let Some(path) = self.recovery_paths.get_mut(i) {
+                        path.keys.push(DescriptorKey::default());
+                        path.threshold += 1;
+                    }
+                }
+                message::DefinePath::Key(j, msg) => match msg {
+                    message::DefineKey::Clipboard(key) => {
+                        return Command::perform(async move { key }, Message::Clibpboard);
+                    }
+                    message::DefineKey::Edited(name, imported_key) => {
+                        self.edit_alias_for_key_with_same_fingerprint(
+                            name.clone(),
+                            imported_key.master_fingerprint(),
+                        );
+
+                        if let Some(key) = self
+                            .recovery_paths
+                            .get_mut(i)
+                            .and_then(|path| path.keys.get_mut(j))
+                        {
+                            key.name = name;
+                            key.key = Some(imported_key);
+                            key.check_network(self.network);
+                        }
+                        self.modal = None;
+                        self.check_for_duplicate();
+                    }
+                    message::DefineKey::Edit => {
+                        if let Some(key) =
+                            self.recovery_paths.get(i).and_then(|path| path.keys.get(j))
+                        {
+                            let modal = EditXpubModal::new(
+                                key.name.clone(),
+                                key.key.as_ref(),
+                                Some(i),
+                                j,
+                                self.network,
+                                self.fingerprint_account_index_mappping(),
+                                self.keys_aliases(),
+                                self.signer.clone(),
+                            );
+                            let cmd = modal.load();
+                            self.modal = Some(Box::new(modal));
+                            return cmd;
+                        }
+                    }
+                    message::DefineKey::Delete => {
+                        if let Some(path) = self.recovery_paths.get_mut(i) {
+                            path.keys.remove(j);
+                            if path.threshold > path.keys.len() {
+                                path.threshold -= 1;
+                            }
+                        }
+                        if self
+                            .recovery_paths
+                            .get(i)
+                            .map(|path| path.keys.is_empty())
+                            .unwrap_or(false)
+                        {
+                            self.recovery_paths.remove(i);
+                        }
+                        self.check_for_duplicate();
+                    }
+                },
+            },
             _ => {
                 if let Some(modal) = &mut self.modal {
                     return modal.update(message);
@@ -375,40 +458,45 @@ impl Step for DefineDescriptor {
             }
         }
 
-        let mut recovery_keys: Vec<DescriptorPublicKey> = Vec::new();
-        for recovery_key in self.recovery_keys.iter().clone() {
-            if let Some(DescriptorPublicKey::XPub(xpub)) = recovery_key.key.as_ref() {
-                if let Some((master_fingerprint, _)) = xpub.origin {
-                    ctx.keys.push(KeySetting {
-                        master_fingerprint,
-                        name: recovery_key.name.clone(),
-                    });
-                    if master_fingerprint == self.signer.fingerprint() {
-                        signer_is_used = true;
+        let mut recovery_paths = BTreeMap::new();
+
+        for path in self.recovery_paths.iter_mut() {
+            let mut recovery_keys: Vec<DescriptorPublicKey> = Vec::new();
+            for recovery_key in path.keys.iter().clone() {
+                if let Some(DescriptorPublicKey::XPub(xpub)) = recovery_key.key.as_ref() {
+                    if let Some((master_fingerprint, _)) = xpub.origin {
+                        ctx.keys.push(KeySetting {
+                            master_fingerprint,
+                            name: recovery_key.name.clone(),
+                        });
+                        if master_fingerprint == self.signer.fingerprint() {
+                            signer_is_used = true;
+                        }
                     }
+                    let xpub = DescriptorMultiXKey {
+                        origin: xpub.origin.clone(),
+                        xkey: xpub.xkey,
+                        derivation_paths: DerivPaths::new(vec![
+                            DerivationPath::from_str("m/0").unwrap(),
+                            DerivationPath::from_str("m/1").unwrap(),
+                        ])
+                        .unwrap(),
+                        wildcard: Wildcard::Unhardened,
+                    };
+                    recovery_keys.push(DescriptorPublicKey::MultiXPub(xpub));
                 }
-                let xpub = DescriptorMultiXKey {
-                    origin: xpub.origin.clone(),
-                    xkey: xpub.xkey,
-                    derivation_paths: DerivPaths::new(vec![
-                        DerivationPath::from_str("m/0").unwrap(),
-                        DerivationPath::from_str("m/1").unwrap(),
-                    ])
-                    .unwrap(),
-                    wildcard: Wildcard::Unhardened,
-                };
-                recovery_keys.push(DescriptorPublicKey::MultiXPub(xpub));
             }
+
+            let recovery_keys = if recovery_keys.len() == 1 {
+                PathInfo::Single(recovery_keys[0].clone())
+            } else {
+                PathInfo::Multi(path.threshold, recovery_keys)
+            };
+
+            recovery_paths.insert(path.sequence, recovery_keys);
         }
 
-        let sequence = self.sequence.value.parse::<u16>();
-        self.sequence.valid = sequence.is_ok();
-
-        if !self.network_valid
-            || !self.sequence.valid
-            || recovery_keys.is_empty()
-            || spending_keys.is_empty()
-        {
+        if !self.network_valid || spending_keys.is_empty() {
             return false;
         }
 
@@ -417,15 +505,6 @@ impl Step for DefineDescriptor {
         } else {
             PathInfo::Multi(self.spending_threshold, spending_keys)
         };
-
-        let recovery_keys = if recovery_keys.len() == 1 {
-            PathInfo::Single(recovery_keys[0].clone())
-        } else {
-            PathInfo::Multi(self.recovery_threshold, recovery_keys)
-        };
-
-        let mut recovery_paths = BTreeMap::new();
-        recovery_paths.insert(sequence.unwrap(), recovery_keys);
 
         let policy = match LianaPolicy::new(spending_keys, recovery_paths) {
             Ok(policy) => policy,
@@ -452,22 +531,22 @@ impl Step for DefineDescriptor {
                 .enumerate()
                 .map(|(i, key)| {
                     key.view().map(move |msg| {
-                        Message::DefineDescriptor(message::DefineDescriptor::Key(false, i, msg))
+                        Message::DefineDescriptor(message::DefineDescriptor::PrimaryPath(
+                            message::DefinePath::Key(i, msg),
+                        ))
                     })
                 })
                 .collect(),
-            self.recovery_keys
+            self.spending_threshold,
+            self.recovery_paths
                 .iter()
                 .enumerate()
-                .map(|(i, key)| {
-                    key.view().map(move |msg| {
-                        Message::DefineDescriptor(message::DefineDescriptor::Key(true, i, msg))
+                .map(|(i, path)| {
+                    path.view().map(move |msg| {
+                        Message::DefineDescriptor(message::DefineDescriptor::RecoveryPath(i, msg))
                     })
                 })
                 .collect(),
-            &self.sequence,
-            self.spending_threshold,
-            self.recovery_threshold,
             self.valid(),
             self.error.as_ref(),
         );
@@ -557,8 +636,69 @@ impl From<DefineDescriptor> for Box<dyn Step> {
     }
 }
 
+pub struct EditSequenceModal {
+    path_index: usize,
+    sequence: form::Value<String>,
+}
+
+impl EditSequenceModal {
+    pub fn new(path_index: usize, sequence: u16) -> Self {
+        Self {
+            path_index,
+            sequence: form::Value {
+                value: sequence.to_string(),
+                valid: true,
+            },
+        }
+    }
+}
+
+impl DescriptorEditModal for EditSequenceModal {
+    fn processing(&self) -> bool {
+        false
+    }
+
+    fn update(&mut self, message: Message) -> Command<Message> {
+        if let Message::DefineDescriptor(message::DefineDescriptor::SequenceModal(msg)) = message {
+            match msg {
+                message::SequenceModal::SequenceEdited(seq) => {
+                    if let Ok(s) = u16::from_str(&seq) {
+                        self.sequence.valid = s != 0
+                    } else {
+                        self.sequence.valid = false;
+                    }
+                    self.sequence.value = seq;
+                }
+                message::SequenceModal::ConfirmSequence => {
+                    if self.sequence.valid {
+                        if let Ok(sequence) = u16::from_str(&self.sequence.value) {
+                            let path_index = self.path_index;
+                            return Command::perform(
+                                async move { (path_index, sequence) },
+                                |(path_index, sequence)| {
+                                    message::DefineDescriptor::RecoveryPath(
+                                        path_index,
+                                        message::DefinePath::SequenceEdited(sequence),
+                                    )
+                                },
+                            )
+                            .map(Message::DefineDescriptor);
+                        }
+                    }
+                }
+            }
+        }
+        Command::none()
+    }
+
+    fn view(&self) -> Element<Message> {
+        view::edit_sequence_modal(&self.sequence)
+    }
+}
+
 pub struct EditXpubModal {
-    is_recovery: bool,
+    /// None if path is primary path
+    path_index: Option<usize>,
     key_index: usize,
     network: Network,
     error: Option<Error>,
@@ -583,8 +723,8 @@ impl EditXpubModal {
     fn new(
         name: String,
         key: Option<&DescriptorPublicKey>,
+        path_index: Option<usize>,
         key_index: usize,
-        is_recovery: bool,
         network: Network,
         account_indexes: HashMap<Fingerprint, ChildNumber>,
         keys_aliases: HashMap<Fingerprint, String>,
@@ -601,7 +741,7 @@ impl EditXpubModal {
             },
             keys_aliases,
             account_indexes,
-            is_recovery,
+            path_index,
             key_index,
             chosen_hw: None,
             processing: false,
@@ -621,7 +761,7 @@ impl EditXpubModal {
     }
 }
 
-impl DescriptorKeyModal for EditXpubModal {
+impl DescriptorEditModal for EditXpubModal {
     fn processing(&self) -> bool {
         self.processing
     }
@@ -650,8 +790,8 @@ impl DescriptorKeyModal for EditXpubModal {
                             generate_derivation_path(self.network, account_index),
                         ),
                         |res| {
-                            Message::DefineDescriptor(message::DefineDescriptor::HWXpubImported(
-                                res,
+                            Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
+                                message::ImportKeyModal::HWXpubImported(res),
                             ))
                         },
                     );
@@ -696,71 +836,89 @@ impl DescriptorKeyModal for EditXpubModal {
                     self.signer.get_extended_pubkey(&derivation_path)
                 );
             }
-            Message::DefineDescriptor(message::DefineDescriptor::HWXpubImported(res)) => {
-                self.processing = false;
-                match res {
-                    Ok(key) => {
-                        if let Some(alias) = self.keys_aliases.get(&key.master_fingerprint()) {
-                            self.form_name.valid = true;
-                            self.form_name.value = alias.clone();
-                            self.edit_name = false;
-                        } else {
-                            self.edit_name = true;
+            Message::DefineDescriptor(message::DefineDescriptor::KeyModal(msg)) => match msg {
+                message::ImportKeyModal::HWXpubImported(res) => {
+                    self.processing = false;
+                    match res {
+                        Ok(key) => {
+                            if let Some(alias) = self.keys_aliases.get(&key.master_fingerprint()) {
+                                self.form_name.valid = true;
+                                self.form_name.value = alias.clone();
+                                self.edit_name = false;
+                            } else {
+                                self.edit_name = true;
+                            }
+                            self.chosen_signer = false;
+                            self.form_xpub.valid = true;
+                            self.form_xpub.value = key.to_string();
                         }
-                        self.chosen_signer = false;
-                        self.form_xpub.valid = true;
-                        self.form_xpub.value = key.to_string();
-                    }
-                    Err(e) => {
-                        self.chosen_hw = None;
-                        self.error = Some(e);
+                        Err(e) => {
+                            self.chosen_hw = None;
+                            self.error = Some(e);
+                        }
                     }
                 }
-            }
-            Message::DefineDescriptor(message::DefineDescriptor::EditName) => {
-                self.edit_name = true;
-            }
-            Message::DefineDescriptor(message::DefineDescriptor::NameEdited(name)) => {
-                self.form_name.valid = true;
-                self.form_name.value = name;
-            }
-            Message::DefineDescriptor(message::DefineDescriptor::XPubEdited(s)) => {
-                if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&s) {
-                    if let Some((fingerprint, _)) = key.origin {
-                        self.form_xpub.valid = true;
-                        if let Some(alias) = self.keys_aliases.get(&fingerprint) {
-                            self.form_name.valid = true;
-                            self.form_name.value = alias.clone();
-                            self.edit_name = false;
+                message::ImportKeyModal::EditName => {
+                    self.edit_name = true;
+                }
+                message::ImportKeyModal::NameEdited(name) => {
+                    self.form_name.valid = true;
+                    self.form_name.value = name;
+                }
+                message::ImportKeyModal::XPubEdited(s) => {
+                    if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&s) {
+                        if let Some((fingerprint, _)) = key.origin {
+                            self.form_xpub.valid = true;
+                            if let Some(alias) = self.keys_aliases.get(&fingerprint) {
+                                self.form_name.valid = true;
+                                self.form_name.value = alias.clone();
+                                self.edit_name = false;
+                            } else {
+                                self.edit_name = true;
+                            }
                         } else {
-                            self.edit_name = true;
+                            self.form_xpub.valid = false;
                         }
                     } else {
                         self.form_xpub.valid = false;
                     }
-                } else {
-                    self.form_xpub.valid = false;
+                    self.form_xpub.value = s;
                 }
-                self.form_xpub.value = s;
-            }
-            Message::DefineDescriptor(message::DefineDescriptor::ConfirmXpub) => {
-                if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
-                    let key_index = self.key_index;
-                    let is_recovery = self.is_recovery;
-                    let name = self.form_name.value.clone();
-                    return Command::perform(
-                        async move { (is_recovery, key_index, key) },
-                        |(is_recovery, key_index, key)| {
-                            message::DefineDescriptor::Key(
-                                is_recovery,
-                                key_index,
-                                message::DefineKey::Edited(name, key),
+                message::ImportKeyModal::ConfirmXpub => {
+                    if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
+                        let key_index = self.key_index;
+                        let name = self.form_name.value.clone();
+                        if let Some(path_index) = self.path_index {
+                            return Command::perform(
+                                async move { (path_index, key_index, key) },
+                                |(path_index, key_index, key)| {
+                                    message::DefineDescriptor::RecoveryPath(
+                                        path_index,
+                                        message::DefinePath::Key(
+                                            key_index,
+                                            message::DefineKey::Edited(name, key),
+                                        ),
+                                    )
+                                },
                             )
-                        },
-                    )
-                    .map(Message::DefineDescriptor);
+                            .map(Message::DefineDescriptor);
+                        } else {
+                            return Command::perform(
+                                async move { (key_index, key) },
+                                |(key_index, key)| {
+                                    message::DefineDescriptor::PrimaryPath(
+                                        message::DefinePath::Key(
+                                            key_index,
+                                            message::DefineKey::Edited(name, key),
+                                        ),
+                                    )
+                                },
+                            )
+                            .map(Message::DefineDescriptor);
+                        }
+                    }
                 }
-            }
+            },
             _ => {}
         };
         Command::none()
@@ -1321,22 +1479,25 @@ mod tests {
 
         // Edit primary key
         sandbox
-            .update(Message::DefineDescriptor(message::DefineDescriptor::Key(
-                false,
-                0,
-                message::DefineKey::Edit,
-            )))
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::PrimaryPath(message::DefinePath::Key(
+                    0,
+                    message::DefineKey::Edit,
+                )),
+            ))
             .await;
         sandbox.check(|step| assert!(step.modal.is_some()));
         sandbox.update(Message::UseHotSigner).await;
         sandbox
             .update(Message::DefineDescriptor(
-                message::DefineDescriptor::NameEdited("hot signer key".to_string()),
+                message::DefineDescriptor::KeyModal(message::ImportKeyModal::NameEdited(
+                    "hot signer key".to_string(),
+                )),
             ))
             .await;
         sandbox
             .update(Message::DefineDescriptor(
-                message::DefineDescriptor::ConfirmXpub,
+                message::DefineDescriptor::KeyModal(message::ImportKeyModal::ConfirmXpub),
             ))
             .await;
         sandbox.check(|step| assert!(step.modal.is_none()));
@@ -1344,30 +1505,38 @@ mod tests {
         // Edit sequence
         sandbox
             .update(Message::DefineDescriptor(
-                message::DefineDescriptor::SequenceEdited("1000".to_string()),
+                message::DefineDescriptor::RecoveryPath(
+                    0,
+                    message::DefinePath::SequenceEdited(1000),
+                ),
             ))
             .await;
 
         // Edit recovery key
         sandbox
-            .update(Message::DefineDescriptor(message::DefineDescriptor::Key(
-                true,
-                0,
-                message::DefineKey::Edit,
-            )))
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::RecoveryPath(
+                    0,
+                    message::DefinePath::Key(0, message::DefineKey::Edit),
+                ),
+            ))
             .await;
         sandbox.check(|step| assert!(step.modal.is_some()));
         sandbox.update(Message::DefineDescriptor(
-            message::DefineDescriptor::XPubEdited("[f5acc2fd/48'/1'/0'/2']tpubDFAqEGNyad35aBCKUAXbQGDjdVhNueno5ZZVEn3sQbW5ci457gLR7HyTmHBg93oourBssgUxuWz1jX5uhc1qaqFo9VsybY1J5FuedLfm4dK".to_string()),
+                message::DefineDescriptor::KeyModal(
+                    message::ImportKeyModal::XPubEdited("[f5acc2fd/48'/1'/0'/2']tpubDFAqEGNyad35aBCKUAXbQGDjdVhNueno5ZZVEn3sQbW5ci457gLR7HyTmHBg93oourBssgUxuWz1jX5uhc1qaqFo9VsybY1J5FuedLfm4dK".to_string()),
+                )
         )).await;
         sandbox
             .update(Message::DefineDescriptor(
-                message::DefineDescriptor::NameEdited("external recovery key".to_string()),
+                message::DefineDescriptor::KeyModal(message::ImportKeyModal::NameEdited(
+                    "External recovery key".to_string(),
+                )),
             ))
             .await;
         sandbox
             .update(Message::DefineDescriptor(
-                message::DefineDescriptor::ConfirmXpub,
+                message::DefineDescriptor::KeyModal(message::ImportKeyModal::ConfirmXpub),
             ))
             .await;
         sandbox.check(|step| {

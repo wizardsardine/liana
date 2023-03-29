@@ -43,16 +43,21 @@ pub enum DefineBitcoind {
 #[derive(Debug, Clone)]
 pub enum DefineDescriptor {
     ImportDescriptor(String),
-    /// AddKey(is_recovery)
-    AddKey(bool),
-    Key(bool, usize, DefineKey),
-    HWXpubImported(Result<DescriptorPublicKey, Error>),
-    XPubEdited(String),
-    EditName,
-    NameEdited(String),
-    SequenceEdited(String),
-    ThresholdEdited(bool, usize),
-    ConfirmXpub,
+    PrimaryPath(DefinePath),
+    RecoveryPath(usize, DefinePath),
+    AddRecoveryPath,
+    KeyModal(ImportKeyModal),
+    SequenceModal(SequenceModal),
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone)]
+pub enum DefinePath {
+    AddKey,
+    Key(usize, DefineKey),
+    ThresholdEdited(usize),
+    SequenceEdited(u16),
+    EditSequence,
 }
 
 #[derive(Debug, Clone)]
@@ -61,4 +66,19 @@ pub enum DefineKey {
     Edit,
     Clipboard(String),
     Edited(String, DescriptorPublicKey),
+}
+
+#[derive(Debug, Clone)]
+pub enum ImportKeyModal {
+    HWXpubImported(Result<DescriptorPublicKey, Error>),
+    XPubEdited(String),
+    EditName,
+    NameEdited(String),
+    ConfirmXpub,
+}
+
+#[derive(Debug, Clone)]
+pub enum SequenceModal {
+    SequenceEdited(String),
+    ConfirmSequence,
 }
