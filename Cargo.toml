@@ -28,7 +28,7 @@ daemon = ["libc"]
 miniscript = { git = "https://github.com/darosior/rust-miniscript", branch = "multipath_descriptors_on_9.0", features = ["serde"] }
 
 # Don't reinvent the wheel
-dirs = "3.0"
+dirs = "5.0"
 
 # We use TOML for the config, and JSON for RPC
 serde = { version = "1.0", features = ["derive"] }
@@ -67,4 +67,4 @@ rdrand = "0.8"
 rdrand = "0.8"
 
 # Used for the hot signer
-bip39 = "1.0"
+bip39 = "2.0"
