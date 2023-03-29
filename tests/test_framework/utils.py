@@ -12,7 +12,7 @@ from io import BytesIO
 from .serializations import CTransaction, PSBT
 
 TIMEOUT = int(os.getenv("TIMEOUT", 20))
-EXECUTOR_WORKERS = int(os.getenv("EXECUTOR_WORKERS", 20))
+EXECUTOR_WORKERS = int(os.getenv("EXECUTOR_WORKERS", 5))
 VERBOSE = os.getenv("VERBOSE", "0") == "1"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "debug")
 assert LOG_LEVEL in ["trace", "debug", "info", "warn", "error"]
