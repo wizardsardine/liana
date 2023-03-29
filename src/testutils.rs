@@ -120,7 +120,7 @@ struct DummyDbState {
     change_index: bip32::ChildNumber,
     curr_tip: Option<BlockChainTip>,
     coins: HashMap<bitcoin::OutPoint, Coin>,
-    spend_txs: HashMap<bitcoin::Txid, Psbt>,
+    spend_txs: HashMap<bitcoin::Txid, (Psbt, Option<u32>)>,
 }
 
 pub struct DummyDatabase {
@@ -293,14 +293,20 @@ impl DatabaseConnection for DummyDatabase {
             .write()
             .unwrap()
             .spend_txs
-            .insert(txid, psbt.clone());
+            .insert(txid, (psbt.clone(), None));
     }
 
     fn spend_tx(&mut self, txid: &bitcoin::Txid) -> Option<Psbt> {
-        self.db.read().unwrap().spend_txs.get(txid).cloned()
+        self.db
+            .read()
+            .unwrap()
+            .spend_txs
+            .get(txid)
+            .cloned()
+            .map(|x| x.0)
     }
 
-    fn list_spend(&mut self) -> Vec<Psbt> {
+    fn list_spend(&mut self) -> Vec<(Psbt, Option<u32>)> {
         self.db
             .read()
             .unwrap()

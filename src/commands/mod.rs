@@ -563,7 +563,7 @@ impl DaemonControl {
         let spend_txs = db_conn
             .list_spend()
             .into_iter()
-            .map(|psbt| ListSpendEntry { psbt })
+            .map(|(psbt, updated_at)| ListSpendEntry { psbt, updated_at })
             .collect();
         ListSpendResult { spend_txs }
     }
@@ -840,6 +840,7 @@ pub struct CreateSpendResult {
 pub struct ListSpendEntry {
     #[serde(serialize_with = "ser_base64", deserialize_with = "deser_base64")]
     pub psbt: Psbt,
+    pub updated_at: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

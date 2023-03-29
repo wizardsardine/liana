@@ -50,11 +50,14 @@ where
         .collect::<rusqlite::Result<Vec<T>>>()
 }
 
-// Sqlite supports up to i64, thus rusqlite prevents us from inserting u64's.
-// We use this to panic rather than inserting a truncated integer into the database (as we'd have
-// done by using `n as u32`).
-fn timestamp_to_u32(n: u64) -> u32 {
-    n.try_into()
+/// The current time as the number of seconds since the UNIX epoch, truncated to u32 since SQLite
+/// only supports i64 integers.
+pub fn curr_timestamp() -> u32 {
+    time::SystemTime::now()
+        .duration_since(time::UNIX_EPOCH)
+        .expect("System clock went backward the epoch?")
+        .as_secs()
+        .try_into()
         .expect("Is this the year 2106 yet? Misconfigured system clock.")
 }
 
@@ -87,10 +90,7 @@ pub fn create_fresh_db(
 ) -> Result<(), SqliteDbError> {
     create_db_file(db_path)?;
 
-    let timestamp = time::SystemTime::now()
-        .duration_since(time::UNIX_EPOCH)
-        .map(|dur| timestamp_to_u32(dur.as_secs()))
-        .expect("System clock went backward the epoch?");
+    let timestamp = curr_timestamp();
 
     // Fill the initial addresses. On a fresh database, the deposit_derivation_index is
     // necessarily 0.

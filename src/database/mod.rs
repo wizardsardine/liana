@@ -112,8 +112,8 @@ pub trait DatabaseConnection {
     /// Insert a new Spend transaction or replace an existing one.
     fn store_spend(&mut self, psbt: &Psbt);
 
-    /// List all existing Spend transactions.
-    fn list_spend(&mut self) -> Vec<Psbt>;
+    /// List all existing Spend transactions, along with an optional last update timestamp.
+    fn list_spend(&mut self) -> Vec<(Psbt, Option<u32>)>;
 
     /// Delete a Spend transaction from database.
     fn delete_spend(&mut self, txid: &bitcoin::Txid);
@@ -241,10 +241,10 @@ impl DatabaseConnection for SqliteConn {
         self.store_spend(psbt)
     }
 
-    fn list_spend(&mut self) -> Vec<Psbt> {
+    fn list_spend(&mut self) -> Vec<(Psbt, Option<u32>)> {
         self.list_spend()
             .into_iter()
-            .map(|db_spend| db_spend.psbt)
+            .map(|db_spend| (db_spend.psbt, db_spend.updated_at))
             .collect()
     }
 

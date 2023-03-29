@@ -15,8 +15,8 @@ use crate::{
         sqlite::{
             schema::{DbAddress, DbCoin, DbSpendTransaction, DbTip, DbWallet, SCHEMA},
             utils::{
-                create_fresh_db, db_exec, db_query, db_tx_query, db_version, maybe_apply_migration,
-                LOOK_AHEAD_LIMIT,
+                create_fresh_db, curr_timestamp, db_exec, db_query, db_tx_query, db_version,
+                maybe_apply_migration, LOOK_AHEAD_LIMIT,
             },
         },
         Coin, CoinType,
@@ -500,9 +500,9 @@ impl SqliteConn {
 
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(
-                "INSERT into spend_transactions (psbt, txid) VALUES (?1, ?2) \
+                "INSERT into spend_transactions (psbt, txid, updated_at) VALUES (?1, ?2, ?3) \
                  ON CONFLICT DO UPDATE SET psbt=excluded.psbt",
-                rusqlite::params![psbt, txid],
+                rusqlite::params![psbt, txid, curr_timestamp()],
             )?;
             Ok(())
         })
@@ -1463,12 +1463,11 @@ CREATE TABLE spend_transactions (
                 .find(|db_spend| db_spend.psbt == first_psbt)
                 .unwrap();
             assert!(first_spend.updated_at.is_none());
-            // TODO: update once we update store_spend() to take a timestamp.
             let second_spend = db_spends
                 .iter()
                 .find(|db_spend| db_spend.psbt == second_psbt)
                 .unwrap();
-            assert!(second_spend.updated_at.is_none());
+            assert!(second_spend.updated_at.is_some());
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();

@@ -174,6 +174,7 @@ This command does not take any parameter for now.
 | Field          | Type              | Description                                                             |
 | -------------- | ----------------- | ----------------------------------------------------------------------- |
 | `psbt`         | string            | Base64-encoded PSBT of the Spend transaction.                           |
+| `updated_at`   | int or null       | UNIX timestamp of the last time this PSBT was updated.                  |
 
 
 ### `delspendtx`
