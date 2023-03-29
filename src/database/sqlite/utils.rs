@@ -1,4 +1,4 @@
-use crate::database::sqlite::{schema::SCHEMA, FreshDbOptions, SqliteDbError, DB_VERSION};
+use crate::database::sqlite::{FreshDbOptions, SqliteDbError, DB_VERSION};
 
 use std::{convert::TryInto, fs, path, time};
 
@@ -79,6 +79,7 @@ pub fn create_db_file(db_path: &path::Path) -> Result<(), std::io::Error> {
     };
 }
 
+/// Create a fresh Liana database with the given schema.
 pub fn create_fresh_db(
     db_path: &path::Path,
     options: FreshDbOptions,
@@ -113,10 +114,10 @@ pub fn create_fresh_db(
 
     let mut conn = rusqlite::Connection::open(db_path)?;
     db_exec(&mut conn, |tx| {
-        tx.execute_batch(SCHEMA)?;
+        tx.execute_batch(options.schema)?;
         tx.execute(
             "INSERT INTO version (version) VALUES (?1)",
-            rusqlite::params![DB_VERSION],
+            rusqlite::params![options.version],
         )?;
         tx.execute(
             "INSERT INTO tip (network, blockheight, blockhash) VALUES (?1, NULL, NULL)",
@@ -157,10 +158,7 @@ fn migrate_v0_to_v1(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
             "ALTER TABLE spend_transactions ADD COLUMN updated_at",
             rusqlite::params![],
         )?;
-        tx.execute(
-            "UPDATE version SET version = 1",
-            rusqlite::params![],
-        )?;
+        tx.execute("UPDATE version SET version = 1", rusqlite::params![])?;
         Ok(())
     })?;
 

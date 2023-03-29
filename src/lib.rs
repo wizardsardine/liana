@@ -184,10 +184,10 @@ fn setup_sqlite(
         .iter()
         .collect();
     let options = if fresh_data_dir {
-        Some(FreshDbOptions {
-            bitcoind_network: config.bitcoin_config.network,
-            main_descriptor: config.main_descriptor.clone(),
-        })
+        Some(FreshDbOptions::new(
+            config.bitcoin_config.network,
+            config.main_descriptor.clone(),
+        ))
     } else {
         None
     };
