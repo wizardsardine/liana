@@ -224,7 +224,7 @@ impl Recipient {
 
 pub struct ChooseCoins {
     descriptor: LianaDescriptor,
-    timelock: u32,
+    timelock: u16,
     coins: Vec<(Coin, bool)>,
     recipients: Vec<(Address, Amount)>,
 
@@ -238,7 +238,7 @@ impl ChooseCoins {
     pub fn new(
         descriptor: LianaDescriptor,
         coins: Vec<Coin>,
-        timelock: u32,
+        timelock: u16,
         blockheight: u32,
     ) -> Self {
         let mut coins: Vec<(Coin, bool)> = coins

@@ -138,7 +138,7 @@ pub struct CreateSpendPanel {
 impl CreateSpendPanel {
     pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: u32) -> Self {
         let descriptor = wallet.main_descriptor.clone();
-        let timelock = descriptor.timelock_value();
+        let timelock = descriptor.first_timelock_value();
         Self {
             draft: step::TransactionDraft::default(),
             current: 0,

@@ -110,30 +110,12 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                 .push(
                     Row::new()
                         .push(badge::spend())
-                        .push(if let Some(sigs) = tx.sigs.recovery_path() {
-                            Row::new()
-                                .spacing(10)
-                                .align_items(Alignment::Center)
-                                .push(
-                                    Row::new()
-                                        .spacing(5)
-                                        .align_items(Alignment::Center)
-                                        .push(text(format!(
-                                            "{}/{}",
-                                            if sigs.sigs_count <= sigs.threshold {
-                                                sigs.sigs_count
-                                            } else {
-                                                sigs.threshold
-                                            },
-                                            sigs.threshold
-                                        )))
-                                        .push(icon::key_icon()),
-                                )
-                                .push(
-                                    Container::new(text(" Recovery ").small())
-                                        .padding(3)
-                                        .style(theme::Container::Pill(theme::Pill::Simple)),
-                                )
+                        .push(if !tx.sigs.recovery_paths().is_empty() {
+                            Row::new().push(
+                                Container::new(text(" Recovery ").small())
+                                    .padding(3)
+                                    .style(theme::Container::Pill(theme::Pill::Simple)),
+                            )
                         } else {
                             let sigs = tx.sigs.primary_path();
                             Row::new()

@@ -33,11 +33,11 @@ pub struct RecoveryPanel {
     recipient: form::Value<String>,
     generated: Option<detail::SpendTxState>,
     /// timelock value to pass for the heir to consume a coin.
-    timelock: u32,
+    timelock: u16,
 }
 
 impl RecoveryPanel {
-    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], timelock: u32, blockheight: u32) -> Self {
+    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], timelock: u16, blockheight: u32) -> Self {
         let mut locked_coins = (0, Amount::from_sat(0));
         let mut recoverable_coins = (0, Amount::from_sat(0));
         for coin in coins {

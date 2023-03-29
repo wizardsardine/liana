@@ -55,8 +55,10 @@ impl Wallet {
         for (fingerprint, _) in info.primary_path().thresh_origins().1.iter() {
             descriptor_keys.insert(*fingerprint);
         }
-        for (fingerprint, _) in info.recovery_path().1.thresh_origins().1.iter() {
-            descriptor_keys.insert(*fingerprint);
+        for path in info.recovery_paths().values() {
+            for (fingerprint, _) in path.thresh_origins().1.iter() {
+                descriptor_keys.insert(*fingerprint);
+            }
         }
         descriptor_keys
     }

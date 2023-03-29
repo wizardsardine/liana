@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -424,7 +424,10 @@ impl Step for DefineDescriptor {
             PathInfo::Multi(self.recovery_threshold, recovery_keys)
         };
 
-        let policy = match LianaPolicy::new(spending_keys, recovery_keys, sequence.unwrap()) {
+        let mut recovery_paths = BTreeMap::new();
+        recovery_paths.insert(sequence.unwrap(), recovery_keys);
+
+        let policy = match LianaPolicy::new(spending_keys, recovery_paths) {
             Ok(policy) => policy,
             Err(e) => {
                 self.error = Some(e.to_string());

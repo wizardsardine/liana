@@ -201,7 +201,7 @@ impl Daemon for EmbeddedDaemon {
             .read()
             .unwrap()
             .control
-            .create_recovery(address, feerate_vb)
+            .create_recovery(address, feerate_vb, None)
             .map_err(|e| DaemonError::Unexpected(e.to_string()))
             .map(|res| res.psbt)
     }

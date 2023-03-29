@@ -124,12 +124,12 @@ impl State for Home {
                     for coin in coins {
                         if coin.spend_info.is_none() && coin.block_height.is_some() {
                             self.balance += coin.amount;
-                            let timelock = self.wallet.main_descriptor.timelock_value();
+                            let timelock = self.wallet.main_descriptor.first_timelock_value();
                             let seq = remaining_sequence(&coin, cache.blockheight as u32, timelock);
                             if seq == 0 {
                                 recovery_alert.0 += coin.amount;
                                 recovery_alert.1 += 1;
-                            } else if seq < timelock * 10 / 100 {
+                            } else if seq < timelock as u32 * 10 / 100 {
                                 recovery_warning.0 += coin.amount;
                                 recovery_warning.1 += 1;
                             }
