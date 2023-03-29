@@ -1,7 +1,7 @@
 task:
   name: 'Functional tests'
   container:
-    image: rust:latest
+    image: rust:1-bookworm
   timeout_in: 90m  # https://cirrus-ci.org/faq/#instance-timed-out
 
   env:
@@ -37,7 +37,7 @@ task:
 
   pip_cache:
     folder: ~/.cache/pip
-  python_deps_script: pip install -r tests/requirements.txt
+  python_deps_script: pip install --break-system-packages -r tests/requirements.txt
 
   test_script: |
     set -xe
@@ -47,6 +47,15 @@ task:
     echo "49df6e444515d457ea0b885d66f521f2a26ca92ccf73d5296082e633544253bf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
     tar -xzf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
     export BITCOIND_PATH=bitcoin-24.0.1/bin/bitcoind
+
+    # The misc tests have a backward compat test that need the path to a previous version of Liana.
+    # For now it requires using 0.3.
+    if [ "$TEST_GROUP" = "tests/test_misc.py" ]; then
+      curl -LO https://github.com/wizardsardine/liana/releases/download/0.3.1/liana-0.3.1-x86_64-linux-gnu.tar.gz
+      echo "70c8595554b6f78ccc7b66ef5f5ebc5bac03a7b1ce28afe8a076f69adf59c583 liana-0.3.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+      tar -xzf liana-0.3.1-x86_64-linux-gnu.tar.gz
+      export OLD_LIANAD_PATH="$PWD/liana-0.3.1-x86_64-linux-gnu/lianad"
+    fi
 
     # Run the functional tests
     LIANAD_PATH=$PWD/target/release/lianad pytest $TEST_GROUP -vvv -n 2
