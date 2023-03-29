@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use iced::Command;
 use liana::{
-    descriptors::{LianaDescKeys, MultipathDescriptor},
+    descriptors::{LianaDescriptor, LianaPolicy, PathInfo},
     miniscript::{
         bitcoin::{
             util::bip32::{ChildNumber, DerivationPath, Fingerprint},
@@ -410,38 +410,26 @@ impl Step for DefineDescriptor {
         }
 
         let spending_keys = if spending_keys.len() == 1 {
-            LianaDescKeys::from_single(spending_keys[0].clone())
+            PathInfo::Single(spending_keys[0].clone())
         } else {
-            match LianaDescKeys::from_multi(self.spending_threshold, spending_keys) {
-                Ok(keys) => keys,
-                Err(e) => {
-                    self.error = Some(e.to_string());
-                    return false;
-                }
-            }
+            PathInfo::Multi(self.spending_threshold, spending_keys)
         };
 
         let recovery_keys = if recovery_keys.len() == 1 {
-            LianaDescKeys::from_single(recovery_keys[0].clone())
+            PathInfo::Single(recovery_keys[0].clone())
         } else {
-            match LianaDescKeys::from_multi(self.recovery_threshold, recovery_keys) {
-                Ok(keys) => keys,
-                Err(e) => {
-                    self.error = Some(e.to_string());
-                    return false;
-                }
-            }
+            PathInfo::Multi(self.recovery_threshold, recovery_keys)
         };
 
-        let desc = match MultipathDescriptor::new(spending_keys, recovery_keys, sequence.unwrap()) {
-            Ok(desc) => desc,
+        let policy = match LianaPolicy::new(spending_keys, recovery_keys, sequence.unwrap()) {
+            Ok(policy) => policy,
             Err(e) => {
                 self.error = Some(e.to_string());
                 return false;
             }
         };
 
-        ctx.descriptor = Some(desc);
+        ctx.descriptor = Some(LianaDescriptor::new(policy));
         if signer_is_used {
             ctx.signer = Some(self.signer.clone());
         }
@@ -1115,7 +1103,7 @@ impl Step for ImportDescriptor {
         ctx.bitcoin_config.network = self.network;
         // descriptor forms for import or creation cannot be both empty or filled.
         if !self.imported_descriptor.value.is_empty() {
-            if let Ok(desc) = MultipathDescriptor::from_str(&self.imported_descriptor.value) {
+            if let Ok(desc) = LianaDescriptor::from_str(&self.imported_descriptor.value) {
                 self.imported_descriptor.valid = true;
                 ctx.descriptor = Some(desc);
                 true
@@ -1148,7 +1136,7 @@ impl From<ImportDescriptor> for Box<dyn Step> {
 
 #[derive(Default)]
 pub struct RegisterDescriptor {
-    descriptor: Option<MultipathDescriptor>,
+    descriptor: Option<LianaDescriptor>,
     processing: bool,
     chosen_hw: Option<usize>,
     hws: Vec<HardwareWallet>,
@@ -1262,7 +1250,7 @@ impl From<RegisterDescriptor> for Box<dyn Step> {
 #[derive(Default)]
 pub struct BackupDescriptor {
     done: bool,
-    descriptor: Option<MultipathDescriptor>,
+    descriptor: Option<LianaDescriptor>,
 }
 
 impl Step for BackupDescriptor {

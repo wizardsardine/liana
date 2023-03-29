@@ -9,7 +9,7 @@ use crate::{
 
 use liana::{miniscript::bitcoin, signer::HotSigner};
 
-use liana::descriptors::MultipathDescriptor;
+use liana::descriptors::LianaDescriptor;
 use liana::miniscript::bitcoin::util::bip32::Fingerprint;
 
 pub const DEFAULT_WALLET_NAME: &str = "Liana";
@@ -17,14 +17,14 @@ pub const DEFAULT_WALLET_NAME: &str = "Liana";
 #[derive(Debug)]
 pub struct Wallet {
     pub name: String,
-    pub main_descriptor: MultipathDescriptor,
+    pub main_descriptor: LianaDescriptor,
     pub keys_aliases: HashMap<Fingerprint, String>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Signer>,
 }
 
 impl Wallet {
-    pub fn new(main_descriptor: MultipathDescriptor) -> Self {
+    pub fn new(main_descriptor: LianaDescriptor) -> Self {
         Self {
             name: DEFAULT_WALLET_NAME.to_string(),
             main_descriptor,
@@ -50,7 +50,7 @@ impl Wallet {
     }
 
     pub fn descriptor_keys(&self) -> HashSet<Fingerprint> {
-        let info = self.main_descriptor.info();
+        let info = self.main_descriptor.policy();
         let mut descriptor_keys = HashSet::new();
         for (fingerprint, _) in info.primary_path().thresh_origins().1.iter() {
             descriptor_keys.insert(*fingerprint);

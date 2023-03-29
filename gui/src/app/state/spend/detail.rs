@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use iced::Command;
 use liana::{
-    descriptors::LianaDescInfo,
+    descriptors::LianaPolicy,
     miniscript::bitcoin::{
         consensus,
         util::{bip32::Fingerprint, psbt::Psbt},
@@ -50,7 +50,7 @@ trait Action {
 
 pub struct SpendTxState {
     wallet: Arc<Wallet>,
-    desc_info: LianaDescInfo,
+    desc_policy: LianaPolicy,
     tx: SpendTx,
     saved: bool,
     action: Option<Box<dyn Action>>,
@@ -59,7 +59,7 @@ pub struct SpendTxState {
 impl SpendTxState {
     pub fn new(wallet: Arc<Wallet>, tx: SpendTx, saved: bool) -> Self {
         Self {
-            desc_info: wallet.main_descriptor.info(),
+            desc_policy: wallet.main_descriptor.policy(),
             wallet,
             action: None,
             tx,
@@ -132,7 +132,7 @@ impl SpendTxState {
         let content = detail::spend_view(
             &self.tx,
             self.saved,
-            &self.desc_info,
+            &self.desc_policy,
             &self.wallet.keys_aliases,
             cache.network,
         );

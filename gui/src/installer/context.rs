@@ -14,7 +14,7 @@ use async_hwi::DeviceKind;
 use liana::{
     config::Config,
     config::{BitcoinConfig, BitcoindConfig},
-    descriptors::MultipathDescriptor,
+    descriptors::LianaDescriptor,
     miniscript::bitcoin,
 };
 
@@ -22,7 +22,7 @@ use liana::{
 pub struct Context {
     pub bitcoin_config: BitcoinConfig,
     pub bitcoind_config: Option<BitcoindConfig>,
-    pub descriptor: Option<MultipathDescriptor>,
+    pub descriptor: Option<LianaDescriptor>,
     pub keys: Vec<KeySetting>,
     pub hws: Vec<(
         DeviceKind,
