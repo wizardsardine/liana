@@ -14,7 +14,10 @@ use crate::{
     database::{
         sqlite::{
             schema::{DbAddress, DbCoin, DbSpendTransaction, DbTip, DbWallet},
-            utils::{create_fresh_db, db_exec, db_query, db_tx_query, LOOK_AHEAD_LIMIT},
+            utils::{
+                create_fresh_db, db_exec, db_query, db_tx_query, db_version, maybe_apply_migration,
+                LOOK_AHEAD_LIMIT,
+            },
         },
         Coin, CoinType,
     },
@@ -31,7 +34,7 @@ use miniscript::bitcoin::{
     util::{bip32, psbt::PartiallySignedTransaction as Psbt},
 };
 
-const DB_VERSION: i64 = 0;
+const DB_VERSION: i64 = 1;
 
 #[derive(Debug)]
 pub enum SqliteDbError {
@@ -108,6 +111,9 @@ impl SqliteDb {
             return Err(SqliteDbError::FileNotFound(db_path));
         }
 
+        log::info!("Checking if the database needs upgrading.");
+        maybe_apply_migration(&db_path)?;
+
         Ok(SqliteDb { db_path })
     }
 
@@ -126,8 +132,7 @@ impl SqliteDb {
     ) -> Result<(), SqliteDbError> {
         let mut conn = self.connection()?;
 
-        // Check if there database isn't from the future.
-        // NOTE: we'll do migration there eventually. Until then be strict on the check.
+        // At this point any migration must have been applied.
         let db_version = conn.db_version();
         if db_version != DB_VERSION {
             return Err(SqliteDbError::UnsupportedVersion(db_version));
@@ -160,18 +165,7 @@ pub struct SqliteConn {
 
 impl SqliteConn {
     pub fn db_version(&mut self) -> i64 {
-        db_query(
-            &mut self.conn,
-            "SELECT version FROM version",
-            rusqlite::params![],
-            |row| {
-                let version: i64 = row.get(0)?;
-                Ok(version)
-            },
-        )
-        .expect("db must not fail")
-        .pop()
-        .expect("There is always a row in the version table")
+        db_version(&mut self.conn).expect("db must not fail")
     }
 
     /// Get the network tip.

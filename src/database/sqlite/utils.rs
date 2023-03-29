@@ -134,3 +134,58 @@ pub fn create_fresh_db(
 
     Ok(())
 }
+
+pub fn db_version(conn: &mut rusqlite::Connection) -> Result<i64, SqliteDbError> {
+    Ok(db_query(
+        conn,
+        "SELECT version FROM version",
+        rusqlite::params![],
+        |row| {
+            let version: i64 = row.get(0)?;
+            Ok(version)
+        },
+    )?
+    .pop()
+    .expect("There is always a row in the version table"))
+}
+
+// In Liana 0.4 we upgraded the schema to hold a timestamp for transaction drafts. Existing
+// transaction drafts are not set any timestamp on purpose.
+fn migrate_v0_to_v1(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError> {
+    db_exec(conn, |tx| {
+        tx.execute(
+            "ALTER TABLE spend_transactions ADD COLUMN updated_at",
+            rusqlite::params![],
+        )?;
+        tx.execute(
+            "UPDATE version SET version = 1",
+            rusqlite::params![],
+        )?;
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
+/// Check the database version and if necessary apply the migrations to upgrade it to the current
+/// one.
+pub fn maybe_apply_migration(db_path: &path::Path) -> Result<(), SqliteDbError> {
+    let mut conn = rusqlite::Connection::open(db_path)?;
+
+    // Iteratively apply the database migrations necessary.
+    loop {
+        let version = db_version(&mut conn)?;
+        match version {
+            DB_VERSION => {
+                log::info!("Database is up to date.");
+                return Ok(());
+            }
+            0 => {
+                log::warn!("Upgrading database from version 0 to version 1.");
+                migrate_v0_to_v1(&mut conn)?;
+                log::warn!("Migration from database version 0 to version 1 successful.");
+            }
+            _ => return Err(SqliteDbError::UnsupportedVersion(version)),
+        }
+    }
+}
