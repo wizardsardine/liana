@@ -33,21 +33,8 @@ RUN curl -O "https://static.rust-lang.org/dist/rust-1.65.0-x86_64-unknown-linux-
     tar -xzf rust-1.65.0-x86_64-apple-darwin.tar.gz && \
     rm -r *.tar.gz
 
-# Copy the Cargo files for both the daemon and the GUI to vendor the dependencies.
-COPY Cargo.toml Cargo.lock /liana/
-COPY gui/Cargo.toml gui/Cargo.lock /liana/gui/
-
-# We cache the dependencies sources in the image to avoid re-indexing everything from scratch
-# at every run. It was useful when debugging the build, it could be removed eventually if we
-# think the tradeoff vs the image size isn't worth it anymore.
-RUN /liana/rust-1.65.0-x86_64-unknown-linux-gnu/cargo/bin/cargo vendor && \
-    cd gui && \
-    /liana/rust-1.65.0-x86_64-unknown-linux-gnu/cargo/bin/cargo vendor && \
-    cd ..
-
-# Cargo configuration for using the vendored dependencies during the builds.
-COPY contrib/reproducible/docker/cargo_config.toml /liana/.cargo/cargo_config.toml
-COPY contrib/reproducible/docker/cargo_config.toml /liana/gui/.cargo/cargo_config.toml
+# NOTE: we were previously caching dependencies here (through `cargo vendor`). It's a tradeoff between the image size
+# and not needing internet access when running the image to build the software.
 
 # For some reason, we can't just set the RUSTFLAGS environment variable to add `-L` for compiling dependencies.
 # This doesn't work: RUSTFLAGS="-L/liana/rust-1.65.0-x86_64-apple-darwin/rust-std-x86_64-apple-darwin/lib/rustlib/x86_64-apple-darwin/lib/"
