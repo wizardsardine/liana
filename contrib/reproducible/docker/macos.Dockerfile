@@ -4,24 +4,24 @@ WORKDIR /liana
 
 # We try to pin our dependencies to avoid potential sources of non-determinism, but we don't go
 # out of our way to pin the whole tree of deps. Instead invest time in getting Guix cross-compilation.
-RUN apt update && apt install -y \
-                    clang=1:11.0-51+nmu5 \
-                    make=4.3-4.1 \
-                    libssl-dev=1.1.1n-0+deb11u3 \
-                    liblzma-dev=5.2.5-2.1~deb11u1 \
-                    libxml2=2.9.10+dfsg-6.7+deb11u3 \
-                    libxml2-dev=2.9.10+dfsg-6.7+deb11u3 \
-                    cmake=3.18.4-2+deb11u1 \
-                    git=1:2.30.2-1 \
-                    patch=2.7.6-7 \
-                    python3=3.9.2-3 \
-                    llvm-dev=1:11.0-51+nmu5 \
-                    cpio=2.13+dfsg-4 \
-                    zlib1g-dev=1:1.2.11.dfsg-2+deb11u2 \
-                    libbz2-dev=1.0.8-4 \
-                    xz-utils=5.2.5-2.1~deb11u1 \
-                    bzip2=1.0.8-4 \
-                    curl=7.74.0-1.3+deb11u5
+RUN apt update && apt satisfy -y \
+                    "clang (>=11.0, <=11.0)" \
+                    "make (<=4.3-*)" \
+                    "libssl-dev (>=1.1, <=1.1)" \
+                    "liblzma-dev (>=5.2, <=5.2)" \
+                    "libxml2 (>=2.9, <= 2.9)" \
+                    "libxml2-dev (>=2.9, <=2.9)" \
+                    "cmake (>=3.18, <=3.18)" \
+                    "git (>=2.30, <=2.30)" \
+                    "patch (>=2.7, <=2.7)" \
+                    "python3 (>=3.9, <=3.9)" \
+                    "llvm-dev (>=11.0, <=11.0)" \
+                    "cpio (<=2.13+*)" \
+                    "zlib1g-dev (>=1.2, <=1.2)" \
+                    "libbz2-dev (>=1.0, <=1.0)" \
+                    "xz-utils (>=5.2, <=5.2)" \
+                    "bzip2 (>=1.0, <=1.0)" \
+                    "curl (>=7.74, <=7.74)"
 
 # Download the cargo binary and compiled stdlib from the distributed releases to make sure to build with
 # the very same toolchain. We use 1.65.0 because it is unfortunately the MSRV of the GUI.

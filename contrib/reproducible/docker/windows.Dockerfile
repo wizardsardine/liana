@@ -4,10 +4,10 @@ WORKDIR /liana
 
 # We try to pin our dependencies to avoid potential sources of non-determinism, but we don't go
 # out of our way to pin the whole tree of deps. Instead invest time in getting Guix cross-compilation.
-RUN apt update && apt install -y \
-                    gcc-mingw-w64-x86-64=10.2.1-6+24.2 \
-                    curl=7.74.0-1.3+deb11u5 \
-                    gcc=4:10.2.1-1
+RUN apt update && apt satisfy -y \
+                    "gcc-mingw-w64-x86-64 (>=10.2, <=10.2)" \
+                    "curl (>=7.74, <=7.74)" \
+                    "gcc (>=10.2, <=10.2)"
 
 # Download the cargo binary and compiled stdlib from the distributed releases to make sure to build with
 # the very same toolchain. We use 1.65.0 because it is unfortunately the MSRV of the GUI.
