@@ -357,6 +357,9 @@ impl Step for DefineDescriptor {
                         master_fingerprint,
                         name: spending_key.name.clone(),
                     });
+                    if master_fingerprint == self.signer.fingerprint() {
+                        signer_is_used = true;
+                    }
                 }
                 let xpub = DescriptorMultiXKey {
                     origin: xpub.origin.clone(),
@@ -1272,5 +1275,102 @@ impl Step for BackupDescriptor {
 impl From<BackupDescriptor> for Box<dyn Step> {
     fn from(s: BackupDescriptor) -> Box<dyn Step> {
         Box::new(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced_native::command::Action;
+    use std::sync::{Arc, Mutex};
+
+    pub struct Sandbox<S: Step> {
+        step: Arc<Mutex<S>>,
+    }
+
+    impl<S: Step + 'static> Sandbox<S> {
+        pub fn new(step: S) -> Self {
+            Self {
+                step: Arc::new(Mutex::new(step)),
+            }
+        }
+
+        pub fn check<F: FnOnce(&mut S)>(&self, check: F) {
+            let mut step = self.step.lock().unwrap();
+            check(&mut step)
+        }
+
+        pub async fn update(&self, message: Message) {
+            let cmd = self.step.lock().unwrap().update(message);
+            for action in cmd.actions() {
+                if let Action::Future(f) = action {
+                    let msg = f.await;
+                    let _cmd = self.step.lock().unwrap().update(msg);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_define_descriptor_use_hotkey() {
+        let mut ctx = Context::new(Network::Signet, PathBuf::from_str("/").unwrap());
+        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new());
+
+        // Edit primary key
+        sandbox
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Key(
+                false,
+                0,
+                message::DefineKey::Edit,
+            )))
+            .await;
+        sandbox.check(|step| assert!(step.modal.is_some()));
+        sandbox.update(Message::UseHotSigner).await;
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::NameEdited("hot signer key".to_string()),
+            ))
+            .await;
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::ConfirmXpub,
+            ))
+            .await;
+        sandbox.check(|step| assert!(step.modal.is_none()));
+
+        // Edit sequence
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::SequenceEdited("1000".to_string()),
+            ))
+            .await;
+
+        // Edit recovery key
+        sandbox
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Key(
+                true,
+                0,
+                message::DefineKey::Edit,
+            )))
+            .await;
+        sandbox.check(|step| assert!(step.modal.is_some()));
+        sandbox.update(Message::DefineDescriptor(
+            message::DefineDescriptor::XPubEdited("[f5acc2fd/48'/1'/0'/2']tpubDFAqEGNyad35aBCKUAXbQGDjdVhNueno5ZZVEn3sQbW5ci457gLR7HyTmHBg93oourBssgUxuWz1jX5uhc1qaqFo9VsybY1J5FuedLfm4dK".to_string()),
+        )).await;
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::NameEdited("external recovery key".to_string()),
+            ))
+            .await;
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::ConfirmXpub,
+            ))
+            .await;
+        sandbox.check(|step| {
+            assert!(step.modal.is_none());
+            assert!((step).apply(&mut ctx));
+            assert!(ctx.signer.is_some());
+        });
     }
 }
