@@ -24,5 +24,5 @@
         (if
           (string=? is_gui "1")
           (list
-            (@@ (gnu packages rust) rust-1.64))
+            (@@ (gnu packages rust) rust-1.65))
           '())))))
