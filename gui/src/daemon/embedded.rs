@@ -194,14 +194,19 @@ impl Daemon for EmbeddedDaemon {
             .map_err(|e| DaemonError::Unexpected(e.to_string()))
     }
 
-    fn create_recovery(&self, address: Address, feerate_vb: u64) -> Result<Psbt, DaemonError> {
+    fn create_recovery(
+        &self,
+        address: Address,
+        feerate_vb: u64,
+        sequence: Option<u16>,
+    ) -> Result<Psbt, DaemonError> {
         self.handle
             .as_ref()
             .ok_or(DaemonError::NoAnswer)?
             .read()
             .unwrap()
             .control
-            .create_recovery(address, feerate_vb, None)
+            .create_recovery(address, feerate_vb, sequence)
             .map_err(|e| DaemonError::Unexpected(e.to_string()))
             .map(|res| res.psbt)
     }

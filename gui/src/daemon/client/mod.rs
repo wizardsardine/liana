@@ -134,10 +134,15 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         self.call("listtransactions", Some(vec![txids]))
     }
 
-    fn create_recovery(&self, address: Address, feerate_vb: u64) -> Result<Psbt, DaemonError> {
+    fn create_recovery(
+        &self,
+        address: Address,
+        feerate_vb: u64,
+        sequence: Option<u16>,
+    ) -> Result<Psbt, DaemonError> {
         let res: CreateSpendResult = self.call(
             "createrecovery",
-            Some(vec![json!(address), json!(feerate_vb)]),
+            Some(vec![json!(address), json!(feerate_vb), json!(sequence)]),
         )?;
         Ok(res.psbt)
     }

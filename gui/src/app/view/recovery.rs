@@ -1,20 +1,30 @@
-use iced::{widget::Space, Alignment, Length};
+use std::collections::HashMap;
 
-use liana::miniscript::bitcoin::Amount;
+use iced::{
+    widget::{tooltip, Space},
+    Alignment, Length,
+};
+
+use liana::miniscript::bitcoin::{
+    util::bip32::{DerivationPath, Fingerprint},
+    Amount,
+};
 
 use liana_ui::{
     component::{button, form, text::*},
-    icon,
-    util::Collection,
+    icon, theme,
     widget::*,
 };
 
-use crate::app::view::message::{CreateSpendMessage, Message};
+use crate::app::view::{
+    message::{CreateSpendMessage, Message},
+    util::amount,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub fn recovery<'a>(
-    locked_coins: &(usize, Amount),
-    recoverable_coins: &(usize, Amount),
+    recovery_paths: Vec<Element<'a, Message>>,
+    selected_path: Option<usize>,
     feerate: &form::Value<String>,
     address: &'a form::Value<String>,
 ) -> Element<'a, Message> {
@@ -30,23 +40,17 @@ pub fn recovery<'a>(
                 .spacing(1),
         )
         .push(
-            Container::new(Row::new().push(text(format!(
-                "{} ({} coins) will be spendable through the recovery path in the next block",
-                recoverable_coins.1, recoverable_coins.0
-            ))))
-            .center_x(),
-        )
-        .push_maybe(if *locked_coins != (0, Amount::from_sat(0)) {
-            Some(
-                Container::new(Row::new().push(text(format!(
-                    "{} ({} coins) are not yet spendable through the recovery path",
-                    locked_coins.1, locked_coins.0
-                ))))
-                .center_x(),
+            Container::new(
+                Column::new()
+                    .spacing(10)
+                    .push(text(format!(
+                        "{} recovery paths are available or will be available next block, select one:",
+                        recovery_paths.len()
+                    )))
+                    .push(Column::with_children(recovery_paths).spacing(10)),
             )
-        } else {
-            None
-        })
+            .padding(20),
+        )
         .push(Space::with_height(Length::Units(20)))
         .push(
             Column::new()
@@ -80,7 +84,7 @@ pub fn recovery<'a>(
                         && !feerate.value.is_empty()
                         && address.valid
                         && !address.value.is_empty()
-                        && recoverable_coins.0 != 0
+                        && selected_path.is_some()
                     {
                         button::primary(None, "Next")
                             .on_press(Message::Next)
@@ -95,4 +99,82 @@ pub fn recovery<'a>(
         .align_items(Alignment::Center)
         .spacing(20)
         .into()
+}
+
+pub fn recovery_path_view<'a>(
+    index: usize,
+    threshold: usize,
+    origins: &'a [(Fingerprint, DerivationPath)],
+    total_amount: Amount,
+    number_of_coins: usize,
+    key_aliases: &'a HashMap<Fingerprint, String>,
+    selected: bool,
+) -> Element<'a, Message> {
+    Container::new(
+        Button::new(
+            Row::new()
+                .push(if selected {
+                    icon::square_check_icon()
+                } else {
+                    icon::square_icon()
+                })
+                .push(
+                    Column::new()
+                        .push(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .spacing(10)
+                                .push(
+                                    text(format!(
+                                        "{} signature{} from",
+                                        threshold,
+                                        if threshold > 1 { "s" } else { "" }
+                                    ))
+                                    .bold(),
+                                )
+                                .push(origins.iter().fold(
+                                    Row::new().align_items(Alignment::Center).spacing(5),
+                                    |row, (fg, _)| {
+                                        row.push(if let Some(alias) = key_aliases.get(fg) {
+                                            Container::new(
+                                                tooltip::Tooltip::new(
+                                                    Container::new(text(alias)).padding(3).style(
+                                                        theme::Container::Pill(theme::Pill::Simple),
+                                                    ),
+                                                    fg.to_string(),
+                                                    tooltip::Position::Bottom,
+                                                )
+                                                .style(theme::Container::Card(theme::Card::Simple)),
+                                            )
+                                        } else {
+                                            Container::new(text(fg.to_string()))
+                                                .padding(3)
+                                                .style(theme::Container::Pill(theme::Pill::Simple))
+                                        })
+                                    },
+                                )),
+                        )
+                        .push(
+                            Row::new()
+                                .spacing(5)
+                                .push(text("can recover"))
+                                .push(text(format!(
+                                    "{} coin{} totalling",
+                                    number_of_coins,
+                                    if number_of_coins > 0 { "s" } else { "" }
+                                )))
+                                .push(amount(&total_amount)),
+                        ),
+                )
+                .align_items(Alignment::Center)
+                .spacing(20),
+        )
+        .padding(10)
+        .width(Length::Fill)
+        .on_press(Message::CreateSpend(CreateSpendMessage::SelectPath(index)))
+        .style(theme::Button::TransparentBorder),
+    )
+    .style(theme::Container::Card(theme::Card::Simple))
+    .width(Length::Fill)
+    .into()
 }

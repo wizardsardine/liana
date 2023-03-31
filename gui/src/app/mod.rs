@@ -77,8 +77,7 @@ impl App {
             menu::Menu::Recovery => RecoveryPanel::new(
                 self.wallet.clone(),
                 &self.cache.coins,
-                self.wallet.main_descriptor.first_timelock_value(),
-                self.cache.blockheight as u32,
+                self.cache.blockheight,
             )
             .into(),
             menu::Menu::Receive => ReceivePanel::default().into(),
