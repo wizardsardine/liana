@@ -117,11 +117,14 @@ for project_folder in "" "gui"; do
     # NOTE: it looks like "--rebuild-cache" is necessary for the IS_GUI variable to
     # be taken into account when building the container (otherwise the GUI container could
     # miss some dependencies).
+    # TODO: only expose the "ui" folder for GUI builds
     IS_GUI="$IS_GUI" time_machine shell --no-cwd \
                --expose="$PROJECT_ROOT/src=/liana/src" \
-               --expose="$PWD/gui/static=/liana/static" \
                --expose="$PROJECT_ROOT/Cargo.toml=/liana/Cargo.toml" \
                --expose="$BUILD_ROOT/Cargo.lock=/liana/Cargo.lock" \
+               --expose="$PWD/gui/ui/src=/liana/ui/src" \
+               --expose="$PWD/gui/ui/Cargo.toml=/liana/ui/Cargo.toml" \
+               --expose="$PWD/gui/ui/static=/liana/ui/static" \
                --expose="$PWD/contrib/reproducible/guix/build.sh=/liana/build.sh" \
                --expose="$PROJECT_VENDOR_DIR=/vendor" \
                --share="$PROJECT_OUT_DIR=/out" \

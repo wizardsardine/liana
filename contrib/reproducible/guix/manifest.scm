@@ -5,7 +5,7 @@
         (append
           (list
             "rust:cargo"
-            "coreutils"
+            "coreutils-minimal"
             "patchelf"
             "gcc-toolchain@10.3.0")
             ;; Additional dependencies for building the GUI, and the regular rustc for building
@@ -24,5 +24,5 @@
         (if
           (string=? is_gui "1")
           (list
-            (@@ (gnu packages rust) rust-1.64))
+            (@@ (gnu packages rust) rust-1.65))
           '())))))

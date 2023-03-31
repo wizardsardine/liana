@@ -4,10 +4,10 @@ WORKDIR /liana
 
 # We try to pin our dependencies to avoid potential sources of non-determinism, but we don't go
 # out of our way to pin the whole tree of deps. Instead invest time in getting Guix cross-compilation.
-RUN apt update && apt install -y \
-                    gcc-mingw-w64-x86-64=10.2.1-6+24.2 \
-                    curl=7.74.0-1.3+deb11u5 \
-                    gcc=4:10.2.1-1
+RUN apt update && apt satisfy -y \
+                    "gcc-mingw-w64-x86-64 (>=10.2, <=10.2)" \
+                    "curl (>=7.74, <=7.74)" \
+                    "gcc (>=10.2, <=10.2)"
 
 # Download the cargo binary and compiled stdlib from the distributed releases to make sure to build with
 # the very same toolchain. We use 1.65.0 because it is unfortunately the MSRV of the GUI.
@@ -19,16 +19,8 @@ RUN curl -O "https://static.rust-lang.org/dist/rust-1.65.0-x86_64-unknown-linux-
     tar -xzf rust-1.65.0-x86_64-pc-windows-gnu.tar.gz && \
     rm -r *.tar.gz
 
-# Copy the Cargo files to vendor the dependencies.
-COPY gui/Cargo.toml gui/Cargo.lock /liana/
-
-# We cache the dependencies sources in the image to avoid re-indexing everything from scratch
-# at every run. It was useful when debugging the build, it could be removed eventually if we
-# think the tradeoff vs the image size wasn't worth it anymore.
-RUN /liana/rust-1.65.0-x86_64-unknown-linux-gnu/cargo/bin/cargo vendor
-
-# Cargo configuration for using the vendored dependencies during the build.
-COPY contrib/reproducible/docker/cargo_config.toml /liana/.cargo/cargo_config.toml
+# NOTE: we were previously caching dependencies here (through `cargo vendor`). It's a tradeoff between the image size
+# and not needing internet access when running the image to build the software.
 
 # For some reason, we can't just set the RUSTFLAGS environment variable to add `-L` for compiling dependencies.
 # This doesn't work: RUSTFLAGS="-L /liana/rust-1.65.0-x86_64-pc-windows-gnu/rust-std-x86_64-pc-windows-gnu/lib/rustlib/x86_64-pc-windows-gnu/lib/ -L /liana/rust-1.65.0-x86_64-unknown-linux-gnu/rust-std-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/"
