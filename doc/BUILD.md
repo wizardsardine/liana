@@ -11,7 +11,13 @@ that had the chance to be reviewed and distributed by third parties, as well as 
 community).  The minimum supported Rust version for `lianad` currently is `1.48`, that is the
 version of [`rustc` shipped in Debian stable](https://packages.debian.org/stable/rustc). (It is also
 inferior to the latest version of `rustc` supported by
-[`mrustc`](https://github.com/thepowersgang/mrustc/) supported at the time of writing, `1.54`).
+[`mrustc`](https://github.com/thepowersgang/mrustc/) at the time of writing, `1.54`).
+
+If you want to not only build the daemon but the whole wallet including the GUI, you'll
+unfortunately have to use a more recent `cargo`. The minimum version supported by the GUI at the
+moment is `1.65`. You will most likely have to [manually download
+it](#by-manually-downloading-the-latest-stable-version) or [use `rustup`](#through-rustup) to
+install such a recent compiler.
 
 
 ## Getting `Cargo`
@@ -65,12 +71,12 @@ Some package managers distribute a version of `rustup`. Failing that, you can al
 
 ## Building the project
 
-Once you've got Cargo installed, building the project is a simple `cargo` invocation away:
+Once you've got Cargo, building the project is a simple `cargo` invocation away.
+
+To only build the daemon, run it from the root of the repository:
 ```
 $ cargo build --release
 ```
-Make sure not to forget the `--release`, or you would build without optimizations otherwise.
-
 The `lianad` and `liana-cli` binaries will be in the `target/` directory at the root of the
 repository:
 ```
@@ -78,12 +84,18 @@ $ ls target/release/
 build  deps  examples  incremental  liana-cli  liana-cli.d  lianad  lianad.d  libliana.d  libliana.rlib
 ```
 
-To build the GUI you'll need to first install its [build and runtime
-dependencies](https://github.com/wizardsardine/liana/tree/master/gui#dependencies), then do the same
-but in the [`gui/`](../gui/) folder present at the root of the repository:
+To build the whole wallet including the GUI, you'll need to install its [build and runtime
+dependencies](https://github.com/wizardsardine/liana/tree/master/gui#dependencies) first. Then run
+the same command as above within the [`gui/`](../gui/) folder present at the root of the repository:
 ```
 $ cd gui/
 $ cargo build --release
+```
+The `liana-gui` binary will be in the `target/` folder:
+```
 $ ls target/release/
 build  deps  examples  incremental  liana-gui  liana-gui.d  libliana_gui.d  libliana_gui.rlib
 ```
+
+Whether your are building the whole wallet or only the daemon, make sure not to forget the
+`--release` command line option. You would otherwise build without optimizations.
