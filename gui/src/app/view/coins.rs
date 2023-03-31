@@ -140,14 +140,14 @@ fn coin_list_view(
                                     if let Some(b) = coin.block_height {
                                         if blockheight > b as u32 + timelock as u32 {
                                             Some(Container::new(
-                                                text("The recovery path is available")
+                                                text("One of the recovery path is available")
                                                     .bold()
                                                     .small()
                                                     .style(color::legacy::ALERT),
                                             ))
                                         } else {
                                             Some(Container::new(
-                                                text(format!("The recovery path will be available in {} blocks", b as u32 + timelock as u32 - blockheight))
+                                                text(format!("One of the recovery path will be available in {} blocks", b as u32 + timelock as u32 - blockheight))
                                                 .bold()
                                                 .small(),
                                             ))
