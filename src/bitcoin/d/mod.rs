@@ -586,13 +586,32 @@ impl BitcoinD {
 
     /// Load the watchonly wallet on bitcoind, if it isn't already.
     pub fn maybe_load_watchonly_wallet(&self) -> Result<(), BitcoindError> {
-        if !self.list_wallets().contains(&self.watchonly_wallet_path) {
-            self.make_fallible_node_request(
-                "loadwallet",
-                &params!(Json::String(self.watchonly_wallet_path.clone()),),
-            )?;
+        if self.list_wallets().contains(&self.watchonly_wallet_path) {
+            return Ok(());
         }
-        Ok(())
+        let res = self.make_fallible_node_request(
+            "loadwallet",
+            &params!(Json::String(self.watchonly_wallet_path.clone()),),
+        );
+        match res {
+            Err(BitcoindError::Server(jsonrpc::Error::Rpc(ref e))) => {
+                if e.code == -4 && e.message.to_lowercase().contains("wallet already loading") {
+                    log::warn!("The watchonly wallet is already loading on bitcoind. Waiting for completion.");
+                    loop {
+                        thread::sleep(Duration::from_secs(3));
+                        if self.list_wallets().contains(&self.watchonly_wallet_path) {
+                            log::warn!("Watchonly wallet now loaded. Continuing.");
+                            return Ok(());
+                        }
+                        log::debug!(
+                            "Watchonly wallet loading still not complete. Waiting 3 more seconds."
+                        );
+                    }
+                }
+                res
+            }
+            r => r,
+        }.map(|_| ())
     }
 
     /// Perform various non-wallet-related sanity checks on the bitcoind instance.
