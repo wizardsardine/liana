@@ -6,7 +6,7 @@ pub mod sqlite;
 use crate::{
     bitcoin::BlockChainTip,
     database::sqlite::{
-        schema::{DbCoin, DbSpendBlock, DbTip},
+        schema::{DbBlockInfo, DbCoin, DbSpendBlock, DbTip},
         SqliteConn, SqliteDb,
     },
 };
@@ -277,10 +277,24 @@ impl From<DbSpendBlock> for SpendBlock {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BlockInfo {
+    pub height: i32,
+    pub time: u32,
+}
+
+impl From<DbBlockInfo> for BlockInfo {
+    fn from(b: DbBlockInfo) -> BlockInfo {
+        BlockInfo {
+            height: b.height,
+            time: b.time,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Coin {
     pub outpoint: bitcoin::OutPoint,
-    pub block_height: Option<i32>,
-    pub block_time: Option<u32>,
+    pub block_info: Option<BlockInfo>,
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub is_change: bool,
@@ -292,8 +306,7 @@ impl std::convert::From<DbCoin> for Coin {
     fn from(db_coin: DbCoin) -> Coin {
         let DbCoin {
             outpoint,
-            block_height,
-            block_time,
+            block_info,
             amount,
             derivation_index,
             is_change,
@@ -303,8 +316,7 @@ impl std::convert::From<DbCoin> for Coin {
         } = db_coin;
         Coin {
             outpoint,
-            block_height,
-            block_time,
+            block_info: block_info.map(BlockInfo::from),
             amount,
             derivation_index,
             is_change,
@@ -316,7 +328,7 @@ impl std::convert::From<DbCoin> for Coin {
 
 impl Coin {
     pub fn is_confirmed(&self) -> bool {
-        self.block_height.is_some()
+        self.block_info.is_some()
     }
 
     pub fn is_spent(&self) -> bool {

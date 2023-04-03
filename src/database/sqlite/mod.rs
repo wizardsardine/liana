@@ -585,7 +585,7 @@ impl SqliteConn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::SpendBlock;
+    use crate::database::{BlockInfo, DbBlockInfo, SpendBlock};
     use crate::testutils::*;
     use std::{
         collections::{HashMap, HashSet},
@@ -709,8 +709,7 @@ mod tests {
                     "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
                 )
                 .unwrap(),
-                block_height: None,
-                block_time: None,
+                block_info: None,
                 amount: bitcoin::Amount::from_sat(98765),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                 is_change: false,
@@ -742,8 +741,7 @@ mod tests {
                     "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571936f:12",
                 )
                 .unwrap(),
-                block_height: None,
-                block_time: None,
+                block_info: None,
                 amount: bitcoin::Amount::from_sat(1111),
                 derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
                 is_change: true,
@@ -780,10 +778,8 @@ mod tests {
             let time = 174500;
             conn.confirm_coins(&[(coin_a.outpoint, height, time)]);
             let coins = conn.coins(CoinType::All);
-            assert_eq!(coins[0].block_height, Some(height));
-            assert_eq!(coins[0].block_time, Some(time));
-            assert!(coins[1].block_height.is_none());
-            assert!(coins[1].block_time.is_none());
+            assert_eq!(coins[0].block_info, Some(DbBlockInfo { height, time }));
+            assert!(coins[1].block_info.is_none());
 
             // Now if we spend one, it'll be marked as such.
             conn.spend_coins(&[(
@@ -969,8 +965,7 @@ mod tests {
                         "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
                     )
                     .unwrap(),
-                    block_height: None,
-                    block_time: None,
+                    block_info: None,
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                     is_change: false,
@@ -982,8 +977,10 @@ mod tests {
                         "c449539458c60bee6c0d8905ba1dadb20b9187b82045d306a408b894cea492b0:2",
                     )
                     .unwrap(),
-                    block_height: Some(101_095),
-                    block_time: Some(1_111_899),
+                    block_info: Some(BlockInfo {
+                        height: 101_095,
+                        time: 1_111_899,
+                    }),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
                     is_change: false,
@@ -995,8 +992,10 @@ mod tests {
                         "f0801fd9ca8bca0624c230ab422b2e2c4c8dc995e4e1dbc6412510959cce1e4f:3",
                     )
                     .unwrap(),
-                    block_height: Some(101_099),
-                    block_time: Some(1_121_899),
+                    block_info: Some(BlockInfo {
+                        height: 101_099,
+                        time: 1_121_899,
+                    }),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
                     is_change: false,
@@ -1016,8 +1015,10 @@ mod tests {
                         "19f56e65069f0a7a3bfb00c6a7085cc0669e03e91befeca1ee9891c9e737b2fb:4",
                     )
                     .unwrap(),
-                    block_height: Some(101_100),
-                    block_time: Some(1_131_899),
+                    block_info: Some(BlockInfo {
+                        height: 101_100,
+                        time: 1_131_899,
+                    }),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
                     is_change: false,
@@ -1029,8 +1030,10 @@ mod tests {
                         "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:5",
                     )
                     .unwrap(),
-                    block_height: Some(101_102),
-                    block_time: Some(1_134_899),
+                    block_info: Some(BlockInfo {
+                        height: 101_102,
+                        time: 1_134_899,
+                    }),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
                     is_change: false,
@@ -1050,10 +1053,7 @@ mod tests {
             conn.confirm_coins(
                 &coins
                     .iter()
-                    .filter_map(|c| {
-                        c.block_height
-                            .map(|b| (c.outpoint, b, c.block_time.unwrap()))
-                    })
+                    .filter_map(|c| c.block_info.map(|b| (c.outpoint, b.height, b.time)))
                     .collect::<Vec<_>>(),
             );
             conn.confirm_spend(
@@ -1115,13 +1115,11 @@ mod tests {
             assert_eq!(db_coins[&coins[2].outpoint], coin);
             // The fourth one got its own confirmation info wiped
             let mut coin = coins[3];
-            coin.block_height = None;
-            coin.block_time = None;
+            coin.block_info = None;
             assert_eq!(db_coins[&coins[3].outpoint], coin);
             // The fourth one got both is own confirmation and spend confirmation info wiped
             let mut coin = coins[4];
-            coin.block_height = None;
-            coin.block_time = None;
+            coin.block_info = None;
             coin.spend_block = None;
             assert_eq!(db_coins[&coins[4].outpoint], coin);
         }
@@ -1180,8 +1178,7 @@ mod tests {
                         "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
                     )
                     .unwrap(),
-                    block_height: None,
-                    block_time: None,
+                    block_info: None,
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                     is_change: false,
@@ -1193,8 +1190,10 @@ mod tests {
                         "c449539458c60bee6c0d8905ba1dadb20b9187b82045d306a408b894cea492b0:2",
                     )
                     .unwrap(),
-                    block_height: Some(101_095),
-                    block_time: Some(1_121_000),
+                    block_info: Some(BlockInfo {
+                        height: 101_095,
+                        time: 1_121_000,
+                    }),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
                     is_change: false,
@@ -1206,8 +1205,10 @@ mod tests {
                         "f0801fd9ca8bca0624c230ab422b2e2c4c8dc995e4e1dbc6412510959cce1e4f:3",
                     )
                     .unwrap(),
-                    block_height: Some(101_099),
-                    block_time: Some(1_122_000),
+                    block_info: Some(BlockInfo {
+                        height: 101_099,
+                        time: 1_122_000,
+                    }),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
                     is_change: false,
@@ -1227,8 +1228,10 @@ mod tests {
                         "19f56e65069f0a7a3bfb00c6a7085cc0669e03e91befeca1ee9891c9e737b2fb:4",
                     )
                     .unwrap(),
-                    block_height: Some(101_100),
-                    block_time: Some(1_124_000),
+                    block_info: Some(BlockInfo {
+                        height: 101_100,
+                        time: 1_124_000,
+                    }),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
                     is_change: false,
@@ -1240,8 +1243,10 @@ mod tests {
                         "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:5",
                     )
                     .unwrap(),
-                    block_height: Some(101_102),
-                    block_time: Some(1_125_000),
+                    block_info: Some(BlockInfo {
+                        height: 101_102,
+                        time: 1_125_000,
+                    }),
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
                     is_change: false,
@@ -1261,10 +1266,7 @@ mod tests {
             conn.confirm_coins(
                 &coins
                     .iter()
-                    .filter_map(|c| {
-                        c.block_height
-                            .map(|b| (c.outpoint, b, c.block_time.unwrap()))
-                    })
+                    .filter_map(|c| c.block_info.map(|b| (c.outpoint, b.height, b.time)))
                     .collect::<Vec<_>>(),
             );
             conn.confirm_spend(

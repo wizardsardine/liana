@@ -293,7 +293,7 @@ impl DaemonControl {
                 let Coin {
                     amount,
                     outpoint,
-                    block_height,
+                    block_info,
                     spend_txid,
                     spend_block,
                     ..
@@ -302,6 +302,7 @@ impl DaemonControl {
                     txid,
                     height: spend_block.map(|b| b.height),
                 });
+                let block_height = block_info.map(|b| b.height);
                 ListCoinsEntry {
                     amount,
                     outpoint,
@@ -712,8 +713,8 @@ impl DaemonControl {
             .into_iter()
             .filter(|(_, c)| {
                 // We are interested in coins available at the *next* block
-                c.block_height
-                    .map(|h| current_height + 1 >= h + timelock)
+                c.block_info
+                    .map(|b| current_height + 1 >= b.height + timelock)
                     .unwrap_or(false)
             });
 
@@ -867,7 +868,11 @@ pub struct CreateRecoveryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{bitcoin::Block, database::SpendBlock, testutils::*};
+    use crate::{
+        bitcoin::Block,
+        database::{BlockInfo, SpendBlock},
+        testutils::*,
+    };
 
     use bitcoin::{
         blockdata::transaction::{TxIn, TxOut},
@@ -959,8 +964,7 @@ mod tests {
         let mut db_conn = control.db().lock().unwrap().connection();
         db_conn.new_unspent_coins(&[Coin {
             outpoint: dummy_op,
-            block_height: None,
-            block_time: None,
+            block_info: None,
             amount: bitcoin::Amount::from_sat(100_000),
             derivation_index: bip32::ChildNumber::from(13),
             is_change: false,
@@ -1065,8 +1069,7 @@ mod tests {
         };
         db_conn.new_unspent_coins(&[Coin {
             outpoint: dummy_op_dup,
-            block_height: None,
-            block_time: None,
+            block_info: None,
             amount: bitcoin::Amount::from_sat(400_000),
             derivation_index: bip32::ChildNumber::from(42),
             is_change: false,
@@ -1112,8 +1115,7 @@ mod tests {
         db_conn.new_unspent_coins(&[
             Coin {
                 outpoint: dummy_op_a,
-                block_height: None,
-                block_time: None,
+                block_info: None,
                 amount: bitcoin::Amount::from_sat(100_000),
                 derivation_index: bip32::ChildNumber::from(13),
                 is_change: false,
@@ -1122,8 +1124,7 @@ mod tests {
             },
             Coin {
                 outpoint: dummy_op_b,
-                block_height: None,
-                block_time: None,
+                block_info: None,
                 amount: bitcoin::Amount::from_sat(115_680),
                 derivation_index: bip32::ChildNumber::from(34),
                 is_change: false,
@@ -1294,8 +1295,7 @@ mod tests {
                     txid: deposit1.txid(),
                     vout: 0,
                 },
-                block_time: Some(1),
-                block_height: Some(1),
+                block_info: Some(BlockInfo { height: 1, time: 1 }),
                 spend_block: Some(SpendBlock { time: 3, height: 3 }),
                 derivation_index: ChildNumber::from(0),
                 amount: bitcoin::Amount::from_sat(100_000_000),
@@ -1308,8 +1308,7 @@ mod tests {
                     txid: deposit2.txid(),
                     vout: 0,
                 },
-                block_time: Some(2),
-                block_height: Some(2),
+                block_info: Some(BlockInfo { height: 2, time: 2 }),
                 spend_block: None,
                 derivation_index: ChildNumber::from(1),
                 amount: bitcoin::Amount::from_sat(2000),
@@ -1319,8 +1318,7 @@ mod tests {
             Coin {
                 is_change: true,
                 outpoint: OutPoint::new(spend_tx.txid(), 1),
-                block_time: Some(3),
-                block_height: Some(3),
+                block_info: Some(BlockInfo { height: 3, time: 3 }),
                 spend_block: None,
                 derivation_index: ChildNumber::from(2),
                 amount: bitcoin::Amount::from_sat(100_000_000 - 4000 - 1000),
@@ -1333,8 +1331,7 @@ mod tests {
                     txid: deposit3.txid(),
                     vout: 0,
                 },
-                block_time: Some(4),
-                block_height: Some(4),
+                block_info: Some(BlockInfo { height: 4, time: 4 }),
                 spend_block: None,
                 derivation_index: ChildNumber::from(3),
                 amount: bitcoin::Amount::from_sat(3000),

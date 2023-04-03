@@ -60,8 +60,7 @@ fn update_coins(
                     amount,
                     derivation_index,
                     is_change,
-                    block_height: None,
-                    block_time: None,
+                    block_info: None,
                     spend_txid: None,
                     spend_block: None,
                 };
@@ -85,7 +84,7 @@ fn update_coins(
         .values()
         .chain(received.iter())
         .filter_map(|coin| {
-            if coin.block_height.is_none() {
+            if coin.block_info.is_none() {
                 Some(coin.outpoint)
             } else {
                 None

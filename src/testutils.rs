@@ -1,7 +1,7 @@
 use crate::{
     bitcoin::{BitcoinInterface, Block, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
-    database::{Coin, CoinType, DatabaseConnection, DatabaseInterface, SpendBlock},
+    database::{BlockInfo, Coin, CoinType, DatabaseConnection, DatabaseInterface, SpendBlock},
     descriptors, DaemonHandle,
 };
 
@@ -233,10 +233,11 @@ impl DatabaseConnection for DummyDatabase {
         for (op, height, time) in outpoints {
             let mut db = self.db.write().unwrap();
             let coin = &mut db.coins.get_mut(op).unwrap();
-            assert!(coin.block_height.is_none());
-            assert!(coin.block_time.is_none());
-            coin.block_height = Some(*height);
-            coin.block_time = Some(*time);
+            assert!(coin.block_info.is_none());
+            coin.block_info = Some(BlockInfo {
+                height: *height,
+                time: *time,
+            });
         }
     }
 
@@ -335,7 +336,7 @@ impl DatabaseConnection for DummyDatabase {
         // Get txid and block time of every transactions that happened between start and end
         // timestamps.
         for coin in coins.values() {
-            if let Some(time) = coin.block_time {
+            if let Some(time) = coin.block_info.map(|b| b.time) {
                 if time >= start && time <= end {
                     let row = (coin.outpoint.txid, time);
                     if !txids_and_time.contains(&row) {
