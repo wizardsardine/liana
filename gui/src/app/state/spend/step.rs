@@ -77,7 +77,7 @@ impl ChooseRecipients {
             if !recipient.valid() {
                 self.is_valid = false;
             }
-            if !self.is_duplicate {
+            if !self.is_duplicate && !recipient.address.value.is_empty() {
                 self.is_duplicate = self.recipients[..i]
                     .iter()
                     .any(|r| r.address.value == recipient.address.value);
