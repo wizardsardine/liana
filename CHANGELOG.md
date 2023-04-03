@@ -1,5 +1,16 @@
 # Liana daemon and GUI release notes
 
+## 0.3.1
+
+A patch release for a serious bug fix in the GUI installer.
+
+### Fixes
+
+#### GUI-specific
+
+- Under very specific conditions the GUI installer would not store the mnemonic words corresponding
+  to a hot key that was used in the descriptor, nor present it to the user for backup.
+
 ## 0.3
 
 A small release which brings some fixes as well as the possibility to use Liana as a "hot wallet".
