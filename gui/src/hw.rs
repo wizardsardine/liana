@@ -20,6 +20,7 @@ pub enum HardwareWallet {
         kind: DeviceKind,
         fingerprint: Fingerprint,
         version: Option<Version>,
+        registered: Option<bool>,
     },
 }
 
@@ -33,6 +34,7 @@ impl HardwareWallet {
             kind,
             fingerprint,
             version,
+            registered: None,
         })
     }
 
@@ -110,25 +112,23 @@ pub async fn list_hardware_wallets(
     match ledger::LedgerSimulator::try_connect().await {
         Ok(mut device) => match device.get_master_fingerprint().await {
             Ok(fingerprint) => {
-                if let Some((name, descriptor)) = wallet {
-                    device
-                        .load_wallet(
-                            name,
-                            descriptor,
-                            cfg.iter()
-                                .find(|cfg| cfg.fingerprint == fingerprint)
-                                .map(|cfg| cfg.token()),
-                        )
-                        .expect("Configuration must be correct");
-                }
-
                 let version = device.get_version().await.ok();
                 if ledger_version_supported(version.as_ref()) {
+                    let mut registered = false;
+                    if let Some((name, descriptor)) = wallet {
+                        if let Some(cfg) = cfg.iter().find(|cfg| cfg.fingerprint == fingerprint) {
+                            device
+                                .load_wallet(name, descriptor, Some(cfg.token()))
+                                .expect("Configuration must be correct");
+                            registered = true;
+                        }
+                    }
                     hws.push(HardwareWallet::Supported {
                         kind: device.device_kind(),
                         fingerprint,
                         device: Arc::new(device),
                         version,
+                        registered: Some(registered),
                     });
                 } else {
                     hws.push(HardwareWallet::Unsupported {
@@ -160,25 +160,25 @@ pub async fn list_hardware_wallets(
                 match ledger::Ledger::<ledger::TransportHID>::connect(&api, detected) {
                     Ok(mut device) => match device.get_master_fingerprint().await {
                         Ok(fingerprint) => {
-                            if let Some((name, descriptor)) = wallet {
-                                device
-                                    .load_wallet(
-                                        name,
-                                        descriptor,
-                                        cfg.iter()
-                                            .find(|cfg| cfg.fingerprint == fingerprint)
-                                            .map(|cfg| cfg.token()),
-                                    )
-                                    .expect("Configuration must be correct");
-                            }
-
                             let version = device.get_version().await.ok();
                             if ledger_version_supported(version.as_ref()) {
+                                let mut registered = false;
+                                if let Some((name, descriptor)) = wallet {
+                                    if let Some(cfg) =
+                                        cfg.iter().find(|cfg| cfg.fingerprint == fingerprint)
+                                    {
+                                        device
+                                            .load_wallet(name, descriptor, Some(cfg.token()))
+                                            .expect("Configuration must be correct");
+                                        registered = true;
+                                    }
+                                }
                                 hws.push(HardwareWallet::Supported {
                                     kind: device.device_kind(),
                                     fingerprint,
                                     device: Arc::new(device),
                                     version,
+                                    registered: Some(registered),
                                 });
                             } else {
                                 hws.push(HardwareWallet::Unsupported {

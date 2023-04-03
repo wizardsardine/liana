@@ -644,18 +644,14 @@ pub fn register_wallet_modal<'a>(
                         .push(hws.iter().enumerate().fold(
                             Column::new().spacing(10),
                             |col, (i, hw)| {
-                                col.push(hw::hw_list_view(
+                                col.push(hw::hw_list_view_for_registration(
                                     i,
                                     hw,
                                     Some(i) == chosen_hw,
                                     processing,
-                                    hw.fingerprint().and_then(|f| {
-                                        if registered.contains(&f) {
-                                            Some("Registered")
-                                        } else {
-                                            None
-                                        }
-                                    }),
+                                    hw.fingerprint()
+                                        .map(|f| registered.contains(&f))
+                                        .unwrap_or(false),
                                 ))
                             },
                         ))
