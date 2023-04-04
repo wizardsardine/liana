@@ -91,7 +91,16 @@ impl Wallet {
                     self.with_hardware_wallets(gui_config_hws)
                 }
             }
-            Err(settings::SettingsError::NotFound) => self.with_hardware_wallets(gui_config_hws),
+            Err(settings::SettingsError::NotFound) => {
+                let wallet = self.with_hardware_wallets(gui_config_hws);
+                let s = settings::Settings {
+                    wallets: vec![settings::WalletSetting::from(&wallet)],
+                };
+
+                tracing::info!("Settings file not found, creating one");
+                s.to_file(datadir_path.to_path_buf(), network)?;
+                wallet
+            }
             Err(e) => return Err(e.into()),
         };
 
