@@ -6,7 +6,7 @@ pub mod sqlite;
 use crate::{
     bitcoin::BlockChainTip,
     database::sqlite::{
-        schema::{DbCoin, DbSpendBlock, DbTip},
+        schema::{DbBlockInfo, DbCoin, DbTip},
         SqliteConn, SqliteDb,
     },
 };
@@ -262,14 +262,14 @@ impl DatabaseConnection for SqliteConn {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SpendBlock {
+pub struct BlockInfo {
     pub height: i32,
     pub time: u32,
 }
 
-impl From<DbSpendBlock> for SpendBlock {
-    fn from(b: DbSpendBlock) -> SpendBlock {
-        SpendBlock {
+impl From<DbBlockInfo> for BlockInfo {
+    fn from(b: DbBlockInfo) -> BlockInfo {
+        BlockInfo {
             height: b.height,
             time: b.time,
         }
@@ -279,21 +279,19 @@ impl From<DbSpendBlock> for SpendBlock {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Coin {
     pub outpoint: bitcoin::OutPoint,
-    pub block_height: Option<i32>,
-    pub block_time: Option<u32>,
+    pub block_info: Option<BlockInfo>,
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub is_change: bool,
     pub spend_txid: Option<bitcoin::Txid>,
-    pub spend_block: Option<SpendBlock>,
+    pub spend_block: Option<BlockInfo>,
 }
 
 impl std::convert::From<DbCoin> for Coin {
     fn from(db_coin: DbCoin) -> Coin {
         let DbCoin {
             outpoint,
-            block_height,
-            block_time,
+            block_info,
             amount,
             derivation_index,
             is_change,
@@ -303,20 +301,19 @@ impl std::convert::From<DbCoin> for Coin {
         } = db_coin;
         Coin {
             outpoint,
-            block_height,
-            block_time,
+            block_info: block_info.map(BlockInfo::from),
             amount,
             derivation_index,
             is_change,
             spend_txid,
-            spend_block: spend_block.map(SpendBlock::from),
+            spend_block: spend_block.map(BlockInfo::from),
         }
     }
 }
 
 impl Coin {
     pub fn is_confirmed(&self) -> bool {
-        self.block_height.is_some()
+        self.block_info.is_some()
     }
 
     pub fn is_spent(&self) -> bool {

@@ -148,7 +148,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DbSpendBlock {
+pub struct DbBlockInfo {
     pub height: i32,
     pub time: u32,
 }
@@ -158,13 +158,12 @@ pub struct DbCoin {
     pub id: i64,
     pub wallet_id: i64,
     pub outpoint: bitcoin::OutPoint,
-    pub block_height: Option<i32>,
-    pub block_time: Option<u32>,
+    pub block_info: Option<DbBlockInfo>,
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub is_change: bool,
     pub spend_txid: Option<bitcoin::Txid>,
-    pub spend_block: Option<DbSpendBlock>,
+    pub spend_block: Option<DbBlockInfo>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
@@ -174,8 +173,13 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         let id = row.get(0)?;
         let wallet_id = row.get(1)?;
 
-        let block_height = row.get(2)?;
-        let block_time = row.get(3)?;
+        let block_height: Option<i32> = row.get(2)?;
+        let block_time: Option<u32> = row.get(3)?;
+        assert_eq!(block_height.is_none(), block_time.is_none());
+        let block_info = block_height.map(|height| DbBlockInfo {
+            height,
+            time: block_time.expect("Must be there if height is"),
+        });
         let txid: Vec<u8> = row.get(4)?;
         let txid: bitcoin::Txid = encode::deserialize(&txid).expect("We only store valid txids");
         let vout = row.get(5)?;
@@ -193,7 +197,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         let spend_height: Option<i32> = row.get(10)?;
         let spend_time: Option<u32> = row.get(11)?;
         assert_eq!(spend_height.is_none(), spend_time.is_none());
-        let spend_block = spend_height.map(|height| DbSpendBlock {
+        let spend_block = spend_height.map(|height| DbBlockInfo {
             height,
             time: spend_time.expect("Must be there if height is"),
         });
@@ -202,8 +206,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             id,
             wallet_id,
             outpoint,
-            block_height,
-            block_time,
+            block_info,
             amount,
             derivation_index,
             is_change,
