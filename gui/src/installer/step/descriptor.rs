@@ -26,7 +26,7 @@ use async_hwi::DeviceKind;
 
 use crate::{
     app::settings::KeySetting,
-    hw::{list_hardware_wallets, HardwareWallet},
+    hw::{list_unregistered_hardware_wallets, HardwareWallet},
     installer::{
         message::{self, Message},
         step::{Context, Step},
@@ -754,8 +754,9 @@ impl EditXpubModal {
         }
     }
     fn load(&self) -> Command<Message> {
+        let keys_aliases = self.keys_aliases.clone();
         Command::perform(
-            list_hardware_wallets(&[], None),
+            async move { list_unregistered_hardware_wallets(Some(&keys_aliases)).await },
             Message::ConnectedHardwareWallets,
         )
     }
@@ -1174,7 +1175,7 @@ impl Step for ParticipateXpub {
 
     fn load(&self) -> Command<Message> {
         Command::perform(
-            list_hardware_wallets(&[], None),
+            list_unregistered_hardware_wallets(None),
             Message::ConnectedHardwareWallets,
         )
     }
@@ -1301,6 +1302,7 @@ impl From<ImportDescriptor> for Box<dyn Step> {
 #[derive(Default)]
 pub struct RegisterDescriptor {
     descriptor: Option<LianaDescriptor>,
+    keys_aliases: HashMap<Fingerprint, String>,
     processing: bool,
     chosen_hw: Option<usize>,
     hws: Vec<HardwareWallet>,
@@ -1313,6 +1315,11 @@ pub struct RegisterDescriptor {
 impl Step for RegisterDescriptor {
     fn load_context(&mut self, ctx: &Context) {
         self.descriptor = ctx.descriptor.clone();
+        let mut map = HashMap::new();
+        for key in ctx.keys.iter().filter(|k| !k.name.is_empty()) {
+            map.insert(key.master_fingerprint, key.name.clone());
+        }
+        self.keys_aliases = map;
     }
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
@@ -1373,8 +1380,9 @@ impl Step for RegisterDescriptor {
         true
     }
     fn load(&self) -> Command<Message> {
+        let keys_aliases = self.keys_aliases.clone();
         Command::perform(
-            list_hardware_wallets(&[], None),
+            async move { list_unregistered_hardware_wallets(Some(&keys_aliases)).await },
             Message::ConnectedHardwareWallets,
         )
     }

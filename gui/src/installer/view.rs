@@ -9,7 +9,7 @@ use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
     component::{
-        button, card, collapse, form, separation,
+        button, card, collapse, form, hw, separation,
         text::{text, Text},
         tooltip,
     },
@@ -473,67 +473,32 @@ pub fn hardware_wallet_xpubs<'a>(
     processing: bool,
     error: Option<&Error>,
 ) -> Element<'a, Message> {
-    let mut bttn = Button::new(
-        Row::new()
-            .align_items(Alignment::Center)
-            .push(
-                Column::new()
-                    .push(text(format!("{}", hw.kind())).bold())
-                    .push(match hw {
-                        HardwareWallet::Supported {
-                            fingerprint,
-                            version,
-                            ..
-                        } => Row::new()
-                            .spacing(5)
-                            .push(text(format!("fingerprint: {}", fingerprint)).small())
-                            .push_maybe(
-                                version
-                                    .as_ref()
-                                    .map(|v| text(format!("version: {}", v)).small()),
-                            ),
-                        HardwareWallet::Unsupported {
-                            version, message, ..
-                        } => Row::new()
-                            .spacing(5)
-                            .push_maybe(
-                                version
-                                    .as_ref()
-                                    .map(|v| text(format!("version: {}", v)).small()),
-                            )
-                            .push(
-                                iced::widget::tooltip::Tooltip::new(
-                                    icon::warning_icon(),
-                                    message,
-                                    iced::widget::tooltip::Position::Bottom,
-                                )
-                                .style(theme::Container::Card(theme::Card::Simple)),
-                            ),
-                    })
-                    .spacing(5)
-                    .width(Length::Fill),
-            )
-            .push_maybe(error.map(|e| {
-                iced::widget::tooltip(
-                    Row::new()
-                        .spacing(5)
-                        .align_items(Alignment::Center)
-                        .push(icon::warning_icon().style(color::legacy::ALERT))
-                        .push(text("An error occured").style(color::legacy::ALERT)),
-                    e,
-                    iced::widget::tooltip::Position::Bottom,
-                )
-                .style(theme::Container::Card(theme::Card::Error))
-            })),
-    )
-    .padding(10)
-    .style(theme::Button::TransparentBorder)
+    let mut bttn = Button::new(match hw {
+        HardwareWallet::Supported {
+            kind,
+            version,
+            fingerprint,
+            alias,
+            ..
+        } => {
+            if processing {
+                hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
+            } else {
+                hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
+            }
+        }
+        HardwareWallet::Unsupported { version, kind, .. } => {
+            hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
+        }
+    })
+    .style(theme::Button::Secondary)
     .width(Length::Fill);
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Select(i));
     }
     Container::new(
         Column::new()
+            .push_maybe(error.map(|e| card::warning(e.to_string()).width(Length::Fill)))
             .push(bttn)
             .push_maybe(if xpubs.is_empty() {
                 None
@@ -1468,66 +1433,29 @@ fn hw_list_view(
     hw: &HardwareWallet,
     chosen: bool,
     processing: bool,
-    registered: bool,
+    selected: bool,
 ) -> Element<Message> {
-    let mut bttn = Button::new(
-        Row::new()
-            .push(
-                Column::new()
-                    .push(text(format!("{}", hw.kind())).bold())
-                    .push(match hw {
-                        HardwareWallet::Supported {
-                            fingerprint,
-                            version,
-                            ..
-                        } => Row::new()
-                            .spacing(5)
-                            .push(text(format!("fingerprint: {}", fingerprint)).small())
-                            .push_maybe(
-                                version
-                                    .as_ref()
-                                    .map(|v| text(format!("version: {}", v)).small()),
-                            ),
-                        HardwareWallet::Unsupported {
-                            version, message, ..
-                        } => Row::new()
-                            .spacing(5)
-                            .push_maybe(
-                                version
-                                    .as_ref()
-                                    .map(|v| text(format!("version: {}", v)).small()),
-                            )
-                            .push(
-                                iced::widget::tooltip::Tooltip::new(
-                                    icon::warning_icon(),
-                                    message,
-                                    iced::widget::tooltip::Position::Bottom,
-                                )
-                                .style(theme::Container::Card(theme::Card::Simple)),
-                            ),
-                    })
-                    .spacing(5)
-                    .width(Length::Fill),
-            )
-            .push_maybe(if chosen && processing {
-                Some(
-                    Column::new()
-                        .push(text("Processing..."))
-                        .push(text("Please check your device").small()),
-                )
+    let mut bttn = Button::new(match hw {
+        HardwareWallet::Supported {
+            kind,
+            version,
+            fingerprint,
+            alias,
+            ..
+        } => {
+            if chosen && processing {
+                hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
+            } else if selected {
+                hw::selected_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             } else {
-                None
-            })
-            .push_maybe(if registered {
-                Some(Column::new().push(icon::circle_check_icon().style(color::legacy::SUCCESS)))
-            } else {
-                None
-            })
-            .align_items(Alignment::Center)
-            .width(Length::Fill),
-    )
-    .padding(10)
-    .style(theme::Button::TransparentBorder)
+                hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
+            }
+        }
+        HardwareWallet::Unsupported { version, kind, .. } => {
+            hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
+        }
+    })
+    .style(theme::Button::Secondary)
     .width(Length::Fill);
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Select(i));

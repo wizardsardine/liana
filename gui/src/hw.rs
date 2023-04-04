@@ -1,5 +1,6 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
+use crate::app::wallet::Wallet;
 use async_hwi::{ledger, specter, DeviceKind, Error as HWIError, Version, HWI};
 use liana::miniscript::bitcoin::{
     hashes::hex::{FromHex, ToHex},
@@ -21,11 +22,15 @@ pub enum HardwareWallet {
         fingerprint: Fingerprint,
         version: Option<Version>,
         registered: Option<bool>,
+        alias: Option<String>,
     },
 }
 
 impl HardwareWallet {
-    async fn new(device: Arc<dyn HWI + Send + Sync>) -> Result<Self, HWIError> {
+    async fn new(
+        device: Arc<dyn HWI + Send + Sync>,
+        aliases: Option<&HashMap<Fingerprint, String>>,
+    ) -> Result<Self, HWIError> {
         let kind = device.device_kind();
         let fingerprint = device.get_master_fingerprint().await?;
         let version = device.get_version().await.ok();
@@ -35,6 +40,7 @@ impl HardwareWallet {
             fingerprint,
             version,
             registered: None,
+            alias: aliases.and_then(|aliases| aliases.get(&fingerprint).cloned()),
         })
     }
 
@@ -80,13 +86,12 @@ impl HardwareWalletConfig {
     }
 }
 
-pub async fn list_hardware_wallets(
-    cfg: &[HardwareWalletConfig],
-    wallet: Option<(&str, &str)>,
-) -> Vec<HardwareWallet> {
+pub async fn list_hardware_wallets(wallet: &Wallet) -> Vec<HardwareWallet> {
+    let descriptor = wallet.main_descriptor.to_string();
     let mut hws: Vec<HardwareWallet> = Vec::new();
     match specter::SpecterSimulator::try_connect().await {
-        Ok(device) => match HardwareWallet::new(Arc::new(device)).await {
+        Ok(device) => match HardwareWallet::new(Arc::new(device), Some(&wallet.keys_aliases)).await
+        {
             Ok(hw) => hws.push(hw),
             Err(e) => {
                 debug!("{}", e);
@@ -98,7 +103,8 @@ pub async fn list_hardware_wallets(
         }
     }
     match specter::Specter::try_connect_serial().await {
-        Ok(device) => match HardwareWallet::new(Arc::new(device)).await {
+        Ok(device) => match HardwareWallet::new(Arc::new(device), Some(&wallet.keys_aliases)).await
+        {
             Ok(hw) => hws.push(hw),
             Err(e) => {
                 debug!("{}", e);
@@ -115,13 +121,15 @@ pub async fn list_hardware_wallets(
                 let version = device.get_version().await.ok();
                 if ledger_version_supported(version.as_ref()) {
                     let mut registered = false;
-                    if let Some((name, descriptor)) = wallet {
-                        if let Some(cfg) = cfg.iter().find(|cfg| cfg.fingerprint == fingerprint) {
-                            device
-                                .load_wallet(name, descriptor, Some(cfg.token()))
-                                .expect("Configuration must be correct");
-                            registered = true;
-                        }
+                    if let Some(cfg) = wallet
+                        .hardware_wallets
+                        .iter()
+                        .find(|cfg| cfg.fingerprint == fingerprint)
+                    {
+                        device
+                            .load_wallet(&wallet.name, &descriptor, Some(cfg.token()))
+                            .expect("Configuration must be correct");
+                        registered = true;
                     }
                     hws.push(HardwareWallet::Supported {
                         kind: device.device_kind(),
@@ -129,6 +137,7 @@ pub async fn list_hardware_wallets(
                         device: Arc::new(device),
                         version,
                         registered: Some(registered),
+                        alias: wallet.keys_aliases.get(&fingerprint).cloned(),
                     });
                 } else {
                     hws.push(HardwareWallet::Unsupported {
@@ -163,15 +172,15 @@ pub async fn list_hardware_wallets(
                             let version = device.get_version().await.ok();
                             if ledger_version_supported(version.as_ref()) {
                                 let mut registered = false;
-                                if let Some((name, descriptor)) = wallet {
-                                    if let Some(cfg) =
-                                        cfg.iter().find(|cfg| cfg.fingerprint == fingerprint)
-                                    {
-                                        device
-                                            .load_wallet(name, descriptor, Some(cfg.token()))
-                                            .expect("Configuration must be correct");
-                                        registered = true;
-                                    }
+                                if let Some(cfg) = wallet
+                                    .hardware_wallets
+                                    .iter()
+                                    .find(|cfg| cfg.fingerprint == fingerprint)
+                                {
+                                    device
+                                        .load_wallet(&wallet.name, &descriptor, Some(cfg.token()))
+                                        .expect("Configuration must be correct");
+                                    registered = true;
                                 }
                                 hws.push(HardwareWallet::Supported {
                                     kind: device.device_kind(),
@@ -179,6 +188,7 @@ pub async fn list_hardware_wallets(
                                     device: Arc::new(device),
                                     version,
                                     registered: Some(registered),
+                                    alias: wallet.keys_aliases.get(&fingerprint).cloned(),
                                 });
                             } else {
                                 hws.push(HardwareWallet::Unsupported {
@@ -221,4 +231,113 @@ fn ledger_version_supported(version: Option<&Version>) -> bool {
     } else {
         false
     }
+}
+
+pub async fn list_unregistered_hardware_wallets(
+    aliases: Option<&HashMap<Fingerprint, String>>,
+) -> Vec<HardwareWallet> {
+    let mut hws: Vec<HardwareWallet> = Vec::new();
+    match specter::SpecterSimulator::try_connect().await {
+        Ok(device) => match HardwareWallet::new(Arc::new(device), aliases).await {
+            Ok(hw) => hws.push(hw),
+            Err(e) => {
+                debug!("{}", e);
+            }
+        },
+        Err(HWIError::DeviceNotFound) => {}
+        Err(e) => {
+            debug!("{}", e);
+        }
+    }
+    match specter::Specter::try_connect_serial().await {
+        Ok(device) => match HardwareWallet::new(Arc::new(device), aliases).await {
+            Ok(hw) => hws.push(hw),
+            Err(e) => {
+                debug!("{}", e);
+            }
+        },
+        Err(HWIError::DeviceNotFound) => {}
+        Err(e) => {
+            debug!("{}", e);
+        }
+    }
+    match ledger::LedgerSimulator::try_connect().await {
+        Ok(device) => match device.get_master_fingerprint().await {
+            Ok(fingerprint) => {
+                let version = device.get_version().await.ok();
+                if ledger_version_supported(version.as_ref()) {
+                    hws.push(HardwareWallet::Supported {
+                        kind: device.device_kind(),
+                        fingerprint,
+                        device: Arc::new(device),
+                        version,
+                        registered: None,
+                        alias: aliases.and_then(|aliases| aliases.get(&fingerprint).cloned()),
+                    });
+                } else {
+                    hws.push(HardwareWallet::Unsupported {
+                        kind: device.device_kind(),
+                        version,
+                        message: "Minimal supported app version is 2.1.0".to_string(),
+                    });
+                }
+            }
+            Err(_) => {
+                hws.push(HardwareWallet::Unsupported {
+                    kind: device.device_kind(),
+                    version: None,
+                    message: "Minimal supported app version is 2.1.0".to_string(),
+                });
+            }
+        },
+        Err(HWIError::DeviceNotFound) => {}
+        Err(e) => {
+            debug!("{}", e);
+        }
+    }
+    match ledger::HidApi::new() {
+        Err(e) => {
+            debug!("{}", e);
+        }
+        Ok(api) => {
+            for detected in ledger::Ledger::<ledger::TransportHID>::enumerate(&api) {
+                match ledger::Ledger::<ledger::TransportHID>::connect(&api, detected) {
+                    Ok(device) => match device.get_master_fingerprint().await {
+                        Ok(fingerprint) => {
+                            let version = device.get_version().await.ok();
+                            if ledger_version_supported(version.as_ref()) {
+                                hws.push(HardwareWallet::Supported {
+                                    kind: device.device_kind(),
+                                    fingerprint,
+                                    device: Arc::new(device),
+                                    version,
+                                    registered: None,
+                                    alias: aliases
+                                        .and_then(|aliases| aliases.get(&fingerprint).cloned()),
+                                });
+                            } else {
+                                hws.push(HardwareWallet::Unsupported {
+                                    kind: device.device_kind(),
+                                    version,
+                                    message: "Minimal supported app version is 2.1.0".to_string(),
+                                });
+                            }
+                        }
+                        Err(_) => {
+                            hws.push(HardwareWallet::Unsupported {
+                                kind: device.device_kind(),
+                                version: None,
+                                message: "Minimal supported app version is 2.1.0".to_string(),
+                            });
+                        }
+                    },
+                    Err(HWIError::DeviceNotFound) => {}
+                    Err(e) => {
+                        debug!("{}", e);
+                    }
+                }
+            }
+        }
+    }
+    hws
 }

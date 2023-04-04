@@ -3,6 +3,7 @@ pub mod button;
 pub mod card;
 pub mod collapse;
 pub mod form;
+pub mod hw;
 pub mod modal;
 pub mod notification;
 pub mod text;

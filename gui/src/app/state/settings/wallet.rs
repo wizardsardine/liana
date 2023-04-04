@@ -284,8 +284,9 @@ impl RegisterWalletModal {
     }
 
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+        let wallet = self.wallet.clone();
         Command::perform(
-            list_hws(self.wallet.clone()),
+            async move { list_hardware_wallets(&wallet).await },
             Message::ConnectedHardwareWallets,
         )
     }
@@ -358,12 +359,4 @@ async fn update_keys_aliases(
     settings.to_file(data_dir, network)?;
 
     Ok(())
-}
-
-async fn list_hws(wallet: Arc<Wallet>) -> Vec<HardwareWallet> {
-    list_hardware_wallets(
-        &wallet.hardware_wallets,
-        Some((&wallet.name, &wallet.main_descriptor.to_string())),
-    )
-    .await
 }
