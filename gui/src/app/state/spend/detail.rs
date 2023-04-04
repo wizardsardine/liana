@@ -292,8 +292,9 @@ impl Action for SignAction {
     }
 
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+        let wallet = self.wallet.clone();
         Command::perform(
-            list_hws(self.wallet.clone()),
+            async move { list_hardware_wallets(&wallet).await },
             Message::ConnectedHardwareWallets,
         )
     }
@@ -383,14 +384,6 @@ impl Action for SignAction {
             &self.signed,
         )
     }
-}
-
-async fn list_hws(wallet: Arc<Wallet>) -> Vec<HardwareWallet> {
-    list_hardware_wallets(
-        &wallet.hardware_wallets,
-        Some((&wallet.name, &wallet.main_descriptor.to_string())),
-    )
-    .await
 }
 
 async fn sign_psbt_with_hot_signer(

@@ -49,6 +49,7 @@ impl Application for DesignSystem {
                 Box::new(section::Overview {}),
                 Box::new(section::Colors {}),
                 Box::new(section::Buttons {}),
+                Box::new(section::HardwareWallets {}),
             ],
             current: 0,
         };
@@ -111,21 +112,23 @@ impl Application for DesignSystem {
     fn view(&self) -> Element<Message> {
         let sidebar = container(
             column![
-                [ThemeType::Light, ThemeType::Dark].iter().fold(
-                    column![text("Choose a theme:")].spacing(10),
-                    |column, theme| {
-                        column.push(radio(
-                            format!("{theme:?}"),
-                            *theme,
-                            Some(match self.theme {
-                                theme::Theme::Light => ThemeType::Light,
-                                theme::Theme::Dark => ThemeType::Dark,
-                                theme::Theme::Legacy => ThemeType::Legacy,
-                            }),
-                            Message::ThemeChanged,
-                        ))
-                    },
-                ),
+                [ThemeType::Light, ThemeType::Dark, ThemeType::Legacy]
+                    .iter()
+                    .fold(
+                        column![text("Choose a theme:")].spacing(10),
+                        |column, theme| {
+                            column.push(radio(
+                                format!("{theme:?}"),
+                                *theme,
+                                Some(match self.theme {
+                                    theme::Theme::Light => ThemeType::Light,
+                                    theme::Theme::Dark => ThemeType::Dark,
+                                    theme::Theme::Legacy => ThemeType::Legacy,
+                                }),
+                                Message::ThemeChanged,
+                            ))
+                        },
+                    ),
                 Space::with_height(Length::Units(100)),
                 self.sections.iter().enumerate().fold(
                     Column::new().spacing(10),

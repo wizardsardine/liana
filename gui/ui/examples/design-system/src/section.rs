@@ -3,7 +3,12 @@ use iced::{
     widget::{button, column, container, row, Space},
     Alignment, Length,
 };
-use liana_ui::{color, component::text::*, theme, widget::Element};
+use liana_ui::{
+    color,
+    component::{hw, text::*},
+    theme,
+    widget::Element,
+};
 
 use super::{Message, Section};
 
@@ -101,4 +106,95 @@ fn button_row(style: theme::Button, label: &'static str) -> Element<Message> {
     .style(style)
     .on_press(Message::Ignore)
     .into()
+}
+
+pub struct HardwareWallets {}
+
+impl Section for HardwareWallets {
+    fn title(&self) -> &'static str {
+        "Hardware wallets"
+    }
+
+    fn view(&self) -> Element<Message> {
+        column![
+            text(self.title()).bold().size(50),
+            column![
+                button(
+                    hw::supported_hardware_wallet(
+                        "ledger",
+                        Some("v2.1.0"),
+                        "f123de",
+                        None::<String>
+                    )
+                    .width(Length::Units(500))
+                )
+                .on_press(Message::Ignore)
+                .style(theme::Button::Secondary),
+                button(
+                    hw::supported_hardware_wallet(
+                        "ledger",
+                        Some("v2.1.0"),
+                        "f123de",
+                        Some("Edouard key")
+                    )
+                    .width(Length::Units(500))
+                )
+                .on_press(Message::Ignore)
+                .style(theme::Button::Secondary),
+                button(
+                    hw::unregistered_hardware_wallet(
+                        "ledger",
+                        Some("v2.1.0"),
+                        "f123de",
+                        Some("Edouard key")
+                    )
+                    .width(Length::Units(500))
+                )
+                .on_press(Message::Ignore)
+                .style(theme::Button::Secondary),
+                button(
+                    hw::unsupported_hardware_wallet("ledger", Some("v2.1.0"))
+                        .width(Length::Units(500))
+                )
+                .on_press(Message::Ignore)
+                .style(theme::Button::Secondary),
+                button(
+                    hw::processing_hardware_wallet(
+                        "ledger",
+                        Some("v2.1.0"),
+                        "f123de",
+                        Some("Edouard key")
+                    )
+                    .width(Length::Units(500))
+                )
+                .on_press(Message::Ignore)
+                .style(theme::Button::Secondary),
+                button(
+                    hw::sign_success_hardware_wallet(
+                        "ledger",
+                        Some("v2.1.0"),
+                        "f123de",
+                        Some("Edouard key")
+                    )
+                    .width(Length::Units(500))
+                )
+                .on_press(Message::Ignore)
+                .style(theme::Button::Secondary),
+                button(
+                    hw::registration_success_hardware_wallet(
+                        "ledger",
+                        Some("v2.1.0"),
+                        "f123de",
+                        Some("Edouard key")
+                    )
+                    .width(Length::Units(500))
+                )
+                .on_press(Message::Ignore)
+                .style(theme::Button::Secondary),
+            ]
+            .spacing(20)
+        ]
+        .spacing(100)
+        .into()
+    }
 }
