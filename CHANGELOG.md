@@ -1,5 +1,39 @@
 # Liana daemon and GUI release notes
 
+## 0.4
+
+This fourth release brings support for descriptors with multiple recovery path as well as several
+usability improvements in the GUI around signing devices management, and more.
+
+### Features
+
+- We now support having multiple recovery path in a descriptor.
+- We now support more general descriptors: multisigs in the primary or any of the recovery paths
+  henceforth aren't required to use `multi()` anymore and the maximum number of keys per spending
+  path is thereby lifted.
+
+#### GUI-specific
+
+- You can now re-register the descriptor on a hardware signing device in the settings.
+- You can now change the alias of each of the signers from the settings panel.
+- At signing time we now warn you if the descriptor is not registered on the signing device.
+- The signer alias is now displayed along with its type when signing.
+- You can now connect to a running daemon without having to provide a path to its configuration,
+  provided it is using the default location for its data directory.
+- The GUI will now log to a `installer.log` file at the root of the datadir during installation, and
+  to a `<network>/liana-gui.log` when running. In case of crash, this will contain a backtrace.
+- During installation we now check the connection to bitcoind.
+
+### Fixes
+
+- We won't error when parsing of descriptor with a 1-of-N multisig as primary path.
+- We won't error at startup if our watchonly wallet is loading on bitcoind. Instead, we'll wait for
+  completion of the previous loading attempt.
+
+#### GUI-specific
+
+- Blank addresses aren't treated as duplicates when creating a transaction.
+
 ## 0.3.1
 
 A patch release for a serious bug fix in the GUI installer.
