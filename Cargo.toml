@@ -25,7 +25,7 @@ daemon = ["libc"]
 
 [dependencies]
 # For managing transactions (it re-exports the bitcoin crate)
-miniscript = { git = "https://github.com/darosior/rust-miniscript", branch = "multipath_descriptors_on_9.0", features = ["serde"] }
+miniscript = { git = "https://github.com/darosior/rust-miniscript", branch = "multipath_descriptors_on_9.0", features = ["serde", "compiler"] }
 
 # Don't reinvent the wheel
 dirs = "5.0"

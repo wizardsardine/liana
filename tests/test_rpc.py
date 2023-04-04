@@ -554,7 +554,7 @@ def test_create_recovery(lianad, bitcoind):
     # There's nothing to sweep
     with pytest.raises(
         RpcError,
-        match="No coin currently available through the timelocked recovery path",
+        match="No coin currently spendable through this timelocked recovery path",
     ):
         lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
 
