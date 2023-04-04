@@ -120,7 +120,7 @@ pub fn recipient_view<'a>(
 
 pub fn choose_coins_view<'a>(
     cache: &Cache,
-    timelock: u32,
+    timelock: u16,
     coins: &[(Coin, bool)],
     amount_left: Option<&Amount>,
     feerate: &form::Value<String>,
@@ -192,7 +192,7 @@ pub fn choose_coins_view<'a>(
 fn coin_list_view<'a>(
     i: usize,
     coin: &Coin,
-    timelock: u32,
+    timelock: u16,
     blockheight: u32,
     selected: bool,
 ) -> Element<'a, Message> {
@@ -223,7 +223,7 @@ fn coin_list_view<'a>(
                                         )
                                         .align_items(Alignment::Center),
                                 ))
-                            } else if seq < timelock * 10 / 100 {
+                            } else if seq < timelock as u32 * 10 / 100 {
                                 Some(Container::new(
                                     Row::new()
                                         .spacing(5)

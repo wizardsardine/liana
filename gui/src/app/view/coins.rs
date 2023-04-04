@@ -19,7 +19,7 @@ use crate::{
 pub fn coins_view<'a>(
     cache: &Cache,
     coins: &'a [Coin],
-    timelock: u32,
+    timelock: u16,
     selected: &[usize],
 ) -> Element<'a, Message> {
     Column::new()
@@ -55,7 +55,7 @@ pub fn coins_view<'a>(
 #[allow(clippy::collapsible_else_if)]
 fn coin_list_view(
     coin: &Coin,
-    timelock: u32,
+    timelock: u16,
     blockheight: u32,
     index: usize,
     collapsed: bool,
@@ -84,7 +84,7 @@ fn coin_list_view(
                                                 )
                                                 .align_items(Alignment::Center),
                                         ))
-                                    } else if seq < timelock * 10 / 100 {
+                                    } else if seq < timelock as u32 * 10 / 100 {
                                         Some(Container::new(
                                             Row::new()
                                                 .spacing(5)
@@ -138,16 +138,16 @@ fn coin_list_view(
                                 .spacing(5)
                                 .push_maybe(if coin.spend_info.is_none() {
                                     if let Some(b) = coin.block_height {
-                                        if blockheight > b as u32 + timelock {
+                                        if blockheight > b as u32 + timelock as u32 {
                                             Some(Container::new(
-                                                text("The recovery path is available")
+                                                text("One of the recovery path is available")
                                                     .bold()
                                                     .small()
                                                     .style(color::legacy::ALERT),
                                             ))
                                         } else {
                                             Some(Container::new(
-                                                text(format!("The recovery path will be available in {} blocks", b as u32 + timelock - blockheight))
+                                                text(format!("One of the recovery path will be available in {} blocks", b as u32 + timelock as u32 - blockheight))
                                                 .bold()
                                                 .small(),
                                             ))

@@ -302,13 +302,13 @@ impl Setting for RescanSetting {
                 }
             }
             view::SettingsEditMessage::Confirm => {
-                let date_time = NaiveDate::from_ymd(
+                let date_time = NaiveDate::from_ymd_opt(
                     i32::from_str(&self.year.value).unwrap_or(1),
                     u32::from_str(&self.month.value).unwrap_or(1),
                     u32::from_str(&self.day.value).unwrap_or(1),
                 )
-                .and_hms(0, 0, 0);
-                let t = date_time.timestamp() as u32;
+                .unwrap();
+                let t = date_time.and_hms_opt(0, 0, 0).unwrap().timestamp() as u32;
                 self.processing = true;
                 info!("Asking deamon to rescan with timestamp: {}", t);
                 return Command::perform(

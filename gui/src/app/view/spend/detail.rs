@@ -203,7 +203,7 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
         .push(
             Row::new()
                 .push(badge::Badge::new(icon::send_icon()).style(theme::Badge::Standard))
-                .push(if tx.sigs.recovery_path().is_some() {
+                .push(if !tx.sigs.recovery_paths().is_empty() {
                     text("Recovery").bold()
                 } else {
                     text("Spend").bold()
@@ -363,8 +363,8 @@ pub fn signatures<'a>(
                         Column::new()
                             .padding(15)
                             .spacing(10)
-                            .push(text(if tx.sigs.recovery_path().is_some() {
-                                "2 spending paths available. Finalizing this transaction requires either:"
+                            .push(text(if !tx.sigs.recovery_paths().is_empty() {
+                                "Multiple spending paths available. Finalizing this transaction requires either:"
                             } else {
                                 "1 spending path available. Finalizing this transaction requires:"
                             }))
@@ -373,9 +373,9 @@ pub fn signatures<'a>(
                                 tx.sigs.primary_path(),
                                 keys_aliases,
                             ))
-                            .push_maybe(tx.sigs.recovery_path().as_ref().map(|path| {
-                                let (_, keys) = desc_info.recovery_path();
-                                path_view(keys, path, keys_aliases)
+                            .push(tx.sigs.recovery_paths().iter().fold(Column::new().spacing(10), |col, (seq, path)| {
+                                let keys = &desc_info.recovery_paths()[seq];
+                                col.push(path_view(keys, path, keys_aliases))
                             })),
                     ),
                 )

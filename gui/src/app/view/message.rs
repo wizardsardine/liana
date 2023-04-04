@@ -24,6 +24,7 @@ pub enum CreateSpendMessage {
     SelectCoin(usize),
     RecipientEdited(usize, &'static str, String),
     FeerateEdited(String),
+    SelectPath(usize),
     Generate,
 }
 

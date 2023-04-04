@@ -15,11 +15,11 @@ pub struct CoinsPanel {
     selected: Vec<usize>,
     warning: Option<Error>,
     /// timelock value to pass for the heir to consume a coin.
-    timelock: u32,
+    timelock: u16,
 }
 
 impl CoinsPanel {
-    pub fn new(coins: &[Coin], timelock: u32) -> Self {
+    pub fn new(coins: &[Coin], timelock: u16) -> Self {
         let mut panel = Self {
             coins: Vec::new(),
             selected: Vec::new(),

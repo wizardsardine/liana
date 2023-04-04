@@ -71,14 +71,13 @@ impl App {
             menu::Menu::Home => Home::new(self.wallet.clone(), &self.cache.coins).into(),
             menu::Menu::Coins => CoinsPanel::new(
                 &self.cache.coins,
-                self.wallet.main_descriptor.timelock_value(),
+                self.wallet.main_descriptor.first_timelock_value(),
             )
             .into(),
             menu::Menu::Recovery => RecoveryPanel::new(
                 self.wallet.clone(),
                 &self.cache.coins,
-                self.wallet.main_descriptor.timelock_value(),
-                self.cache.blockheight as u32,
+                self.cache.blockheight,
             )
             .into(),
             menu::Menu::Receive => ReceivePanel::default().into(),

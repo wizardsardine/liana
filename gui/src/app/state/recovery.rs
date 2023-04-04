@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use iced::Command;
 
+use liana::miniscript::bitcoin::util::bip32::{DerivationPath, Fingerprint};
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
@@ -26,41 +27,24 @@ use liana::miniscript::bitcoin::{Address, Amount};
 
 pub struct RecoveryPanel {
     wallet: Arc<Wallet>,
-    locked_coins: (usize, Amount),
-    recoverable_coins: (usize, Amount),
+    recovery_paths: Vec<RecoveryPath>,
+    selected_path: Option<usize>,
     warning: Option<Error>,
     feerate: form::Value<String>,
     recipient: form::Value<String>,
     generated: Option<detail::SpendTxState>,
-    /// timelock value to pass for the heir to consume a coin.
-    timelock: u32,
 }
 
 impl RecoveryPanel {
-    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], timelock: u32, blockheight: u32) -> Self {
-        let mut locked_coins = (0, Amount::from_sat(0));
-        let mut recoverable_coins = (0, Amount::from_sat(0));
-        for coin in coins {
-            if coin.spend_info.is_none() {
-                // recoverable coins are coins that can be recoverable next block.
-                if remaining_sequence(coin, blockheight, timelock) > 1 {
-                    locked_coins.0 += 1;
-                    locked_coins.1 += coin.amount;
-                } else {
-                    recoverable_coins.0 += 1;
-                    recoverable_coins.1 += coin.amount;
-                }
-            }
-        }
+    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: i32) -> Self {
         Self {
+            recovery_paths: recovery_paths(&wallet, coins, blockheight),
             wallet,
-            locked_coins,
-            recoverable_coins,
+            selected_path: None,
             warning: None,
             feerate: form::Value::default(),
             recipient: form::Value::default(),
             generated: None,
-            timelock,
         }
     }
 }
@@ -74,8 +58,26 @@ impl State for RecoveryPanel {
                 false,
                 self.warning.as_ref(),
                 view::recovery::recovery(
-                    &self.locked_coins,
-                    &self.recoverable_coins,
+                    self.recovery_paths
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, path)| {
+                            if path.number_of_coins > 0 {
+                                Some(view::recovery::recovery_path_view(
+                                    i,
+                                    path.threshold,
+                                    &path.origins,
+                                    path.total_amount,
+                                    path.number_of_coins,
+                                    &self.wallet.keys_aliases,
+                                    self.selected_path == Some(i),
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    self.selected_path,
                     &self.feerate,
                     &self.recipient,
                 ),
@@ -95,22 +97,7 @@ impl State for RecoveryPanel {
                 Err(e) => self.warning = Some(e),
                 Ok(coins) => {
                     self.warning = None;
-                    self.locked_coins = (0, Amount::from_sat(0));
-                    self.recoverable_coins = (0, Amount::from_sat(0));
-                    for coin in coins {
-                        if coin.spend_info.is_none() {
-                            // recoverable coins are coins that can be recoverable next block.
-                            if remaining_sequence(&coin, cache.blockheight as u32, self.timelock)
-                                > 1
-                            {
-                                self.locked_coins.0 += 1;
-                                self.locked_coins.1 += coin.amount;
-                            } else {
-                                self.recoverable_coins.0 += 1;
-                                self.recoverable_coins.1 += coin.amount;
-                            }
-                        }
-                    }
+                    self.recovery_paths = recovery_paths(&self.wallet, &coins, cache.blockheight);
                 }
             },
             Message::Recovery(res) => match res {
@@ -134,6 +121,13 @@ impl State for RecoveryPanel {
                         self.recipient.valid = false;
                     }
                 }
+                view::Message::CreateSpend(view::CreateSpendMessage::SelectPath(index)) => {
+                    if Some(index) == self.selected_path {
+                        self.selected_path = None;
+                    } else {
+                        self.selected_path = Some(index);
+                    }
+                }
                 view::Message::CreateSpend(view::CreateSpendMessage::FeerateEdited(feerate)) => {
                     self.feerate.value = feerate;
                     self.feerate.valid =
@@ -144,9 +138,13 @@ impl State for RecoveryPanel {
                     let feerate_vb = self.feerate.value.parse::<u64>().expect("Checked before");
                     self.warning = None;
                     let desc = self.wallet.main_descriptor.clone();
+                    let sequence = self
+                        .recovery_paths
+                        .get(self.selected_path.expect("A path must be selected"))
+                        .map(|p| p.sequence);
                     return Command::perform(
                         async move {
-                            let psbt = daemon.create_recovery(address, feerate_vb)?;
+                            let psbt = daemon.create_recovery(address, feerate_vb, sequence)?;
                             let coins = daemon.list_coins().map(|res| res.coins)?;
                             let coins = coins
                                 .iter()
@@ -197,4 +195,44 @@ impl From<RecoveryPanel> for Box<dyn State> {
     fn from(s: RecoveryPanel) -> Box<dyn State> {
         Box::new(s)
     }
+}
+
+pub struct RecoveryPath {
+    threshold: usize,
+    sequence: u16,
+    origins: Vec<(Fingerprint, DerivationPath)>,
+    total_amount: Amount,
+    number_of_coins: usize,
+}
+
+fn recovery_paths(wallet: &Wallet, coins: &[Coin], blockheight: i32) -> Vec<RecoveryPath> {
+    wallet
+        .main_descriptor
+        .policy()
+        .recovery_paths()
+        .iter()
+        .map(|(&sequence, path)| {
+            let (number_of_coins, total_amount) = coins
+                .iter()
+                .filter(|coin| {
+                    coin.spend_info.is_none()
+                        && remaining_sequence(coin, blockheight as u32, sequence) <= 1
+                })
+                .fold(
+                    (0, Amount::from_sat(0)),
+                    |(number_of_coins, total_amount), coin| {
+                        (number_of_coins + 1, total_amount + coin.amount)
+                    },
+                );
+
+            let (threshold, origins) = path.thresh_origins();
+            RecoveryPath {
+                total_amount,
+                number_of_coins,
+                sequence,
+                threshold,
+                origins: origins.into_iter().collect(),
+            }
+        })
+        .collect()
 }

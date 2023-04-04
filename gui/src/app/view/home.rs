@@ -127,8 +127,11 @@ fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Element<'a, Mess
                         })
                         .push(if let Some(t) = event.time {
                             Container::new(
-                                text(format!("{}", NaiveDateTime::from_timestamp(t as i64, 0)))
-                                    .small(),
+                                text(format!(
+                                    "{}",
+                                    NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
+                                ))
+                                .small(),
                             )
                         } else {
                             badge::unconfirmed()
@@ -186,7 +189,7 @@ pub fn event_view<'a>(cache: &Cache, event: &'a HistoryTransaction) -> Element<'
         .push(card::simple(
             Column::new()
                 .push_maybe(event.time.map(|t| {
-                    let date = NaiveDateTime::from_timestamp(t as i64, 0);
+                    let date = NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap();
                     Row::new()
                         .width(Length::Fill)
                         .push(Container::new(text("Date:").bold()).width(Length::Fill))

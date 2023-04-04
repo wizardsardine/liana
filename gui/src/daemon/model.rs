@@ -9,15 +9,15 @@ pub use liana::{
 
 pub type Coin = ListCoinsEntry;
 
-pub fn remaining_sequence(coin: &Coin, blockheight: u32, timelock: u32) -> u32 {
+pub fn remaining_sequence(coin: &Coin, blockheight: u32, timelock: u16) -> u32 {
     if let Some(coin_blockheight) = coin.block_height {
-        if blockheight > coin_blockheight as u32 + timelock {
+        if blockheight > coin_blockheight as u32 + timelock as u32 {
             0
         } else {
-            coin_blockheight as u32 + timelock - blockheight
+            coin_blockheight as u32 + timelock as u32 - blockheight
         }
     } else {
-        timelock
+        timelock as u32
     }
 }
 
@@ -89,12 +89,10 @@ impl SpendTx {
         if path.sigs_count >= path.threshold {
             return Some(path);
         }
-        if let Some(path) = self.sigs.recovery_path() {
-            if path.sigs_count >= path.threshold {
-                return Some(path);
-            }
-        }
-        None
+        self.sigs
+            .recovery_paths()
+            .values()
+            .find(|&path| path.sigs_count >= path.threshold)
     }
 }
 
