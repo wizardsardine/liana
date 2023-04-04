@@ -1,7 +1,7 @@
 use crate::{
     bitcoin::{BitcoinInterface, Block, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
-    database::{BlockInfo, Coin, CoinType, DatabaseConnection, DatabaseInterface, SpendBlock},
+    database::{BlockInfo, Coin, CoinType, DatabaseConnection, DatabaseInterface},
     descriptors, DaemonHandle,
 };
 
@@ -258,7 +258,7 @@ impl DatabaseConnection for DummyDatabase {
             assert!(spent.spend_txid.is_some());
             assert!(spent.spend_block.is_none());
             spent.spend_txid = Some(*spend_txid);
-            spent.spend_block = Some(SpendBlock {
+            spent.spend_block = Some(BlockInfo {
                 height: *height,
                 time: *time,
             });

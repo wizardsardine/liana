@@ -868,11 +868,7 @@ pub struct CreateRecoveryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        bitcoin::Block,
-        database::{BlockInfo, SpendBlock},
-        testutils::*,
-    };
+    use crate::{bitcoin::Block, database::BlockInfo, testutils::*};
 
     use bitcoin::{
         blockdata::transaction::{TxIn, TxOut},
@@ -1296,7 +1292,7 @@ mod tests {
                     vout: 0,
                 },
                 block_info: Some(BlockInfo { height: 1, time: 1 }),
-                spend_block: Some(SpendBlock { time: 3, height: 3 }),
+                spend_block: Some(BlockInfo { time: 3, height: 3 }),
                 derivation_index: ChildNumber::from(0),
                 amount: bitcoin::Amount::from_sat(100_000_000),
                 spend_txid: Some(spend_tx.txid()),

@@ -148,12 +148,6 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DbSpendBlock {
-    pub height: i32,
-    pub time: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DbBlockInfo {
     pub height: i32,
     pub time: u32,
@@ -169,7 +163,7 @@ pub struct DbCoin {
     pub derivation_index: bip32::ChildNumber,
     pub is_change: bool,
     pub spend_txid: Option<bitcoin::Txid>,
-    pub spend_block: Option<DbSpendBlock>,
+    pub spend_block: Option<DbBlockInfo>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
@@ -203,7 +197,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         let spend_height: Option<i32> = row.get(10)?;
         let spend_time: Option<u32> = row.get(11)?;
         assert_eq!(spend_height.is_none(), spend_time.is_none());
-        let spend_block = spend_height.map(|height| DbSpendBlock {
+        let spend_block = spend_height.map(|height| DbBlockInfo {
             height,
             time: spend_time.expect("Must be there if height is"),
         });

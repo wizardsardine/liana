@@ -585,7 +585,7 @@ impl SqliteConn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::{BlockInfo, DbBlockInfo, SpendBlock};
+    use crate::database::{BlockInfo, DbBlockInfo};
     use crate::testutils::*;
     use std::{
         collections::{HashMap, HashSet},
@@ -1005,7 +1005,7 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    spend_block: Some(SpendBlock {
+                    spend_block: Some(BlockInfo {
                         height: 101_199,
                         time: 1_231_678,
                     }),
@@ -1043,7 +1043,7 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    spend_block: Some(SpendBlock {
+                    spend_block: Some(BlockInfo {
                         height: 101_105,
                         time: 1_201_678,
                     }),
@@ -1218,7 +1218,7 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    spend_block: Some(SpendBlock {
+                    spend_block: Some(BlockInfo {
                         height: 101_199,
                         time: 1_123_000,
                     }),
@@ -1256,7 +1256,7 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    spend_block: Some(SpendBlock {
+                    spend_block: Some(BlockInfo {
                         height: 101_105,
                         time: 1_126_000,
                     }),

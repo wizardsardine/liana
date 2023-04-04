@@ -6,7 +6,7 @@ pub mod sqlite;
 use crate::{
     bitcoin::BlockChainTip,
     database::sqlite::{
-        schema::{DbBlockInfo, DbCoin, DbSpendBlock, DbTip},
+        schema::{DbBlockInfo, DbCoin, DbTip},
         SqliteConn, SqliteDb,
     },
 };
@@ -262,21 +262,6 @@ impl DatabaseConnection for SqliteConn {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SpendBlock {
-    pub height: i32,
-    pub time: u32,
-}
-
-impl From<DbSpendBlock> for SpendBlock {
-    fn from(b: DbSpendBlock) -> SpendBlock {
-        SpendBlock {
-            height: b.height,
-            time: b.time,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlockInfo {
     pub height: i32,
     pub time: u32,
@@ -299,7 +284,7 @@ pub struct Coin {
     pub derivation_index: bip32::ChildNumber,
     pub is_change: bool,
     pub spend_txid: Option<bitcoin::Txid>,
-    pub spend_block: Option<SpendBlock>,
+    pub spend_block: Option<BlockInfo>,
 }
 
 impl std::convert::From<DbCoin> for Coin {
@@ -321,7 +306,7 @@ impl std::convert::From<DbCoin> for Coin {
             derivation_index,
             is_change,
             spend_txid,
-            spend_block: spend_block.map(SpendBlock::from),
+            spend_block: spend_block.map(BlockInfo::from),
         }
     }
 }
