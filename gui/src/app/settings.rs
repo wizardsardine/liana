@@ -47,6 +47,7 @@ impl Settings {
 
         let mut settings_file = OpenOptions::new()
             .write(true)
+            .create(true)
             .truncate(true)
             .open(path)
             .map_err(|e| SettingsError::WritingFile(e.to_string()))?;
