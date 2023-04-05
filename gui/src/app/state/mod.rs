@@ -278,21 +278,25 @@ impl State for ReceivePanel {
     }
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
     ) -> Command<Message> {
-        if let Message::ReceiveAddress(res) = message {
-            match res {
-                Ok(address) => {
-                    self.warning = None;
-                    self.qr_code = Some(qr_code::State::new(address.to_qr_uri()).unwrap());
-                    self.address = Some(address);
+        match message {
+            Message::ReceiveAddress(res) => {
+                match res {
+                    Ok(address) => {
+                        self.warning = None;
+                        self.qr_code = Some(qr_code::State::new(address.to_qr_uri()).unwrap());
+                        self.address = Some(address);
+                    }
+                    Err(e) => self.warning = Some(e),
                 }
-                Err(e) => self.warning = Some(e),
+                Command::none()
             }
-        };
-        Command::none()
+            Message::View(view::Message::Next) => self.load(daemon),
+            _ => Command::none(),
+        }
     }
 
     fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
