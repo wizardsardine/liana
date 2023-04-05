@@ -159,6 +159,7 @@ def test_list_spend(lianad, bitcoind):
     assert "psbt" in res_b
 
     # Store them both in DB.
+    time_before_update = int(time.time())
     assert len(lianad.rpc.listspendtxs()["spend_txs"]) == 0
     lianad.rpc.updatespend(res["psbt"])
     lianad.rpc.updatespend(res_b["psbt"])
@@ -168,7 +169,9 @@ def test_list_spend(lianad, bitcoind):
     list_res = lianad.rpc.listspendtxs()["spend_txs"]
     assert len(list_res) == 2
     first_psbt = next(entry for entry in list_res if entry["psbt"] == res["psbt"])
+    assert time_before_update <= first_psbt["updated_at"] <= int(time.time())
     second_psbt = next(entry for entry in list_res if entry["psbt"] == res_b["psbt"])
+    assert time_before_update <= second_psbt["updated_at"] <= int(time.time())
 
     # If we delete the first one, we'll get only the second one.
     first_psbt = PSBT.from_base64(res["psbt"])

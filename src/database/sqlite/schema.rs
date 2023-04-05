@@ -74,7 +74,8 @@ CREATE TABLE addresses (
 CREATE TABLE spend_transactions (
     id INTEGER PRIMARY KEY NOT NULL,
     psbt BLOB UNIQUE NOT NULL,
-    txid BLOB UNIQUE NOT NULL
+    txid BLOB UNIQUE NOT NULL,
+    updated_at INTEGER
 );
 ";
 
@@ -253,6 +254,7 @@ pub struct DbSpendTransaction {
     pub id: i64,
     pub psbt: Psbt,
     pub txid: bitcoin::Txid,
+    pub updated_at: Option<u32>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbSpendTransaction {
@@ -268,6 +270,13 @@ impl TryFrom<&rusqlite::Row<'_>> for DbSpendTransaction {
         let txid: bitcoin::Txid = encode::deserialize(&txid).expect("We only store valid txids");
         assert_eq!(txid, psbt.unsigned_tx.txid());
 
-        Ok(DbSpendTransaction { id, psbt, txid })
+        let updated_at = row.get(3)?;
+
+        Ok(DbSpendTransaction {
+            id,
+            psbt,
+            txid,
+            updated_at,
+        })
     }
 }
