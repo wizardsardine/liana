@@ -294,11 +294,24 @@ pub fn create_and_write_file(
 
 #[derive(Debug, Clone)]
 pub enum Error {
+    Bitcoind(String),
     CannotCreateDatadir(String),
     CannotCreateFile(String),
     CannotWriteToFile(String),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
+}
+
+impl From<jsonrpc::simple_http::Error> for Error {
+    fn from(error: jsonrpc::simple_http::Error) -> Self {
+        Error::Bitcoind(error.to_string())
+    }
+}
+
+impl From<jsonrpc::Error> for Error {
+    fn from(error: jsonrpc::Error) -> Self {
+        Error::Bitcoind(error.to_string())
+    }
 }
 
 impl From<async_hwi::Error> for Error {
@@ -310,6 +323,7 @@ impl From<async_hwi::Error> for Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            Self::Bitcoind(e) => write!(f, "Failed to ping bitcoind: {}", e),
             Self::CannotCreateDatadir(e) => write!(f, "Failed to create datadir: {}", e),
             Self::CannotWriteToFile(e) => write!(f, "Failed to write to file: {}", e),
             Self::CannotCreateFile(e) => write!(f, "Failed to create file: {}", e),
