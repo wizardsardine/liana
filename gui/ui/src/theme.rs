@@ -808,7 +808,7 @@ impl progress_bar::StyleSheet for Theme {
     type Style = ProgressBar;
     fn appearance(&self, _style: &Self::Style) -> progress_bar::Appearance {
         progress_bar::Appearance {
-            background: iced::Color::TRANSPARENT.into(),
+            background: color::GREY.into(),
             bar: color::GREEN.into(),
             border_radius: 10.0,
         }
