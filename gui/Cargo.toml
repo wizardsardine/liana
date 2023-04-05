@@ -28,6 +28,9 @@ tokio = {version = "1.21.0", features = ["signal"]}
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Used to ping bitcoind node
+jsonrpc = "0.12"
+
 # Logging stuff
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"

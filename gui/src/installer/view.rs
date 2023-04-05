@@ -801,6 +801,7 @@ pub fn define_bitcoin<'a>(
     progress: (usize, usize),
     address: &form::Value<String>,
     cookie_path: &form::Value<String>,
+    is_running: Option<&Result<(), Error>>,
 ) -> Element<'a, Message> {
     let col_address = Column::new()
         .push(text("Address:").bold())
@@ -836,10 +837,46 @@ pub fn define_bitcoin<'a>(
             )
             .push(col_address)
             .push(col_cookie)
+            .push_maybe(if is_running.is_some() {
+                is_running.map(|res| {
+                    if res.is_ok() {
+                        Container::new(
+                            Row::new()
+                                .spacing(10)
+                                .align_items(Alignment::Center)
+                                .push(icon::circle_check_icon().style(color::legacy::SUCCESS))
+                                .push(text("Connection checked").style(color::legacy::SUCCESS)),
+                        )
+                    } else {
+                        Container::new(
+                            Row::new()
+                                .spacing(10)
+                                .align_items(Alignment::Center)
+                                .push(icon::circle_cross_icon().style(color::legacy::ALERT))
+                                .push(text("Connection failed").style(color::legacy::ALERT)),
+                        )
+                    }
+                })
+            } else {
+                Some(Container::new(Space::with_height(Length::Units(25))))
+            })
             .push(
-                button::primary(None, "Next")
-                    .on_press(Message::Next)
-                    .width(Length::Units(200)),
+                Row::new()
+                    .spacing(10)
+                    .push(Container::new(
+                        button::border(None, "Check connection")
+                            .on_press(Message::DefineBitcoind(
+                                message::DefineBitcoind::PingBitcoind,
+                            ))
+                            .width(Length::Units(200)),
+                    ))
+                    .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
+                        button::primary(None, "Next")
+                            .on_press(Message::Next)
+                            .width(Length::Units(200))
+                    } else {
+                        button::primary(None, "Next").width(Length::Units(200))
+                    }),
             )
             .width(Length::Fill)
             .height(Length::Fill)

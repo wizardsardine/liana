@@ -1757,6 +1757,7 @@ dependencies = [
  "iced",
  "iced_lazy",
  "iced_native",
+ "jsonrpc",
  "liana",
  "liana_ui",
  "log",

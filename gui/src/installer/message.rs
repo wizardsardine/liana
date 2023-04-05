@@ -38,6 +38,8 @@ pub enum Message {
 pub enum DefineBitcoind {
     CookiePathEdited(String),
     AddressEdited(String),
+    PingBitcoindResult(Result<(), Error>),
+    PingBitcoind,
 }
 
 #[derive(Debug, Clone)]

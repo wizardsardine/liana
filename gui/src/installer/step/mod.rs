@@ -13,12 +13,14 @@ use std::str::FromStr;
 use iced::Command;
 use liana::{config::BitcoindConfig, miniscript::bitcoin};
 
+use jsonrpc::{client::Client, simple_http::SimpleHttpTransport};
+
 use liana_ui::{component::form, widget::*};
 
 use crate::installer::{
     context::Context,
     message::{self, Message},
-    view,
+    view, Error,
 };
 
 pub trait Step {
@@ -56,6 +58,7 @@ impl From<Welcome> for Box<dyn Step> {
 pub struct DefineBitcoind {
     cookie_path: form::Value<String>,
     address: form::Value<String>,
+    is_running: Option<Result<(), Error>>,
 }
 
 fn bitcoind_default_cookie_path(network: &bitcoin::Network) -> Option<String> {
@@ -106,7 +109,29 @@ impl DefineBitcoind {
         Self {
             cookie_path: form::Value::default(),
             address: form::Value::default(),
+            is_running: None,
         }
+    }
+
+    pub fn ping(&self) -> Command<Message> {
+        let address = self.address.value.to_owned();
+        let cookie_path = self.cookie_path.value.to_owned();
+        Command::perform(
+            async move {
+                let cookie = std::fs::read_to_string(&cookie_path)
+                    .map_err(|e| Error::Bitcoind(format!("Failed to read cookie file: {}", e)))?;
+                let client = Client::with_transport(
+                    SimpleHttpTransport::builder()
+                        .url(&address)?
+                        .timeout(std::time::Duration::from_secs(3))
+                        .cookie_auth(cookie)
+                        .build(),
+                );
+                client.send_request(client.build_request("echo", &[]))?;
+                Ok(())
+            },
+            |res| Message::DefineBitcoind(message::DefineBitcoind::PingBitcoindResult(res)),
+        )
     }
 }
 
@@ -123,11 +148,18 @@ impl Step for DefineBitcoind {
     fn update(&mut self, message: Message) -> Command<Message> {
         if let Message::DefineBitcoind(msg) = message {
             match msg {
+                message::DefineBitcoind::PingBitcoind => {
+                    self.is_running = None;
+                    return self.ping();
+                }
+                message::DefineBitcoind::PingBitcoindResult(res) => self.is_running = Some(res),
                 message::DefineBitcoind::AddressEdited(address) => {
+                    self.is_running = None;
                     self.address.value = address;
                     self.address.valid = true;
                 }
                 message::DefineBitcoind::CookiePathEdited(path) => {
+                    self.is_running = None;
                     self.cookie_path.value = path;
                     self.address.valid = true;
                 }
@@ -165,7 +197,16 @@ impl Step for DefineBitcoind {
     }
 
     fn view(&self, progress: (usize, usize)) -> Element<Message> {
-        view::define_bitcoin(progress, &self.address, &self.cookie_path)
+        view::define_bitcoin(
+            progress,
+            &self.address,
+            &self.cookie_path,
+            self.is_running.as_ref(),
+        )
+    }
+
+    fn load(&self) -> Command<Message> {
+        self.ping()
     }
 }
 
