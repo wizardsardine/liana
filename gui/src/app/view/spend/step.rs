@@ -78,6 +78,7 @@ pub fn choose_recipients_view<'a>(
                         button::primary(None, "Next").width(Length::Units(100))
                     }),
             )
+            .style(theme::Container::Foreground)
             .padding(20),
         ),
     )
@@ -184,6 +185,7 @@ pub fn choose_coins_view<'a>(
                         button::primary(None, "Next").width(Length::Units(100))
                     }),
             )
+            .style(theme::Container::Foreground)
             .padding(20),
         ),
     )
