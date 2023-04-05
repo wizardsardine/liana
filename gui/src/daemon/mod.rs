@@ -97,8 +97,17 @@ pub trait Daemon: Debug {
                 .main
                 .partial_spend_info(&tx.psbt)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
-            spend_txs.push(model::SpendTx::new(tx.psbt, coins, sigs))
+            spend_txs.push(model::SpendTx::new(tx.updated_at, tx.psbt, coins, sigs))
         }
+        spend_txs.sort_by(|a, b| {
+            if a.status == b.status {
+                // last updated first
+                b.updated_at.cmp(&a.updated_at)
+            } else {
+                // follows status enum order
+                a.status.cmp(&b.status)
+            }
+        });
         Ok(spend_txs)
     }
 

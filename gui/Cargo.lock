@@ -1727,7 +1727,7 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "0.3.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#045182e7eae5846d33934adeb2018ab6857173ae"
+source = "git+https://github.com/wizardsardine/liana?branch=master#76deaab9888619249a5ca75dd19d75db155ee1f3"
 dependencies = [
  "backtrace",
  "base64",

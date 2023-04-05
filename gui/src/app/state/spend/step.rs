@@ -451,7 +451,7 @@ impl Step for SaveSpend {
             .unwrap();
         self.spend = Some(detail::SpendTxState::new(
             self.wallet.clone(),
-            SpendTx::new(psbt, draft.inputs.clone(), sigs),
+            SpendTx::new(None, psbt, draft.inputs.clone(), sigs),
             false,
         ));
     }
