@@ -30,18 +30,24 @@ pub struct SpendTx {
     pub fee_amount: Amount,
     pub status: SpendStatus,
     pub sigs: PartialSpendInfo,
+    pub updated_at: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(PartialOrd, Ord, Debug, Clone, PartialEq, Eq)]
 pub enum SpendStatus {
     Pending,
-    Deprecated,
     Broadcast,
     Spent,
+    Deprecated,
 }
 
 impl SpendTx {
-    pub fn new(psbt: Psbt, coins: Vec<Coin>, sigs: PartialSpendInfo) -> Self {
+    pub fn new(
+        updated_at: Option<u32>,
+        psbt: Psbt,
+        coins: Vec<Coin>,
+        sigs: PartialSpendInfo,
+    ) -> Self {
         let mut change_indexes = Vec::new();
         let (change_amount, spend_amount) = psbt.unsigned_tx.output.iter().enumerate().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
@@ -73,6 +79,7 @@ impl SpendTx {
         }
 
         Self {
+            updated_at,
             coins,
             psbt,
             change_indexes,
