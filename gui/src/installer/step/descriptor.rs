@@ -49,6 +49,7 @@ pub struct RecoveryPath {
     keys: Vec<DescriptorKey>,
     threshold: usize,
     sequence: u16,
+    duplicate_sequence: bool,
 }
 
 impl RecoveryPath {
@@ -57,11 +58,14 @@ impl RecoveryPath {
             keys: vec![DescriptorKey::default()],
             threshold: 1,
             sequence: u16::MAX,
+            duplicate_sequence: false,
         }
     }
 
     fn valid(&self) -> bool {
-        !self.keys.is_empty() && !self.keys.iter().any(|k| k.key.is_none())
+        !self.keys.is_empty()
+            && !self.keys.iter().any(|k| k.key.is_none())
+            && !self.duplicate_sequence
     }
 
     fn check_network(&mut self, network: Network) {
@@ -73,6 +77,7 @@ impl RecoveryPath {
     fn view(&self) -> Element<message::DefinePath> {
         view::recovery_path_view(
             self.sequence,
+            self.duplicate_sequence,
             self.threshold,
             self.keys
                 .iter()
@@ -143,6 +148,8 @@ impl DefineDescriptor {
         let mut duplicate_keys = HashSet::new();
         let mut all_names: HashMap<String, Fingerprint> = HashMap::new();
         let mut duplicate_names = HashSet::new();
+        let mut all_sequence = HashSet::new();
+        let mut duplicate_sequence = HashSet::new();
         for spending_key in &self.spending_keys {
             if let Some(key) = &spending_key.key {
                 if let Some(fg) = all_names.get(&spending_key.name) {
@@ -159,7 +166,12 @@ impl DefineDescriptor {
                 }
             }
         }
-        for path in &self.recovery_paths {
+        for path in &mut self.recovery_paths {
+            if all_sequence.contains(&path.sequence) {
+                duplicate_sequence.insert(path.sequence);
+            } else {
+                all_sequence.insert(path.sequence);
+            }
             for recovery_key in &path.keys {
                 if let Some(key) = &recovery_key.key {
                     if let Some(fg) = all_names.get(&recovery_key.name) {
@@ -185,6 +197,7 @@ impl DefineDescriptor {
         }
 
         for path in &mut self.recovery_paths {
+            path.duplicate_sequence = duplicate_sequence.contains(&path.sequence);
             for recovery_key in path.keys.iter_mut() {
                 if let Some(key) = &recovery_key.key {
                     recovery_key.duplicate_key = duplicate_keys.contains(key);
@@ -342,6 +355,7 @@ impl Step for DefineDescriptor {
                     if let Some(path) = self.recovery_paths.get_mut(i) {
                         path.sequence = seq;
                     }
+                    self.check_for_duplicate();
                 }
                 message::DefinePath::EditSequence => {
                     if let Some(path) = self.recovery_paths.get(i) {
