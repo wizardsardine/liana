@@ -278,46 +278,49 @@ pub fn define_descriptor<'a>(
 
 pub fn recovery_path_view(
     sequence: u16,
+    duplicate_sequence: bool,
     recovery_threshold: usize,
     recovery_keys: Vec<Element<message::DefinePath>>,
 ) -> Element<message::DefinePath> {
     Container::new(
-        Column::new().push(defined_sequence(sequence)).push(
-            Row::new()
-                .align_items(Alignment::Center)
-                .push_maybe(if recovery_keys.len() > 1 {
-                    Some(threshsold_input::threshsold_input(
-                        recovery_threshold,
-                        recovery_keys.len(),
-                        message::DefinePath::ThresholdEdited,
-                    ))
-                } else {
-                    None
-                })
-                .push(
-                    scrollable(
-                        Row::new()
-                            .spacing(5)
-                            .align_items(Alignment::Center)
-                            .push(Row::with_children(recovery_keys).spacing(5))
-                            .push(
-                                Button::new(
-                                    Container::new(icon::plus_icon().size(50))
-                                        .width(Length::Units(150))
-                                        .height(Length::Units(150))
-                                        .align_y(alignment::Vertical::Center)
-                                        .align_x(alignment::Horizontal::Center),
+        Column::new()
+            .push(defined_sequence(sequence, duplicate_sequence))
+            .push(
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push_maybe(if recovery_keys.len() > 1 {
+                        Some(threshsold_input::threshsold_input(
+                            recovery_threshold,
+                            recovery_keys.len(),
+                            message::DefinePath::ThresholdEdited,
+                        ))
+                    } else {
+                        None
+                    })
+                    .push(
+                        scrollable(
+                            Row::new()
+                                .spacing(5)
+                                .align_items(Alignment::Center)
+                                .push(Row::with_children(recovery_keys).spacing(5))
+                                .push(
+                                    Button::new(
+                                        Container::new(icon::plus_icon().size(50))
+                                            .width(Length::Units(150))
+                                            .height(Length::Units(150))
+                                            .align_y(alignment::Vertical::Center)
+                                            .align_x(alignment::Horizontal::Center),
+                                    )
+                                    .width(Length::Units(150))
+                                    .height(Length::Units(150))
+                                    .style(theme::Button::TransparentBorder)
+                                    .on_press(message::DefinePath::AddKey),
                                 )
-                                .width(Length::Units(150))
-                                .height(Length::Units(150))
-                                .style(theme::Button::TransparentBorder)
-                                .on_press(message::DefinePath::AddKey),
-                            )
-                            .padding(5),
-                    )
-                    .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
-                ),
-        ),
+                                .padding(5),
+                        )
+                        .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
+                    ),
+            ),
     )
     .padding(5)
     .style(theme::Container::Card(theme::Card::Border))
@@ -1032,46 +1035,61 @@ pub fn install<'a>(
     )
 }
 
-pub fn defined_sequence<'a>(sequence: u16) -> Element<'a, message::DefinePath> {
+pub fn defined_sequence<'a>(
+    sequence: u16,
+    duplicate_sequence: bool,
+) -> Element<'a, message::DefinePath> {
     let (n_years, n_months, n_days, n_hours, n_minutes) = duration_from_sequence(sequence);
     Container::new(
-        Row::new()
-            .width(Length::Fill)
-            .align_items(Alignment::Center)
-            .push(
-                Container::new(
-                    Column::new()
-                        .spacing(5)
-                        .push(text(format!("Available after {} blocks", sequence)).bold())
-                        .push(
-                            [
-                                (n_years, "y"),
-                                (n_months, "m"),
-                                (n_days, "d"),
-                                (n_hours, "h"),
-                                (n_minutes, "mn"),
-                            ]
-                            .iter()
-                            .fold(
-                                Row::new().spacing(5),
-                                |row, (n, unit)| {
-                                    row.push_maybe(if *n > 0 {
-                                        Some(text(format!("{}{}", n, unit,)))
-                                    } else {
-                                        None
-                                    })
-                                },
-                            ),
-                        ),
+        Column::new()
+            .spacing(5)
+            .push_maybe(if duplicate_sequence {
+                Some(
+                    text("No two recovery paths may become available at the very same date.")
+                        .small()
+                        .style(color::legacy::ALERT),
                 )
-                .padding(5)
-                .align_y(alignment::Vertical::Center),
-            )
+            } else {
+                None
+            })
             .push(
-                button::border(Some(icon::pencil_icon()), "Edit")
-                    .on_press(message::DefinePath::EditSequence),
-            )
-            .spacing(15),
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(5)
+                                .push(text(format!("Available after {} blocks", sequence)).bold())
+                                .push(
+                                    [
+                                        (n_years, "y"),
+                                        (n_months, "m"),
+                                        (n_days, "d"),
+                                        (n_hours, "h"),
+                                        (n_minutes, "mn"),
+                                    ]
+                                    .iter()
+                                    .fold(
+                                        Row::new().spacing(5),
+                                        |row, (n, unit)| {
+                                            row.push_maybe(if *n > 0 {
+                                                Some(text(format!("{}{}", n, unit,)))
+                                            } else {
+                                                None
+                                            })
+                                        },
+                                    ),
+                                ),
+                        )
+                        .padding(5)
+                        .align_y(alignment::Vertical::Center),
+                    )
+                    .push(
+                        button::border(Some(icon::pencil_icon()), "Edit")
+                            .on_press(message::DefinePath::EditSequence),
+                    )
+                    .spacing(15),
+            ),
     )
     .padding(5)
     .into()
