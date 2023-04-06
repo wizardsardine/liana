@@ -74,6 +74,7 @@ class SingleSigner:
         :param psbt: PSBT of the transaction to be signed.
         :returns: PSBT with a signature in each input for the specified key.
         """
+        assert isinstance(recovery, bool)
         return sign_psbt(psbt, [self.recovery_hd if recovery else self.primary_hd])
 
 

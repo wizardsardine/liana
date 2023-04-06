@@ -2,19 +2,25 @@ import pytest
 
 from fixtures import *
 from test_framework.serializations import PSBT
-from test_framework.utils import wait_for, RpcError
+from test_framework.utils import wait_for, RpcError, OLD_LIANAD_PATH, LIANAD_PATH
 
 
 def receive_and_send(lianad, bitcoind):
+    n_coins = len(lianad.rpc.listcoins()["coins"])
+
     # Receive 3 coins in different blocks on different addresses.
     for _ in range(3):
         addr = lianad.rpc.getnewaddress()["address"]
         txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
         bitcoind.generate_block(1, wait_for_mempool=txid)
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 3)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == n_coins + 3)
 
     # Create a spend that will create a change output, sign and broadcast it.
-    outpoints = [lianad.rpc.listcoins()["coins"][0]["outpoint"]]
+    outpoints = [next(
+        c["outpoint"]
+        for c in lianad.rpc.listcoins()["coins"]
+        if c["spend_info"] is None
+    )]
     destinations = {
         bitcoind.rpc.getnewaddress(): 200_000,
     }
@@ -182,3 +188,33 @@ def test_coinbase_deposit(lianad, bitcoind):
 
     # We must have detected a new deposit.
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
+
+
+@pytest.mark.skipif(
+    OLD_LIANAD_PATH is None, reason="Need the old lianad binary to create the datadir."
+)
+def test_migration(lianad_multisig, bitcoind):
+    """Test we can start a newer lianad on a datadir created by an older lianad."""
+    lianad = lianad_multisig
+
+    # Set the old binary and re-create the datadir.
+    lianad.cmd_line[0] = OLD_LIANAD_PATH
+    lianad.restart_fresh(bitcoind)
+    assert lianad.rpc.getinfo()["version"] == "0.3.0"
+
+    # Perform some transactions. On Liana v0.3 there was no "updated_at" for Spend
+    # transaction drafts.
+    receive_and_send(lianad, bitcoind)
+    spend_txs = lianad.rpc.listspendtxs()["spend_txs"]
+    assert len(spend_txs) == 2 and all("updated_at" not in s for s in spend_txs)
+
+    # Set back the new binary. We should be able to read and, if necessary, upgrade
+    # the old database and generally all files from the datadir.
+    lianad.cmd_line[0] = LIANAD_PATH
+    lianad.restart_fresh(bitcoind)
+
+    # And we can go on to create more deposits and transactions. Make sure we now have
+    # the "updated_at" field on tx drafts.
+    receive_and_send(lianad, bitcoind)
+    spend_txs = lianad.rpc.listspendtxs()["spend_txs"]
+    assert len(spend_txs) == 2 and all(s["updated_at"] is not None for s in spend_txs)
