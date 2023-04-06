@@ -88,8 +88,8 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         self.call(
             "createspend",
             Some(vec![
-                json!(coins_outpoints),
                 json!(destinations),
+                json!(coins_outpoints),
                 json!(feerate_vb),
             ]),
         )
