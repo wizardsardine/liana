@@ -725,11 +725,9 @@ pub struct EditXpubModal {
     form_xpub: form::Value<String>,
     edit_name: bool,
 
-    chosen_hw: Option<usize>,
     hws: Vec<HardwareWallet>,
-
-    signer: Arc<Signer>,
-    chosen_signer: bool,
+    hot_signer: Arc<Signer>,
+    chosen_signer: Option<Fingerprint>,
 }
 
 impl EditXpubModal {
@@ -742,7 +740,7 @@ impl EditXpubModal {
         network: Network,
         account_indexes: HashMap<Fingerprint, ChildNumber>,
         keys_aliases: HashMap<Fingerprint, String>,
-        signer: Arc<Signer>,
+        hot_signer: Arc<Signer>,
     ) -> Self {
         Self {
             form_name: form::Value {
@@ -757,14 +755,13 @@ impl EditXpubModal {
             account_indexes,
             path_index,
             key_index,
-            chosen_hw: None,
             processing: false,
             hws: Vec::new(),
             error: None,
             network,
             edit_name: false,
-            chosen_signer: Some(signer.fingerprint()) == key.map(|k| k.master_fingerprint()),
-            signer,
+            chosen_signer: key.map(|k| k.master_fingerprint()),
+            hot_signer,
         }
     }
     fn load(&self) -> Command<Message> {
@@ -790,7 +787,7 @@ impl DescriptorEditModal for EditXpubModal {
                     ..
                 }) = self.hws.get(i)
                 {
-                    self.chosen_hw = Some(i);
+                    self.chosen_signer = Some(*fingerprint);
                     self.processing = true;
                     // If another account n exists, the key is retrieved for the account n+1
                     let account_index = self
@@ -815,10 +812,7 @@ impl DescriptorEditModal for EditXpubModal {
             Message::ConnectedHardwareWallets(hws) => {
                 self.hws = hws;
                 if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
-                    self.chosen_hw = self
-                        .hws
-                        .iter()
-                        .position(|hw| hw.fingerprint() == Some(key.master_fingerprint()));
+                    self.chosen_signer = Some(key.master_fingerprint());
                 }
             }
             Message::Reload => {
@@ -826,10 +820,9 @@ impl DescriptorEditModal for EditXpubModal {
                 return self.load();
             }
             Message::UseHotSigner => {
-                self.chosen_hw = None;
-                self.chosen_signer = true;
+                let fingerprint = self.hot_signer.fingerprint();
+                self.chosen_signer = Some(fingerprint);
                 self.form_xpub.valid = true;
-                let fingerprint = self.signer.fingerprint();
                 if let Some(alias) = self.keys_aliases.get(&fingerprint) {
                     self.form_name.valid = true;
                     self.form_name.value = alias.clone();
@@ -848,7 +841,7 @@ impl DescriptorEditModal for EditXpubModal {
                     "[{}{}]{}",
                     fingerprint,
                     derivation_path.to_string().trim_start_matches('m'),
-                    self.signer.get_extended_pubkey(&derivation_path)
+                    self.hot_signer.get_extended_pubkey(&derivation_path)
                 );
             }
             Message::DefineDescriptor(message::DefineDescriptor::KeyModal(msg)) => match msg {
@@ -863,12 +856,12 @@ impl DescriptorEditModal for EditXpubModal {
                             } else {
                                 self.edit_name = true;
                             }
-                            self.chosen_signer = false;
+                            self.chosen_signer = None;
                             self.form_xpub.valid = true;
                             self.form_xpub.value = key.to_string();
                         }
                         Err(e) => {
-                            self.chosen_hw = None;
+                            self.chosen_signer = None;
                             self.error = Some(e);
                         }
                     }
@@ -944,8 +937,9 @@ impl DescriptorEditModal for EditXpubModal {
             &self.hws,
             self.error.as_ref(),
             self.processing,
-            self.chosen_hw,
             self.chosen_signer,
+            &self.hot_signer,
+            self.keys_aliases.get(&self.hot_signer.fingerprint),
             &self.form_xpub,
             &self.form_name,
             self.edit_name,

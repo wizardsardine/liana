@@ -379,6 +379,10 @@ impl Action for SignAction {
             self.error.as_ref(),
             &self.hws,
             self.wallet.signer.as_ref().map(|s| s.fingerprint()),
+            self.wallet
+                .signer
+                .as_ref()
+                .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
             self.processing,
             self.chosen_hw,
             &self.signed,
