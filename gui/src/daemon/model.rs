@@ -1,10 +1,15 @@
+use std::collections::HashSet;
+
 pub use liana::{
     commands::{
         CreateSpendResult, GetAddressResult, GetInfoResult, ListCoinsEntry, ListCoinsResult,
         ListSpendEntry, ListSpendResult, ListTransactionsResult, TransactionInfo,
     },
     descriptors::{PartialSpendInfo, PathSpendInfo},
-    miniscript::bitcoin::{util::psbt::Psbt, Amount, Transaction},
+    miniscript::bitcoin::{
+        util::{bip32::Fingerprint, psbt::Psbt},
+        Amount, Transaction,
+    },
 };
 
 pub type Coin = ListCoinsEntry;
@@ -100,6 +105,21 @@ impl SpendTx {
             .recovery_paths()
             .values()
             .find(|&path| path.sigs_count >= path.threshold)
+    }
+
+    pub fn signers(&self) -> HashSet<Fingerprint> {
+        let mut signers = HashSet::new();
+        for (fg, _) in self.sigs.primary_path().signed_pubkeys.keys() {
+            signers.insert(*fg);
+        }
+
+        for path in self.sigs.recovery_paths().values() {
+            for (fg, _) in path.signed_pubkeys.keys() {
+                signers.insert(*fg);
+            }
+        }
+
+        signers
     }
 }
 

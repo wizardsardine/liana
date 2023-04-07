@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use iced::{
     widget::{scrollable, tooltip, Space},
@@ -713,7 +713,7 @@ pub fn sign_action<'a>(
     signer_alias: Option<&'a String>,
     processing: bool,
     chosen_hw: Option<usize>,
-    signed: &[Fingerprint],
+    signed: &HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))

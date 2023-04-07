@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use iced::Command;
@@ -90,7 +91,7 @@ impl SpendTxState {
                     self.action = Some(Box::new(DeleteAction::default()));
                 }
                 view::SpendTxMessage::Sign => {
-                    let action = SignAction::new(self.wallet.clone());
+                    let action = SignAction::new(self.tx.signers(), self.wallet.clone());
                     let cmd = action.load(daemon);
                     self.action = Some(Box::new(action));
                     return cmd;
@@ -270,18 +271,18 @@ pub struct SignAction {
     processing: bool,
     hws: Vec<HardwareWallet>,
     error: Option<Error>,
-    signed: Vec<Fingerprint>,
+    signed: HashSet<Fingerprint>,
 }
 
 impl SignAction {
-    pub fn new(wallet: Arc<Wallet>) -> Self {
+    pub fn new(signed: HashSet<Fingerprint>, wallet: Arc<Wallet>) -> Self {
         Self {
             wallet,
             chosen_hw: None,
             processing: false,
             hws: Vec::new(),
             error: None,
-            signed: Vec::new(),
+            signed,
         }
     }
 }
@@ -332,7 +333,7 @@ impl Action for SignAction {
                 Err(e) => self.error = Some(e),
                 Ok((psbt, fingerprint)) => {
                     self.error = None;
-                    self.signed.push(fingerprint);
+                    self.signed.insert(fingerprint);
                     let daemon = daemon.clone();
                     tx.psbt = psbt.clone();
                     return Command::perform(
