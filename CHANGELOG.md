@@ -19,7 +19,7 @@ usability improvements in the GUI around signing devices management, and more.
 - At signing time we now warn you if the descriptor is not registered on the signing device.
 - The signer alias is now displayed along with its type when signing.
 - You can now connect to a running daemon without having to provide a path to its configuration,
-  provided it is using the default location for its data directory.
+  provided it is using the default location for its data directory (or `--datadir` is used).
 - The GUI will now log to a `installer.log` file at the root of the datadir during installation, and
   to a `<network>/liana-gui.log` when running. In case of crash, this will contain a backtrace.
 - During installation we now check the connection to bitcoind.
