@@ -97,8 +97,12 @@ impl Logger {
 
     pub fn remove_install_log_file(&self, mut datadir: PathBuf) {
         datadir.push(INSTALLER_LOG_FILE_NAME);
-        if let Err(e) = std::fs::remove_file(datadir) {
-            error!("Failed to remove installer log file: {:#?}", e);
+        if let Err(e) = std::fs::remove_file(&datadir) {
+            error!(
+                "Failed to remove installer log file {} error:{:#?}",
+                datadir.to_string_lossy(),
+                e
+            );
         }
     }
 
