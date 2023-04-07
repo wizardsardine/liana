@@ -211,10 +211,11 @@ pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
 
 pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
     let mut cfg: liana::config::Config = ctx.extract_daemon_config();
-    let data_dir =
-        cfg.data_dir.unwrap().canonicalize().map_err(|e| {
-            Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e))
-        })?;
+    let data_dir = cfg.data_dir.unwrap();
+
+    let data_dir = data_dir
+        .canonicalize()
+        .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e)))?;
     cfg.data_dir = Some(data_dir.clone());
 
     daemon_check(cfg.clone())?;
