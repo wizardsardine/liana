@@ -213,7 +213,7 @@ pub fn unsupported_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(text("Unsupported version").bold())
+                    .push(text("Connection error").bold())
                     .into(),
                 Row::new()
                     .spacing(5)
@@ -225,7 +225,7 @@ pub fn unsupported_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
             .into(),
             tooltip::Tooltip::new(
                 icon::warning_icon(),
-                "Please update the application on your device",
+                "Make sure your device is unlocked and a supported Bitcoin application is opened.",
                 tooltip::Position::Bottom,
             )
             .style(theme::Container::Card(theme::Card::Simple))
