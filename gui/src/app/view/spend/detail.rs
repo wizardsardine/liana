@@ -18,7 +18,7 @@ use liana_ui::{
     component::{
         badge, button, card,
         collapse::Collapse,
-        form, separation,
+        form, hw, separation,
         text::{text, Text},
     },
     icon, theme,
@@ -710,6 +710,7 @@ pub fn sign_action<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
     signer: Option<Fingerprint>,
+    signer_alias: Option<&'a String>,
     processing: bool,
     chosen_hw: Option<usize>,
     signed: &[Fingerprint],
@@ -746,35 +747,11 @@ pub fn sign_action<'a>(
                             },
                         ))
                         .push_maybe(signer.map(|fingerprint| {
-                            Button::new(
-                                Row::new()
-                                    .align_items(Alignment::Center)
-                                    .push(
-                                        Column::new()
-                                            .width(Length::Fill)
-                                            .push(text("This computer").bold())
-                                            .push(
-                                                text(format!("fingerprint: {}", fingerprint))
-                                                    .small(),
-                                            )
-                                            .spacing(5)
-                                            .width(Length::Fill),
-                                    )
-                                    .push_maybe(if signed.contains(&fingerprint) {
-                                        Some(
-                                            Row::new()
-                                                .align_items(Alignment::Center)
-                                                .spacing(5)
-                                                .push(
-                                                    icon::circle_check_icon()
-                                                        .style(color::legacy::SUCCESS),
-                                                )
-                                                .push(text("Signed").style(color::legacy::SUCCESS)),
-                                        )
-                                    } else {
-                                        None
-                                    }),
-                            )
+                            Button::new(if signed.contains(&fingerprint) {
+                                hw::sign_success_hot_signer(fingerprint, signer_alias)
+                            } else {
+                                hw::hot_signer(fingerprint, signer_alias)
+                            })
                             .on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
                             .padding(10)
                             .style(theme::Button::Secondary)

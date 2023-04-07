@@ -17,12 +17,20 @@ pub fn hw_list_view(
             version,
             fingerprint,
             alias,
+            registered,
             ..
         } => {
             if chosen && processing {
                 hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             } else if signed {
                 hw::sign_success_hardware_wallet(
+                    kind,
+                    version.as_ref(),
+                    fingerprint,
+                    alias.as_ref(),
+                )
+            } else if *registered == Some(false) {
+                hw::unregistered_hardware_wallet(
                     kind,
                     version.as_ref(),
                     fingerprint,

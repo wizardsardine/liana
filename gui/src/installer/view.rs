@@ -5,7 +5,7 @@ use iced::{alignment, Alignment, Length};
 
 use std::{collections::HashSet, str::FromStr};
 
-use liana::miniscript::bitcoin;
+use liana::miniscript::bitcoin::{self, util::bip32::Fingerprint};
 use liana_ui::{
     color,
     component::{
@@ -25,6 +25,7 @@ use crate::{
         message::{self, Message},
         prompt, Error,
     },
+    signer::Signer,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1236,8 +1237,9 @@ pub fn edit_key_modal<'a>(
     hws: &'a [HardwareWallet],
     error: Option<&Error>,
     processing: bool,
-    chosen_hw: Option<usize>,
-    chosen_signer: bool,
+    chosen_signer: Option<Fingerprint>,
+    signer: &Signer,
+    signer_alias: Option<&'a String>,
     form_xpub: &form::Value<String>,
     form_name: &'a form::Value<String>,
     edit_name: bool,
@@ -1269,37 +1271,21 @@ pub fn edit_key_modal<'a>(
                                 col.push(hw_list_view(
                                     i,
                                     hw,
-                                    Some(i) == chosen_hw,
+                                    hw.fingerprint() == chosen_signer,
                                     processing,
                                     !processing
-                                        && Some(i) == chosen_hw
+                                        && hw.fingerprint() == chosen_signer
                                         && form_xpub.valid
                                         && !form_xpub.value.is_empty(),
                                 ))
                             },
                         ))
                         .push(
-                            Button::new(
-                                Row::new()
-                                    .padding(5)
-                                    .width(Length::Fill)
-                                    .align_items(Alignment::Center)
-                                    .push(
-                                        Column::new()
-                                            .spacing(5)
-                                            .push(text("This computer").bold())
-                                            .push(
-                                                text("Derive a key from a mnemonic stored on this computer").small(),
-                                            )
-                                            .width(Length::Fill),
-                                    )
-                                    .push_maybe(if chosen_signer {
-                                        Some(icon::circle_check_icon().style(color::legacy::SUCCESS))
-                                    } else {
-                                        None
-                                    })
-                                    .spacing(10),
-                            )
+                            Button::new(if Some(signer.fingerprint) == chosen_signer {
+                                hw::selected_hot_signer(signer.fingerprint, signer_alias)
+                            } else {
+                                hw::unselected_hot_signer(signer.fingerprint, signer_alias)
+                            })
                             .width(Length::Fill)
                             .on_press(Message::UseHotSigner)
                             .style(theme::Button::Secondary),
@@ -1315,7 +1301,9 @@ pub fn edit_key_modal<'a>(
                                 .push(
                                     form::Form::new("Extended public key", form_xpub, |msg| {
                                         Message::DefineDescriptor(
-                                            message::DefineDescriptor::KeyModal(message::ImportKeyModal::XPubEdited(msg)),
+                                            message::DefineDescriptor::KeyModal(
+                                                message::ImportKeyModal::XPubEdited(msg),
+                                            ),
                                         )
                                     })
                                     .warning(if network == bitcoin::Network::Bitcoin {
@@ -1349,9 +1337,9 @@ pub fn edit_key_modal<'a>(
                                         .push(text(&form_name.value)),
                                 )
                                 .push(button::border(Some(icon::pencil_icon()), "Edit").on_press(
-                                        Message::DefineDescriptor(
-                                            message::DefineDescriptor::KeyModal(message::ImportKeyModal::EditName),
-                                        )
+                                    Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
+                                        message::ImportKeyModal::EditName,
+                                    )),
                                 )),
                         )
                     } else if !form_xpub.value.is_empty() && form_xpub.valid {
@@ -1365,9 +1353,9 @@ pub fn edit_key_modal<'a>(
                             )
                             .push(
                                 form::Form::new("Alias", form_name, |msg| {
-                                    Message::DefineDescriptor(
-                                            message::DefineDescriptor::KeyModal(message::ImportKeyModal::NameEdited(msg)),
-                                        )
+                                    Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
+                                        message::ImportKeyModal::NameEdited(msg),
+                                    ))
                                 })
                                 .warning("Please enter correct alias")
                                 .size(20)
@@ -1381,11 +1369,11 @@ pub fn edit_key_modal<'a>(
                     if form_xpub.valid && !form_xpub.value.is_empty() && !form_name.value.is_empty()
                     {
                         button::primary(None, "Apply")
-                            .on_press(
-                                Message::DefineDescriptor(
-                                    message::DefineDescriptor::KeyModal(message::ImportKeyModal::ConfirmXpub),
-                                )
-                            )
+                            .on_press(Message::DefineDescriptor(
+                                message::DefineDescriptor::KeyModal(
+                                    message::ImportKeyModal::ConfirmXpub,
+                                ),
+                            ))
                             .width(Length::Units(200))
                     } else {
                         button::primary(None, "Apply").width(Length::Units(100))

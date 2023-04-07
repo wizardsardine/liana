@@ -235,3 +235,109 @@ pub fn unsupported_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
     )
     .padding(10)
 }
+
+pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
+    fingerprint: F,
+    alias: Option<impl Into<Cow<'a, str>>>,
+) -> Container<'a, T> {
+    container(
+        row(vec![
+            column(vec![
+                Row::new()
+                    .spacing(5)
+                    .push_maybe(alias.map(|a| text(a).bold()))
+                    .push(text(format!("#{}", fingerprint)))
+                    .into(),
+                Row::new()
+                    .spacing(5)
+                    .push(text("This computer").small())
+                    .into(),
+            ])
+            .width(Length::Fill)
+            .into(),
+            row(vec![
+                icon::circle_check_icon()
+                    .style(color::legacy::SUCCESS)
+                    .into(),
+                text("Signed").style(color::legacy::SUCCESS).into(),
+            ])
+            .align_items(Alignment::Center)
+            .spacing(5)
+            .into(),
+        ])
+        .align_items(Alignment::Center),
+    )
+    .padding(10)
+}
+
+pub fn selected_hot_signer<'a, T: 'a, F: Display>(
+    fingerprint: F,
+    alias: Option<impl Into<Cow<'a, str>>>,
+) -> Container<'a, T> {
+    container(
+        row(vec![
+            column(vec![
+                Row::new()
+                    .spacing(5)
+                    .push_maybe(alias.map(|a| text(a).bold()))
+                    .push(text(format!("#{}", fingerprint)))
+                    .into(),
+                Row::new()
+                    .spacing(5)
+                    .push(text("This computer").small())
+                    .push(text("(A derived key from a mnemonic stored locally)").small())
+                    .into(),
+            ])
+            .width(Length::Fill)
+            .into(),
+            icon::circle_check_icon()
+                .style(color::legacy::SUCCESS)
+                .into(),
+        ])
+        .align_items(Alignment::Center),
+    )
+    .padding(10)
+}
+
+pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
+    fingerprint: F,
+    alias: Option<impl Into<Cow<'a, str>>>,
+) -> Container<'a, T> {
+    Container::new(
+        column(vec![
+            Row::new()
+                .spacing(5)
+                .push_maybe(alias.map(|a| text(a).bold()))
+                .push(text(format!("#{}", fingerprint)))
+                .into(),
+            Row::new()
+                .spacing(5)
+                .push(text("This computer").small())
+                .push(text("(A derived key from a mnemonic stored locally)").small())
+                .into(),
+        ])
+        .width(Length::Fill),
+    )
+    .padding(10)
+}
+
+pub fn hot_signer<'a, T: 'a, F: Display>(
+    fingerprint: F,
+    alias: Option<impl Into<Cow<'a, str>>>,
+) -> Container<'a, T> {
+    Container::new(
+        column(vec![
+            Row::new()
+                .spacing(5)
+                .push_maybe(alias.map(|a| text(a).bold()))
+                .push(text(format!("#{}", fingerprint)))
+                .into(),
+            Row::new()
+                .spacing(5)
+                .push(text("This computer").small())
+                .into(),
+        ])
+        .width(Length::Fill),
+    )
+    .padding(10)
+}
