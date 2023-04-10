@@ -20,7 +20,7 @@ replace-with = "vendored_sources"
 
 [source."https://github.com/wizardsardine/liana"]
 git = "https://github.com/wizardsardine/liana"
-branch = "master"
+branch = "0.4-lianad"
 replace-with = "vendored_sources"
 EOF
 
