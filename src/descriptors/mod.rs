@@ -425,7 +425,7 @@ mod tests {
             [(timelock, heir_key.clone())].iter().cloned().collect(),
         )
         .unwrap();
-        assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(pk([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#g7vk9r5l");
+        assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(pk([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pk([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#xmwmxzx2");
 
         // A decaying multisig after 6 months. Note we can't duplicate the keys, so different ones
         // are used. In practice they would both be controlled by the same entity.
@@ -450,7 +450,7 @@ mod tests {
             [(26352, recovery_keys)].iter().cloned().collect(),
         )
         .unwrap();
-        assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(multi(3,[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0011/10/4893]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[abcdef01]xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*),and_v(v:thresh(2,pkh([abcdef01]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*),a:pkh([abcdef01]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*),a:pkh([aabb0011/10/4893]xpub6AyxexvxizZJffF153evmfqHcE9MV88fCNCAtP3jQjXJHwrAKri71Tq9jWUkPxj9pja4u6AkCPHY7atgxzSEa2HtDwJfrRWKK4fsfQg4o77/<0;1>/*)),older(26352))))#hmsqemgr");
+        assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(multi(3,[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0011/10/4893]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[abcdef01]xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*),and_v(v:multi(2,[abcdef01]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*,[abcdef01]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*,[aabb0011/10/4893]xpub6AyxexvxizZJffF153evmfqHcE9MV88fCNCAtP3jQjXJHwrAKri71Tq9jWUkPxj9pja4u6AkCPHY7atgxzSEa2HtDwJfrRWKK4fsfQg4o77/<0;1>/*),older(26352))))#s0zsa6uc");
 
         // We prevent footguns with timelocks by requiring a u16. Note how the following wouldn't
         // compile:
@@ -469,7 +469,7 @@ mod tests {
             [(timelock, heir_key)].iter().cloned().collect(),
         )
         .unwrap();
-        assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(pk([aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*),and_v(v:pkh([abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*),older(57600))))#ak4cm093");
+        assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(pk([aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*),and_v(v:pk([abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*),older(57600))))#sfdvdtzl");
 
         // We can't pass a raw key, an xpub that is not deriveable, only hardened derivable,
         // without both the change and receive derivation paths, or with more than 2 different
@@ -632,10 +632,10 @@ mod tests {
     fn liana_desc_keys() {
         let secp = secp256k1::Secp256k1::signing_only();
         let prim_path = PathInfo::Single(random_desc_key(&secp));
-        let twenty_eight_keys: Vec<descriptor::DescriptorPublicKey> =
-            (0..28).map(|_| random_desc_key(&secp)).collect();
-        let mut twenty_nine_keys = twenty_eight_keys.clone();
-        twenty_nine_keys.push(random_desc_key(&secp));
+        let sixty_five_keys: Vec<descriptor::DescriptorPublicKey> =
+            (0..65).map(|_| random_desc_key(&secp)).collect();
+        let mut sixty_six_keys = sixty_five_keys.clone();
+        sixty_six_keys.push(random_desc_key(&secp));
 
         LianaPolicy::new(
             prim_path.clone(),
@@ -691,7 +691,7 @@ mod tests {
         .unwrap_err();
         LianaPolicy::new(
             prim_path.clone(),
-            [(1, PathInfo::Multi(3, twenty_eight_keys.clone()))]
+            [(1, PathInfo::Multi(3, sixty_five_keys.clone()))]
                 .iter()
                 .cloned()
                 .collect(),
@@ -699,7 +699,7 @@ mod tests {
         .unwrap();
         LianaPolicy::new(
             prim_path.clone(),
-            [(1, PathInfo::Multi(20, twenty_eight_keys))]
+            [(1, PathInfo::Multi(20, sixty_five_keys))]
                 .iter()
                 .cloned()
                 .collect(),
@@ -707,7 +707,7 @@ mod tests {
         .unwrap();
         LianaPolicy::new(
             prim_path,
-            [(1, PathInfo::Multi(20, twenty_nine_keys))]
+            [(1, PathInfo::Multi(20, sixty_six_keys))]
                 .iter()
                 .cloned()
                 .collect(),
