@@ -899,7 +899,7 @@ mod tests {
         assert_eq!(
             addr,
             bitcoin::Address::from_str(
-                "bc1q9ksrc647hx8zp2cewl8p5f487dgux3777yees8rjcx46t4daqzzqt7yga8"
+                "bc1qye5vht0l4dk2xs8ujcphs5w3dfx5f98ra6fgpld3x76asq5aa7ys8ap52m"
             )
             .unwrap()
         );
@@ -978,12 +978,12 @@ mod tests {
         assert_eq!(tx.output[0].script_pubkey, dummy_addr.script_pubkey());
         assert_eq!(tx.output[0].value, dummy_value);
 
-        // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 171 sats fees.
+        // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 165 sats fees.
         // At 2sats/vb, it's twice that.
-        assert_eq!(tx.output[1].value, 89_829);
+        assert_eq!(tx.output[1].value, 89_835);
         let res = control.create_spend(&destinations, &[dummy_op], 2).unwrap();
         let tx = res.psbt.unsigned_tx;
-        assert_eq!(tx.output[1].value, 89_658);
+        assert_eq!(tx.output[1].value, 89_670);
 
         // A feerate of 555 won't trigger the sanity checks (they were previously not taking the
         // satisfaction size into account and overestimating the feerate).
