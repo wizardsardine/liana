@@ -1726,8 +1726,8 @@ dependencies = [
 
 [[package]]
 name = "liana"
-version = "0.3.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#76deaab9888619249a5ca75dd19d75db155ee1f3"
+version = "0.4.0"
+source = "git+https://github.com/wizardsardine/liana?branch=0.4-lianad#81b81b2f789052cd8ef6b13964f9953f4fcbc0a4"
 dependencies = [
  "backtrace",
  "base64",
@@ -1747,7 +1747,7 @@ dependencies = [
 
 [[package]]
 name = "liana_gui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-hwi",
  "backtrace",
