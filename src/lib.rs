@@ -79,7 +79,7 @@ impl fmt::Display for Version {
 
 pub const VERSION: Version = Version {
     major: 0,
-    minor: 3,
+    minor: 4,
     patch: 0,
 };
 
