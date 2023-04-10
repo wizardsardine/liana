@@ -111,12 +111,9 @@ Liana can be used as a hot wallet. Note that mnemonics would be stored in clear 
 strongly recommend using a hardware signing device for any non-trivial amount.
 
 For now, only the Ledger and Specter DIY signing devices are supported, as Miniscript compatibility
-of the signer is a must. We expect more signing devices to implement Miniscript capability. For more
-information, please read the [signing devices documentation](./doc/signing_devices.md).
-
-If you are using a Ledger device, the minimum supported version of the Bitcoin application is
-`2.1.0`. You may have to tweak with the Ledger Live options in order to install it for now, see the
-instructions [here](./doc/signing_devices.md).
+of the signer is a must. More signing devices are expected to implement Miniscript capability in the
+near future. For more information (such as minimum supported versions, please read the [signing
+devices documentation](./doc/signing_devices.md).
 
 If you are using the GUI, it should be intuitive what menu to use depending on your intention. If it
 is not, bug reports are very welcome so [feel free to report it](https://github.com/wizardsardine/liana/issues)! :)
