@@ -1727,7 +1727,7 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "0.4.0"
-source = "git+https://github.com/wizardsardine/liana?branch=0.4-lianad#81b81b2f789052cd8ef6b13964f9953f4fcbc0a4"
+source = "git+https://github.com/wizardsardine/liana?branch=0.4-lianad#52bcfc0dd518331ca1a7507cc7c0aac7ebe2ddfa"
 dependencies = [
  "backtrace",
  "base64",
@@ -2023,8 +2023,8 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "miniscript"
-version = "9.0.0"
-source = "git+https://github.com/darosior/rust-miniscript?branch=multipath_descriptors_on_9.0#3104519501ce6ad15b36dcec759936f4d3bd3980"
+version = "9.0.1"
+source = "git+https://github.com/darosior/rust-miniscript?branch=multipath_descriptors_on_9.0.1#9d2775477c22a3f0d1e1a99d8cbc74361e0751cf"
 dependencies = [
  "bitcoin",
  "serde",
