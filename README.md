@@ -48,8 +48,8 @@ build the project from source, see [`doc/BUILD.md`](doc/BUILD.md) instead.
 
 Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
 executable for your platform. If you are not sure what is the "right" executable for your platform,
-choose `liana-0.3.exe` if you are on Windows, `liana-0.3.dmg` if you are on MacOS and
-`liana-0.3-x86_64-linux-gnu.tar.gz` if you are on Linux.
+choose `liana-0.4.exe` if you are on Windows, `liana-0.4.dmg` if you are on MacOS and
+`liana-0.4-x86_64-linux-gnu.tar.gz` if you are on Linux.
 
 For every file available on the release page, there is an accompanying `.asc` file with the same
 name. This is a GPG signature made with Antoine Poinsot's key:
@@ -125,20 +125,21 @@ API exposed by `lianad` at [`doc/API.md`](doc/API.md). For instance:
 $ liana-cli --conf ./signet_config.toml getinfo
 {
   "result": {
-    "block_height": 131880,
+    "block_height": 3083,
     "descriptors": {
       "main": {
-        "change_desc": "wsh(or_d(pk([0bb79a6c/48'/1'/0'/2']tpubDEfKGhwubP97F3gqfvrSHmqEqLTaeBJvyY5byWuzFTuShnj7WWrG4bZMWxAiva2qoGc9DZWERczuvBqbRAB7vEiyEHqjLLctZ7Tif27EGu3/1/*),and_v(v:pkh([0bb79a6c/48'/1'/1'/2']tpubDFYpQER7bt8M2ByvNBmhThcVp5p4QrEV72dHVczXukDbjFPPMFVPy5hYqHKp3TtLaESbYpM2FCH1oECai6GKiMuv5bkomPy9zhtBGgBRkQs/1/*),older(2))))#x0xv2zce",
-        "multi_desc": "wsh(or_d(pk([0bb79a6c/48'/1'/0'/2']tpubDEfKGhwubP97F3gqfvrSHmqEqLTaeBJvyY5byWuzFTuShnj7WWrG4bZMWxAiva2qoGc9DZWERczuvBqbRAB7vEiyEHqjLLctZ7Tif27EGu3/<0;1>/*),and_v(v:pkh([0bb79a6c/48'/1'/1'/2']tpubDFYpQER7bt8M2ByvNBmhThcVp5p4QrEV72dHVczXukDbjFPPMFVPy5hYqHKp3TtLaESbYpM2FCH1oECai6GKiMuv5bkomPy9zhtBGgBRkQs/<0;1>/*),older(2))))#jqhwaq75",
-        "receive_desc": "wsh(or_d(pk([0bb79a6c/48'/1'/0'/2']tpubDEfKGhwubP97F3gqfvrSHmqEqLTaeBJvyY5byWuzFTuShnj7WWrG4bZMWxAiva2qoGc9DZWERczuvBqbRAB7vEiyEHqjLLctZ7Tif27EGu3/0/*),and_v(v:pkh([0bb79a6c/48'/1'/1'/2']tpubDFYpQER7bt8M2ByvNBmhThcVp5p4QrEV72dHVczXukDbjFPPMFVPy5hYqHKp3TtLaESbYpM2FCH1oECai6GKiMuv5bkomPy9zhtBGgBRkQs/0/*),older(2))))#eesy8k0q"
+        "change_desc": "wsh(or_i(and_v(v:thresh(1,pkh([b883f127/48'/1'/2'/2']tpubDEP7MLK6TGe1EWhKGpMWdQQCvMmS6pRjCyN7PW24afniPJYdfeMMUb2fau3xTku6EPgA68oGuR4hSCTUpu2bqaoYrLn2UmhkytXXSzxcaqt/1/*),a:pkh([636adf3f/48'/1'/2'/2']tpubDFnPUtXZhnftEFD5vg4LfVoApf5ZVB8Nkrf8CNe9pT9j1EEPXssJnMgAjmvbTChHugnkfVfsmGafFnE6gwoifJNybSasAJ316dRpsP86EFb/1/*),a:pkh([b883f127/48'/1'/3'/2']tpubDFPMBua4idthySDayX1GxgXgPbpaEVfU7GwMc1HAfneknhqov5syrNuq4NVdSVWa2mPVP3BD6f2pGB98pMsbnVvWqrxcLgwv9PbEWyLJ6cW/1/*)),older(20)),or_i(and_v(v:pkh([636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/1/*),older(19)),or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/1/*,[b883f127/48'/1'/0'/2']tpubDET11c81MZjJvsqBikGXfn1YUzXofoYQ4HkueCrH7kE94MYkdyBvGzyikBd2KrcBAFZWDB6nLmTa8sJ381rWSQj8qFvqiidxqn6aQv1wrJw/1/*),and_v(v:pkh([b883f127/48'/1'/1'/2']tpubDEA6SKh5epTZXebgZtcNxpLj6CeZ9UhgHGoGArACFE7QHCgx76vwkzJMP5wQ9yYEc6g9qSGW8EVzn4PhRxiFz1RUvAXBg7txFnvZFv62uFL/1/*),older(18))))))#056xvvp3",
+        "multi_desc": "wsh(or_i(and_v(v:thresh(1,pkh([b883f127/48'/1'/2'/2']tpubDEP7MLK6TGe1EWhKGpMWdQQCvMmS6pRjCyN7PW24afniPJYdfeMMUb2fau3xTku6EPgA68oGuR4hSCTUpu2bqaoYrLn2UmhkytXXSzxcaqt/<0;1>/*),a:pkh([636adf3f/48'/1'/2'/2']tpubDFnPUtXZhnftEFD5vg4LfVoApf5ZVB8Nkrf8CNe9pT9j1EEPXssJnMgAjmvbTChHugnkfVfsmGafFnE6gwoifJNybSasAJ316dRpsP86EFb/<0;1>/*),a:pkh([b883f127/48'/1'/3'/2']tpubDFPMBua4idthySDayX1GxgXgPbpaEVfU7GwMc1HAfneknhqov5syrNuq4NVdSVWa2mPVP3BD6f2pGB98pMsbnVvWqrxcLgwv9PbEWyLJ6cW/<0;1>/*)),older(20)),or_i(and_v(v:pkh([636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/<0;1>/*),older(19)),or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*,[b883f127/48'/1'/0'/2']tpubDET11c81MZjJvsqBikGXfn1YUzXofoYQ4HkueCrH7kE94MYkdyBvGzyikBd2KrcBAFZWDB6nLmTa8sJ381rWSQj8qFvqiidxqn6aQv1wrJw/<0;1>/*),and_v(v:pkh([b883f127/48'/1'/1'/2']tpubDEA6SKh5epTZXebgZtcNxpLj6CeZ9UhgHGoGArACFE7QHCgx76vwkzJMP5wQ9yYEc6g9qSGW8EVzn4PhRxiFz1RUvAXBg7txFnvZFv62uFL/<0;1>/*),older(18))))))#yl5jehy9",
+        "receive_desc": "wsh(or_i(and_v(v:thresh(1,pkh([b883f127/48'/1'/2'/2']tpubDEP7MLK6TGe1EWhKGpMWdQQCvMmS6pRjCyN7PW24afniPJYdfeMMUb2fau3xTku6EPgA68oGuR4hSCTUpu2bqaoYrLn2UmhkytXXSzxcaqt/0/*),a:pkh([636adf3f/48'/1'/2'/2']tpubDFnPUtXZhnftEFD5vg4LfVoApf5ZVB8Nkrf8CNe9pT9j1EEPXssJnMgAjmvbTChHugnkfVfsmGafFnE6gwoifJNybSasAJ316dRpsP86EFb/0/*),a:pkh([b883f127/48'/1'/3'/2']tpubDFPMBua4idthySDayX1GxgXgPbpaEVfU7GwMc1HAfneknhqov5syrNuq4NVdSVWa2mPVP3BD6f2pGB98pMsbnVvWqrxcLgwv9PbEWyLJ6cW/0/*)),older(20)),or_i(and_v(v:pkh([636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/0/*),older(19)),or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/0/*,[b883f127/48'/1'/0'/2']tpubDET11c81MZjJvsqBikGXfn1YUzXofoYQ4HkueCrH7kE94MYkdyBvGzyikBd2KrcBAFZWDB6nLmTa8sJ381rWSQj8qFvqiidxqn6aQv1wrJw/0/*),and_v(v:pkh([b883f127/48'/1'/1'/2']tpubDEA6SKh5epTZXebgZtcNxpLj6CeZ9UhgHGoGArACFE7QHCgx76vwkzJMP5wQ9yYEc6g9qSGW8EVzn4PhRxiFz1RUvAXBg7txFnvZFv62uFL/0/*),older(18))))))#v3g9rzum"
       }
     },
-    "network": "signet",
+    "network": "regtest",
     "rescan_progress": null,
     "sync": 1.0,
-    "version": "0.3.0"
+    "version": "0.4.0"
   }
 }
+
 ```
 
 Note also that you might connect the GUI to a running `lianad`. If the GUI detects a daemon is
