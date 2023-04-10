@@ -269,8 +269,8 @@ checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
 
 [[package]]
 name = "miniscript"
-version = "9.0.0"
-source = "git+https://github.com/darosior/rust-miniscript?branch=multipath_descriptors_on_9.0#3104519501ce6ad15b36dcec759936f4d3bd3980"
+version = "9.0.1"
+source = "git+https://github.com/darosior/rust-miniscript?branch=multipath_descriptors_on_9.0.1#9d2775477c22a3f0d1e1a99d8cbc74361e0751cf"
 dependencies = [
  "bitcoin",
  "serde",
