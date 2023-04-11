@@ -1,7 +1,11 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use iced::{alignment, widget::Space, Alignment, Length};
+use iced::{
+    alignment,
+    widget::{scrollable, Space},
+    Alignment, Length,
+};
 
 use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Network};
 
@@ -549,7 +553,11 @@ pub fn wallet_settings<'a>(
             .push(card::simple(
                 Column::new()
                     .push(text("Wallet descriptor:").bold())
-                    .push(text(descriptor.to_owned()).small())
+                    .push(
+                        scrollable(text(descriptor.to_owned()).small()).horizontal_scroll(
+                            scrollable::Properties::new().width(2).scroller_width(2),
+                        ),
+                    )
                     .push(
                         Row::new()
                             .spacing(10)
