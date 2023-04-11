@@ -103,7 +103,7 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
 
     fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
         let _res: serde_json::value::Value =
-            self.call("deletespend", Some(vec![txid.to_string()]))?;
+            self.call("delspendtx", Some(vec![txid.to_string()]))?;
         Ok(())
     }
 
