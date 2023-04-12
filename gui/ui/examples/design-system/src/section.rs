@@ -5,7 +5,7 @@ use iced::{
 };
 use liana_ui::{
     color,
-    component::{hw, text::*},
+    component::{hw, separation, text::*},
     theme,
     widget::Element,
 };
@@ -21,7 +21,7 @@ impl Section for Overview {
 
     fn view(&self) -> Element<Message> {
         column![
-            text("Hello").bold().size(50),
+            h1("Hello"),
             column![text(
                 "This is the Liana design system for the Iced framework"
             )]
@@ -41,7 +41,7 @@ impl Section for Colors {
 
     fn view(&self) -> Element<Message> {
         column![
-            text(self.title()).bold().size(50),
+            h1(self.title()),
             column![
                 color_row(color::BLACK, "BLACK (0,0,0)"),
                 color_row(color::LIGHT_BLACK, "LIGHT_BLACK #141414 original design"),
@@ -53,6 +53,54 @@ impl Section for Colors {
                 color_row(color::ORANGE, "ORANGE #FFa700")
             ]
             .spacing(10)
+        ]
+        .spacing(100)
+        .into()
+    }
+}
+
+pub struct Typography {}
+
+impl Section for Typography {
+    fn title(&self) -> &'static str {
+        "Typography"
+    }
+
+    fn view(&self) -> Element<Message> {
+        column![
+            h1(self.title()),
+            column![
+                column![
+                    h2("Font-Family"),
+                    separation().width(Length::Fill),
+                    h1("IBM Plex Sans"),
+                ]
+                .spacing(10),
+                column![
+                    h2("Heading"),
+                    separation().width(Length::Fill),
+                    h1("H1. Heading 40 bold"),
+                    h2("H2. Heading 29 bold"),
+                    h3("H3. Heading 24 bold"),
+                    h4_bold("H4. Heading 20 bold"),
+                    h4_regular("H4. Heading 20 regular"),
+                    h5_medium("H5. Heading 18 medium"),
+                    h5_regular("H5. Heading 18 regular"),
+                ]
+                .spacing(10),
+                column![
+                    h2("Body"),
+                    separation().width(Length::Fill),
+                    p1_bold("P1. Body 16 bold"),
+                    p1_medium("P1. Body 16 medium"),
+                    p1_regular("P1. Body 16 regular"),
+                    p2_medium("P2. Body 14 medium"),
+                    p2_regular("P2. Body 14 regular"),
+                    caption("Caption Body 12 regular"),
+                ]
+                .spacing(10),
+            ]
+            .spacing(50)
         ]
         .spacing(100)
         .into()
@@ -81,7 +129,7 @@ impl Section for Buttons {
 
     fn view(&self) -> Element<Message> {
         column![
-            text(self.title()).bold().size(50),
+            h1(self.title()),
             column![
                 button_row(theme::Button::Primary, "Primary"),
                 button_row(theme::Button::Secondary, "Secondary"),
@@ -117,7 +165,7 @@ impl Section for HardwareWallets {
 
     fn view(&self) -> Element<Message> {
         column![
-            text(self.title()).bold().size(50),
+            h1(self.title()),
             column![
                 button(
                     hw::supported_hardware_wallet(
