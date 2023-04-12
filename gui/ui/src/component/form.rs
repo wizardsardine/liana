@@ -1,6 +1,6 @@
 use iced::{widget::text_input, Length};
 
-use crate::{color, component::text::*, theme, util::Collection, widget::*};
+use crate::{color, component::text, theme, util::Collection, widget::*};
 
 #[derive(Debug, Clone)]
 pub struct Value<T> {
@@ -74,7 +74,7 @@ impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
                 })
                 .push_maybe(if !form.valid {
                     form.warning
-                        .map(|message| text(message).style(color::legacy::ALERT).small())
+                        .map(|message| text::caption(message).style(color::legacy::ALERT))
                 } else {
                     None
                 })

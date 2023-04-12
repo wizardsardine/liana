@@ -1,4 +1,4 @@
-use crate::{color, component::text::*, icon, theme, util::*, widget::*};
+use crate::{color, component::text, icon, theme, util::*, widget::*};
 use iced::{
     widget::{column, container, row, tooltip},
     Alignment, Length,
@@ -16,13 +16,13 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         column(vec![
             Row::new()
                 .spacing(5)
-                .push_maybe(alias.map(|a| text(a).bold()))
-                .push(text(format!("#{}", fingerprint)))
+                .push_maybe(alias.map(|a| text::p1_bold(a)))
+                .push(text::p1_regular(format!("#{}", fingerprint)))
                 .into(),
             Row::new()
                 .spacing(5)
-                .push(text(kind.to_string()).small())
-                .push_maybe(version.map(|v| text(v.to_string()).small()))
+                .push(text::caption(kind.to_string()))
+                .push_maybe(version.map(|v| text::caption(v.to_string())))
                 .into(),
         ])
         .width(Length::Fill),
@@ -41,13 +41,13 @@ pub fn unregistered_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text(a).bold()))
-                    .push(text(format!("#{}", fingerprint)))
+                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
-                    .push(text(kind.to_string()).small())
-                    .push_maybe(version.map(|v| text(v.to_string()).small()))
+                    .push(text::caption(kind.to_string()))
+                    .push_maybe(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -77,20 +77,20 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text(a).bold()))
-                    .push(text(format!("#{}", fingerprint)))
+                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
-                    .push(text(kind.to_string()).small())
-                    .push_maybe(version.map(|v| text(v.to_string()).small()))
+                    .push(text::caption(kind.to_string()))
+                    .push_maybe(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
             .into(),
             column(vec![
-                text("Processing...").into(),
-                text("Please check your device").small().into(),
+                text::p1_regular("Processing...").into(),
+                text::p1_regular("Please check your device").into(),
             ])
             .into(),
         ])
@@ -110,13 +110,13 @@ pub fn selected_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text(a).bold()))
-                    .push(text(format!("#{}", fingerprint)))
+                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
-                    .push(text(kind.to_string()).small())
-                    .push_maybe(version.map(|v| text(v.to_string()).small()))
+                    .push(text::caption(kind.to_string()))
+                    .push_maybe(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -141,13 +141,13 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text(a).bold()))
-                    .push(text(format!("#{}", fingerprint)))
+                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
-                    .push(text(kind.to_string()).small())
-                    .push_maybe(version.map(|v| text(v.to_string()).small()))
+                    .push(text::caption(kind.to_string()))
+                    .push_maybe(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -156,7 +156,9 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
                 icon::circle_check_icon()
                     .style(color::legacy::SUCCESS)
                     .into(),
-                text("Signed").style(color::legacy::SUCCESS).into(),
+                text::p1_regular("Signed")
+                    .style(color::legacy::SUCCESS)
+                    .into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -178,13 +180,13 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text(a).bold()))
-                    .push(text(format!("#{}", fingerprint)))
+                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
-                    .push(text(kind.to_string()).small())
-                    .push_maybe(version.map(|v| text(v.to_string()).small()))
+                    .push(text::caption(kind.to_string()))
+                    .push_maybe(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -193,7 +195,9 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
                 icon::circle_check_icon()
                     .style(color::legacy::SUCCESS)
                     .into(),
-                text("Registered").style(color::legacy::SUCCESS).into(),
+                text::p1_regular("Registered")
+                    .style(color::legacy::SUCCESS)
+                    .into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -213,12 +217,12 @@ pub fn unsupported_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(text("Connection error").bold())
+                    .push(text::p1_bold("Connection error"))
                     .into(),
                 Row::new()
                     .spacing(5)
-                    .push(text(kind.to_string()).small())
-                    .push_maybe(version.map(|v| text(v.to_string()).small()))
+                    .push(text::caption(kind.to_string()))
+                    .push_maybe(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -245,12 +249,12 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text(a).bold()))
-                    .push(text(format!("#{}", fingerprint)))
+                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
-                    .push(text("This computer").small())
+                    .push(text::caption("This computer"))
                     .into(),
             ])
             .width(Length::Fill)
@@ -259,7 +263,9 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
                 icon::circle_check_icon()
                     .style(color::legacy::SUCCESS)
                     .into(),
-                text("Signed").style(color::legacy::SUCCESS).into(),
+                text::p1_regular("Signed")
+                    .style(color::legacy::SUCCESS)
+                    .into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -279,13 +285,15 @@ pub fn selected_hot_signer<'a, T: 'a, F: Display>(
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text(a).bold()))
-                    .push(text(format!("#{}", fingerprint)))
+                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
-                    .push(text("This computer").small())
-                    .push(text("(A derived key from a mnemonic stored locally)").small())
+                    .push(text::caption("This computer"))
+                    .push(text::caption(
+                        "(A derived key from a mnemonic stored locally)",
+                    ))
                     .into(),
             ])
             .width(Length::Fill)
@@ -307,13 +315,15 @@ pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
         column(vec![
             Row::new()
                 .spacing(5)
-                .push_maybe(alias.map(|a| text(a).bold()))
-                .push(text(format!("#{}", fingerprint)))
+                .push_maybe(alias.map(|a| text::p1_bold(a)))
+                .push(text::p1_regular(format!("#{}", fingerprint)))
                 .into(),
             Row::new()
                 .spacing(5)
-                .push(text("This computer").small())
-                .push(text("(A derived key from a mnemonic stored locally)").small())
+                .push(text::caption("This computer"))
+                .push(text::caption(
+                    "(A derived key from a mnemonic stored locally)",
+                ))
                 .into(),
         ])
         .width(Length::Fill),
@@ -329,12 +339,12 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
         column(vec![
             Row::new()
                 .spacing(5)
-                .push_maybe(alias.map(|a| text(a).bold()))
-                .push(text(format!("#{}", fingerprint)))
+                .push_maybe(alias.map(|a| text::p1_bold(a)))
+                .push(text::p1_regular(format!("#{}", fingerprint)))
                 .into(),
             Row::new()
                 .spacing(5)
-                .push(text("This computer").small())
+                .push(text::caption("This computer"))
                 .into(),
         ])
         .width(Length::Fill),

@@ -1,6 +1,6 @@
 use iced::{widget::tooltip, Length};
 
-use crate::{component::text::*, icon, theme, widget::*};
+use crate::{component::text, icon, theme, widget::*};
 
 pub struct Badge {
     icon: crate::widget::Text<'static>,
@@ -64,7 +64,7 @@ pub fn coin<T>() -> Container<'static, T> {
 pub fn unconfirmed<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(
-            Container::new(text("  Unconfirmed  ").small())
+            Container::new(text::caption("  Unconfirmed  "))
                 .padding(3)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
             "Do not treat this as a payment until it is confirmed",
@@ -77,7 +77,7 @@ pub fn unconfirmed<'a, T: 'a>() -> Container<'a, T> {
 pub fn deprecated<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(
-            Container::new(text("  Deprecated  ").small())
+            Container::new(text::caption("  Deprecated  "))
                 .padding(3)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
             "This spend cannot be included anymore in the blockchain",
@@ -90,7 +90,7 @@ pub fn deprecated<'a, T: 'a>() -> Container<'a, T> {
 pub fn spent<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(
-            Container::new(text("  Spent  ").small())
+            Container::new(text::caption("  Spent  "))
                 .padding(3)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
             "The spend transaction was included in the blockchain",

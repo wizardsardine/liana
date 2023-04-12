@@ -3,11 +3,11 @@ use liana::miniscript::bitcoin::Amount;
 use liana_ui::{color, component::text::*, util::Collection, widget::*};
 
 pub fn amount<'a, T: 'a>(a: &Amount) -> impl Into<Element<'a, T>> {
-    amount_with_size(a, TEXT_REGULAR_SIZE)
+    amount_with_size(a, P1_SIZE)
 }
 
 pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> impl Into<Element<'a, T>> {
-    let spacing = if size > TEXT_REGULAR_SIZE { 10 } else { 5 };
+    let spacing = if size > P1_SIZE { 10 } else { 5 };
     let sats = format!("{:.8}", a.to_btc());
     assert!(sats.len() >= 9);
     let row = Row::new()

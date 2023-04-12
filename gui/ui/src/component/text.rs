@@ -116,12 +116,8 @@ pub fn caption<'a>(
         .size(CAPTION_SIZE)
 }
 
-pub const TEXT_REGULAR_SIZE: u16 = 25;
-
 pub fn text<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
-    iced::widget::Text::new(content)
-        .font(font::REGULAR)
-        .size(TEXT_REGULAR_SIZE)
+    p1_regular(content)
 }
 
 pub trait Text {
