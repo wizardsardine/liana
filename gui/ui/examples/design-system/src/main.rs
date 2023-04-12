@@ -2,11 +2,11 @@ mod section;
 
 use iced::widget::{button, column, container, row, text, Space};
 use iced::{executor, Application, Command, Length, Settings, Subscription};
-use liana_ui::{theme, widget::*};
+use liana_ui::{component::text::*, theme, widget::*};
 
 pub fn main() -> iced::Result {
     let mut settings = Settings::with_flags(Config {});
-    settings.default_text_size = 19;
+    settings.default_text_size = P1_SIZE;
     DesignSystem::run(settings)
 }
 

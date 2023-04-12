@@ -1,22 +1,47 @@
 use crate::{font, theme::Theme};
 use std::borrow::Cow;
 
+// 40 * 1.2
+pub const H1_SIZE: u16 = 48;
+// 29 * 1.2
+pub const H2_SIZE: u16 = 35;
+// 24 * 1.2
+pub const H3_SIZE: u16 = 29;
+// 20 * 1.2
+pub const H4_SIZE: u16 = 24;
+// 18 * 1.2
+pub const H5_SIZE: u16 = 22;
+// 16 * 1.2
+pub const P1_SIZE: u16 = 20;
+// 14 * 1.2
+pub const P2_SIZE: u16 = 17;
+// 12 * 1.2
+pub const CAPTION_SIZE: u16 = 15;
+
 pub fn h1<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
-    iced::widget::Text::new(content).font(font::BOLD).size(40)
+    iced::widget::Text::new(content)
+        .font(font::BOLD)
+        .size(H1_SIZE)
 }
 
 pub fn h2<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
-    iced::widget::Text::new(content).font(font::BOLD).size(29)
+    iced::widget::Text::new(content)
+        .font(font::BOLD)
+        .size(H2_SIZE)
 }
 
 pub fn h3<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
-    iced::widget::Text::new(content).font(font::BOLD).size(24)
+    iced::widget::Text::new(content)
+        .font(font::BOLD)
+        .size(H3_SIZE)
 }
 
 pub fn h4_bold<'a>(
     content: impl Into<Cow<'a, str>>,
 ) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
-    iced::widget::Text::new(content).font(font::BOLD).size(20)
+    iced::widget::Text::new(content)
+        .font(font::BOLD)
+        .size(H4_SIZE)
 }
 
 pub fn h4_regular<'a>(
@@ -24,13 +49,15 @@ pub fn h4_regular<'a>(
 ) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
     iced::widget::Text::new(content)
         .font(font::REGULAR)
-        .size(20)
+        .size(H4_SIZE)
 }
 
 pub fn h5_medium<'a>(
     content: impl Into<Cow<'a, str>>,
 ) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
-    iced::widget::Text::new(content).font(font::MEDIUM).size(18)
+    iced::widget::Text::new(content)
+        .font(font::MEDIUM)
+        .size(H5_SIZE)
 }
 
 pub fn h5_regular<'a>(
@@ -38,19 +65,23 @@ pub fn h5_regular<'a>(
 ) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
     iced::widget::Text::new(content)
         .font(font::REGULAR)
-        .size(18)
+        .size(H5_SIZE)
 }
 
 pub fn p1_bold<'a>(
     content: impl Into<Cow<'a, str>>,
 ) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
-    iced::widget::Text::new(content).font(font::BOLD).size(16)
+    iced::widget::Text::new(content)
+        .font(font::BOLD)
+        .size(P1_SIZE)
 }
 
 pub fn p1_medium<'a>(
     content: impl Into<Cow<'a, str>>,
 ) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
-    iced::widget::Text::new(content).font(font::MEDIUM).size(16)
+    iced::widget::Text::new(content)
+        .font(font::MEDIUM)
+        .size(P1_SIZE)
 }
 
 pub fn p1_regular<'a>(
@@ -58,13 +89,15 @@ pub fn p1_regular<'a>(
 ) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
     iced::widget::Text::new(content)
         .font(font::REGULAR)
-        .size(16)
+        .size(P1_SIZE)
 }
 
 pub fn p2_medium<'a>(
     content: impl Into<Cow<'a, str>>,
 ) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
-    iced::widget::Text::new(content).font(font::MEDIUM).size(14)
+    iced::widget::Text::new(content)
+        .font(font::MEDIUM)
+        .size(P2_SIZE)
 }
 
 pub fn p2_regular<'a>(
@@ -72,7 +105,7 @@ pub fn p2_regular<'a>(
 ) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
     iced::widget::Text::new(content)
         .font(font::REGULAR)
-        .size(14)
+        .size(P2_SIZE)
 }
 
 pub fn caption<'a>(
@@ -80,7 +113,7 @@ pub fn caption<'a>(
 ) -> iced::widget::Text<'a, iced::Renderer<Theme>> {
     iced::widget::Text::new(content)
         .font(font::REGULAR)
-        .size(12)
+        .size(CAPTION_SIZE)
 }
 
 pub const TEXT_REGULAR_SIZE: u16 = 25;
