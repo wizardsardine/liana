@@ -1448,11 +1448,14 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                     }),
                 )
                 .push(
-                    Container::new(slider(1..=u16::MAX, sequence, |v| {
-                        Message::DefineDescriptor(message::DefineDescriptor::SequenceModal(
-                            message::SequenceModal::SequenceEdited(v.to_string()),
-                        ))
-                    }))
+                    Container::new(
+                        slider(1..=u16::MAX, sequence, |v| {
+                            Message::DefineDescriptor(message::DefineDescriptor::SequenceModal(
+                                message::SequenceModal::SequenceEdited(v.to_string()),
+                            ))
+                        })
+                        .step(144), // 144 blocks per day
+                    )
                     .width(Length::Units(500)),
                 );
         }
