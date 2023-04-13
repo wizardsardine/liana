@@ -9,7 +9,7 @@ extern crate serde;
 extern crate serde_json;
 
 use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
-use liana_ui::{theme, widget::Element};
+use liana_ui::{component::text, font, theme, widget::Element};
 
 use liana_gui::{
     app::{
@@ -386,6 +386,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     setup_panic_hook();
 
     let mut settings = Settings::with_flags(config);
+    settings.default_text_size = text::P1_SIZE;
+    settings.default_font = Some(font::REGULAR_BYTES);
     settings.exit_on_close_request = false;
 
     if let Err(e) = GUI::run(settings) {

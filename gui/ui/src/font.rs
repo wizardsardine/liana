@@ -10,7 +10,9 @@ pub const MEDIUM: Font = Font::External {
     bytes: include_bytes!("../static/fonts/IBMPlexSans-Medium.ttf"),
 };
 
+pub const REGULAR_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Regular.ttf");
+
 pub const REGULAR: Font = Font::External {
     name: "Regular",
-    bytes: include_bytes!("../static/fonts/IBMPlexSans-Regular.ttf"),
+    bytes: REGULAR_BYTES,
 };
