@@ -11,3 +11,4 @@ TODO
 **/dist
 gui/ui/Cargo.lock
 gui/ui/examples/design-system/Cargo.lock
+Xcode_12.2.xip
