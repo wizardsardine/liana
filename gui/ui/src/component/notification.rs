@@ -1,5 +1,5 @@
 use crate::{
-    component::{collapse, text::*},
+    component::{collapse, text},
     icon, theme,
     widget::*,
 };
@@ -12,14 +12,14 @@ pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'
             Button::new(
                 Row::new()
                     .push(
-                        Container::new(text(message_clone.to_string()).small().bold())
+                        Container::new(text::p1_bold(message_clone.to_string()))
                             .width(Length::Fill),
                     )
                     .push(
                         Row::new()
                             .align_items(Alignment::Center)
                             .spacing(10)
-                            .push(text("Learn more").small().bold())
+                            .push(text::p1_bold("Learn more"))
                             .push(icon::collapse_icon()),
                     ),
             )
@@ -28,20 +28,18 @@ pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'
         move || {
             Button::new(
                 Row::new()
-                    .push(
-                        Container::new(text(message.to_owned()).small().bold()).width(Length::Fill),
-                    )
+                    .push(Container::new(text::p1_bold(message.to_owned())).width(Length::Fill))
                     .push(
                         Row::new()
                             .align_items(Alignment::Center)
                             .spacing(10)
-                            .push(text("Learn more").small().bold())
+                            .push(text::p1_bold("Learn more"))
                             .push(icon::collapsed_icon()),
                     ),
             )
             .style(theme::Button::Transparent)
         },
-        move || Element::<'a, T>::from(text(error.to_owned()).small()),
+        move || Element::<'a, T>::from(text::p2_regular(error.to_owned())),
     )))
     .padding(15)
     .style(theme::Container::Card(theme::Card::Warning))

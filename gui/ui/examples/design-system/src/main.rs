@@ -1,11 +1,13 @@
 mod section;
 
-use iced::widget::{button, column, container, radio, row, text, Space};
+use iced::widget::{button, column, container, row, text, Space};
 use iced::{executor, Application, Command, Length, Settings, Subscription};
-use liana_ui::{theme, widget::*};
+use liana_ui::{component::text::*, theme, widget::*};
 
 pub fn main() -> iced::Result {
-    DesignSystem::run(Settings::with_flags(Config {}))
+    let mut settings = Settings::with_flags(Config {});
+    settings.default_text_size = P1_SIZE;
+    DesignSystem::run(settings)
 }
 
 struct Config {}
@@ -17,16 +19,8 @@ struct DesignSystem {
     current: usize,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum ThemeType {
-    Light,
-    Dark,
-    Legacy,
-}
-
 #[derive(Debug, Clone)]
 pub enum Message {
-    ThemeChanged(ThemeType),
     Event(iced_native::Event),
     Section(usize),
     Ignore,
@@ -44,10 +38,11 @@ impl Application for DesignSystem {
 
     fn new(_config: Config) -> (Self, Command<Self::Message>) {
         let app = Self {
-            theme: theme::Theme::Light,
+            theme: theme::Theme::Dark,
             sections: vec![
                 Box::new(section::Overview {}),
                 Box::new(section::Colors {}),
+                Box::new(section::Typography {}),
                 Box::new(section::Buttons {}),
                 Box::new(section::HardwareWallets {}),
             ],
@@ -75,13 +70,6 @@ impl Application for DesignSystem {
 
     fn update(&mut self, message: Message) -> Command<Self::Message> {
         match message {
-            Message::ThemeChanged(theme) => {
-                self.theme = match theme {
-                    ThemeType::Light => theme::Theme::Light,
-                    ThemeType::Dark => theme::Theme::Dark,
-                    ThemeType::Legacy => theme::Theme::Legacy,
-                }
-            }
             Message::Section(i) => {
                 if self.sections.get(i).is_some() {
                     self.current = i;
@@ -112,23 +100,6 @@ impl Application for DesignSystem {
     fn view(&self) -> Element<Message> {
         let sidebar = container(
             column![
-                [ThemeType::Light, ThemeType::Dark, ThemeType::Legacy]
-                    .iter()
-                    .fold(
-                        column![text("Choose a theme:")].spacing(10),
-                        |column, theme| {
-                            column.push(radio(
-                                format!("{theme:?}"),
-                                *theme,
-                                Some(match self.theme {
-                                    theme::Theme::Light => ThemeType::Light,
-                                    theme::Theme::Dark => ThemeType::Dark,
-                                    theme::Theme::Legacy => ThemeType::Legacy,
-                                }),
-                                Message::ThemeChanged,
-                            ))
-                        },
-                    ),
                 Space::with_height(Length::Units(100)),
                 self.sections.iter().enumerate().fold(
                     Column::new().spacing(10),
