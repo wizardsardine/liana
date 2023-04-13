@@ -1,6 +1,6 @@
 mod section;
 
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::{executor, Application, Command, Length, Settings, Subscription};
 use liana_ui::{component::text::*, theme, widget::*};
 
@@ -128,10 +128,10 @@ impl Application for DesignSystem {
         container(row![
             sidebar.width(Length::Units(200)),
             Space::with_width(Length::Units(150)),
-            column![
+            scrollable(column![
                 Space::with_height(Length::Units(150)),
                 container(self.sections[self.current].view()).width(Length::Fill)
-            ]
+            ]),
         ])
         .width(Length::Fill)
         .height(Length::Fill)

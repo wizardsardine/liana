@@ -43,12 +43,18 @@ impl Section for Colors {
         column![
             h1(self.title()),
             column![
-                color_row(color::BLACK, "BLACK (0,0,0)"),
-                color_row(color::LIGHT_BLACK, "LIGHT_BLACK #141414 original design"),
-                color_row(color::GREEN, "GREEN #00FF66 original design"),
-                color_row(color::DARK_GREY, "DARK_GREY #555555"),
-                color_row(color::GREY, "GREY #CCCCCC original design"),
-                color_row(color::LIGHT_GREY, "LIGHT_GREY #E6E6E6 original design"),
+                color_row(color::dark::BLACK, "BLACK (0,0,0)"),
+                color_row(
+                    color::dark::LIGHT_BLACK,
+                    "LIGHT_BLACK #141414 original design"
+                ),
+                color_row(color::dark::GREEN, "GREEN #00FF66 original design"),
+                color_row(color::dark::GREY_5, "GREY #272727"),
+                color_row(color::dark::GREY_4, "GREY #424242"),
+                color_row(color::dark::GREY_3, "GREY #717171"),
+                color_row(color::dark::GREY_2, "GREY #CCCCCC"),
+                color_row(color::dark::GREY_1, "GREY #E6E6E6"),
+                color_row(color::dark::WHITE, "WHITE #FFFFFF"),
                 color_row(color::RED, "RED #F04359"),
                 color_row(color::ORANGE, "ORANGE #FFa700")
             ]
