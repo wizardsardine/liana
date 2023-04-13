@@ -20,7 +20,7 @@ liana_ui = { path = "ui" }
 backtrace = "0.3"
 base64 = "0.13"
 
-iced = { version = "0.7", default-features= false, features = ["tokio", "glow", "svg", "qr_code"] }
+iced = { version = "0.7", default-features= false, features = ["tokio", "glow", "svg", "qr_code", "image"] }
 iced_native = "0.8"
 iced_lazy = { version = "0.4"}
 

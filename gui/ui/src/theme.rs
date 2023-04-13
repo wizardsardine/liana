@@ -1,7 +1,7 @@
 use iced::{
     application,
     widget::{
-        button, checkbox, container, pick_list, progress_bar, radio, scrollable, slider, text,
+        button, checkbox, container, pick_list, progress_bar, radio, scrollable, slider, svg, text,
         text_input,
     },
 };
@@ -681,5 +681,18 @@ impl slider::StyleSheet for Theme {
             rail_colors: (color::GREEN, iced::Color::TRANSPARENT),
             handle,
         }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+pub enum Svg {
+    #[default]
+    Simple,
+}
+
+impl svg::StyleSheet for Theme {
+    type Style = ProgressBar;
+    fn appearance(&self, _style: &Self::Style) -> svg::Appearance {
+        svg::Appearance::default()
     }
 }

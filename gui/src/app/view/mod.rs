@@ -16,7 +16,7 @@ use warning::warn;
 use iced::{widget::scrollable, Length};
 
 use liana_ui::{
-    component::{button, separation, text::*},
+    component::{button, text::*},
     icon::{coin_icon, cross_icon, home_icon, receive_icon, send_icon, settings_icon},
     theme,
     util::Collection,
@@ -214,10 +214,12 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .push(
                 Column::new()
                     .push(
-                        Column::new()
-                            .push(Container::new(text("Liana").bold()).padding(10))
-                            .push(separation().width(Length::Units(200)))
-                            .spacing(10),
+                        Container::new(
+                            liana_ui::image::liana_grey_logo()
+                                .height(Length::Units(150))
+                                .width(Length::Units(60)),
+                        )
+                        .padding(15),
                     )
                     .push(home_button)
                     .push(coins_button)

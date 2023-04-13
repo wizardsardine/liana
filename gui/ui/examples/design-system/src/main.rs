@@ -2,7 +2,7 @@ mod section;
 
 use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::{executor, Application, Command, Length, Settings, Subscription};
-use liana_ui::{component::text::*, theme, widget::*};
+use liana_ui::{component::text::*, image, theme, widget::*};
 
 pub fn main() -> iced::Result {
     let mut settings = Settings::with_flags(Config {});
@@ -100,6 +100,7 @@ impl Application for DesignSystem {
     fn view(&self) -> Element<Message> {
         let sidebar = container(
             column![
+                image::liana_grey_logo(),
                 Space::with_height(Length::Units(100)),
                 self.sections.iter().enumerate().fold(
                     Column::new().spacing(10),
