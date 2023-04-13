@@ -114,7 +114,7 @@ impl Launcher {
                                         .on_press(ViewMessage::Check(*choice))
                                         .padding(10)
                                         .width(Length::Fill)
-                                        .style(theme::Button::Secondary),
+                                        .style(theme::Button::Border),
                                     )
                                 },
                             )

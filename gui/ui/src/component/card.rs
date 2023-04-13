@@ -32,8 +32,8 @@ pub fn error<'a, T: 'a>(message: &'static str, error: String) -> Container<'a, T
             Row::new()
                 .spacing(20)
                 .align_items(iced::Alignment::Center)
-                .push(icon::warning_icon().style(color::legacy::ALERT))
-                .push(text(message).style(color::legacy::ALERT)),
+                .push(icon::warning_icon().style(color::RED))
+                .push(text(message).style(color::RED)),
             error,
             iced::widget::tooltip::Position::Bottom,
         )

@@ -107,13 +107,9 @@ impl Application for DesignSystem {
                         button(
                             container(text(section.title()))
                                 .width(Length::Fill)
-                                .padding(5)
+                                .padding(10)
                         )
-                        .style(if i == self.current {
-                            theme::Button::Primary
-                        } else {
-                            theme::Button::Transparent
-                        })
+                        .style(theme::Button::Menu(i == self.current))
                         .on_press(Message::Section(i))
                         .width(Length::Units(200))
                     )

@@ -35,11 +35,7 @@ pub fn home_view<'a>(
             Row::new()
                 .spacing(15)
                 .align_items(Alignment::Center)
-                .push(
-                    icon::hourglass_icon()
-                        .size(30)
-                        .style(color::legacy::WARNING),
-                )
+                .push(icon::hourglass_icon().size(30).style(color::ORANGE))
                 .push(
                     Row::new()
                         .spacing(5)
@@ -57,7 +53,7 @@ pub fn home_view<'a>(
             Row::new()
                 .spacing(15)
                 .align_items(Alignment::Center)
-                .push(icon::hourglass_done_icon().style(color::legacy::ALERT))
+                .push(icon::hourglass_done_icon().style(color::RED))
                 .push(
                     Row::new()
                         .spacing(5)

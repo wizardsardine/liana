@@ -76,11 +76,11 @@ fn coin_list_view(
                                         Some(Container::new(
                                             Row::new()
                                                 .spacing(5)
-                                                .push(text(" 0").small().style(color::legacy::ALERT))
+                                                .push(text(" 0").small().style(color::RED))
                                                 .push(
                                                     icon::hourglass_done_icon()
                                                         .small()
-                                                        .style(color::legacy::ALERT),
+                                                        .style(color::RED),
                                                 )
                                                 .align_items(Alignment::Center),
                                         ))
@@ -91,12 +91,12 @@ fn coin_list_view(
                                                 .push(
                                                     text(format!(" {}", seq))
                                                         .small()
-                                                        .style(color::legacy::WARNING),
+                                                        .style(color::ORANGE),
                                                 )
                                                 .push(
                                                     icon::hourglass_icon()
                                                         .small()
-                                                        .style(color::legacy::WARNING),
+                                                        .style(color::ORANGE),
                                                 )
                                                 .align_items(Alignment::Center),
                                         ))
@@ -143,7 +143,7 @@ fn coin_list_view(
                                                 text("One of the recovery path is available")
                                                     .bold()
                                                     .small()
-                                                    .style(color::legacy::ALERT),
+                                                    .style(color::RED),
                                             ))
                                         } else {
                                             Some(Container::new(

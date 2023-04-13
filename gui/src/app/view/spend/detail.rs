@@ -249,11 +249,11 @@ fn spend_overview_view<'a>(
                                 Row::new()
                                     .spacing(5)
                                     .push(
-                                        button::border(Some(icon::clipboard_icon()), "Copy")
+                                        button::secondary(Some(icon::clipboard_icon()), "Copy")
                                             .on_press(Message::Clipboard(tx.psbt.to_string())),
                                     )
                                     .push(
-                                        button::border(Some(icon::import_icon()), "Update")
+                                        button::secondary(Some(icon::import_icon()), "Update")
                                             .on_press(Message::Spend(SpendTxMessage::EditPsbt)),
                                     ),
                             )
@@ -292,8 +292,8 @@ pub fn signatures<'a>(
                     Row::new()
                         .spacing(5)
                         .align_items(Alignment::Center)
-                        .push(icon::circle_check_icon().style(color::legacy::SUCCESS))
-                        .push(text("Ready").bold().style(color::legacy::SUCCESS))
+                        .push(icon::circle_check_icon().style(color::GREEN))
+                        .push(text("Ready").bold().style(color::GREEN))
                         .push(text(", signed by"))
                         .push(
                             sigs.signed_pubkeys
@@ -429,7 +429,7 @@ pub fn path_view<'a>(
         Row::new()
             .align_items(Alignment::Center)
             .push(if sigs.sigs_count >= sigs.threshold {
-                icon::circle_check_icon().style(color::legacy::SUCCESS)
+                icon::circle_check_icon().style(color::GREEN)
             } else {
                 icon::circle_cross_icon()
             })
@@ -728,7 +728,7 @@ pub fn sign_action<'a>(
                                         .bold()
                                         .width(Length::Fill),
                                 )
-                                .push(button::border(None, "Refresh").on_press(Message::Reload))
+                                .push(button::secondary(None, "Refresh").on_press(Message::Reload))
                                 .align_items(Alignment::Center),
                         )
                         .spacing(10)
@@ -754,7 +754,7 @@ pub fn sign_action<'a>(
                             })
                             .on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
                             .padding(10)
-                            .style(theme::Button::Secondary)
+                            .style(theme::Button::Border)
                             .width(Length::Fill)
                         }))
                         .width(Length::Fill),
@@ -820,7 +820,7 @@ pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
     Column::new()
         .push(
             card::simple(Container::new(
-                text("Spend transaction is updated").style(color::legacy::SUCCESS),
+                text("Spend transaction is updated").style(color::GREEN),
             ))
             .padding(50),
         )

@@ -43,18 +43,17 @@ impl Section for Colors {
         column![
             h1(self.title()),
             column![
-                color_row(color::dark::BLACK, "BLACK (0,0,0)"),
-                color_row(
-                    color::dark::LIGHT_BLACK,
-                    "LIGHT_BLACK #141414 original design"
-                ),
-                color_row(color::dark::GREEN, "GREEN #00FF66 original design"),
-                color_row(color::dark::GREY_5, "GREY #272727"),
-                color_row(color::dark::GREY_4, "GREY #424242"),
-                color_row(color::dark::GREY_3, "GREY #717171"),
-                color_row(color::dark::GREY_2, "GREY #CCCCCC"),
-                color_row(color::dark::GREY_1, "GREY #E6E6E6"),
-                color_row(color::dark::WHITE, "WHITE #FFFFFF"),
+                color_row(color::BLACK, "BLACK (0,0,0)"),
+                color_row(color::LIGHT_BLACK, "LIGHT_BLACK #141414 original design"),
+                color_row(color::GREEN, "GREEN #00FF66 original design"),
+                color_row(color::GREY_7, "GREY #3F3F3F"),
+                color_row(color::GREY_6, "GREY #202020"),
+                color_row(color::GREY_5, "GREY #272727"),
+                color_row(color::GREY_4, "GREY #424242"),
+                color_row(color::GREY_3, "GREY #717171"),
+                color_row(color::GREY_2, "GREY #CCCCCC"),
+                color_row(color::GREY_1, "GREY #E6E6E6"),
+                color_row(color::WHITE, "WHITE #FFFFFF"),
                 color_row(color::RED, "RED #F04359"),
                 color_row(color::ORANGE, "ORANGE #FFa700")
             ]
@@ -140,7 +139,9 @@ impl Section for Buttons {
                 button_row(theme::Button::Primary, "Primary"),
                 button_row(theme::Button::Secondary, "Secondary"),
                 button_row(theme::Button::Destructive, "Destructive"),
-                button_row(theme::Button::Transparent, "Transparent")
+                button_row(theme::Button::Transparent, "Transparent"),
+                button_row(theme::Button::TransparentBorder, "Transparent Border"),
+                button_row(theme::Button::Border, "Border"),
             ]
             .spacing(20)
         ]
@@ -183,7 +184,7 @@ impl Section for HardwareWallets {
                     .width(Length::Units(500))
                 )
                 .on_press(Message::Ignore)
-                .style(theme::Button::Secondary),
+                .style(theme::Button::Border),
                 button(
                     hw::supported_hardware_wallet(
                         "ledger",
@@ -194,7 +195,7 @@ impl Section for HardwareWallets {
                     .width(Length::Units(500))
                 )
                 .on_press(Message::Ignore)
-                .style(theme::Button::Secondary),
+                .style(theme::Button::Border),
                 button(
                     hw::unregistered_hardware_wallet(
                         "ledger",
@@ -205,13 +206,13 @@ impl Section for HardwareWallets {
                     .width(Length::Units(500))
                 )
                 .on_press(Message::Ignore)
-                .style(theme::Button::Secondary),
+                .style(theme::Button::Border),
                 button(
                     hw::unsupported_hardware_wallet("ledger", Some("v2.1.0"))
                         .width(Length::Units(500))
                 )
                 .on_press(Message::Ignore)
-                .style(theme::Button::Secondary),
+                .style(theme::Button::Border),
                 button(
                     hw::processing_hardware_wallet(
                         "ledger",
@@ -222,7 +223,7 @@ impl Section for HardwareWallets {
                     .width(Length::Units(500))
                 )
                 .on_press(Message::Ignore)
-                .style(theme::Button::Secondary),
+                .style(theme::Button::Border),
                 button(
                     hw::sign_success_hardware_wallet(
                         "ledger",
@@ -233,7 +234,7 @@ impl Section for HardwareWallets {
                     .width(Length::Units(500))
                 )
                 .on_press(Message::Ignore)
-                .style(theme::Button::Secondary),
+                .style(theme::Button::Border),
                 button(
                     hw::registration_success_hardware_wallet(
                         "ledger",
@@ -244,7 +245,7 @@ impl Section for HardwareWallets {
                     .width(Length::Units(500))
                 )
                 .on_press(Message::Ignore)
-                .style(theme::Button::Secondary),
+                .style(theme::Button::Border),
             ]
             .spacing(20)
         ]

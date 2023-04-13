@@ -53,7 +53,7 @@ pub fn list(cache: &Cache) -> Element<Message> {
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(theme::Button::Secondary)
+                    .style(theme::Button::TransparentBorder)
                     .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings))
                 )
                 .width(Length::Fill)
@@ -71,7 +71,7 @@ pub fn list(cache: &Cache) -> Element<Message> {
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(theme::Button::Secondary)
+                    .style(theme::Button::TransparentBorder)
                     .on_press(Message::Settings(SettingsMessage::EditWalletSettings))
                 )
                 .width(Length::Fill)
@@ -90,7 +90,7 @@ pub fn list(cache: &Cache) -> Element<Message> {
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(theme::Button::Secondary)
+                    .style(theme::Button::TransparentBorder)
                     .on_press(Message::Menu(Menu::Recovery))
                 )
                 .width(Length::Fill)
@@ -108,7 +108,7 @@ pub fn list(cache: &Cache) -> Element<Message> {
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(theme::Button::Secondary)
+                    .style(theme::Button::TransparentBorder)
                     .on_press(Message::Settings(SettingsMessage::AboutSection))
                 )
                 .width(Length::Fill)
@@ -397,15 +397,15 @@ pub fn is_running_label<'a, T: 'a>(is_running: Option<bool>) -> Container<'a, T>
         if running {
             Container::new(
                 Row::new()
-                    .push(icon::dot_icon().size(5).style(color::legacy::SUCCESS))
-                    .push(text("Running").small().style(color::legacy::SUCCESS))
+                    .push(icon::dot_icon().size(5).style(color::GREEN))
+                    .push(text("Running").small().style(color::GREEN))
                     .align_items(Alignment::Center),
             )
         } else {
             Container::new(
                 Row::new()
-                    .push(icon::dot_icon().size(5).style(color::legacy::ALERT))
-                    .push(text("Not running").small().style(color::legacy::ALERT))
+                    .push(icon::dot_icon().size(5).style(color::RED))
+                    .push(text("Not running").small().style(color::RED))
                     .align_items(Alignment::Center),
             )
         }
@@ -430,7 +430,7 @@ pub fn rescan<'a>(
                     .push(badge::Badge::new(icon::block_icon()))
                     .push(text("Rescan blockchain").bold().width(Length::Fill))
                     .push_maybe(if success {
-                        Some(text("Rescan was successful").style(color::legacy::SUCCESS))
+                        Some(text("Rescan was successful").style(color::GREEN))
                     } else {
                         None
                     })
@@ -563,7 +563,7 @@ pub fn wallet_settings<'a>(
                             .spacing(10)
                             .push(Column::new().width(Length::Fill))
                             .push(
-                                button::border(Some(icon::clipboard_icon()), "Copy")
+                                button::secondary(Some(icon::clipboard_icon()), "Copy")
                                     .on_press(Message::Clipboard(descriptor.to_owned())),
                             )
                             .push(
@@ -609,10 +609,8 @@ pub fn wallet_settings<'a>(
                                 Some(
                                     Row::new()
                                         .align_items(Alignment::Center)
-                                        .push(
-                                            icon::circle_check_icon().style(color::legacy::SUCCESS),
-                                        )
-                                        .push(text("Updated").style(color::legacy::SUCCESS)),
+                                        .push(icon::circle_check_icon().style(color::GREEN))
+                                        .push(text("Updated").style(color::GREEN)),
                                 )
                             } else {
                                 None
@@ -645,7 +643,7 @@ pub fn register_wallet_modal<'a>(
                         .push(
                             Row::new()
                                 .push(text("Select device:").bold().width(Length::Fill))
-                                .push(button::border(None, "Refresh").on_press(Message::Reload))
+                                .push(button::secondary(None, "Refresh").on_press(Message::Reload))
                                 .align_items(Alignment::Center),
                         )
                         .spacing(10)

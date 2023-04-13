@@ -47,7 +47,7 @@ fn split_digits<'a, T: 'a>(mut s: String, size: u16) -> impl Into<Element<'a, T>
         if s.starts_with(prefix) {
             let right = s.split_off(prefix.len());
             return Row::new()
-                .push(text(s).size(size).style(color::DARK_GREY))
+                .push(text(s).size(size).style(color::GREY_2))
                 .push_maybe(if right.is_empty() {
                     None
                 } else {

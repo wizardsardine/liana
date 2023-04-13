@@ -27,11 +27,11 @@ use crate::app::{cache::Cache, error::Error, menu::Menu};
 
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let home_button = if *menu == Menu::Home {
-        button::primary(Some(home_icon()), "Home")
+        button::menu_active(Some(home_icon()), "Home")
             .on_press(Message::Reload)
             .width(iced::Length::Units(200))
     } else {
-        button::transparent(Some(home_icon()), "Home")
+        button::menu(Some(home_icon()), "Home")
             .on_press(Message::Menu(Menu::Home))
             .width(iced::Length::Units(200))
     };
@@ -62,17 +62,17 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                             .small()
                             .bold(),
                         )
-                        .style(theme::Container::Pill(theme::Pill::InversePrimary)),
+                        .style(theme::Container::Pill(theme::Pill::Primary)),
                     )
                     .spacing(10)
                     .width(iced::Length::Fill)
                     .align_items(iced::Alignment::Center),
             )
             .width(iced::Length::Fill)
-            .padding(5)
+            .padding(10)
             .center_x(),
         )
-        .style(theme::Button::Primary)
+        .style(theme::Button::Menu(true))
         .on_press(Message::Reload)
         .width(iced::Length::Units(200))
     } else {
@@ -108,10 +108,10 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .align_items(iced::Alignment::Center),
             )
             .width(iced::Length::Fill)
-            .padding(5)
+            .padding(10)
             .center_x(),
         )
-        .style(theme::Button::Transparent)
+        .style(theme::Button::Menu(false))
         .on_press(Message::Menu(Menu::Coins))
         .width(iced::Length::Units(200))
     };
@@ -137,7 +137,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                                     .small()
                                     .bold(),
                             )
-                            .style(theme::Pill::InversePrimary),
+                            .style(theme::Pill::Primary),
                         )
                     })
                     .spacing(10)
@@ -145,10 +145,10 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .align_items(iced::Alignment::Center),
             )
             .width(iced::Length::Fill)
-            .padding(5)
+            .padding(10)
             .center_x(),
         )
-        .style(theme::Button::Primary)
+        .style(theme::Button::Menu(true))
         .on_press(Message::Reload)
         .width(iced::Length::Units(200))
     } else {
@@ -180,30 +180,30 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .align_items(iced::Alignment::Center),
             )
             .width(iced::Length::Fill)
-            .padding(5)
+            .padding(10)
             .center_x(),
         )
-        .style(theme::Button::Transparent)
+        .style(theme::Button::Menu(false))
         .on_press(Message::Menu(Menu::Spend))
         .width(iced::Length::Units(200))
     };
 
     let receive_button = if *menu == Menu::Receive {
-        button::primary(Some(receive_icon()), "Receive")
+        button::menu_active(Some(receive_icon()), "Receive")
             .on_press(Message::Reload)
             .width(iced::Length::Units(200))
     } else {
-        button::transparent(Some(receive_icon()), "Receive")
+        button::menu(Some(receive_icon()), "Receive")
             .on_press(Message::Menu(Menu::Receive))
             .width(iced::Length::Units(200))
     };
 
     let settings_button = if *menu == Menu::Settings {
-        button::primary(Some(settings_icon()), "Settings")
+        button::menu_active(Some(settings_icon()), "Settings")
             .on_press(Message::Menu(Menu::Settings))
             .width(iced::Length::Units(200))
     } else {
-        button::transparent(Some(settings_icon()), "Settings")
+        button::menu(Some(settings_icon()), "Settings")
             .on_press(Message::Menu(Menu::Settings))
             .width(iced::Length::Units(200))
     };
