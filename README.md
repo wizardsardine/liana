@@ -18,10 +18,10 @@ Learn more about Liana from our [announcement blog
 post](https://wizardsardine.com/blog/liana-announcement/) and about how it was enhanced with
 Multisig from our [second release post](https://wizardsardine.com/blog/liana-0.2-release/).
 
-Liana is still under heavy development. Multisig support was implemented in the second release.
-Regular wallet features are also planned. In addition we intend to implement the possibility to have
-multiple timelocked paths (for instance for more powerful decaying multisigs). We also intend to
-switch to using Taproot as soon as possible, for enhanced privacy.
+Liana is still under heavy development. Multisig support was implemented in the second release and
+the possibility for having multiple timelocked recovery paths was in the fourth release.  Regular
+wallet features (RBF, coin selection, ..) are planned. We also intend to switch to using Taproot as
+soon as possible, for enhanced privacy.
 
 **As such please consider Liana to be beta software.**
 
