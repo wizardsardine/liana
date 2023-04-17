@@ -937,26 +937,44 @@ pub fn install<'a>(
                                                     acc.push(
                                                         Row::new()
                                                             .spacing(5)
-                                                            .push(text(hw.0.to_string()).small())
+                                                            .push_maybe(
+                                                                context.keys.iter().find_map(|k| {
+                                                                    if k.master_fingerprint == hw.1
+                                                                    {
+                                                                        Some(
+                                                                            text(k.name.clone())
+                                                                                .small()
+                                                                                .bold(),
+                                                                        )
+                                                                    } else {
+                                                                        None
+                                                                    }
+                                                                }),
+                                                            )
                                                             .push(
-                                                                text(format!(
-                                                                    "(fingerprint: {})",
-                                                                    hw.1
-                                                                ))
-                                                                .small(),
-                                                            ),
+                                                                text(format!("#{}", hw.1)).small(),
+                                                            )
+                                                            .push(text(hw.0.to_string()).small()),
                                                     )
                                                 },
                                             ))
                                         })
                                         .push_maybe(context.signer.as_ref().map(|signer| {
-                                            Row::new().push(text("This computer").small()).push(
-                                                text(format!(
-                                                    "(fingerprint: {})",
-                                                    signer.fingerprint()
-                                                ))
-                                                .small(),
-                                            )
+                                            Row::new()
+                                                .spacing(5)
+                                                .push_maybe(context.keys.iter().find_map(|k| {
+                                                    if k.master_fingerprint == signer.fingerprint()
+                                                    {
+                                                        Some(text(k.name.clone()).small().bold())
+                                                    } else {
+                                                        None
+                                                    }
+                                                }))
+                                                .push(
+                                                    text(format!("#{}", signer.fingerprint()))
+                                                        .small(),
+                                                )
+                                                .push(text("This computer").small())
                                         })),
                                 )
                                 .width(Length::Fill),
