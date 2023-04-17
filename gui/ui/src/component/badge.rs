@@ -64,7 +64,7 @@ pub fn coin<T>() -> Container<'static, T> {
 pub fn unconfirmed<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(
-            Container::new(text::caption("  Unconfirmed  "))
+            Container::new(text::p2_regular("  Unconfirmed  "))
                 .padding(3)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
             "Do not treat this as a payment until it is confirmed",
@@ -77,7 +77,7 @@ pub fn unconfirmed<'a, T: 'a>() -> Container<'a, T> {
 pub fn deprecated<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(
-            Container::new(text::caption("  Deprecated  "))
+            Container::new(text::p2_regular("  Deprecated  "))
                 .padding(3)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
             "This spend cannot be included anymore in the blockchain",
@@ -90,7 +90,7 @@ pub fn deprecated<'a, T: 'a>() -> Container<'a, T> {
 pub fn spent<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(
-            Container::new(text::caption("  Spent  "))
+            Container::new(text::p2_regular("  Spent  "))
                 .padding(3)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
             "The spend transaction was included in the blockchain",

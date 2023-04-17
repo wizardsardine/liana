@@ -12,3 +12,9 @@ pub fn liana_grey_logo() -> Svg {
     let h = Handle::from_memory(LIANA_LOGO_GREY.to_vec());
     Svg::new(h)
 }
+
+const HISTORY_ICON: &[u8] = include_bytes!("../static/icons/history-icon.svg");
+pub fn history_icon() -> Svg {
+    let h = Handle::from_memory(HISTORY_ICON.to_vec());
+    Svg::new(h)
+}

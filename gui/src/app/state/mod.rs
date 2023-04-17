@@ -1,4 +1,5 @@
 mod coins;
+mod psbts;
 mod recovery;
 mod settings;
 mod spend;
@@ -18,9 +19,10 @@ use crate::daemon::{
     Daemon,
 };
 pub use coins::CoinsPanel;
+pub use psbts::PsbtsPanel;
 pub use recovery::RecoveryPanel;
 pub use settings::SettingsState;
-pub use spend::{CreateSpendPanel, SpendPanel};
+pub use spend::CreateSpendPanel;
 
 pub trait State {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;
