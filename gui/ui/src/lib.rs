@@ -2,6 +2,7 @@ pub mod color;
 pub mod component;
 pub mod font;
 pub mod icon;
+pub mod image;
 pub mod theme;
 pub mod util;
 
@@ -20,4 +21,5 @@ pub mod widget {
     pub type ProgressBar = iced::widget::ProgressBar<Renderer>;
     pub type PickList<'a, Message> = iced::widget::PickList<'a, Message, Renderer>;
     pub type Scrollable<'a, Message> = iced::widget::Scrollable<'a, Message, Renderer>;
+    pub type Svg = iced::widget::Svg<Renderer>;
 }

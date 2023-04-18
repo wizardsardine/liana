@@ -63,10 +63,7 @@ pub fn choose_recipients_view<'a>(
                         .width(Length::Fill),
                     )
                     .push_maybe(if duplicate {
-                        Some(
-                            text("Two recipient addresses are the same")
-                                .style(color::legacy::WARNING),
-                        )
+                        Some(text("Two recipient addresses are the same").style(color::ORANGE))
                     } else {
                         None
                     })
@@ -217,12 +214,8 @@ fn coin_list_view<'a>(
                                 Some(Container::new(
                                     Row::new()
                                         .spacing(5)
-                                        .push(text(" 0").small().style(color::legacy::ALERT))
-                                        .push(
-                                            icon::hourglass_done_icon()
-                                                .small()
-                                                .style(color::legacy::ALERT),
-                                        )
+                                        .push(text(" 0").small().style(color::RED))
+                                        .push(icon::hourglass_done_icon().small().style(color::RED))
                                         .align_items(Alignment::Center),
                                 ))
                             } else if seq < timelock as u32 * 10 / 100 {
@@ -230,15 +223,9 @@ fn coin_list_view<'a>(
                                     Row::new()
                                         .spacing(5)
                                         .push(
-                                            text(format!(" {}", seq))
-                                                .small()
-                                                .style(color::legacy::WARNING),
+                                            text(format!(" {}", seq)).small().style(color::ORANGE),
                                         )
-                                        .push(
-                                            icon::hourglass_icon()
-                                                .small()
-                                                .style(color::legacy::WARNING),
-                                        )
+                                        .push(icon::hourglass_icon().small().style(color::ORANGE))
                                         .align_items(Alignment::Center),
                                 ))
                             } else {

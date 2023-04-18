@@ -55,10 +55,7 @@ pub fn import_spend_view<'a>(
 pub fn import_spend_success_view<'a>() -> Element<'a, Message> {
     Column::new()
         .push(
-            card::simple(Container::new(
-                text("PSBT is imported").style(color::legacy::SUCCESS),
-            ))
-            .padding(50),
+            card::simple(Container::new(text("PSBT is imported").style(color::GREEN))).padding(50),
         )
         .width(Length::Units(400))
         .align_items(Alignment::Center)
@@ -72,7 +69,7 @@ pub fn spend_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
                 .spacing(10)
                 .push(Column::new().width(Length::Fill))
                 .push(
-                    button::border(Some(icon::import_icon()), "Import")
+                    button::secondary(Some(icon::import_icon()), "Import")
                         .on_press(Message::ImportSpend(ImportSpendMessage::Import)),
                 )
                 .push(

@@ -166,10 +166,7 @@ pub fn define_descriptor<'a>(
         .push_maybe(if network_valid {
             None
         } else {
-            Some(
-                text("A data directory already exists for this network")
-                    .style(color::legacy::ALERT),
-            )
+            Some(text("A data directory already exists for this network").style(color::RED))
         })
         .padding(50);
 
@@ -257,7 +254,7 @@ pub fn define_descriptor<'a>(
             .push(
                 Row::new()
                     .spacing(10)
-                    .push(button::border(None, "Add a recovery path").on_press(
+                    .push(button::secondary(None, "Add a recovery path").on_press(
                         Message::DefineDescriptor(message::DefineDescriptor::AddRecoveryPath),
                     ))
                     .push(if !valid {
@@ -354,10 +351,7 @@ pub fn import_descriptor<'a>(
         .push_maybe(if network_valid {
             None
         } else {
-            Some(
-                text("A data directory already exists for this network")
-                    .style(color::legacy::ALERT),
-            )
+            Some(text("A data directory already exists for this network").style(color::RED))
         });
     let col_descriptor = Column::new()
         .push(text("Descriptor:").bold())
@@ -445,7 +439,7 @@ pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
                             )
                             .push(
                                 Container::new(
-                                    button::border(Some(icon::clipboard_icon()), "Copy")
+                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
                                         .on_press(Message::Clibpboard(xpub.clone()))
                                         .width(Length::Shrink),
                                 )
@@ -457,7 +451,7 @@ pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
             .push_maybe(if !xpubs.is_empty() {
                 Some(
                     Container::new(
-                        button::border(Some(icon::plus_icon()), "New public key")
+                        button::secondary(Some(icon::plus_icon()), "New public key")
                             .on_press(Message::UseHotSigner),
                     )
                     .padding(10),
@@ -528,7 +522,7 @@ pub fn hardware_wallet_xpubs<'a>(
                             )
                             .push(
                                 Container::new(
-                                    button::border(Some(icon::clipboard_icon()), "Copy")
+                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
                                         .on_press(Message::Clibpboard(xpub.clone()))
                                         .width(Length::Shrink),
                                 )
@@ -540,10 +534,10 @@ pub fn hardware_wallet_xpubs<'a>(
             .push_maybe(if !xpubs.is_empty() {
                 Some(
                     Container::new(if !processing {
-                        button::border(Some(icon::plus_icon()), "New public key")
+                        button::secondary(Some(icon::plus_icon()), "New public key")
                             .on_press(Message::Select(i))
                     } else {
-                        button::border(Some(icon::plus_icon()), "New public key")
+                        button::secondary(Some(icon::plus_icon()), "New public key")
                     })
                     .padding(10),
                 )
@@ -581,10 +575,7 @@ pub fn participate_xpub<'a>(
         .push_maybe(if network_valid {
             None
         } else {
-            Some(
-                text("A data directory already exists for this network")
-                    .style(color::legacy::ALERT),
-            )
+            Some(text("A data directory already exists for this network").style(color::RED))
         });
 
     layout(
@@ -608,7 +599,7 @@ pub fn participate_xpub<'a>(
                                     .width(Length::Fill),
                             )
                             .push(
-                                button::border(Some(icon::reload_icon()), "Refresh")
+                                button::secondary(Some(icon::reload_icon()), "Refresh")
                                     .on_press(Message::Reload),
                             ),
                     )
@@ -659,7 +650,7 @@ pub fn register_descriptor<'a>(
                     .push(text(descriptor.clone()).small())
                     .push(
                         Row::new().push(Column::new().width(Length::Fill)).push(
-                            button::transparent_border(Some(icon::clipboard_icon()), "Copy")
+                            button::secondary(Some(icon::clipboard_icon()), "Copy")
                                 .on_press(Message::Clibpboard(descriptor)),
                         ),
                     )
@@ -681,7 +672,7 @@ pub fn register_descriptor<'a>(
                                 .width(Length::Fill),
                             )
                             .push(
-                                button::border(Some(icon::reload_icon()), "Refresh")
+                                button::secondary(Some(icon::reload_icon()), "Refresh")
                                     .on_press(Message::Reload),
                             ),
                     )
@@ -770,7 +761,7 @@ pub fn backup_descriptor<'a>(
                     .push(text(descriptor.clone()).small())
                     .push(
                         Row::new().push(Column::new().width(Length::Fill)).push(
-                            button::transparent_border(Some(icon::clipboard_icon()), "Copy")
+                            button::secondary(Some(icon::clipboard_icon()), "Copy")
                                 .on_press(Message::Clibpboard(descriptor)),
                         ),
                     )
@@ -848,16 +839,16 @@ pub fn define_bitcoin<'a>(
                             Row::new()
                                 .spacing(10)
                                 .align_items(Alignment::Center)
-                                .push(icon::circle_check_icon().style(color::legacy::SUCCESS))
-                                .push(text("Connection checked").style(color::legacy::SUCCESS)),
+                                .push(icon::circle_check_icon().style(color::GREEN))
+                                .push(text("Connection checked").style(color::GREEN)),
                         )
                     } else {
                         Container::new(
                             Row::new()
                                 .spacing(10)
                                 .align_items(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(color::legacy::ALERT))
-                                .push(text("Connection failed").style(color::legacy::ALERT)),
+                                .push(icon::circle_cross_icon().style(color::RED))
+                                .push(text("Connection failed").style(color::RED)),
                         )
                     }
                 })
@@ -868,7 +859,7 @@ pub fn define_bitcoin<'a>(
                 Row::new()
                     .spacing(10)
                     .push(Container::new(
-                        button::border(None, "Check connection")
+                        button::secondary(None, "Check connection")
                             .on_press(Message::DefineBitcoind(
                                 message::DefineBitcoind::PingBitcoind,
                             ))
@@ -1066,7 +1057,7 @@ pub fn defined_sequence<'a>(
                 Some(
                     text("No two recovery paths may become available at the very same date.")
                         .small()
-                        .style(color::legacy::ALERT),
+                        .style(color::RED),
                 )
             } else {
                 None
@@ -1104,7 +1095,7 @@ pub fn defined_sequence<'a>(
                         .align_y(alignment::Vertical::Center),
                     )
                     .push(
-                        button::border(Some(icon::pencil_icon()), "Edit")
+                        button::secondary(Some(icon::pencil_icon()), "Edit")
                             .on_press(message::DefinePath::EditSequence),
                     )
                     .spacing(15),
@@ -1134,18 +1125,14 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
                     Column::new()
                         .spacing(15)
                         .align_items(Alignment::Center)
-                        .push(
-                            icon::key_icon()
-                                .style(color::DARK_GREY)
-                                .size(30)
-                                .width(Length::Units(50)),
-                        ),
+                        .push(icon::key_icon().size(30).width(Length::Units(50))),
                 )
                 .height(Length::Fill)
                 .align_y(alignment::Vertical::Center),
             )
             .push(
-                button::border(Some(icon::pencil_icon()), "Set").on_press(message::DefineKey::Edit),
+                button::secondary(Some(icon::pencil_icon()), "Set")
+                    .on_press(message::DefineKey::Edit),
             )
             .push(Space::with_height(Length::Units(5))),
     )
@@ -1190,7 +1177,7 @@ pub fn defined_descriptor_key(
                             )
                             .push(
                                 icon::circle_check_icon()
-                                    .style(color::legacy::SUCCESS)
+                                    .style(color::GREEN)
                                     .size(20)
                                     .width(Length::Units(50)),
                             ),
@@ -1200,7 +1187,9 @@ pub fn defined_descriptor_key(
                 )
                 .height(Length::Fill),
         )
-        .push(button::border(Some(icon::pencil_icon()), "Edit").on_press(message::DefineKey::Edit))
+        .push(
+            button::secondary(Some(icon::pencil_icon()), "Edit").on_press(message::DefineKey::Edit),
+        )
         .push(Space::with_height(Length::Units(5)));
 
     if !valid {
@@ -1215,7 +1204,7 @@ pub fn defined_descriptor_key(
             .push(
                 text("Key is for a different network")
                     .small()
-                    .style(color::legacy::ALERT),
+                    .style(color::RED),
             )
             .into()
     } else if duplicate_key {
@@ -1227,7 +1216,7 @@ pub fn defined_descriptor_key(
                     .height(Length::Units(150))
                     .width(Length::Units(150)),
             )
-            .push(text("Duplicate key").small().style(color::legacy::ALERT))
+            .push(text("Duplicate key").small().style(color::RED))
             .into()
     } else if duplicate_name {
         Column::new()
@@ -1238,7 +1227,7 @@ pub fn defined_descriptor_key(
                     .height(Length::Units(150))
                     .width(Length::Units(150)),
             )
-            .push(text("Duplicate name").small().style(color::legacy::ALERT))
+            .push(text("Duplicate name").small().style(color::RED))
             .into()
     } else {
         card::simple(col)
@@ -1278,7 +1267,7 @@ pub fn edit_key_modal<'a>(
                                         .width(Length::Fill),
                                 )
                                 .push(
-                                    button::border(Some(icon::reload_icon()), "Refresh")
+                                    button::secondary(Some(icon::reload_icon()), "Refresh")
                                         .on_press(Message::Reload),
                                 ),
                         )
@@ -1306,7 +1295,7 @@ pub fn edit_key_modal<'a>(
                             })
                             .width(Length::Fill)
                             .on_press(Message::UseHotSigner)
-                            .style(theme::Button::Secondary),
+                            .style(theme::Button::Border),
                         )
                         .width(Length::Fill),
                 )
@@ -1354,11 +1343,15 @@ pub fn edit_key_modal<'a>(
                                         )
                                         .push(text(&form_name.value)),
                                 )
-                                .push(button::border(Some(icon::pencil_icon()), "Edit").on_press(
-                                    Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
-                                        message::ImportKeyModal::EditName,
-                                    )),
-                                )),
+                                .push(
+                                    button::secondary(Some(icon::pencil_icon()), "Edit").on_press(
+                                        Message::DefineDescriptor(
+                                            message::DefineDescriptor::KeyModal(
+                                                message::ImportKeyModal::EditName,
+                                            ),
+                                        ),
+                                    ),
+                                ),
                         )
                     } else if !form_xpub.value.is_empty() && form_xpub.valid {
                         Column::new()
@@ -1519,7 +1512,7 @@ fn hw_list_view(
             hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
         }
     })
-    .style(theme::Button::Secondary)
+    .style(theme::Button::Border)
     .width(Length::Fill);
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Select(i));
@@ -1629,10 +1622,7 @@ pub fn recover_mnemonic<'a>(
                                             .width(Length::Units(100)),
                                         )
                                         .push_maybe(if *valid {
-                                            Some(
-                                                icon::circle_check_icon()
-                                                    .style(color::legacy::SUCCESS),
-                                            )
+                                            Some(icon::circle_check_icon().style(color::GREEN))
                                         } else {
                                             None
                                         }),
@@ -1640,9 +1630,7 @@ pub fn recover_mnemonic<'a>(
                             },
                         ))
                         .push(Space::with_height(Length::Units(50)))
-                        .push_maybe(
-                            error.map(|e| card::invalid(text(e).style(color::legacy::ALERT))),
-                        ),
+                        .push_maybe(error.map(|e| card::invalid(text(e).style(color::RED)))),
                 )
             } else {
                 None
@@ -1651,7 +1639,7 @@ pub fn recover_mnemonic<'a>(
                 Row::new()
                     .spacing(10)
                     .push(
-                        button::border(None, "Import mnemonic")
+                        button::secondary(None, "Import mnemonic")
                             .on_press(Message::ImportMnemonic(true))
                             .width(Length::Units(200)),
                     )
@@ -1664,7 +1652,7 @@ pub fn recover_mnemonic<'a>(
                 Row::new()
                     .spacing(10)
                     .push(
-                        button::border(None, "Cancel")
+                        button::secondary(None, "Cancel")
                             .on_press(Message::ImportMnemonic(false))
                             .width(Length::Units(200)),
                     )

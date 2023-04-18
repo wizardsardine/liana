@@ -74,7 +74,7 @@ impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
                 })
                 .push_maybe(if !form.valid {
                     form.warning
-                        .map(|message| text::caption(message).style(color::legacy::ALERT))
+                        .map(|message| text::caption(message).style(color::RED))
                 } else {
                     None
                 })

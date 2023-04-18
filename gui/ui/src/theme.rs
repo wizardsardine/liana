@@ -1,7 +1,7 @@
 use iced::{
     application,
     widget::{
-        button, checkbox, container, pick_list, progress_bar, radio, scrollable, slider, text,
+        button, checkbox, container, pick_list, progress_bar, radio, scrollable, slider, svg, text,
         text_input,
     },
 };
@@ -10,10 +10,9 @@ use super::color;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum Theme {
+    #[default]
     Dark,
     Light,
-    #[default]
-    Legacy,
 }
 
 impl application::StyleSheet for Theme {
@@ -22,16 +21,12 @@ impl application::StyleSheet for Theme {
     fn appearance(&self, _style: &Self::Style) -> application::Appearance {
         match self {
             Theme::Light => application::Appearance {
-                background_color: color::LIGHT_GREY,
+                background_color: color::GREY_2,
                 text_color: color::LIGHT_BLACK,
             },
             Theme::Dark => application::Appearance {
                 background_color: color::LIGHT_BLACK,
-                text_color: color::LIGHT_GREY,
-            },
-            Theme::Legacy => application::Appearance {
-                background_color: color::legacy::BACKGROUND,
-                text_color: color::BLACK,
+                text_color: color::WHITE,
             },
         }
     }
@@ -47,12 +42,12 @@ impl iced::overlay::menu::StyleSheet for Theme {
 
     fn appearance(&self, _style: &Self::Style) -> iced::overlay::menu::Appearance {
         iced::overlay::menu::Appearance {
-            text_color: color::BLACK,
-            background: color::LIGHT_GREY.into(),
-            border_width: 1.0,
-            border_radius: 0.0,
-            border_color: color::LIGHT_GREY,
-            selected_text_color: color::BLACK,
+            text_color: color::GREY_2,
+            background: color::GREY_6.into(),
+            border_width: 0.0,
+            border_radius: 25.0,
+            border_color: color::GREY_2,
+            selected_text_color: color::LIGHT_BLACK,
             selected_background: color::GREEN.into(),
         }
     }
@@ -110,11 +105,11 @@ impl container::StyleSheet for Theme {
                     ..container::Appearance::default()
                 },
                 Container::Background => container::Appearance {
-                    background: color::LIGHT_GREY.into(),
+                    background: color::GREY_2.into(),
                     ..container::Appearance::default()
                 },
                 Container::Foreground => container::Appearance {
-                    background: color::GREY.into(),
+                    background: color::GREY_2.into(),
                     ..container::Appearance::default()
                 },
                 Container::Border => container::Appearance {
@@ -147,34 +142,7 @@ impl container::StyleSheet for Theme {
                 Container::Border => container::Appearance {
                     background: iced::Color::TRANSPARENT.into(),
                     border_width: 1.0,
-                    border_color: color::LIGHT_GREY,
-                    ..container::Appearance::default()
-                },
-                Container::Card(c) => c.appearance(self),
-                Container::Badge(c) => c.appearance(self),
-                Container::Pill(c) => c.appearance(self),
-                Container::Custom(c) => container::Appearance {
-                    background: (*c).into(),
-                    ..container::Appearance::default()
-                },
-            },
-            Theme::Legacy => match style {
-                Container::Transparent => container::Appearance {
-                    background: iced::Color::TRANSPARENT.into(),
-                    ..container::Appearance::default()
-                },
-                Container::Background => container::Appearance {
-                    background: color::legacy::BACKGROUND.into(),
-                    ..container::Appearance::default()
-                },
-                Container::Foreground => container::Appearance {
-                    background: color::legacy::FOREGROUND.into(),
-                    ..container::Appearance::default()
-                },
-                Container::Border => container::Appearance {
-                    background: iced::Color::TRANSPARENT.into(),
-                    border_width: 1.0,
-                    border_color: color::legacy::BORDER_GREY,
+                    border_color: color::GREY_3,
                     ..container::Appearance::default()
                 },
                 Container::Card(c) => c.appearance(self),
@@ -222,25 +190,25 @@ impl Card {
         match theme {
             Theme::Light => match self {
                 Card::Simple => container::Appearance {
-                    background: color::GREY.into(),
+                    background: color::GREY_2.into(),
                     ..container::Appearance::default()
                 },
                 Card::Border => container::Appearance {
                     background: iced::Color::TRANSPARENT.into(),
                     border_radius: 10.0,
-                    border_color: color::GREY,
+                    border_color: color::GREY_2,
                     border_width: 1.0,
                     ..container::Appearance::default()
                 },
                 Card::Invalid => container::Appearance {
-                    background: color::GREY.into(),
+                    background: color::GREY_2.into(),
                     text_color: color::BLACK.into(),
                     border_width: 1.0,
                     border_color: color::RED,
                     ..container::Appearance::default()
                 },
                 Card::Error => container::Appearance {
-                    background: color::GREY.into(),
+                    background: color::GREY_2.into(),
                     text_color: color::RED.into(),
                     border_width: 1.0,
                     border_color: color::RED,
@@ -248,28 +216,29 @@ impl Card {
                 },
                 Card::Warning => container::Appearance {
                     background: color::ORANGE.into(),
-                    text_color: color::GREY.into(),
+                    text_color: color::GREY_2.into(),
                     ..container::Appearance::default()
                 },
             },
             Theme::Dark => match self {
                 Card::Simple => container::Appearance {
-                    background: color::LIGHT_BLACK.into(),
+                    background: color::GREY_6.into(),
+                    border_radius: 25.0,
                     ..container::Appearance::default()
                 },
                 Card::Border => container::Appearance {
                     background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 10.0,
-                    border_color: color::LIGHT_GREY,
+                    border_radius: 25.0,
+                    border_color: color::GREY_5,
                     border_width: 1.0,
                     ..container::Appearance::default()
                 },
                 Card::Invalid => container::Appearance {
                     background: color::LIGHT_BLACK.into(),
-                    text_color: color::BLACK.into(),
+                    text_color: color::RED.into(),
                     border_width: 1.0,
+                    border_radius: 25.0,
                     border_color: color::RED,
-                    ..container::Appearance::default()
                 },
                 Card::Error => container::Appearance {
                     background: color::LIGHT_BLACK.into(),
@@ -280,44 +249,7 @@ impl Card {
                 },
                 Card::Warning => container::Appearance {
                     background: color::ORANGE.into(),
-                    text_color: color::GREY.into(),
-                    ..container::Appearance::default()
-                },
-            },
-            Theme::Legacy => match self {
-                Card::Simple => container::Appearance {
-                    background: color::legacy::FOREGROUND.into(),
-                    border_radius: 10.0,
-                    border_color: color::legacy::BORDER_GREY,
-                    border_width: 1.0,
-                    ..container::Appearance::default()
-                },
-                Card::Border => container::Appearance {
-                    background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 10.0,
-                    border_color: color::legacy::BORDER_GREY,
-                    border_width: 1.0,
-                    ..container::Appearance::default()
-                },
-                Card::Invalid => container::Appearance {
-                    background: color::legacy::FOREGROUND.into(),
-                    text_color: iced::Color::BLACK.into(),
-                    border_width: 1.0,
-                    border_radius: 10.0,
-                    border_color: color::legacy::ALERT,
-                },
-                Card::Error => container::Appearance {
-                    background: color::legacy::FOREGROUND.into(),
-                    text_color: color::legacy::ALERT.into(),
-                    border_width: 1.0,
-                    border_radius: 10.0,
-                    border_color: color::legacy::ALERT,
-                },
-                Card::Warning => container::Appearance {
-                    border_radius: 0.0,
-                    text_color: iced::Color::BLACK.into(),
-                    background: color::legacy::WARNING.into(),
-                    border_color: color::legacy::WARNING,
+                    text_color: color::WHITE.into(),
                     ..container::Appearance::default()
                 },
             },
@@ -337,12 +269,12 @@ impl Badge {
         match self {
             Self::Standard => container::Appearance {
                 border_radius: 40.0,
-                background: color::legacy::BACKGROUND.into(),
+                background: color::GREY_4.into(),
                 ..container::Appearance::default()
             },
             Self::Bitcoin => container::Appearance {
                 border_radius: 40.0,
-                background: color::legacy::WARNING.into(),
+                background: color::ORANGE.into(),
                 text_color: iced::Color::WHITE.into(),
                 ..container::Appearance::default()
             },
@@ -354,7 +286,6 @@ impl Badge {
 pub enum Pill {
     #[default]
     Simple,
-    InversePrimary,
     Primary,
     Success,
 }
@@ -363,27 +294,21 @@ impl Pill {
     fn appearance(&self, _theme: &Theme) -> iced::widget::container::Appearance {
         match self {
             Self::Primary => container::Appearance {
-                background: color::legacy::PRIMARY.into(),
-                border_radius: 10.0,
-                text_color: iced::Color::WHITE.into(),
-                ..container::Appearance::default()
-            },
-            Self::InversePrimary => container::Appearance {
-                background: color::legacy::FOREGROUND.into(),
-                border_radius: 10.0,
-                text_color: color::legacy::PRIMARY.into(),
+                background: color::GREEN.into(),
+                border_radius: 25.0,
+                text_color: color::LIGHT_BLACK.into(),
                 ..container::Appearance::default()
             },
             Self::Success => container::Appearance {
-                background: color::legacy::SUCCESS.into(),
-                border_radius: 10.0,
-                text_color: iced::Color::WHITE.into(),
+                background: color::GREEN.into(),
+                border_radius: 25.0,
+                text_color: color::LIGHT_BLACK.into(),
                 ..container::Appearance::default()
             },
             Self::Simple => container::Appearance {
-                background: color::legacy::BACKGROUND.into(),
-                border_radius: 10.0,
-                text_color: iced::Color::BLACK.into(),
+                background: color::GREEN.into(),
+                border_radius: 25.0,
+                text_color: color::LIGHT_BLACK.into(),
                 ..container::Appearance::default()
             },
         }
@@ -424,10 +349,10 @@ impl scrollable::StyleSheet for Theme {
         scrollable::Scrollbar {
             background: None,
             border_width: 0.0,
-            border_color: color::legacy::BORDER_GREY,
+            border_color: color::GREY_7,
             border_radius: 10.0,
             scroller: scrollable::Scroller {
-                color: color::legacy::BORDER_GREY,
+                color: color::GREY_7,
                 border_radius: 10.0,
                 border_width: 0.0,
                 border_color: iced::Color::TRANSPARENT,
@@ -453,21 +378,21 @@ impl pick_list::StyleSheet for Theme {
     fn active(&self, style: &Self::Style) -> pick_list::Appearance {
         match style {
             PickList::Simple => pick_list::Appearance {
-                placeholder_color: color::legacy::FOREGROUND,
-                handle_color: color::legacy::FOREGROUND,
-                background: color::legacy::FOREGROUND.into(),
+                placeholder_color: color::GREY_6,
+                handle_color: color::GREY_6,
+                background: color::GREEN.into(),
                 border_width: 1.0,
-                border_color: color::legacy::BORDER_GREY,
-                border_radius: 10.0,
+                border_color: color::GREY_7,
+                border_radius: 25.0,
                 text_color: iced::Color::BLACK,
             },
             PickList::Invalid => pick_list::Appearance {
-                placeholder_color: color::legacy::FOREGROUND,
-                handle_color: color::legacy::FOREGROUND,
-                background: color::legacy::FOREGROUND.into(),
+                placeholder_color: color::GREY_6,
+                handle_color: color::GREY_6,
+                background: color::GREY_6.into(),
                 border_width: 1.0,
-                border_color: color::legacy::ALERT,
-                border_radius: 10.0,
+                border_color: color::RED,
+                border_radius: 25.0,
                 text_color: iced::Color::BLACK,
             },
         }
@@ -488,7 +413,7 @@ impl checkbox::StyleSheet for Theme {
         checkbox::Appearance {
             background: iced::Color::TRANSPARENT.into(),
             border_width: 1.0,
-            border_color: color::GREY,
+            border_color: color::GREY_7,
             checkmark_color: color::GREEN,
             text_color: None,
             border_radius: 0.0,
@@ -509,6 +434,8 @@ pub enum Button {
     Destructive,
     Transparent,
     TransparentBorder,
+    Border,
+    Menu(bool),
 }
 
 impl button::StyleSheet for Theme {
@@ -516,168 +443,89 @@ impl button::StyleSheet for Theme {
 
     fn active(&self, style: &Self::Style) -> button::Appearance {
         match self {
-            Theme::Light => match style {
-                Button::Primary => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::LIGHT_BLACK.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_GREY,
-                },
-                Button::Secondary => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 10.0,
-                    border_width: 1.0,
-                    border_color: color::DARK_GREY,
-                    text_color: color::LIGHT_BLACK,
-                },
-                Button::Destructive => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::RED.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_GREY,
-                },
-                Button::Transparent | Button::TransparentBorder => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_BLACK,
-                },
-            },
+            Theme::Light => button::Appearance::default(),
             Theme::Dark => match style {
                 Button::Primary => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: color::GREY.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_BLACK,
-                },
-                Button::Secondary => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::LIGHT_BLACK.into(),
-                    border_radius: 10.0,
+                    background: iced::Color::TRANSPARENT.into(),
+                    border_radius: 25.0,
                     border_width: 1.0,
-                    border_color: color::LIGHT_GREY,
-                    text_color: color::LIGHT_GREY,
+                    border_color: color::GREY_7,
+                    text_color: color::GREY_2,
+                },
+                Button::Secondary | Button::Border => button::Appearance {
+                    shadow_offset: iced::Vector::default(),
+                    background: iced::Color::TRANSPARENT.into(),
+                    border_radius: 25.0,
+                    border_width: 1.0,
+                    border_color: color::GREY_7,
+                    text_color: color::GREY_2,
                 },
                 Button::Destructive => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: color::RED.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_BLACK,
+                    background: iced::Color::TRANSPARENT.into(),
+                    border_radius: 25.0,
+                    border_width: 1.0,
+                    border_color: color::RED,
+                    text_color: color::RED,
                 },
-                Button::Transparent | Button::TransparentBorder => button::Appearance {
+                Button::Transparent => button::Appearance {
                     shadow_offset: iced::Vector::default(),
                     background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 10.0,
+                    border_radius: 25.0,
                     border_width: 0.0,
                     border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_GREY,
+                    text_color: color::GREY_2,
                 },
-            },
-            Theme::Legacy => match style {
-                Button::Primary => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::legacy::PRIMARY.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: color::legacy::FOREGROUND,
-                },
-                Button::Destructive => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::legacy::FOREGROUND.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: color::legacy::ALERT,
-                    text_color: color::legacy::ALERT,
-                },
-                Button::Transparent | Button::TransparentBorder => button::Appearance {
+                Button::TransparentBorder => button::Appearance {
                     shadow_offset: iced::Vector::default(),
                     background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 10.0,
+                    border_radius: 25.0,
                     border_width: 0.0,
                     border_color: iced::Color::TRANSPARENT,
-                    text_color: iced::Color::BLACK,
+                    text_color: color::WHITE,
                 },
-                Button::Secondary => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 10.0,
-                    border_width: 1.2,
-                    border_color: color::legacy::BORDER_GREY,
-                    text_color: iced::Color::BLACK,
-                },
+                Button::Menu(active) => {
+                    if *active {
+                        button::Appearance {
+                            shadow_offset: iced::Vector::default(),
+                            background: color::LIGHT_BLACK.into(),
+                            border_radius: 25.0,
+                            border_width: 0.0,
+                            border_color: iced::Color::TRANSPARENT,
+                            text_color: color::WHITE,
+                        }
+                    } else {
+                        button::Appearance {
+                            shadow_offset: iced::Vector::default(),
+                            background: iced::Color::TRANSPARENT.into(),
+                            border_radius: 25.0,
+                            border_width: 0.0,
+                            border_color: iced::Color::TRANSPARENT,
+                            text_color: color::WHITE,
+                        }
+                    }
+                }
             },
         }
     }
 
     fn hovered(&self, style: &Self::Style) -> button::Appearance {
         match self {
-            Theme::Light => match style {
-                Button::Primary => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::LIGHT_BLACK.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_GREY,
-                },
-                Button::Secondary => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::LIGHT_BLACK.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_GREY,
-                },
-                Button::Destructive => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::RED.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_GREY,
-                },
-                Button::Transparent => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::DARK_GREY.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_GREY,
-                },
-                Button::TransparentBorder => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::DARK_GREY.into(),
-                    border_radius: 10.0,
-                    border_width: 1.0,
-                    border_color: color::LIGHT_BLACK,
-                    text_color: color::LIGHT_GREY,
-                },
-            },
+            Theme::Light => button::Appearance::default(),
             Theme::Dark => match style {
                 Button::Primary => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: color::GREY.into(),
-                    border_radius: 10.0,
+                    background: color::GREEN.into(),
+                    border_radius: 25.0,
                     border_width: 0.0,
                     border_color: iced::Color::TRANSPARENT,
                     text_color: color::LIGHT_BLACK,
                 },
                 Button::Secondary => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: color::GREY.into(),
-                    border_radius: 10.0,
+                    background: color::GREEN.into(),
+                    border_radius: 25.0,
                     border_width: 0.0,
                     border_color: iced::Color::TRANSPARENT,
                     text_color: color::LIGHT_BLACK,
@@ -685,68 +533,34 @@ impl button::StyleSheet for Theme {
                 Button::Destructive => button::Appearance {
                     shadow_offset: iced::Vector::default(),
                     background: color::RED.into(),
-                    border_radius: 10.0,
+                    border_radius: 25.0,
                     border_width: 0.0,
                     border_color: iced::Color::TRANSPARENT,
                     text_color: color::LIGHT_BLACK,
                 },
                 Button::Transparent => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: color::DARK_GREY.into(),
-                    border_radius: 10.0,
+                    background: color::GREY_7.into(),
+                    border_radius: 25.0,
                     border_width: 0.0,
                     border_color: iced::Color::TRANSPARENT,
-                    text_color: color::LIGHT_GREY,
+                    text_color: color::GREY_2,
                 },
-                Button::TransparentBorder => button::Appearance {
+                Button::TransparentBorder | Button::Border => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: color::DARK_GREY.into(),
-                    border_radius: 10.0,
+                    background: iced::Color::TRANSPARENT.into(),
+                    border_radius: 25.0,
                     border_width: 1.0,
-                    border_color: color::LIGHT_GREY,
-                    text_color: color::LIGHT_GREY,
+                    border_color: color::GREEN,
+                    text_color: color::WHITE,
                 },
-            },
-            Theme::Legacy => match style {
-                Button::Primary => button::Appearance {
+                Button::Menu(_) => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: color::legacy::PRIMARY.into(),
-                    border_radius: 10.0,
+                    background: color::LIGHT_BLACK.into(),
+                    border_radius: 25.0,
                     border_width: 0.0,
                     border_color: iced::Color::TRANSPARENT,
-                    text_color: color::legacy::FOREGROUND,
-                },
-                Button::Destructive => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: color::legacy::FOREGROUND.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: color::legacy::ALERT,
-                    text_color: color::legacy::ALERT,
-                },
-                Button::Transparent => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 10.0,
-                    border_width: 0.0,
-                    border_color: iced::Color::TRANSPARENT,
-                    text_color: iced::Color::BLACK,
-                },
-                Button::TransparentBorder => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 10.0,
-                    border_width: 1.0,
-                    border_color: iced::Color::BLACK,
-                    text_color: iced::Color::BLACK,
-                },
-                Button::Secondary => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 10.0,
-                    border_width: 1.0,
-                    border_color: iced::Color::BLACK,
-                    text_color: iced::Color::BLACK,
+                    text_color: color::WHITE,
                 },
             },
         }
@@ -765,16 +579,16 @@ impl text_input::StyleSheet for Theme {
     fn active(&self, style: &Self::Style) -> text_input::Appearance {
         match style {
             Form::Simple => text_input::Appearance {
-                background: iced::Background::Color(color::legacy::FOREGROUND),
-                border_radius: 5.0,
+                background: iced::Background::Color(iced::Color::TRANSPARENT),
+                border_radius: 25.0,
                 border_width: 1.0,
-                border_color: color::legacy::DARK_GREY,
+                border_color: color::GREY_7,
             },
             Form::Invalid => text_input::Appearance {
-                background: iced::Background::Color(color::legacy::FOREGROUND),
-                border_radius: 5.0,
+                background: iced::Background::Color(iced::Color::TRANSPARENT),
+                border_radius: 25.0,
                 border_width: 1.0,
-                border_color: color::legacy::ALERT,
+                border_color: color::RED,
             },
         }
     }
@@ -786,15 +600,15 @@ impl text_input::StyleSheet for Theme {
     }
 
     fn placeholder_color(&self, _style: &Self::Style) -> iced::Color {
-        iced::Color::from_rgb(0.7, 0.7, 0.7)
+        color::GREY_7
     }
 
     fn value_color(&self, _style: &Self::Style) -> iced::Color {
-        iced::Color::from_rgb(0.3, 0.3, 0.3)
+        color::GREY_2
     }
 
     fn selection_color(&self, _style: &Self::Style) -> iced::Color {
-        iced::Color::from_rgb(0.8, 0.8, 1.0)
+        color::GREEN
     }
 }
 
@@ -808,7 +622,7 @@ impl progress_bar::StyleSheet for Theme {
     type Style = ProgressBar;
     fn appearance(&self, _style: &Self::Style) -> progress_bar::Appearance {
         progress_bar::Appearance {
-            background: color::GREY.into(),
+            background: color::GREY_6.into(),
             bar: color::GREEN.into(),
             border_radius: 10.0,
         }
@@ -829,7 +643,7 @@ impl slider::StyleSheet for Theme {
                 width: 8,
                 border_radius: 4.0,
             },
-            color: color::legacy::FOREGROUND,
+            color: color::BLACK,
             border_color: color::GREEN,
             border_width: 1.0,
         };
@@ -867,5 +681,18 @@ impl slider::StyleSheet for Theme {
             rail_colors: (color::GREEN, iced::Color::TRANSPARENT),
             handle,
         }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+pub enum Svg {
+    #[default]
+    Simple,
+}
+
+impl svg::StyleSheet for Theme {
+    type Style = ProgressBar;
+    fn appearance(&self, _style: &Self::Style) -> svg::Appearance {
+        svg::Appearance::default()
     }
 }

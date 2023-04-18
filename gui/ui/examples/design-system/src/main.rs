@@ -1,8 +1,8 @@
 mod section;
 
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::{executor, Application, Command, Length, Settings, Subscription};
-use liana_ui::{component::text::*, theme, widget::*};
+use liana_ui::{component::text::*, image, theme, widget::*};
 
 pub fn main() -> iced::Result {
     let mut settings = Settings::with_flags(Config {});
@@ -100,6 +100,7 @@ impl Application for DesignSystem {
     fn view(&self) -> Element<Message> {
         let sidebar = container(
             column![
+                image::liana_grey_logo(),
                 Space::with_height(Length::Units(100)),
                 self.sections.iter().enumerate().fold(
                     Column::new().spacing(10),
@@ -107,13 +108,9 @@ impl Application for DesignSystem {
                         button(
                             container(text(section.title()))
                                 .width(Length::Fill)
-                                .padding(5)
+                                .padding(10)
                         )
-                        .style(if i == self.current {
-                            theme::Button::Primary
-                        } else {
-                            theme::Button::Transparent
-                        })
+                        .style(theme::Button::Menu(i == self.current))
                         .on_press(Message::Section(i))
                         .width(Length::Units(200))
                     )
@@ -128,10 +125,10 @@ impl Application for DesignSystem {
         container(row![
             sidebar.width(Length::Units(200)),
             Space::with_width(Length::Units(150)),
-            column![
+            scrollable(column![
                 Space::with_height(Length::Units(150)),
                 container(self.sections[self.current].view()).width(Length::Fill)
-            ]
+            ]),
         ])
         .width(Length::Fill)
         .height(Length::Fill)

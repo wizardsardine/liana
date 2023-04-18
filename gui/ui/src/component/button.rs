@@ -4,6 +4,14 @@ use iced::{Alignment, Length};
 
 use super::text::text;
 
+pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    button::Button::new(content(icon, t).padding(10)).style(theme::Button::Menu(false))
+}
+
+pub fn menu_active<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    button::Button::new(content(icon, t).padding(10)).style(theme::Button::Menu(true))
+}
+
 pub fn alert<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     button::Button::new(content(icon, t)).style(theme::Button::Destructive)
 }
@@ -16,8 +24,12 @@ pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button
     button::Button::new(content(icon, t)).style(theme::Button::Transparent)
 }
 
-pub fn border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+pub fn secondary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     button::Button::new(content(icon, t)).style(theme::Button::Secondary)
+}
+
+pub fn border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    button::Button::new(content(icon, t)).style(theme::Button::Border)
 }
 
 pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {

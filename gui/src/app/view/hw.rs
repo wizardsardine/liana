@@ -44,7 +44,7 @@ pub fn hw_list_view(
             hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
         }
     })
-    .style(theme::Button::Secondary)
+    .style(theme::Button::Border)
     .width(Length::Fill);
     if !processing {
         if let HardwareWallet::Supported { registered, .. } = hw {
@@ -91,7 +91,7 @@ pub fn hw_list_view_for_registration(
             hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
         }
     })
-    .style(theme::Button::Secondary)
+    .style(theme::Button::Border)
     .width(Length::Fill);
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::SelectHardwareWallet(i));

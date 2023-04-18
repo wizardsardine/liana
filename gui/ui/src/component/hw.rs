@@ -121,9 +121,7 @@ pub fn selected_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
             ])
             .width(Length::Fill)
             .into(),
-            icon::circle_check_icon()
-                .style(color::legacy::SUCCESS)
-                .into(),
+            icon::circle_check_icon().style(color::GREEN).into(),
         ])
         .align_items(Alignment::Center),
     )
@@ -153,12 +151,8 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
             .width(Length::Fill)
             .into(),
             row(vec![
-                icon::circle_check_icon()
-                    .style(color::legacy::SUCCESS)
-                    .into(),
-                text::p1_regular("Signed")
-                    .style(color::legacy::SUCCESS)
-                    .into(),
+                icon::circle_check_icon().style(color::GREEN).into(),
+                text::p1_regular("Signed").style(color::GREEN).into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -192,12 +186,8 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
             .width(Length::Fill)
             .into(),
             row(vec![
-                icon::circle_check_icon()
-                    .style(color::legacy::SUCCESS)
-                    .into(),
-                text::p1_regular("Registered")
-                    .style(color::legacy::SUCCESS)
-                    .into(),
+                icon::circle_check_icon().style(color::GREEN).into(),
+                text::p1_regular("Registered").style(color::GREEN).into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -260,12 +250,8 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
             .width(Length::Fill)
             .into(),
             row(vec![
-                icon::circle_check_icon()
-                    .style(color::legacy::SUCCESS)
-                    .into(),
-                text::p1_regular("Signed")
-                    .style(color::legacy::SUCCESS)
-                    .into(),
+                icon::circle_check_icon().style(color::GREEN).into(),
+                text::p1_regular("Signed").style(color::GREEN).into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -298,9 +284,7 @@ pub fn selected_hot_signer<'a, T: 'a, F: Display>(
             ])
             .width(Length::Fill)
             .into(),
-            icon::circle_check_icon()
-                .style(color::legacy::SUCCESS)
-                .into(),
+            icon::circle_check_icon().style(color::GREEN).into(),
         ])
         .align_items(Alignment::Center),
     )
