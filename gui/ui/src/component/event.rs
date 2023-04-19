@@ -22,7 +22,7 @@ pub fn unconfirmed_outgoing_event<'a, T: Clone + 'a>(amount: &Amount, msg: T) ->
                     .align_items(Alignment::Center),
             )
             .align_items(Alignment::Center)
-            .padding(10)
+            .padding(5)
             .spacing(20),
         )
         .on_press(msg)
@@ -32,7 +32,7 @@ pub fn unconfirmed_outgoing_event<'a, T: Clone + 'a>(amount: &Amount, msg: T) ->
 }
 
 pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
-    date: chrono::NaiveDate,
+    date: chrono::NaiveDateTime,
     amount: &Amount,
     msg: T,
 ) -> Container<'a, T> {
@@ -48,7 +48,7 @@ pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
                     .align_items(Alignment::Center),
             )
             .align_items(Alignment::Center)
-            .padding(10)
+            .padding(5)
             .spacing(20),
         )
         .on_press(msg)
@@ -70,7 +70,7 @@ pub fn unconfirmed_incoming_event<'a, T: Clone + 'a>(amount: &Amount, msg: T) ->
                     .align_items(Alignment::Center),
             )
             .align_items(Alignment::Center)
-            .padding(10)
+            .padding(5)
             .spacing(20),
         )
         .on_press(msg)
@@ -80,7 +80,7 @@ pub fn unconfirmed_incoming_event<'a, T: Clone + 'a>(amount: &Amount, msg: T) ->
 }
 
 pub fn confirmed_incoming_event<'a, T: Clone + 'a>(
-    date: chrono::NaiveDate,
+    date: chrono::NaiveDateTime,
     amount: &Amount,
     msg: T,
 ) -> Container<'a, T> {
@@ -96,7 +96,7 @@ pub fn confirmed_incoming_event<'a, T: Clone + 'a>(
                     .align_items(Alignment::Center),
             )
             .align_items(Alignment::Center)
-            .padding(10)
+            .padding(5)
             .spacing(20),
         )
         .on_press(msg)

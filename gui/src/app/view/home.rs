@@ -5,7 +5,7 @@ use iced::{alignment, Alignment, Length};
 use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
-    component::{amount::*, badge, text::*},
+    component::{amount::*, event, text::*},
     icon, theme,
     util::Collection,
     widget::*,
@@ -23,7 +23,8 @@ pub fn home_view<'a>(
     events: &Vec<HistoryTransaction>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(amount_with_size(balance, 50))
+        .push(h3("Balance"))
+        .push(amount_with_size(balance, H1_SIZE))
         .push_maybe(recovery_warning.map(|(a, c)| {
             Row::new()
                 .spacing(15)
@@ -60,6 +61,7 @@ pub fn home_view<'a>(
         .push(
             Column::new()
                 .spacing(10)
+                .push(h4_bold("Last payments"))
                 .push(
                     pending_events
                         .iter()
@@ -71,6 +73,7 @@ pub fn home_view<'a>(
                 .push(
                     events
                         .iter()
+                        .filter(|event| !event.is_self_send())
                         .enumerate()
                         .fold(Column::new().spacing(10), |col, (i, event)| {
                             col.push(event_list_view(i + pending_events.len(), event))
@@ -98,57 +101,43 @@ pub fn home_view<'a>(
                     },
                 ),
         )
-        .align_items(Alignment::Center)
         .spacing(20)
         .into()
 }
 
-fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Element<'a, Message> {
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(
-                    Row::new()
-                        .push(if event.is_external() {
-                            badge::receive()
-                        } else {
-                            badge::spend()
-                        })
-                        .push(if let Some(t) = event.time {
-                            Container::new(
-                                text(format!(
-                                    "{}",
-                                    NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
-                                ))
-                                .small(),
-                            )
-                        } else {
-                            badge::unconfirmed()
-                        })
-                        .spacing(10)
-                        .align_items(Alignment::Center)
-                        .width(Length::Fill),
-                )
-                .push(if event.is_external() {
-                    Row::new()
-                        .spacing(5)
-                        .push(text("+"))
-                        .push(amount(&event.incoming_amount))
-                        .align_items(Alignment::Center)
+fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Column<'a, Message> {
+    event.tx.output.iter().enumerate().fold(
+        Column::new().spacing(10),
+        |col, (output_index, output)| {
+            if event.is_external() {
+                if !event.change_indexes.contains(&output_index) {
+                    col
+                } else if let Some(t) = event.time {
+                    col.push(event::confirmed_incoming_event(
+                        NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
+                        &Amount::from_sat(output.value),
+                        Message::Select(i),
+                    ))
                 } else {
-                    Row::new()
-                        .spacing(5)
-                        .push(text("-"))
-                        .push(amount(&event.outgoing_amount))
-                        .align_items(Alignment::Center)
-                })
-                .align_items(Alignment::Center)
-                .spacing(20),
-        )
-        .padding(10)
-        .on_press(Message::Select(i))
-        .style(theme::Button::TransparentBorder),
+                    col.push(event::unconfirmed_incoming_event(
+                        &Amount::from_sat(output.value),
+                        Message::Select(i),
+                    ))
+                }
+            } else if event.change_indexes.contains(&output_index) {
+                col
+            } else if let Some(t) = event.time {
+                col.push(event::confirmed_outgoing_event(
+                    NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
+                    &Amount::from_sat(output.value),
+                    Message::Select(i),
+                ))
+            } else {
+                col.push(event::unconfirmed_outgoing_event(
+                    &Amount::from_sat(output.value),
+                    Message::Select(i),
+                ))
+            }
+        },
     )
-    .style(theme::Container::Card(theme::Card::Simple))
-    .into()
 }

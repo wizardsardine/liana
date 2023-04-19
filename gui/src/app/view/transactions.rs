@@ -99,12 +99,14 @@ fn tx_list_view<'a>(i: usize, tx: &HistoryTransaction) -> Element<'a, Message> {
                         .push(text("+"))
                         .push(amount(&tx.incoming_amount))
                         .align_items(Alignment::Center)
-                } else {
+                } else if tx.outgoing_amount != Amount::from_sat(0) {
                     Row::new()
                         .spacing(5)
                         .push(text("-"))
                         .push(amount(&tx.outgoing_amount))
                         .align_items(Alignment::Center)
+                } else {
+                    Row::new().push(text("Self send"))
                 })
                 .align_items(Alignment::Center)
                 .spacing(20),

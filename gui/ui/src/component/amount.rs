@@ -36,9 +36,12 @@ pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
                 .into()
         });
 
-    Row::with_children(vec![row.into(), text("BTC").size(size).into()])
-        .spacing(spacing)
-        .align_items(iced::Alignment::Center)
+    Row::with_children(vec![
+        row.into(),
+        text("BTC").size(size).style(color::GREY_3).into(),
+    ])
+    .spacing(spacing)
+    .align_items(iced::Alignment::Center)
 }
 
 fn split_digits<'a, T: 'a>(mut s: String, size: u16) -> impl Into<Element<'a, T>> {
@@ -47,7 +50,7 @@ fn split_digits<'a, T: 'a>(mut s: String, size: u16) -> impl Into<Element<'a, T>
         if s.starts_with(prefix) {
             let right = s.split_off(prefix.len());
             return Row::new()
-                .push(text(s).size(size).style(color::GREY_2))
+                .push(text(s).size(size).style(color::GREY_3))
                 .push_maybe(if right.is_empty() {
                     None
                 } else {

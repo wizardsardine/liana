@@ -261,18 +261,20 @@ impl Section for Events {
         "Events "
     }
     fn view(&self) -> Element<Message> {
+        let d = chrono::NaiveDate::from_ymd_opt(2015, 6, 3).unwrap();
+        let t = chrono::NaiveTime::from_hms_milli_opt(12, 34, 56, 789).unwrap();
         column![
             h1(self.title()),
             column![
                 event::unconfirmed_outgoing_event(&Amount::from_sat(32934234), Message::Ignore),
                 event::confirmed_outgoing_event(
-                    chrono::NaiveDate::from_ymd_opt(2023, 04, 19).unwrap(),
+                    chrono::NaiveDateTime::new(d, t),
                     &Amount::from_sat(32934234),
                     Message::Ignore
                 ),
                 event::unconfirmed_incoming_event(&Amount::from_sat(32934234), Message::Ignore),
                 event::confirmed_incoming_event(
-                    chrono::NaiveDate::from_ymd_opt(2023, 04, 19).unwrap(),
+                    chrono::NaiveDateTime::new(d, t),
                     &Amount::from_sat(32934234),
                     Message::Ignore
                 )

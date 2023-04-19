@@ -206,6 +206,8 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
                 .push(badge::Badge::new(icon::send_icon()).style(theme::Badge::Standard))
                 .push(if !tx.sigs.recovery_paths().is_empty() {
                     text("Recovery").bold()
+                } else if tx.spend_amount == Amount::from_sat(0) {
+                    text("Self send").bold()
                 } else {
                     text("Spend").bold()
                 })
