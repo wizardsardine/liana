@@ -29,7 +29,6 @@ pub fn home_view<'a>(
     events: &Vec<HistoryTransaction>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(Column::new().padding(40))
         .push(amount_with_size(balance, 50))
         .push_maybe(recovery_warning.map(|(a, c)| {
             Row::new()

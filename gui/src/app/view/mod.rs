@@ -5,6 +5,7 @@ mod warning;
 pub mod coins;
 pub mod home;
 pub mod hw;
+pub mod psbts;
 pub mod receive;
 pub mod recovery;
 pub mod settings;
@@ -13,11 +14,15 @@ pub mod spend;
 pub use message::*;
 use warning::warn;
 
-use iced::{widget::scrollable, Length};
+use iced::{
+    widget::{column, row, scrollable, Space},
+    Length,
+};
 
 use liana_ui::{
     component::{button, text::*},
     icon::{coin_icon, cross_icon, home_icon, receive_icon, send_icon, settings_icon},
+    image::*,
     theme,
     util::Collection,
     widget::*,
@@ -29,11 +34,11 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let home_button = if *menu == Menu::Home {
         button::menu_active(Some(home_icon()), "Home")
             .on_press(Message::Reload)
-            .width(iced::Length::Units(200))
+            .width(iced::Length::Fill)
     } else {
         button::menu(Some(home_icon()), "Home")
             .on_press(Message::Menu(Menu::Home))
-            .width(iced::Length::Units(200))
+            .width(iced::Length::Fill)
     };
 
     let coins_button = if *menu == Menu::Coins {
@@ -74,7 +79,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         )
         .style(theme::Button::Menu(true))
         .on_press(Message::Reload)
-        .width(iced::Length::Units(200))
+        .width(iced::Length::Fill)
     } else {
         Button::new(
             Container::new(
@@ -113,17 +118,17 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         )
         .style(theme::Button::Menu(false))
         .on_press(Message::Menu(Menu::Coins))
-        .width(iced::Length::Units(200))
+        .width(iced::Length::Fill)
     };
 
-    let spend_button = if *menu == Menu::Spend {
+    let psbt_button = if *menu == Menu::PSBTs {
         Button::new(
             Container::new(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(send_icon())
-                            .push(text("Send"))
+                            .push(history_icon().width(Length::Units(20)))
+                            .push(text("PSBTs"))
                             .spacing(10)
                             .width(iced::Length::Fill)
                             .align_items(iced::Alignment::Center),
@@ -150,15 +155,15 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         )
         .style(theme::Button::Menu(true))
         .on_press(Message::Reload)
-        .width(iced::Length::Units(200))
+        .width(iced::Length::Fill)
     } else {
         Button::new(
             Container::new(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(send_icon())
-                            .push(text("Send"))
+                            .push(history_icon().width(Length::Units(20)))
+                            .push(text("PSBTs"))
                             .spacing(10)
                             .width(iced::Length::Fill)
                             .align_items(iced::Alignment::Center),
@@ -184,47 +189,83 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .center_x(),
         )
         .style(theme::Button::Menu(false))
-        .on_press(Message::Menu(Menu::Spend))
-        .width(iced::Length::Units(200))
+        .on_press(Message::Menu(Menu::PSBTs))
+        .width(iced::Length::Fill)
+    };
+
+    let spend_button = if *menu == Menu::CreateSpendTx {
+        Button::new(
+            Container::new(
+                Row::new()
+                    .push(send_icon())
+                    .push(text("Send"))
+                    .spacing(10)
+                    .width(iced::Length::Fill)
+                    .align_items(iced::Alignment::Center),
+            )
+            .width(iced::Length::Fill)
+            .padding(10)
+            .center_x(),
+        )
+        .style(theme::Button::Menu(true))
+        .on_press(Message::Reload)
+        .width(iced::Length::Fill)
+    } else {
+        Button::new(
+            Container::new(
+                Row::new()
+                    .push(send_icon())
+                    .push(text("Send"))
+                    .spacing(10)
+                    .width(iced::Length::Fill)
+                    .align_items(iced::Alignment::Center),
+            )
+            .width(iced::Length::Fill)
+            .padding(10)
+            .center_x(),
+        )
+        .style(theme::Button::Menu(false))
+        .on_press(Message::Menu(Menu::CreateSpendTx))
+        .width(iced::Length::Fill)
     };
 
     let receive_button = if *menu == Menu::Receive {
         button::menu_active(Some(receive_icon()), "Receive")
             .on_press(Message::Reload)
-            .width(iced::Length::Units(200))
+            .width(iced::Length::Fill)
     } else {
         button::menu(Some(receive_icon()), "Receive")
             .on_press(Message::Menu(Menu::Receive))
-            .width(iced::Length::Units(200))
+            .width(iced::Length::Fill)
     };
 
     let settings_button = if *menu == Menu::Settings {
         button::menu_active(Some(settings_icon()), "Settings")
             .on_press(Message::Menu(Menu::Settings))
-            .width(iced::Length::Units(200))
+            .width(iced::Length::Fill)
     } else {
         button::menu(Some(settings_icon()), "Settings")
             .on_press(Message::Menu(Menu::Settings))
-            .width(iced::Length::Units(200))
+            .width(iced::Length::Fill)
     };
 
     Container::new(
         Column::new()
-            .padding(10)
             .push(
                 Column::new()
                     .push(
                         Container::new(
-                            liana_ui::image::liana_grey_logo()
+                            liana_grey_logo()
                                 .height(Length::Units(150))
                                 .width(Length::Units(60)),
                         )
                         .padding(15),
                     )
                     .push(home_button)
-                    .push(coins_button)
                     .push(spend_button)
                     .push(receive_button)
+                    .push(coins_button)
+                    .push(psbt_button)
                     .spacing(15)
                     .height(Length::Fill),
             )
@@ -254,18 +295,25 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     Row::new()
         .push(
             sidebar(menu, cache)
-                .width(Length::Shrink)
+                .width(Length::FillPortion(2))
                 .height(Length::Fill),
         )
         .push(
             Column::new()
                 .push(warn(warning))
-                .push(main_section(Container::new(scrollable(
-                    Container::new(content).padding(20),
-                )))),
+                .push(
+                    main_section(Container::new(scrollable(row!(
+                        Space::with_width(Length::FillPortion(1)),
+                        column!(Space::with_height(Length::Units(150)), content.into())
+                            .width(Length::FillPortion(8)),
+                        Space::with_width(Length::FillPortion(1)),
+                    ))))
+                    .width(Length::Fill),
+                )
+                .width(Length::FillPortion(10)),
         )
-        .width(iced::Length::Fill)
-        .height(iced::Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fill)
         .into()
 }
 

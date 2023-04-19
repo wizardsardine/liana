@@ -24,7 +24,7 @@ use liana_ui::widget::Element;
 pub use config::Config;
 pub use message::Message;
 
-use state::{CoinsPanel, CreateSpendPanel, Home, ReceivePanel, RecoveryPanel, SpendPanel, State};
+use state::{CoinsPanel, CreateSpendPanel, Home, PsbtsPanel, ReceivePanel, RecoveryPanel, State};
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
@@ -81,7 +81,7 @@ impl App {
             )
             .into(),
             menu::Menu::Receive => ReceivePanel::default().into(),
-            menu::Menu::Spend => SpendPanel::new(self.wallet.clone(), &self.cache.spend_txs).into(),
+            menu::Menu::PSBTs => PsbtsPanel::new(self.wallet.clone(), &self.cache.spend_txs).into(),
             menu::Menu::CreateSpendTx => CreateSpendPanel::new(
                 self.wallet.clone(),
                 &self.cache.coins,

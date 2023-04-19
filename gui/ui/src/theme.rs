@@ -306,10 +306,11 @@ impl Pill {
                 ..container::Appearance::default()
             },
             Self::Simple => container::Appearance {
-                background: color::GREEN.into(),
+                background: iced::Color::TRANSPARENT.into(),
                 border_radius: 25.0,
-                text_color: color::LIGHT_BLACK.into(),
-                ..container::Appearance::default()
+                border_width: 1.0,
+                border_color: color::GREY_3,
+                text_color: color::GREY_3.into(),
             },
         }
     }
