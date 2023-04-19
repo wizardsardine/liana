@@ -1,5 +1,4 @@
 mod message;
-mod util;
 mod warning;
 
 pub mod coins;

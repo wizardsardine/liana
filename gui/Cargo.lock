@@ -1887,6 +1887,8 @@ dependencies = [
 name = "liana_ui"
 version = "0.1.0"
 dependencies = [
+ "bitcoin",
+ "chrono",
  "iced",
  "iced_lazy",
  "iced_native",

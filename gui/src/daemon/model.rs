@@ -180,4 +180,8 @@ impl HistoryTransaction {
     pub fn is_external(&self) -> bool {
         self.coins.is_empty()
     }
+
+    pub fn is_self_send(&self) -> bool {
+        !self.coins.is_empty() && self.outgoing_amount == Amount::from_sat(0)
+    }
 }

@@ -2,14 +2,14 @@ use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
     color,
-    component::{badge, button, card, form, text::*},
+    component::{amount::*, badge, button, card, form, text::*},
     icon, theme,
     util::Collection,
     widget::*,
 };
 
 use crate::{
-    app::{error::Error, menu::Menu, view::util::*},
+    app::{error::Error, menu::Menu},
     daemon::model::{SpendStatus, SpendTx},
 };
 

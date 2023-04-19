@@ -5,16 +5,13 @@ use iced::{alignment, Alignment, Length};
 use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
-    component::{badge, text::*},
+    component::{amount::*, badge, text::*},
     icon, theme,
     util::Collection,
     widget::*,
 };
 
-use crate::{
-    app::view::{message::Message, util::*},
-    daemon::model::HistoryTransaction,
-};
+use crate::{app::view::message::Message, daemon::model::HistoryTransaction};
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 

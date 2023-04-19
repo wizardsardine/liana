@@ -45,6 +45,7 @@ impl Application for DesignSystem {
                 Box::new(section::Typography {}),
                 Box::new(section::Buttons {}),
                 Box::new(section::HardwareWallets {}),
+                Box::new(section::Events {}),
             ],
             current: 0,
         };
@@ -123,12 +124,14 @@ impl Application for DesignSystem {
         .height(Length::Fill);
 
         container(row![
-            sidebar.width(Length::Units(200)),
-            Space::with_width(Length::Units(150)),
-            scrollable(column![
+            sidebar.width(Length::FillPortion(2)),
+            Space::with_width(Length::FillPortion(1)),
+            container(scrollable(column![
                 Space::with_height(Length::Units(150)),
                 container(self.sections[self.current].view()).width(Length::Fill)
-            ]),
+            ]))
+            .width(Length::FillPortion(8)),
+            Space::with_width(Length::FillPortion(1)),
         ])
         .width(Length::Fill)
         .height(Length::Fill)

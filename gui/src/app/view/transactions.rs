@@ -3,17 +3,14 @@ use chrono::NaiveDateTime;
 use iced::{alignment, Alignment, Length};
 
 use liana_ui::{
-    component::{badge, card, text::*},
+    component::{amount::*, badge, card, text::*},
     icon, theme,
     util::Collection,
     widget::*,
 };
 
 use crate::{
-    app::{
-        cache::Cache,
-        view::{message::Message, util::*},
-    },
+    app::{cache::Cache, view::message::Message},
     daemon::model::HistoryTransaction,
 };
 

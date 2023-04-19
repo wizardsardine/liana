@@ -16,6 +16,7 @@ use liana::{
 use liana_ui::{
     color,
     component::{
+        amount::*,
         badge, button, card,
         collapse::Collapse,
         form, hw, separation,
@@ -29,7 +30,7 @@ use liana_ui::{
 use crate::{
     app::{
         error::Error,
-        view::{hw::hw_list_view, message::*, util::*, warning::warn},
+        view::{hw::hw_list_view, message::*, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
