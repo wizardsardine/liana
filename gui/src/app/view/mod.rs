@@ -10,6 +10,7 @@ pub mod receive;
 pub mod recovery;
 pub mod settings;
 pub mod spend;
+pub mod transactions;
 
 pub use message::*;
 use warning::warn;
@@ -39,6 +40,34 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         button::menu(Some(home_icon()), "Home")
             .on_press(Message::Menu(Menu::Home))
             .width(iced::Length::Fill)
+    };
+
+    let transactions_button = if *menu == Menu::Transactions {
+        Button::new(
+            row!(
+                history_icon().width(Length::Units(20)),
+                text("Transactions")
+            )
+            .spacing(10)
+            .padding(10)
+            .align_items(iced::Alignment::Center),
+        )
+        .style(theme::Button::Menu(true))
+        .on_press(Message::Reload)
+        .width(iced::Length::Fill)
+    } else {
+        Button::new(
+            row!(
+                history_icon().width(Length::Units(20)),
+                text("Transactions")
+            )
+            .spacing(10)
+            .padding(10)
+            .align_items(iced::Alignment::Center),
+        )
+        .style(theme::Button::Menu(false))
+        .on_press(Message::Menu(Menu::Transactions))
+        .width(iced::Length::Fill)
     };
 
     let coins_button = if *menu == Menu::Coins {
@@ -266,6 +295,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(receive_button)
                     .push(coins_button)
                     .push(psbt_button)
+                    .push(transactions_button)
                     .spacing(15)
                     .height(Length::Fill),
             )

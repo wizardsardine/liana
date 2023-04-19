@@ -63,6 +63,7 @@ pub fn psbts_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
     Column::new()
         .push(
             Row::new()
+                .align_items(Alignment::Center)
                 .spacing(10)
                 .push(Container::new(h3("PSBTs")).width(Length::Fill))
                 .push(
