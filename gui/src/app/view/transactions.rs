@@ -25,14 +25,18 @@ pub fn transactions_view<'a>(
         .push(
             Column::new()
                 .spacing(10)
-                .push(
-                    pending_txs
-                        .iter()
-                        .enumerate()
-                        .fold(Column::new().spacing(10), |col, (i, tx)| {
-                            col.push(tx_list_view(i, tx))
-                        }),
-                )
+                .push_maybe(if !pending_txs.is_empty() {
+                    Some(
+                        pending_txs
+                            .iter()
+                            .enumerate()
+                            .fold(Column::new().spacing(10), |col, (i, tx)| {
+                                col.push(tx_list_view(i, tx))
+                            }),
+                    )
+                } else {
+                    None
+                })
                 .push(
                     txs.iter()
                         .enumerate()
@@ -63,7 +67,7 @@ pub fn transactions_view<'a>(
                 ),
         )
         .align_items(Alignment::Center)
-        .spacing(20)
+        .spacing(30)
         .into()
 }
 

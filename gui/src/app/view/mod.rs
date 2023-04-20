@@ -21,7 +21,7 @@ use iced::{
 
 use liana_ui::{
     component::{button, text::*},
-    icon::{coin_icon, cross_icon, home_icon, receive_icon, send_icon, settings_icon},
+    icon::{cross_icon, home_icon, receive_icon, send_icon, settings_icon},
     image::*,
     theme,
     util::Collection,
@@ -75,7 +75,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                 Row::new()
                     .push(
                         Row::new()
-                            .push(coin_icon())
+                            .push(coins_icon().width(Length::Units(20)))
                             .push(text("Coins"))
                             .spacing(10)
                             .width(iced::Length::Fill)
@@ -114,7 +114,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                 Row::new()
                     .push(
                         Row::new()
-                            .push(coin_icon())
+                            .push(coins_icon().width(Length::Units(20)))
                             .push(text("Coins"))
                             .spacing(10)
                             .width(iced::Length::Fill)
