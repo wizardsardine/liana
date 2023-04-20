@@ -1,12 +1,12 @@
-use liana::miniscript::bitcoin::Amount;
+pub use bitcoin::Amount;
 
-use liana_ui::{color, component::text::*, util::Collection, widget::*};
+use crate::{color, component::text::*, util::Collection, widget::*};
 
-pub fn amount<'a, T: 'a>(a: &Amount) -> impl Into<Element<'a, T>> {
+pub fn amount<'a, T: 'a>(a: &Amount) -> Row<'a, T> {
     amount_with_size(a, P1_SIZE)
 }
 
-pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> impl Into<Element<'a, T>> {
+pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
     let sats = format!("{:.8}", a.to_btc());
     assert!(sats.len() >= 9);
@@ -36,9 +36,12 @@ pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> impl Into<Element<'
                 .into()
         });
 
-    Row::with_children(vec![row.into(), text("BTC").size(size).into()])
-        .spacing(spacing)
-        .align_items(iced::Alignment::Center)
+    Row::with_children(vec![
+        row.into(),
+        text("BTC").size(size).style(color::GREY_3).into(),
+    ])
+    .spacing(spacing)
+    .align_items(iced::Alignment::Center)
 }
 
 fn split_digits<'a, T: 'a>(mut s: String, size: u16) -> impl Into<Element<'a, T>> {
@@ -47,7 +50,7 @@ fn split_digits<'a, T: 'a>(mut s: String, size: u16) -> impl Into<Element<'a, T>
         if s.starts_with(prefix) {
             let right = s.split_off(prefix.len());
             return Row::new()
-                .push(text(s).size(size).style(color::GREY_2))
+                .push(text(s).size(size).style(color::GREY_3))
                 .push_maybe(if right.is_empty() {
                     None
                 } else {

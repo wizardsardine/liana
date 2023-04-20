@@ -2,17 +2,14 @@ use iced::{Alignment, Length};
 
 use liana_ui::{
     color,
-    component::{badge, separation, text::*},
+    component::{amount::*, badge, separation, text::*},
     icon, theme,
     util::Collection,
     widget::*,
 };
 
 use crate::{
-    app::{
-        cache::Cache,
-        view::{message::Message, util::*},
-    },
+    app::{cache::Cache, view::message::Message},
     daemon::model::{remaining_sequence, Coin},
 };
 

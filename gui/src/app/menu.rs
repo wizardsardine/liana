@@ -3,6 +3,7 @@ pub enum Menu {
     Home,
     Receive,
     PSBTs,
+    Transactions,
     Settings,
     Coins,
     CreateSpendTx,

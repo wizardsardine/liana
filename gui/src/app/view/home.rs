@@ -5,19 +5,13 @@ use iced::{alignment, Alignment, Length};
 use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
-    component::{badge, card, text::*},
+    component::{amount::*, event, text::*},
     icon, theme,
     util::Collection,
     widget::*,
 };
 
-use crate::{
-    app::{
-        cache::Cache,
-        view::{message::Message, util::*},
-    },
-    daemon::model::HistoryTransaction,
-};
+use crate::{app::view::message::Message, daemon::model::HistoryTransaction};
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
@@ -29,7 +23,8 @@ pub fn home_view<'a>(
     events: &Vec<HistoryTransaction>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(amount_with_size(balance, 50))
+        .push(h3("Balance"))
+        .push(amount_with_size(balance, H1_SIZE))
         .push_maybe(recovery_warning.map(|(a, c)| {
             Row::new()
                 .spacing(15)
@@ -66,6 +61,7 @@ pub fn home_view<'a>(
         .push(
             Column::new()
                 .spacing(10)
+                .push(h4_bold("Last payments"))
                 .push(
                     pending_events
                         .iter()
@@ -77,6 +73,7 @@ pub fn home_view<'a>(
                 .push(
                     events
                         .iter()
+                        .filter(|event| !event.is_self_send())
                         .enumerate()
                         .fold(Column::new().spacing(10), |col, (i, event)| {
                             col.push(event_list_view(i + pending_events.len(), event))
@@ -104,128 +101,43 @@ pub fn home_view<'a>(
                     },
                 ),
         )
-        .align_items(Alignment::Center)
         .spacing(20)
         .into()
 }
 
-fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Element<'a, Message> {
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(
-                    Row::new()
-                        .push(if event.is_external() {
-                            badge::receive()
-                        } else {
-                            badge::spend()
-                        })
-                        .push(if let Some(t) = event.time {
-                            Container::new(
-                                text(format!(
-                                    "{}",
-                                    NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
-                                ))
-                                .small(),
-                            )
-                        } else {
-                            badge::unconfirmed()
-                        })
-                        .spacing(10)
-                        .align_items(Alignment::Center)
-                        .width(Length::Fill),
-                )
-                .push(if event.is_external() {
-                    Row::new()
-                        .spacing(5)
-                        .push(text("+"))
-                        .push(amount(&event.incoming_amount))
-                        .align_items(Alignment::Center)
+fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Column<'a, Message> {
+    event.tx.output.iter().enumerate().fold(
+        Column::new().spacing(10),
+        |col, (output_index, output)| {
+            if event.is_external() {
+                if !event.change_indexes.contains(&output_index) {
+                    col
+                } else if let Some(t) = event.time {
+                    col.push(event::confirmed_incoming_event(
+                        NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
+                        &Amount::from_sat(output.value),
+                        Message::Select(i),
+                    ))
                 } else {
-                    Row::new()
-                        .spacing(5)
-                        .push(text("-"))
-                        .push(amount(&event.outgoing_amount))
-                        .align_items(Alignment::Center)
-                })
-                .align_items(Alignment::Center)
-                .spacing(20),
-        )
-        .padding(10)
-        .on_press(Message::Select(i))
-        .style(theme::Button::TransparentBorder),
+                    col.push(event::unconfirmed_incoming_event(
+                        &Amount::from_sat(output.value),
+                        Message::Select(i),
+                    ))
+                }
+            } else if event.change_indexes.contains(&output_index) {
+                col
+            } else if let Some(t) = event.time {
+                col.push(event::confirmed_outgoing_event(
+                    NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
+                    &Amount::from_sat(output.value),
+                    Message::Select(i),
+                ))
+            } else {
+                col.push(event::unconfirmed_outgoing_event(
+                    &Amount::from_sat(output.value),
+                    Message::Select(i),
+                ))
+            }
+        },
     )
-    .style(theme::Container::Card(theme::Card::Simple))
-    .into()
-}
-
-pub fn event_view<'a>(cache: &Cache, event: &'a HistoryTransaction) -> Element<'a, Message> {
-    Column::new()
-        .push(
-            Row::new()
-                .push(if event.is_external() {
-                    badge::receive()
-                } else {
-                    badge::spend()
-                })
-                .spacing(10)
-                .align_items(Alignment::Center),
-        )
-        .push(if event.is_external() {
-            amount_with_size(&event.incoming_amount, 50)
-        } else {
-            amount_with_size(&event.outgoing_amount, 50)
-        })
-        .push_maybe(
-            event
-                .fee_amount
-                .map(|fee| Row::new().push(text("Miner Fee: ")).push(amount(&fee))),
-        )
-        .push(card::simple(
-            Column::new()
-                .push_maybe(event.time.map(|t| {
-                    let date = NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap();
-                    Row::new()
-                        .width(Length::Fill)
-                        .push(Container::new(text("Date:").bold()).width(Length::Fill))
-                        .push(Container::new(text(format!("{}", date))).width(Length::Shrink))
-                }))
-                .push(
-                    Row::new()
-                        .width(Length::Fill)
-                        .align_items(Alignment::Center)
-                        .push(Container::new(text("Txid:").bold()).width(Length::Fill))
-                        .push(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .push(Container::new(text(format!("{}", event.tx.txid())).small()))
-                                .push(
-                                    Button::new(icon::clipboard_icon())
-                                        .on_press(Message::Clipboard(event.tx.txid().to_string()))
-                                        .style(theme::Button::TransparentBorder),
-                                )
-                                .width(Length::Shrink),
-                        ),
-                )
-                .spacing(5),
-        ))
-        .push(super::spend::detail::inputs_and_outputs_view(
-            &event.coins,
-            &event.tx,
-            cache.network,
-            if event.is_external() {
-                None
-            } else {
-                Some(event.change_indexes.clone())
-            },
-            if event.is_external() {
-                Some(event.change_indexes.clone())
-            } else {
-                None
-            },
-        ))
-        .align_items(Alignment::Center)
-        .spacing(20)
-        .max_width(800)
-        .into()
 }

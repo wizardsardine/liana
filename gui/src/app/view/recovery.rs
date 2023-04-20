@@ -11,15 +11,12 @@ use liana::miniscript::bitcoin::{
 };
 
 use liana_ui::{
-    component::{button, form, text::*},
+    component::{amount::*, button, form, text::*},
     icon, theme,
     widget::*,
 };
 
-use crate::app::view::{
-    message::{CreateSpendMessage, Message},
-    util::amount,
-};
+use crate::app::view::message::{CreateSpendMessage, Message};
 
 #[allow(clippy::too_many_arguments)]
 pub fn recovery<'a>(

@@ -16,6 +16,7 @@ use liana::{
 use liana_ui::{
     color,
     component::{
+        amount::*,
         badge, button, card,
         collapse::Collapse,
         form, hw, separation,
@@ -29,7 +30,7 @@ use liana_ui::{
 use crate::{
     app::{
         error::Error,
-        view::{hw::hw_list_view, message::*, util::*, warning::warn},
+        view::{hw::hw_list_view, message::*, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
@@ -205,6 +206,8 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
                 .push(badge::Badge::new(icon::send_icon()).style(theme::Badge::Standard))
                 .push(if !tx.sigs.recovery_paths().is_empty() {
                     text("Recovery").bold()
+                } else if tx.spend_amount == Amount::from_sat(0) {
+                    text("Self send").bold()
                 } else {
                     text("Spend").bold()
                 })

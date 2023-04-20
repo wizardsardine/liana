@@ -9,3 +9,5 @@ edition = "2021"
 iced = { version = "0.7", features = ["svg", "image"] }
 iced_native = "0.8"
 iced_lazy = { version = "0.4"}
+bitcoin = "0.29"
+chrono = "0.4"

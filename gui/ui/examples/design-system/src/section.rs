@@ -5,7 +5,7 @@ use iced::{
 };
 use liana_ui::{
     color,
-    component::{hw, separation, text::*},
+    component::{amount::Amount, event, hw, separation, text::*},
     theme,
     widget::Element,
 };
@@ -246,6 +246,38 @@ impl Section for HardwareWallets {
                 )
                 .on_press(Message::Ignore)
                 .style(theme::Button::Border),
+            ]
+            .spacing(20)
+        ]
+        .spacing(100)
+        .into()
+    }
+}
+
+pub struct Events {}
+
+impl Section for Events {
+    fn title(&self) -> &'static str {
+        "Events "
+    }
+    fn view(&self) -> Element<Message> {
+        let d = chrono::NaiveDate::from_ymd_opt(2015, 6, 3).unwrap();
+        let t = chrono::NaiveTime::from_hms_milli_opt(12, 34, 56, 789).unwrap();
+        column![
+            h1(self.title()),
+            column![
+                event::unconfirmed_outgoing_event(&Amount::from_sat(32934234), Message::Ignore),
+                event::confirmed_outgoing_event(
+                    chrono::NaiveDateTime::new(d, t),
+                    &Amount::from_sat(32934234),
+                    Message::Ignore
+                ),
+                event::unconfirmed_incoming_event(&Amount::from_sat(32934234), Message::Ignore),
+                event::confirmed_incoming_event(
+                    chrono::NaiveDateTime::new(d, t),
+                    &Amount::from_sat(32934234),
+                    Message::Ignore
+                )
             ]
             .spacing(20)
         ]

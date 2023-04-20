@@ -3,6 +3,7 @@ mod psbts;
 mod recovery;
 mod settings;
 mod spend;
+mod transactions;
 
 use std::convert::TryInto;
 use std::sync::Arc;
@@ -23,6 +24,7 @@ pub use psbts::PsbtsPanel;
 pub use recovery::RecoveryPanel;
 pub use settings::SettingsState;
 pub use spend::CreateSpendPanel;
+pub use transactions::TransactionsPanel;
 
 pub trait State {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;
@@ -91,7 +93,7 @@ impl State for Home {
             return view::modal(
                 false,
                 self.warning.as_ref(),
-                view::home::event_view(cache, event),
+                view::transactions::tx_view(cache, event),
                 None::<Element<view::Message>>,
             );
         }

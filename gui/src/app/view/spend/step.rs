@@ -5,6 +5,7 @@ use liana::miniscript::bitcoin::Amount;
 use liana_ui::{
     color,
     component::{
+        amount::*,
         badge, button, form,
         text::{text, Text},
     },
@@ -17,7 +18,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        view::{message::*, modal, util::amount},
+        view::{message::*, modal},
     },
     daemon::model::{remaining_sequence, Coin},
 };
