@@ -11,53 +11,77 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::{app::view::message::Message, daemon::model::HistoryTransaction};
+use crate::{
+    app::view::{coins, message::Message},
+    daemon::model::HistoryTransaction,
+};
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
 pub fn home_view<'a>(
     balance: &'a bitcoin::Amount,
-    recovery_warning: Option<&(bitcoin::Amount, usize)>,
-    recovery_alert: Option<&(bitcoin::Amount, usize)>,
+    unconfirmed_balance: &'a bitcoin::Amount,
+    remaining_sequence: &Option<u32>,
+    number_of_expiring_coins: usize,
     pending_events: &[HistoryTransaction],
     events: &Vec<HistoryTransaction>,
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
-        .push(amount_with_size(balance, H1_SIZE))
-        .push_maybe(recovery_warning.map(|(a, c)| {
-            Row::new()
-                .spacing(15)
-                .align_items(Alignment::Center)
-                .push(icon::hourglass_icon().size(30).style(color::ORANGE))
-                .push(
+        .push(
+            Column::new()
+                .push(amount_with_size(balance, H1_SIZE))
+                .push_maybe(if unconfirmed_balance.to_sat() != 0 {
+                    Some(
+                        Row::new()
+                            .spacing(10)
+                            .push(text("+").size(H3_SIZE).style(color::GREY_3))
+                            .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
+                            .push(text("unconfirmed").size(H3_SIZE).style(color::GREY_3)),
+                    )
+                } else {
+                    None
+                }),
+        )
+        .push_maybe(if number_of_expiring_coins == 0 {
+            remaining_sequence.map(|sequence| {
+                Container::new(
                     Row::new()
-                        .spacing(5)
-                        .push(text(format!(
-                            "Recovery path will be soon available for {} coins",
-                            c
-                        )))
-                        .push(text("("))
-                        .push(amount(a))
-                        .push(text(")")),
+                        .spacing(15)
+                        .align_items(Alignment::Center)
+                        .push(
+                            h4_regular(format!(
+                                "Your next coin to expire will in ≈ {}",
+                                coins::expire_message_units(sequence).join(",")
+                            ))
+                            .width(Length::Fill),
+                        )
+                        .push(
+                            icon::tooltip_icon()
+                                .size(20)
+                                .style(color::GREY_3)
+                                .width(Length::Units(20)),
+                        )
+                        .width(Length::Fill),
                 )
-                .padding(10)
-        }))
-        .push_maybe(recovery_alert.map(|(a, c)| {
-            Row::new()
-                .spacing(15)
-                .align_items(Alignment::Center)
-                .push(icon::hourglass_done_icon().style(color::RED))
-                .push(
-                    Row::new()
-                        .spacing(5)
-                        .push(text(format!("Recovery path is available for {} coins", c)))
-                        .push(text("("))
-                        .push(amount(a))
-                        .push(text(")")),
+                .padding(25)
+                .style(theme::Card::Border)
+            })
+        } else {
+            Some(
+                Container::new(
+                    Row::new().spacing(15).align_items(Alignment::Center).push(
+                        h4_regular(format!(
+                            "You have {} coins that are already or about to be expired",
+                            number_of_expiring_coins
+                        ))
+                        .width(Length::Fill),
+                    ),
                 )
-                .padding(10)
-        }))
+                .padding(25)
+                .style(theme::Card::Invalid),
+            )
+        })
         .push(
             Column::new()
                 .spacing(10)

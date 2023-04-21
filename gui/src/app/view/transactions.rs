@@ -25,14 +25,18 @@ pub fn transactions_view<'a>(
         .push(
             Column::new()
                 .spacing(10)
-                .push(
-                    pending_txs
-                        .iter()
-                        .enumerate()
-                        .fold(Column::new().spacing(10), |col, (i, tx)| {
-                            col.push(tx_list_view(i, tx))
-                        }),
-                )
+                .push_maybe(if !pending_txs.is_empty() {
+                    Some(
+                        pending_txs
+                            .iter()
+                            .enumerate()
+                            .fold(Column::new().spacing(10), |col, (i, tx)| {
+                                col.push(tx_list_view(i, tx))
+                            }),
+                    )
+                } else {
+                    None
+                })
                 .push(
                     txs.iter()
                         .enumerate()
@@ -63,7 +67,7 @@ pub fn transactions_view<'a>(
                 ),
         )
         .align_items(Alignment::Center)
-        .spacing(20)
+        .spacing(30)
         .into()
 }
 
@@ -82,7 +86,9 @@ fn tx_list_view<'a>(i: usize, tx: &HistoryTransaction) -> Element<'a, Message> {
                             Container::new(
                                 text(format!(
                                     "{}",
-                                    NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
+                                    NaiveDateTime::from_timestamp_opt(t as i64, 0)
+                                        .unwrap()
+                                        .format("%b. %d, %Y - %T"),
                                 ))
                                 .small(),
                             )
@@ -143,7 +149,9 @@ pub fn tx_view<'a>(cache: &Cache, tx: &'a HistoryTransaction) -> Element<'a, Mes
         .push(card::simple(
             Column::new()
                 .push_maybe(tx.time.map(|t| {
-                    let date = NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap();
+                    let date = NaiveDateTime::from_timestamp_opt(t as i64, 0)
+                        .unwrap()
+                        .format("%b. %d, %Y - %T");
                     Row::new()
                         .width(Length::Fill)
                         .push(Container::new(text("Date:").bold()).width(Length::Fill))

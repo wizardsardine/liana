@@ -1,6 +1,6 @@
 use iced::{widget::tooltip, Length};
 
-use crate::{component::text, icon, theme, widget::*};
+use crate::{component::text, icon, image, theme, widget::*};
 
 pub struct Badge {
     icon: crate::widget::Text<'static>,
@@ -53,19 +53,23 @@ pub fn spend<T>() -> Container<'static, T> {
 }
 
 pub fn coin<T>() -> Container<'static, T> {
-    Container::new(icon::coin_icon().width(Length::Units(20)))
-        .width(Length::Units(40))
-        .height(Length::Units(40))
-        .style(theme::Container::Badge(theme::Badge::Standard))
-        .center_x()
-        .center_y()
+    Container::new(
+        image::liana_grey_logo()
+            .height(Length::Units(25))
+            .width(Length::Units(25)),
+    )
+    .width(Length::Units(40))
+    .height(Length::Units(40))
+    .style(theme::Container::Badge(theme::Badge::Standard))
+    .center_x()
+    .center_y()
 }
 
 pub fn unconfirmed<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(
             Container::new(text::p2_regular("  Unconfirmed  "))
-                .padding(3)
+                .padding(10)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
             "Do not treat this as a payment until it is confirmed",
             tooltip::Position::Top,
@@ -78,7 +82,7 @@ pub fn deprecated<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(
             Container::new(text::p2_regular("  Deprecated  "))
-                .padding(3)
+                .padding(10)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
             "This spend cannot be included anymore in the blockchain",
             tooltip::Position::Top,
@@ -91,7 +95,7 @@ pub fn spent<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(
             Container::new(text::p2_regular("  Spent  "))
-                .padding(3)
+                .padding(10)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
             "The spend transaction was included in the blockchain",
             tooltip::Position::Top,

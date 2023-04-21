@@ -18,7 +18,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        view::{message::*, modal},
+        view::{coins, message::*, modal},
     },
     daemon::model::{remaining_sequence, Coin},
 };
@@ -207,42 +207,13 @@ fn coin_list_view<'a>(
                             icon::square_icon()
                         })
                         .push(badge::coin())
-                        .push_maybe(if coin.spend_info.is_some() {
-                            Some(badge::spent())
+                        .push(if coin.spend_info.is_some() {
+                            badge::spent()
+                        } else if coin.block_height.is_none() {
+                            badge::unconfirmed()
                         } else {
                             let seq = remaining_sequence(coin, blockheight, timelock);
-                            if seq == 0 {
-                                Some(Container::new(
-                                    Row::new()
-                                        .spacing(5)
-                                        .push(text(" 0").small().style(color::RED))
-                                        .push(icon::hourglass_done_icon().small().style(color::RED))
-                                        .align_items(Alignment::Center),
-                                ))
-                            } else if seq < timelock as u32 * 10 / 100 {
-                                Some(Container::new(
-                                    Row::new()
-                                        .spacing(5)
-                                        .push(
-                                            text(format!(" {}", seq)).small().style(color::ORANGE),
-                                        )
-                                        .push(icon::hourglass_icon().small().style(color::ORANGE))
-                                        .align_items(Alignment::Center),
-                                ))
-                            } else {
-                                Some(Container::new(
-                                    Row::new()
-                                        .spacing(5)
-                                        .push(text(format!(" {}", seq)).small())
-                                        .push(icon::hourglass_icon().small())
-                                        .align_items(Alignment::Center),
-                                ))
-                            }
-                        })
-                        .push_maybe(if coin.block_height.is_none() {
-                            Some(badge::unconfirmed())
-                        } else {
-                            None
+                            coins::coin_sequence_label(seq, timelock as u32)
                         })
                         .spacing(10)
                         .align_items(Alignment::Center)

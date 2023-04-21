@@ -288,6 +288,7 @@ pub enum Pill {
     Simple,
     Primary,
     Success,
+    Warning,
 }
 
 impl Pill {
@@ -311,6 +312,13 @@ impl Pill {
                 border_width: 1.0,
                 border_color: color::GREY_3,
                 text_color: color::GREY_3.into(),
+            },
+            Self::Warning => container::Appearance {
+                background: iced::Color::TRANSPARENT.into(),
+                border_radius: 25.0,
+                border_width: 1.0,
+                border_color: color::RED,
+                text_color: color::RED.into(),
             },
         }
     }

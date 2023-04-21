@@ -86,7 +86,7 @@ pub fn psbts_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
             ),
         )
         .align_items(Alignment::Center)
-        .spacing(20)
+        .spacing(25)
         .into()
 }
 
@@ -99,8 +99,8 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                         .push(badge::spend())
                         .push(if !tx.sigs.recovery_paths().is_empty() {
                             Row::new().push(
-                                Container::new(text(" Recovery ").small())
-                                    .padding(3)
+                                Container::new(p2_regular(" Recovery "))
+                                    .padding(10)
                                     .style(theme::Container::Pill(theme::Pill::Simple)),
                             )
                         } else {

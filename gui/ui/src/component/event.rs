@@ -39,10 +39,13 @@ pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
     Container::new(
         button(
             row!(
-                row!(badge::spend(), text::p2_regular(date.to_string()))
-                    .spacing(10)
-                    .align_items(Alignment::Center)
-                    .width(Length::Fill),
+                row!(
+                    badge::spend(),
+                    text::p2_regular(date.format("%b. %d, %Y - %T").to_string())
+                )
+                .spacing(10)
+                .align_items(Alignment::Center)
+                .width(Length::Fill),
                 row!(text::p1_regular("-"), amount::amount(amount))
                     .spacing(5)
                     .align_items(Alignment::Center),
@@ -87,10 +90,13 @@ pub fn confirmed_incoming_event<'a, T: Clone + 'a>(
     Container::new(
         button(
             row!(
-                row!(badge::receive(), text::p2_regular(date.to_string()))
-                    .spacing(10)
-                    .align_items(Alignment::Center)
-                    .width(Length::Fill),
+                row!(
+                    badge::receive(),
+                    text::p2_regular(date.format("%b. %d, %Y - %T").to_string())
+                )
+                .spacing(10)
+                .align_items(Alignment::Center)
+                .width(Length::Fill),
                 row!(text::p1_regular("+"), amount::amount(amount))
                     .spacing(5)
                     .align_items(Alignment::Center),
