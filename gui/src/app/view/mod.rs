@@ -73,30 +73,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         Button::new(
             Container::new(
                 Row::new()
-                    .push(
-                        Row::new()
-                            .push(coins_icon().width(Length::Units(20)))
-                            .push(text("Coins"))
-                            .spacing(10)
-                            .width(iced::Length::Fill)
-                            .align_items(iced::Alignment::Center),
-                    )
-                    .push(
-                        Container::new(
-                            text(format!(
-                                "  {}  ",
-                                cache
-                                    .coins
-                                    .iter()
-                                    // TODO: Remove when cache contains only current coins.
-                                    .filter(|coin| coin.spend_info.is_none())
-                                    .count()
-                            ))
-                            .small()
-                            .bold(),
-                        )
-                        .style(theme::Container::Pill(theme::Pill::Primary)),
-                    )
+                    .push(coins_icon().width(Length::Units(20)))
+                    .push(text("Coins"))
                     .spacing(10)
                     .width(iced::Length::Fill)
                     .align_items(iced::Alignment::Center),
@@ -112,30 +90,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         Button::new(
             Container::new(
                 Row::new()
-                    .push(
-                        Row::new()
-                            .push(coins_icon().width(Length::Units(20)))
-                            .push(text("Coins"))
-                            .spacing(10)
-                            .width(iced::Length::Fill)
-                            .align_items(iced::Alignment::Center),
-                    )
-                    .push(
-                        Container::new(
-                            text(format!(
-                                "  {}  ",
-                                cache
-                                    .coins
-                                    .iter()
-                                    // TODO: Remove when cache contains only current coins.
-                                    .filter(|coin| coin.spend_info.is_none())
-                                    .count()
-                            ))
-                            .small()
-                            .bold(),
-                        )
-                        .style(theme::Pill::Primary),
-                    )
+                    .push(coins_icon().width(Length::Units(20)))
+                    .push(text("Coins"))
                     .spacing(10)
                     .width(iced::Length::Fill)
                     .align_items(iced::Alignment::Center),
@@ -153,26 +109,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         Button::new(
             Container::new(
                 Row::new()
-                    .push(
-                        Row::new()
-                            .push(history_icon().width(Length::Units(20)))
-                            .push(text("PSBTs"))
-                            .spacing(10)
-                            .width(iced::Length::Fill)
-                            .align_items(iced::Alignment::Center),
-                    )
-                    .push_maybe(if cache.spend_txs.is_empty() {
-                        None
-                    } else {
-                        Some(
-                            Container::new(
-                                text(format!("  {}  ", cache.spend_txs.len()))
-                                    .small()
-                                    .bold(),
-                            )
-                            .style(theme::Pill::Primary),
-                        )
-                    })
+                    .push(history_icon().width(Length::Units(20)))
+                    .push(text("PSBTs"))
                     .spacing(10)
                     .width(iced::Length::Fill)
                     .align_items(iced::Alignment::Center),
@@ -188,26 +126,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         Button::new(
             Container::new(
                 Row::new()
-                    .push(
-                        Row::new()
-                            .push(history_icon().width(Length::Units(20)))
-                            .push(text("PSBTs"))
-                            .spacing(10)
-                            .width(iced::Length::Fill)
-                            .align_items(iced::Alignment::Center),
-                    )
-                    .push_maybe(if cache.spend_txs.is_empty() {
-                        None
-                    } else {
-                        Some(
-                            Container::new(
-                                text(format!("  {}  ", cache.spend_txs.len()))
-                                    .small()
-                                    .bold(),
-                            )
-                            .style(theme::Pill::Primary),
-                        )
-                    })
+                    .push(history_icon().width(Length::Units(20)))
+                    .push(text("PSBTs"))
                     .spacing(10)
                     .width(iced::Length::Fill)
                     .align_items(iced::Alignment::Center),
@@ -284,10 +204,10 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(
                         Container::new(
                             liana_grey_logo()
-                                .height(Length::Units(150))
+                                .height(Length::Units(120))
                                 .width(Length::Units(60)),
                         )
-                        .padding(15),
+                        .padding(10),
                     )
                     .push(home_button)
                     .push(spend_button)
@@ -295,7 +215,6 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(coins_button)
                     .push(psbt_button)
                     .push(transactions_button)
-                    .spacing(15)
                     .height(Length::Fill),
             )
             .push(
