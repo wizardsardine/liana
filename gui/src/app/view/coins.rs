@@ -62,14 +62,11 @@ fn coin_list_view(
                                 .push(badge::coin())
                                 .push(if coin.spend_info.is_some() {
                                     badge::spent()
+                                } else if coin.block_height.is_none() {
+                                    badge::unconfirmed()
                                 } else {
                                     let seq = remaining_sequence(coin, blockheight, timelock);
                                     coin_sequence_label(seq, timelock as u32)
-                                })
-                                .push_maybe(if coin.block_height.is_none() {
-                                    Some(badge::unconfirmed())
-                                } else {
-                                    None
                                 })
                                 .spacing(10)
                                 .align_items(Alignment::Center)
@@ -208,31 +205,28 @@ pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, 
 /// returns y,m,d,h,m
 pub fn expire_message(sequence: u32) -> String {
     let mut n_minutes = sequence * 10;
-    let n_years = n_minutes / 525960;
-    n_minutes -= n_years * 525960;
-    let n_months = n_minutes / 43830;
-    n_minutes -= n_months * 43830;
-    let n_days = n_minutes / 1440;
-    n_minutes -= n_days * 1440;
-    let n_hours = n_minutes / 60;
-    n_minutes -= n_hours * 60;
+    if n_minutes <= 1440 {
+        "Expires today".to_string()
+    } else if n_minutes <= 2 * 1440 {
+        "Expires in ≈ 2 days".to_string()
+    } else {
+        let n_years = n_minutes / 525960;
+        n_minutes -= n_years * 525960;
+        let n_months = n_minutes / 43830;
+        n_minutes -= n_months * 43830;
+        let n_days = n_minutes / 1440;
 
-    let units: Vec<String> = [
-        (n_years, "year"),
-        (n_months, "month"),
-        (n_days, "day"),
-        (n_hours, "hour"),
-        (n_minutes, "minute"),
-    ]
-    .iter()
-    .filter_map(|(n, u)| {
-        if *n != 0 {
-            Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
-        } else {
-            None
-        }
-    })
-    .collect();
+        let units: Vec<String> = [(n_years, "year"), (n_months, "month"), (n_days, "day")]
+            .iter()
+            .filter_map(|(n, u)| {
+                if *n != 0 {
+                    Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-    format!("Expires in {}", units.join(","))
+        format!("Expires in {}", units.join(","))
+    }
 }

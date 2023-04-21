@@ -209,14 +209,11 @@ fn coin_list_view<'a>(
                         .push(badge::coin())
                         .push(if coin.spend_info.is_some() {
                             badge::spent()
+                        } else if coin.block_height.is_none() {
+                            badge::unconfirmed()
                         } else {
                             let seq = remaining_sequence(coin, blockheight, timelock);
                             coins::coin_sequence_label(seq, timelock as u32)
-                        })
-                        .push_maybe(if coin.block_height.is_none() {
-                            Some(badge::unconfirmed())
-                        } else {
-                            None
                         })
                         .spacing(10)
                         .align_items(Alignment::Center)

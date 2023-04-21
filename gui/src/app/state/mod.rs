@@ -47,6 +47,7 @@ pub trait State {
 pub struct Home {
     wallet: Arc<Wallet>,
     balance: Amount,
+    unconfirmed_balance: Amount,
     recovery_warning: Option<(Amount, usize)>,
     recovery_alert: Option<(Amount, usize)>,
     pending_events: Vec<HistoryTransaction>,
@@ -57,21 +58,22 @@ pub struct Home {
 
 impl Home {
     pub fn new(wallet: Arc<Wallet>, coins: &[Coin]) -> Self {
+        let (balance, unconfirmed_balance) = coins.iter().fold(
+            (Amount::from_sat(0), Amount::from_sat(0)),
+            |(balance, unconfirmed_balance), coin| {
+                if coin.spend_info.is_some() {
+                    (balance, unconfirmed_balance)
+                } else if coin.block_height.is_some() {
+                    (balance + coin.amount, unconfirmed_balance)
+                } else {
+                    (balance, unconfirmed_balance + coin.amount)
+                }
+            },
+        );
         Self {
             wallet,
-            balance: Amount::from_sat(
-                coins
-                    .iter()
-                    .map(|coin| {
-                        // If the coin is not spent and is its transaction is confirmed
-                        if coin.spend_info.is_none() && coin.block_height.is_some() {
-                            coin.amount.to_sat()
-                        } else {
-                            0
-                        }
-                    })
-                    .sum(),
-            ),
+            balance,
+            unconfirmed_balance,
             recovery_alert: None,
             recovery_warning: None,
             selected_event: None,
@@ -103,6 +105,7 @@ impl State for Home {
             None,
             view::home::home_view(
                 &self.balance,
+                &self.unconfirmed_balance,
                 self.recovery_warning.as_ref(),
                 self.recovery_alert.as_ref(),
                 &self.pending_events,
@@ -123,19 +126,25 @@ impl State for Home {
                 Ok(coins) => {
                     self.warning = None;
                     self.balance = Amount::from_sat(0);
+                    self.unconfirmed_balance = Amount::from_sat(0);
                     let mut recovery_warning = (Amount::from_sat(0), 0);
                     let mut recovery_alert = (Amount::from_sat(0), 0);
                     for coin in coins {
-                        if coin.spend_info.is_none() && coin.block_height.is_some() {
-                            self.balance += coin.amount;
-                            let timelock = self.wallet.main_descriptor.first_timelock_value();
-                            let seq = remaining_sequence(&coin, cache.blockheight as u32, timelock);
-                            if seq == 0 {
-                                recovery_alert.0 += coin.amount;
-                                recovery_alert.1 += 1;
-                            } else if seq < timelock as u32 * 10 / 100 {
-                                recovery_warning.0 += coin.amount;
-                                recovery_warning.1 += 1;
+                        if coin.spend_info.is_none() {
+                            if coin.block_height.is_some() {
+                                self.balance += coin.amount;
+                                let timelock = self.wallet.main_descriptor.first_timelock_value();
+                                let seq =
+                                    remaining_sequence(&coin, cache.blockheight as u32, timelock);
+                                if seq == 0 {
+                                    recovery_alert.0 += coin.amount;
+                                    recovery_alert.1 += 1;
+                                } else if seq < timelock as u32 * 10 / 100 {
+                                    recovery_warning.0 += coin.amount;
+                                    recovery_warning.1 += 1;
+                                }
+                            } else {
+                                self.unconfirmed_balance += coin.amount;
                             }
                         }
                     }

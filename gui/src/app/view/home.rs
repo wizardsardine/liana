@@ -17,6 +17,7 @@ pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
 pub fn home_view<'a>(
     balance: &'a bitcoin::Amount,
+    unconfirmed_balance: &'a bitcoin::Amount,
     recovery_warning: Option<&(bitcoin::Amount, usize)>,
     recovery_alert: Option<&(bitcoin::Amount, usize)>,
     pending_events: &[HistoryTransaction],
@@ -24,7 +25,21 @@ pub fn home_view<'a>(
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
-        .push(amount_with_size(balance, H1_SIZE))
+        .push(
+            Column::new()
+                .push(amount_with_size(balance, H1_SIZE))
+                .push_maybe(if unconfirmed_balance.to_sat() != 0 {
+                    Some(
+                        Row::new()
+                            .spacing(10)
+                            .push(text("+").size(H3_SIZE).style(color::GREY_3))
+                            .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
+                            .push(text("unconfirmed").size(H3_SIZE).style(color::GREY_3)),
+                    )
+                } else {
+                    None
+                }),
+        )
         .push_maybe(recovery_warning.map(|(a, c)| {
             Row::new()
                 .spacing(15)
