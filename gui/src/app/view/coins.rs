@@ -202,31 +202,33 @@ pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, 
     }
 }
 
-/// returns y,m,d,h,m
 pub fn expire_message(sequence: u32) -> String {
-    let mut n_minutes = sequence * 10;
-    if n_minutes <= 1440 {
+    if sequence <= 144 {
         "Expires today".to_string()
-    } else if n_minutes <= 2 * 1440 {
+    } else if sequence <= 2 * 144 {
         "Expires in ≈ 2 days".to_string()
     } else {
-        let n_years = n_minutes / 525960;
-        n_minutes -= n_years * 525960;
-        let n_months = n_minutes / 43830;
-        n_minutes -= n_months * 43830;
-        let n_days = n_minutes / 1440;
-
-        let units: Vec<String> = [(n_years, "year"), (n_months, "month"), (n_days, "day")]
-            .iter()
-            .filter_map(|(n, u)| {
-                if *n != 0 {
-                    Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        format!("Expires in {}", units.join(","))
+        format!("Expires in {}", expire_message_units(sequence).join(","))
     }
+}
+
+/// returns y,m,d
+pub fn expire_message_units(sequence: u32) -> Vec<String> {
+    let mut n_minutes = sequence * 10;
+    let n_years = n_minutes / 525960;
+    n_minutes -= n_years * 525960;
+    let n_months = n_minutes / 43830;
+    n_minutes -= n_months * 43830;
+    let n_days = n_minutes / 1440;
+
+    [(n_years, "year"), (n_months, "month"), (n_days, "day")]
+        .iter()
+        .filter_map(|(n, u)| {
+            if *n != 0 {
+                Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
+            } else {
+                None
+            }
+        })
+        .collect()
 }

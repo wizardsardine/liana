@@ -48,8 +48,8 @@ pub struct Home {
     wallet: Arc<Wallet>,
     balance: Amount,
     unconfirmed_balance: Amount,
-    recovery_warning: Option<(Amount, usize)>,
-    recovery_alert: Option<(Amount, usize)>,
+    remaining_sequence: Option<u32>,
+    number_of_expiring_coins: usize,
     pending_events: Vec<HistoryTransaction>,
     events: Vec<HistoryTransaction>,
     selected_event: Option<usize>,
@@ -74,8 +74,8 @@ impl Home {
             wallet,
             balance,
             unconfirmed_balance,
-            recovery_alert: None,
-            recovery_warning: None,
+            remaining_sequence: None,
+            number_of_expiring_coins: 0,
             selected_event: None,
             events: Vec::new(),
             pending_events: Vec::new(),
@@ -106,8 +106,8 @@ impl State for Home {
             view::home::home_view(
                 &self.balance,
                 &self.unconfirmed_balance,
-                self.recovery_warning.as_ref(),
-                self.recovery_alert.as_ref(),
+                &self.remaining_sequence,
+                self.number_of_expiring_coins,
                 &self.pending_events,
                 &self.events,
             ),
@@ -127,8 +127,8 @@ impl State for Home {
                     self.warning = None;
                     self.balance = Amount::from_sat(0);
                     self.unconfirmed_balance = Amount::from_sat(0);
-                    let mut recovery_warning = (Amount::from_sat(0), 0);
-                    let mut recovery_alert = (Amount::from_sat(0), 0);
+                    self.remaining_sequence = None;
+                    self.number_of_expiring_coins = 0;
                     for coin in coins {
                         if coin.spend_info.is_none() {
                             if coin.block_height.is_some() {
@@ -136,23 +136,21 @@ impl State for Home {
                                 let timelock = self.wallet.main_descriptor.first_timelock_value();
                                 let seq =
                                     remaining_sequence(&coin, cache.blockheight as u32, timelock);
-                                if seq == 0 {
-                                    recovery_alert.0 += coin.amount;
-                                    recovery_alert.1 += 1;
-                                } else if seq < timelock as u32 * 10 / 100 {
-                                    recovery_warning.0 += coin.amount;
-                                    recovery_warning.1 += 1;
+                                // number of block in a day
+                                if seq <= 144 {
+                                    self.number_of_expiring_coins += 1;
+                                }
+                                if let Some(last) = &mut self.remaining_sequence {
+                                    if seq < *last {
+                                        *last = seq
+                                    }
+                                } else {
+                                    self.remaining_sequence = Some(seq);
                                 }
                             } else {
                                 self.unconfirmed_balance += coin.amount;
                             }
                         }
-                    }
-                    if recovery_warning.1 > 0 {
-                        self.recovery_warning = Some(recovery_warning);
-                    }
-                    if recovery_alert.1 > 0 {
-                        self.recovery_alert = Some(recovery_alert);
                     }
                 }
             },
