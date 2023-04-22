@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use super::Error;
 use crate::hw::HardwareWallet;
+use async_hwi::DeviceKind;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -67,7 +68,7 @@ pub enum DefineKey {
     Delete,
     Edit,
     Clipboard(String),
-    Edited(String, DescriptorPublicKey),
+    Edited(String, DescriptorPublicKey, Option<DeviceKind>),
 }
 
 #[derive(Debug, Clone)]

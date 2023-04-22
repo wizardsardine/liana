@@ -31,6 +31,7 @@ pub struct Context {
     )>,
     pub data_dir: PathBuf,
     pub signer: Option<Arc<Signer>>,
+    pub hw_is_used: bool,
 }
 
 impl Context {
@@ -46,6 +47,7 @@ impl Context {
             descriptor: None,
             data_dir,
             signer: None,
+            hw_is_used: false,
         }
     }
 

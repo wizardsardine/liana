@@ -34,6 +34,16 @@ impl Installer {
         if self.current > 0 {
             self.current -= 1;
         }
+        // skip the previous step according to the current context.
+        while self.current > 0
+            && self
+                .steps
+                .get(self.current)
+                .expect("There is always a step")
+                .skip(&self.context)
+        {
+            self.current -= 1;
+        }
     }
 
     pub fn new(
