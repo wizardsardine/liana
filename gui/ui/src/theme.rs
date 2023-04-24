@@ -418,20 +418,30 @@ pub struct CheckBox {}
 impl checkbox::StyleSheet for Theme {
     type Style = CheckBox;
 
-    fn active(&self, _style: &Self::Style, _is_selected: bool) -> checkbox::Appearance {
-        checkbox::Appearance {
-            background: iced::Color::TRANSPARENT.into(),
-            border_width: 1.0,
-            border_color: color::GREY_7,
-            checkmark_color: color::GREEN,
-            text_color: None,
-            border_radius: 0.0,
+    fn active(&self, _style: &Self::Style, is_selected: bool) -> checkbox::Appearance {
+        if is_selected {
+            checkbox::Appearance {
+                background: color::GREEN.into(),
+                border_width: 0.0,
+                border_color: iced::Color::TRANSPARENT,
+                checkmark_color: color::GREY_4,
+                text_color: None,
+                border_radius: 4.0,
+            }
+        } else {
+            checkbox::Appearance {
+                background: color::GREY_4.into(),
+                border_width: 0.0,
+                border_color: iced::Color::TRANSPARENT,
+                checkmark_color: color::GREEN,
+                text_color: None,
+                border_radius: 4.0,
+            }
         }
     }
 
     fn hovered(&self, style: &Self::Style, is_selected: bool) -> checkbox::Appearance {
-        let active = self.active(style, is_selected);
-        checkbox::Appearance { ..active }
+        self.active(style, is_selected)
     }
 }
 

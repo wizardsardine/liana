@@ -26,8 +26,7 @@ impl CreateSpendPanel {
             draft: step::TransactionDraft::default(),
             current: 0,
             steps: vec![
-                Box::new(step::ChooseRecipients::new(coins)),
-                Box::new(step::ChooseCoins::new(
+                Box::new(step::DefineSpend::new(
                     descriptor,
                     coins.to_vec(),
                     timelock,
@@ -72,7 +71,7 @@ impl State for CreateSpendPanel {
         }
 
         if let Some(step) = self.steps.get_mut(self.current) {
-            return step.update(daemon, cache, &self.draft, message);
+            return step.update(daemon, cache, message);
         }
 
         Command::none()
