@@ -86,23 +86,26 @@ pub fn home_view<'a>(
             Column::new()
                 .spacing(10)
                 .push(h4_bold("Last payments"))
-                .push(
-                    pending_events
-                        .iter()
-                        .enumerate()
-                        .fold(Column::new().spacing(10), |col, (i, event)| {
+                .push(pending_events.iter().enumerate().fold(
+                    Column::new().spacing(10),
+                    |col, (i, event)| {
+                        if !event.is_self_send() {
                             col.push(event_list_view(i, event))
-                        }),
-                )
-                .push(
-                    events
-                        .iter()
-                        .filter(|event| !event.is_self_send())
-                        .enumerate()
-                        .fold(Column::new().spacing(10), |col, (i, event)| {
+                        } else {
+                            col
+                        }
+                    },
+                ))
+                .push(events.iter().enumerate().fold(
+                    Column::new().spacing(10),
+                    |col, (i, event)| {
+                        if !event.is_self_send() {
                             col.push(event_list_view(i + pending_events.len(), event))
-                        }),
-                )
+                        } else {
+                            col
+                        }
+                    },
+                ))
                 .push_maybe(
                     if events.len() % HISTORY_EVENT_PAGE_SIZE as usize == 0 && !events.is_empty() {
                         Some(
