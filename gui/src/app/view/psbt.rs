@@ -16,11 +16,7 @@ use liana::{
 use liana_ui::{
     color,
     component::{
-        amount::*,
-        badge, button, card,
-        collapse::Collapse,
-        form, hw, separation,
-        text::{text, Text},
+        amount::*, badge, button, card, collapse::Collapse, form, hw, separation, text::*,
     },
     icon, theme,
     util::Collection,
@@ -31,27 +27,44 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
+        menu::Menu,
         view::{dashboard, hw::hw_list_view, message::*, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
 };
 
-pub fn spend_view<'a>(
+pub fn psbt_view<'a>(
     cache: &'a Cache,
     tx: &'a SpendTx,
-    _saved: bool,
+    saved: bool,
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     network: Network,
 ) -> Element<'a, Message> {
     dashboard(
-        &crate::app::menu::Menu::CreateSpendTx,
-        &cache,
+        &Menu::PSBTs,
+        cache,
         None,
         Column::new()
-            .align_items(Alignment::Center)
             .spacing(20)
+            .push(
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .spacing(10)
+                    .push(Container::new(h3("PSBT")).width(Length::Fill))
+                    .push_maybe(if !tx.sigs.recovery_paths().is_empty() {
+                        Some(badge::recovery())
+                    } else {
+                        None
+                    })
+                    .push_maybe(match tx.status {
+                        SpendStatus::Deprecated => Some(badge::deprecated()),
+                        SpendStatus::Broadcast => Some(badge::unconfirmed()),
+                        SpendStatus::Spent => Some(badge::spent()),
+                        _ => None,
+                    }),
+            )
             .push(spend_header(tx))
             .push(spend_overview_view(tx, desc_info, key_aliases))
             .push(inputs_and_outputs_view(
@@ -60,7 +73,25 @@ pub fn spend_view<'a>(
                 network,
                 Some(tx.change_indexes.clone()),
                 None,
-            )),
+            ))
+            .push(if saved {
+                Row::new()
+                    .push(
+                        button::secondary(None, "Delete")
+                            .width(Length::Units(200))
+                            .on_press(Message::Spend(SpendTxMessage::Delete)),
+                    )
+                    .width(Length::Fill)
+            } else {
+                Row::new()
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        button::secondary(None, "Save")
+                            .width(Length::Units(150))
+                            .on_press(Message::Spend(SpendTxMessage::Save)),
+                    )
+                    .width(Length::Fill)
+            }),
     )
 }
 
@@ -151,86 +182,21 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
     }
 }
 
-pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
-    saved: bool,
-    warning: Option<&Error>,
-    content: T,
-) -> Element<'a, Message> {
-    Column::new()
-        .push(warn(warning))
-        .push(
-            Container::new(
-                Row::new()
-                    .push(if saved {
-                        Column::new()
-                            .push(
-                                button::alert(Some(icon::trash_icon()), "Delete")
-                                    .on_press(Message::Spend(SpendTxMessage::Delete)),
-                            )
-                            .width(Length::Fill)
-                    } else {
-                        Column::new()
-                            .push(
-                                button::transparent(None, "< Previous").on_press(Message::Previous),
-                            )
-                            .width(Length::Fill)
-                    })
-                    .align_items(iced::Alignment::Center)
-                    .push(if saved {
-                        button::primary(Some(icon::cross_icon()), "Close").on_press(Message::Close)
-                    } else {
-                        button::primary(Some(icon::cross_icon()), "Close")
-                            .on_press(Message::Spend(SpendTxMessage::Save))
-                    }),
-            )
-            .padding(10)
-            .style(theme::Container::Background),
-        )
-        .push(
-            Container::new(scrollable(
-                Container::new(Container::new(content).max_width(800))
-                    .width(Length::Fill)
-                    .center_x(),
-            ))
-            .height(Length::Fill)
-            .style(theme::Container::Background),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-}
-
 pub fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
     Column::new()
         .spacing(20)
-        .align_items(Alignment::Center)
-        .push(
-            Row::new()
-                .push(badge::Badge::new(icon::send_icon()).style(theme::Badge::Standard))
-                .push(if !tx.sigs.recovery_paths().is_empty() {
-                    text("Recovery").bold()
-                } else if tx.spend_amount == Amount::from_sat(0) {
-                    text("Self send").bold()
-                } else {
-                    text("Spend").bold()
-                })
-                .spacing(5)
-                .align_items(Alignment::Center),
-        )
-        .push_maybe(match tx.status {
-            SpendStatus::Deprecated => Some(badge::deprecated()),
-            SpendStatus::Broadcast => Some(badge::unconfirmed()),
-            SpendStatus::Spent => Some(badge::spent()),
-            _ => None,
-        })
         .push(
             Column::new()
-                .align_items(Alignment::Center)
-                .push(amount_with_size(&tx.spend_amount, 50))
+                .push(if tx.is_self_send() {
+                    Container::new(h1("Self send"))
+                } else {
+                    Container::new(amount_with_size(&tx.spend_amount, H1_SIZE))
+                })
                 .push(
                     Row::new()
-                        .push(text("Miner fee: "))
-                        .push(amount(&tx.fee_amount)),
+                        .align_items(Alignment::Center)
+                        .push(h3("Miner fee: ").style(color::GREY_3))
+                        .push(amount_with_size(&tx.fee_amount, H3_SIZE)),
                 ),
         )
         .into()
@@ -241,48 +207,84 @@ pub fn spend_overview_view<'a>(
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
-    Container::new(
-        Column::new()
-            .push(
+    Column::new()
+        .spacing(20)
+        .push(
+            Container::new(
                 Column::new()
-                    .padding(15)
-                    .spacing(10)
                     .push(
-                        Row::new()
-                            .align_items(Alignment::Center)
-                            .push(text("PSBT:").bold().width(Length::Fill))
+                        Column::new()
+                            .padding(15)
+                            .spacing(10)
                             .push(
                                 Row::new()
-                                    .spacing(5)
+                                    .align_items(Alignment::Center)
+                                    .push(text("PSBT").bold().width(Length::Fill))
                                     .push(
-                                        button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                            .on_press(Message::Clipboard(tx.psbt.to_string())),
+                                        Row::new()
+                                            .spacing(5)
+                                            .push(
+                                                button::secondary(
+                                                    Some(icon::clipboard_icon()),
+                                                    "Copy",
+                                                )
+                                                .on_press(Message::Clipboard(tx.psbt.to_string())),
+                                            )
+                                            .push(
+                                                button::secondary(
+                                                    Some(icon::import_icon()),
+                                                    "Update",
+                                                )
+                                                .on_press(Message::Spend(SpendTxMessage::EditPsbt)),
+                                            ),
+                                    )
+                                    .align_items(Alignment::Center),
+                            )
+                            .push(
+                                Row::new()
+                                    .push(p1_bold("Tx ID").width(Length::Fill))
+                                    .push(
+                                        p2_regular(tx.psbt.unsigned_tx.txid().to_string())
+                                            .style(color::GREY_3),
                                     )
                                     .push(
-                                        button::secondary(Some(icon::import_icon()), "Update")
-                                            .on_press(Message::Spend(SpendTxMessage::EditPsbt)),
-                                    ),
-                            )
-                            .align_items(Alignment::Center),
+                                        Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                            .on_press(Message::Clipboard(
+                                                tx.psbt.unsigned_tx.txid().to_string(),
+                                            ))
+                                            .style(theme::Button::TransparentBorder),
+                                    )
+                                    .align_items(Alignment::Center),
+                            ),
                     )
-                    .push(
-                        Row::new()
-                            .push(text("Tx ID:").bold().width(Length::Fill))
-                            .push(text(tx.psbt.unsigned_tx.txid().to_string()).small())
-                            .push(
-                                Button::new(icon::clipboard_icon())
-                                    .on_press(Message::Clipboard(
-                                        tx.psbt.unsigned_tx.txid().to_string(),
-                                    ))
-                                    .style(theme::Button::TransparentBorder),
-                            )
-                            .align_items(Alignment::Center),
-                    ),
+                    .push(signatures(tx, desc_info, key_aliases)),
             )
-            .push(signatures(tx, desc_info, key_aliases)),
-    )
-    .style(theme::Container::Card(theme::Card::Simple))
-    .into()
+            .style(theme::Container::Card(theme::Card::Simple)),
+        )
+        .push_maybe(if tx.status == SpendStatus::Pending {
+            Some(
+                Row::new()
+                    .push(Space::with_width(Length::Fill))
+                    .push_maybe(if tx.path_ready().is_none() {
+                        Some(
+                            button::primary(None, "Sign")
+                                .on_press(Message::Spend(SpendTxMessage::Sign))
+                                .width(Length::Units(150)),
+                        )
+                    } else {
+                        Some(
+                            button::primary(None, "Broadcast")
+                                .on_press(Message::Spend(SpendTxMessage::Broadcast))
+                                .width(Length::Units(150)),
+                        )
+                    })
+                    .align_items(Alignment::Center)
+                    .spacing(20),
+            )
+        } else {
+            None
+        })
+        .into()
 }
 
 pub fn signatures<'a>(
@@ -298,9 +300,11 @@ pub fn signatures<'a>(
                     Row::new()
                         .spacing(5)
                         .align_items(Alignment::Center)
+                        .spacing(10)
+                        .push(p1_bold("Status"))
                         .push(icon::circle_check_icon().style(color::GREEN))
                         .push(text("Ready").bold().style(color::GREEN))
-                        .push(text(", signed by"))
+                        .push(text("  signed by"))
                         .push(
                             sigs.signed_pubkeys
                             .keys()
@@ -309,7 +313,7 @@ pub fn signatures<'a>(
                                 Container::new(
                                     tooltip::Tooltip::new(
                                         Container::new(text(alias))
-                                            .padding(3)
+                                            .padding(10)
                                             .style(theme::Container::Pill(theme::Pill::Simple)),
                                             value.0.to_string(),
                                             tooltip::Position::Bottom,
@@ -318,7 +322,7 @@ pub fn signatures<'a>(
                                 )
                             } else {
                                 Container::new(text(value.0.to_string()))
-                                    .padding(3)
+                                    .padding(10)
                                     .style(theme::Container::Pill(theme::Pill::Simple))
                             })
                             }),
@@ -332,11 +336,13 @@ pub fn signatures<'a>(
                 Button::new(
                     Row::new()
                         .align_items(Alignment::Center)
+                        .spacing(20)
+                        .push(p1_bold("Status"))
                         .push(Row::new()
                                 .spacing(5)
                                 .align_items(Alignment::Center)
-                                .push(icon::circle_cross_icon())
-                                .push(text("Not ready").bold())
+                                .push(icon::circle_cross_icon().style(color::RED))
+                                .push(text("Not ready").style(color::RED))
                                 .width(Length::Fill)
                         )
                         .push(icon::collapse_icon()),
@@ -349,12 +355,14 @@ pub fn signatures<'a>(
                 Button::new(
                     Row::new()
                         .align_items(Alignment::Center)
+                        .spacing(20)
+                        .push(p1_bold("Status"))
                         .push(
                             Row::new()
                                 .spacing(5)
                                 .align_items(Alignment::Center)
-                                .push(icon::circle_cross_icon())
-                                .push(text("Not ready").bold())
+                                .push(icon::circle_cross_icon().style(color::RED))
+                                .push(text("Not ready").style(color::RED))
                                 .width(Length::Fill)
                         )
                         .push(icon::collapsed_icon()),
@@ -365,7 +373,6 @@ pub fn signatures<'a>(
             },
             move || {
                 Into::<Element<'a, Message>>::into(
-                    Column::new().push(separation().width(Length::Fill)).push(
                         Column::new()
                             .padding(15)
                             .spacing(10)
@@ -383,38 +390,9 @@ pub fn signatures<'a>(
                                 let keys = &desc_info.recovery_paths()[seq];
                                 col.push(path_view(keys, path, keys_aliases))
                             })),
-                    ),
                 )
             },
         ))})
-        .push_maybe(if tx.status == SpendStatus::Pending {
-            Some(
-                Column::new().push(separation().width(Length::Fill)).push(
-                    Container::new(
-                        Row::new()
-                            .push(Space::with_width(Length::Fill))
-                            .push_maybe(if tx.path_ready().is_none() {
-                                Some(
-                                    button::primary(None, "Sign")
-                                        .on_press(Message::Spend(SpendTxMessage::Sign))
-                                        .width(Length::Units(150)),
-                                )
-                            } else {
-                                Some(
-                                    button::primary(None, "Broadcast")
-                                        .on_press(Message::Spend(SpendTxMessage::Broadcast))
-                                        .width(Length::Units(150)),
-                                )
-                            })
-                            .align_items(Alignment::Center)
-                            .spacing(20),
-                    )
-                    .padding(15),
-                ),
-            )
-        } else {
-            None
-        })
         .into()
 }
 
@@ -434,22 +412,29 @@ pub fn path_view<'a>(
     scrollable(
         Row::new()
             .align_items(Alignment::Center)
-            .push(if sigs.sigs_count >= sigs.threshold {
-                icon::circle_check_icon().style(color::GREEN)
-            } else {
-                icon::circle_cross_icon()
-            })
-            .push(text(format!(" {}", missing_signatures)).bold())
-            .push(text(format!(
-                " more signature{}",
-                if missing_signatures > 1 {
-                    "s from "
-                } else if missing_signatures == 0 {
-                    ""
-                } else {
-                    " from "
-                }
-            )))
+            .push(
+                Row::new()
+                    .push(if sigs.sigs_count >= sigs.threshold {
+                        icon::circle_check_icon().style(color::GREEN)
+                    } else {
+                        icon::circle_cross_icon().style(color::GREY_3)
+                    })
+                    .push(Space::with_width(Length::Units(20))),
+            )
+            .push(
+                p1_regular(format!(
+                    "{} more signature{}",
+                    missing_signatures,
+                    if missing_signatures > 1 {
+                        "s from "
+                    } else if missing_signatures == 0 {
+                        ""
+                    } else {
+                        " from "
+                    }
+                ))
+                .style(color::GREY_3),
+            )
             .push_maybe(if keys.is_empty() {
                 None
             } else {
@@ -459,7 +444,7 @@ pub fn path_view<'a>(
                             Container::new(
                                 tooltip::Tooltip::new(
                                     Container::new(text(alias))
-                                        .padding(3)
+                                        .padding(10)
                                         .style(theme::Container::Pill(theme::Pill::Simple)),
                                     value.0.to_string(),
                                     tooltip::Position::Bottom,
@@ -468,7 +453,7 @@ pub fn path_view<'a>(
                             )
                         } else {
                             Container::new(text(value.0.to_string()))
-                                .padding(3)
+                                .padding(10)
                                 .style(theme::Container::Pill(theme::Pill::Simple))
                         })
                     } else {
@@ -479,7 +464,7 @@ pub fn path_view<'a>(
             .push_maybe(if sigs.signed_pubkeys.is_empty() {
                 None
             } else {
-                Some(text(", already signed by "))
+                Some(p1_regular(", already signed by ").style(color::GREY_3))
             })
             .push(
                 sigs.signed_pubkeys
@@ -489,7 +474,7 @@ pub fn path_view<'a>(
                             Container::new(
                                 tooltip::Tooltip::new(
                                     Container::new(text(alias))
-                                        .padding(3)
+                                        .padding(10)
                                         .style(theme::Container::Pill(theme::Pill::Simple)),
                                     value.0.to_string(),
                                     tooltip::Position::Bottom,
@@ -516,198 +501,184 @@ pub fn inputs_and_outputs_view<'a>(
     receive_indexes: Option<Vec<usize>>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(
-            Column::new()
-                .spacing(10)
-                .push_maybe(if !coins.is_empty() {
-                    Some(
-                        Container::new(Collapse::new(
-                            move || {
-                                Button::new(
-                                    Row::new()
-                                        .align_items(Alignment::Center)
-                                        .push(
-                                            text(format!(
-                                                "{} spent coin{}",
-                                                coins.len(),
-                                                if coins.len() == 1 { "" } else { "s" }
-                                            ))
-                                            .bold()
-                                            .width(Length::Fill),
-                                        )
-                                        .push(icon::collapse_icon()),
+        .spacing(20)
+        .push_maybe(if !coins.is_empty() {
+            Some(
+                Container::new(Collapse::new(
+                    move || {
+                        Button::new(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .push(
+                                    h4_bold(format!(
+                                        "{} spent coin{}",
+                                        coins.len(),
+                                        if coins.len() == 1 { "" } else { "s" }
+                                    ))
+                                    .width(Length::Fill),
                                 )
-                                .padding(15)
-                                .width(Length::Fill)
-                                .style(theme::Button::TransparentBorder)
-                            },
-                            move || {
-                                Button::new(
-                                    Row::new()
-                                        .align_items(Alignment::Center)
-                                        .push(
-                                            text(format!(
-                                                "{} spent coin{}",
-                                                coins.len(),
-                                                if coins.len() == 1 { "" } else { "s" }
-                                            ))
-                                            .bold()
-                                            .width(Length::Fill),
-                                        )
-                                        .push(icon::collapsed_icon()),
+                                .push(icon::collapse_icon()),
+                        )
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(theme::Button::TransparentBorder)
+                    },
+                    move || {
+                        Button::new(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .push(
+                                    h4_bold(format!(
+                                        "{} spent coin{}",
+                                        coins.len(),
+                                        if coins.len() == 1 { "" } else { "s" }
+                                    ))
+                                    .width(Length::Fill),
                                 )
-                                .padding(15)
-                                .width(Length::Fill)
-                                .style(theme::Button::TransparentBorder)
-                            },
-                            move || {
-                                coins
-                                    .iter()
-                                    .fold(Column::new(), |col: Column<'a, Message>, coin| {
-                                        col.push(
-                                            Row::new()
-                                                .padding(15)
-                                                .align_items(Alignment::Center)
-                                                .width(Length::Fill)
-                                                .push(
-                                                    Row::new()
-                                                        .width(Length::Fill)
-                                                        .align_items(Alignment::Center)
-                                                        .push(
-                                                            text(coin.outpoint.to_string())
-                                                                .small()
-                                                        )
-                                                        .push(
-                                                            Button::new(icon::clipboard_icon())
-                                                                .on_press(Message::Clipboard(
-                                                                    coin.outpoint.to_string(),
-                                                                ))
-                                                                .style(
-                                                                    theme::Button::TransparentBorder,
-                                                                ),
-                                                        ),
-                                                )
-                                                .push(amount(&coin.amount)),
-                                        )
-                                    })
-                                    .into()
-                            },
-                        ))
-                        .style(theme::Container::Card(theme::Card::Simple)),
-                    )
-                } else {
-                    None
-                })
-                .push(
-                    Container::new(Collapse::new(
-                        move || {
-                            Button::new(
-                                Row::new()
-                                    .align_items(Alignment::Center)
-                                    .push(
-                                        text(format!(
-                                            "{} recipient{}",
-                                            tx.output.len(),
-                                            if tx.output.len() == 1 { "" } else { "s" }
-                                        ))
-                                        .bold()
-                                        .width(Length::Fill),
-                                    )
-                                    .push(icon::collapse_icon()),
-                            )
-                            .padding(15)
-                            .width(Length::Fill)
-                            .style(theme::Button::TransparentBorder)
-                        },
-                        move || {
-                            Button::new(
-                                Row::new()
-                                    .align_items(Alignment::Center)
-                                    .push(
-                                        text(format!(
-                                            "{} recipient{}",
-                                            tx.output.len(),
-                                            if tx.output.len() == 1 { "" } else { "s" }
-                                        ))
-                                        .bold()
-                                        .width(Length::Fill),
-                                    )
-                                    .push(icon::collapsed_icon()),
-                            )
-                            .padding(15)
-                            .width(Length::Fill)
-                            .style(theme::Button::TransparentBorder)
-                        },
-                        move || {
-                            tx.output
-                                .iter()
-                                .enumerate()
-                                .fold(Column::new(), |col: Column<'a, Message>, (i, output)| {
-                                    let addr = Address::from_script(&output.script_pubkey, network).unwrap();
+                                .push(icon::collapsed_icon()),
+                        )
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(theme::Button::TransparentBorder)
+                    },
+                    move || {
+                        coins
+                            .iter()
+                            .fold(
+                                Column::new().padding(20),
+                                |col: Column<'a, Message>, coin| {
                                     col.push(
-                                        Column::new()
-                                            .padding(15)
+                                        Row::new()
+                                            .align_items(Alignment::Center)
                                             .width(Length::Fill)
-                                            .spacing(10)
                                             .push(
                                                 Row::new()
                                                     .width(Length::Fill)
+                                                    .align_items(Alignment::Center)
+                                                    .push(p2_regular(coin.outpoint.to_string()).style(color::GREY_3))
                                                     .push(
-                                                        Row::new()
-                                                        .align_items(Alignment::Center)
-                                                        .width(Length::Fill)
-                                                        .push(text(addr.to_string()).small())
-                                                        .push(
-                                                            Button::new(icon::clipboard_icon())
-                                                                .on_press(Message::Clipboard(
-                                                                    addr.to_string(),
-                                                                ))
-                                                                .style(
-                                                                    theme::Button::TransparentBorder,
-                                                                ),
-                                                        ),
-                                                    )
-                                                    .push(
-                                                        amount(&Amount::from_sat(output.value))
+                                                        Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                                            .on_press(Message::Clipboard(
+                                                                coin.outpoint.to_string(),
+                                                            ))
+                                                            .style(
+                                                                theme::Button::TransparentBorder,
+                                                            ),
                                                     ),
                                             )
-                                            .push_maybe(
-                                                if let Some(indexes) = change_indexes.as_ref() {
-                                                    if indexes.contains(&i) {
-                                                        Some(
-                                                            Container::new(text("Change"))
-                                                                .padding(5)
-                                                                .style(theme::Container::Pill(theme::Pill::Success)),
-                                                        )
-                                                    } else {
-                                                        None
-                                                    }
-                                                } else {
-                                                    None
-                                                },
-                                            )
-                                            .push_maybe(
-                                                if let Some(indexes) = receive_indexes.as_ref() {
-                                                    if indexes.contains(&i) {
-                                                        Some(
-                                                            Container::new(text("Deposit"))
-                                                                .padding(5)
-                                                                .style(theme::Container::Pill(theme::Pill::Success)),
-                                                        )
-                                                    } else {
-                                                        None
-                                                    }
-                                                } else {
-                                                    None
-                                                },
-                                            ),
+                                            .push(amount(&coin.amount)),
                                     )
-                                })
-                                .into()
-                        },
-                    ))
-                    .style(theme::Container::Card(theme::Card::Simple)),
-                ),
+                                },
+                            )
+                            .into()
+                    },
+                ))
+                .style(theme::Container::Card(theme::Card::Simple)),
+            )
+        } else {
+            None
+        })
+        .push(
+            Container::new(Collapse::new(
+                move || {
+                    Button::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .push(
+                                h4_bold(format!(
+                                    "{} recipient{}",
+                                    tx.output.len(),
+                                    if tx.output.len() == 1 { "" } else { "s" }
+                                ))
+                                .width(Length::Fill),
+                            )
+                            .push(icon::collapse_icon()),
+                    )
+                    .padding(20)
+                    .width(Length::Fill)
+                    .style(theme::Button::TransparentBorder)
+                },
+                move || {
+                    Button::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .push(
+                                h4_bold(format!(
+                                    "{} recipient{}",
+                                    tx.output.len(),
+                                    if tx.output.len() == 1 { "" } else { "s" }
+                                ))
+                                .width(Length::Fill),
+                            )
+                            .push(icon::collapsed_icon()),
+                    )
+                    .padding(20)
+                    .width(Length::Fill)
+                    .style(theme::Button::TransparentBorder)
+                },
+                move || {
+                    tx.output
+                        .iter()
+                        .enumerate()
+                        .fold(
+                            Column::new().padding(20),
+                            |col: Column<'a, Message>, (i, output)| {
+                                let addr =
+                                    Address::from_script(&output.script_pubkey, network).unwrap();
+                                col.push(
+                                Column::new()
+                                    .width(Length::Fill)
+                                    .spacing(5)
+                                    .push(
+                                        Row::new()
+                                            .align_items(Alignment::Center)
+                                            .width(Length::Fill)
+                                            .push(
+                                                Row::new()
+                                                    .align_items(Alignment::Center)
+                                                    .width(Length::Fill)
+                                                    .push(p2_regular(addr.to_string()).style(color::GREY_3))
+                                                    .push(
+                                                        Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                                            .on_press(Message::Clipboard(
+                                                                addr.to_string(),
+                                                            ))
+                                                            .style(
+                                                                theme::Button::TransparentBorder,
+                                                            ),
+                                                    ),
+                                            )
+                                            .push(amount(&Amount::from_sat(output.value))),
+                                    )
+                                    .push_maybe(if let Some(indexes) = change_indexes.as_ref() {
+                                        if indexes.contains(&i) {
+                                            Some(Container::new(text("Change")).padding(5).style(
+                                                theme::Container::Pill(theme::Pill::Success),
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    })
+                                    .push_maybe(if let Some(indexes) = receive_indexes.as_ref() {
+                                        if indexes.contains(&i) {
+                                            Some(Container::new(text("Deposit")).padding(5).style(
+                                                theme::Container::Pill(theme::Pill::Success),
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }),
+                            )
+                            },
+                        )
+                        .into()
+                },
+            ))
+            .style(theme::Container::Card(theme::Card::Simple)),
         )
         .into()
 }

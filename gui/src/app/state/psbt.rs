@@ -30,7 +30,7 @@ use crate::{
     hw::{list_hardware_wallets, HardwareWallet},
 };
 
-trait Action {
+pub trait Action {
     fn warning(&self) -> Option<&Error> {
         None
     }
@@ -49,11 +49,11 @@ trait Action {
 }
 
 pub struct PsbtState {
-    wallet: Arc<Wallet>,
-    desc_policy: LianaPolicy,
-    tx: SpendTx,
-    saved: bool,
-    action: Option<Box<dyn Action>>,
+    pub wallet: Arc<Wallet>,
+    pub desc_policy: LianaPolicy,
+    pub tx: SpendTx,
+    pub saved: bool,
+    pub action: Option<Box<dyn Action>>,
 }
 
 impl PsbtState {
@@ -129,7 +129,7 @@ impl PsbtState {
     }
 
     pub fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::psbt::spend_view(
+        let content = view::psbt::psbt_view(
             cache,
             &self.tx,
             self.saved,

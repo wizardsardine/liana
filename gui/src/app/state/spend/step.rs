@@ -10,7 +10,10 @@ use liana::{
     },
 };
 
-use liana_ui::{component::form, widget::Element};
+use liana_ui::{
+    component::{form, modal},
+    widget::Element,
+};
 
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::psbt, view, wallet::Wallet},
@@ -427,6 +430,21 @@ impl Step for SaveSpend {
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        self.spend.as_ref().unwrap().view(cache)
+        let spend = self.spend.as_ref().unwrap();
+        let content = view::spend::spend_view(
+            cache,
+            &spend.tx,
+            spend.saved,
+            &spend.desc_policy,
+            &spend.wallet.keys_aliases,
+            cache.network,
+        );
+        if let Some(action) = &spend.action {
+            modal::Modal::new(content, action.view())
+                .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+                .into()
+        } else {
+            content
+        }
     }
 }

@@ -32,18 +32,18 @@ use crate::{
 pub fn spend_view<'a>(
     cache: &'a Cache,
     tx: &'a SpendTx,
-    _saved: bool,
+    saved: bool,
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     network: Network,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::CreateSpendTx,
-        &cache,
+        cache,
         None,
         Column::new()
-            .align_items(Alignment::Center)
             .spacing(20)
+            .push(Container::new(h3("Send")).width(Length::Fill))
             .push(psbt::spend_header(tx))
             .push(psbt::spend_overview_view(tx, desc_info, key_aliases))
             .push(psbt::inputs_and_outputs_view(
@@ -52,7 +52,30 @@ pub fn spend_view<'a>(
                 network,
                 Some(tx.change_indexes.clone()),
                 None,
-            )),
+            ))
+            .push(if saved {
+                Row::new()
+                    .push(
+                        button::secondary(None, "Delete")
+                            .width(Length::Units(200))
+                            .on_press(Message::Spend(SpendTxMessage::Delete)),
+                    )
+                    .width(Length::Fill)
+            } else {
+                Row::new()
+                    .push(
+                        button::secondary(None, "< Previous")
+                            .width(Length::Units(150))
+                            .on_press(Message::Previous),
+                    )
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        button::secondary(None, "Save")
+                            .width(Length::Units(150))
+                            .on_press(Message::Spend(SpendTxMessage::Save)),
+                    )
+                    .width(Length::Fill)
+            }),
     )
 }
 

@@ -98,29 +98,27 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                     Row::new()
                         .push(badge::spend())
                         .push(if !tx.sigs.recovery_paths().is_empty() {
-                            Row::new().push(
-                                Container::new(p2_regular(" Recovery "))
-                                    .padding(10)
-                                    .style(theme::Container::Pill(theme::Pill::Simple)),
-                            )
+                            badge::recovery()
                         } else {
                             let sigs = tx.sigs.primary_path();
-                            Row::new()
-                                .spacing(5)
-                                .align_items(Alignment::Center)
-                                .push(
-                                    p2_regular(format!(
-                                        "{}/{}",
-                                        if sigs.sigs_count <= sigs.threshold {
-                                            sigs.sigs_count
-                                        } else {
+                            Container::new(
+                                Row::new()
+                                    .spacing(5)
+                                    .align_items(Alignment::Center)
+                                    .push(
+                                        p2_regular(format!(
+                                            "{}/{}",
+                                            if sigs.sigs_count <= sigs.threshold {
+                                                sigs.sigs_count
+                                            } else {
+                                                sigs.threshold
+                                            },
                                             sigs.threshold
-                                        },
-                                        sigs.threshold
-                                    ))
-                                    .style(color::GREY_3),
-                                )
-                                .push(icon::key_icon().style(color::GREY_3))
+                                        ))
+                                        .style(color::GREY_3),
+                                    )
+                                    .push(icon::key_icon().style(color::GREY_3)),
+                            )
                         })
                         .spacing(10)
                         .align_items(Alignment::Center)
@@ -134,7 +132,12 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                 })
                 .push(
                     Column::new()
-                        .push(amount(&tx.spend_amount))
+                        .align_items(Alignment::End)
+                        .push(if tx.is_self_send() {
+                            Container::new(amount(&tx.spend_amount))
+                        } else {
+                            Container::new(p1_regular("Self send"))
+                        })
                         .push(amount_with_size(&tx.fee_amount, P2_SIZE))
                         .width(Length::Shrink),
                 )
