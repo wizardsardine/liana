@@ -214,8 +214,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(spend_button)
                     .push(receive_button)
                     .push(coins_button)
-                    .push(psbt_button)
                     .push(transactions_button)
+                    .push(psbt_button)
                     .height(Length::Fill),
             )
             .push(
