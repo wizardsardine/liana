@@ -1,4 +1,3 @@
-pub mod detail;
 mod step;
 use std::sync::Arc;
 

@@ -13,9 +13,7 @@ use liana::{
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
-    app::{
-        cache::Cache, error::Error, message::Message, state::spend::detail, view, wallet::Wallet,
-    },
+    app::{cache::Cache, error::Error, message::Message, state::psbt, view, wallet::Wallet},
     daemon::{
         model::{remaining_sequence, Coin, SpendTx},
         Daemon,
@@ -286,7 +284,7 @@ impl Step for DefineSpend {
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::spend::step::create_spend_tx(
+        view::spend::create_spend_tx(
             cache,
             &self.balance_available,
             self.recipients
@@ -382,13 +380,13 @@ impl Recipient {
     }
 
     fn view(&self, i: usize) -> Element<view::CreateSpendMessage> {
-        view::spend::step::recipient_view(i, &self.address, &self.amount)
+        view::spend::recipient_view(i, &self.address, &self.amount)
     }
 }
 
 pub struct SaveSpend {
     wallet: Arc<Wallet>,
-    spend: Option<detail::SpendTxState>,
+    spend: Option<psbt::PsbtState>,
 }
 
 impl SaveSpend {
@@ -408,7 +406,7 @@ impl Step for SaveSpend {
             .main_descriptor
             .partial_spend_info(&psbt)
             .unwrap();
-        self.spend = Some(detail::SpendTxState::new(
+        self.spend = Some(psbt::PsbtState::new(
             self.wallet.clone(),
             SpendTx::new(None, psbt, draft.inputs.clone(), sigs),
             false,

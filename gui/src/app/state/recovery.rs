@@ -12,7 +12,7 @@ use crate::{
         error::Error,
         menu::Menu,
         message::Message,
-        state::spend::detail,
+        state::psbt,
         state::{redirect, State},
         view,
         wallet::Wallet,
@@ -32,7 +32,7 @@ pub struct RecoveryPanel {
     warning: Option<Error>,
     feerate: form::Value<String>,
     recipient: form::Value<String>,
-    generated: Option<detail::SpendTxState>,
+    generated: Option<psbt::PsbtState>,
 }
 
 impl RecoveryPanel {
@@ -102,7 +102,7 @@ impl State for RecoveryPanel {
             },
             Message::Recovery(res) => match res {
                 Ok(tx) => {
-                    self.generated = Some(detail::SpendTxState::new(self.wallet.clone(), tx, false))
+                    self.generated = Some(psbt::PsbtState::new(self.wallet.clone(), tx, false))
                 }
                 Err(e) => self.warning = Some(e),
             },

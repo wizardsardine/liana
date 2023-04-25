@@ -29,22 +29,25 @@ use liana_ui::{
 
 use crate::{
     app::{
+        cache::Cache,
         error::Error,
-        view::{hw::hw_list_view, message::*, warning::warn},
+        menu::Menu,
+        view::{dashboard, hw::hw_list_view, message::*, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
 };
 
-pub fn spend_view<'a>(
+pub fn psbt_view<'a>(
+    cache: &'a Cache,
     tx: &'a SpendTx,
-    saved: bool,
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     network: Network,
 ) -> Element<'a, Message> {
-    spend_modal(
-        saved,
+    dashboard(
+        &Menu::PSBTs,
+        &cache,
         None,
         Column::new()
             .align_items(Alignment::Center)
@@ -197,7 +200,7 @@ pub fn spend_modal<'a, T: Into<Element<'a, Message>>>(
         .into()
 }
 
-fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
+pub fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
     Column::new()
         .spacing(20)
         .align_items(Alignment::Center)
@@ -233,7 +236,7 @@ fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
         .into()
 }
 
-fn spend_overview_view<'a>(
+pub fn spend_overview_view<'a>(
     tx: &'a SpendTx,
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
@@ -561,7 +564,7 @@ pub fn inputs_and_outputs_view<'a>(
                                 coins
                                     .iter()
                                     .fold(Column::new(), |col: Column<'a, Message>, coin| {
-                                        col.push(separation().width(Length::Fill)).push(
+                                        col.push(
                                             Row::new()
                                                 .padding(15)
                                                 .align_items(Alignment::Center)
@@ -641,7 +644,7 @@ pub fn inputs_and_outputs_view<'a>(
                                 .enumerate()
                                 .fold(Column::new(), |col: Column<'a, Message>, (i, output)| {
                                     let addr = Address::from_script(&output.script_pubkey, network).unwrap();
-                                    col.push(separation().width(Length::Fill)).push(
+                                    col.push(
                                         Column::new()
                                             .padding(15)
                                             .width(Length::Fill)

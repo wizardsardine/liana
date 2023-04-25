@@ -21,7 +21,6 @@ use crate::{
         error::Error,
         message::Message,
         view,
-        view::spend::detail,
         wallet::{Wallet, WalletError},
     },
     daemon::{
@@ -49,7 +48,7 @@ trait Action {
     fn view(&self) -> Element<view::Message>;
 }
 
-pub struct SpendTxState {
+pub struct PsbtState {
     wallet: Arc<Wallet>,
     desc_policy: LianaPolicy,
     tx: SpendTx,
@@ -57,7 +56,7 @@ pub struct SpendTxState {
     action: Option<Box<dyn Action>>,
 }
 
-impl SpendTxState {
+impl PsbtState {
     pub fn new(wallet: Arc<Wallet>, tx: SpendTx, saved: bool) -> Self {
         Self {
             desc_policy: wallet.main_descriptor.policy(),
@@ -130,7 +129,8 @@ impl SpendTxState {
     }
 
     pub fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = detail::spend_view(
+        let content = view::psbt::spend_view(
+            cache,
             &self.tx,
             self.saved,
             &self.desc_policy,
@@ -178,7 +178,7 @@ impl Action for SaveAction {
         Command::none()
     }
     fn view(&self) -> Element<view::Message> {
-        detail::save_action(self.error.as_ref(), self.saved)
+        view::psbt::save_action(self.error.as_ref(), self.saved)
     }
 }
 
@@ -221,7 +221,7 @@ impl Action for BroadcastAction {
         Command::none()
     }
     fn view(&self) -> Element<view::Message> {
-        detail::broadcast_action(self.error.as_ref(), self.broadcast)
+        view::psbt::broadcast_action(self.error.as_ref(), self.broadcast)
     }
 }
 
@@ -261,7 +261,7 @@ impl Action for DeleteAction {
         Command::none()
     }
     fn view(&self) -> Element<view::Message> {
-        detail::delete_action(self.error.as_ref(), self.deleted)
+        view::psbt::delete_action(self.error.as_ref(), self.deleted)
     }
 }
 
@@ -376,7 +376,7 @@ impl Action for SignAction {
         Command::none()
     }
     fn view(&self) -> Element<view::Message> {
-        view::spend::detail::sign_action(
+        view::psbt::sign_action(
             self.error.as_ref(),
             &self.hws,
             self.wallet.signer.as_ref().map(|s| s.fingerprint()),
@@ -439,9 +439,9 @@ impl UpdateAction {
 impl Action for UpdateAction {
     fn view(&self) -> Element<view::Message> {
         if self.success {
-            view::spend::detail::update_spend_success_view()
+            view::psbt::update_spend_success_view()
         } else {
-            view::spend::detail::update_spend_view(
+            view::psbt::update_spend_view(
                 self.psbt.clone(),
                 &self.updated,
                 self.error.as_ref(),

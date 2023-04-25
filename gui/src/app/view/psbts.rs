@@ -108,16 +108,19 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                             Row::new()
                                 .spacing(5)
                                 .align_items(Alignment::Center)
-                                .push(text(format!(
-                                    "{}/{}",
-                                    if sigs.sigs_count <= sigs.threshold {
-                                        sigs.sigs_count
-                                    } else {
+                                .push(
+                                    p2_regular(format!(
+                                        "{}/{}",
+                                        if sigs.sigs_count <= sigs.threshold {
+                                            sigs.sigs_count
+                                        } else {
+                                            sigs.threshold
+                                        },
                                         sigs.threshold
-                                    },
-                                    sigs.threshold
-                                )))
-                                .push(icon::key_icon())
+                                    ))
+                                    .style(color::GREY_3),
+                                )
+                                .push(icon::key_icon().style(color::GREY_3))
                         })
                         .spacing(10)
                         .align_items(Alignment::Center)
@@ -132,7 +135,7 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                 .push(
                     Column::new()
                         .push(amount(&tx.spend_amount))
-                        .push(text(format!("fee: {:8}", tx.fee_amount.to_btc())).small())
+                        .push(amount_with_size(&tx.fee_amount, P2_SIZE))
                         .width(Length::Shrink),
                 )
                 .align_items(Alignment::Center)

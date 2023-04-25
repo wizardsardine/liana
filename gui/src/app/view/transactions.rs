@@ -176,7 +176,7 @@ pub fn tx_view<'a>(cache: &Cache, tx: &'a HistoryTransaction) -> Element<'a, Mes
                 )
                 .spacing(5),
         ))
-        .push(super::spend::detail::inputs_and_outputs_view(
+        .push(super::psbt::inputs_and_outputs_view(
             &tx.coins,
             &tx.tx,
             cache.network,

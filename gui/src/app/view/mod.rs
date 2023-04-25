@@ -4,6 +4,7 @@ mod warning;
 pub mod coins;
 pub mod home;
 pub mod hw;
+pub mod psbt;
 pub mod psbts;
 pub mod receive;
 pub mod recovery;
