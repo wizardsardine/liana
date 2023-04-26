@@ -133,7 +133,7 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                 .push(
                     Column::new()
                         .align_items(Alignment::End)
-                        .push(if tx.is_self_send() {
+                        .push(if !tx.is_self_send() {
                             Container::new(amount(&tx.spend_amount))
                         } else {
                             Container::new(p1_regular("Self send"))
