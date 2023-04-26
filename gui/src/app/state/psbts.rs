@@ -8,7 +8,7 @@ use liana_ui::{
     widget::Element,
 };
 
-use super::{spend::detail, State};
+use super::{psbt, State};
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet},
     daemon::{model::SpendTx, Daemon},
@@ -16,7 +16,7 @@ use crate::{
 
 pub struct PsbtsPanel {
     wallet: Arc<Wallet>,
-    selected_tx: Option<detail::SpendTxState>,
+    selected_tx: Option<psbt::PsbtState>,
     spend_txs: Vec<SpendTx>,
     warning: Option<Error>,
     import_tx: Option<ImportPsbtModal>,
@@ -90,7 +90,7 @@ impl State for PsbtsPanel {
             }
             Message::View(view::Message::Select(i)) => {
                 if let Some(tx) = self.spend_txs.get(i) {
-                    let tx = detail::SpendTxState::new(self.wallet.clone(), tx.clone(), true);
+                    let tx = psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true);
                     let cmd = tx.load(daemon);
                     self.selected_tx = Some(tx);
                     return cmd;

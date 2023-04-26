@@ -1,4 +1,5 @@
 mod coins;
+mod psbt;
 mod psbts;
 mod recovery;
 mod settings;

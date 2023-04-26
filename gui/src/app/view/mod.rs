@@ -4,6 +4,7 @@ mod warning;
 pub mod coins;
 pub mod home;
 pub mod hw;
+pub mod psbt;
 pub mod psbts;
 pub mod receive;
 pub mod recovery;
@@ -120,7 +121,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .center_x(),
         )
         .style(theme::Button::Menu(true))
-        .on_press(Message::Reload)
+        .on_press(Message::Menu(Menu::PSBTs))
         .width(iced::Length::Fill)
     } else {
         Button::new(
@@ -213,8 +214,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(spend_button)
                     .push(receive_button)
                     .push(coins_button)
-                    .push(psbt_button)
                     .push(transactions_button)
+                    .push(psbt_button)
                     .height(Length::Fill),
             )
             .push(

@@ -65,6 +65,19 @@ pub fn coin<T>() -> Container<'static, T> {
     .center_y()
 }
 
+pub fn recovery<'a, T: 'a>() -> Container<'a, T> {
+    Container::new(
+        tooltip::Tooltip::new(
+            Container::new(text::p2_regular("  Recovery  "))
+                .padding(10)
+                .style(theme::Container::Pill(theme::Pill::Simple)),
+            "This transaction is using a recovery path",
+            tooltip::Position::Top,
+        )
+        .style(theme::Container::Card(theme::Card::Simple)),
+    )
+}
+
 pub fn unconfirmed<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(

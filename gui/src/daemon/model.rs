@@ -121,6 +121,10 @@ impl SpendTx {
 
         signers
     }
+
+    pub fn is_self_send(&self) -> bool {
+        !self.coins.is_empty() && self.spend_amount == Amount::from_sat(0)
+    }
 }
 
 #[derive(Debug, Clone)]
