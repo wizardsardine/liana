@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use iced::Command;
 use liana_ui::widget::*;
 
-use crate::app::{cache::Cache, error::Error, menu::Menu, message::Message, view, State};
+use crate::app::{cache::Cache, error::Error, message::Message, view, State};
 
 use crate::daemon::{model::HistoryTransaction, Daemon};
 
@@ -36,19 +36,15 @@ impl State for TransactionsPanel {
             } else {
                 &self.txs[i - self.pending_txs.len()]
             };
-            return view::modal(
-                false,
+            view::transactions::tx_view(cache, tx, self.warning.as_ref())
+        } else {
+            view::transactions::transactions_view(
+                cache,
+                &self.pending_txs,
+                &self.txs,
                 self.warning.as_ref(),
-                view::transactions::tx_view(cache, tx),
-                None::<Element<view::Message>>,
-            );
+            )
         }
-        view::dashboard(
-            &Menu::Transactions,
-            cache,
-            None,
-            view::transactions::transactions_view(&self.pending_txs, &self.txs),
-        )
     }
 
     fn update(

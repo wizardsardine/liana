@@ -5,14 +5,19 @@ use iced::{alignment, Alignment, Length};
 use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
-    component::{amount::*, event, text::*},
+    component::{amount::*, card, event, text::*},
     icon, theme,
     util::Collection,
     widget::*,
 };
 
 use crate::{
-    app::view::{coins, message::Message},
+    app::{
+        cache::Cache,
+        error::Error,
+        menu::Menu,
+        view::{coins, dashboard, message::Message},
+    },
     daemon::model::HistoryTransaction,
 };
 
@@ -143,12 +148,12 @@ fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Column<'a, Messa
                     col.push(event::confirmed_incoming_event(
                         NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
                         &Amount::from_sat(output.value),
-                        Message::Select(i),
+                        Message::SelectSub(i, output_index),
                     ))
                 } else {
                     col.push(event::unconfirmed_incoming_event(
                         &Amount::from_sat(output.value),
-                        Message::Select(i),
+                        Message::SelectSub(i, output_index),
                     ))
                 }
             } else if event.change_indexes.contains(&output_index) {
@@ -157,14 +162,92 @@ fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Column<'a, Messa
                 col.push(event::confirmed_outgoing_event(
                     NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
                     &Amount::from_sat(output.value),
-                    Message::Select(i),
+                    Message::SelectSub(i, output_index),
                 ))
             } else {
                 col.push(event::unconfirmed_outgoing_event(
                     &Amount::from_sat(output.value),
-                    Message::Select(i),
+                    Message::SelectSub(i, output_index),
                 ))
             }
         },
+    )
+}
+
+pub fn payment_view<'a>(
+    cache: &'a Cache,
+    tx: &'a HistoryTransaction,
+    output_index: usize,
+    warning: Option<&'a Error>,
+) -> Element<'a, Message> {
+    dashboard(
+        &Menu::Home,
+        cache,
+        warning,
+        Column::new()
+            .push(if tx.is_self_send() {
+                Container::new(h3("Payment")).width(Length::Fill)
+            } else if tx.is_external() {
+                Container::new(h3("Incoming payment")).width(Length::Fill)
+            } else {
+                Container::new(h3("Outgoing payment")).width(Length::Fill)
+            })
+            .push(Container::new(amount_with_size(
+                &Amount::from_sat(tx.tx.output[output_index].value),
+                H1_SIZE,
+            )))
+            .push(Container::new(h3("Transaction")).width(Length::Fill))
+            .push_maybe(tx.fee_amount.map(|fee_amount| {
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push(h3("Miner fee: ").style(color::GREY_3))
+                    .push(amount_with_size(&fee_amount, H3_SIZE))
+            }))
+            .push(card::simple(
+                Column::new()
+                    .push_maybe(tx.time.map(|t| {
+                        let date = NaiveDateTime::from_timestamp_opt(t as i64, 0)
+                            .unwrap()
+                            .format("%b. %d, %Y - %T");
+                        Row::new()
+                            .width(Length::Fill)
+                            .push(Container::new(text("Date:").bold()).width(Length::Fill))
+                            .push(Container::new(text(format!("{}", date))).width(Length::Shrink))
+                    }))
+                    .push(
+                        Row::new()
+                            .width(Length::Fill)
+                            .align_items(Alignment::Center)
+                            .push(Container::new(text("Txid:").bold()).width(Length::Fill))
+                            .push(
+                                Row::new()
+                                    .align_items(Alignment::Center)
+                                    .push(Container::new(text(format!("{}", tx.tx.txid())).small()))
+                                    .push(
+                                        Button::new(icon::clipboard_icon())
+                                            .on_press(Message::Clipboard(tx.tx.txid().to_string()))
+                                            .style(theme::Button::TransparentBorder),
+                                    )
+                                    .width(Length::Shrink),
+                            ),
+                    )
+                    .spacing(5),
+            ))
+            .push(super::psbt::inputs_and_outputs_view(
+                &tx.coins,
+                &tx.tx,
+                cache.network,
+                if tx.is_external() {
+                    None
+                } else {
+                    Some(tx.change_indexes.clone())
+                },
+                if tx.is_external() {
+                    Some(tx.change_indexes.clone())
+                } else {
+                    None
+                },
+            ))
+            .spacing(20),
     )
 }

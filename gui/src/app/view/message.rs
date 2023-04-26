@@ -8,6 +8,7 @@ pub enum Message {
     Menu(Menu),
     Close,
     Select(usize),
+    SelectSub(usize, usize),
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
