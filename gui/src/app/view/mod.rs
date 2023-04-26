@@ -34,7 +34,7 @@ use crate::app::{cache::Cache, error::Error, menu::Menu};
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let home_button = if *menu == Menu::Home {
         button::menu_active(Some(home_icon()), "Home")
-            .on_press(Message::Reload)
+            .on_press(Message::Menu(Menu::Home))
             .width(iced::Length::Fill)
     } else {
         button::menu(Some(home_icon()), "Home")

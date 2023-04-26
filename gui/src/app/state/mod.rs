@@ -53,7 +53,7 @@ pub struct Home {
     number_of_expiring_coins: usize,
     pending_events: Vec<HistoryTransaction>,
     events: Vec<HistoryTransaction>,
-    selected_event: Option<usize>,
+    selected_event: Option<(usize, usize)>,
     warning: Option<Error>,
 }
 
@@ -87,13 +87,13 @@ impl Home {
 
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Some(i) = self.selected_event {
+        if let Some((i, output_index)) = self.selected_event {
             let event = if i < self.pending_events.len() {
                 &self.pending_events[i]
             } else {
                 &self.events[i - self.pending_events.len()]
             };
-            view::transactions::tx_view(cache, event, self.warning.as_ref())
+            view::home::payment_view(cache, event, output_index, self.warning.as_ref())
         } else {
             view::dashboard(
                 &Menu::Home,
@@ -176,8 +176,8 @@ impl State for Home {
             Message::View(view::Message::Close) => {
                 self.selected_event = None;
             }
-            Message::View(view::Message::Select(i)) => {
-                self.selected_event = Some(i);
+            Message::View(view::Message::SelectSub(i, j)) => {
+                self.selected_event = Some((i, j));
             }
             Message::View(view::Message::Next) => {
                 if let Some(last) = self.events.last() {

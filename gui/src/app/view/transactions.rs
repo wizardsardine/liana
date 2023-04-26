@@ -81,7 +81,6 @@ pub fn transactions_view<'a>(
             .align_items(Alignment::Center)
             .spacing(30),
     )
-    .into()
 }
 
 fn tx_list_view<'a>(i: usize, tx: &HistoryTransaction) -> Element<'a, Message> {
@@ -220,5 +219,4 @@ pub fn tx_view<'a>(
             ))
             .spacing(20),
     )
-    .into()
 }
