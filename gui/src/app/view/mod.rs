@@ -53,7 +53,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .align_items(iced::Alignment::Center),
         )
         .style(theme::Button::Menu(true))
-        .on_press(Message::Reload)
+        .on_press(Message::Menu(Menu::Transactions))
         .width(iced::Length::Fill)
     } else {
         Button::new(

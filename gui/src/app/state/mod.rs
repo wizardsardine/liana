@@ -93,26 +93,22 @@ impl State for Home {
             } else {
                 &self.events[i - self.pending_events.len()]
             };
-            return view::modal(
-                false,
-                self.warning.as_ref(),
-                view::transactions::tx_view(cache, event),
-                None::<Element<view::Message>>,
-            );
+            view::transactions::tx_view(cache, event, self.warning.as_ref())
+        } else {
+            view::dashboard(
+                &Menu::Home,
+                cache,
+                None,
+                view::home::home_view(
+                    &self.balance,
+                    &self.unconfirmed_balance,
+                    &self.remaining_sequence,
+                    self.number_of_expiring_coins,
+                    &self.pending_events,
+                    &self.events,
+                ),
+            )
         }
-        view::dashboard(
-            &Menu::Home,
-            cache,
-            None,
-            view::home::home_view(
-                &self.balance,
-                &self.unconfirmed_balance,
-                &self.remaining_sequence,
-                self.number_of_expiring_coins,
-                &self.pending_events,
-                &self.events,
-            ),
-        )
     }
 
     fn update(
