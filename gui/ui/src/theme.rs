@@ -93,6 +93,7 @@ pub enum Container {
     Badge(Badge),
     Pill(Pill),
     Custom(iced::Color),
+    QrCode,
 }
 
 impl container::StyleSheet for Theme {
@@ -125,6 +126,11 @@ impl container::StyleSheet for Theme {
                     background: (*c).into(),
                     ..container::Appearance::default()
                 },
+                Container::QrCode => container::Appearance {
+                    background: color::WHITE.into(),
+                    border_radius: 25.0,
+                    ..container::Appearance::default()
+                },
             },
             Theme::Dark => match style {
                 Container::Transparent => container::Appearance {
@@ -150,6 +156,11 @@ impl container::StyleSheet for Theme {
                 Container::Pill(c) => c.appearance(self),
                 Container::Custom(c) => container::Appearance {
                     background: (*c).into(),
+                    ..container::Appearance::default()
+                },
+                Container::QrCode => container::Appearance {
+                    background: color::WHITE.into(),
+                    border_radius: 25.0,
                     ..container::Appearance::default()
                 },
             },
