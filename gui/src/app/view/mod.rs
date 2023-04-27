@@ -251,27 +251,23 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
             Column::new()
                 .push(warn(warning))
                 .push(
-                    main_section(Container::new(scrollable(row!(
+                    Container::new(scrollable(row!(
                         Space::with_width(Length::FillPortion(1)),
                         column!(Space::with_height(Length::Units(150)), content.into())
-                            .width(Length::FillPortion(8)),
+                            .width(Length::FillPortion(8))
+                            .max_width(1500),
                         Space::with_width(Length::FillPortion(1)),
-                    ))))
-                    .width(Length::Fill),
+                    )))
+                    .center_x()
+                    .style(theme::Container::Background)
+                    .width(Length::Fill)
+                    .height(Length::Fill),
                 )
                 .width(Length::FillPortion(10)),
         )
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
-}
-
-fn main_section<'a, T: 'a>(menu: Container<'a, T>) -> Container<'a, T> {
-    Container::new(menu.max_width(1500))
-        .style(theme::Container::Background)
-        .center_x()
-        .width(Length::Fill)
-        .height(Length::Fill)
 }
 
 pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
