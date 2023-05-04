@@ -46,7 +46,6 @@ const MAINNET_GENESIS_TIME: u32 = 1231006505;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     NoOutpoint,
-    NoDestination,
     InvalidFeerate(/* sats/vb */ u64),
     UnknownOutpoint(bitcoin::OutPoint),
     AlreadySpent(bitcoin::OutPoint),
@@ -54,7 +53,7 @@ pub enum CommandError {
     InvalidOutputValue(bitcoin::Amount),
     InsufficientFunds(
         /* in value */ bitcoin::Amount,
-        /* out value */ bitcoin::Amount,
+        /* out value */ Option<bitcoin::Amount>,
         /* target feerate */ u64,
     ),
     InsaneFees(InsaneFeeInfo),
@@ -75,7 +74,6 @@ impl fmt::Display for CommandError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::NoOutpoint => write!(f, "No provided outpoint. Need at least one."),
-            Self::NoDestination => write!(f, "No provided destination. Need at least one."),
             Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {} sats/vb.", sats_vb),
             Self::AlreadySpent(op) => write!(f, "Coin at '{}' is already spent.", op),
             Self::UnknownOutpoint(op) => write!(f, "Unknown outpoint '{}'.", op),
@@ -85,11 +83,19 @@ impl fmt::Display for CommandError {
                 addr, expected, addr.network
             ),
             Self::InvalidOutputValue(amount) => write!(f, "Invalid output value '{}'.", amount),
-            Self::InsufficientFunds(in_val, out_val, feerate) => write!(
-                f,
-                "Cannot create a {} sat/vb transaction with input value {} and output value {}",
-                feerate, in_val, out_val
-            ),
+            Self::InsufficientFunds(in_val, out_val, feerate) => if let Some(out_val) = out_val {
+                write!(
+                    f,
+                    "Cannot create a {} sat/vb transaction with input value {} and output value {}",
+                    feerate, in_val, out_val
+                )
+            } else {
+                write!(
+                    f,
+                    "Not enough fund to create a {} sat/vb transaction with input value {}",
+                    feerate, in_val
+                )
+            },
             Self::InsaneFees(info) => write!(
                 f,
                 "We assume transactions with a fee larger than {} sats or a feerate larger than {} sats/vb are a mistake. \
@@ -161,7 +167,10 @@ fn sanity_check_psbt(
     let tx = &psbt.unsigned_tx;
 
     // Must have as many in/out in the PSBT and Bitcoin tx.
-    if psbt.inputs.len() != tx.input.len() || psbt.outputs.len() != tx.output.len() {
+    if psbt.inputs.len() != tx.input.len()
+        || psbt.outputs.len() != tx.output.len()
+        || tx.output.is_empty()
+    {
         return Err(CommandError::SanityCheckFailure(psbt.clone()));
     }
 
@@ -320,11 +329,9 @@ impl DaemonControl {
         coins_outpoints: &[bitcoin::OutPoint],
         feerate_vb: u64,
     ) -> Result<CreateSpendResult, CommandError> {
+        let is_self_send = destinations.is_empty();
         if coins_outpoints.is_empty() {
             return Err(CommandError::NoOutpoint);
-        }
-        if destinations.is_empty() {
-            return Err(CommandError::NoDestination);
         }
         if feerate_vb < 1 {
             return Err(CommandError::InvalidFeerate(feerate_vb));
@@ -419,6 +426,7 @@ impl DaemonControl {
                 ..PsbtOut::default()
             });
         }
+        assert_eq!(txouts.is_empty(), is_self_send);
 
         // Now create the transaction, compute its fees and already sanity check if its feerate
         // isn't much less than what was asked (and obviously that fees aren't negative).
@@ -433,19 +441,23 @@ impl DaemonControl {
             in_value
                 .checked_sub(out_value)
                 .ok_or(CommandError::InsufficientFunds(
-                    in_value, out_value, feerate_vb,
+                    in_value,
+                    Some(out_value),
+                    feerate_vb,
                 ))?;
         let nochange_feerate_vb = absolute_fee.to_sat().checked_div(nochange_vb).unwrap();
         if nochange_feerate_vb.checked_mul(10).unwrap() < feerate_vb.checked_mul(9).unwrap() {
             return Err(CommandError::InsufficientFunds(
-                in_value, out_value, feerate_vb,
+                in_value,
+                Some(out_value),
+                feerate_vb,
             ));
         }
 
         // If necessary, add a change output. The computation here is a bit convoluted: we infer
         // the needed change value from the target feerate and the size of the transaction *with
         // an added output* (for the change).
-        if nochange_feerate_vb > feerate_vb {
+        if is_self_send || nochange_feerate_vb > feerate_vb {
             // Get the change address to create a dummy change txo.
             let change_index = db_conn.change_index();
             let change_desc = self
@@ -487,7 +499,11 @@ impl DaemonControl {
                         bip32_derivation: change_desc.bip32_derivations(),
                         ..PsbtOut::default()
                     });
+                } else if is_self_send {
+                    return Err(CommandError::InsufficientFunds(in_value, None, feerate_vb));
                 }
+            } else if is_self_send {
+                return Err(CommandError::InsufficientFunds(in_value, None, feerate_vb));
             }
         }
 
@@ -772,9 +788,9 @@ impl DaemonControl {
         // Compute the value of the single output based on the requested feerate.
         let tx_vbytes = (psbt.unsigned_tx.vsize() + sat_vb) as u64;
         let absolute_fee = bitcoin::Amount::from_sat(tx_vbytes.checked_mul(feerate_vb).unwrap());
-        let output_value = in_value.checked_sub(absolute_fee).ok_or({
-            CommandError::InsufficientFunds(in_value, bitcoin::Amount::from_sat(0), feerate_vb)
-        })?;
+        let output_value = in_value
+            .checked_sub(absolute_fee)
+            .ok_or(CommandError::InsufficientFunds(in_value, None, feerate_vb))?;
         psbt.unsigned_tx.output[0].value = output_value.to_sat();
 
         sanity_check_psbt(&self.config.main_descriptor, &psbt)?;
@@ -945,10 +961,6 @@ mod tests {
             Err(CommandError::NoOutpoint)
         );
         assert_eq!(
-            control.create_spend(&HashMap::new(), &[dummy_op], 1),
-            Err(CommandError::NoDestination)
-        );
-        assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 0),
             Err(CommandError::InvalidFeerate(0))
         );
@@ -996,7 +1008,7 @@ mod tests {
             control.create_spend(&destinations, &[dummy_op], 10_000),
             Err(CommandError::InsufficientFunds(
                 bitcoin::Amount::from_sat(100_000),
-                bitcoin::Amount::from_sat(10_000),
+                Some(bitcoin::Amount::from_sat(10_000)),
                 10_000
             ))
         );
@@ -1005,7 +1017,7 @@ mod tests {
             control.create_spend(&destinations, &[dummy_op], 1),
             Err(CommandError::InsufficientFunds(
                 bitcoin::Amount::from_sat(100_000),
-                bitcoin::Amount::from_sat(100_001),
+                Some(bitcoin::Amount::from_sat(100_001)),
                 1
             ))
         );
