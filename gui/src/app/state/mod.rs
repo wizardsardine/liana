@@ -266,23 +266,19 @@ impl From<Home> for Box<dyn State> {
 
 #[derive(Default)]
 pub struct ReceivePanel {
-    address: Option<Address>,
+    addresses: Vec<Address>,
     qr_code: Option<qr_code::State>,
     warning: Option<Error>,
 }
 
 impl State for ReceivePanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Some(address) = &self.address {
-            view::dashboard(
-                &Menu::Receive,
-                cache,
-                self.warning.as_ref(),
-                view::receive::receive(address, self.qr_code.as_ref().unwrap()),
-            )
-        } else {
-            view::dashboard(&Menu::Receive, cache, self.warning.as_ref(), Column::new())
-        }
+        view::dashboard(
+            &Menu::Receive,
+            cache,
+            self.warning.as_ref(),
+            view::receive::receive(&self.addresses, self.qr_code.as_ref()),
+        )
     }
     fn update(
         &mut self,
@@ -296,7 +292,7 @@ impl State for ReceivePanel {
                     Ok(address) => {
                         self.warning = None;
                         self.qr_code = Some(qr_code::State::new(address.to_qr_uri()).unwrap());
-                        self.address = Some(address);
+                        self.addresses.push(address);
                     }
                     Err(e) => self.warning = Some(e),
                 }
@@ -367,6 +363,6 @@ mod tests {
         let sandbox = sandbox.load(client, &Cache::default()).await;
 
         let panel = sandbox.state();
-        assert_eq!(panel.address, Some(addr));
+        assert_eq!(panel.addresses, vec![addr]);
     }
 }
