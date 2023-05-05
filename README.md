@@ -1,6 +1,11 @@
+<div align="center">
+<img src="gui/ui/static/logos/liana-app-icon.svg" width="140px" />
+
 # Liana
 
 *The missing safety net for your bitcoins*.
+
+</div>
 
 
 ## About
