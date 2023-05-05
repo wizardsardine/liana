@@ -93,12 +93,13 @@ pub fn create_spend_tx<'a>(
     feerate: &form::Value<String>,
     error: Option<&Error>,
 ) -> Element<'a, Message> {
+    let is_self_send = recipients.is_empty();
     dashboard(
         &Menu::CreateSpendTx,
         cache,
         error,
         Column::new()
-            .push(h3("Send"))
+            .push(h3(if is_self_send { "Self send" } else { "Send" }))
             .push(
                 Column::new()
                     .push(Column::with_children(recipients).spacing(10))
@@ -151,7 +152,26 @@ pub fn create_spend_tx<'a>(
                             Row::new()
                                 .align_items(Alignment::Center)
                                 .push(p1_bold("Coins selection").width(Length::Fill))
-                                .push(Container::new(if let Some(amount_left) = amount_left {
+                                .push(if is_self_send {
+                                    Row::new()
+                                        .spacing(5)
+                                        .push(amount_with_size(
+                                            &Amount::from_sat(
+                                                coins
+                                                    .iter()
+                                                    .filter_map(|(coin, selected)| {
+                                                        if *selected {
+                                                            Some(coin.amount.to_sat())
+                                                        } else {
+                                                            None
+                                                        }
+                                                    })
+                                                    .sum(),
+                                            ),
+                                            P2_SIZE,
+                                        ))
+                                        .push(p2_regular("selected").style(color::GREY_3))
+                                } else if let Some(amount_left) = amount_left {
                                     Row::new()
                                         .spacing(5)
                                         .push(amount_with_size(amount_left, P2_SIZE))
@@ -159,7 +179,7 @@ pub fn create_spend_tx<'a>(
                                 } else {
                                     Row::new()
                                         .push(text("Feerate needs to be set.").style(color::GREY_3))
-                                }))
+                                })
                                 .width(Length::Fill),
                         )
                         .push(
@@ -193,8 +213,9 @@ pub fn create_spend_tx<'a>(
                     )
                     .push(
                         if is_valid
-                            && total_amount < *balance_available
-                            && Some(&Amount::from_sat(0)) == amount_left
+                            && (is_self_send
+                                || (total_amount < *balance_available
+                                    && Some(&Amount::from_sat(0)) == amount_left))
                         {
                             button::primary(None, "Next")
                                 .on_press(Message::CreateSpend(CreateSpendMessage::Generate))

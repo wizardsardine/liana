@@ -112,8 +112,11 @@ impl DefineSpend {
         }
     }
     fn check_valid(&mut self) {
-        self.is_valid = !self.recipients.is_empty();
+        self.is_valid = self.feerate.valid && !self.feerate.value.is_empty();
         self.is_duplicate = false;
+        if !self.coins.iter().any(|(_, selected)| *selected) {
+            self.is_valid = false;
+        }
         for (i, recipient) in self.recipients.iter().enumerate() {
             if !recipient.valid() {
                 self.is_valid = false;
@@ -212,9 +215,9 @@ impl Step for DefineSpend {
                 }
 
                 view::CreateSpendMessage::FeerateEdited(s) => {
-                    if s.parse::<u64>().is_ok() {
+                    if let Ok(value) = s.parse::<u64>() {
                         self.feerate.value = s;
-                        self.feerate.valid = true;
+                        self.feerate.valid = value != 0;
                         self.amount_left_to_select();
                     } else if s.is_empty() {
                         self.feerate.value = "".to_string();
