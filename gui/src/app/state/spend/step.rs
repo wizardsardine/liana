@@ -60,12 +60,7 @@ pub struct DefineSpend {
 }
 
 impl DefineSpend {
-    pub fn new(
-        descriptor: LianaDescriptor,
-        coins: Vec<Coin>,
-        timelock: u16,
-        blockheight: u32,
-    ) -> Self {
+    pub fn new(descriptor: LianaDescriptor, coins: &[Coin], timelock: u16) -> Self {
         let balance_available = coins
             .iter()
             .filter_map(|coin| {
@@ -76,27 +71,17 @@ impl DefineSpend {
                 }
             })
             .sum();
-        let mut coins: Vec<(Coin, bool)> = coins
-            .into_iter()
+        let coins: Vec<(Coin, bool)> = coins
+            .iter()
             .filter_map(|c| {
                 if c.spend_info.is_none() {
-                    Some((c, false))
+                    Some((*c, false))
                 } else {
                     None
                 }
             })
             .collect();
-        coins.sort_by(|(a, _), (b, _)| {
-            if remaining_sequence(a, blockheight, timelock)
-                == remaining_sequence(b, blockheight, timelock)
-            {
-                // bigger amount first
-                b.amount.cmp(&a.amount)
-            } else {
-                // smallest blockheight (remaining_sequence) first
-                a.block_height.cmp(&b.block_height)
-            }
-        });
+
         Self {
             balance_available,
             descriptor,
@@ -111,6 +96,37 @@ impl DefineSpend {
             warning: None,
         }
     }
+
+    pub fn with_preselected_coins(mut self, preselected_coins: &[OutPoint]) -> Self {
+        for (coin, selected) in &mut self.coins {
+            *selected = preselected_coins.contains(&coin.outpoint);
+        }
+        self
+    }
+
+    pub fn with_coins_sorted(mut self, blockheight: u32) -> Self {
+        let timelock = self.timelock;
+        self.coins.sort_by(|(a, a_selected), (b, b_selected)| {
+            if *a_selected && !b_selected || !a_selected && *b_selected {
+                b_selected.cmp(a_selected)
+            } else if remaining_sequence(a, blockheight, timelock)
+                == remaining_sequence(b, blockheight, timelock)
+            {
+                // bigger amount first
+                b.amount.cmp(&a.amount)
+            } else {
+                // smallest blockheight (remaining_sequence) first
+                a.block_height.cmp(&b.block_height)
+            }
+        });
+        self
+    }
+
+    pub fn self_send(mut self) -> Self {
+        self.recipients = Vec::new();
+        self
+    }
+
     fn check_valid(&mut self) {
         self.is_valid = self.feerate.valid && !self.feerate.value.is_empty();
         self.is_duplicate = false;

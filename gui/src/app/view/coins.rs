@@ -1,8 +1,8 @@
-use iced::{Alignment, Length};
+use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
     color,
-    component::{amount::*, badge, text::*},
+    component::{amount::*, badge, button, text::*},
     icon,
     image::*,
     theme,
@@ -11,7 +11,7 @@ use liana_ui::{
 };
 
 use crate::{
-    app::{cache::Cache, view::message::Message},
+    app::{cache::Cache, menu::Menu, view::message::Message},
     daemon::model::{remaining_sequence, Coin},
 };
 
@@ -136,7 +136,7 @@ fn coin_list_view(
                                         .spacing(5)
                                 })),
                         )
-                        .push_maybe(coin.spend_info.map(|info| {
+                        .push(if let Some(info) = coin.spend_info {
                             Column::new()
                                 .push(
                                     Row::new()
@@ -159,7 +159,16 @@ fn coin_list_view(
                                     )
                                 })
                                 .spacing(5)
-                        })),
+                        } else {
+                            Column::new().push(
+                                Row::new().push(Space::with_width(Length::Fill)).push(
+                                    button::primary(Some(icon::arrow_repeat()), "Refresh coin")
+                                        .on_press(Message::Menu(Menu::RefreshCoins(vec![
+                                            coin.outpoint,
+                                        ]))),
+                                ),
+                            )
+                        }),
                 )
             } else {
                 None

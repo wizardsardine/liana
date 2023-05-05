@@ -117,12 +117,16 @@ pub fn create_spend_tx<'a>(
                                 None
                             })
                             .push(Space::with_width(Length::Fill))
-                            .push(
-                                button::secondary(Some(icon::plus_icon()), "Add recipient")
-                                    .on_press(Message::CreateSpend(
-                                        CreateSpendMessage::AddRecipient,
-                                    )),
-                            ),
+                            .push_maybe(if is_self_send {
+                                None
+                            } else {
+                                Some(
+                                    button::secondary(Some(icon::plus_icon()), "Add recipient")
+                                        .on_press(Message::CreateSpend(
+                                            CreateSpendMessage::AddRecipient,
+                                        )),
+                                )
+                            }),
                     )
                     .spacing(20),
             )

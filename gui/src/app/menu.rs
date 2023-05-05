@@ -1,3 +1,4 @@
+use liana::miniscript::bitcoin::OutPoint;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Menu {
     Home,
@@ -8,4 +9,5 @@ pub enum Menu {
     Coins,
     CreateSpendTx,
     Recovery,
+    RefreshCoins(Vec<OutPoint>),
 }

@@ -92,6 +92,13 @@ impl App {
                 self.cache.blockheight as u32,
             )
             .into(),
+            menu::Menu::RefreshCoins(preselected) => CreateSpendPanel::new_self_send(
+                self.wallet.clone(),
+                &self.cache.coins,
+                self.cache.blockheight as u32,
+                preselected,
+            )
+            .into(),
         };
         self.state.load(self.daemon.clone())
     }
