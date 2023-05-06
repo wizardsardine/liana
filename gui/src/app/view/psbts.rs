@@ -54,7 +54,7 @@ pub fn import_psbt_success_view<'a>() -> Element<'a, Message> {
         .push(
             card::simple(Container::new(text("PSBT is imported").style(color::GREEN))).padding(50),
         )
-        .width(Length::Units(400))
+        .width(Length::Fixed(400.0))
         .align_items(Alignment::Center)
         .into()
 }

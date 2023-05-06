@@ -6,7 +6,7 @@ use liana_ui::{component::text::*, image, theme, widget::*};
 
 pub fn main() -> iced::Result {
     let mut settings = Settings::with_flags(Config {});
-    settings.default_text_size = P1_SIZE;
+    settings.default_text_size = P1_SIZE.into();
     DesignSystem::run(settings)
 }
 
@@ -102,7 +102,7 @@ impl Application for DesignSystem {
         let sidebar = container(
             column![
                 image::liana_grey_logo(),
-                Space::with_height(Length::Units(100)),
+                Space::with_height(Length::Fixed(100.0)),
                 self.sections.iter().enumerate().fold(
                     Column::new().spacing(10),
                     |col, (i, section)| col.push(
@@ -113,7 +113,7 @@ impl Application for DesignSystem {
                         )
                         .style(theme::Button::Menu(i == self.current))
                         .on_press(Message::Section(i))
-                        .width(Length::Units(200))
+                        .width(Length::Fixed(200.0))
                     )
                 )
             ]
@@ -127,7 +127,7 @@ impl Application for DesignSystem {
             sidebar.width(Length::FillPortion(2)),
             Space::with_width(Length::FillPortion(1)),
             container(scrollable(column![
-                Space::with_height(Length::Units(150)),
+                Space::with_height(Length::Fixed(150.0)),
                 container(self.sections[self.current].view()).width(Length::Fill)
             ]))
             .width(Length::FillPortion(8)),

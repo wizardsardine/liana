@@ -20,5 +20,5 @@ use crate::{theme, widget::*};
 pub fn separation<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Column::new().push(Text::new(" ")))
         .style(theme::Container::Border)
-        .height(Length::Units(1))
+        .height(Length::Fixed(1.0))
 }

@@ -9,7 +9,7 @@ const BOOTSTRAP_ICONS: Font = Font::External {
 fn bootstrap_icon(unicode: char) -> Text<'static> {
     Text::new(unicode.to_string())
         .font(BOOTSTRAP_ICONS)
-        .width(Length::Units(20))
+        .width(Length::Fixed(20.0))
         .horizontal_alignment(alignment::Horizontal::Center)
         .size(20)
 }
@@ -126,7 +126,7 @@ const ICONEX_ICONS: Font = Font::External {
 fn iconex_icon(unicode: char) -> Text<'static> {
     Text::new(unicode.to_string())
         .font(ICONEX_ICONS)
-        .width(Length::Units(20))
+        .width(Length::Fixed(20.0))
         .horizontal_alignment(alignment::Horizontal::Center)
         .size(20)
 }

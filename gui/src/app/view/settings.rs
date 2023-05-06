@@ -187,7 +187,7 @@ pub fn about_section<'a>(
                                 .width(Length::Fill),
                         )
                         .push(separation().width(Length::Fill))
-                        .push(Space::with_height(Length::Units(10)))
+                        .push(Space::with_height(Length::Fixed(10.0)))
                         .push(
                             Row::new().push(Space::with_width(Length::Fill)).push(
                                 Column::new()
@@ -568,7 +568,7 @@ pub fn wallet_settings<'a>(
                         scrollable(
                             Column::new()
                                 .push(text(descriptor.to_owned()).small())
-                                .push(Space::with_height(Length::Units(5))),
+                                .push(Space::with_height(Length::Fixed(5.0))),
                         )
                         .horizontal_scroll(
                             scrollable::Properties::new().width(5).scroller_width(5),
@@ -603,7 +603,7 @@ pub fn wallet_settings<'a>(
                                 Row::new()
                                     .spacing(10)
                                     .align_items(Alignment::Center)
-                                    .push(text(fg.to_string()).bold().width(Length::Units(100)))
+                                    .push(text(fg.to_string()).bold().width(Length::Fixed(100.0)))
                                     .push(
                                         form::Form::new("Alias", name, move |msg| {
                                             Message::Settings(
@@ -683,6 +683,6 @@ pub fn register_wallet_modal<'a>(
                 .width(Length::Fill)
                 .align_items(Alignment::Center),
         ))
-        .width(Length::Units(500))
+        .width(Length::Fixed(500.0))
         .into()
 }

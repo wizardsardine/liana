@@ -57,7 +57,7 @@ pub fn spend_view<'a>(
                 Row::new()
                     .push(
                         button::secondary(None, "Delete")
-                            .width(Length::Units(200))
+                            .width(Length::Fixed(200.0))
                             .on_press(Message::Spend(SpendTxMessage::Delete)),
                     )
                     .width(Length::Fill)
@@ -65,13 +65,13 @@ pub fn spend_view<'a>(
                 Row::new()
                     .push(
                         button::secondary(None, "< Previous")
-                            .width(Length::Units(150))
+                            .width(Length::Fixed(150.0))
                             .on_press(Message::Previous),
                     )
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::secondary(None, "Save")
-                            .width(Length::Units(150))
+                            .width(Length::Fixed(150.0))
                             .on_press(Message::Spend(SpendTxMessage::Save)),
                     )
                     .width(Length::Fill)
@@ -217,7 +217,7 @@ pub fn create_spend_tx<'a>(
                     .push(
                         button::primary(None, "Clear")
                             .on_press(Message::Menu(Menu::CreateSpendTx))
-                            .width(Length::Units(100)),
+                            .width(Length::Fixed(100.0)),
                     )
                     .push(
                         if is_valid
@@ -227,13 +227,13 @@ pub fn create_spend_tx<'a>(
                         {
                             button::primary(None, "Next")
                                 .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
-                                .width(Length::Units(100))
+                                .width(Length::Fixed(100.0))
                         } else {
-                            button::primary(None, "Next").width(Length::Units(100))
+                            button::primary(None, "Next").width(Length::Fixed(100.0))
                         },
                     ),
             )
-            .push(Space::with_height(Length::Units(20)))
+            .push(Space::with_height(Length::Fixed(20.0)))
             .spacing(20),
     )
 }
@@ -262,7 +262,7 @@ pub fn recipient_view<'a>(
                         Container::new(p1_bold("Pay to"))
                             .align_x(alignment::Horizontal::Right)
                             .padding(10)
-                            .width(Length::Units(80)),
+                            .width(Length::Fixed(80.0)),
                     )
                     .push(
                         form::Form::new("Address", address, move |msg| {
@@ -281,7 +281,7 @@ pub fn recipient_view<'a>(
                         Container::new(p1_bold("Amount"))
                             .padding(10)
                             .align_x(alignment::Horizontal::Right)
-                            .width(Length::Units(80)),
+                            .width(Length::Fixed(80.0)),
                     )
                     .push(
                         form::Form::new("0.001 (in BTC)", amount, move |msg| {
@@ -328,7 +328,7 @@ fn coin_list_view<'a>(
         )
         .push(amount(&coin.amount))
         // give some space for the scroll bar without using padding
-        .push(Space::with_width(Length::Units(0)))
+        .push(Space::with_width(Length::Fixed(0.0)))
         .align_items(Alignment::Center)
         .spacing(20)
         .into()

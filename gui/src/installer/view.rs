@@ -78,7 +78,9 @@ const NETWORKS: [Network; 4] = [
 pub fn welcome<'a>() -> Element<'a, Message> {
     Container::new(
         Column::new()
-            .push(Container::new(image::liana_brand_grey().width(Length::Units(200))).padding(100))
+            .push(
+                Container::new(image::liana_brand_grey().width(Length::Fixed(200.0))).padding(100),
+            )
             .push(
                 Container::new(
                     Column::new()
@@ -93,7 +95,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                             .align_items(Alignment::Center)
                                             .push(
                                                 image::create_new_wallet_icon()
-                                                    .width(Length::Units(100)),
+                                                    .width(Length::Fixed(100.0)),
                                             )
                                             .push(
                                                 p1_regular("Create a new wallet")
@@ -101,7 +103,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                             )
                                             .push(
                                                 button::secondary(None, "Select")
-                                                    .width(Length::Units(200))
+                                                    .width(Length::Fixed(200.0))
                                                     .on_press(Message::CreateWallet),
                                             )
                                             .align_items(Alignment::Center),
@@ -115,7 +117,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                             .align_items(Alignment::Center)
                                             .push(
                                                 image::participate_in_new_wallet_icon()
-                                                    .width(Length::Units(200)),
+                                                    .width(Length::Fixed(200.0)),
                                             )
                                             .push(
                                                 p1_regular("Participate in new wallet")
@@ -123,7 +125,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                             )
                                             .push(
                                                 button::secondary(None, "Select")
-                                                    .width(Length::Units(200))
+                                                    .width(Length::Fixed(200.0))
                                                     .on_press(Message::ParticipateWallet),
                                             )
                                             .align_items(Alignment::Center),
@@ -137,14 +139,14 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                             .align_items(Alignment::Center)
                                             .push(
                                                 image::restore_wallet_icon()
-                                                    .width(Length::Units(100)),
+                                                    .width(Length::Fixed(100.0)),
                                             )
                                             .push(
                                                 p1_regular("Restore a wallet").style(color::GREY_3),
                                             )
                                             .push(
                                                 button::secondary(None, "Select")
-                                                    .width(Length::Units(200))
+                                                    .width(Length::Fixed(200.0))
                                                     .on_press(Message::ImportWallet),
                                             )
                                             .align_items(Alignment::Center),
@@ -152,7 +154,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                     .padding(20),
                                 ),
                         )
-                        .push(Space::with_height(Length::Units(100)))
+                        .push(Space::with_height(Length::Fixed(100.0)))
                         .spacing(50)
                         .align_items(Alignment::Center),
                 )
@@ -228,13 +230,13 @@ pub fn define_descriptor<'a>(
                             .push(
                                 Button::new(
                                     Container::new(icon::plus_icon().size(50))
-                                        .width(Length::Units(150))
-                                        .height(Length::Units(150))
+                                        .width(Length::Fixed(150.0))
+                                        .height(Length::Fixed(150.0))
                                         .align_y(alignment::Vertical::Center)
                                         .align_x(alignment::Horizontal::Center),
                                 )
-                                .width(Length::Units(150))
-                                .height(Length::Units(150))
+                                .width(Length::Fixed(150.0))
+                                .height(Length::Fixed(150.0))
                                 .style(theme::Button::TransparentBorder)
                                 .on_press(
                                     Message::DefineDescriptor(
@@ -281,18 +283,18 @@ pub fn define_descriptor<'a>(
                             .on_press(Message::DefineDescriptor(
                                 message::DefineDescriptor::AddRecoveryPath,
                             ))
-                            .width(Length::Units(200)),
+                            .width(Length::Fixed(200.0)),
                     )
                     .push(if !valid {
-                        button::primary(None, "Next").width(Length::Units(200))
+                        button::primary(None, "Next").width(Length::Fixed(200.0))
                     } else {
                         button::primary(None, "Next")
-                            .width(Length::Units(200))
+                            .width(Length::Fixed(200.0))
                             .on_press(Message::Next)
                     }),
             )
             .push_maybe(error.map(|e| card::error("Failed to create descriptor", e.to_string())))
-            .push(Space::with_height(Length::Units(20)))
+            .push(Space::with_height(Length::Fixed(20.0)))
             .spacing(50),
         false,
     )
@@ -328,13 +330,13 @@ pub fn recovery_path_view(
                                 .push(
                                     Button::new(
                                         Container::new(icon::plus_icon().size(50))
-                                            .width(Length::Units(150))
-                                            .height(Length::Units(150))
+                                            .width(Length::Fixed(150.0))
+                                            .height(Length::Fixed(150.0))
                                             .align_y(alignment::Vertical::Center)
                                             .align_x(alignment::Horizontal::Center),
                                     )
-                                    .width(Length::Units(150))
-                                    .height(Length::Units(150))
+                                    .width(Length::Fixed(150.0))
+                                    .height(Length::Fixed(150.0))
                                     .style(theme::Button::TransparentBorder)
                                     .on_press(message::DefinePath::AddKey),
                                 )
@@ -403,10 +405,10 @@ pub fn import_descriptor<'a>(
                     .push(col_descriptor),
             )
             .push(if imported_descriptor.value.is_empty() {
-                button::primary(None, "Next").width(Length::Units(200))
+                button::primary(None, "Next").width(Length::Fixed(200.0))
             } else {
                 button::primary(None, "Next")
-                    .width(Length::Units(200))
+                    .width(Length::Fixed(200.0))
                     .on_press(Message::Next)
             })
             .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
@@ -636,10 +638,10 @@ pub fn participate_xpub<'a>(
             ))
             .push(if shared {
                 button::primary(None, "Next")
-                    .width(Length::Units(200))
+                    .width(Length::Fixed(200.0))
                     .on_press(Message::Next)
             } else {
-                button::primary(None, "Next").width(Length::Units(200))
+                button::primary(None, "Next").width(Length::Fixed(200.0))
             })
             .spacing(50),
         true
@@ -719,9 +721,9 @@ pub fn register_descriptor<'a>(
             .push(if done && !processing {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
-                    .width(Length::Units(200))
+                    .width(Length::Fixed(200.0))
             } else {
-                button::primary(None, "Next").width(Length::Units(200))
+                button::primary(None, "Next").width(Length::Fixed(200.0))
             })
             .spacing(50),
         true,
@@ -786,9 +788,9 @@ pub fn backup_descriptor<'a>(
             .push(if done {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
-                    .width(Length::Units(200))
+                    .width(Length::Fixed(200.0))
             } else {
-                button::primary(None, "Next").width(Length::Units(200))
+                button::primary(None, "Next").width(Length::Fixed(200.0))
             })
             .spacing(50),
         true,
@@ -856,7 +858,7 @@ pub fn define_bitcoin<'a>(
                     }
                 })
             } else {
-                Some(Container::new(Space::with_height(Length::Units(25))))
+                Some(Container::new(Space::with_height(Length::Fixed(25.0))))
             })
             .push(
                 Row::new()
@@ -866,14 +868,14 @@ pub fn define_bitcoin<'a>(
                             .on_press(Message::DefineBitcoind(
                                 message::DefineBitcoind::PingBitcoind,
                             ))
-                            .width(Length::Units(200)),
+                            .width(Length::Fixed(200.0)),
                     ))
                     .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
                         button::primary(None, "Next")
                             .on_press(Message::Next)
-                            .width(Length::Units(200))
+                            .width(Length::Fixed(200.0))
                     } else {
-                        button::primary(None, "Next").width(Length::Units(200))
+                        button::primary(None, "Next").width(Length::Fixed(200.0))
                     }),
             )
             .spacing(50),
@@ -1007,10 +1009,10 @@ pub fn install<'a>(
                 )
                 .max_width(1000),
             )
-            .push(Space::with_height(Length::Units(50)))
+            .push(Space::with_height(Length::Fixed(50.0)))
             .push_maybe(warning.map(|e| card::invalid(text(e))))
             .push(if generating {
-                Container::new(button::primary(None, "Installing ...").width(Length::Units(200)))
+                Container::new(button::primary(None, "Installing ...").width(Length::Fixed(200.0)))
             } else if let Some(path) = config_path {
                 Container::new(
                     Column::new()
@@ -1018,7 +1020,7 @@ pub fn install<'a>(
                         .push(Container::new(
                             button::primary(None, "Start")
                                 .on_press(Message::Exit(path.clone()))
-                                .width(Length::Units(200)),
+                                .width(Length::Fixed(200.0)),
                         ))
                         .align_items(Alignment::Center)
                         .spacing(20),
@@ -1030,7 +1032,7 @@ pub fn install<'a>(
                 Container::new(
                     button::primary(None, "Finalize installation")
                         .on_press(Message::Install)
-                        .width(Length::Units(200)),
+                        .width(Length::Fixed(200.0)),
                 )
             })
             .spacing(10)
@@ -1119,7 +1121,7 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
                     Column::new()
                         .spacing(15)
                         .align_items(Alignment::Center)
-                        .push(image::key_mark_icon().width(Length::Units(30))),
+                        .push(image::key_mark_icon().width(Length::Fixed(30.0))),
                 )
                 .height(Length::Fill)
                 .align_y(alignment::Vertical::Center),
@@ -1128,11 +1130,11 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
                 button::secondary(Some(icon::pencil_icon()), "Set")
                     .on_press(message::DefineKey::Edit),
             )
-            .push(Space::with_height(Length::Units(5))),
+            .push(Space::with_height(Length::Fixed(5.0))),
     )
     .padding(5)
-    .height(Length::Units(150))
-    .width(Length::Units(150))
+    .height(Length::Fixed(150.0))
+    .width(Length::Fixed(150.0))
     .into()
 }
 
@@ -1164,12 +1166,12 @@ pub fn defined_descriptor_key(
                         scrollable(
                             Column::new()
                                 .push(text(name).bold())
-                                .push(Space::with_height(Length::Units(5))),
+                                .push(Space::with_height(Length::Fixed(5.0))),
                         )
                         .horizontal_scroll(Properties::new().width(5).scroller_width(5)),
                     )
-                    .push(image::success_mark_icon().width(Length::Units(50)))
-                    .push(Space::with_width(Length::Units(1))),
+                    .push(image::success_mark_icon().width(Length::Fixed(50.0)))
+                    .push(Space::with_width(Length::Fixed(1.0))),
             )
             .height(Length::Fill)
             .align_y(alignment::Vertical::Center),
@@ -1177,7 +1179,7 @@ pub fn defined_descriptor_key(
         .push(
             button::secondary(Some(icon::pencil_icon()), "Edit").on_press(message::DefineKey::Edit),
         )
-        .push(Space::with_height(Length::Units(5)));
+        .push(Space::with_height(Length::Fixed(5.0)));
 
     if !valid {
         Column::new()
@@ -1185,8 +1187,8 @@ pub fn defined_descriptor_key(
             .push(
                 card::invalid(col)
                     .padding(5)
-                    .height(Length::Units(150))
-                    .width(Length::Units(150)),
+                    .height(Length::Fixed(150.0))
+                    .width(Length::Fixed(150.0)),
             )
             .push(
                 text("Key is for a different network")
@@ -1200,8 +1202,8 @@ pub fn defined_descriptor_key(
             .push(
                 card::invalid(col)
                     .padding(5)
-                    .height(Length::Units(150))
-                    .width(Length::Units(150)),
+                    .height(Length::Fixed(150.0))
+                    .width(Length::Fixed(150.0)),
             )
             .push(text("Duplicate key").small().style(color::RED))
             .into()
@@ -1211,16 +1213,16 @@ pub fn defined_descriptor_key(
             .push(
                 card::invalid(col)
                     .padding(5)
-                    .height(Length::Units(150))
-                    .width(Length::Units(150)),
+                    .height(Length::Fixed(150.0))
+                    .width(Length::Fixed(150.0)),
             )
             .push(text("Duplicate name").small().style(color::RED))
             .into()
     } else {
         card::simple(col)
             .padding(5)
-            .height(Length::Units(150))
-            .width(Length::Units(150))
+            .height(Length::Fixed(150.0))
+            .width(Length::Fixed(150.0))
             .into()
     }
 }
@@ -1372,14 +1374,14 @@ pub fn edit_key_modal<'a>(
                                     message::ImportKeyModal::ConfirmXpub,
                                 ),
                             ))
-                            .width(Length::Units(200))
+                            .width(Length::Fixed(200.0))
                     } else {
-                        button::primary(None, "Apply").width(Length::Units(100))
+                        button::primary(None, "Apply").width(Length::Fixed(100.0))
                     },
                 )
                 .align_items(Alignment::Center),
         ))
-        .width(Length::Units(600))
+        .width(Length::Fixed(600.0))
         .into()
 }
 
@@ -1415,7 +1417,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                         })
                         .warning("Sequence must be superior to 0 and inferior to 65535"),
                     )
-                    .width(Length::Units(200)),
+                    .width(Length::Fixed(200.0)),
                 )
                 .spacing(10)
                 .push(text("blocks").bold()),
@@ -1454,7 +1456,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                         })
                         .step(144), // 144 blocks per day
                     )
-                    .width(Length::Units(500)),
+                    .width(Length::Fixed(500.0)),
                 );
         }
     }
@@ -1464,11 +1466,11 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
             .on_press(Message::DefineDescriptor(
                 message::DefineDescriptor::SequenceModal(message::SequenceModal::ConfirmSequence),
             ))
-            .width(Length::Units(200))
+            .width(Length::Fixed(200.0))
     } else {
-        button::primary(None, "Apply").width(Length::Units(200))
+        button::primary(None, "Apply").width(Length::Fixed(200.0))
     }))
-    .width(Length::Units(800))
+    .width(Length::Fixed(800.0))
     .into()
 }
 
@@ -1530,7 +1532,7 @@ pub fn backup_mnemonic<'a>(
                                 .align_items(Alignment::End)
                                 .push(
                                     Container::new(text(format!("#{}", i + 1)).small())
-                                        .width(Length::Units(50)),
+                                        .width(Length::Fixed(50.0)),
                                 )
                                 .push(text(*w).bold()),
                         )
@@ -1544,9 +1546,9 @@ pub fn backup_mnemonic<'a>(
             .push(if done {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
-                    .width(Length::Units(200))
+                    .width(Length::Fixed(200.0))
             } else {
-                button::primary(None, "Next").width(Length::Units(200))
+                button::primary(None, "Next").width(Length::Fixed(200.0))
             })
             .spacing(50),
         true,
@@ -1586,7 +1588,7 @@ pub fn recover_mnemonic<'a>(
                                 Row::new()
                             })
                             // Fixed height in order to not move words list
-                            .height(Length::Units(50)),
+                            .height(Length::Fixed(50.0)),
                         )
                         .push(words.iter().enumerate().fold(
                             Column::new().spacing(5),
@@ -1597,13 +1599,13 @@ pub fn recover_mnemonic<'a>(
                                         .align_items(Alignment::Center)
                                         .push(
                                             Container::new(text(format!("#{}", i + 1)).small())
-                                                .width(Length::Units(50)),
+                                                .width(Length::Fixed(50.0)),
                                         )
                                         .push(
-                                            Container::new(TextInput::new("", word, move |msg| {
-                                                Message::MnemonicWord(i, msg)
-                                            }))
-                                            .width(Length::Units(100)),
+                                            Container::new(TextInput::new("", word).on_input(
+                                                move |msg| Message::MnemonicWord(i, msg),
+                                            ))
+                                            .width(Length::Fixed(100.0)),
                                         )
                                         .push_maybe(if *valid {
                                             Some(icon::circle_check_icon().style(color::GREEN))
@@ -1613,7 +1615,7 @@ pub fn recover_mnemonic<'a>(
                                 )
                             },
                         ))
-                        .push(Space::with_height(Length::Units(50)))
+                        .push(Space::with_height(Length::Fixed(50.0)))
                         .push_maybe(error.map(|e| card::invalid(text(e).style(color::RED)))),
                 )
             } else {
@@ -1625,12 +1627,12 @@ pub fn recover_mnemonic<'a>(
                     .push(
                         button::secondary(None, "Import mnemonic")
                             .on_press(Message::ImportMnemonic(true))
-                            .width(Length::Units(200)),
+                            .width(Length::Fixed(200.0)),
                     )
                     .push(
                         button::primary(None, "Skip")
                             .on_press(Message::Skip)
-                            .width(Length::Units(200)),
+                            .width(Length::Fixed(200.0)),
                     )
             } else {
                 Row::new()
@@ -1638,15 +1640,15 @@ pub fn recover_mnemonic<'a>(
                     .push(
                         button::secondary(None, "Cancel")
                             .on_press(Message::ImportMnemonic(false))
-                            .width(Length::Units(200)),
+                            .width(Length::Fixed(200.0)),
                     )
                     .push(
                         if words.iter().any(|(_, valid)| !valid) || error.is_some() {
-                            button::primary(None, "Next").width(Length::Units(200))
+                            button::primary(None, "Next").width(Length::Fixed(200.0))
                         } else {
                             button::primary(None, "Next")
                                 .on_press(Message::Next)
-                                .width(Length::Units(200))
+                                .width(Length::Fixed(200.0))
                         },
                     )
             })
@@ -1664,7 +1666,7 @@ fn layout<'a>(
     Container::new(scrollable(
         Column::new()
             .width(Length::Fill)
-            .push(Space::with_height(Length::Units(100)))
+            .push(Space::with_height(Length::Fixed(100.0)))
             .push(
                 Row::new()
                     .align_items(Alignment::Center)
@@ -1689,7 +1691,7 @@ fn layout<'a>(
                     .push(
                         Container::new(
                             Column::new()
-                                .push(Space::with_height(Length::Units(100)))
+                                .push(Space::with_height(Length::Fixed(100.0)))
                                 .push(content),
                         )
                         .width(Length::FillPortion(if padding_left {
@@ -1779,12 +1781,12 @@ mod threshsold_input {
             let button = |label, on_press| {
                 Button::new(label)
                     .style(theme::Button::Transparent)
-                    .width(Length::Units(50))
+                    .width(Length::Fixed(50.0))
                     .on_press(on_press)
             };
 
             Column::new()
-                .width(Length::Units(150))
+                .width(Length::Fixed(150.0))
                 .push(button(icon::up_icon().size(30), Event::IncrementPressed))
                 .push(text("Threshold:").small().bold())
                 .push(

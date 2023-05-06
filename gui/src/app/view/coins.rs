@@ -180,7 +180,7 @@ pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, 
         Container::new(
             Row::new()
                 .spacing(5)
-                .push(icon::clock_icon().width(Length::Units(20)))
+                .push(icon::clock_icon().width(Length::Fixed(20.0)))
                 .push(p2_regular("Expired"))
                 .align_items(Alignment::Center),
         )
@@ -190,7 +190,7 @@ pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, 
         Container::new(
             Row::new()
                 .spacing(5)
-                .push(icon::clock_icon().width(Length::Units(20)))
+                .push(icon::clock_icon().width(Length::Fixed(20.0)))
                 .push(p2_regular(expire_message(seq)))
                 .align_items(Alignment::Center),
         )
@@ -200,7 +200,7 @@ pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, 
         Container::new(
             Row::new()
                 .spacing(5)
-                .push(icon::clock_icon().width(Length::Units(20)))
+                .push(icon::clock_icon().width(Length::Fixed(20.0)))
                 .push(p2_regular(expire_message(seq)).style(color::GREY_3))
                 .align_items(Alignment::Center),
         )

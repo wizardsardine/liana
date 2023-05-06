@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-iced = "0.7"
-iced_native = "0.8"
+iced = "0.9"
+iced_native = "0.10"
 web-sys = "0.3.61"
 chrono = "0.4"
 liana_ui = { path = "../.." }

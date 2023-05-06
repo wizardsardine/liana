@@ -78,7 +78,7 @@ pub fn psbt_view<'a>(
                 Row::new()
                     .push(
                         button::secondary(None, "Delete")
-                            .width(Length::Units(200))
+                            .width(Length::Fixed(200.0))
                             .on_press(Message::Spend(SpendTxMessage::Delete)),
                     )
                     .width(Length::Fill)
@@ -87,7 +87,7 @@ pub fn psbt_view<'a>(
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::secondary(None, "Save")
-                            .width(Length::Units(150))
+                            .width(Length::Fixed(150.0))
                             .on_press(Message::Spend(SpendTxMessage::Save)),
                     )
                     .width(Length::Fill)
@@ -98,7 +98,7 @@ pub fn psbt_view<'a>(
 pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Message> {
     if saved {
         card::simple(text("Transaction is saved"))
-            .width(Length::Units(400))
+            .width(Length::Fixed(400.0))
             .align_x(iced::alignment::Horizontal::Center)
             .into()
     } else {
@@ -117,7 +117,7 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
                         ),
                 ),
         )
-        .width(Length::Units(400))
+        .width(Length::Fixed(400.0))
         .into()
     }
 }
@@ -125,7 +125,7 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
 pub fn broadcast_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Message> {
     if saved {
         card::simple(text("Transaction is broadcast"))
-            .width(Length::Units(400))
+            .width(Length::Fixed(400.0))
             .align_x(iced::alignment::Horizontal::Center)
             .into()
     } else {
@@ -141,7 +141,7 @@ pub fn broadcast_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a,
                     ),
                 ),
         )
-        .width(Length::Units(400))
+        .width(Length::Fixed(400.0))
         .into()
     }
 }
@@ -156,7 +156,7 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
                 .push(button::primary(None, "Go back to PSBTs").on_press(Message::Close)),
         )
         .align_x(iced::alignment::Horizontal::Center)
-        .width(Length::Units(400))
+        .width(Length::Fixed(400.0))
         .into()
     } else {
         card::simple(
@@ -177,7 +177,7 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
                         ),
                 ),
         )
-        .width(Length::Units(400))
+        .width(Length::Fixed(400.0))
         .into()
     }
 }
@@ -269,13 +269,13 @@ pub fn spend_overview_view<'a>(
                         Some(
                             button::primary(None, "Sign")
                                 .on_press(Message::Spend(SpendTxMessage::Sign))
-                                .width(Length::Units(150)),
+                                .width(Length::Fixed(150.0)),
                         )
                     } else {
                         Some(
                             button::primary(None, "Broadcast")
                                 .on_press(Message::Spend(SpendTxMessage::Broadcast))
-                                .width(Length::Units(150)),
+                                .width(Length::Fixed(150.0)),
                         )
                     })
                     .align_items(Alignment::Center)
@@ -419,7 +419,7 @@ pub fn path_view<'a>(
                     } else {
                         icon::circle_cross_icon().style(color::GREY_3)
                     })
-                    .push(Space::with_width(Length::Units(20))),
+                    .push(Space::with_width(Length::Fixed(20.0))),
             )
             .push(
                 p1_regular(format!(
@@ -740,7 +740,7 @@ pub fn sign_action<'a>(
                 .width(Length::Fill)
                 .align_items(Alignment::Center),
         ))
-        .width(Length::Units(500))
+        .width(Length::Fixed(500.0))
         .into()
 }
 
@@ -801,7 +801,7 @@ pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
             ))
             .padding(50),
         )
-        .width(Length::Units(400))
+        .width(Length::Fixed(400.0))
         .align_items(Alignment::Center)
         .into()
 }

@@ -388,7 +388,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut settings = Settings::with_flags(config);
     settings.id = Some("liana-gui".to_string());
     settings.window.icon = Some(image::liana_app_icon());
-    settings.default_text_size = text::P1_SIZE;
+    settings.default_text_size = text::P1_SIZE.into();
     settings.default_font = Some(font::REGULAR_BYTES);
     settings.exit_on_close_request = false;
 

@@ -58,7 +58,7 @@ pub fn recovery<'a>(
                             .on_press(Message::Menu(Menu::Recovery)),
                     ),
             )
-            .push(Space::with_height(Length::Units(20)))
+            .push(Space::with_height(Length::Fixed(20.0)))
             .push(
                 Row::new()
                     .spacing(20)
@@ -88,7 +88,7 @@ pub fn recovery<'a>(
                             .size(20)
                             .padding(10),
                         )
-                        .width(Length::Units(200)),
+                        .width(Length::Fixed(200.0)),
                     ),
             )
             .push(if no_recovery_paths {
@@ -121,9 +121,9 @@ pub fn recovery<'a>(
                             {
                                 button::primary(None, "Next")
                                     .on_press(Message::Next)
-                                    .width(Length::Units(200))
+                                    .width(Length::Fixed(200.0))
                             } else {
-                                button::primary(None, "Next").width(Length::Units(200))
+                                button::primary(None, "Next").width(Length::Fixed(200.0))
                             },
                         )
                         .spacing(20)

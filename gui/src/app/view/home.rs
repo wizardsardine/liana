@@ -65,7 +65,7 @@ pub fn home_view<'a>(
                             icon::tooltip_icon()
                                 .size(20)
                                 .style(color::GREY_3)
-                                .width(Length::Units(20)),
+                                .width(Length::Fixed(20.0)),
                         )
                         .width(Length::Fill),
                 )

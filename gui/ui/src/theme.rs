@@ -380,7 +380,7 @@ impl scrollable::StyleSheet for Theme {
         }
     }
 
-    fn hovered(&self, style: &Self::Style) -> scrollable::Scrollbar {
+    fn hovered(&self, style: &Self::Style, _is_hovered: bool) -> scrollable::Scrollbar {
         let active = self.active(style);
         scrollable::Scrollbar { ..active }
     }
@@ -435,7 +435,7 @@ impl checkbox::StyleSheet for Theme {
                 background: color::GREEN.into(),
                 border_width: 0.0,
                 border_color: iced::Color::TRANSPARENT,
-                checkmark_color: color::GREY_4,
+                icon_color: color::GREY_4,
                 text_color: None,
                 border_radius: 4.0,
             }
@@ -444,7 +444,7 @@ impl checkbox::StyleSheet for Theme {
                 background: color::GREY_4.into(),
                 border_width: 0.0,
                 border_color: iced::Color::TRANSPARENT,
-                checkmark_color: color::GREEN,
+                icon_color: color::GREEN,
                 text_color: None,
                 border_radius: 4.0,
             }
@@ -609,12 +609,14 @@ impl text_input::StyleSheet for Theme {
     fn active(&self, style: &Self::Style) -> text_input::Appearance {
         match style {
             Form::Simple => text_input::Appearance {
+                icon_color: color::GREY_7,
                 background: iced::Background::Color(iced::Color::TRANSPARENT),
                 border_radius: 25.0,
                 border_width: 1.0,
                 border_color: color::GREY_7,
             },
             Form::Invalid => text_input::Appearance {
+                icon_color: color::GREY_7,
                 background: iced::Background::Color(iced::Color::TRANSPARENT),
                 border_radius: 25.0,
                 border_width: 1.0,
@@ -623,10 +625,20 @@ impl text_input::StyleSheet for Theme {
         }
     }
 
+    fn disabled(&self, style: &Self::Style) -> text_input::Appearance {
+        text_input::Appearance {
+            ..self.active(style)
+        }
+    }
+
     fn focused(&self, style: &Self::Style) -> text_input::Appearance {
         text_input::Appearance {
             ..self.active(style)
         }
+    }
+
+    fn disabled_color(&self, _style: &Self::Style) -> iced::Color {
+        color::GREY_7
     }
 
     fn placeholder_color(&self, _style: &Self::Style) -> iced::Color {
@@ -678,7 +690,10 @@ impl slider::StyleSheet for Theme {
             border_width: 1.0,
         };
         slider::Appearance {
-            rail_colors: (color::GREEN, iced::Color::TRANSPARENT),
+            rail: slider::Rail {
+                colors: (color::GREEN, iced::Color::TRANSPARENT),
+                width: 2.0,
+            },
             handle,
         }
     }
@@ -693,7 +708,10 @@ impl slider::StyleSheet for Theme {
             border_width: 1.0,
         };
         slider::Appearance {
-            rail_colors: (color::GREEN, iced::Color::TRANSPARENT),
+            rail: slider::Rail {
+                colors: (color::GREEN, iced::Color::TRANSPARENT),
+                width: 2.0,
+            },
             handle,
         }
     }
@@ -708,7 +726,10 @@ impl slider::StyleSheet for Theme {
             border_width: 1.0,
         };
         slider::Appearance {
-            rail_colors: (color::GREEN, iced::Color::TRANSPARENT),
+            rail: slider::Rail {
+                colors: (color::GREEN, iced::Color::TRANSPARENT),
+                width: 2.0,
+            },
             handle,
         }
     }

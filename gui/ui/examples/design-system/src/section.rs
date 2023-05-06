@@ -114,8 +114,8 @@ impl Section for Typography {
 
 fn color_row<'a, T: 'a>(color: iced::Color, label: &'static str) -> Element<'a, T> {
     row![
-        container(Space::with_width(Length::Units(100)))
-            .height(Length::Units(100))
+        container(Space::with_width(Length::Fixed(100.0)))
+            .height(Length::Fixed(100.0))
             .style(theme::Container::Custom(color)),
         text(label)
     ]
@@ -156,7 +156,7 @@ fn button_row(style: theme::Button, label: &'static str) -> Element<Message> {
             .width(Length::Fill)
             .align_x(alignment::Horizontal::Center),
     )
-    .width(Length::Units(200))
+    .width(Length::Fixed(200.0))
     .padding(5)
     .style(style)
     .on_press(Message::Ignore)
@@ -181,7 +181,7 @@ impl Section for HardwareWallets {
                         "f123de",
                         None::<String>
                     )
-                    .width(Length::Units(500))
+                    .width(Length::Fixed(500.0))
                 )
                 .on_press(Message::Ignore)
                 .style(theme::Button::Border),
@@ -192,7 +192,7 @@ impl Section for HardwareWallets {
                         "f123de",
                         Some("Edouard key")
                     )
-                    .width(Length::Units(500))
+                    .width(Length::Fixed(500.0))
                 )
                 .on_press(Message::Ignore)
                 .style(theme::Button::Border),
@@ -203,13 +203,13 @@ impl Section for HardwareWallets {
                         "f123de",
                         Some("Edouard key")
                     )
-                    .width(Length::Units(500))
+                    .width(Length::Fixed(500.0))
                 )
                 .on_press(Message::Ignore)
                 .style(theme::Button::Border),
                 button(
                     hw::unsupported_hardware_wallet("ledger", Some("v2.1.0"))
-                        .width(Length::Units(500))
+                        .width(Length::Fixed(500.0))
                 )
                 .on_press(Message::Ignore)
                 .style(theme::Button::Border),
@@ -220,7 +220,7 @@ impl Section for HardwareWallets {
                         "f123de",
                         Some("Edouard key")
                     )
-                    .width(Length::Units(500))
+                    .width(Length::Fixed(500.0))
                 )
                 .on_press(Message::Ignore)
                 .style(theme::Button::Border),
@@ -231,7 +231,7 @@ impl Section for HardwareWallets {
                         "f123de",
                         Some("Edouard key")
                     )
-                    .width(Length::Units(500))
+                    .width(Length::Fixed(500.0))
                 )
                 .on_press(Message::Ignore)
                 .style(theme::Button::Border),
@@ -242,7 +242,7 @@ impl Section for HardwareWallets {
                         "f123de",
                         Some("Edouard key")
                     )
-                    .width(Length::Units(500))
+                    .width(Length::Fixed(500.0))
                 )
                 .on_press(Message::Ignore)
                 .style(theme::Button::Border),
