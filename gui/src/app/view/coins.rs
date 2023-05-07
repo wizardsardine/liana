@@ -230,14 +230,31 @@ pub fn expire_message_units(sequence: u32) -> Vec<String> {
     n_minutes -= n_months * 43830;
     let n_days = n_minutes / 1440;
 
-    [(n_years, "year"), (n_months, "month"), (n_days, "day")]
-        .iter()
-        .filter_map(|(n, u)| {
-            if *n != 0 {
-                Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
-            } else {
-                None
-            }
-        })
-        .collect()
+    #[allow(clippy::nonminimal_bool)]
+    if n_days != 0 || n_months != 0 || n_days != 0 {
+        [(n_years, "year"), (n_months, "month"), (n_days, "day")]
+            .iter()
+            .filter_map(|(n, u)| {
+                if *n != 0 {
+                    Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        n_minutes -= n_days * 1440;
+        let n_hours = n_minutes / 60;
+        n_minutes -= n_hours * 60;
+        [(n_hours, "hour"), (n_minutes, "minute")]
+            .iter()
+            .filter_map(|(n, u)| {
+                if *n != 0 {
+                    Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
