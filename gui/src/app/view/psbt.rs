@@ -377,9 +377,9 @@ pub fn signatures<'a>(
                             .padding(15)
                             .spacing(10)
                             .push(text(if !tx.sigs.recovery_paths().is_empty() {
-                                "Multiple spending paths available. Finalizing this transaction requires either:"
+                                "Multiple spending paths are available. Finalizing this transaction requires either:"
                             } else {
-                                "1 spending path available. Finalizing this transaction requires:"
+                                "1 spending path is available. Finalizing this transaction requires:"
                             }))
                             .push(path_view(
                                 desc_info.primary_path(),
