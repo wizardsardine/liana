@@ -428,9 +428,9 @@ pub fn rescan<'a>(
             .push(
                 Row::new()
                     .push(badge::Badge::new(icon::block_icon()))
-                    .push(text("Rescan blockchain").bold().width(Length::Fill))
+                    .push(text("Blockchain rescan").bold().width(Length::Fill))
                     .push_maybe(if success {
-                        Some(text("Rescan was successful").style(color::GREEN))
+                        Some(text("Successfully rescanned the blockchain").style(color::GREEN))
                     } else {
                         None
                     })
@@ -444,7 +444,7 @@ pub fn rescan<'a>(
                     Column::new()
                         .width(Length::Fill)
                         .push(ProgressBar::new(0.0..=1.0, p as f32).width(Length::Fill))
-                        .push(text(format!("Rescan...{:.2}%", p * 100.0))),
+                        .push(text(format!("Rescanning...{:.2}%", p * 100.0))),
                 )
             } else {
                 Container::new(
