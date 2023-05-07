@@ -511,7 +511,7 @@ pub fn inputs_and_outputs_view<'a>(
                                 .align_items(Alignment::Center)
                                 .push(
                                     h4_bold(format!(
-                                        "{} spent coin{}",
+                                        "{} coin{} spent",
                                         coins.len(),
                                         if coins.len() == 1 { "" } else { "s" }
                                     ))
@@ -529,7 +529,7 @@ pub fn inputs_and_outputs_view<'a>(
                                 .align_items(Alignment::Center)
                                 .push(
                                     h4_bold(format!(
-                                        "{} spent coin{}",
+                                        "{} coin{} spent",
                                         coins.len(),
                                         if coins.len() == 1 { "" } else { "s" }
                                     ))
