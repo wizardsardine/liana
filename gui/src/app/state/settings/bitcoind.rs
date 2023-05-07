@@ -251,6 +251,7 @@ pub struct RescanSetting {
     year: form::Value<String>,
     month: form::Value<String>,
     day: form::Value<String>,
+    invalid_date: bool,
 }
 
 impl From<RescanSetting> for Box<dyn Setting> {
@@ -292,6 +293,7 @@ impl Setting for RescanSetting {
                 }
             }
             view::SettingsEditMessage::FieldEdited(field, value) => {
+                self.invalid_date = false;
                 if !self.processing && (value.is_empty() || u32::from_str(&value).is_ok()) {
                     match field {
                         "rescan_year" => self.year.value = value,
@@ -302,12 +304,22 @@ impl Setting for RescanSetting {
                 }
             }
             view::SettingsEditMessage::Confirm => {
-                let date_time = NaiveDate::from_ymd_opt(
+                let date_time = if let Some(date) = NaiveDate::from_ymd_opt(
                     i32::from_str(&self.year.value).unwrap_or(1),
                     u32::from_str(&self.month.value).unwrap_or(1),
                     u32::from_str(&self.day.value).unwrap_or(1),
-                )
-                .unwrap();
+                ) {
+                    if date < NaiveDate::from_str("2009-01-03").unwrap() {
+                        self.invalid_date = true;
+                        return Command::none();
+                    } else {
+                        self.invalid_date = false;
+                        date
+                    }
+                } else {
+                    self.invalid_date = true;
+                    return Command::none();
+                };
                 let t = date_time.and_hms_opt(0, 0, 0).unwrap().timestamp() as u32;
                 self.processing = true;
                 info!("Asking deamon to rescan with timestamp: {}", t);
@@ -329,6 +341,7 @@ impl Setting for RescanSetting {
             self.success,
             self.processing,
             can_edit,
+            self.invalid_date,
         )
     }
 }
