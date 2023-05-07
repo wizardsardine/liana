@@ -13,6 +13,7 @@ use liana::miniscript::bitcoin::{
 use liana_ui::{
     component::{amount::*, button, form, text::*},
     icon, theme,
+    util::*,
     widget::*,
 };
 
@@ -25,6 +26,7 @@ pub fn recovery<'a>(
     feerate: &form::Value<String>,
     address: &'a form::Value<String>,
 ) -> Element<'a, Message> {
+    let no_recovery_paths = recovery_paths.is_empty();
     Column::new()
         .push(Space::with_height(Length::Units(100)))
         .push(
@@ -36,7 +38,9 @@ pub fn recovery<'a>(
                 .align_items(Alignment::Center)
                 .spacing(1),
         )
-        .push(
+        .push(if no_recovery_paths {
+            Container::new(text("No recovery path is currently available"))
+        } else {
             Container::new(
                 Column::new()
                     .spacing(10)
@@ -46,53 +50,57 @@ pub fn recovery<'a>(
                     )))
                     .push(Column::with_children(recovery_paths).spacing(10)),
             )
-            .padding(20),
-        )
+            .padding(20)
+        })
         .push(Space::with_height(Length::Units(20)))
-        .push(
-            Column::new()
-                .push(text("Enter destination address and feerate:").bold())
-                .push(
-                    Container::new(
-                        form::Form::new("Address", address, move |msg| {
-                            Message::CreateSpend(CreateSpendMessage::RecipientEdited(
-                                0, "address", msg,
-                            ))
-                        })
-                        .warning("Invalid Bitcoin address")
-                        .size(20)
-                        .padding(10),
+        .push_maybe(if no_recovery_paths {
+            None
+        } else {
+            Some(
+                Column::new()
+                    .push(text("Enter destination address and feerate:").bold())
+                    .push(
+                        Container::new(
+                            form::Form::new("Address", address, move |msg| {
+                                Message::CreateSpend(CreateSpendMessage::RecipientEdited(
+                                    0, "address", msg,
+                                ))
+                            })
+                            .warning("Invalid Bitcoin address")
+                            .size(20)
+                            .padding(10),
+                        )
+                        .width(Length::Units(250)),
                     )
-                    .width(Length::Units(250)),
-                )
-                .push(
-                    Container::new(
-                        form::Form::new("42 (sats/vbyte)", feerate, move |msg| {
-                            Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
-                        })
-                        .warning("Invalid feerate")
-                        .size(20)
-                        .padding(10),
+                    .push(
+                        Container::new(
+                            form::Form::new("42 (sats/vbyte)", feerate, move |msg| {
+                                Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
+                            })
+                            .warning("Invalid feerate")
+                            .size(20)
+                            .padding(10),
+                        )
+                        .width(Length::Units(250)),
                     )
-                    .width(Length::Units(250)),
-                )
-                .push(
-                    if feerate.valid
-                        && !feerate.value.is_empty()
-                        && address.valid
-                        && !address.value.is_empty()
-                        && selected_path.is_some()
-                    {
-                        button::primary(None, "Next")
-                            .on_press(Message::Next)
-                            .width(Length::Units(200))
-                    } else {
-                        button::primary(None, "Next").width(Length::Units(200))
-                    },
-                )
-                .spacing(20)
-                .align_items(Alignment::Center),
-        )
+                    .push(
+                        if feerate.valid
+                            && !feerate.value.is_empty()
+                            && address.valid
+                            && !address.value.is_empty()
+                            && selected_path.is_some()
+                        {
+                            button::primary(None, "Next")
+                                .on_press(Message::Next)
+                                .width(Length::Units(200))
+                        } else {
+                            button::primary(None, "Next").width(Length::Units(200))
+                        },
+                    )
+                    .spacing(20)
+                    .align_items(Alignment::Center),
+            )
+        })
         .align_items(Alignment::Center)
         .spacing(20)
         .into()
