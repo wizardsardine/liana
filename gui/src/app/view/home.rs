@@ -5,7 +5,7 @@ use iced::{alignment, Alignment, Length};
 use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
-    component::{amount::*, card, event, text::*},
+    component::{amount::*, button, card, event, text::*},
     icon, theme,
     util::Collection,
     widget::*,
@@ -27,7 +27,7 @@ pub fn home_view<'a>(
     balance: &'a bitcoin::Amount,
     unconfirmed_balance: &'a bitcoin::Amount,
     remaining_sequence: &Option<u32>,
-    number_of_expiring_coins: usize,
+    expiring_coins: &Vec<bitcoin::OutPoint>,
     pending_events: &[HistoryTransaction],
     events: &Vec<HistoryTransaction>,
 ) -> Element<'a, Message> {
@@ -48,7 +48,7 @@ pub fn home_view<'a>(
                     None
                 }),
         )
-        .push_maybe(if number_of_expiring_coins == 0 {
+        .push_maybe(if expiring_coins.is_empty() {
             remaining_sequence.map(|sequence| {
                 Container::new(
                     Row::new()
@@ -75,13 +75,21 @@ pub fn home_view<'a>(
         } else {
             Some(
                 Container::new(
-                    Row::new().spacing(15).align_items(Alignment::Center).push(
-                        h4_regular(format!(
-                            "You have {} coins that are already or about to be expired",
-                            number_of_expiring_coins
-                        ))
-                        .width(Length::Fill),
-                    ),
+                    Row::new()
+                        .spacing(15)
+                        .align_items(Alignment::Center)
+                        .push(
+                            h4_regular(format!(
+                                "You have {} coins that are already or about to be expired",
+                                expiring_coins.len(),
+                            ))
+                            .width(Length::Fill),
+                        )
+                        .push(
+                            button::primary(Some(icon::arrow_repeat()), "Refresh coins").on_press(
+                                Message::Menu(Menu::RefreshCoins(expiring_coins.clone())),
+                            ),
+                        ),
                 )
                 .padding(25)
                 .style(theme::Card::Invalid),

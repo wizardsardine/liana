@@ -22,6 +22,10 @@ pub fn arrow_right() -> Text<'static> {
     icon('\u{F138}')
 }
 
+pub fn arrow_repeat() -> Text<'static> {
+    icon('\u{F130}')
+}
+
 pub fn arrow_return_right() -> Text<'static> {
     icon('\u{F132}')
 }

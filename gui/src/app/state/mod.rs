@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::{widget::qr_code, Command, Subscription};
-use liana::miniscript::bitcoin::{Address, Amount};
+use liana::miniscript::bitcoin::{Address, Amount, OutPoint};
 use liana_ui::widget::*;
 
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet};
@@ -50,7 +50,7 @@ pub struct Home {
     balance: Amount,
     unconfirmed_balance: Amount,
     remaining_sequence: Option<u32>,
-    number_of_expiring_coins: usize,
+    expiring_coins: Vec<OutPoint>,
     pending_events: Vec<HistoryTransaction>,
     events: Vec<HistoryTransaction>,
     selected_event: Option<(usize, usize)>,
@@ -76,7 +76,7 @@ impl Home {
             balance,
             unconfirmed_balance,
             remaining_sequence: None,
-            number_of_expiring_coins: 0,
+            expiring_coins: Vec::new(),
             selected_event: None,
             events: Vec::new(),
             pending_events: Vec::new(),
@@ -103,7 +103,7 @@ impl State for Home {
                     &self.balance,
                     &self.unconfirmed_balance,
                     &self.remaining_sequence,
-                    self.number_of_expiring_coins,
+                    &self.expiring_coins,
                     &self.pending_events,
                     &self.events,
                 ),
@@ -125,7 +125,7 @@ impl State for Home {
                     self.balance = Amount::from_sat(0);
                     self.unconfirmed_balance = Amount::from_sat(0);
                     self.remaining_sequence = None;
-                    self.number_of_expiring_coins = 0;
+                    self.expiring_coins = Vec::new();
                     for coin in coins {
                         if coin.spend_info.is_none() {
                             if coin.block_height.is_some() {
@@ -135,7 +135,7 @@ impl State for Home {
                                     remaining_sequence(&coin, cache.blockheight as u32, timelock);
                                 // number of block in a day
                                 if seq <= 144 {
-                                    self.number_of_expiring_coins += 1;
+                                    self.expiring_coins.push(coin.outpoint);
                                 }
                                 if let Some(last) = &mut self.remaining_sequence {
                                     if seq < *last {

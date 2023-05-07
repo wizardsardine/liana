@@ -177,7 +177,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                 .center_x(),
             )
             .style(theme::Button::Menu(true))
-            .on_press(Message::Reload)
+            .on_press(Message::Menu(Menu::CreateSpendTx))
             .width(iced::Length::Fill),
             menu_green_bar()
         )

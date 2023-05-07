@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use iced::Command;
 
+use liana::miniscript::bitcoin::OutPoint;
 use liana_ui::widget::Element;
 
 use super::{redirect, State};
@@ -25,12 +26,33 @@ impl CreateSpendPanel {
             draft: step::TransactionDraft::default(),
             current: 0,
             steps: vec![
-                Box::new(step::DefineSpend::new(
-                    descriptor,
-                    coins.to_vec(),
-                    timelock,
-                    blockheight,
-                )),
+                Box::new(
+                    step::DefineSpend::new(descriptor, coins, timelock)
+                        .with_coins_sorted(blockheight),
+                ),
+                Box::new(step::SaveSpend::new(wallet)),
+            ],
+        }
+    }
+
+    pub fn new_self_send(
+        wallet: Arc<Wallet>,
+        coins: &[Coin],
+        blockheight: u32,
+        preselected_coins: &[OutPoint],
+    ) -> Self {
+        let descriptor = wallet.main_descriptor.clone();
+        let timelock = descriptor.first_timelock_value();
+        Self {
+            draft: step::TransactionDraft::default(),
+            current: 0,
+            steps: vec![
+                Box::new(
+                    step::DefineSpend::new(descriptor, coins, timelock)
+                        .with_preselected_coins(preselected_coins)
+                        .with_coins_sorted(blockheight)
+                        .self_send(),
+                ),
                 Box::new(step::SaveSpend::new(wallet)),
             ],
         }
