@@ -188,7 +188,7 @@ pub fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
         .push(
             Column::new()
                 .push(if tx.is_self_send() {
-                    Container::new(h1("Self send"))
+                    Container::new(h1("Send-to-self"))
                 } else {
                     Container::new(amount_with_size(&tx.spend_amount, H1_SIZE))
                 })
