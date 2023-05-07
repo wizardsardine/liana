@@ -56,7 +56,7 @@ pub fn home_view<'a>(
                         .align_items(Alignment::Center)
                         .push(
                             h4_regular(format!(
-                                "Your next coin to expire will in ≈ {}",
+                                "≈ {} left before first recovery path becomes available.",
                                 coins::expire_message_units(sequence).join(",")
                             ))
                             .width(Length::Fill),
@@ -80,7 +80,7 @@ pub fn home_view<'a>(
                         .align_items(Alignment::Center)
                         .push(
                             h4_regular(format!(
-                                "You have {} coins that are already or about to be expired",
+                                "Recovery path is or will soon be available for {} coin(s).",
                                 expiring_coins.len(),
                             ))
                             .width(Length::Fill),
