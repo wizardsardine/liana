@@ -106,7 +106,7 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
             Column::new()
                 .spacing(10)
                 .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text("Save the transaction as draft"))
+                .push(text("Save this transaction"))
                 .push(
                     Row::new()
                         .push(Column::new().width(Length::Fill))
@@ -152,8 +152,8 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
             Column::new()
                 .spacing(20)
                 .align_items(Alignment::Center)
-                .push(text("Transaction is deleted"))
-                .push(button::primary(None, "Go back to drafts").on_press(Message::Close)),
+                .push(text("Successfully deleted this transaction."))
+                .push(button::primary(None, "Go back to PSBTs").on_press(Message::Close)),
         )
         .align_x(iced::alignment::Horizontal::Center)
         .width(Length::Units(400))
@@ -163,7 +163,7 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
             Column::new()
                 .spacing(10)
                 .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text("Delete the transaction draft"))
+                .push(text("Delete this PSBT"))
                 .push(
                     Row::new()
                         .push(Column::new().width(Length::Fill))
