@@ -1,6 +1,6 @@
 from fixtures import *
 from test_framework.serializations import PSBT
-from test_framework.utils import wait_for, COIN
+from test_framework.utils import wait_for, COIN, RpcError
 
 
 def test_spend_change(lianad, bitcoind):
@@ -170,3 +170,52 @@ def test_coin_marked_spent(lianad, bitcoind):
         return True
 
     wait_for(lambda: all(is_spent(c) for c in deposited_coins()))
+
+
+def test_send_to_self(lianad, bitcoind):
+    """Test we can use createspend with no destination to send to a change address."""
+    # Get 3 coins.
+    destinations = {
+        lianad.rpc.getnewaddress()["address"]: 0.03,
+        lianad.rpc.getnewaddress()["address"]: 0.04,
+        lianad.rpc.getnewaddress()["address"]: 0.05,
+    }
+    deposit_txid = bitcoind.rpc.sendmany("", destinations)
+    bitcoind.generate_block(1, wait_for_mempool=deposit_txid)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 3)
+
+    # Then create a send-to-self transaction (by not providing any destination) that
+    # sweeps them all.
+    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins()["coins"]]
+    specified_feerate = 142
+    res = lianad.rpc.createspend({}, outpoints, specified_feerate)
+    spend_psbt = PSBT.from_base64(res["psbt"])
+    assert len(spend_psbt.o) == len(spend_psbt.tx.vout) == 1
+
+    # Note they may ask for an impossible send-to-self. In this case we'll error cleanly.
+    with pytest.raises(
+        RpcError,
+        match="Not enough fund to create a 40500 sat/vb transaction with input value 0.12 BTC",
+    ):
+        lianad.rpc.createspend({}, outpoints, 40500)
+
+    # Sign and broadcast the send-to-self transaction created above.
+    signed_psbt = lianad.signer.sign_psbt(spend_psbt)
+    lianad.rpc.updatespend(signed_psbt.to_base64())
+    spend_txid = signed_psbt.tx.txid().hex()
+    lianad.rpc.broadcastspend(spend_txid)
+
+    # The only output is the change output so the feerate of the transaction must
+    # not be lower than the one provided, and only possibly slightly higher (since
+    # we slightly overestimate the satisfaction size).
+    # FIXME: a 15% increase is huge.
+    res = bitcoind.rpc.getmempoolentry(spend_txid)
+    spend_feerate = int(res["fees"]["base"] * COIN / res["vsize"])
+    assert specified_feerate <= spend_feerate <= int(specified_feerate * 115 / 100)
+
+    # We should by now only have one coin.
+    bitcoind.generate_block(1, wait_for_mempool=spend_txid)
+    unspent_coins = lambda: (
+        c for c in lianad.rpc.listcoins()["coins"] if c["spend_info"] is None
+    )
+    wait_for(lambda: len(list(unspent_coins())) == 1)

@@ -152,7 +152,6 @@ impl From<commands::CommandError> for Error {
     fn from(e: commands::CommandError) -> Error {
         match e {
             commands::CommandError::NoOutpoint
-            | commands::CommandError::NoDestination
             | commands::CommandError::UnknownOutpoint(..)
             | commands::CommandError::InvalidFeerate(..)
             | commands::CommandError::AlreadySpent(..)

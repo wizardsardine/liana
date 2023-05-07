@@ -114,6 +114,11 @@ Will error if the given coins are not sufficient to cover the transaction cost a
 the given feerate. If on the contrary the transaction is more than sufficiently funded, it will
 create a change output when economically rationale to do so.
 
+You can create a send-to-self transaction by not specifying any destination. This command will
+create a single change output. This may be useful to "refresh" coins whose timelocked recovery path
+may be close to expiry without having to bear the complexity of computing the correct amount for the
+change output.
+
 This command will refuse to create any output worth less than 5k sats.
 
 #### Request
