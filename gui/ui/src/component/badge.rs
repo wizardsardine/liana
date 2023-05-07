@@ -97,7 +97,7 @@ pub fn deprecated<'a, T: 'a>() -> Container<'a, T> {
             Container::new(text::p2_regular("  Deprecated  "))
                 .padding(10)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
-            "This spend cannot be included anymore in the blockchain",
+            "This transaction cannot be included in the blockchain anymore.",
             tooltip::Position::Top,
         )
         .style(theme::Container::Card(theme::Card::Simple)),
@@ -110,7 +110,7 @@ pub fn spent<'a, T: 'a>() -> Container<'a, T> {
             Container::new(text::p2_regular("  Spent  "))
                 .padding(10)
                 .style(theme::Container::Pill(theme::Pill::Simple)),
-            "The spend transaction was included in the blockchain",
+            "The transaction was included in the blockchain.",
             tooltip::Position::Top,
         )
         .style(theme::Container::Card(theme::Card::Simple)),
