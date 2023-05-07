@@ -41,7 +41,7 @@ pub fn recovery<'a>(
                 Column::new()
                     .spacing(10)
                     .push(text(format!(
-                        "{} recovery paths are available or will be available next block, select one:",
+                        "{} recovery paths will be available at the next block, select one:",
                         recovery_paths.len()
                     )))
                     .push(Column::with_children(recovery_paths).spacing(10)),
@@ -67,7 +67,7 @@ pub fn recovery<'a>(
                 )
                 .push(
                     Container::new(
-                        form::Form::new("Feerate (sat/vbyte)", feerate, move |msg| {
+                        form::Form::new("42 (sats/vbyte)", feerate, move |msg| {
                             Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
                         })
                         .warning("Invalid feerate")
