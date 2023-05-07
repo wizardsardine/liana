@@ -414,6 +414,7 @@ pub fn is_running_label<'a, T: 'a>(is_running: Option<bool>) -> Container<'a, T>
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn rescan<'a>(
     year: &form::Value<String>,
     month: &form::Value<String>,
@@ -422,6 +423,7 @@ pub fn rescan<'a>(
     success: bool,
     processing: bool,
     can_edit: bool,
+    invalid_date: bool,
 ) -> Element<'a, SettingsEditMessage> {
     card::simple(Container::new(
         Column::new()
@@ -479,8 +481,17 @@ pub fn rescan<'a>(
                                 .align_items(Alignment::Center)
                                 .spacing(10),
                         )
+                        .push_maybe(if invalid_date {
+                            Some(
+                                p1_regular("Provided date is either invalid or anterior to the genesis block's timestamp.")
+                                    .style(color::RED),
+                            )
+                        } else {
+                            None
+                        })
                         .push(
                             if can_edit
+                                && !invalid_date
                                 && !processing
                                 && (is_ok_and(&u32::from_str(&year.value), |&v| v > 0)
                                     && is_ok_and(&u32::from_str(&month.value), |&v| {
