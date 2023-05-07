@@ -57,7 +57,7 @@ pub fn home_view<'a>(
                         .push(
                             h4_regular(format!(
                                 "≈ {} left before first recovery path becomes available.",
-                                coins::expire_message_units(sequence).join(",")
+                                coins::expire_message_units(sequence).join(", ")
                             ))
                             .width(Length::Fill),
                         )
