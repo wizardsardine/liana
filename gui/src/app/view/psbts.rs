@@ -136,7 +136,7 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                         .push(if !tx.is_self_send() {
                             Container::new(amount(&tx.spend_amount))
                         } else {
-                            Container::new(p1_regular("Self send"))
+                            Container::new(p1_regular("Send-to-self"))
                         })
                         .push(amount_with_size(&tx.fee_amount, P2_SIZE))
                         .width(Length::Shrink),

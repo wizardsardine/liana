@@ -106,7 +106,7 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
             Column::new()
                 .spacing(10)
                 .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text("Save the transaction as draft"))
+                .push(text("Save this transaction"))
                 .push(
                     Row::new()
                         .push(Column::new().width(Length::Fill))
@@ -152,8 +152,8 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
             Column::new()
                 .spacing(20)
                 .align_items(Alignment::Center)
-                .push(text("Transaction is deleted"))
-                .push(button::primary(None, "Go back to drafts").on_press(Message::Close)),
+                .push(text("Successfully deleted this transaction."))
+                .push(button::primary(None, "Go back to PSBTs").on_press(Message::Close)),
         )
         .align_x(iced::alignment::Horizontal::Center)
         .width(Length::Units(400))
@@ -163,7 +163,7 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
             Column::new()
                 .spacing(10)
                 .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text("Delete the transaction draft"))
+                .push(text("Delete this PSBT"))
                 .push(
                     Row::new()
                         .push(Column::new().width(Length::Fill))
@@ -188,7 +188,7 @@ pub fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
         .push(
             Column::new()
                 .push(if tx.is_self_send() {
-                    Container::new(h1("Self send"))
+                    Container::new(h1("Send-to-self"))
                 } else {
                     Container::new(amount_with_size(&tx.spend_amount, H1_SIZE))
                 })
@@ -377,9 +377,9 @@ pub fn signatures<'a>(
                             .padding(15)
                             .spacing(10)
                             .push(text(if !tx.sigs.recovery_paths().is_empty() {
-                                "Multiple spending paths available. Finalizing this transaction requires either:"
+                                "Multiple spending paths are available. Finalizing this transaction requires either:"
                             } else {
-                                "1 spending path available. Finalizing this transaction requires:"
+                                "1 spending path is available. Finalizing this transaction requires:"
                             }))
                             .push(path_view(
                                 desc_info.primary_path(),
@@ -511,7 +511,7 @@ pub fn inputs_and_outputs_view<'a>(
                                 .align_items(Alignment::Center)
                                 .push(
                                     h4_bold(format!(
-                                        "{} spent coin{}",
+                                        "{} coin{} spent",
                                         coins.len(),
                                         if coins.len() == 1 { "" } else { "s" }
                                     ))
@@ -529,7 +529,7 @@ pub fn inputs_and_outputs_view<'a>(
                                 .align_items(Alignment::Center)
                                 .push(
                                     h4_bold(format!(
-                                        "{} spent coin{}",
+                                        "{} coin{} spent",
                                         coins.len(),
                                         if coins.len() == 1 { "" } else { "s" }
                                     ))

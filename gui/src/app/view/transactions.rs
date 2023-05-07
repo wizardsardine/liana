@@ -124,7 +124,7 @@ fn tx_list_view<'a>(i: usize, tx: &HistoryTransaction) -> Element<'a, Message> {
                         .push(amount(&tx.outgoing_amount))
                         .align_items(Alignment::Center)
                 } else {
-                    Row::new().push(text("Self send"))
+                    Row::new().push(text("Send-to-self"))
                 })
                 .align_items(Alignment::Center)
                 .spacing(20),
@@ -158,7 +158,7 @@ pub fn tx_view<'a>(
                 Column::new().spacing(20).push(
                     Column::new()
                         .push(if tx.is_self_send() {
-                            Container::new(h1("Self send"))
+                            Container::new(h1("Send-to-self"))
                         } else if tx.is_external() {
                             Container::new(amount_with_size(&tx.incoming_amount, H1_SIZE))
                         } else {

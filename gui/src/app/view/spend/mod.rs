@@ -99,7 +99,7 @@ pub fn create_spend_tx<'a>(
         cache,
         error,
         Column::new()
-            .push(h3(if is_self_send { "Self send" } else { "Send" }))
+            .push(h3(if is_self_send { "Send-to-self" } else { "Send" }))
             .push(
                 Column::new()
                     .push(Column::with_children(recipients).spacing(10))
@@ -134,10 +134,10 @@ pub fn create_spend_tx<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(Container::new(p1_bold("Fee rate")).padding(10))
+                            .push(Container::new(p1_bold("Feerate")).padding(10))
                             .spacing(10)
                             .push(
-                                form::Form::new("Feerate (sat/vbyte)", feerate, move |msg| {
+                                form::Form::new("42 (in sats/vbyte)", feerate, move |msg| {
                                     Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
                                 })
                                 .warning("Invalid feerate")
@@ -280,7 +280,7 @@ pub fn recipient_view<'a>(
                             .width(Length::Units(80)),
                     )
                     .push(
-                        form::Form::new("ex: 0.001", amount, move |msg| {
+                        form::Form::new("0.001 (in BTC)", amount, move |msg| {
                             CreateSpendMessage::RecipientEdited(index, "amount", msg)
                         })
                         .warning("Invalid amount. Must be > 0.00005000 BTC.")
