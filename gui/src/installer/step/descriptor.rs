@@ -302,7 +302,7 @@ impl Step for DefineDescriptor {
                     message::DefineKey::Clipboard(key) => {
                         return Command::perform(async move { key }, Message::Clibpboard);
                     }
-                    message::DefineKey::Edited(name, imported_key) => {
+                    message::DefineKey::Edited(name, imported_key, kind) => {
                         self.edit_alias_for_key_with_same_fingerprint(
                             name.clone(),
                             imported_key.master_fingerprint(),
@@ -311,6 +311,7 @@ impl Step for DefineDescriptor {
                         if let Some(spending_key) = self.spending_keys.get_mut(i) {
                             spending_key.name = name;
                             spending_key.key = Some(imported_key);
+                            spending_key.device_kind = kind;
                             spending_key.check_network(self.network);
                         }
                         self.modal = None;
@@ -372,7 +373,7 @@ impl Step for DefineDescriptor {
                     message::DefineKey::Clipboard(key) => {
                         return Command::perform(async move { key }, Message::Clibpboard);
                     }
-                    message::DefineKey::Edited(name, imported_key) => {
+                    message::DefineKey::Edited(name, imported_key, kind) => {
                         self.edit_alias_for_key_with_same_fingerprint(
                             name.clone(),
                             imported_key.master_fingerprint(),
@@ -385,6 +386,7 @@ impl Step for DefineDescriptor {
                         {
                             key.name = name;
                             key.key = Some(imported_key);
+                            key.device_kind = kind;
                             key.check_network(self.network);
                         }
                         self.modal = None;
@@ -445,6 +447,7 @@ impl Step for DefineDescriptor {
     fn apply(&mut self, ctx: &mut Context) -> bool {
         ctx.bitcoin_config.network = self.network;
         ctx.keys = Vec::new();
+        let mut hw_is_used = false;
         let mut signer_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
         for spending_key in self.spending_keys.iter().clone() {
@@ -456,6 +459,9 @@ impl Step for DefineDescriptor {
                     });
                     if master_fingerprint == self.signer.fingerprint() {
                         signer_is_used = true;
+                    }
+                    if spending_key.device_kind.is_some() {
+                        hw_is_used = true;
                     }
                 }
                 let xpub = DescriptorMultiXKey {
@@ -485,6 +491,9 @@ impl Step for DefineDescriptor {
                         });
                         if master_fingerprint == self.signer.fingerprint() {
                             signer_is_used = true;
+                        }
+                        if recovery_key.device_kind.is_some() {
+                            hw_is_used = true;
                         }
                     }
                     let xpub = DescriptorMultiXKey {
@@ -529,6 +538,7 @@ impl Step for DefineDescriptor {
         };
 
         ctx.descriptor = Some(LianaDescriptor::new(policy));
+        ctx.hw_is_used = hw_is_used;
         if signer_is_used {
             ctx.signer = Some(self.signer.clone());
         }
@@ -580,6 +590,7 @@ impl Step for DefineDescriptor {
 
 pub struct DescriptorKey {
     pub name: String,
+    pub device_kind: Option<DeviceKind>,
     pub valid: bool,
     pub key: Option<DescriptorPublicKey>,
     pub duplicate_key: bool,
@@ -590,6 +601,7 @@ impl Default for DescriptorKey {
     fn default() -> Self {
         Self {
             name: "".to_string(),
+            device_kind: None,
             valid: true,
             key: None,
             duplicate_key: false,
@@ -727,7 +739,7 @@ pub struct EditXpubModal {
 
     hws: Vec<HardwareWallet>,
     hot_signer: Arc<Signer>,
-    chosen_signer: Option<Fingerprint>,
+    chosen_signer: Option<(Fingerprint, Option<DeviceKind>)>,
 }
 
 impl EditXpubModal {
@@ -760,7 +772,7 @@ impl EditXpubModal {
             error: None,
             network,
             edit_name: false,
-            chosen_signer: key.map(|k| k.master_fingerprint()),
+            chosen_signer: key.map(|k| (k.master_fingerprint(), None)),
             hot_signer,
         }
     }
@@ -784,10 +796,11 @@ impl DescriptorEditModal for EditXpubModal {
                 if let Some(HardwareWallet::Supported {
                     device,
                     fingerprint,
+                    kind,
                     ..
                 }) = self.hws.get(i)
                 {
-                    self.chosen_signer = Some(*fingerprint);
+                    self.chosen_signer = Some((*fingerprint, Some(*kind)));
                     self.processing = true;
                     // If another account n exists, the key is retrieved for the account n+1
                     let account_index = self
@@ -810,10 +823,15 @@ impl DescriptorEditModal for EditXpubModal {
                 }
             }
             Message::ConnectedHardwareWallets(hws) => {
-                self.hws = hws;
                 if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
-                    self.chosen_signer = Some(key.master_fingerprint());
+                    self.chosen_signer = Some((
+                        key.master_fingerprint(),
+                        hws.iter()
+                            .find(|hw| hw.fingerprint() == Some(key.master_fingerprint()))
+                            .map(|hw| *hw.kind()),
+                    ));
                 }
+                self.hws = hws;
             }
             Message::Reload => {
                 self.hws = Vec::new();
@@ -821,7 +839,7 @@ impl DescriptorEditModal for EditXpubModal {
             }
             Message::UseHotSigner => {
                 let fingerprint = self.hot_signer.fingerprint();
-                self.chosen_signer = Some(fingerprint);
+                self.chosen_signer = Some((fingerprint, None));
                 self.form_xpub.valid = true;
                 if let Some(alias) = self.keys_aliases.get(&fingerprint) {
                     self.form_name.valid = true;
@@ -856,7 +874,6 @@ impl DescriptorEditModal for EditXpubModal {
                             } else {
                                 self.edit_name = true;
                             }
-                            self.chosen_signer = None;
                             self.form_xpub.valid = true;
                             self.form_xpub.value = key.to_string();
                         }
@@ -875,6 +892,7 @@ impl DescriptorEditModal for EditXpubModal {
                 }
                 message::ImportKeyModal::XPubEdited(s) => {
                     if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&s) {
+                        self.chosen_signer = None;
                         if let Some((fingerprint, _)) = key.origin {
                             self.form_xpub.valid = true;
                             if let Some(alias) = self.keys_aliases.get(&fingerprint) {
@@ -896,15 +914,16 @@ impl DescriptorEditModal for EditXpubModal {
                     if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
                         let key_index = self.key_index;
                         let name = self.form_name.value.clone();
+                        let device_kind = self.chosen_signer.and_then(|(_, kind)| kind);
                         if let Some(path_index) = self.path_index {
                             return Command::perform(
                                 async move { (path_index, key_index, key) },
-                                |(path_index, key_index, key)| {
+                                move |(path_index, key_index, key)| {
                                     message::DefineDescriptor::RecoveryPath(
                                         path_index,
                                         message::DefinePath::Key(
                                             key_index,
-                                            message::DefineKey::Edited(name, key),
+                                            message::DefineKey::Edited(name, key, device_kind),
                                         ),
                                     )
                                 },
@@ -913,11 +932,11 @@ impl DescriptorEditModal for EditXpubModal {
                         } else {
                             return Command::perform(
                                 async move { (key_index, key) },
-                                |(key_index, key)| {
+                                move |(key_index, key)| {
                                     message::DefineDescriptor::PrimaryPath(
                                         message::DefinePath::Key(
                                             key_index,
-                                            message::DefineKey::Edited(name, key),
+                                            message::DefineKey::Edited(name, key, device_kind),
                                         ),
                                     )
                                 },
@@ -937,7 +956,7 @@ impl DescriptorEditModal for EditXpubModal {
             &self.hws,
             self.error.as_ref(),
             self.processing,
-            self.chosen_signer,
+            self.chosen_signer.map(|s| s.0),
             &self.hot_signer,
             self.keys_aliases.get(&self.hot_signer.fingerprint),
             &self.form_xpub,
@@ -1274,6 +1293,8 @@ impl Step for ImportDescriptor {
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
         ctx.bitcoin_config.network = self.network;
+        // Set to true in order to force the registration process to be shown to user.
+        ctx.hw_is_used = true;
         // descriptor forms for import or creation cannot be both empty or filled.
         if !self.imported_descriptor.value.is_empty() {
             if let Ok(desc) = LianaDescriptor::from_str(&self.imported_descriptor.value) {
@@ -1380,6 +1401,9 @@ impl Step for RegisterDescriptor {
             _ => {}
         };
         Command::none()
+    }
+    fn skip(&self, ctx: &Context) -> bool {
+        !ctx.hw_is_used
     }
     fn apply(&mut self, ctx: &mut Context) -> bool {
         for (fingerprint, kind, token) in &self.hmacs {
@@ -1559,6 +1583,101 @@ mod tests {
             assert!(step.modal.is_none());
             assert!((step).apply(&mut ctx));
             assert!(ctx.signer.is_some());
+        });
+    }
+
+    #[tokio::test]
+    async fn test_define_descriptor_stores_if_hw_is_used() {
+        let mut ctx = Context::new(Network::Signet, PathBuf::from_str("/").unwrap());
+        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new());
+
+        let specter_key = message::DefinePath::Key(
+            0,
+            message::DefineKey::Edited(
+                "My Specter key".to_string(),
+                DescriptorPublicKey::from_str("[4df3f0e3/84'/0'/0']tpubDDRs9DnRUiJc4hq92PSJKhfzQBgHJUrDo7T2i48smsDfLsQcm3Vh7JhuGqJv8zozVkNFin8YPgpmn2NWNmpRaE3GW2pSxbmAzYf2juy7LeW").unwrap(),
+                Some(DeviceKind::Specter),
+            ),
+        );
+
+        // Use Specter device for primary key
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::PrimaryPath(specter_key.clone()),
+            ))
+            .await;
+
+        // Edit recovery key
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::RecoveryPath(
+                    0,
+                    message::DefinePath::Key(0, message::DefineKey::Edit),
+                ),
+            ))
+            .await;
+        sandbox.check(|step| assert!(step.modal.is_some()));
+        sandbox.update(Message::DefineDescriptor(
+                message::DefineDescriptor::KeyModal(
+                    message::ImportKeyModal::XPubEdited("[f5acc2fd/48'/1'/0'/2']tpubDFAqEGNyad35aBCKUAXbQGDjdVhNueno5ZZVEn3sQbW5ci457gLR7HyTmHBg93oourBssgUxuWz1jX5uhc1qaqFo9VsybY1J5FuedLfm4dK".to_string()),
+                )
+        )).await;
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::KeyModal(message::ImportKeyModal::NameEdited(
+                    "External recovery key".to_string(),
+                )),
+            ))
+            .await;
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::KeyModal(message::ImportKeyModal::ConfirmXpub),
+            ))
+            .await;
+        sandbox.check(|step| {
+            assert!(step.modal.is_none());
+            assert!((step).apply(&mut ctx));
+            assert!(ctx.hw_is_used);
+        });
+
+        // Now edit primary key to use hot signer instead of Specter device
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::PrimaryPath(message::DefinePath::Key(
+                    0,
+                    message::DefineKey::Edit,
+                )),
+            ))
+            .await;
+        sandbox.check(|step| assert!(step.modal.is_some()));
+        sandbox.update(Message::UseHotSigner).await;
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::KeyModal(message::ImportKeyModal::NameEdited(
+                    "hot signer key".to_string(),
+                )),
+            ))
+            .await;
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::KeyModal(message::ImportKeyModal::ConfirmXpub),
+            ))
+            .await;
+        sandbox.check(|step| {
+            assert!(step.modal.is_none());
+            assert!((step).apply(&mut ctx));
+            assert!(!ctx.hw_is_used);
+        });
+
+        // Now edit the recovery key to use Specter device
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::RecoveryPath(0, specter_key.clone()),
+            ))
+            .await;
+        sandbox.check(|step| {
+            assert!((step).apply(&mut ctx));
+            assert!(ctx.hw_is_used);
         });
     }
 }
