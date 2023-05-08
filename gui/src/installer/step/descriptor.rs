@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use iced::Command;
 use liana::{
@@ -97,13 +97,13 @@ pub struct DefineDescriptor {
     recovery_paths: Vec<RecoveryPath>,
 
     modal: Option<Box<dyn DescriptorEditModal>>,
-    signer: Arc<Signer>,
+    signer: Arc<Mutex<Signer>>,
 
     error: Option<String>,
 }
 
 impl DefineDescriptor {
-    pub fn new() -> Self {
+    pub fn new(signer: Arc<Mutex<Signer>>) -> Self {
         Self {
             network: Network::Bitcoin,
             data_dir: None,
@@ -112,7 +112,7 @@ impl DefineDescriptor {
             spending_threshold: 1,
             recovery_paths: vec![RecoveryPath::new()],
             modal: None,
-            signer: Arc::new(Signer::generate(Network::Bitcoin).unwrap()),
+            signer,
             error: None,
         }
     }
@@ -125,9 +125,7 @@ impl DefineDescriptor {
 
     fn set_network(&mut self, network: Network) {
         self.network = network;
-        if let Some(signer) = Arc::get_mut(&mut self.signer) {
-            signer.set_network(network);
-        }
+        self.signer.lock().unwrap().set_network(network);
         if let Some(mut network_datadir) = self.data_dir.clone() {
             network_datadir.push(self.network.to_string());
             self.network_valid = !network_datadir.exists();
@@ -448,7 +446,6 @@ impl Step for DefineDescriptor {
         ctx.bitcoin_config.network = self.network;
         ctx.keys = Vec::new();
         let mut hw_is_used = false;
-        let mut signer_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
         for spending_key in self.spending_keys.iter().clone() {
             if let Some(DescriptorPublicKey::XPub(xpub)) = spending_key.key.as_ref() {
@@ -457,9 +454,6 @@ impl Step for DefineDescriptor {
                         master_fingerprint,
                         name: spending_key.name.clone(),
                     });
-                    if master_fingerprint == self.signer.fingerprint() {
-                        signer_is_used = true;
-                    }
                     if spending_key.device_kind.is_some() {
                         hw_is_used = true;
                     }
@@ -489,9 +483,6 @@ impl Step for DefineDescriptor {
                             master_fingerprint,
                             name: recovery_key.name.clone(),
                         });
-                        if master_fingerprint == self.signer.fingerprint() {
-                            signer_is_used = true;
-                        }
                         if recovery_key.device_kind.is_some() {
                             hw_is_used = true;
                         }
@@ -539,9 +530,6 @@ impl Step for DefineDescriptor {
 
         ctx.descriptor = Some(LianaDescriptor::new(policy));
         ctx.hw_is_used = hw_is_used;
-        if signer_is_used {
-            ctx.signer = Some(self.signer.clone());
-        }
         true
     }
 
@@ -650,12 +638,6 @@ fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
     }
 }
 
-impl Default for DefineDescriptor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl From<DefineDescriptor> for Box<dyn Step> {
     fn from(s: DefineDescriptor) -> Box<dyn Step> {
         Box::new(s)
@@ -738,7 +720,8 @@ pub struct EditXpubModal {
     edit_name: bool,
 
     hws: Vec<HardwareWallet>,
-    hot_signer: Arc<Signer>,
+    hot_signer: Arc<Mutex<Signer>>,
+    hot_signer_fingerprint: Fingerprint,
     chosen_signer: Option<(Fingerprint, Option<DeviceKind>)>,
 }
 
@@ -752,8 +735,9 @@ impl EditXpubModal {
         network: Network,
         account_indexes: HashMap<Fingerprint, ChildNumber>,
         keys_aliases: HashMap<Fingerprint, String>,
-        hot_signer: Arc<Signer>,
+        hot_signer: Arc<Mutex<Signer>>,
     ) -> Self {
+        let hot_signer_fingerprint = hot_signer.lock().unwrap().fingerprint();
         Self {
             form_name: form::Value {
                 valid: true,
@@ -773,6 +757,7 @@ impl EditXpubModal {
             network,
             edit_name: false,
             chosen_signer: key.map(|k| (k.master_fingerprint(), None)),
+            hot_signer_fingerprint,
             hot_signer,
         }
     }
@@ -838,7 +823,7 @@ impl DescriptorEditModal for EditXpubModal {
                 return self.load();
             }
             Message::UseHotSigner => {
-                let fingerprint = self.hot_signer.fingerprint();
+                let fingerprint = self.hot_signer.lock().unwrap().fingerprint();
                 self.chosen_signer = Some((fingerprint, None));
                 self.form_xpub.valid = true;
                 if let Some(alias) = self.keys_aliases.get(&fingerprint) {
@@ -859,7 +844,10 @@ impl DescriptorEditModal for EditXpubModal {
                     "[{}{}]{}",
                     fingerprint,
                     derivation_path.to_string().trim_start_matches('m'),
-                    self.hot_signer.get_extended_pubkey(&derivation_path)
+                    self.hot_signer
+                        .lock()
+                        .unwrap()
+                        .get_extended_pubkey(&derivation_path)
                 );
             }
             Message::DefineDescriptor(message::DefineDescriptor::KeyModal(msg)) => match msg {
@@ -957,8 +945,8 @@ impl DescriptorEditModal for EditXpubModal {
             self.error.as_ref(),
             self.processing,
             self.chosen_signer.map(|s| s.0),
-            &self.hot_signer,
-            self.keys_aliases.get(&self.hot_signer.fingerprint),
+            &self.hot_signer_fingerprint,
+            self.keys_aliases.get(&self.hot_signer_fingerprint),
             &self.form_xpub,
             &self.form_name,
             self.edit_name,
@@ -1073,13 +1061,13 @@ impl HardwareWalletXpubs {
 }
 
 pub struct SignerXpubs {
-    signer: Arc<Signer>,
+    signer: Arc<Mutex<Signer>>,
     xpubs: Vec<String>,
     next_account: ChildNumber,
 }
 
 impl SignerXpubs {
-    fn new(signer: Arc<Signer>) -> Self {
+    fn new(signer: Arc<Mutex<Signer>>) -> Self {
         Self {
             signer,
             xpubs: Vec::new(),
@@ -1095,11 +1083,12 @@ impl SignerXpubs {
     fn select(&mut self, network: Network) {
         let derivation_path = generate_derivation_path(network, self.next_account);
         self.next_account = self.next_account.increment().unwrap();
+        let signer = self.signer.lock().unwrap();
         self.xpubs.push(format!(
             "[{}{}]{}",
-            self.signer.fingerprint(),
+            signer.fingerprint(),
             derivation_path.to_string().trim_start_matches('m'),
-            self.signer.get_extended_pubkey(&derivation_path)
+            signer.get_extended_pubkey(&derivation_path)
         ));
     }
 
@@ -1120,14 +1109,14 @@ pub struct ParticipateXpub {
 }
 
 impl ParticipateXpub {
-    pub fn new() -> Self {
+    pub fn new(signer: Arc<Mutex<Signer>>) -> Self {
         Self {
             network: Network::Bitcoin,
             network_valid: true,
             data_dir: None,
             xpubs_hw: Vec::new(),
             shared: false,
-            xpubs_signer: SignerXpubs::new(Arc::new(Signer::generate(Network::Bitcoin).unwrap())),
+            xpubs_signer: SignerXpubs::new(signer),
         }
     }
 
@@ -1137,19 +1126,15 @@ impl ParticipateXpub {
             self.xpubs_signer.reset();
         }
         self.network = network;
-        if let Some(signer) = Arc::get_mut(&mut self.xpubs_signer.signer) {
-            signer.set_network(network);
-        }
+        self.xpubs_signer
+            .signer
+            .lock()
+            .unwrap()
+            .set_network(network);
         if let Some(mut network_datadir) = self.data_dir.clone() {
             network_datadir.push(self.network.to_string());
             self.network_valid = !network_datadir.exists();
         }
-    }
-}
-
-impl Default for ParticipateXpub {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -1211,11 +1196,6 @@ impl Step for ParticipateXpub {
         ctx.bitcoin_config.network = self.network;
         // Drop connections to hardware wallets.
         self.xpubs_hw = Vec::new();
-        if !self.xpubs_signer.xpubs.is_empty() {
-            ctx.signer = Some(self.xpubs_signer.signer.clone());
-        } else {
-            ctx.signer = None;
-        }
         true
     }
 
@@ -1515,7 +1495,9 @@ mod tests {
     #[tokio::test]
     async fn test_define_descriptor_use_hotkey() {
         let mut ctx = Context::new(Network::Signet, PathBuf::from_str("/").unwrap());
-        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new());
+        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(Arc::new(
+            Mutex::new(Signer::generate(Network::Bitcoin).unwrap()),
+        )));
 
         // Edit primary key
         sandbox
@@ -1582,14 +1564,21 @@ mod tests {
         sandbox.check(|step| {
             assert!(step.modal.is_none());
             assert!((step).apply(&mut ctx));
-            assert!(ctx.signer.is_some());
+            assert!(ctx
+                .descriptor
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .contains(&step.signer.lock().unwrap().fingerprint().to_string()));
         });
     }
 
     #[tokio::test]
     async fn test_define_descriptor_stores_if_hw_is_used() {
         let mut ctx = Context::new(Network::Signet, PathBuf::from_str("/").unwrap());
-        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new());
+        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(Arc::new(
+            Mutex::new(Signer::generate(Network::Bitcoin).unwrap()),
+        )));
 
         let specter_key = message::DefinePath::Key(
             0,

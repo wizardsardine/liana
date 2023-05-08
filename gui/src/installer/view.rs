@@ -25,7 +25,6 @@ use crate::{
         message::{self, Message},
         prompt, Error,
     },
-    signer::Signer,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -888,6 +887,7 @@ pub fn install<'a>(
     generating: bool,
     config_path: Option<&std::path::PathBuf>,
     warning: Option<&'a String>,
+    signer: Option<Fingerprint>,
 ) -> Element<'a, Message> {
     layout(
         progress,
@@ -911,7 +911,7 @@ pub fn install<'a>(
                             )
                             .width(Length::Fill),
                         )
-                        .push_maybe(if context.hws.is_empty() && context.signer.is_none() {
+                        .push_maybe(if context.hws.is_empty() && signer.is_none() {
                             None
                         } else {
                             Some(
@@ -950,21 +950,17 @@ pub fn install<'a>(
                                                 },
                                             ))
                                         })
-                                        .push_maybe(context.signer.as_ref().map(|signer| {
+                                        .push_maybe(signer.as_ref().map(|fingerprint| {
                                             Row::new()
                                                 .spacing(5)
                                                 .push_maybe(context.keys.iter().find_map(|k| {
-                                                    if k.master_fingerprint == signer.fingerprint()
-                                                    {
+                                                    if k.master_fingerprint == *fingerprint {
                                                         Some(text(k.name.clone()).small().bold())
                                                     } else {
                                                         None
                                                     }
                                                 }))
-                                                .push(
-                                                    text(format!("#{}", signer.fingerprint()))
-                                                        .small(),
-                                                )
+                                                .push(text(format!("#{}", fingerprint)).small())
                                                 .push(text("This computer").small())
                                         })),
                                 )
@@ -1245,7 +1241,7 @@ pub fn edit_key_modal<'a>(
     error: Option<&Error>,
     processing: bool,
     chosen_signer: Option<Fingerprint>,
-    signer: &Signer,
+    hot_signer_fingerprint: &Fingerprint,
     signer_alias: Option<&'a String>,
     form_xpub: &form::Value<String>,
     form_name: &'a form::Value<String>,
@@ -1288,10 +1284,10 @@ pub fn edit_key_modal<'a>(
                             },
                         ))
                         .push(
-                            Button::new(if Some(signer.fingerprint) == chosen_signer {
-                                hw::selected_hot_signer(signer.fingerprint, signer_alias)
+                            Button::new(if Some(*hot_signer_fingerprint) == chosen_signer {
+                                hw::selected_hot_signer(hot_signer_fingerprint, signer_alias)
                             } else {
-                                hw::unselected_hot_signer(signer.fingerprint, signer_alias)
+                                hw::unselected_hot_signer(hot_signer_fingerprint, signer_alias)
                             })
                             .width(Length::Fill)
                             .on_press(Message::UseHotSigner)

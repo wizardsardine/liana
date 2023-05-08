@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use iced::Command;
 use liana::{bip39, signer::HotSigner};
@@ -11,10 +11,21 @@ use crate::{
     signer::Signer,
 };
 
-#[derive(Default)]
 pub struct BackupMnemonic {
     words: [&'static str; 12],
     done: bool,
+    signer: Arc<Mutex<Signer>>,
+}
+
+impl BackupMnemonic {
+    pub fn new(signer: Arc<Mutex<Signer>>) -> Self {
+        let words = signer.lock().unwrap().mnemonic();
+        Self {
+            done: false,
+            words,
+            signer,
+        }
+    }
 }
 
 impl From<BackupMnemonic> for Box<dyn Step> {
@@ -24,11 +35,6 @@ impl From<BackupMnemonic> for Box<dyn Step> {
 }
 
 impl Step for BackupMnemonic {
-    fn load_context(&mut self, ctx: &Context) {
-        if let Some(signer) = &ctx.signer {
-            self.words = signer.mnemonic();
-        }
-    }
     fn update(&mut self, message: Message) -> Command<Message> {
         if let Message::UserActionDone(done) = message {
             self.done = done;
@@ -36,7 +42,13 @@ impl Step for BackupMnemonic {
         Command::none()
     }
     fn skip(&self, ctx: &Context) -> bool {
-        ctx.signer.is_none()
+        if let Some(descriptor) = &ctx.descriptor {
+            !descriptor
+                .to_string()
+                .contains(&self.signer.lock().unwrap().fingerprint().to_string())
+        } else {
+            false
+        }
     }
     fn view(&self, progress: (usize, usize)) -> Element<Message> {
         view::backup_mnemonic(progress, &self.words, self.done)
@@ -109,7 +121,6 @@ impl Step for RecoverMnemonic {
         if self.skip {
             // If the user click previous, we dont want the skip to be set to true.
             self.skip = false;
-            ctx.signer = None;
             return true;
         }
 
@@ -148,8 +159,7 @@ impl Step for RecoverMnemonic {
             }
         }
 
-        ctx.signer = Some(Arc::new(signer));
-
+        ctx.recovered_signer = Some(Arc::new(signer));
         true
     }
     fn view(&self, progress: (usize, usize)) -> Element<Message> {

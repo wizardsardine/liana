@@ -10,10 +10,15 @@ use liana_ui::widget::Element;
 use tracing::{error, info, warn};
 
 use context::Context;
+
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
-use crate::app::{config as gui_config, settings as gui_settings};
+use crate::{
+    app::{config as gui_config, settings as gui_settings},
+    signer::Signer,
+};
 
 pub use message::Message;
 use step::{
@@ -24,6 +29,7 @@ use step::{
 pub struct Installer {
     current: usize,
     steps: Vec<Box<dyn Step>>,
+    signer: Arc<Mutex<Signer>>,
 
     /// Context is data passed through each step.
     context: Context,
@@ -55,6 +61,7 @@ impl Installer {
                 current: 0,
                 steps: vec![Welcome::default().into()],
                 context: Context::new(network, destination_path),
+                signer: Arc::new(Mutex::new(Signer::generate(network).unwrap())),
             },
             Command::none(),
         )
@@ -98,29 +105,30 @@ impl Installer {
     }
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
+        let hot_signer_fingerprint = self.signer.lock().unwrap().fingerprint();
         match message {
             Message::CreateWallet => {
                 self.steps = vec![
                     Welcome::default().into(),
-                    DefineDescriptor::new().into(),
-                    BackupMnemonic::default().into(),
+                    DefineDescriptor::new(self.signer.clone()).into(),
+                    BackupMnemonic::new(self.signer.clone()).into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
-                    Final::new().into(),
+                    Final::new(hot_signer_fingerprint).into(),
                 ];
                 self.next()
             }
             Message::ParticipateWallet => {
                 self.steps = vec![
                     Welcome::default().into(),
-                    ParticipateXpub::new().into(),
+                    ParticipateXpub::new(self.signer.clone()).into(),
                     ImportDescriptor::new(false).into(),
-                    BackupMnemonic::default().into(),
+                    BackupMnemonic::new(self.signer.clone()).into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
-                    Final::new().into(),
+                    Final::new(hot_signer_fingerprint).into(),
                 ];
                 self.next()
             }
@@ -131,7 +139,7 @@ impl Installer {
                     RecoverMnemonic::default().into(),
                     RegisterDescriptor::default().into(),
                     DefineBitcoind::new().into(),
-                    Final::new().into(),
+                    Final::new(hot_signer_fingerprint).into(),
                 ];
                 self.next()
             }
@@ -146,7 +154,10 @@ impl Installer {
                     .get_mut(self.current)
                     .expect("There is always a step")
                     .update(message);
-                Command::perform(install(self.context.clone()), Message::Installed)
+                Command::perform(
+                    install(self.context.clone(), self.signer.clone()),
+                    Message::Installed,
+                )
             }
             Message::Installed(Err(e)) => {
                 let mut data_dir = self.context.data_dir.clone();
@@ -219,7 +230,7 @@ pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
     }
 }
 
-pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
+pub async fn install(ctx: Context, signer: Arc<Mutex<Signer>>) -> Result<PathBuf, Error> {
     let mut cfg: liana::config::Config = ctx.extract_daemon_config();
     let data_dir = cfg.data_dir.unwrap();
 
@@ -248,8 +259,14 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
 
     info!("Daemon configuration file created");
 
-    if let Some(signer) = &ctx.signer {
+    if cfg
+        .main_descriptor
+        .to_string()
+        .contains(&signer.lock().unwrap().fingerprint().to_string())
+    {
         signer
+            .lock()
+            .unwrap()
             .store(
                 &cfg.data_dir().expect("Already checked"),
                 cfg.bitcoin_config.network,
@@ -257,6 +274,17 @@ pub async fn install(ctx: Context) -> Result<PathBuf, Error> {
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Hot signer mnemonic stored");
+    }
+
+    if let Some(signer) = &ctx.recovered_signer {
+        signer
+            .store(
+                &cfg.data_dir().expect("Already checked"),
+                cfg.bitcoin_config.network,
+            )
+            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+
+        info!("Recovered signer mnemonic stored");
     }
 
     // create liana GUI configuration file

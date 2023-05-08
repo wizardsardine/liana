@@ -30,8 +30,10 @@ pub struct Context {
         Option<[u8; 32]>,
     )>,
     pub data_dir: PathBuf,
-    pub signer: Option<Arc<Signer>>,
     pub hw_is_used: bool,
+    // In case a user entered a mnemonic,
+    // we dont want to override the generated signer with it.
+    pub recovered_signer: Option<Arc<Signer>>,
 }
 
 impl Context {
@@ -46,8 +48,8 @@ impl Context {
             bitcoind_config: None,
             descriptor: None,
             data_dir,
-            signer: None,
             hw_is_used: false,
+            recovered_signer: None,
         }
     }
 
