@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use iced::{
-    widget::{tooltip, Space},
+    widget::{checkbox, tooltip, Space},
     Alignment, Length,
 };
 
@@ -116,68 +116,60 @@ pub fn recovery_path_view<'a>(
     selected: bool,
 ) -> Element<'a, Message> {
     Container::new(
-        Button::new(
-            Row::new()
-                .push(if selected {
-                    icon::square_check_icon()
-                } else {
-                    icon::square_icon()
-                })
-                .push(
-                    Column::new()
-                        .push(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .spacing(10)
-                                .push(
-                                    text(format!(
-                                        "{} signature{} from",
-                                        threshold,
-                                        if threshold > 1 { "s" } else { "" }
-                                    ))
-                                    .bold(),
-                                )
-                                .push(origins.iter().fold(
-                                    Row::new().align_items(Alignment::Center).spacing(5),
-                                    |row, (fg, _)| {
-                                        row.push(if let Some(alias) = key_aliases.get(fg) {
-                                            Container::new(
-                                                tooltip::Tooltip::new(
-                                                    Container::new(text(alias)).padding(3).style(
-                                                        theme::Container::Pill(theme::Pill::Simple),
-                                                    ),
-                                                    fg.to_string(),
-                                                    tooltip::Position::Bottom,
-                                                )
-                                                .style(theme::Container::Card(theme::Card::Simple)),
+        Row::new()
+            .push(checkbox("", selected, move |_| {
+                Message::CreateSpend(CreateSpendMessage::SelectPath(index))
+            }))
+            .push(
+                Column::new()
+                    .push(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(10)
+                            .push(
+                                text(format!(
+                                    "{} signature{} from",
+                                    threshold,
+                                    if threshold > 1 { "s" } else { "" }
+                                ))
+                                .bold(),
+                            )
+                            .push(origins.iter().fold(
+                                Row::new().align_items(Alignment::Center).spacing(5),
+                                |row, (fg, _)| {
+                                    row.push(if let Some(alias) = key_aliases.get(fg) {
+                                        Container::new(
+                                            tooltip::Tooltip::new(
+                                                Container::new(text(alias)).padding(3).style(
+                                                    theme::Container::Pill(theme::Pill::Simple),
+                                                ),
+                                                fg.to_string(),
+                                                tooltip::Position::Bottom,
                                             )
-                                        } else {
-                                            Container::new(text(fg.to_string()))
-                                                .padding(3)
-                                                .style(theme::Container::Pill(theme::Pill::Simple))
-                                        })
-                                    },
-                                )),
-                        )
-                        .push(
-                            Row::new()
-                                .spacing(5)
-                                .push(text("can recover"))
-                                .push(text(format!(
-                                    "{} coin{} totalling",
-                                    number_of_coins,
-                                    if number_of_coins > 0 { "s" } else { "" }
-                                )))
-                                .push(amount(&total_amount)),
-                        ),
-                )
-                .align_items(Alignment::Center)
-                .spacing(20),
-        )
-        .padding(10)
-        .width(Length::Fill)
-        .on_press(Message::CreateSpend(CreateSpendMessage::SelectPath(index)))
-        .style(theme::Button::TransparentBorder),
+                                            .style(theme::Container::Card(theme::Card::Simple)),
+                                        )
+                                    } else {
+                                        Container::new(text(fg.to_string()))
+                                            .padding(3)
+                                            .style(theme::Container::Pill(theme::Pill::Simple))
+                                    })
+                                },
+                            )),
+                    )
+                    .push(
+                        Row::new()
+                            .spacing(5)
+                            .push(text("can recover"))
+                            .push(text(format!(
+                                "{} coin{} totalling",
+                                number_of_coins,
+                                if number_of_coins > 0 { "s" } else { "" }
+                            )))
+                            .push(amount(&total_amount)),
+                    ),
+            )
+            .align_items(Alignment::Center)
+            .spacing(20),
     )
     .style(theme::Container::Card(theme::Card::Simple))
     .width(Length::Fill)

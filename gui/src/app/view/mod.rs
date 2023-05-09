@@ -23,7 +23,9 @@ use iced::{
 use liana_ui::{
     color,
     component::{button, text::*},
-    icon::{cross_icon, home_icon, receive_icon, send_icon, settings_icon},
+    icon::{
+        coins_icon, cross_icon, history_icon, home_icon, receive_icon, send_icon, settings_icon,
+    },
     image::*,
     theme,
     util::Collection,
@@ -54,150 +56,55 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
 
     let transactions_button = if *menu == Menu::Transactions {
         row!(
-            Button::new(
-                row!(
-                    history_icon().width(Length::Units(20)),
-                    text("Transactions")
-                )
-                .spacing(10)
-                .padding(10)
-                .align_items(iced::Alignment::Center),
-            )
-            .style(theme::Button::Menu(true))
-            .on_press(Message::Menu(Menu::Transactions))
-            .width(iced::Length::Fill),
+            button::menu_active(Some(history_icon()), "Transactions")
+                .on_press(Message::Menu(Menu::Transactions))
+                .width(iced::Length::Fill),
             menu_green_bar()
         )
     } else {
-        row!(Button::new(
-            row!(
-                history_icon().width(Length::Units(20)),
-                text("Transactions")
-            )
-            .spacing(10)
-            .padding(10)
-            .align_items(iced::Alignment::Center),
-        )
-        .style(theme::Button::Menu(false))
-        .on_press(Message::Menu(Menu::Transactions))
-        .width(iced::Length::Fill))
+        row!(button::menu(Some(history_icon()), "Transactions")
+            .on_press(Message::Menu(Menu::Transactions))
+            .width(iced::Length::Fill))
     };
 
     let coins_button = if *menu == Menu::Coins {
         row!(
-            Button::new(
-                Container::new(
-                    Row::new()
-                        .push(coins_icon().width(Length::Units(20)))
-                        .push(text("Coins"))
-                        .spacing(10)
-                        .width(iced::Length::Fill)
-                        .align_items(iced::Alignment::Center),
-                )
-                .width(iced::Length::Fill)
-                .padding(10)
-                .center_x(),
-            )
-            .style(theme::Button::Menu(true))
-            .on_press(Message::Reload)
-            .width(iced::Length::Fill),
+            button::menu_active(Some(coins_icon()), "Coins")
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
             menu_green_bar()
         )
     } else {
-        row!(Button::new(
-            Container::new(
-                Row::new()
-                    .push(coins_icon().width(Length::Units(20)))
-                    .push(text("Coins"))
-                    .spacing(10)
-                    .width(iced::Length::Fill)
-                    .align_items(iced::Alignment::Center),
-            )
-            .width(iced::Length::Fill)
-            .padding(10)
-            .center_x(),
-        )
-        .style(theme::Button::Menu(false))
-        .on_press(Message::Menu(Menu::Coins))
-        .width(iced::Length::Fill))
+        row!(button::menu(Some(coins_icon()), "Coins")
+            .style(theme::Button::Menu(false))
+            .on_press(Message::Menu(Menu::Coins))
+            .width(iced::Length::Fill))
     };
 
     let psbt_button = if *menu == Menu::PSBTs {
         row!(
-            Button::new(
-                Container::new(
-                    Row::new()
-                        .push(history_icon().width(Length::Units(20)))
-                        .push(text("PSBTs"))
-                        .spacing(10)
-                        .width(iced::Length::Fill)
-                        .align_items(iced::Alignment::Center),
-                )
-                .width(iced::Length::Fill)
-                .padding(10)
-                .center_x(),
-            )
-            .style(theme::Button::Menu(true))
-            .on_press(Message::Menu(Menu::PSBTs))
-            .width(iced::Length::Fill),
+            button::menu_active(Some(history_icon()), "PSBTs")
+                .on_press(Message::Menu(Menu::PSBTs))
+                .width(iced::Length::Fill),
             menu_green_bar()
         )
     } else {
-        row!(Button::new(
-            Container::new(
-                Row::new()
-                    .push(history_icon().width(Length::Units(20)))
-                    .push(text("PSBTs"))
-                    .spacing(10)
-                    .width(iced::Length::Fill)
-                    .align_items(iced::Alignment::Center),
-            )
-            .width(iced::Length::Fill)
-            .padding(10)
-            .center_x(),
-        )
-        .style(theme::Button::Menu(false))
-        .on_press(Message::Menu(Menu::PSBTs))
-        .width(iced::Length::Fill))
+        row!(button::menu(Some(history_icon()), "PSBTs")
+            .on_press(Message::Menu(Menu::PSBTs))
+            .width(iced::Length::Fill))
     };
 
     let spend_button = if *menu == Menu::CreateSpendTx {
         row!(
-            Button::new(
-                Container::new(
-                    Row::new()
-                        .push(send_icon())
-                        .push(text("Send"))
-                        .spacing(10)
-                        .width(iced::Length::Fill)
-                        .align_items(iced::Alignment::Center),
-                )
-                .width(iced::Length::Fill)
-                .padding(10)
-                .center_x(),
-            )
-            .style(theme::Button::Menu(true))
-            .on_press(Message::Menu(Menu::CreateSpendTx))
-            .width(iced::Length::Fill),
+            button::menu_active(Some(send_icon()), "Send")
+                .on_press(Message::Menu(Menu::CreateSpendTx))
+                .width(iced::Length::Fill),
             menu_green_bar()
         )
     } else {
-        row!(Button::new(
-            Container::new(
-                Row::new()
-                    .push(send_icon())
-                    .push(text("Send"))
-                    .spacing(10)
-                    .width(iced::Length::Fill)
-                    .align_items(iced::Alignment::Center),
-            )
-            .width(iced::Length::Fill)
-            .padding(10)
-            .center_x(),
-        )
-        .style(theme::Button::Menu(false))
-        .on_press(Message::Menu(Menu::CreateSpendTx))
-        .width(iced::Length::Fill))
+        row!(button::menu(Some(send_icon()), "Send")
+            .on_press(Message::Menu(Menu::CreateSpendTx))
+            .width(iced::Length::Fill))
     };
 
     let receive_button = if *menu == Menu::Receive {

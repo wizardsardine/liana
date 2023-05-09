@@ -1,15 +1,17 @@
-use crate::{theme, widget::*};
+use crate::{color, theme, widget::*};
 use iced::widget::{button, container, row};
 use iced::{Alignment, Length};
 
 use super::text::text;
 
 pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button::Button::new(content(icon, t).padding(10)).style(theme::Button::Menu(false))
+    button::Button::new(content(icon.map(|i| i.style(color::GREY_3)), t).padding(10))
+        .style(theme::Button::Menu(false))
 }
 
 pub fn menu_active<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button::Button::new(content(icon, t).padding(10)).style(theme::Button::Menu(true))
+    button::Button::new(content(icon.map(|i| i.style(color::GREY_3)), t).padding(10))
+        .style(theme::Button::Menu(true))
 }
 
 pub fn alert<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
