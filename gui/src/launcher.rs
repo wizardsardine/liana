@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-use iced::{Alignment, Command, Length, Subscription};
+use iced::{widget::Space, Alignment, Command, Length, Subscription};
 
 use liana::{config::ConfigError, miniscript::bitcoin::Network};
 use liana_ui::{
     component::{badge, card, text::*},
-    icon, theme,
+    icon, image, theme,
     util::*,
     widget::*,
 };
@@ -76,69 +76,76 @@ impl Launcher {
 
     pub fn view(&self) -> Element<Message> {
         Into::<Element<ViewMessage>>::into(
-            Container::new(
-                Column::new()
-                    .spacing(30)
-                    .push(text("Welcome back").size(50).bold())
-                    .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
-                    .push(
-                        self.choices
-                            .iter()
-                            .fold(
-                                Column::new()
-                                    .push(text("Select network:").small().bold())
-                                    .spacing(10),
-                                |col, choice| {
-                                    col.push(
+            Column::new()
+                .push(
+                    Container::new(image::liana_brand_grey().width(Length::Units(200)))
+                        .padding(100),
+                )
+                .push(
+                    Container::new(
+                        Column::new()
+                            .spacing(30)
+                            .push(text("Welcome back").size(50).bold())
+                            .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
+                            .push(
+                                self.choices
+                                    .iter()
+                                    .fold(
+                                        Column::new()
+                                            .push(text("Select network:").small().bold())
+                                            .spacing(10),
+                                        |col, choice| {
+                                            col.push(
+                                                Button::new(
+                                                    Row::new()
+                                                        .spacing(20)
+                                                        .align_items(Alignment::Center)
+                                                        .push(
+                                                            badge::Badge::new(icon::bitcoin_icon())
+                                                                .style(match choice {
+                                                                    Network::Bitcoin => {
+                                                                        theme::Badge::Bitcoin
+                                                                    }
+                                                                    _ => theme::Badge::Standard,
+                                                                }),
+                                                        )
+                                                        .push(text(match choice {
+                                                            Network::Bitcoin => "Bitcoin Mainnet",
+                                                            Network::Testnet => "Bitcoin Testnet",
+                                                            Network::Signet => "Bitcoin Signet",
+                                                            Network::Regtest => "Bitcoin Regtest",
+                                                        })),
+                                                )
+                                                .on_press(ViewMessage::Check(*choice))
+                                                .padding(10)
+                                                .width(Length::Fill)
+                                                .style(theme::Button::Border),
+                                            )
+                                        },
+                                    )
+                                    .push(
                                         Button::new(
                                             Row::new()
                                                 .spacing(20)
                                                 .align_items(Alignment::Center)
-                                                .push(
-                                                    badge::Badge::new(icon::bitcoin_icon()).style(
-                                                        match choice {
-                                                            Network::Bitcoin => {
-                                                                theme::Badge::Bitcoin
-                                                            }
-                                                            _ => theme::Badge::Standard,
-                                                        },
-                                                    ),
-                                                )
-                                                .push(text(match choice {
-                                                    Network::Bitcoin => "Bitcoin Mainnet",
-                                                    Network::Testnet => "Bitcoin Testnet",
-                                                    Network::Signet => "Bitcoin Signet",
-                                                    Network::Regtest => "Bitcoin Regtest",
-                                                })),
+                                                .push(badge::Badge::new(icon::plus_icon()))
+                                                .push(text("Install Liana on another network")),
                                         )
-                                        .on_press(ViewMessage::Check(*choice))
+                                        .on_press(ViewMessage::StartInstall)
                                         .padding(10)
                                         .width(Length::Fill)
-                                        .style(theme::Button::Border),
-                                    )
-                                },
+                                        .style(theme::Button::TransparentBorder),
+                                    ),
                             )
-                            .push(
-                                Button::new(
-                                    Row::new()
-                                        .spacing(20)
-                                        .align_items(Alignment::Center)
-                                        .push(badge::Badge::new(icon::plus_icon()))
-                                        .push(text("Install Liana on another network")),
-                                )
-                                .on_press(ViewMessage::StartInstall)
-                                .padding(10)
-                                .width(Length::Fill)
-                                .style(theme::Button::TransparentBorder),
-                            ),
+                            .max_width(500)
+                            .align_items(Alignment::Center),
                     )
-                    .max_width(500)
-                    .align_items(Alignment::Center),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x()
-            .center_y(),
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x()
+                    .center_y(),
+                )
+                .push(Space::with_height(Length::Units(100))),
         )
         .map(Message::View)
     }

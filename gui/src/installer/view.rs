@@ -76,73 +76,92 @@ const NETWORKS: [Network; 4] = [
 ];
 
 pub fn welcome<'a>() -> Element<'a, Message> {
-    Container::new(Container::new(
+    Container::new(
         Column::new()
+            .push(Container::new(image::liana_brand_grey().width(Length::Units(200))).padding(100))
             .push(
-                Row::new()
-                    .align_items(Alignment::End)
-                    .spacing(20)
-                    .push(
-                        Container::new(
-                            Column::new()
+                Container::new(
+                    Column::new()
+                        .push(
+                            Row::new()
+                                .align_items(Alignment::End)
                                 .spacing(20)
-                                .align_items(Alignment::Center)
-                                .push(image::create_new_wallet_icon().width(Length::Units(100)))
-                                .push(p1_regular("Create a new wallet").style(color::GREY_3))
                                 .push(
-                                    button::secondary(None, "Select")
-                                        .width(Length::Units(200))
-                                        .on_press(Message::CreateWallet),
+                                    Container::new(
+                                        Column::new()
+                                            .spacing(20)
+                                            .align_items(Alignment::Center)
+                                            .push(
+                                                image::create_new_wallet_icon()
+                                                    .width(Length::Units(100)),
+                                            )
+                                            .push(
+                                                p1_regular("Create a new wallet")
+                                                    .style(color::GREY_3),
+                                            )
+                                            .push(
+                                                button::secondary(None, "Select")
+                                                    .width(Length::Units(200))
+                                                    .on_press(Message::CreateWallet),
+                                            )
+                                            .align_items(Alignment::Center),
+                                    )
+                                    .padding(20),
                                 )
-                                .align_items(Alignment::Center),
+                                .push(
+                                    Container::new(
+                                        Column::new()
+                                            .spacing(20)
+                                            .align_items(Alignment::Center)
+                                            .push(
+                                                image::participate_in_new_wallet_icon()
+                                                    .width(Length::Units(200)),
+                                            )
+                                            .push(
+                                                p1_regular("Participate in new wallet")
+                                                    .style(color::GREY_3),
+                                            )
+                                            .push(
+                                                button::secondary(None, "Select")
+                                                    .width(Length::Units(200))
+                                                    .on_press(Message::ParticipateWallet),
+                                            )
+                                            .align_items(Alignment::Center),
+                                    )
+                                    .padding(20),
+                                )
+                                .push(
+                                    Container::new(
+                                        Column::new()
+                                            .spacing(20)
+                                            .align_items(Alignment::Center)
+                                            .push(
+                                                image::restore_wallet_icon()
+                                                    .width(Length::Units(100)),
+                                            )
+                                            .push(
+                                                p1_regular("Restore a wallet").style(color::GREY_3),
+                                            )
+                                            .push(
+                                                button::secondary(None, "Select")
+                                                    .width(Length::Units(200))
+                                                    .on_press(Message::ImportWallet),
+                                            )
+                                            .align_items(Alignment::Center),
+                                    )
+                                    .padding(20),
+                                ),
                         )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .align_items(Alignment::Center)
-                                .push(
-                                    image::participate_in_new_wallet_icon()
-                                        .width(Length::Units(200)),
-                                )
-                                .push(p1_regular("Participate in new wallet").style(color::GREY_3))
-                                .push(
-                                    button::secondary(None, "Select")
-                                        .width(Length::Units(200))
-                                        .on_press(Message::ParticipateWallet),
-                                )
-                                .align_items(Alignment::Center),
-                        )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .align_items(Alignment::Center)
-                                .push(image::restore_wallet_icon().width(Length::Units(100)))
-                                .push(p1_regular("Restore a wallet").style(color::GREY_3))
-                                .push(
-                                    button::secondary(None, "Select")
-                                        .width(Length::Units(200))
-                                        .on_press(Message::ImportWallet),
-                                )
-                                .align_items(Alignment::Center),
-                        )
-                        .padding(20),
-                    ),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .spacing(50)
-            .align_items(Alignment::Center),
-    ))
-    .center_y()
-    .center_x()
-    .height(Length::Fill)
-    .width(Length::Fill)
+                        .push(Space::with_height(Length::Units(100)))
+                        .spacing(50)
+                        .align_items(Alignment::Center),
+                )
+                .center_y()
+                .center_x()
+                .width(Length::Fill)
+                .height(Length::Fill),
+            ),
+    )
     .into()
 }
 
@@ -274,8 +293,6 @@ pub fn define_descriptor<'a>(
             )
             .push_maybe(error.map(|e| card::error("Failed to create descriptor", e.to_string())))
             .push(Space::with_height(Length::Units(20)))
-            .width(Length::Fill)
-            .height(Length::Fill)
             .spacing(50),
         false,
     )
