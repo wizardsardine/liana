@@ -1,5 +1,43 @@
 # Liana daemon and GUI release notes
 
+## 1.0
+
+This is the first non-beta release of Liana.
+
+Improvements were concentrated on the GUI. The UI was entirely overhauled.
+
+### Features
+
+- The `createspend` command now allows you to not provide any destination. In this case it will
+  create a send-to-self transaction containing a single change output.
+
+#### GUI-specific
+
+- Overall there is a new layout and color scheme. The "draft transactions" menu was renamed to
+  the more common "PSBTs".
+- The homepage now features a list of payments, instead of transactions.
+- The spend transaction creation process is now contained in a single screen. It allows you to
+  easily create a send-to-self transaction by not specifying any recipient.
+- The homepage will now feature an approximation of the remaining time before the first recovery
+  path becomes available.
+- The homepage now features a button to refresh all coins whose recovery path is available (or close
+  to be), if there is any.
+- Entries in the coins list now features a button to refresh a coin (create a send-to-self
+  transaction in order to restart the timelock).
+- You can now generate multiple receive addresses in a row.
+- We now display the alias of signing devices (if any) in the final installer step.
+
+### Fixes
+
+#### GUI-specific
+
+- Send-to-self transactions are now displayed as such instead of being affected a "0.00000BTC"
+  value.
+- The installer will not present a step to register the descriptor on the signing device if there
+  isn't any.
+- Some wording improvements all around.
+- The slider to configure timelocks in the installer now has a step of 144 (instead of 1).
+
 ## 0.4
 
 This fourth release brings support for descriptors with multiple recovery path as well as several
