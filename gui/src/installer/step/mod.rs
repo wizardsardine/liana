@@ -11,7 +11,10 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use iced::Command;
-use liana::{config::BitcoindConfig, miniscript::bitcoin};
+use liana::{
+    config::BitcoindConfig,
+    miniscript::bitcoin::{util::bip32::Fingerprint, Network},
+};
 
 use jsonrpc::{client::Client, simple_http::SimpleHttpTransport};
 
@@ -61,7 +64,7 @@ pub struct DefineBitcoind {
     is_running: Option<Result<(), Error>>,
 }
 
-fn bitcoind_default_cookie_path(network: &bitcoin::Network) -> Option<String> {
+fn bitcoind_default_cookie_path(network: &Network) -> Option<String> {
     #[cfg(target_os = "linux")]
     let configs_dir = dirs::home_dir();
 
@@ -76,16 +79,16 @@ fn bitcoind_default_cookie_path(network: &bitcoin::Network) -> Option<String> {
         path.push("Bitcoin");
 
         match network {
-            bitcoin::Network::Bitcoin => {
+            Network::Bitcoin => {
                 path.push(".cookie");
             }
-            bitcoin::Network::Testnet => {
+            Network::Testnet => {
                 path.push("testnet3/.cookie");
             }
-            bitcoin::Network::Regtest => {
+            Network::Regtest => {
                 path.push("regtest/.cookie");
             }
-            bitcoin::Network::Signet => {
+            Network::Signet => {
                 path.push("signet/.cookie");
             }
         }
@@ -95,12 +98,12 @@ fn bitcoind_default_cookie_path(network: &bitcoin::Network) -> Option<String> {
     None
 }
 
-fn bitcoind_default_address(network: &bitcoin::Network) -> String {
+fn bitcoind_default_address(network: &Network) -> String {
     match network {
-        bitcoin::Network::Bitcoin => "127.0.0.1:8332".to_string(),
-        bitcoin::Network::Testnet => "127.0.0.1:18332".to_string(),
-        bitcoin::Network::Regtest => "127.0.0.1:18443".to_string(),
-        bitcoin::Network::Signet => "127.0.0.1:38332".to_string(),
+        Network::Bitcoin => "127.0.0.1:8332".to_string(),
+        Network::Testnet => "127.0.0.1:18332".to_string(),
+        Network::Regtest => "127.0.0.1:18443".to_string(),
+        Network::Signet => "127.0.0.1:38332".to_string(),
     }
 }
 
@@ -227,15 +230,19 @@ pub struct Final {
     context: Option<Context>,
     warning: Option<String>,
     config_path: Option<PathBuf>,
+    hot_signer_fingerprint: Fingerprint,
+    hot_signer_is_not_used: bool,
 }
 
 impl Final {
-    pub fn new() -> Self {
+    pub fn new(hot_signer_fingerprint: Fingerprint) -> Self {
         Self {
             context: None,
             generating: false,
             warning: None,
             config_path: None,
+            hot_signer_fingerprint,
+            hot_signer_is_not_used: false,
         }
     }
 }
@@ -243,6 +250,20 @@ impl Final {
 impl Step for Final {
     fn load_context(&mut self, ctx: &Context) {
         self.context = Some(ctx.clone());
+        if let Some(signer) = &ctx.recovered_signer {
+            self.hot_signer_fingerprint = signer.fingerprint();
+            self.hot_signer_is_not_used = false;
+        } else if ctx
+            .descriptor
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains(&self.hot_signer_fingerprint.to_string())
+        {
+            self.hot_signer_is_not_used = false;
+        } else {
+            self.hot_signer_is_not_used = true;
+        }
     }
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
@@ -276,13 +297,12 @@ impl Step for Final {
             self.generating,
             self.config_path.as_ref(),
             self.warning.as_ref(),
+            if self.hot_signer_is_not_used {
+                None
+            } else {
+                Some(self.hot_signer_fingerprint)
+            },
         )
-    }
-}
-
-impl Default for Final {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
