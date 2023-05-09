@@ -1,69 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist SYSTEM "file://localhost/System/Library/DTDs/PropertyList.dtd">
 <plist version="0.9">
-<dict>
-  <key>LSMinimumSystemVersion</key>
-  <string>10.15.0</string>
-
-  <key>LSArchitecturePriority</key>
-  <array>
-    <string>x86_64</string>
-  </array>
-
-  <!-- TODO -->
-  <!--<key>CFBundleIconFile</key>-->
-  <!--<string></string>-->
-
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-
-  <key>CFBundleSupportedPlatforms</key>
-  <array>
-	   <string>MacOSX</string>
-  </array>
-
-  <key>CFBundleShortVersionString</key>
-  <string>VERSION_PLACEHOLDER</string>
-
-  <key>CFBundleVersion</key>
-  <string>VERSION_PLACEHOLDER</string>
-
-  <key>CFBundleSignature</key>
-  <string>????</string>
-
-  <key>CFBundleExecutable</key>
-  <string>Liana</string>
-
-  <key>CFBundleName</key>
-  <string>Liana</string>
-
-  <key>LSHasLocalizedDisplayName</key>
-  <true/>
-
-  <key>CFBundleIdentifier</key>
-  <string>org.wizardsardine.liana</string>
-
-  <key>CFBundleURLTypes</key>
-  <array>
+    <!-- Based on https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html#//apple_ref/doc/uid/10000123i-CH101-SW5 -->
+    <!-- See also https://github.com/bitcoin/bitcoin/blob/master/share/qt/Info.plist.in as an example. -->
     <dict>
-      <key>CFBundleTypeRole</key>
-      <string>Editor</string>
-      <key>CFBundleURLName</key>
-      <string>org.wizardsardine.liana</string>
-      <key>CFBundleURLSchemes</key>
-      <array>
-        <string>liana</string>
-      </array>
+        <key>CFBundleName</key>
+        <string>Liana</string>
+
+        <key>CFBundleDisplayName</key>
+        <string>Liana</string>
+
+        <key>CFBundleIdentifier</key>
+        <string>com.wizardsardine.liana</string>
+
+        <key>CFBundleVersion</key>
+        <string>VERSION_PLACEHOLDER</string>
+
+        <key>CFBundleShortVersionString</key>
+        <string>VERSION_PLACEHOLDER</string>
+
+        <key>CFBundlePackageType</key>
+        <string>APPL</string>
+
+        <key>CFBundleSignature</key>
+        <string>????</string>
+
+        <key>CFBundleExecutable</key>
+        <string>Liana</string>
+
+        <key>LSMinimumSystemVersion</key>
+        <string>10.15.0</string>
+
+        <key>CFBundleIconFile</key>
+        <string>Liana.icns</string>
+
+        <key>NSPrincipalClass</key>
+        <string>NSApplication</string>
+
+        <key>LSApplicationCategoryType</key>
+        <string>public.app-category.finance</string>
+
     </dict>
-  </array>
-
-  <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
-
-  <key>NSHighResolutionCapable</key>
-    <string>True</string>
-
-  <key>LSApplicationCategoryType</key>
-    <string>public.app-category.finance</string>
-</dict>
 </plist>
