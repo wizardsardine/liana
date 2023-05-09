@@ -10,7 +10,7 @@ use liana_ui::{
     color,
     component::{
         button, card, collapse, form, hw, separation,
-        text::{text, Text},
+        text::{h3, text, Text},
         tooltip,
     },
     icon, theme,
@@ -147,10 +147,9 @@ pub fn define_descriptor<'a>(
     valid: bool,
     error: Option<&String>,
 ) -> Element<'a, Message> {
-    let row_network = Row::new()
+    let col_network = Column::new()
         .spacing(10)
-        .align_items(Alignment::Center)
-        .push(text("Network:").bold())
+        .push(text("Network").bold())
         .push(container(
             pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
                 Message::Network(net.into())
@@ -166,14 +165,12 @@ pub fn define_descriptor<'a>(
             None
         } else {
             Some(text("A data directory already exists for this network").style(color::RED))
-        })
-        .padding(50);
+        });
 
     let col_spending_keys = Column::new()
         .push(
             Row::new()
                 .spacing(10)
-                .push(Space::with_width(Length::Units(5)))
                 .push(text("Primary path:").bold())
                 .push(tooltip(prompt::DEFINE_DESCRIPTOR_PRIMARY_PATH_TOOLTIP)),
         )
@@ -227,14 +224,12 @@ pub fn define_descriptor<'a>(
 
     layout(
         progress,
+        "Create the wallet",
         Column::new()
-            .push(Space::with_height(Length::Units(30)))
-            .push(text("Create the wallet").bold().size(50))
             .push(
                 Column::new()
                     .width(Length::Fill)
-                    .align_items(Alignment::Center)
-                    .push(row_network)
+                    .push(col_network)
                     .push(
                         Column::new()
                             .spacing(25)
@@ -242,7 +237,6 @@ pub fn define_descriptor<'a>(
                             .push(
                                 Row::new()
                                     .spacing(10)
-                                    .push(Space::with_width(Length::Units(5)))
                                     .push(text("Recovery paths:").bold())
                                     .push(tooltip(prompt::DEFINE_DESCRIPTOR_RECOVERY_PATH_TOOLTIP)),
                             )
@@ -253,9 +247,13 @@ pub fn define_descriptor<'a>(
             .push(
                 Row::new()
                     .spacing(10)
-                    .push(button::secondary(None, "Add a recovery path").on_press(
-                        Message::DefineDescriptor(message::DefineDescriptor::AddRecoveryPath),
-                    ))
+                    .push(
+                        button::secondary(Some(icon::plus_icon()), "Add a recovery path")
+                            .on_press(Message::DefineDescriptor(
+                                message::DefineDescriptor::AddRecoveryPath,
+                            ))
+                            .width(Length::Units(200)),
+                    )
                     .push(if !valid {
                         button::primary(None, "Next").width(Length::Units(200))
                     } else {
@@ -268,8 +266,8 @@ pub fn define_descriptor<'a>(
             .push(Space::with_height(Length::Units(20)))
             .width(Length::Fill)
             .height(Length::Fill)
-            .spacing(50)
-            .align_items(Alignment::Center),
+            .spacing(50),
+        false,
     )
 }
 
@@ -365,8 +363,8 @@ pub fn import_descriptor<'a>(
         .spacing(10);
     layout(
         progress,
+        "Import the wallet",
         Column::new()
-            .push(text("Import the wallet").bold().size(50))
             .push(
                 Column::new()
                     .spacing(20)
@@ -385,11 +383,8 @@ pub fn import_descriptor<'a>(
                     .on_press(Message::Next)
             })
             .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(100)
-            .spacing(50)
-            .align_items(Alignment::Center),
+            .spacing(50),
+        true,
     )
 }
 
@@ -579,8 +574,8 @@ pub fn participate_xpub<'a>(
 
     layout(
         progress,
+        "Share your public keys",
         Column::new()
-            .push(text("Share your public keys").bold().size(50))
             .push(
                 Column::new()
                     .spacing(20)
@@ -619,11 +614,8 @@ pub fn participate_xpub<'a>(
             } else {
                 button::primary(None, "Next").width(Length::Units(200))
             })
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(100)
-            .spacing(50)
-            .align_items(Alignment::Center),
+            .spacing(50),
+        true
     )
 }
 
@@ -640,9 +632,8 @@ pub fn register_descriptor<'a>(
 ) -> Element<'a, Message> {
     layout(
         progress,
+        "Register descriptor",
         Column::new()
-            .max_width(1000)
-            .push(text("Register descriptor").bold().size(50))
             .push(card::simple(
                 Column::new()
                     .push(text("The descriptor:").small().bold())
@@ -705,11 +696,8 @@ pub fn register_descriptor<'a>(
             } else {
                 button::primary(None, "Next").width(Length::Units(200))
             })
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(100)
-            .spacing(50)
-            .align_items(Alignment::Center),
+            .spacing(50),
+        true,
     )
 }
 
@@ -720,12 +708,8 @@ pub fn backup_descriptor<'a>(
 ) -> Element<'a, Message> {
     layout(
         progress,
+        "Backup your wallet descriptor",
         Column::new()
-            .push(
-                text("Did you backup your wallet descriptor ?")
-                    .bold()
-                    .size(50),
-            )
             .push(
                 Column::new()
                     .push(text(prompt::BACKUP_DESCRIPTOR_MESSAGE))
@@ -779,11 +763,8 @@ pub fn backup_descriptor<'a>(
             } else {
                 button::primary(None, "Next").width(Length::Units(200))
             })
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(100)
-            .spacing(50)
-            .align_items(Alignment::Center),
+            .spacing(50),
+        true,
     )
 }
 
@@ -823,12 +804,8 @@ pub fn define_bitcoin<'a>(
 
     layout(
         progress,
+        "Set up connection to the Bitcoin full node",
         Column::new()
-            .push(
-                text("Set up connection to the Bitcoin full node")
-                    .bold()
-                    .size(50),
-            )
             .push(col_address)
             .push(col_cookie)
             .push_maybe(if is_running.is_some() {
@@ -872,11 +849,8 @@ pub fn define_bitcoin<'a>(
                         button::primary(None, "Next").width(Length::Units(200))
                     }),
             )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(100)
-            .spacing(50)
-            .align_items(Alignment::Center),
+            .spacing(50),
+        true,
     )
 }
 
@@ -891,10 +865,8 @@ pub fn install<'a>(
 ) -> Element<'a, Message> {
     layout(
         progress,
+        "Final step",
         Column::new()
-            .push(Space::with_height(Length::Units(50)))
-            .push(text("Final step").bold().size(50))
-            .push(Space::with_height(Length::Units(50)))
             .push(text(
                 "Check your information before finalizing the install process:",
             ))
@@ -1036,8 +1008,8 @@ pub fn install<'a>(
             })
             .spacing(10)
             .width(Length::Fill)
-            .height(Length::Fill)
-            .align_items(Alignment::Center),
+            .height(Length::Fill),
+        true,
     )
 }
 
@@ -1121,7 +1093,12 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
                     Column::new()
                         .spacing(15)
                         .align_items(Alignment::Center)
-                        .push(icon::key_icon().size(30).width(Length::Units(50))),
+                        .push(
+                            icon::key_icon()
+                                .size(30)
+                                .width(Length::Units(50))
+                                .style(color::GREY_3),
+                        ),
                 )
                 .height(Length::Fill)
                 .align_y(alignment::Vertical::Center),
@@ -1526,8 +1503,8 @@ pub fn backup_mnemonic<'a>(
 ) -> Element<'a, Message> {
     layout(
         progress,
+        "Backup your mnemonic",
         Column::new()
-            .push(text("Backup your mnemonic").bold().size(50))
             .push(text(prompt::MNEMONIC_HELP))
             .push(
                 words
@@ -1557,11 +1534,8 @@ pub fn backup_mnemonic<'a>(
             } else {
                 button::primary(None, "Next").width(Length::Units(200))
             })
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(100)
-            .spacing(50)
-            .align_items(Alignment::Center),
+            .spacing(50),
+        true,
     )
 }
 
@@ -1575,8 +1549,8 @@ pub fn recover_mnemonic<'a>(
 ) -> Element<'a, Message> {
     layout(
         progress,
+        "Import Mnemonic",
         Column::new()
-            .push(text("Mnemonics import").bold().size(50))
             .push(text(prompt::RECOVER_MNEMONIC_HELP))
             .push_maybe(if recover {
                 Some(
@@ -1662,30 +1636,60 @@ pub fn recover_mnemonic<'a>(
                         },
                     )
             })
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(100)
-            .spacing(50)
-            .align_items(Alignment::Center),
+            .spacing(50),
+        true,
     )
 }
 
 fn layout<'a>(
     progress: (usize, usize),
+    title: &'static str,
     content: impl Into<Element<'a, Message>>,
+    padding_left: bool,
 ) -> Element<'a, Message> {
     Container::new(scrollable(
         Column::new()
+            .width(Length::Fill)
+            .push(Space::with_height(Length::Units(100)))
             .push(
-                Container::new(button::transparent(None, "< Previous").on_press(Message::Previous))
-                    .padding(5),
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push(
+                        Container::new(
+                            button::transparent(Some(icon::previous_icon()), "Previous")
+                                .on_press(Message::Previous),
+                        )
+                        .width(Length::FillPortion(2))
+                        .center_x(),
+                    )
+                    .push(Container::new(h3(title)).width(Length::FillPortion(8)))
+                    .push(
+                        Container::new(text(format!("{} | {}", progress.0, progress.1)))
+                            .width(Length::FillPortion(2))
+                            .center_x(),
+                    ),
             )
             .push(
-                Container::new(text(format!("{}/{}", progress.0, progress.1)))
-                    .width(Length::Fill)
-                    .center_x(),
-            )
-            .push(Container::new(content).width(Length::Fill).center_x()),
+                Row::new()
+                    .push(Space::with_width(Length::FillPortion(2)))
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .push(Space::with_height(Length::Units(100)))
+                                .push(content),
+                        )
+                        .width(Length::FillPortion(if padding_left {
+                            8
+                        } else {
+                            10
+                        })),
+                    )
+                    .push_maybe(if padding_left {
+                        Some(Space::with_width(Length::FillPortion(2)))
+                    } else {
+                        None
+                    }),
+            ),
     ))
     .center_x()
     .height(Length::Fill)

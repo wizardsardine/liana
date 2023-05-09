@@ -118,6 +118,10 @@ pub fn network_icon() -> Text<'static> {
     bootstrap_icon('\u{F40D}')
 }
 
+pub fn previous_icon() -> Text<'static> {
+    bootstrap_icon('\u{F284}')
+}
+
 const ICONEX_ICONS: Font = Font::External {
     name: "Iconex icons",
     bytes: include_bytes!("../static/icons/iconex/iconex-icons.ttf"),
