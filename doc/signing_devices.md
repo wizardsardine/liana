@@ -13,5 +13,5 @@ repository](https://github.com/wizardsardine/async-hwi).
 
 ## Ledger
 
-Minimum supported version of the Bitcoin application is 2.1.0 (the first version to have  full
+Minimum supported version of the Bitcoin application is 2.1.0 (the first version to have full
 Miniscript descriptors support).
