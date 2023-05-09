@@ -10,10 +10,10 @@ use liana_ui::{
     color,
     component::{
         button, card, collapse, form, hw, separation,
-        text::{h3, text, Text},
+        text::{h3, p1_regular, text, Text},
         tooltip,
     },
-    icon, theme,
+    icon, image, theme,
     util::Collection,
     widget::*,
 };
@@ -80,48 +80,58 @@ pub fn welcome<'a>() -> Element<'a, Message> {
         Column::new()
             .push(
                 Row::new()
+                    .align_items(Alignment::End)
                     .spacing(20)
                     .push(
-                        Button::new(
-                            Container::new(
-                                Column::new()
-                                    .width(Length::Units(250))
-                                    .push(icon::wallet_icon().size(50).width(Length::Units(100)))
-                                    .push(text("Create a new wallet"))
-                                    .align_items(Alignment::Center),
-                            )
-                            .padding(20),
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .align_items(Alignment::Center)
+                                .push(image::create_new_wallet_icon().width(Length::Units(100)))
+                                .push(p1_regular("Create a new wallet").style(color::GREY_3))
+                                .push(
+                                    button::secondary(None, "Select")
+                                        .width(Length::Units(200))
+                                        .on_press(Message::CreateWallet),
+                                )
+                                .align_items(Alignment::Center),
                         )
-                        .style(theme::Button::Secondary)
-                        .on_press(Message::CreateWallet),
+                        .padding(20),
                     )
                     .push(
-                        Button::new(
-                            Container::new(
-                                Column::new()
-                                    .width(Length::Units(250))
-                                    .push(icon::people_icon().size(50).width(Length::Units(100)))
-                                    .push(text("Participate in a new wallet"))
-                                    .align_items(Alignment::Center),
-                            )
-                            .padding(20),
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .align_items(Alignment::Center)
+                                .push(
+                                    image::participate_in_new_wallet_icon()
+                                        .width(Length::Units(200)),
+                                )
+                                .push(p1_regular("Participate in new wallet").style(color::GREY_3))
+                                .push(
+                                    button::secondary(None, "Select")
+                                        .width(Length::Units(200))
+                                        .on_press(Message::ParticipateWallet),
+                                )
+                                .align_items(Alignment::Center),
                         )
-                        .style(theme::Button::Secondary)
-                        .on_press(Message::ParticipateWallet),
+                        .padding(20),
                     )
                     .push(
-                        Button::new(
-                            Container::new(
-                                Column::new()
-                                    .width(Length::Units(250))
-                                    .push(icon::import_icon().size(50).width(Length::Units(100)))
-                                    .push(text("Import a wallet backup"))
-                                    .align_items(Alignment::Center),
-                            )
-                            .padding(20),
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .align_items(Alignment::Center)
+                                .push(image::restore_wallet_icon().width(Length::Units(100)))
+                                .push(p1_regular("Restore a wallet").style(color::GREY_3))
+                                .push(
+                                    button::secondary(None, "Select")
+                                        .width(Length::Units(200))
+                                        .on_press(Message::ImportWallet),
+                                )
+                                .align_items(Alignment::Center),
                         )
-                        .style(theme::Button::Secondary)
-                        .on_press(Message::ImportWallet),
+                        .padding(20),
                     ),
             )
             .width(Length::Fill)

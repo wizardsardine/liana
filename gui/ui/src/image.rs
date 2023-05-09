@@ -12,3 +12,24 @@ pub fn liana_grey_logo() -> Svg {
     let h = Handle::from_memory(LIANA_LOGO_GREY.to_vec());
     Svg::new(h)
 }
+
+const CREATE_NEW_WALLET_ICON: &[u8] = include_bytes!("../static/icons/blueprint.svg");
+
+pub fn create_new_wallet_icon() -> Svg {
+    let h = Handle::from_memory(CREATE_NEW_WALLET_ICON.to_vec());
+    Svg::new(h)
+}
+
+const PARTICIPATE_IN_NEW_WALLET_ICON: &[u8] = include_bytes!("../static/icons/discussion.svg");
+
+pub fn participate_in_new_wallet_icon() -> Svg {
+    let h = Handle::from_memory(PARTICIPATE_IN_NEW_WALLET_ICON.to_vec());
+    Svg::new(h)
+}
+
+const RESTORE_WALLET_ICON: &[u8] = include_bytes!("../static/icons/syncdata.svg");
+
+pub fn restore_wallet_icon() -> Svg {
+    let h = Handle::from_memory(RESTORE_WALLET_ICON.to_vec());
+    Svg::new(h)
+}

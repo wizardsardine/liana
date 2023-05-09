@@ -110,10 +110,6 @@ pub fn up_icon() -> Text<'static> {
     bootstrap_icon('\u{F27C}')
 }
 
-pub fn people_icon() -> Text<'static> {
-    bootstrap_icon('\u{F4CF}')
-}
-
 pub fn network_icon() -> Text<'static> {
     bootstrap_icon('\u{F40D}')
 }
