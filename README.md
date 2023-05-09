@@ -185,6 +185,11 @@ a graphical interface to the daemon using the [`iced`](https://github.com/iced-r
 
 The code for the GUI can be found in the [`gui/src/`](gui/src) folder.
 
+## Security
+
+See [`SECURITY.md`](SECURITY.md) for details about reporting a security vulnerability or any bug
+that could potentially impact the security of users' funds.
+
 ## License
 
 Released under the BSD 3-Clause Licence. See the [LICENCE](LICENCE) file.
