@@ -48,7 +48,7 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
     cp "$BUILD_DIR/gui/x86_64-pc-windows-gnu/release/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX.exe"
 )
 
-# Create the MacOS archive and the DMG
+# Create the MacOS archive and a zipped application bundle of liana-gui.
 (
     cd "$BUILD_DIR"
     create_dir "$MAC_DIR_NAME"
@@ -56,19 +56,11 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
     tar -czf "$MAC_ARCHIVE" "$MAC_DIR_NAME"
     cp "$MAC_ARCHIVE" "$RELEASE_DIR"
 
-    DMG_DIR="liana-$VERSION"
-    cp -r ../contrib/release/macos/dmg_template "$DMG_DIR"
-    sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" "$DMG_DIR/Liana.app/Contents/Info.plist"
-    ln -s /Applications "$DMG_DIR/Applications"
-    python3 -m venv venv
-    . venv/bin/activate
-    pip install ds_store mac_alias
-    python3 ../contrib/release/macos/gen_dstore.py
-    mv .DS_Store "$DMG_DIR/"
-    cp "$BUILD_DIR/gui/x86_64-apple-darwin/release/liana-gui" "$DMG_DIR/Liana.app/Contents/MacOS/Liana"
-    DMG_FILE="liana-$VERSION.dmg"
-    xorrisofs -D -l -V Liana -no-pad -r -dir-mode 0755 -o "$DMG_FILE" "$DMG_DIR"
-    cp "$DMG_FILE" "$RELEASE_DIR/"
+    cp -r ../contrib/release/macos/Liana.app ./
+    sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
+    cp "$BUILD_DIR/gui/x86_64-apple-darwin/release/liana-gui" ./Liana.app/Contents/MacOS/Liana
+    zip -ry Liana.zip Liana.app
+    cp ./Liana.zip "$RELEASE_DIR/"
 )
 
 # Finally, sign all the assets
