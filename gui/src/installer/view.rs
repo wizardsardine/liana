@@ -1034,8 +1034,7 @@ pub fn install<'a>(
                 )
             })
             .spacing(10)
-            .width(Length::Fill)
-            .height(Length::Fill),
+            .width(Length::Fill),
         true,
     )
 }
