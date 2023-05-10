@@ -1120,12 +1120,7 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
                     Column::new()
                         .spacing(15)
                         .align_items(Alignment::Center)
-                        .push(
-                            icon::key_icon()
-                                .size(30)
-                                .width(Length::Units(50))
-                                .style(color::GREY_3),
-                        ),
+                        .push(image::key_mark_icon().width(Length::Units(30))),
                 )
                 .height(Length::Fill)
                 .align_y(alignment::Vertical::Center),
@@ -1162,30 +1157,19 @@ pub fn defined_descriptor_key(
                 ),
         )
         .push(
-            Column::new()
-                .align_items(Alignment::Center)
-                .spacing(5)
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(5)
-                            .align_items(Alignment::Center)
-                            .push(
-                                scrollable(text(name).bold()).horizontal_scroll(
-                                    Properties::new().width(2).scroller_width(2),
-                                ),
-                            )
-                            .push(
-                                icon::circle_check_icon()
-                                    .style(color::GREEN)
-                                    .size(20)
-                                    .width(Length::Units(50)),
-                            ),
+            Container::new(
+                Column::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(
+                        scrollable(text(name).bold())
+                            .horizontal_scroll(Properties::new().width(2).scroller_width(2)),
                     )
-                    .height(Length::Fill)
-                    .align_y(alignment::Vertical::Center),
-                )
-                .height(Length::Fill),
+                    .push(image::success_mark_icon().width(Length::Units(50)))
+                    .push(Space::with_width(Length::Units(1))),
+            )
+            .height(Length::Fill)
+            .align_y(alignment::Vertical::Center),
         )
         .push(
             button::secondary(Some(icon::pencil_icon()), "Edit").on_press(message::DefineKey::Edit),

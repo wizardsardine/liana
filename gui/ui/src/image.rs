@@ -39,3 +39,17 @@ pub fn restore_wallet_icon() -> Svg {
     let h = Handle::from_memory(RESTORE_WALLET_ICON.to_vec());
     Svg::new(h)
 }
+
+const SUCCESS_MARK_ICON: &[u8] = include_bytes!("../static/icons/success-mark.svg");
+
+pub fn success_mark_icon() -> Svg {
+    let h = Handle::from_memory(SUCCESS_MARK_ICON.to_vec());
+    Svg::new(h)
+}
+
+const KEY_MARK_ICON: &[u8] = include_bytes!("../static/icons/key-mark.svg");
+
+pub fn key_mark_icon() -> Svg {
+    let h = Handle::from_memory(KEY_MARK_ICON.to_vec());
+    Svg::new(h)
+}
