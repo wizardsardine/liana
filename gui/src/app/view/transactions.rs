@@ -91,6 +91,8 @@ fn tx_list_view<'a>(i: usize, tx: &HistoryTransaction) -> Element<'a, Message> {
                     Row::new()
                         .push(if tx.is_external() {
                             badge::receive()
+                        } else if tx.is_self_send() {
+                            badge::cycle()
                         } else {
                             badge::spend()
                         })

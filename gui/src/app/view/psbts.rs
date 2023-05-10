@@ -96,7 +96,11 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
             Row::new()
                 .push(
                     Row::new()
-                        .push(badge::spend())
+                        .push(if tx.is_self_send() {
+                            badge::cycle()
+                        } else {
+                            badge::spend()
+                        })
                         .push(if !tx.sigs.recovery_paths().is_empty() {
                             badge::recovery()
                         } else {

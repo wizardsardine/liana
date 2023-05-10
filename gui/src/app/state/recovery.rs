@@ -54,34 +54,31 @@ impl State for RecoveryPanel {
         if let Some(generated) = &self.generated {
             generated.view(cache)
         } else {
-            view::modal(
-                false,
+            view::recovery::recovery(
+                cache,
+                self.recovery_paths
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, path)| {
+                        if path.number_of_coins > 0 {
+                            Some(view::recovery::recovery_path_view(
+                                i,
+                                path.threshold,
+                                &path.origins,
+                                path.total_amount,
+                                path.number_of_coins,
+                                &self.wallet.keys_aliases,
+                                self.selected_path == Some(i),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                self.selected_path,
+                &self.feerate,
+                &self.recipient,
                 self.warning.as_ref(),
-                view::recovery::recovery(
-                    self.recovery_paths
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, path)| {
-                            if path.number_of_coins > 0 {
-                                Some(view::recovery::recovery_path_view(
-                                    i,
-                                    path.threshold,
-                                    &path.origins,
-                                    path.total_amount,
-                                    path.number_of_coins,
-                                    &self.wallet.keys_aliases,
-                                    self.selected_path == Some(i),
-                                ))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                    self.selected_path,
-                    &self.feerate,
-                    &self.recipient,
-                ),
-                None::<Element<view::Message>>,
             )
         }
     }

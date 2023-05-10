@@ -197,6 +197,7 @@ impl DefineDescriptor {
         for path in &mut self.recovery_paths {
             path.duplicate_sequence = duplicate_sequence.contains(&path.sequence);
             for recovery_key in path.keys.iter_mut() {
+                recovery_key.duplicate_name = duplicate_names.contains(&recovery_key.name);
                 if let Some(key) = &recovery_key.key {
                     recovery_key.duplicate_key = duplicate_keys.contains(key);
                 }

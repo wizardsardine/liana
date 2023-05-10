@@ -18,7 +18,7 @@ pub fn warning<'a, T: 'a>(message: String) -> Container<'a, T> {
         Row::new()
             .spacing(20)
             .align_items(iced::Alignment::Center)
-            .push(icon::warning_octagon_icon())
+            .push(icon::warning_icon())
             .push(text(message)),
     )
     .padding(15)

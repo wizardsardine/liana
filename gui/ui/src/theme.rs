@@ -413,7 +413,7 @@ impl pick_list::StyleSheet for Theme {
                 border_width: 1.0,
                 border_color: color::RED,
                 border_radius: 25.0,
-                text_color: iced::Color::BLACK,
+                text_color: color::RED,
             },
         }
     }

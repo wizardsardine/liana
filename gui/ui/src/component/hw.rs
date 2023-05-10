@@ -1,4 +1,4 @@
-use crate::{color, component::text, icon, theme, util::*, widget::*};
+use crate::{color, component::text, icon, image, theme, util::*, widget::*};
 use iced::{
     widget::{column, container, row, tooltip},
     Alignment, Length,
@@ -121,7 +121,7 @@ pub fn selected_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
             ])
             .width(Length::Fill)
             .into(),
-            icon::circle_check_icon().style(color::GREEN).into(),
+            image::success_mark_icon().width(Length::Units(50)).into(),
         ])
         .align_items(Alignment::Center),
     )
@@ -151,8 +151,8 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
             .width(Length::Fill)
             .into(),
             row(vec![
-                icon::circle_check_icon().style(color::GREEN).into(),
                 text::p1_regular("Signed").style(color::GREEN).into(),
+                image::success_mark_icon().width(Length::Units(50)).into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -186,8 +186,8 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
             .width(Length::Fill)
             .into(),
             row(vec![
-                icon::circle_check_icon().style(color::GREEN).into(),
                 text::p1_regular("Registered").style(color::GREEN).into(),
+                image::success_mark_icon().width(Length::Units(50)).into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -250,8 +250,8 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
             .width(Length::Fill)
             .into(),
             row(vec![
-                icon::circle_check_icon().style(color::GREEN).into(),
                 text::p1_regular("Signed").style(color::GREEN).into(),
+                image::success_mark_icon().width(Length::Units(50)).into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -284,7 +284,7 @@ pub fn selected_hot_signer<'a, T: 'a, F: Display>(
             ])
             .width(Length::Fill)
             .into(),
-            icon::circle_check_icon().style(color::GREEN).into(),
+            image::success_mark_icon().width(Length::Units(50)).into(),
         ])
         .align_items(Alignment::Center),
     )

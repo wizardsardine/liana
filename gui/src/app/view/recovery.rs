@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use iced::{
-    widget::{tooltip, Space},
+    widget::{checkbox, tooltip, Space},
     Alignment, Length,
 };
 
@@ -17,48 +17,53 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::app::view::message::{CreateSpendMessage, Message};
+use crate::app::{
+    cache::Cache,
+    menu::Menu,
+    view::{
+        dashboard,
+        message::{CreateSpendMessage, Message},
+    },
+    Error,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub fn recovery<'a>(
+    cache: &'a Cache,
     recovery_paths: Vec<Element<'a, Message>>,
     selected_path: Option<usize>,
     feerate: &form::Value<String>,
     address: &'a form::Value<String>,
+    warning: Option<&Error>,
 ) -> Element<'a, Message> {
     let no_recovery_paths = recovery_paths.is_empty();
-    Column::new()
-        .push(Space::with_height(Length::Units(100)))
-        .push(
-            Row::new()
-                .push(Container::new(
-                    icon::recovery_icon().width(Length::Units(100)).size(50),
-                ))
-                .push(text("Recover the funds").size(50).bold())
-                .align_items(Alignment::Center)
-                .spacing(1),
-        )
-        .push(if no_recovery_paths {
-            Container::new(text("No recovery path is currently available"))
-        } else {
-            Container::new(
-                Column::new()
+    dashboard(
+        &Menu::Settings,
+        cache,
+        warning,
+        Column::new()
+            .push(
+                Row::new()
                     .spacing(10)
-                    .push(text(format!(
-                        "{} recovery paths will be available at the next block, select one:",
-                        recovery_paths.len()
-                    )))
-                    .push(Column::with_children(recovery_paths).spacing(10)),
+                    .align_items(Alignment::Center)
+                    .push(
+                        Button::new(text("Settings").size(30).bold())
+                            .style(theme::Button::Transparent)
+                            .on_press(Message::Menu(Menu::Settings)),
+                    )
+                    .push(icon::chevron_right().size(30))
+                    .push(
+                        Button::new(text("Recovery").size(30).bold())
+                            .style(theme::Button::Transparent)
+                            .on_press(Message::Menu(Menu::Recovery)),
+                    ),
             )
-            .padding(20)
-        })
-        .push(Space::with_height(Length::Units(20)))
-        .push_maybe(if no_recovery_paths {
-            None
-        } else {
-            Some(
-                Column::new()
-                    .push(text("Enter destination address and feerate:").bold())
+            .push(Space::with_height(Length::Units(20)))
+            .push(
+                Row::new()
+                    .spacing(20)
+                    .align_items(Alignment::Center)
+                    .push(text("Destination").bold())
                     .push(
                         Container::new(
                             form::Form::new("Address", address, move |msg| {
@@ -70,8 +75,10 @@ pub fn recovery<'a>(
                             .size(20)
                             .padding(10),
                         )
-                        .width(Length::Units(250)),
+                        .max_width(500)
+                        .width(Length::Fill),
                     )
+                    .push(text("Feerate").bold())
                     .push(
                         Container::new(
                             form::Form::new("42 (sats/vbyte)", feerate, move |msg| {
@@ -81,29 +88,50 @@ pub fn recovery<'a>(
                             .size(20)
                             .padding(10),
                         )
-                        .width(Length::Units(250)),
-                    )
-                    .push(
-                        if feerate.valid
-                            && !feerate.value.is_empty()
-                            && address.valid
-                            && !address.value.is_empty()
-                            && selected_path.is_some()
-                        {
-                            button::primary(None, "Next")
-                                .on_press(Message::Next)
-                                .width(Length::Units(200))
-                        } else {
-                            button::primary(None, "Next").width(Length::Units(200))
-                        },
-                    )
-                    .spacing(20)
-                    .align_items(Alignment::Center),
+                        .width(Length::Units(200)),
+                    ),
             )
-        })
-        .align_items(Alignment::Center)
-        .spacing(20)
-        .into()
+            .push(if no_recovery_paths {
+                Container::new(text("No recovery path is currently available"))
+            } else {
+                Container::new(
+                    Column::new()
+                        .spacing(20)
+                        .push(text(format!(
+                            "{} recovery paths will be available at the next block, select one:",
+                            recovery_paths.len()
+                        )))
+                        .push(Column::with_children(recovery_paths).spacing(20)),
+                )
+                .style(theme::Container::Card(theme::Card::Simple))
+                .padding(20)
+            })
+            .push_maybe(if no_recovery_paths {
+                None
+            } else {
+                Some(
+                    Row::new()
+                        .push(Space::with_width(Length::Fill))
+                        .push(
+                            if feerate.valid
+                                && !feerate.value.is_empty()
+                                && address.valid
+                                && !address.value.is_empty()
+                                && selected_path.is_some()
+                            {
+                                button::primary(None, "Next")
+                                    .on_press(Message::Next)
+                                    .width(Length::Units(200))
+                            } else {
+                                button::primary(None, "Next").width(Length::Units(200))
+                            },
+                        )
+                        .spacing(20)
+                        .align_items(Alignment::Center),
+                )
+            })
+            .spacing(20),
+    )
 }
 
 pub fn recovery_path_view<'a>(
@@ -115,71 +143,61 @@ pub fn recovery_path_view<'a>(
     key_aliases: &'a HashMap<Fingerprint, String>,
     selected: bool,
 ) -> Element<'a, Message> {
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(if selected {
-                    icon::square_check_icon()
-                } else {
-                    icon::square_icon()
-                })
+    Row::new()
+        .push(checkbox("", selected, move |_| {
+            Message::CreateSpend(CreateSpendMessage::SelectPath(index))
+        }))
+        .push(
+            Column::new()
                 .push(
-                    Column::new()
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .spacing(10)
                         .push(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .spacing(10)
-                                .push(
-                                    text(format!(
-                                        "{} signature{} from",
-                                        threshold,
-                                        if threshold > 1 { "s" } else { "" }
-                                    ))
-                                    .bold(),
-                                )
-                                .push(origins.iter().fold(
-                                    Row::new().align_items(Alignment::Center).spacing(5),
-                                    |row, (fg, _)| {
-                                        row.push(if let Some(alias) = key_aliases.get(fg) {
-                                            Container::new(
-                                                tooltip::Tooltip::new(
-                                                    Container::new(text(alias)).padding(3).style(
-                                                        theme::Container::Pill(theme::Pill::Simple),
-                                                    ),
-                                                    fg.to_string(),
-                                                    tooltip::Position::Bottom,
-                                                )
-                                                .style(theme::Container::Card(theme::Card::Simple)),
-                                            )
-                                        } else {
-                                            Container::new(text(fg.to_string()))
-                                                .padding(3)
-                                                .style(theme::Container::Pill(theme::Pill::Simple))
-                                        })
-                                    },
-                                )),
+                            text(format!(
+                                "{} signature{} from",
+                                threshold,
+                                if threshold > 1 { "s" } else { "" }
+                            ))
+                            .bold(),
                         )
-                        .push(
-                            Row::new()
-                                .spacing(5)
-                                .push(text("can recover"))
-                                .push(text(format!(
-                                    "{} coin{} totalling",
-                                    number_of_coins,
-                                    if number_of_coins > 0 { "s" } else { "" }
-                                )))
-                                .push(amount(&total_amount)),
-                        ),
+                        .push(origins.iter().fold(
+                            Row::new().align_items(Alignment::Center).spacing(5),
+                            |row, (fg, _)| {
+                                row.push(if let Some(alias) = key_aliases.get(fg) {
+                                    Container::new(
+                                        tooltip::Tooltip::new(
+                                            Container::new(text(alias))
+                                                .padding(5)
+                                                .style(theme::Container::Pill(theme::Pill::Simple)),
+                                            fg.to_string(),
+                                            tooltip::Position::Bottom,
+                                        )
+                                        .style(theme::Container::Card(theme::Card::Simple)),
+                                    )
+                                } else {
+                                    Container::new(text(fg.to_string()))
+                                        .padding(5)
+                                        .style(theme::Container::Pill(theme::Pill::Simple))
+                                })
+                            },
+                        )),
                 )
-                .align_items(Alignment::Center)
-                .spacing(20),
+                .push(
+                    Row::new()
+                        .spacing(5)
+                        .push(text("can recover"))
+                        .push(text(format!(
+                            "{} coin{} totalling",
+                            number_of_coins,
+                            if number_of_coins > 0 { "s" } else { "" }
+                        )))
+                        .push(amount(&total_amount)),
+                )
+                .spacing(5),
         )
-        .padding(10)
         .width(Length::Fill)
-        .on_press(Message::CreateSpend(CreateSpendMessage::SelectPath(index)))
-        .style(theme::Button::TransparentBorder),
-    )
-    .style(theme::Container::Card(theme::Card::Simple))
-    .width(Length::Fill)
-    .into()
+        .align_items(Alignment::Center)
+        .spacing(20)
+        .into()
 }
