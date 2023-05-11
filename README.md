@@ -1,5 +1,7 @@
 <div align="center">
-<img src="gui/ui/static/logos/liana-app-icon.svg" width="140px" />
+  <a href="https://wizardsardine.com/liana" target="_blank">
+    <img src="gui/ui/static/logos/liana-app-icon.svg" width="140px" />
+  </a>
 
 # Liana
 
@@ -14,22 +16,9 @@ Liana is a simple Bitcoin wallet that features a timelocked recovery path for al
 is, your coins are spendable as with a regular wallet but a secondary key becomes available after a
 configurable period of time should the primary one not be accessible anymore.
 
-Liana can be used for inheritance, where the owner of the coins is holding the primary key and the
-heir the secondary one. It can also be leveraged for recovery where a single person is holding both
-but different tradeoffs can be made between the backup(s) of the directly accessible and timelocked
-keys.
+Liana can be used for inheritance, decaying multisigs or safer backups.
 
-Learn more about Liana from our [announcement blog
-post](https://wizardsardine.com/blog/liana-announcement/) and about how it was enhanced with
-Multisig from our [second release post](https://wizardsardine.com/blog/liana-0.2-release/).
-
-Liana is still under heavy development. Multisig support was implemented in the second release and
-the possibility for having multiple timelocked recovery paths was in the fourth release.  Regular
-wallet features (RBF, coin selection, ..) are planned. We also intend to switch to using Taproot as
-soon as possible, for enhanced privacy.
-
-**As such please consider Liana to be beta software.**
-
+**[https://wizardsardine.com/liana](https://wizardsardine.com/liana)**
 
 ## Usage
 
@@ -48,13 +37,14 @@ your machine yet, you can download it [there](https://bitcoincore.org/en/downloa
 
 ### Installing the software
 
-The recommended installation method for regular users is to download an executable software release. If you prefer to
-build the project from source, see [`doc/BUILD.md`](doc/BUILD.md) instead.
+The recommended installation method for regular users is to download [an executable software
+release](https://github.com/wizardsardine/liana/releases). If you prefer to build the project from
+source, see [`doc/BUILD.md`](doc/BUILD.md) instead.
 
 Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
 executable for your platform. If you are not sure what is the "right" executable for your platform,
-choose `liana-0.4.exe` if you are on Windows, `liana-0.4.dmg` if you are on MacOS and
-`liana-0.4-x86_64-linux-gnu.tar.gz` if you are on Linux.
+choose `liana-1.0.exe` if you are on Windows, `Liana.zip` if you are on MacOS and
+`liana-1.0-x86_64-linux-gnu.tar.gz` if you are on Linux.
 
 For every file available on the release page, there is an accompanying `.asc` file with the same
 name. This is a GPG signature made with Antoine Poinsot's key:
@@ -63,29 +53,19 @@ as on [his Twitter profile](https://twitter.com/darosior) or his [personal
 website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
 against this key.
 
-Note that we do not codesign ("notarize") the released binaries for now. Windows or MacOS may
-prevent you from installing the software. On MacOS, you would get a warning saying the developer of
-this application couldn't be verified. This is because we didn't register with Apple prior to
-releasing the application. Make sure you verified the GPG signature of the download, then add an
-exception for Liana by following the steps from [this Apple support
+#### Apple, Windows, codesigned and notarized binaries
+
+We distribute both a non-codesigned and a codesigned-and-notarized MacOS application
+(`Liana-noncodesigned.zip` and `Liana.zip`).  To run the non-codesigned app, see [this Apple support
 guide](https://support.apple.com/en-us/HT202491) (section "If you want to open an app that hasn’t
 been notarized or is from an unidentified developer").
 
-Releases of Liana are reproducibly built. See [`contrib/reproducible`](contrib/reproducible) for
-details and instructions if you want to check a release.
+We do not yet distribute codesigned binaries for Windows at this time.
 
-### Setting up a wallet
 
-If you are using the graphical user interface (GUI), you can just start the program. It will spawn an installer that will guide
-you through the process of setting up a new wallet.
+### Wallet usage tips and tricks
 
-If you are using the daemon, you will need to specify its configuration as a TOML file. There is a
-documented example of such a configuration file in the [`contrib/` folder](contrib/lianad_config_example.toml).
-Then you can start the daemon like so:
-```
-lianad --conf /path/to/your/conf.toml
-```
-#### The script descriptor
+#### Script descriptor backup
 
 In Bitcoin, the conditions for spending a certain amount of coins are expressed using
 [Script](https://en.bitcoin.it/wiki/Script). In order to be able to recover your coins, you need to
@@ -105,12 +85,19 @@ Therefore you may afford a greater number of backups of your descriptor(s) and u
 mediums than for storing your private key(s).
 
 
-### Using a wallet
+#### On refreshing coins
 
-You can use Liana just like a regular wallet. Just be aware that if you are using a relative
+You can use Liana just like a regular wallet. Simply be aware that if you are using a relative
 timelock (the only type of timelocks supported for now), time starts ticking when you receive a
 payment. That is if you want the recovery path to never be available, each coin must be spent
 at least once every `N` blocks. (With `N` the configured value of the timelock.)
+
+The GUI provide simple shortcuts to refresh one or more coin(s) if the recovery path is close to
+become available. This is achieved by making a transaction to yourself (if you don't need to make a
+payment.)
+
+
+#### Signing devices and "hot" keys
 
 Liana can be used as a hot wallet. Note that mnemonics would be stored in clear on your drive. We
 strongly recommend using a hardware signing device for any non-trivial amount.
@@ -120,12 +107,14 @@ of the signer is a must. More signing devices are expected to implement Miniscri
 near future. For more information (such as minimum supported versions, please read the [signing
 devices documentation](./doc/signing_devices.md).
 
-If you are using the GUI, it should be intuitive what menu to use depending on your intention. If it
-is not, bug reports are very welcome so [feel free to report it](https://github.com/wizardsardine/liana/issues)! :)
 
-If you are using the daemon, you can use the `liana-cli` binary to send commands to it. It will need
-the path to the same configuration as the daemon. You can find a full documentation of the JSONRPC
-API exposed by `lianad` at [`doc/API.md`](doc/API.md). For instance:
+#### Using the daemon
+
+Liana can be run as a headless server using the `lianad` program.
+
+You can use the `liana-cli` program to send commands to it. It will need the path to the same
+configuration as the daemon. You can find a full documentation of the JSONRPC API exposed by
+`lianad` at [`doc/API.md`](doc/API.md). For instance:
 ```
 $ liana-cli --conf ./signet_config.toml getinfo
 {
@@ -141,20 +130,19 @@ $ liana-cli --conf ./signet_config.toml getinfo
     "network": "regtest",
     "rescan_progress": null,
     "sync": 1.0,
-    "version": "0.4.0"
+    "version": "1.0.0"
   }
 }
-
 ```
 
 Note also that you might connect the GUI to a running `lianad`. If the GUI detects a daemon is
 already running, it will plug to it and communicate through the JSONRPC API.
 
 
-### Using the recovery path
+#### Using the recovery path
 
 You may sweep the coins whose timelocked recovery path is available. You will need to sign the
-transaction using the recovery key, hence make sure to connect the appropriate signing device.
+transaction using the recovery key(s), hence make sure to connect the appropriate signing device(s).
 
 In the GUI, this option is available in the "Settings" menu at the "Recovery" section. Click on the
 "Recover funds" button, enter the destination for the sweep and the feerate you want to use for the
@@ -162,6 +150,16 @@ sweep transaction. Then sign it with the recovery key and broadcast it.
 
 For the daemon, see the [`createrecovery`](doc/API.md#createrecovery) command. It will create a
 sweep PSBT to the requested address with the specified feerate, filled with all available coins.
+
+
+### Reproducible builds
+
+Releases of Liana are reproducibly built. Linux binaries are also bootstrappable. See
+[`contrib/reproducible`](contrib/reproducible) for details and instructions if you want to check a
+release.
+
+Note you necessarily won't be able to reproduce codesigned binaries. We may provide detached
+signatures in the future.
 
 
 ## About the software project
@@ -186,6 +184,11 @@ The GUI contains both an installer that guides a user through setting up a Liana
 a graphical interface to the daemon using the [`iced`](https://github.com/iced-rs/iced/) library.
 
 The code for the GUI can be found in the [`gui/src/`](gui/src) folder.
+
+## Security
+
+See [`SECURITY.md`](SECURITY.md) for details about reporting a security vulnerability or any bug
+that could potentially impact the security of users' funds.
 
 ## License
 

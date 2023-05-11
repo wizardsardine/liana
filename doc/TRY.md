@@ -131,19 +131,16 @@ name it Alice but choose whatever. Set any timelock you want but preferably some
 you want to try the timelocked recovery feature! I'll go for "2" as the timelock. Click on "Set" for
 the recovery key, and choose "This computer" again.
 
-Of course, it wouldn't make sense for a real to use the same signing device to derive both the
-primary and recovery keys. Or even to use hot keys at all with a non-trivial amount of coins. We
+Of course, it wouldn't make sense for a real wallet to use the same signing device to derive both
+the primary and recovery keys. Or even to use hot keys at all with a non-trivial amount of coins. We
 only do this for convenience in testing Liana on Signet. If you'd like to try out signing with a
 hardware wallet you can use the "testnet" mode of a Specter, the "Bitcoin testnet" app of a Ledger,
 or the simulator of any of them (see the links at the top of this document).
 
 Click on next. If you want to try restoring from wallet backup later on, make sure to backup the
 mnemonic as well as the descriptor in the next two screens. Otherwise just make them happy by
-ticking the boxes.
-
-On the "Register descriptor" step you can (confusingly, i know) click on "i have registered the
-descriptor on my device(s)". If you are using a simulator make sure to register the descriptor
-though!
+ticking the boxes. If you are using a signing device simulator you'll have a step for registering
+the descriptor on it.
 
 Finally, configure the connection to `bitcoind`. The default should work for what we did in this
 guide. Click on continue and finalize the installation.

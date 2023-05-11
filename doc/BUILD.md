@@ -1,7 +1,7 @@
 # Building Liana
 
 We use [Cargo](https://doc.rust-lang.org/stable/cargo/), the ubiquitous Rust package manager.
-Cargo takes care of downloading and compiling the projects dependencies, as well as compiling the
+Cargo takes care of downloading and compiling the project's dependencies, as well as compiling the
 project itself. Dependencies are specified in a [`Cargo.toml`](../Cargo.toml) file at the root of
 this repository. They are pinned in a [`Cargo.lock`](../Cargo.lock) file at the same place.
 
