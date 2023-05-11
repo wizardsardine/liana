@@ -483,7 +483,7 @@ pub fn path_view<'a>(
                             )
                         } else {
                             Container::new(text(value.0.to_string()))
-                                .padding(3)
+                                .padding(10)
                                 .style(theme::Container::Pill(theme::Pill::Simple))
                         })
                     }),
