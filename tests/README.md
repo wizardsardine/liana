@@ -8,6 +8,20 @@ Python scripts are used for the automation, and specifically the [`pytest` frame
 Credits: this test framework was taken and adapted from revaultd, which was itself adapted from
 [C-lightning's test framework](https://github.com/ElementsProject/lightning/tree/master/contrib/pyln-testing).
 
+### Building the project for testing
+
+To run the tests, we must build the debug version of `lianad`. Follow the instructions at [`doc/BUILD.md`](../doc/BUILD.md) but instead of running
+```
+$ cargo build --release
+```
+Run
+```
+$ cargo build
+```
+to build the daemon for testing.  
+The `lianad` and `liana-cli` binaries will be in the `target/debug` directory at the root of the
+repository.
+
 ### Test dependencies
 
 Functional tests dependencies can be installed using `pip`. Use a virtual environment.
