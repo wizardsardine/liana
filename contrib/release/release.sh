@@ -15,6 +15,11 @@ WINDOWS_DIR_NAME="$LIANA_PREFIX-x86_64-windows-gnu"
 WINDOWS_ARCHIVE="$WINDOWS_DIR_NAME.zip"
 MAC_DIR_NAME="$LIANA_PREFIX-x86_64-apple-darwin"
 MAC_ARCHIVE="$MAC_DIR_NAME.tar.gz"
+MAC_CODESIGN="${MAC_CODESIGN:-"0"}"
+RCODESIGN_BIN="${RCODESIGN_BIN:-"$PWD/../../macos_codesigning/apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign"}"
+CODESIGN_KEY="${CODESIGN_KEY:-"$PWD/../../macos_codesigning/wizardsardine_liana.key"}"
+CODESIGN_CERT="${CODESIGN_CERT:-"$PWD/../../macos_codesigning/antoine_devid_liana_codesigning.cer"}"
+NOTARY_API_CREDS_FILE="${NOTARY_API_CREDS_FILE:-"$PWD/../../macos_codesigning/encoded_appstore_api_key.json"}"
 
 create_dir() {
     test -d "$1" || mkdir "$1"
@@ -59,8 +64,15 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
     cp -r ../contrib/release/macos/Liana.app ./
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
     cp "$BUILD_DIR/gui/x86_64-apple-darwin/release/liana-gui" ./Liana.app/Contents/MacOS/Liana
-    zip -ry Liana.zip Liana.app
-    cp ./Liana.zip "$RELEASE_DIR/"
+    zip -ry Liana-noncodesigned.zip Liana.app
+    cp ./Liana-noncodesigned.zip "$RELEASE_DIR/"
+
+    if [ "$MAC_CODESIGN" = "1" ]; then
+        $RCODESIGN_BIN sign --digest sha256 --code-signature-flags runtime --pem-source "$CODESIGN_KEY" --der-source "$CODESIGN_CERT" Liana.app/
+        $RCODESIGN_BIN notary-submit --max-wait-seconds 600 --api-key-path "$NOTARY_API_CREDS_FILE" --staple Liana.app
+        zip -ry Liana.zip Liana.app
+        cp ./Liana.zip "$RELEASE_DIR/"
+    fi
 )
 
 # Finally, sign all the assets
