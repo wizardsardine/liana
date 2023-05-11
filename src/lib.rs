@@ -201,6 +201,7 @@ fn setup_sqlite(
 // Windows-specific utility to remove a leftover watchonly wallet within bitcoind's datadir.
 #[cfg(windows)]
 fn maybe_delete_watchonly_wallet(
+    bitcoind: &BitcoinD,
     bitcoind_cookie_path: &path::Path,
     bitcoin_net: miniscript::bitcoin::Network,
     wallet_name: &str,
@@ -228,6 +229,12 @@ fn maybe_delete_watchonly_wallet(
             "Found a leftover watchonly wallet at '{}'. Deleting it.",
             wallet_path.as_path().to_string_lossy()
         );
+        if let Some(warning) = bitcoind.unload_wallet(wallet_path.to_string_lossy().to_string()) {
+            log::warn!(
+                "Warning when unloading watchonly wallet on bitcoind: '{}'",
+                warning
+            );
+        }
         fs::remove_dir_all(&wallet_path)
             .map_err(|e| StartupError::WindowsBitcoindWatchonlyDeletion(wallet_path, e))?;
     } else {
@@ -275,6 +282,7 @@ fn setup_bitcoind(
         // any leftover Liana watchonly wallet from bitcoind's data dir.
         #[cfg(windows)]
         maybe_delete_watchonly_wallet(
+            &bitcoind,
             &bitcoind_config.cookie_path,
             config.bitcoin_config.network,
             wo_name,
