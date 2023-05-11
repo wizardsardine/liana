@@ -565,8 +565,13 @@ pub fn wallet_settings<'a>(
                 Column::new()
                     .push(text("Wallet descriptor:").bold())
                     .push(
-                        scrollable(text(descriptor.to_owned()).small()).horizontal_scroll(
-                            scrollable::Properties::new().width(2).scroller_width(2),
+                        scrollable(
+                            Column::new()
+                                .push(text(descriptor.to_owned()).small())
+                                .push(Space::with_height(Length::Units(5))),
+                        )
+                        .horizontal_scroll(
+                            scrollable::Properties::new().width(5).scroller_width(5),
                         ),
                     )
                     .push(

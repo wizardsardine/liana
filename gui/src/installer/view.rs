@@ -453,7 +453,7 @@ pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
                                 Container::new(
                                     scrollable(Container::new(text(xpub).small()).padding(10))
                                         .horizontal_scroll(
-                                            Properties::new().width(2).scroller_width(2),
+                                            Properties::new().width(5).scroller_width(5),
                                         ),
                                 )
                                 .width(Length::Fill),
@@ -536,7 +536,7 @@ pub fn hardware_wallet_xpubs<'a>(
                                 Container::new(
                                     scrollable(Container::new(text(xpub).small()).padding(10))
                                         .horizontal_scroll(
-                                            Properties::new().width(2).scroller_width(2),
+                                            Properties::new().width(5).scroller_width(5),
                                         ),
                                 )
                                 .width(Length::Fill),
@@ -1161,8 +1161,12 @@ pub fn defined_descriptor_key(
                     .spacing(10)
                     .align_items(Alignment::Center)
                     .push(
-                        scrollable(text(name).bold())
-                            .horizontal_scroll(Properties::new().width(2).scroller_width(2)),
+                        scrollable(
+                            Column::new()
+                                .push(text(name).bold())
+                                .push(Space::with_height(Length::Units(5))),
+                        )
+                        .horizontal_scroll(Properties::new().width(5).scroller_width(5)),
                     )
                     .push(image::success_mark_icon().width(Length::Units(50)))
                     .push(Space::with_width(Length::Units(1))),
