@@ -446,7 +446,7 @@ impl BitcoinD {
             .collect()
     }
 
-    fn unload_wallet(&self, wallet_path: String) -> Option<String> {
+    pub fn unload_wallet(&self, wallet_path: String) -> Option<String> {
         self.make_node_request("unloadwallet", &params!(Json::String(wallet_path),))
             .get("warning")
             .expect("No 'warning' in 'unloadwallet' response?")
