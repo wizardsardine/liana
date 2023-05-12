@@ -158,6 +158,25 @@ Releases of Liana are reproducibly built. Linux binaries are also bootstrappable
 [`contrib/reproducible`](contrib/reproducible) for details and instructions if you want to check a
 release.
 
+All commits on master are merge commits signed using a set of trusted GPG keys. We use the
+[`github-merge`](https://github.com/wizardsardine/maintainer-tools) script for this purpose. Given a
+set of [trusted
+keys](https://github.com/wizardsardine/maintainer-tools/blob/master/verify-commits/liana/trusted-keys)
+(basically mine and Edouard Paris') and a [trusted git root
+commit](https://github.com/wizardsardine/maintainer-tools/blob/master/verify-commits/liana/trusted-git-root)
+you can verify the integrity of the master branch using the
+[`verify-commits`](https://github.com/wizardsardine/maintainer-tools/tree/master/verify-commits)
+script from our
+[`maintainer-tools`](https://github.com/wizardsardine/maintainer-tools) repository. For instance:
+```
+$ ../maintainer-tools/verify-commits/verify-commits.py liana
+...
+There is a valid path from "9490159e7ca69678bb6995cd56d09b0a65a5b484" to da9149ccde5bf99cb70769b792fd003b079fc9ed where all commits are signed!
+```
+It's worth mentioning we didn't invent anything here: we're just reusing the [great
+tooling](https://github.com/bitcoin-core/bitcoin-maintainer-tools) developed by the Bitcoin Core
+contributors over the years.
+
 Note you necessarily won't be able to reproduce codesigned binaries. We may provide detached
 signatures in the future.
 
