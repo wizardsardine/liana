@@ -446,18 +446,38 @@ impl BitcoinD {
             .collect()
     }
 
-    pub fn unload_wallet(&self, wallet_path: String) -> Option<String> {
-        self.make_node_request("unloadwallet", &params!(Json::String(wallet_path),))
-            .get("warning")
-            .expect("No 'warning' in 'unloadwallet' response?")
-            .as_str()
-            .and_then(|w| {
-                if w.is_empty() {
-                    None
-                } else {
-                    Some(w.to_string())
+    // Get a warning from the result of a wallet command. It was modified in v25 so it's a bit
+    // messy...
+    fn warning_from_res(&self, res: &Json) -> Option<String> {
+        // In v24, it's a "warning" field.
+        if let Some(warning) = res.get("warning").and_then(Json::as_str) {
+            if !warning.is_empty() {
+                return Some(warning.to_string());
+            }
+        }
+
+        // In v25 it becomes a "warnings" field...
+        if let Some(warnings) = res.get("warnings").and_then(Json::as_array) {
+            // FIXME: don't drop the other warnings if there are more than one.
+            let first_actual_warning = warnings.iter().find_map(|w| {
+                if let Some(w) = w.as_str() {
+                    if !w.is_empty() {
+                        return Some(w);
+                    }
                 }
-            })
+                None
+            });
+            if let Some(warning) = first_actual_warning {
+                return Some(warning.to_string());
+            }
+        }
+
+        None
+    }
+
+    pub fn unload_wallet(&self, wallet_path: String) -> Option<String> {
+        let res = self.make_node_request("unloadwallet", &params!(Json::String(wallet_path),));
+        self.warning_from_res(&res)
     }
 
     fn create_wallet(&self, wallet_path: String) -> Result<(), String> {
@@ -472,10 +492,8 @@ impl BitcoinD {
             )
             .map_err(|e| e.to_string())?;
 
-        if let Some(warning) = res.get("warning").and_then(Json::as_str) {
-            if !warning.is_empty() {
-                return Err(warning.to_string());
-            }
+        if let Some(warning) = self.warning_from_res(&res) {
+            return Err(warning);
         }
         if res.get("name").is_none() {
             return Err("Unknown error when create watchonly wallet".to_string());
