@@ -243,6 +243,14 @@ impl SqliteConn {
                 .pop()
                 .expect("There is always a row in the wallet table");
 
+            // Make sure we don't set a lower derivation index. This can happen since the
+            // derivation is set outside the atomic transaction. So there may be a race between say
+            // the Bitcoin poller thread and the JSONRPC commands thread.
+            if (change && index <= db_wallet.change_derivation_index) || (!change && index <= db_wallet.deposit_derivation_index) {
+                // It was already set at a higher index.
+                return Ok(());
+            }
+
             // First of all set the derivation index
             let index_u32: u32 = index.into();
             if change {
@@ -1015,6 +1023,17 @@ CREATE TABLE spend_transactions (
                 let db_addr = conn.db_address(&addr).unwrap();
                 assert_eq!(db_addr.derivation_index, look_ahead_index.into());
             }
+
+            // Suppose the latest change derivation index was set to 52 above by the commands
+            // thread. Suppose concurrently the Bitcoin poller thread queried the DB for the
+            // latest derivation just before it happened, got 2 as a response, and then increased
+            // the derivation index to -say- 7 after noticing a new change output paying to the
+            // address at derivation index 6. It's absolutely possible and the only way to prevent
+            // this is to make sure *within* the atomic DB transaction that we will never decrease
+            // the derivation index. Make sure we actually perform this check (note it would only
+            // crash during the second call).
+            conn.set_derivation_index(7.into(), true, &secp);
+            conn.set_derivation_index(8.into(), true, &secp);
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
