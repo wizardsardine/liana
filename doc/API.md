@@ -7,7 +7,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 
 | Command                                                     | Description                                                   |
 | ----------------------------------------------------------- | ----------------------------------------------------          |
-| [`stop`](#stop)                                             | Stops the minisafe daemon                                     |
+| [`stop`](#stop)                                             | Stops liana daemon                                     |
 | [`getinfo`](#getinfo)                                       | Get general information about the daemon                      |
 | [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                                   |
 | [`listcoins`](#listcoins)                                   | List all wallet transaction outputs.                          |
