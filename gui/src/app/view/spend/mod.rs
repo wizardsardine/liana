@@ -99,7 +99,11 @@ pub fn create_spend_tx<'a>(
         cache,
         error,
         Column::new()
-            .push(h3(if is_self_send { "Send-to-self" } else { "Send" }))
+            .push(h3(if is_self_send {
+                "Self-transfer"
+            } else {
+                "Send"
+            }))
             .push(
                 Column::new()
                     .push(Column::with_children(recipients).spacing(10))
