@@ -283,7 +283,9 @@ pub fn recipient_view<'a>(
                         form::Form::new("0.001 (in BTC)", amount, move |msg| {
                             CreateSpendMessage::RecipientEdited(index, "amount", msg)
                         })
-                        .warning("Invalid amount. Must be > 0.00005000 BTC.")
+                        .warning(
+                            "Invalid amount. (Note amounts lower than 0.00005 BTC are invalid.)",
+                        )
                         .size(20)
                         .padding(10),
                     )
