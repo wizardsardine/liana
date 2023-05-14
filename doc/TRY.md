@@ -25,6 +25,7 @@ TL;DR:
 - Arch Linux: check if you have all the required packages: `pacman -Q coreutils tar curl gnupg fontconfig systemd-libs`.
 If any is listed as "was not found", get it with `pacman -S [missing package name]`
 - Other distribution: see the link to projects below to search for the name of your distribution's packages.
+- Running binaries requires GLIBC >= 2.33 (Ubuntu >= 22.04 or Debian >= 12)
 
 We'll use basic tools which should already be present on your system, such as:
 - `shasum`
