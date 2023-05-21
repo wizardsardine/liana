@@ -60,11 +60,11 @@ base64 = "0.13"
 # Used for generating mnemonics
 getrandom = "0.2"
 
+# Used for the hot signer
+bip39 = "2.0"
+
 # Additional entropy for generating mnemonics
 [target.'cfg(target_arch = "x86")'.dependencies]
 rdrand = "0.8"
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 rdrand = "0.8"
-
-# Used for the hot signer
-bip39 = "2.0"
