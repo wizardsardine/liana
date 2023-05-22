@@ -436,10 +436,15 @@ pub fn rescan<'a>(
                     } else {
                         None
                     })
-                    .spacing(20)
+                    .spacing(5)
                     .align_items(Alignment::Center)
                     .width(Length::Fill),
             )
+            .push(text("Rescan the local blockchain for any missing wallet transaction and rebuild the correct wallet balance")
+                    .width(Length::Fill)
+                    .small()
+                    .style(color::GREY_3))
+                    
             .push(separation().width(Length::Fill))
             .push(if let Some(p) = scan_progress {
                 Container::new(
