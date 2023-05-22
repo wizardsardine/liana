@@ -21,7 +21,7 @@ Here is a list of the system dependencies: the tools and libraries you need to h
 your system to follow the guide if you are running Linux.
 
 TL;DR:
-- Debian/Ubuntu: `apt install curl gpg libfontconfig1-dev libudev-dev`
+- Debian/Ubuntu: `apt install curl gpg udev libfontconfig1-dev libudev-dev`
 - Arch Linux: check if you have all the required packages: `pacman -Q coreutils tar curl gnupg fontconfig systemd-libs`.
 If any is listed as "was not found", get it with `pacman -S [missing package name]`
 - Other distribution: see the link to projects below to search for the name of your distribution's packages.
@@ -36,7 +36,7 @@ To download and verify binaries you will also need:
 
 To run the GUI you will need some additional libraries:
 - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/) (On Debian/Ubuntu `apt install libfontconfig1-dev`)
-- [Libudev](https://www.freedesktop.org/software/systemd/man/libudev.html) (On Debian/Ubuntu `apt install libudev-dev`)
+- [Libudev](https://www.freedesktop.org/software/systemd/man/libudev.html) (On Debian/Ubuntu `apt install udev libudev-dev`)
 
 ### Throwaway folder
 
