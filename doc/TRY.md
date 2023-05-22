@@ -59,10 +59,10 @@ other platforms refer to
 [https://bitcoincore.org/en/download/#verify-your-download](https://bitcoincore.org/en/download).
 
 1. Download the `bitcoind` binary from [the official website of the Bitcoin Core
-project](https://bitcoincore.org/bin/bitcoin-core-24.0.1/) according to your platform (in the context
-of this guide, it is most likely `bitcoin-24.0.1-x86_64-linux-gnu.tar.gz`), and associated SHA256SUMS and SHA256SUMS.asc verification files.
+project](https://bitcoincore.org/bin/bitcoin-core-24.1/) according to your platform (in the context
+of this guide, it is most likely `bitcoin-24.1-x86_64-linux-gnu.tar.gz`), and associated SHA256SUMS and SHA256SUMS.asc verification files.
 ```
-curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/SHA256SUMS -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/SHA256SUMS.asc
+curl -O https://bitcoincore.org/bin/bitcoin-core-24.1/bitcoin-24.1-x86_64-linux-gnu.tar.gz -O https://bitcoincore.org/bin/bitcoin-core-24.1/SHA256SUMS -O https://bitcoincore.org/bin/bitcoin-core-24.1/SHA256SUMS.asc
 ```
 
 2. Verify the hash of the downloaded archive.
@@ -80,21 +80,21 @@ gpg --verify SHA256SUMS.asc
 
 4. Finally, uncompress the archive to get access to the `bitcoind` binary.
 ```
-tar -xzf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
+tar -xzf bitcoin-24.1-x86_64-linux-gnu.tar.gz
 ```
 
 ### Start `bitcoind` on signet
 
 Run `bitcoind` in the background on the public signet network. On Linux:
 ```
-./bitcoin-24.0.1/bin/bitcoind -signet -daemon
+./bitcoin-24.1/bin/bitcoind -signet -daemon
 ```
 
 If it is the first time you start a signet Bitcoin on this machine it will take a few minutes to
 synchronize (depends on your connection and hardware of course, but it shouldn't take longer than a
 handful of minutes). You can track the progress using the `getblockchaininfo` command. On Linux:
 ```
-./bitcoin-24.0.1/bin/bitcoin-cli -signet getblockchaininfo
+./bitcoin-24.1/bin/bitcoin-cli -signet getblockchaininfo
 ```
 
 **You do not need to wait for full synchronisation before moving on to the next step.**
