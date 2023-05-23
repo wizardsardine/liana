@@ -444,7 +444,6 @@ pub fn rescan<'a>(
                     .width(Length::Fill)
                     .size(20)
                     .style(color::GREY_3))
-                    
             .push(separation().width(Length::Fill))
             .push(if let Some(p) = scan_progress {
                 Container::new(
