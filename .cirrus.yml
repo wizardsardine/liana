@@ -43,10 +43,10 @@ task:
     set -xe
 
     # Download the bitcoind binary
-    curl -O https://bitcoincore.org/bin/bitcoin-core-24.1/bitcoin-24.1-x86_64-linux-gnu.tar.gz
-    echo "c112af3d19cca7f5b5f942708ca4d522110d8e1dc1c0f8d3077f531c94e5f00f bitcoin-24.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
-    tar -xzf bitcoin-24.1-x86_64-linux-gnu.tar.gz
-    export BITCOIND_PATH=bitcoin-24.1/bin/bitcoind
+    curl -O https://bitcoincore.org/bin/bitcoin-core-25.0/bitcoin-25.0-x86_64-linux-gnu.tar.gz
+    echo "33930d432593e49d58a9bff4c30078823e9af5d98594d2935862788ce8a20aec bitcoin-25.0-x86_64-linux-gnu.tar.gz" | sha256sum -c
+    tar -xzf bitcoin-25.0-x86_64-linux-gnu.tar.gz
+    export BITCOIND_PATH=bitcoin-25.0/bin/bitcoind
 
     # The misc tests have a backward compat test that need the path to a previous version of Liana.
     # For now it requires using 0.3.
