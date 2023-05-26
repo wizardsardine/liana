@@ -41,11 +41,6 @@ fn cpu_randomness() -> Result<Option<[u8; 32]>, RandomnessError> {
     }
 }
 
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-fn hardware_randomness() -> Result<Option<[u8; 32]>, RandomnessError> {
-    Ok(None)
-}
-
 // OS-generated randomness. See https://docs.rs/getrandom/latest/getrandom/#supported-targets
 // (basically this calls `getrandom()` or polls `/dev/urandom` on Linux, `BCryptGenRandom` on
 // Windows, and `getentropy()` / `/dev/random` on Mac.
@@ -82,9 +77,11 @@ fn additional_data() -> Result<[u8; 32], RandomnessError> {
 pub fn random_bytes() -> Result<[u8; 32], RandomnessError> {
     let mut engine = sha256::HashEngine::default();
 
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if let Some(bytes) = cpu_randomness()? {
         engine.input(&bytes);
     }
+
     engine.input(&system_randomness()?);
     engine.input(&additional_data()?);
     // TODO: add more sources of randomness
