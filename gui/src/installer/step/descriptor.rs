@@ -862,6 +862,7 @@ impl DescriptorEditModal for EditXpubModal {
                                 self.edit_name = false;
                             } else {
                                 self.edit_name = true;
+                                self.form_name.value = String::new();
                             }
                             self.form_xpub.valid = true;
                             self.form_xpub.value = key.to_string();
