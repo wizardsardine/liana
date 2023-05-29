@@ -178,15 +178,13 @@ impl LianaDescriptor {
             .expect("We never create a Liana descriptor with an invalid Liana policy.")
     }
 
-    /// Get the value (in blocks) of the smallest relative timelock of the recovery paths.
-    pub fn first_timelock_value(&self) -> u16 {
-        *self
-            .policy()
+    /// Get an ordered list of timelocks of the recovery paths.
+    pub fn timelock_values(&self) -> Vec<u16> {
+        self.policy()
             .recovery_paths
             .iter()
-            .next()
-            .expect("There is always at least one recovery path")
-            .0
+            .map(|(timelock, _)| *timelock)
+            .collect()
     }
 
     /// Get the maximum size in WU of a satisfaction for this descriptor.
