@@ -725,8 +725,10 @@ impl DaemonControl {
         // Query the coins that we can spend through the specified recovery path (if no recovery
         // path specified, use the first available one) from the database.
         let current_height = self.bitcoin.chain_tip().height;
-        let timelock =
-            timelock.unwrap_or_else(|| self.config.main_descriptor.first_timelock_value());
+        let timelock = timelock.unwrap_or_else(|| {
+            let timelocks = self.config.main_descriptor.timelock_values();
+            timelocks[0] // Access the first timelock value
+        });
         let height_delta: i32 = timelock.try_into().expect("Must fit, it's a u16");
         let sweepable_coins = db_conn
             .coins(CoinType::Unspent)
