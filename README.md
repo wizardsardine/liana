@@ -43,8 +43,11 @@ source, see [`doc/BUILD.md`](doc/BUILD.md) instead.
 
 Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
 executable for your platform. If you are not sure what is the "right" executable for your platform,
-choose `liana-1.0.exe` if you are on Windows, `Liana.zip` if you are on MacOS and
-`liana-1.0-x86_64-linux-gnu.tar.gz` if you are on Linux.
+choose:
+- `Liana.zip` if you are on MacOS,
+- `liana-1.0.exe` if you are on Windows,
+- `liana-1.0-x86_64-linux-gnu.tar.gz` if you are on Linux. Note you may have to compile the software
+  yourself if you are on Linux. See the [section below](#a-note-on-linux-binaries-and-glibc-version).
 
 For every file available on the release page, there is an accompanying `.asc` file with the same
 name. This is a GPG signature made with Antoine Poinsot's key:
@@ -52,6 +55,21 @@ name. This is a GPG signature made with Antoine Poinsot's key:
 as on [his Twitter profile](https://twitter.com/darosior) or his [personal
 website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
 against this key.
+
+#### A note on Linux binaries and glibc version
+
+*Skip this section if you are not running Linux or don't plan on using a released binary.*
+
+Due to technical limitations in our reproducible builds system, the Linux binaries currently link
+against `glibc` version `2.33`. This means you can't run a released Linux binary if your system has
+an older glibc. This is the case most notably of Ubuntu 20 (Focal) and below, and Debian 11
+(Bullseye) and below.
+
+The simplest workaround is to simply build the project yourself. Fear not, it's really trivial if
+you are a Linux user. Instructions [here](doc/BUILD.md).
+
+See [this issue](https://github.com/wizardsardine/liana/issues/414) for details.
+
 
 #### Apple, Windows, codesigned and notarized binaries
 
