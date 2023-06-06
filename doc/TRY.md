@@ -173,3 +173,16 @@ rm -rf liana_quicktry
 rm -rf ~/.bitcoin/signet
 rm -rf ~/.liana/signet
 ```
+
+## Tips & Tricks 
+
+### Simulating multiple wallets
+
+You can simulate multiple wallets by using different data directories. For instance:
+
+```
+./liana-gui --datadir test_alice
+./liana-gui --datadir test_bob
+./liana-gui --datadir test_charlie
+ ```
+The directory will be created if it doesn't exist.
