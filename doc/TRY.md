@@ -105,8 +105,12 @@ handful of minutes). You can track the progress using the `getblockchaininfo` co
 
 Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
 executable for your platform. If you are not sure what is the "right" executable for your platform,
-choose `liana-0.3.exe` if you are on Windows, `liana-0.3.dmg` if you are on MacOS and
-`liana-0.3-x86_64-linux-gnu.tar.gz` if you are on Linux.
+choose `Liana.zip` if you are on MacOS, `liana-1.0.exe` if you are on Windows, and
+`liana-1.0-x86_64-linux-gnu.tar.gz` if you are on Linux.
+
+A note for **Linux users only**: released binaries may not be working on your system if it is
+running a too old glibc. In this case you may have to build from source. See the [short section
+about this in the README](../README.md#a-note-on-linux-binaries-and-glibc-version).
 
 For every file available on the release page, there is an accompanying `.asc` file with the same
 name. This is a GPG signature made with Antoine Poinsot's key:
