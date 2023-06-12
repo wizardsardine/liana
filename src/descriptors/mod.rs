@@ -180,7 +180,13 @@ impl LianaDescriptor {
 
     /// Get an ordered list of timelocks of the recovery paths.
     pub fn timelock_values(&self) -> Vec<u16> {
-        self.policy().recovery_paths.keys().copied().collect()
+        let timelocks: Vec<u16> = self.policy().recovery_paths.keys().copied().collect();
+        // Assert that the resulting vector is not empty
+        assert!(
+            !timelocks.is_empty(),
+            "The timelock_values vector should never be empty"
+        );
+        timelocks
     }
 
     /// Get the maximum size in WU of a satisfaction for this descriptor.
