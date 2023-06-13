@@ -121,7 +121,7 @@ pub fn selected_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
             ])
             .width(Length::Fill)
             .into(),
-            image::success_mark_icon().width(Length::Units(50)).into(),
+            image::success_mark_icon().width(Length::Fixed(50.0)).into(),
         ])
         .align_items(Alignment::Center),
     )
@@ -152,7 +152,7 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
             .into(),
             row(vec![
                 text::p1_regular("Signed").style(color::GREEN).into(),
-                image::success_mark_icon().width(Length::Units(50)).into(),
+                image::success_mark_icon().width(Length::Fixed(50.0)).into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -187,7 +187,7 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
             .into(),
             row(vec![
                 text::p1_regular("Registered").style(color::GREEN).into(),
-                image::success_mark_icon().width(Length::Units(50)).into(),
+                image::success_mark_icon().width(Length::Fixed(50.0)).into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -251,7 +251,7 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
             .into(),
             row(vec![
                 text::p1_regular("Signed").style(color::GREEN).into(),
-                image::success_mark_icon().width(Length::Units(50)).into(),
+                image::success_mark_icon().width(Length::Fixed(50.0)).into(),
             ])
             .align_items(Alignment::Center)
             .spacing(5)
@@ -284,7 +284,7 @@ pub fn selected_hot_signer<'a, T: 'a, F: Display>(
             ])
             .width(Length::Fill)
             .into(),
-            image::success_mark_icon().width(Length::Units(50)).into(),
+            image::success_mark_icon().width(Length::Fixed(50.0)).into(),
         ])
         .align_items(Alignment::Center),
     )

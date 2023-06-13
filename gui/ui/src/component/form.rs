@@ -38,7 +38,7 @@ where
         F: 'static + Fn(String) -> Message,
     {
         Self {
-            input: text_input::TextInput::new(placeholder, &value.value, on_change),
+            input: text_input::TextInput::new(placeholder, &value.value).on_input(on_change),
             warning: None,
             valid: value.valid,
         }

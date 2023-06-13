@@ -35,8 +35,8 @@ use liana_ui::{
 use crate::app::{cache::Cache, error::Error, menu::Menu};
 
 fn menu_green_bar<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(Space::with_width(Length::Units(2)))
-        .height(Length::Units(50))
+    Container::new(Space::with_width(Length::Fixed(2.0)))
+        .height(Length::Fixed(50.0))
         .style(theme::Container::Custom(color::GREEN))
 }
 
@@ -140,8 +140,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(
                         Container::new(
                             liana_grey_logo()
-                                .height(Length::Units(120))
-                                .width(Length::Units(60)),
+                                .height(Length::Fixed(120.0))
+                                .width(Length::Fixed(60.0)),
                         )
                         .padding(10),
                     )
@@ -188,7 +188,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                 .push(
                     Container::new(scrollable(row!(
                         Space::with_width(Length::FillPortion(1)),
-                        column!(Space::with_height(Length::Units(150)), content.into())
+                        column!(Space::with_height(Length::Fixed(150.0)), content.into())
                             .width(Length::FillPortion(8))
                             .max_width(1500),
                         Space::with_width(Length::FillPortion(1)),

@@ -78,7 +78,7 @@ impl Launcher {
         Into::<Element<ViewMessage>>::into(
             Column::new()
                 .push(
-                    Container::new(image::liana_brand_grey().width(Length::Units(200)))
+                    Container::new(image::liana_brand_grey().width(Length::Fixed(200.0)))
                         .padding(100),
                 )
                 .push(
@@ -145,7 +145,7 @@ impl Launcher {
                     .center_x()
                     .center_y(),
                 )
-                .push(Space::with_height(Length::Units(100))),
+                .push(Space::with_height(Length::Fixed(100.0))),
         )
         .map(Message::View)
     }

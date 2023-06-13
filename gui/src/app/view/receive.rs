@@ -45,14 +45,14 @@ pub fn receive<'a>(
                                         Container::new(
                                             scrollable(
                                                 Column::new()
-                                                    .push(Space::with_height(Length::Units(10)))
+                                                    .push(Space::with_height(Length::Fixed(10.0)))
                                                     .push(
                                                         p2_regular(address.to_string())
                                                             .small()
                                                             .style(color::GREY_3),
                                                     )
                                                     // Space between the address and the scrollbar
-                                                    .push(Space::with_height(Length::Units(10))),
+                                                    .push(Space::with_height(Length::Fixed(10.0))),
                                             )
                                             .horizontal_scroll(
                                                 scrollable::Properties::new().scroller_width(5),
@@ -76,7 +76,7 @@ pub fn receive<'a>(
                         .padding(10)
                         .style(theme::Container::QrCode)
                 } else {
-                    Container::new(Space::with_width(Length::Fill)).width(Length::Units(200))
+                    Container::new(Space::with_width(Length::Fill)).width(Length::Fixed(200.0))
                 }),
         )
         .spacing(20)

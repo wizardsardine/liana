@@ -273,7 +273,7 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                 .spacing(20)
                 .width(Length::Fill)
                 .align_items(Alignment::Center)
-                .push(icon::plug_icon().size(100).width(Length::Units(300)))
+                .push(icon::plug_icon().size(100).width(Length::Fixed(300.0)))
                 .push(
                     if matches!(
                         error.as_ref(),
@@ -293,7 +293,7 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                         )
                         .push(
                             button::primary(None, "Retry")
-                                .width(Length::Units(200))
+                                .width(Length::Fixed(200.0))
                                 .on_press(ViewMessage::Retry),
                         ),
                 ),

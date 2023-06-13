@@ -150,7 +150,8 @@ impl Installer {
                 Command::none()
             }
             Message::Install => {
-                self.steps
+                let _cmd = self
+                    .steps
                     .get_mut(self.current)
                     .expect("There is always a step")
                     .update(message);
@@ -180,8 +181,7 @@ impl Installer {
                 self.steps
                     .get_mut(self.current)
                     .expect("There is always a step")
-                    .update(Message::Installed(Err(e)));
-                Command::none()
+                    .update(Message::Installed(Err(e)))
             }
             _ => self
                 .steps

@@ -24,9 +24,9 @@ impl Badge {
 
 impl<'a, Message: 'a> From<Badge> for Element<'a, Message> {
     fn from(badge: Badge) -> Element<'a, Message> {
-        Container::new(badge.icon.width(Length::Units(20)))
-            .width(Length::Units(40))
-            .height(Length::Units(40))
+        Container::new(badge.icon.width(Length::Fixed(20.0)))
+            .width(Length::Fixed(40.0))
+            .height(Length::Fixed(40.0))
             .style(theme::Container::Badge(badge.style))
             .center_x()
             .center_y()
@@ -35,27 +35,27 @@ impl<'a, Message: 'a> From<Badge> for Element<'a, Message> {
 }
 
 pub fn receive<T>() -> Container<'static, T> {
-    Container::new(icon::receive_icon().width(Length::Units(20)))
-        .width(Length::Units(40))
-        .height(Length::Units(40))
+    Container::new(icon::receive_icon().width(Length::Fixed(20.0)))
+        .width(Length::Fixed(40.0))
+        .height(Length::Fixed(40.0))
         .style(theme::Container::Badge(theme::Badge::Standard))
         .center_x()
         .center_y()
 }
 
 pub fn cycle<T>() -> Container<'static, T> {
-    Container::new(icon::arrow_repeat().width(Length::Units(20)))
-        .width(Length::Units(40))
-        .height(Length::Units(40))
+    Container::new(icon::arrow_repeat().width(Length::Fixed(20.0)))
+        .width(Length::Fixed(40.0))
+        .height(Length::Fixed(40.0))
         .style(theme::Container::Badge(theme::Badge::Standard))
         .center_x()
         .center_y()
 }
 
 pub fn spend<T>() -> Container<'static, T> {
-    Container::new(icon::send_icon().width(Length::Units(20)))
-        .width(Length::Units(40))
-        .height(Length::Units(40))
+    Container::new(icon::send_icon().width(Length::Fixed(20.0)))
+        .width(Length::Fixed(40.0))
+        .height(Length::Fixed(40.0))
         .style(theme::Container::Badge(theme::Badge::Standard))
         .center_x()
         .center_y()
@@ -64,11 +64,11 @@ pub fn spend<T>() -> Container<'static, T> {
 pub fn coin<T>() -> Container<'static, T> {
     Container::new(
         image::liana_grey_logo()
-            .height(Length::Units(25))
-            .width(Length::Units(25)),
+            .height(Length::Fixed(25.0))
+            .width(Length::Fixed(25.0)),
     )
-    .width(Length::Units(40))
-    .height(Length::Units(40))
+    .width(Length::Fixed(40.0))
+    .height(Length::Fixed(40.0))
     .style(theme::Container::Badge(theme::Badge::Standard))
     .center_x()
     .center_y()
