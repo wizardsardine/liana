@@ -151,7 +151,7 @@ impl error::Error for Error {}
 impl From<commands::CommandError> for Error {
     fn from(e: commands::CommandError) -> Error {
         match e {
-            commands::CommandError::NoOutpoint
+            commands::CommandError::NoOutpointForSelfSend
             | commands::CommandError::UnknownOutpoint(..)
             | commands::CommandError::InvalidFeerate(..)
             | commands::CommandError::AlreadySpent(..)
@@ -170,6 +170,7 @@ impl From<commands::CommandError> for Error {
             }
             commands::CommandError::FetchingTransaction(..)
             | commands::CommandError::SanityCheckFailure(_)
+            | commands::CommandError::CoinSelectionError(..)
             | commands::CommandError::RescanTrigger(..) => {
                 Error::new(ErrorCode::InternalError, e.to_string())
             }
