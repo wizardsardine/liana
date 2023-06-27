@@ -1,6 +1,7 @@
-///! Implementation of the Bitcoin interface using bitcoind.
-///!
-///! We use the RPC interface and a watchonly descriptor wallet.
+//! Implementation of the Bitcoin interface using bitcoind.
+//!
+//! We use the RPC interface and a watchonly descriptor wallet.
+
 mod utils;
 use crate::{
     bitcoin::{Block, BlockChainTip},

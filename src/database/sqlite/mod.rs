@@ -1,11 +1,12 @@
-///! Implementation of the database interface using SQLite.
-///!
-///! We use a bundled SQLite that is compiled with SQLITE_THREADSAFE. Sqlite.org states:
-///! > Multi-thread. In this mode, SQLite can be safely used by multiple threads provided that
-///! > no single database connection is used simultaneously in two or more threads.
-///!
-///! We leverage SQLite's `unlock_notify` feature to synchronize writes accross connection. More
-///! about it at https://sqlite.org/unlock_notify.html.
+//! Implementation of the database interface using SQLite.
+//!
+//! We use a bundled SQLite that is compiled with SQLITE_THREADSAFE. Sqlite.org states:
+//! > Multi-thread. In this mode, SQLite can be safely used by multiple threads provided that
+//! > no single database connection is used simultaneously in two or more threads.
+//!
+//! We leverage SQLite's `unlock_notify` feature to synchronize writes accross connection. More
+//! about it at https://sqlite.org/unlock_notify.html.
+
 pub mod schema;
 mod utils;
 
