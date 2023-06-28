@@ -30,6 +30,8 @@ pub enum DaemonError {
     Start(StartupError),
     // Error if the client is not supported.
     ClientNotSupported,
+    /// Error when selecting coins for spend.
+    CoinSelectionError,
 }
 
 impl std::fmt::Display for DaemonError {
@@ -42,6 +44,7 @@ impl std::fmt::Display for DaemonError {
             Self::Unexpected(e) => write!(f, "Daemon unexpected error: {}", e),
             Self::Start(e) => write!(f, "Daemon did not start: {}", e),
             Self::ClientNotSupported => write!(f, "Daemon communication is not supported"),
+            Self::CoinSelectionError => write!(f, "Coin selection error"),
         }
     }
 }

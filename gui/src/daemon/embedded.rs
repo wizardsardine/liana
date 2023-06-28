@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::{model::*, Daemon, DaemonError};
 use liana::{
-    commands::LabelItem,
+    commands::{CommandError, LabelItem},
     config::Config,
     miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
     DaemonControl, DaemonHandle,
@@ -90,7 +90,10 @@ impl Daemon for EmbeddedDaemon {
     ) -> Result<CreateSpendResult, DaemonError> {
         self.control()?
             .create_spend(destinations, coins_outpoints, feerate_vb)
-            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+            .map_err(|e| match e {
+                CommandError::CoinSelectionError(_) => DaemonError::CoinSelectionError,
+                e => DaemonError::Unexpected(e.to_string()),
+            })
     }
 
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
