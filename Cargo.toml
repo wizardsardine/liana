@@ -44,9 +44,9 @@ fern = "0.6"
 # to work with our custom panic hook.
 backtrace = "0.3"
 
-# Pinned to this version because they broke the MSRV in 0.27...
+# Pinned to this version because they keep breaking their MSRV in point releases...
 # FIXME: this is unfortunate, we don't receive the updates (sometimes critical) from SQLite.
-rusqlite = { version = "0.26.3", features = ["bundled", "unlock_notify"] }
+rusqlite = { version = "0.27", features = ["bundled", "unlock_notify"] }
 
 # To talk to bitcoind
 jsonrpc = "0.12"

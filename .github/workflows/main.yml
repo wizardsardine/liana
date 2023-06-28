@@ -9,7 +9,7 @@ jobs:
       - uses: actions/checkout@v1
       - uses: actions-rs/toolchain@v1
         with:
-            toolchain: 1.67.1
+            toolchain: 1.70.0
             components: rustfmt, clippy
             override: true
       - name: rustfmt
@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         toolchain:
-          - 1.48
+          - 1.54
           - nightly
         os:
           - ubuntu-latest
@@ -42,8 +42,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: cargo test --verbose --no-default-features
       - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
-        # See issue https://github.com/wizardsardine/liana/issues/69
-        if: matrix.os != 'windows-latest' && (matrix.os != 'macOS-latest' || matrix.toolchain != '1.48')
+        if: matrix.os != 'windows-latest'
         run: cargo test --verbose --color always -- --nocapture
 
   linter_gui:
