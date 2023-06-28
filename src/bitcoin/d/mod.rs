@@ -77,7 +77,6 @@ impl BitcoindError {
         match self {
             BitcoindError::Server(jsonrpc::Error::Transport(ref e)) => {
                 match e.downcast_ref::<simple_http::Error>() {
-                    Some(simple_http::Error::Timeout) => true,
                     Some(simple_http::Error::SocketError(e)) => e.kind() == io::ErrorKind::TimedOut,
                     _ => false,
                 }
@@ -310,8 +309,7 @@ impl BitcoinD {
                         error = Some(e)
                     } else if let BitcoindError::Server(jsonrpc::Error::Transport(ref err)) = e {
                         match err.downcast_ref::<simple_http::Error>() {
-                            Some(simple_http::Error::Timeout)
-                            | Some(simple_http::Error::SocketError(_))
+                            Some(simple_http::Error::SocketError(_))
                             | Some(simple_http::Error::HttpErrorCode(503)) => {
                                 if i <= self.retries {
                                     std::thread::sleep(Duration::from_secs(1));
