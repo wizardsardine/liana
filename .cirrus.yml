@@ -13,6 +13,9 @@ task:
     - name: 'Misc functional tests'
       env:
         TEST_GROUP: tests/test_misc.py
+        matrix:
+          - USE_MIN_BITCOIN_VERSION: 'TRUE'
+          - USE_MIN_BITCOIN_VERSION: 'FALSE'
     - name: 'RPC functional tests'
       env:
         TEST_GROUP: tests/test_rpc.py
@@ -42,11 +45,19 @@ task:
   test_script: |
     set -xe
 
-    # Download the bitcoind binary
-    curl -O https://bitcoincore.org/bin/bitcoin-core-25.0/bitcoin-25.0-x86_64-linux-gnu.tar.gz
-    echo "33930d432593e49d58a9bff4c30078823e9af5d98594d2935862788ce8a20aec bitcoin-25.0-x86_64-linux-gnu.tar.gz" | sha256sum -c
-    tar -xzf bitcoin-25.0-x86_64-linux-gnu.tar.gz
-    export BITCOIND_PATH=bitcoin-25.0/bin/bitcoind
+    if [ "$USE_MIN_BITCOIN_VERSION" = "TRUE" ]; then
+      # Download the minimum required bitcoind binary
+      curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
+      echo "49df6e444515d457ea0b885d66f521f2a26ca92ccf73d5296082e633544253bf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+      tar -xzf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
+      export BITCOIND_PATH=bitcoin-24.0.1/bin/bitcoind
+    else
+      # Download the bitcoind binary
+      curl -O https://bitcoincore.org/bin/bitcoin-core-25.0/bitcoin-25.0-x86_64-linux-gnu.tar.gz
+      echo "33930d432593e49d58a9bff4c30078823e9af5d98594d2935862788ce8a20aec bitcoin-25.0-x86_64-linux-gnu.tar.gz" | sha256sum -c
+      tar -xzf bitcoin-25.0-x86_64-linux-gnu.tar.gz
+      export BITCOIND_PATH=bitcoin-25.0/bin/bitcoind
+    fi
 
     # The misc tests have a backward compat test that need the path to a previous version of Liana.
     # For now it requires using 0.3.
