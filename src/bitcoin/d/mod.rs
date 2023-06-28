@@ -23,7 +23,8 @@ use std::{
 use jsonrpc::{
     arg,
     client::Client,
-    simple_http::{self, SimpleHttpTransport},
+    minreq,
+    minreq_http::{self, MinreqHttpTransport},
 };
 
 use miniscript::{
@@ -74,15 +75,41 @@ impl BitcoindError {
 
     /// Is it a timeout of any kind?
     pub fn is_timeout(&self) -> bool {
-        match self {
-            BitcoindError::Server(jsonrpc::Error::Transport(ref e)) => {
-                match e.downcast_ref::<simple_http::Error>() {
-                    Some(simple_http::Error::SocketError(e)) => e.kind() == io::ErrorKind::TimedOut,
-                    _ => false,
-                }
+        if let BitcoindError::Server(jsonrpc::Error::Transport(ref e)) = self {
+            if let Some(minreq_http::Error::Minreq(minreq::Error::IoError(e))) =
+                e.downcast_ref::<minreq_http::Error>()
+            {
+                return e.kind() == io::ErrorKind::TimedOut;
             }
-            _ => false,
         }
+        false
+    }
+
+    /// Is it an error that can be recovered from?
+    pub fn is_transient(&self) -> bool {
+        if let BitcoindError::Server(jsonrpc::Error::Transport(ref e)) = self {
+            if let Some(ref e) = e.downcast_ref::<minreq_http::Error>() {
+                // Bitcoind is overloaded
+                if let minreq_http::Error::Http(minreq_http::HttpError { status_code, .. }) = e {
+                    return status_code == &503;
+                }
+                // Bitcoind may have been restarted
+                return matches!(e, minreq_http::Error::Minreq(minreq::Error::IoError(_)));
+            }
+        }
+        false
+    }
+
+    /// Is it an error that has to do with our credentials?
+    pub fn is_unauthorized(&self) -> bool {
+        if let BitcoindError::Server(jsonrpc::Error::Transport(ref e)) = self {
+            if let Some(minreq_http::Error::Http(minreq_http::HttpError { status_code, .. })) =
+                e.downcast_ref::<minreq_http::Error>()
+            {
+                return status_code == &402;
+            }
+        }
+        false
     }
 }
 
@@ -130,8 +157,8 @@ impl From<jsonrpc::error::Error> for BitcoindError {
     }
 }
 
-impl From<simple_http::Error> for BitcoindError {
-    fn from(e: simple_http::Error) -> Self {
+impl From<minreq_http::Error> for BitcoindError {
+    fn from(e: minreq_http::Error) -> Self {
         jsonrpc::error::Error::Transport(Box::new(e)).into()
     }
 }
@@ -203,19 +230,20 @@ impl BitcoinD {
     ) -> Result<BitcoinD, BitcoindError> {
         let cookie_string =
             fs::read_to_string(&config.cookie_path).map_err(BitcoindError::CookieFile)?;
+        let node_url = format!("http://{}", config.addr);
         let watchonly_url = format!("http://{}/wallet/{}", config.addr, watchonly_wallet_path);
 
         // Create a dummy bitcoind with clients using a low timeout to sanity check the connection.
         let dummy_node_client = Client::with_transport(
-            SimpleHttpTransport::builder()
-                .url(&config.addr.to_string())
+            MinreqHttpTransport::builder()
+                .url(&node_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(3))
                 .cookie_auth(cookie_string.clone())
                 .build(),
         );
         let sendonly_client = Client::with_transport(
-            SimpleHttpTransport::builder()
+            MinreqHttpTransport::builder()
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(1))
@@ -223,7 +251,7 @@ impl BitcoinD {
                 .build(),
         );
         let dummy_wo_client = Client::with_transport(
-            SimpleHttpTransport::builder()
+            MinreqHttpTransport::builder()
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(3))
@@ -241,15 +269,15 @@ impl BitcoinD {
 
         // Now the connection is checked, create the clients with an appropriate timeout.
         let node_client = Client::with_transport(
-            SimpleHttpTransport::builder()
-                .url(&config.addr.to_string())
+            MinreqHttpTransport::builder()
+                .url(&node_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
                 .cookie_auth(cookie_string.clone())
                 .build(),
         );
         let sendonly_client = Client::with_transport(
-            SimpleHttpTransport::builder()
+            MinreqHttpTransport::builder()
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(1))
@@ -257,7 +285,7 @@ impl BitcoinD {
                 .build(),
         );
         let watchonly_client = Client::with_transport(
-            SimpleHttpTransport::builder()
+            MinreqHttpTransport::builder()
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
@@ -306,19 +334,23 @@ impl BitcoinD {
                 Ok(res) => return Ok(res),
                 Err(e) => {
                     if e.is_warming_up() {
+                        // Always retry when bitcoind is warming up, it'll be available eventually.
+                        std::thread::sleep(Duration::from_secs(1));
                         error = Some(e)
-                    } else if let BitcoindError::Server(jsonrpc::Error::Transport(ref err)) = e {
-                        match err.downcast_ref::<simple_http::Error>() {
-                            Some(simple_http::Error::SocketError(_))
-                            | Some(simple_http::Error::HttpErrorCode(503)) => {
-                                if i <= self.retries {
-                                    std::thread::sleep(Duration::from_secs(1));
-                                    log::debug!("Retrying RPC request to bitcoind: attempt #{}", i);
-                                }
-                                error = Some(e);
-                            }
-                            _ => return Err(e),
+                    } else if e.is_unauthorized() {
+                        // FIXME: it should be trivial for us to cache the cookie path and simply
+                        // refresh the credentials when this happens. Unfortunately this means
+                        // making the BitcoinD struct mutable...
+                        log::error!("Denied access to bitcoind. Most likely bitcoind was restarted from under us and the cookie changed.");
+                        return Err(e);
+                    } else if e.is_transient() {
+                        // If we start hitting transient errors retry requests for a limited time.
+                        log::warn!("Transient error when sending request to bitcoind: {}", e);
+                        if i <= self.retries {
+                            std::thread::sleep(Duration::from_secs(1));
+                            log::debug!("Retrying RPC request to bitcoind: attempt #{}", i);
                         }
+                        error = Some(e);
                     } else {
                         return Err(e);
                     }
