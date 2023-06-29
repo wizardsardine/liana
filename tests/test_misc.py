@@ -18,11 +18,13 @@ def receive_and_send(lianad, bitcoind):
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == n_coins + 3)
 
     # Create a spend that will create a change output, sign and broadcast it.
-    outpoints = [next(
-        c["outpoint"]
-        for c in lianad.rpc.listcoins()["coins"]
-        if c["spend_info"] is None
-    )]
+    outpoints = [
+        next(
+            c["outpoint"]
+            for c in lianad.rpc.listcoins()["coins"]
+            if c["spend_info"] is None
+        )
+    ]
     destinations = {
         bitcoind.rpc.getnewaddress(): 200_000,
     }
