@@ -1,5 +1,5 @@
 use miniscript::{
-    bitcoin::{util::bip32, Sequence},
+    bitcoin::{bip32, Sequence},
     descriptor,
     policy::{compiler, Concrete as ConcretePolicy, Liftable, Semantic as SemanticPolicy},
     ScriptContext,

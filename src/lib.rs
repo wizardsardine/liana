@@ -222,6 +222,10 @@ fn maybe_delete_watchonly_wallet(
         miniscript::bitcoin::Network::Testnet
         | miniscript::bitcoin::Network::Signet
         | miniscript::bitcoin::Network::Regtest => parent_dir.join("wallets").join(wallet_name),
+        net => panic!(
+            "Unsupported network '{}', unknown at the time of writing.",
+            net
+        ),
     };
 
     if wallet_path.exists() {

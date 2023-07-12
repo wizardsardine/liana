@@ -1,10 +1,8 @@
 use miniscript::{
     bitcoin::{
-        self, secp256k1,
-        util::{
-            bip32,
-            psbt::{Input as PsbtIn, Psbt},
-        },
+        self, bip32,
+        psbt::{Input as PsbtIn, Psbt},
+        secp256k1,
     },
     descriptor, translate_hash_clone, ForEachKey, TranslatePk, Translator,
 };
@@ -367,11 +365,11 @@ impl DerivedSinglePathLianaDesc {
             .expect("A P2WSH always has an address")
     }
 
-    pub fn script_pubkey(&self) -> bitcoin::Script {
+    pub fn script_pubkey(&self) -> bitcoin::ScriptBuf {
         self.0.script_pubkey()
     }
 
-    pub fn witness_script(&self) -> bitcoin::Script {
+    pub fn witness_script(&self) -> bitcoin::ScriptBuf {
         self.0.explicit_script().expect("Not a Taproot descriptor")
     }
 
@@ -733,7 +731,7 @@ mod tests {
     }
 
     fn psbt_from_str(psbt_str: &str) -> Psbt {
-        bitcoin::consensus::deserialize(&base64::decode(psbt_str).unwrap()).unwrap()
+        Psbt::from_str(psbt_str).unwrap()
     }
 
     #[test]
@@ -973,7 +971,7 @@ mod tests {
             "0282574238aea21ec72ffffd8d8a981a30004b5794c8094ff394fec79509a5834f",
         )
         .unwrap();
-        let dummy_sig = bitcoin::EcdsaSig::from_str ("30440220264d47ed3fd613e4ac34303c59a0e558d41e487a68af5c5d4bb790f6ccf218ab02203213fe4d51729f9852a28f7d22b2ecb2b096eaf07ad44638af77e4bdbdd4462901").unwrap();
+        let dummy_sig = bitcoin::ecdsa::Signature::from_str("30440220264d47ed3fd613e4ac34303c59a0e558d41e487a68af5c5d4bb790f6ccf218ab02203213fe4d51729f9852a28f7d22b2ecb2b096eaf07ad44638af77e4bdbdd4462901").unwrap();
         let dummy_der_path = bip32::DerivationPath::from_str("m/0/1").unwrap();
         let fingerprint = prim_path.thresh_origins().1.into_iter().next().unwrap().0;
         psbt.inputs[0]

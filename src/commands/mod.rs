@@ -11,8 +11,8 @@ use crate::{
 };
 
 use utils::{
-    deser_amount_from_sats, deser_base64, deser_hex, ser_amount, ser_base64, ser_hex,
-    to_base64_string,
+    deser_addr_assume_checked, deser_amount_from_sats, deser_fromstr, deser_hex, ser_amount,
+    ser_hex, ser_to_string,
 };
 
 use std::{
@@ -23,8 +23,9 @@ use std::{
 
 use miniscript::{
     bitcoin::{
-        self,
-        util::psbt::{Input as PsbtIn, Output as PsbtOut, PartiallySignedTransaction as Psbt},
+        self, address,
+        locktime::absolute,
+        psbt::{Input as PsbtIn, Output as PsbtOut, PartiallySignedTransaction as Psbt},
     },
     psbt::PsbtExt,
 };
@@ -49,7 +50,7 @@ pub enum CommandError {
     InvalidFeerate(/* sats/vb */ u64),
     UnknownOutpoint(bitcoin::OutPoint),
     AlreadySpent(bitcoin::OutPoint),
-    AddressNetwork(bitcoin::Address, /* Expected */ bitcoin::Network),
+    Address(bitcoin::address::Error),
     InvalidOutputValue(bitcoin::Amount),
     InsufficientFunds(
         /* in value */ bitcoin::Amount,
@@ -77,10 +78,9 @@ impl fmt::Display for CommandError {
             Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {} sats/vb.", sats_vb),
             Self::AlreadySpent(op) => write!(f, "Coin at '{}' is already spent.", op),
             Self::UnknownOutpoint(op) => write!(f, "Unknown outpoint '{}'.", op),
-            Self::AddressNetwork(addr, expected) => write!(
+            Self::Address(e) => write!(
                 f,
-                "Invalid network for address '{}'. Our network is '{}' but address is for '{}'.",
-                addr, expected, addr.network
+                "Address error: {}", e
             ),
             Self::InvalidOutputValue(amount) => write!(f, "Invalid output value '{}'.", amount),
             Self::InsufficientFunds(in_val, out_val, feerate) => if let Some(out_val) = out_val {
@@ -115,7 +115,7 @@ impl fmt::Display for CommandError {
             Self::SanityCheckFailure(psbt) => write!(
                 f,
                 "BUG! Please report this. Failed sanity checks for PSBT '{}'.",
-                to_base64_string(psbt)
+                psbt
             ),
             Self::UnknownSpend(txid) => write!(f, "Unknown spend transaction '{}'.", txid),
             Self::SpendFinalization(e) => {
@@ -141,7 +141,7 @@ impl std::error::Error for CommandError {}
 // Sanity check the value of a transaction output.
 fn check_output_value(value: bitcoin::Amount) -> Result<(), CommandError> {
     // NOTE: the network parameter isn't used upstream
-    if value.to_sat() > bitcoin::blockdata::constants::max_money(bitcoin::Network::Bitcoin)
+    if value.to_sat() > bitcoin::blockdata::constants::MAX_MONEY
         || value.to_sat() < DUST_OUTPUT_SATS
     {
         Err(CommandError::InvalidOutputValue(value))
@@ -235,19 +235,14 @@ impl DaemonControl {
     }
 
     // Check whether this address is valid for the network we are operating on.
-    fn validate_address(&self, addr: &bitcoin::Address) -> Result<(), CommandError> {
-        // NOTE: signet uses testnet addresses
-        if addr.network == self.config.bitcoin_config.network
-            || (addr.network == bitcoin::Network::Testnet
-                && self.config.bitcoin_config.network == bitcoin::Network::Signet)
-        {
-            return Ok(());
-        }
-
-        Err(CommandError::AddressNetwork(
-            addr.clone(),
-            self.config.bitcoin_config.network,
-        ))
+    fn validate_address(
+        &self,
+        addr: bitcoin::Address<address::NetworkUnchecked>,
+    ) -> Result<bitcoin::Address, CommandError> {
+        // NOTE: signet uses testnet addresses, and legacy addresses on regtest use testnet
+        // encoding.
+        addr.require_network(self.config.bitcoin_config.network)
+            .map_err(CommandError::Address)
     }
 }
 
@@ -287,7 +282,7 @@ impl DaemonControl {
             .receive_descriptor()
             .derive(index, &self.secp)
             .address(self.config.bitcoin_config.network);
-        GetAddressResult { address }
+        GetAddressResult::new(address)
     }
 
     /// Get a list of all known coins.
@@ -323,7 +318,7 @@ impl DaemonControl {
 
     pub fn create_spend(
         &self,
-        destinations: &HashMap<bitcoin::Address, u64>,
+        destinations: &HashMap<bitcoin::Address<bitcoin::address::NetworkUnchecked>, u64>,
         coins_outpoints: &[bitcoin::OutPoint],
         feerate_vb: u64,
     ) -> Result<CreateSpendResult, CommandError> {
@@ -396,7 +391,7 @@ impl DaemonControl {
         let mut txouts = Vec::with_capacity(destinations.len());
         let mut psbt_outs = Vec::with_capacity(destinations.len());
         for (address, value_sat) in destinations {
-            self.validate_address(address)?;
+            let address = self.validate_address(address.clone())?;
 
             let amount = bitcoin::Amount::from_sat(*value_sat);
             check_output_value(amount)?;
@@ -409,7 +404,7 @@ impl DaemonControl {
             // If it's an address of ours, signal it as change to signing devices by adding the
             // BIP32 derivation path to the PSBT output.
             let bip32_derivation =
-                if let Some((index, is_change)) = db_conn.derivation_index_by_address(address) {
+                if let Some((index, is_change)) = db_conn.derivation_index_by_address(&address) {
                     let desc = if is_change {
                         self.config.main_descriptor.change_descriptor()
                     } else {
@@ -430,7 +425,7 @@ impl DaemonControl {
         // isn't much less than what was asked (and obviously that fees aren't negative).
         let mut tx = bitcoin::Transaction {
             version: 2,
-            lock_time: bitcoin::PackedLockTime(0), // TODO: randomized anti fee sniping
+            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO), // TODO: randomized anti fee sniping
             input: txins,
             output: txouts,
         };
@@ -691,21 +686,21 @@ impl DaemonControl {
     /// Note that not all coins may be spendable through a single recovery path at the same time.
     pub fn create_recovery(
         &self,
-        address: bitcoin::Address,
+        address: bitcoin::Address<address::NetworkUnchecked>,
         feerate_vb: u64,
         timelock: Option<u16>,
     ) -> Result<CreateRecoveryResult, CommandError> {
         if feerate_vb < 1 {
             return Err(CommandError::InvalidFeerate(feerate_vb));
         }
-        self.validate_address(&address)?;
+        let address = self.validate_address(address)?;
         let mut db_conn = self.db.connection();
 
         // The transaction template. We'll fill-in the inputs afterward.
         let mut psbt = Psbt {
             unsigned_tx: bitcoin::Transaction {
                 version: 2,
-                lock_time: bitcoin::PackedLockTime(0), // TODO: anti-fee sniping
+                lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO), // TODO: anti-fee sniping
                 input: Vec::new(),
                 output: vec![bitcoin::TxOut {
                     script_pubkey: address.script_pubkey(),
@@ -813,7 +808,18 @@ pub struct GetInfoResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetAddressResult {
-    pub address: bitcoin::Address,
+    #[serde(deserialize_with = "deser_addr_assume_checked")]
+    address: bitcoin::Address,
+}
+
+impl GetAddressResult {
+    pub fn new(address: bitcoin::Address) -> Self {
+        Self { address }
+    }
+
+    pub fn address(&self) -> &bitcoin::Address {
+        &self.address
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -843,13 +849,13 @@ pub struct ListCoinsResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateSpendResult {
-    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_base64")]
+    #[serde(serialize_with = "ser_to_string", deserialize_with = "deser_fromstr")]
     pub psbt: Psbt,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListSpendEntry {
-    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_base64")]
+    #[serde(serialize_with = "ser_to_string", deserialize_with = "deser_fromstr")]
     pub psbt: Psbt,
     pub updated_at: Option<u32>,
 }
@@ -874,7 +880,7 @@ pub struct TransactionInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateRecoveryResult {
-    #[serde(serialize_with = "ser_base64", deserialize_with = "deser_base64")]
+    #[serde(serialize_with = "ser_to_string", deserialize_with = "deser_fromstr")]
     pub psbt: Psbt,
 }
 
@@ -884,13 +890,12 @@ mod tests {
     use crate::{bitcoin::Block, database::BlockInfo, testutils::*};
 
     use bitcoin::{
+        bip32::{self, ChildNumber},
         blockdata::transaction::{TxIn, TxOut},
-        util::bip32::ChildNumber,
-        OutPoint, PackedLockTime, Script, Sequence, Transaction, Txid, Witness,
+        locktime::absolute,
+        OutPoint, ScriptBuf, Sequence, Transaction, Txid, Witness,
     };
     use std::str::FromStr;
-
-    use bitcoin::util::bip32;
 
     #[test]
     fn getinfo() {
@@ -913,6 +918,7 @@ mod tests {
                 "bc1q9ksrc647hx8zp2cewl8p5f487dgux3777yees8rjcx46t4daqzzqt7yga8"
             )
             .unwrap()
+            .assume_checked()
         );
         // We won't get the same twice.
         let addr2 = control.get_new_address().address;
@@ -933,7 +939,7 @@ mod tests {
             (
                 bitcoin::Transaction {
                     version: 2,
-                    lock_time: bitcoin::PackedLockTime(0),
+                    lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
                     input: vec![],
                     output: vec![],
                 },
@@ -947,10 +953,11 @@ mod tests {
         let dummy_addr =
             bitcoin::Address::from_str("bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv").unwrap();
         let dummy_value = 10_000;
-        let mut destinations: HashMap<bitcoin::Address, u64> = [(dummy_addr.clone(), dummy_value)]
-            .iter()
-            .cloned()
-            .collect();
+        let mut destinations: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
+            [(dummy_addr.clone(), dummy_value)]
+                .iter()
+                .cloned()
+                .collect();
         assert_eq!(
             control.create_spend(&destinations, &[], 1),
             Err(CommandError::NoOutpoint)
@@ -982,7 +989,10 @@ mod tests {
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
         assert_eq!(tx.output.len(), 2);
-        assert_eq!(tx.output[0].script_pubkey, dummy_addr.script_pubkey());
+        assert_eq!(
+            tx.output[0].script_pubkey,
+            dummy_addr.payload.script_pubkey()
+        );
         assert_eq!(tx.output[0].value, dummy_value);
 
         // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 171 sats fees.
@@ -1025,22 +1035,19 @@ mod tests {
         );
 
         // If we ask to create an output for an address from another network, it will fail.
-        let invalid_addr = bitcoin::Address {
-            network: bitcoin::Network::Testnet,
-            payload: dummy_addr.payload.clone(),
-        };
-        let invalid_destinations: HashMap<bitcoin::Address, u64> =
+        let invalid_addr =
+            bitcoin::Address::new(bitcoin::Network::Testnet, dummy_addr.payload.clone());
+        let invalid_destinations: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
             [(invalid_addr.clone(), dummy_value)]
                 .iter()
                 .cloned()
                 .collect();
-        assert_eq!(
+        assert!(matches!(
             control.create_spend(&invalid_destinations, &[dummy_op], 1),
-            Err(CommandError::AddressNetwork(
-                invalid_addr,
-                bitcoin::Network::Bitcoin
+            Err(CommandError::Address(
+                address::Error::NetworkValidation { .. }
             ))
-        );
+        ));
 
         // If we ask for a large, but valid, output we won't get a change output. 95_000 because we
         // won't create an output lower than 5k sats.
@@ -1050,7 +1057,10 @@ mod tests {
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
         assert_eq!(tx.output.len(), 1);
-        assert_eq!(tx.output[0].script_pubkey, dummy_addr.script_pubkey());
+        assert_eq!(
+            tx.output[0].script_pubkey,
+            dummy_addr.payload.script_pubkey()
+        );
         assert_eq!(tx.output[0].value, 95_000);
 
         // Now if we mark the coin as spent, we won't create another Spend transaction containing
@@ -1104,7 +1114,7 @@ mod tests {
         let mut dummy_bitcoind = DummyBitcoind::new();
         let dummy_tx = bitcoin::Transaction {
             version: 2,
-            lock_time: bitcoin::PackedLockTime(0),
+            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
             input: vec![],
             output: vec![],
         };
@@ -1145,17 +1155,17 @@ mod tests {
             bitcoin::Address::from_str("bc1q39srgatmkp6k2ne3l52yhkjprdvunvspqydmkx").unwrap();
         let dummy_value_a = 50_000;
         let dummy_value_b = 60_000;
-        let destinations_a: HashMap<bitcoin::Address, u64> =
+        let destinations_a: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
             [(dummy_addr_a.clone(), dummy_value_a)]
                 .iter()
                 .cloned()
                 .collect();
-        let destinations_b: HashMap<bitcoin::Address, u64> =
+        let destinations_b: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
             [(dummy_addr_b.clone(), dummy_value_b)]
                 .iter()
                 .cloned()
                 .collect();
-        let destinations_c: HashMap<bitcoin::Address, u64> =
+        let destinations_c: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
             [(dummy_addr_a, dummy_value_a), (dummy_addr_b, dummy_value_b)]
                 .iter()
                 .cloned()
@@ -1185,7 +1195,7 @@ mod tests {
         assert_eq!(db_conn.spend_tx(&txid_c).unwrap(), psbt_c);
 
         // As well as update them, with or without new signatures
-        let sig = bitcoin::EcdsaSig::from_str("304402204004fcdbb9c0d0cbf585f58cee34dccb012efbd8fc2b0d5e97760045ae35803802201a0bd7ec2383e0b93748abc9946c8e17a8312e314dab85982aeba650e738cbf401").unwrap();
+        let sig = bitcoin::ecdsa::Signature::from_str("304402204004fcdbb9c0d0cbf585f58cee34dccb012efbd8fc2b0d5e97760045ae35803802201a0bd7ec2383e0b93748abc9946c8e17a8312e314dab85982aeba650e738cbf401").unwrap();
         psbt_a.inputs[0].partial_sigs.insert(
             bitcoin::PublicKey::from_str(
                 "023a664c5617412f0b292665b1fd9d766456a7a3b1614c7e7c5f411200ff1958ef",
@@ -1224,68 +1234,68 @@ mod tests {
 
         let deposit1: Transaction = Transaction {
             version: 1,
-            lock_time: PackedLockTime(1),
+            lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
                 previous_output: outpoint,
-                script_sig: Script::new(),
+                script_sig: ScriptBuf::new(),
                 sequence: Sequence(0),
             }],
             output: vec![TxOut {
-                script_pubkey: Script::new(),
+                script_pubkey: ScriptBuf::new(),
                 value: 100_000_000,
             }],
         };
 
         let deposit2: Transaction = Transaction {
             version: 1,
-            lock_time: PackedLockTime(1),
+            lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
                 previous_output: outpoint,
-                script_sig: Script::new(),
+                script_sig: ScriptBuf::new(),
                 sequence: Sequence(0),
             }],
             output: vec![TxOut {
-                script_pubkey: Script::new(),
+                script_pubkey: ScriptBuf::new(),
                 value: 2000,
             }],
         };
 
         let deposit3: Transaction = Transaction {
             version: 1,
-            lock_time: PackedLockTime(1),
+            lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
                 previous_output: outpoint,
-                script_sig: Script::new(),
+                script_sig: ScriptBuf::new(),
                 sequence: Sequence(0),
             }],
             output: vec![TxOut {
-                script_pubkey: Script::new(),
+                script_pubkey: ScriptBuf::new(),
                 value: 3000,
             }],
         };
 
         let spend_tx: Transaction = Transaction {
             version: 1,
-            lock_time: PackedLockTime(1),
+            lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
                 previous_output: OutPoint {
                     txid: deposit1.txid(),
                     vout: 0,
                 },
-                script_sig: Script::new(),
+                script_sig: ScriptBuf::new(),
                 sequence: Sequence(0),
             }],
             output: vec![
                 TxOut {
-                    script_pubkey: Script::new(),
+                    script_pubkey: ScriptBuf::new(),
                     value: 4000,
                 },
                 TxOut {
-                    script_pubkey: Script::new(),
+                    script_pubkey: ScriptBuf::new(),
                     value: 100_000_000 - 4000 - 1000,
                 },
             ],
@@ -1447,45 +1457,45 @@ mod tests {
 
         let tx1: Transaction = Transaction {
             version: 1,
-            lock_time: PackedLockTime(1),
+            lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
                 previous_output: outpoint,
-                script_sig: Script::new(),
+                script_sig: ScriptBuf::new(),
                 sequence: Sequence(0),
             }],
             output: vec![TxOut {
-                script_pubkey: Script::new(),
+                script_pubkey: ScriptBuf::new(),
                 value: 100_000_000,
             }],
         };
 
         let tx2: Transaction = Transaction {
             version: 1,
-            lock_time: PackedLockTime(1),
+            lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
                 previous_output: outpoint,
-                script_sig: Script::new(),
+                script_sig: ScriptBuf::new(),
                 sequence: Sequence(0),
             }],
             output: vec![TxOut {
-                script_pubkey: Script::new(),
+                script_pubkey: ScriptBuf::new(),
                 value: 2000,
             }],
         };
 
         let tx3: Transaction = Transaction {
             version: 1,
-            lock_time: PackedLockTime(1),
+            lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
                 previous_output: outpoint,
-                script_sig: Script::new(),
+                script_sig: ScriptBuf::new(),
                 sequence: Sequence(0),
             }],
             output: vec![TxOut {
-                script_pubkey: Script::new(),
+                script_pubkey: ScriptBuf::new(),
                 value: 3000,
             }],
         };

@@ -15,14 +15,11 @@ use std::{
 
 use miniscript::bitcoin::{
     self,
+    bip32::{self, Error as Bip32Error},
+    ecdsa,
     hashes::Hash,
-    secp256k1,
-    util::{
-        bip32::{self, Error as Bip32Error},
-        ecdsa,
-        psbt::Psbt,
-        sighash,
-    },
+    psbt::Psbt,
+    secp256k1, sighash,
 };
 
 /// An error related to using a signer.
@@ -78,7 +75,7 @@ fn create_dir(path: &path::Path) -> io::Result<()> {
 
     // TODO: permissions on Windows..
     #[cfg(not(unix))]
-    return { fs::create_dir_all(path) };
+    fs::create_dir_all(path)
 }
 
 // Create a file with no permission for the group and other users, and only read permissions for
@@ -259,7 +256,7 @@ impl HotSigner {
             let sighash = sighash_cache
                 .segwit_signature_hash(i, witscript, value, sig_type)
                 .map_err(|_| SignerError::InsanePsbt)?;
-            let sighash = secp256k1::Message::from_slice(sighash.as_hash().as_inner())
+            let sighash = secp256k1::Message::from_slice(sighash.as_byte_array())
                 .expect("Sighash is always 32 bytes.");
 
             // Then provide a signature for all the keys they asked for.
@@ -277,7 +274,7 @@ impl HotSigner {
                 let sig = secp.sign_ecdsa_low_r(&sighash, &privkey.inner);
                 psbt.inputs[i].partial_sigs.insert(
                     pubkey,
-                    ecdsa::EcdsaSig {
+                    ecdsa::Signature {
                         sig,
                         hash_ty: sig_type,
                     },
@@ -301,7 +298,7 @@ mod tests {
     use super::*;
     use crate::{descriptors, testutils::*};
     use miniscript::{
-        bitcoin::util::psbt::Input as PsbtIn,
+        bitcoin::{locktime::absolute, psbt::Input as PsbtIn},
         descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
     };
     use std::collections::{BTreeMap, HashSet};
@@ -434,7 +431,7 @@ mod tests {
         let mut dummy_psbt = Psbt {
             unsigned_tx: bitcoin::Transaction {
                 version: 2,
-                lock_time: bitcoin::PackedLockTime(0),
+                lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
                 input: vec![bitcoin::TxIn {
                     sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
                     previous_output: bitcoin::OutPoint::from_str(
@@ -449,6 +446,7 @@ mod tests {
                         "bc1qvklensptw5lk7d470ds60pcpsr0psdpgyvwepv",
                     )
                     .unwrap()
+                    .payload
                     .script_pubkey(),
                 }],
             },

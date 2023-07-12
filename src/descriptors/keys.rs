@@ -1,8 +1,7 @@
 use miniscript::{
     bitcoin::{
-        self,
+        self, bip32,
         hashes::{hash160, ripemd160, sha256},
-        util::bip32,
     },
     hash256, MiniscriptKey, ToPublicKey,
 };
