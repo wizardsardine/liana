@@ -19,13 +19,6 @@ pub use analysis::*;
 
 const WITNESS_FACTOR: usize = 4;
 
-// Convert a size in weight units to a size in virtual bytes, rounding up.
-fn wu_to_vb(vb: usize) -> usize {
-    (vb + WITNESS_FACTOR - 1)
-        .checked_div(WITNESS_FACTOR)
-        .expect("Non 0")
-}
-
 #[derive(Debug)]
 pub enum LianaDescError {
     Miniscript(miniscript::Error),
@@ -187,18 +180,30 @@ impl LianaDescriptor {
             .0
     }
 
-    /// Get the maximum size in WU of a satisfaction for this descriptor.
+    /// Get the maximum size difference of a transaction input spending a Script derived from this
+    /// descriptor before and after satisfaction. The returned value is in weight units.
+    /// Callers are expected to account for the Segwit marker (2 WU). This takes into account the
+    /// size of the witness stack length varint.
     pub fn max_sat_weight(&self) -> usize {
+        // We add one to account for the witness stack size, as the `max_weight_to_satisfy` method
+        // computes the difference in size for a satisfied input that was *already* in a
+        // transaction that spent one or more Segwit coins (and thus already have 1 WU accounted
+        // for the emtpy witness). But this method is used to account between a completely "nude"
+        // transaction (and therefore no Segwit marker nor empty witness in inputs) and a satisfied
+        // transaction.
         self.multi_desc
-            .max_satisfaction_weight()
-            .expect("Cannot fail for P2WSH")
+            .max_weight_to_satisfy()
+            .expect("Always satisfiable")
+            + 1
     }
 
-    /// Get the maximum size in vbytes (rounded up) of a satisfaction for this descriptor.
+    /// Get the maximum size difference of a transaction input spending a Script derived from this
+    /// descriptor before and after satisfaction. The returned value is in (rounded up) virtual
+    /// bytes.
+    /// Callers are expected to account for the Segwit marker (2 WU). This takes into account the
+    /// size of the witness stack length varint.
     pub fn max_sat_vbytes(&self) -> usize {
-        self.multi_desc
-            .max_satisfaction_weight()
-            .expect("Cannot fail for P2WSH")
+        self.max_sat_weight()
             .checked_add(WITNESS_FACTOR - 1)
             .unwrap()
             .checked_div(WITNESS_FACTOR)
@@ -209,7 +214,7 @@ impl LianaDescriptor {
     /// a coin with this Script.
     pub fn spender_input_size(&self) -> usize {
         // txid + vout + nSequence + empty scriptSig + witness
-        32 + 4 + 4 + 1 + wu_to_vb(self.max_sat_weight())
+        32 + 4 + 4 + 1 + self.max_sat_vbytes()
     }
 
     /// Get some information about a PSBT input spending Liana coins.
@@ -413,6 +418,13 @@ mod tests {
         descriptor::DescriptorPublicKey::from_str(&xpub_str).unwrap()
     }
 
+    // Convert a size in weight units to a size in virtual bytes, rounding up.
+    fn wu_to_vb(vb: usize) -> usize {
+        (vb + WITNESS_FACTOR - 1)
+            .checked_div(WITNESS_FACTOR)
+            .expect("Non 0")
+    }
+
     #[test]
     fn descriptor_creation() {
         let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
@@ -603,7 +615,7 @@ mod tests {
     #[test]
     fn inheritance_descriptor_sat_size() {
         let desc = LianaDescriptor::from_str("wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/<0;1>/*),and_v(v:pkh([abcdef01]tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/<0;1>/*),older(2))))#ravw7jw5").unwrap();
-        assert_eq!(desc.max_sat_vbytes(), (1 + 69 + 1 + 34 + 73 + 3) / 4); // See the stack details below.
+        assert_eq!(desc.max_sat_vbytes(), (1 + 66 + 1 + 34 + 73 + 3) / 4); // See the stack details below.
 
         // Maximum input size is (txid + vout + scriptsig + nSequence + max_sat).
         // Where max_sat is:
@@ -614,11 +626,11 @@ mod tests {
         // - Push a signature for the recovery key
         // NOTE: The specific value is asserted because this was tested against a regtest
         // transaction.
-        let stack = vec![vec![0; 68], vec![0; 0], vec![0; 33], vec![0; 72]];
+        let stack = vec![vec![0; 65], vec![0; 0], vec![0; 33], vec![0; 72]];
         let witness_size = bitcoin::VarInt(stack.len() as u64).len()
             + stack
                 .iter()
-                .map(|item| bitcoin::VarInt(stack.len() as u64).len() + item.len())
+                .map(|item| bitcoin::VarInt(item.len() as u64).len() + item.len())
                 .sum::<usize>();
         assert_eq!(
             desc.spender_input_size(),

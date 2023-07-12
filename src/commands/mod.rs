@@ -732,7 +732,7 @@ impl DaemonControl {
         // that is fed to the transaction while doing so, to compute the fees afterward.
         let mut in_value = bitcoin::Amount::from_sat(0);
         let txin_sat_vb = self.config.main_descriptor.max_sat_vbytes();
-        let mut sat_vb = 0;
+        let mut sat_vb = 1; // Start at 1 for the segwit marker size, rounded up.
         let mut spent_txs = HashMap::new();
         for coin in sweepable_coins {
             in_value += coin.amount;
@@ -995,12 +995,12 @@ mod tests {
         );
         assert_eq!(tx.output[0].value, dummy_value);
 
-        // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 171 sats fees.
+        // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 170 sats fees.
         // At 2sats/vb, it's twice that.
-        assert_eq!(tx.output[1].value, 89_829);
+        assert_eq!(tx.output[1].value, 89_830);
         let res = control.create_spend(&destinations, &[dummy_op], 2).unwrap();
         let tx = res.psbt.unsigned_tx;
-        assert_eq!(tx.output[1].value, 89_658);
+        assert_eq!(tx.output[1].value, 89_660);
 
         // A feerate of 555 won't trigger the sanity checks (they were previously not taking the
         // satisfaction size into account and overestimating the feerate).
