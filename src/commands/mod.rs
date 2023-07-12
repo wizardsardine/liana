@@ -192,7 +192,7 @@ fn sanity_check_psbt(
     let value_out: u64 = tx.output.iter().map(|o| o.value).sum();
     let abs_fee = value_in
         .checked_sub(value_out)
-        .ok_or_else(|| CommandError::InsaneFees(InsaneFeeInfo::NegativeFee))?;
+        .ok_or(CommandError::InsaneFees(InsaneFeeInfo::NegativeFee))?;
     if abs_fee > MAX_FEE {
         return Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFee(abs_fee)));
     }
@@ -201,7 +201,7 @@ fn sanity_check_psbt(
     let tx_vb = (tx.vsize() + spent_desc.max_sat_vbytes() * tx.input.len()) as u64;
     let feerate_sats_vb = abs_fee
         .checked_div(tx_vb)
-        .ok_or_else(|| CommandError::InsaneFees(InsaneFeeInfo::InvalidFeerate))?;
+        .ok_or(CommandError::InsaneFees(InsaneFeeInfo::InvalidFeerate))?;
     if !(1..=MAX_FEERATE).contains(&feerate_sats_vb) {
         return Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(
             feerate_sats_vb,
@@ -1038,10 +1038,7 @@ mod tests {
         let invalid_addr =
             bitcoin::Address::new(bitcoin::Network::Testnet, dummy_addr.payload.clone());
         let invalid_destinations: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
-            [(invalid_addr.clone(), dummy_value)]
-                .iter()
-                .cloned()
-                .collect();
+            [(invalid_addr, dummy_value)].iter().cloned().collect();
         assert!(matches!(
             control.create_spend(&invalid_destinations, &[dummy_op], 1),
             Err(CommandError::Address(
