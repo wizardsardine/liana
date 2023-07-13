@@ -125,8 +125,8 @@ This command will refuse to create any output worth less than 5k sats.
 
 | Field          | Type              | Description                                                       |
 | -------------- | ----------------- | ----------------------------------------------------------------- |
+| `destinations` | object            | Map from Bitcoin address to value.                                |
 | `outpoints`    | list of string    | List of the coins to be spent, as `txid:vout`.                    |
-| `destinations` | object            | Map from Bitcoin address to value                                 |
 | `feerate`      | integer           | Target feerate for the transaction, in satoshis per virtual byte. |
 
 #### Response
