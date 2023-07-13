@@ -241,7 +241,6 @@ name = "liana"
 version = "1.0.0"
 dependencies = [
  "backtrace",
- "base64",
  "bip39",
  "dirs",
  "fern",

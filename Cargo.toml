@@ -54,9 +54,6 @@ jsonrpc = "0.12"
 # Used for daemonization
 libc = { version = "0.2", optional = true }
 
-# Used for PSBTs
-base64 = "0.13"
-
 # Used for generating mnemonics
 getrandom = "0.2"
 
