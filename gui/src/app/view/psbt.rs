@@ -8,7 +8,7 @@ use iced::{
 use liana::{
     descriptors::{LianaPolicy, PathInfo, PathSpendInfo},
     miniscript::bitcoin::{
-        util::bip32::{DerivationPath, Fingerprint},
+        bip32::{DerivationPath, Fingerprint},
         Address, Amount, Network, Transaction,
     },
 };

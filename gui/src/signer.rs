@@ -2,12 +2,9 @@ pub use liana::signer::SignerError;
 
 use liana::{
     miniscript::bitcoin::{
-        secp256k1,
-        util::{
-            bip32::{DerivationPath, ExtendedPubKey, Fingerprint},
-            psbt::Psbt,
-        },
-        Network,
+        bip32::{DerivationPath, ExtendedPubKey, Fingerprint},
+        psbt::Psbt,
+        secp256k1, Network,
     },
     signer::HotSigner,
 };

@@ -5,7 +5,7 @@ use iced::{alignment, Alignment, Length};
 
 use std::{collections::HashSet, str::FromStr};
 
-use liana::miniscript::bitcoin::{self, util::bip32::Fingerprint};
+use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
 use liana_ui::{
     color,
     component::{
@@ -42,6 +42,7 @@ impl From<bitcoin::Network> for Network {
             bitcoin::Network::Testnet => Network::Testnet,
             bitcoin::Network::Regtest => Network::Regtest,
             bitcoin::Network::Signet => Network::Signet,
+            _ => Network::Mainnet,
         }
     }
 }
@@ -653,7 +654,7 @@ pub fn register_descriptor<'a>(
     progress: (usize, usize),
     descriptor: String,
     hws: &'a [HardwareWallet],
-    registered: &HashSet<bitcoin::util::bip32::Fingerprint>,
+    registered: &HashSet<bitcoin::bip32::Fingerprint>,
     error: Option<&Error>,
     processing: bool,
     chosen_hw: Option<usize>,

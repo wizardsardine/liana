@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use iced::Command;
 
-use liana::miniscript::bitcoin::{hashes::hex::ToHex, util::bip32::Fingerprint, Network};
+use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
 
 use liana_ui::{
     component::{form, modal},
@@ -318,11 +318,11 @@ async fn register_wallet(
                 .iter_mut()
                 .find(|cfg| cfg.kind == kind && cfg.fingerprint == fingerprint)
             {
-                hw_config.token = hmac.to_hex();
+                hw_config.token = hex::encode(hmac);
             } else {
                 wallet_setting.hardware_wallets.push(HardwareWalletConfig {
                     kind,
-                    token: hmac.to_hex(),
+                    token: hex::encode(hmac),
                     fingerprint,
                 })
             }

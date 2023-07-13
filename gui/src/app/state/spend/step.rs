@@ -6,7 +6,7 @@ use iced::Command;
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
-        self, util::psbt::Psbt, Address, Amount, Denomination, Network, OutPoint,
+        self, address, psbt::Psbt, Address, Amount, Denomination, Network, OutPoint,
     },
 };
 
@@ -168,7 +168,7 @@ impl DefineSpend {
         // needed.
         let tx_template = bitcoin::Transaction {
             version: 2,
-            lock_time: bitcoin::PackedLockTime(0),
+            lock_time: bitcoin::blockdata::locktime::absolute::LockTime::ZERO,
             input: selected_coins
                 .iter()
                 .map(|_| bitcoin::TxIn::default())
@@ -181,6 +181,7 @@ impl DefineSpend {
                         Some(bitcoin::TxOut {
                             script_pubkey: Address::from_str(&recipient.address.value)
                                 .unwrap()
+                                .payload
                                 .script_pubkey(),
                             value: recipient.amount().unwrap(),
                         })
@@ -253,7 +254,8 @@ impl Step for DefineSpend {
                             |(coin, selected)| if *selected { Some(coin.outpoint) } else { None },
                         )
                         .collect();
-                    let mut outputs: HashMap<Address, u64> = HashMap::new();
+                    let mut outputs: HashMap<Address<address::NetworkUnchecked>, u64> =
+                        HashMap::new();
                     for recipient in &self.recipients {
                         outputs.insert(
                             Address::from_str(&recipient.address.value).expect("Checked before"),
@@ -355,7 +357,7 @@ impl Recipient {
         }
 
         if let Ok(address) = Address::from_str(&self.address.value) {
-            if amount <= address.script_pubkey().dust_value() {
+            if amount <= address.payload.script_pubkey().dust_value() {
                 return Err(Error::Unexpected(
                     "Amount must be superior to script dust value".to_string(),
                 ));

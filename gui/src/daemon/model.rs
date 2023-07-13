@@ -6,10 +6,7 @@ pub use liana::{
         ListSpendEntry, ListSpendResult, ListTransactionsResult, TransactionInfo,
     },
     descriptors::{PartialSpendInfo, PathSpendInfo},
-    miniscript::bitcoin::{
-        util::{bip32::Fingerprint, psbt::Psbt},
-        Amount, Transaction,
-    },
+    miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Amount, Transaction},
 };
 
 pub type Coin = ListCoinsEntry;

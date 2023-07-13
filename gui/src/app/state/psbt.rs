@@ -4,10 +4,7 @@ use std::sync::Arc;
 use iced::Command;
 use liana::{
     descriptors::LianaPolicy,
-    miniscript::bitcoin::{
-        consensus,
-        util::{bip32::Fingerprint, psbt::Psbt},
-    },
+    miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt},
 };
 
 use liana_ui::{
@@ -463,10 +460,8 @@ impl Action for UpdateAction {
                     Ok(()) => {
                         self.success = true;
                         self.error = None;
-                        let psbt = consensus::encode::deserialize::<Psbt>(
-                            &base64::decode(&self.updated.value).unwrap(),
-                        )
-                        .expect("Already checked");
+                        let psbt = Psbt::deserialize(&base64::decode(&self.updated.value).unwrap())
+                            .expect("Already checked");
                         for (i, input) in tx.psbt.inputs.iter_mut().enumerate() {
                             if tx
                                 .psbt
@@ -501,7 +496,7 @@ impl Action for UpdateAction {
                 self.updated.value = s;
                 if let Some(psbt) = base64::decode(&self.updated.value)
                     .ok()
-                    .and_then(|bytes| consensus::encode::deserialize::<Psbt>(&bytes).ok())
+                    .and_then(|bytes| Psbt::deserialize(&bytes).ok())
                 {
                     self.updated.valid = tx.psbt.unsigned_tx.txid() == psbt.unsigned_tx.txid();
                 }
@@ -510,7 +505,7 @@ impl Action for UpdateAction {
                 if self.updated.valid {
                     self.processing = true;
                     self.error = None;
-                    let updated: Psbt = consensus::encode::deserialize(
+                    let updated = Psbt::deserialize(
                         &base64::decode(&self.updated.value).expect("Already checked"),
                     )
                     .unwrap();

@@ -2,10 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::app::wallet::Wallet;
 use async_hwi::{ledger, specter, DeviceKind, Error as HWIError, Version, HWI};
-use liana::miniscript::bitcoin::{
-    hashes::hex::{FromHex, ToHex},
-    util::bip32::Fingerprint,
-};
+use liana::miniscript::bitcoin::{bip32::Fingerprint, hashes::hex::FromHex};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
@@ -75,7 +72,7 @@ impl HardwareWalletConfig {
         Self {
             kind: kind.to_string(),
             fingerprint,
-            token: token.to_hex(),
+            token: hex::encode(token),
         }
     }
 
@@ -126,8 +123,8 @@ pub async fn list_hardware_wallets(wallet: &Wallet) -> Vec<HardwareWallet> {
                         .iter()
                         .find(|cfg| cfg.fingerprint == fingerprint)
                     {
-                        device
-                            .load_wallet(&wallet.name, &descriptor, Some(cfg.token()))
+                        device = device
+                            .with_wallet(&wallet.name, &descriptor, Some(cfg.token()))
                             .expect("Configuration must be correct");
                         registered = true;
                     }
@@ -177,8 +174,8 @@ pub async fn list_hardware_wallets(wallet: &Wallet) -> Vec<HardwareWallet> {
                                     .iter()
                                     .find(|cfg| cfg.fingerprint == fingerprint)
                                 {
-                                    device
-                                        .load_wallet(&wallet.name, &descriptor, Some(cfg.token()))
+                                    device = device
+                                        .with_wallet(&wallet.name, &descriptor, Some(cfg.token()))
                                         .expect("Configuration must be correct");
                                     registered = true;
                                 }

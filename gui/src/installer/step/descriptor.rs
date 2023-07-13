@@ -8,7 +8,7 @@ use liana::{
     descriptors::{LianaDescriptor, LianaPolicy, PathInfo},
     miniscript::{
         bitcoin::{
-            util::bip32::{ChildNumber, DerivationPath, Fingerprint},
+            bip32::{ChildNumber, DerivationPath, Fingerprint},
             Network,
         },
         descriptor::{
@@ -975,7 +975,7 @@ async fn get_extended_pubkey(
     derivation_path: DerivationPath,
 ) -> Result<DescriptorPublicKey, Error> {
     let xkey = hw
-        .get_extended_pubkey(&derivation_path, false)
+        .get_extended_pubkey(&derivation_path)
         .await
         .map_err(Error::from)?;
     Ok(DescriptorPublicKey::XPub(DescriptorXKey {

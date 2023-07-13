@@ -310,7 +310,7 @@ impl State for ReceivePanel {
             async move {
                 daemon
                     .get_new_address()
-                    .map(|res| res.address)
+                    .map(|res| res.address().clone())
                     .map_err(|e| e.into())
             },
             Message::ReceiveAddress,
@@ -351,12 +351,11 @@ mod tests {
     async fn test_receive_panel() {
         let addr =
             Address::from_str("tb1qkldgvljmjpxrjq2ev5qxe8dvhn0dph9q85pwtfkjeanmwdue2akqj4twxj")
-                .unwrap();
+                .unwrap()
+                .assume_checked();
         let daemon = Daemon::new(vec![(
             Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
-            Ok(json!(GetAddressResult {
-                address: addr.clone()
-            })),
+            Ok(json!(GetAddressResult::new(addr.clone()))),
         )]);
 
         let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::default());

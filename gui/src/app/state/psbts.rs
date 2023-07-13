@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use iced::Command;
 
-use liana::miniscript::bitcoin::{consensus, util::psbt::Psbt};
+use liana::miniscript::bitcoin::psbt::Psbt;
 use liana_ui::{
     component::{form, modal},
     widget::Element,
@@ -172,14 +172,14 @@ impl ImportPsbtModal {
                 self.imported.value = s;
                 self.imported.valid = base64::decode(&self.imported.value)
                     .ok()
-                    .and_then(|bytes| consensus::encode::deserialize::<Psbt>(&bytes).ok())
+                    .and_then(|bytes| Psbt::deserialize(&bytes).ok())
                     .is_some();
             }
             Message::View(view::Message::ImportSpend(view::ImportSpendMessage::Confirm)) => {
                 if self.imported.valid {
                     self.processing = true;
                     self.error = None;
-                    let imported: Psbt = consensus::encode::deserialize(
+                    let imported = Psbt::deserialize(
                         &base64::decode(&self.imported.value).expect("Already checked"),
                     )
                     .unwrap();
