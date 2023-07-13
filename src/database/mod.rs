@@ -14,10 +14,7 @@ use crate::{
 
 use std::{collections::HashMap, sync};
 
-use miniscript::bitcoin::{
-    self, secp256k1,
-    util::{bip32, psbt::PartiallySignedTransaction as Psbt},
-};
+use miniscript::bitcoin::{self, bip32, psbt::PartiallySignedTransaction as Psbt, secp256k1};
 
 pub trait DatabaseInterface: Send {
     fn connection(&self) -> Box<dyn DatabaseConnection>;
@@ -220,8 +217,12 @@ impl DatabaseConnection for SqliteConn {
         &mut self,
         address: &bitcoin::Address,
     ) -> Option<(bip32::ChildNumber, bool)> {
-        self.db_address(address)
-            .map(|db_addr| (db_addr.derivation_index, address == &db_addr.change_address))
+        self.db_address(address).map(|db_addr| {
+            (
+                db_addr.derivation_index,
+                address == &db_addr.change_address.assume_checked(),
+            )
+        })
     }
 
     fn coins_by_outpoints(

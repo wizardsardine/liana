@@ -3,9 +3,7 @@ use crate::descriptors::LianaDescriptor;
 use std::{convert::TryFrom, str::FromStr};
 
 use miniscript::bitcoin::{
-    self,
-    consensus::encode,
-    util::{bip32, psbt::PartiallySignedTransaction as Psbt},
+    self, address, bip32, consensus::encode, psbt::PartiallySignedTransaction as Psbt,
 };
 
 pub const SCHEMA: &str = "\
@@ -219,8 +217,8 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbAddress {
-    pub receive_address: bitcoin::Address,
-    pub change_address: bitcoin::Address,
+    pub receive_address: bitcoin::Address<address::NetworkUnchecked>,
+    pub change_address: bitcoin::Address<address::NetworkUnchecked>,
     pub derivation_index: bip32::ChildNumber,
 }
 
@@ -264,7 +262,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbSpendTransaction {
         let id: i64 = row.get(0)?;
 
         let psbt: Vec<u8> = row.get(1)?;
-        let psbt: Psbt = encode::deserialize(&psbt).expect("We only store valid PSBTs");
+        let psbt = Psbt::deserialize(&psbt).expect("We only store valid PSBTs");
 
         let txid: Vec<u8> = row.get(2)?;
         let txid: bitcoin::Txid = encode::deserialize(&txid).expect("We only store valid txids");

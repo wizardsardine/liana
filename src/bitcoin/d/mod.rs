@@ -27,7 +27,7 @@ use jsonrpc::{
 };
 
 use miniscript::{
-    bitcoin::{self, hashes::hex::FromHex},
+    bitcoin::{self, address, hashes::hex::FromHex},
     descriptor,
 };
 
@@ -651,6 +651,7 @@ impl BitcoinD {
             bitcoin::Network::Testnet => "test",
             bitcoin::Network::Regtest => "regtest",
             bitcoin::Network::Signet => "signet",
+            _ => "Unknown network, undefined at the time of writing",
         };
         if bitcoind_net != bip70_net {
             return Err(BitcoindError::NetworkMismatch(
@@ -1072,7 +1073,7 @@ pub struct LSBlockEntry {
     pub outpoint: bitcoin::OutPoint,
     pub amount: bitcoin::Amount,
     pub block_height: Option<i32>,
-    pub address: bitcoin::Address,
+    pub address: bitcoin::Address<address::NetworkUnchecked>,
     pub parent_descs: Vec<descriptor::Descriptor<descriptor::DescriptorPublicKey>>,
 }
 

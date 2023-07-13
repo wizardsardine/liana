@@ -67,7 +67,7 @@ fn additional_data() -> Result<[u8; 32], RandomnessError> {
     engine.input(&pid.to_be_bytes());
     // TODO: get some more contextual information
 
-    Ok(*sha256::Hash::from_engine(engine).as_inner())
+    Ok(sha256::Hash::from_engine(engine).to_byte_array())
 }
 
 /// Get 32 random bytes. This is mainly based on OS-provided randomness (`getrandom` or
@@ -86,7 +86,7 @@ pub fn random_bytes() -> Result<[u8; 32], RandomnessError> {
     engine.input(&additional_data()?);
     // TODO: add more sources of randomness
 
-    Ok(*sha256::Hash::from_engine(engine).as_inner())
+    Ok(sha256::Hash::from_engine(engine).to_byte_array())
 }
 
 #[cfg(test)]

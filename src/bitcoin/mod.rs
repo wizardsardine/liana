@@ -12,7 +12,7 @@ use crate::{
 
 use std::{fmt, sync};
 
-use miniscript::bitcoin;
+use miniscript::bitcoin::{self, address};
 
 /// Information about a block
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
@@ -408,5 +408,5 @@ pub struct UTxO {
     pub outpoint: bitcoin::OutPoint,
     pub amount: bitcoin::Amount,
     pub block_height: Option<i32>,
-    pub address: bitcoin::Address,
+    pub address: bitcoin::Address<address::NetworkUnchecked>,
 }

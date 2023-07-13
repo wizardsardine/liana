@@ -28,11 +28,11 @@ use crate::{
 use std::{cmp, convert::TryInto, fmt, io, path};
 
 use miniscript::bitcoin::{
-    self,
+    self, bip32,
     consensus::encode,
-    hashes::hex::ToHex,
+    hashes::{sha256, Hash},
+    psbt::PartiallySignedTransaction as Psbt,
     secp256k1,
-    util::{bip32, psbt::PartiallySignedTransaction as Psbt},
 };
 
 const DB_VERSION: i64 = 1;
@@ -81,6 +81,24 @@ impl From<io::Error> for SqliteDbError {
 impl From<rusqlite::Error> for SqliteDbError {
     fn from(e: rusqlite::Error) -> Self {
         SqliteDbError::Rusqlite(e)
+    }
+}
+
+// In Bitcoin land, txids are usually displayed in reverse byte order. This is what rust-bitcoin
+// implements as `fmt::Display` for `bitcoin::Txid`. However, we store them as raw bytes in the
+// database and it so happens we sometimes have to look for a txid in hex, in which case we want
+// the "frontward" hex serialization. This is a hack to implement it.
+#[derive(Debug, Clone, Copy)]
+struct FrontwardHexTxid(bitcoin::Txid);
+
+impl fmt::Display for FrontwardHexTxid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{:x}",
+            // sha256 isn't displayed in reverse byte order (contrary to sha256d).
+            sha256::Hash::from_byte_array(self.0.to_byte_array())
+        )
     }
 }
 
@@ -217,7 +235,7 @@ impl SqliteConn {
             db_tx
                 .execute(
                     "UPDATE tip SET blockheight = (?1), blockhash = (?2)",
-                    rusqlite::params![tip.height, tip.hash.to_vec()],
+                    rusqlite::params![tip.height, tip.hash[..].to_vec()],
                 )
                 .map(|_| ())
         })
@@ -369,7 +387,7 @@ impl SqliteConn {
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     rusqlite::params![
                         WALLET_ID,
-                        coin.outpoint.txid.to_vec(),
+                        coin.outpoint.txid[..].to_vec(),
                         coin.outpoint.vout,
                         coin.amount.to_sat(),
                         deriv_index,
@@ -388,7 +406,7 @@ impl SqliteConn {
             for outpoint in outpoints {
                 db_tx.execute(
                     "DELETE FROM coins WHERE txid = ?1 AND vout = ?2",
-                    rusqlite::params![outpoint.txid.to_vec(), outpoint.vout,],
+                    rusqlite::params![outpoint.txid[..].to_vec(), outpoint.vout,],
                 )?;
             }
 
@@ -406,7 +424,7 @@ impl SqliteConn {
             for (outpoint, height, time) in outpoints {
                 db_tx.execute(
                     "UPDATE coins SET blockheight = ?1, blocktime = ?2 WHERE txid = ?3 AND vout = ?4",
-                    rusqlite::params![height, time, outpoint.txid.to_vec(), outpoint.vout,],
+                    rusqlite::params![height, time, outpoint.txid[..].to_vec(), outpoint.vout,],
                 )?;
             }
 
@@ -424,7 +442,11 @@ impl SqliteConn {
             for (outpoint, spend_txid) in outpoints {
                 db_tx.execute(
                     "UPDATE coins SET spend_txid = ?1 WHERE txid = ?2 AND vout = ?3",
-                    rusqlite::params![spend_txid.to_vec(), outpoint.txid.to_vec(), outpoint.vout,],
+                    rusqlite::params![
+                        spend_txid[..].to_vec(),
+                        outpoint.txid[..].to_vec(),
+                        outpoint.vout,
+                    ],
                 )?;
             }
 
@@ -444,10 +466,10 @@ impl SqliteConn {
                 db_tx.execute(
                     "UPDATE coins SET spend_txid = ?1, spend_block_height = ?2, spend_block_time = ?3 WHERE txid = ?4 AND vout = ?5",
                     rusqlite::params![
-                        spend_txid.to_vec(),
+                        spend_txid[..].to_vec(),
                         height,
                         time,
-                        outpoint.txid.to_vec(),
+                        outpoint.txid[..].to_vec(),
                         outpoint.vout,
                     ],
                 )?;
@@ -473,10 +495,11 @@ impl SqliteConn {
         // SELECT * FROM coins WHERE (txid, vout) IN ((txidA, voutA), (txidB, voutB));
         let mut query = "SELECT * FROM coins WHERE (txid, vout) IN (VALUES ".to_string();
         for (i, outpoint) in outpoints.iter().enumerate() {
-            // NOTE: the txid is not stored as little-endian. Convert it to vec first.
+            // NOTE: SQLite doesn't know Satoshi decided txids would be displayed as little-endian
+            // hex.
             query += &format!(
                 "(x'{}', {})",
-                &outpoint.txid.to_vec().to_hex(),
+                FrontwardHexTxid(outpoint.txid),
                 outpoint.vout
             );
             if i != outpoints.len() - 1 {
@@ -495,7 +518,7 @@ impl SqliteConn {
         db_query(
             &mut self.conn,
             "SELECT * FROM spend_transactions WHERE txid = ?1",
-            rusqlite::params![txid.to_vec()],
+            rusqlite::params![txid[..].to_vec()],
             |row| row.try_into(),
         )
         .expect("Db must not fail")
@@ -504,14 +527,13 @@ impl SqliteConn {
 
     /// Insert a new Spend transaction or replace an existing one.
     pub fn store_spend(&mut self, psbt: &Psbt) {
-        let txid = psbt.unsigned_tx.txid().to_vec();
-        let psbt = encode::serialize(psbt);
+        let txid = &psbt.unsigned_tx.txid()[..].to_vec();
 
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(
                 "INSERT into spend_transactions (psbt, txid, updated_at) VALUES (?1, ?2, ?3) \
                  ON CONFLICT DO UPDATE SET psbt=excluded.psbt",
-                rusqlite::params![psbt, txid, curr_timestamp()],
+                rusqlite::params![psbt.serialize(), txid, curr_timestamp()],
             )?;
             Ok(())
         })
@@ -564,7 +586,7 @@ impl SqliteConn {
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(
                 "DELETE FROM spend_transactions WHERE txid = ?1",
-                rusqlite::params![txid.to_vec()],
+                rusqlite::params![txid[..].to_vec()],
             )?;
             Ok(())
         })
@@ -593,7 +615,7 @@ impl SqliteConn {
             )?;
             db_tx.execute(
                 "UPDATE tip SET blockheight = (?1), blockhash = (?2)",
-                rusqlite::params![new_tip.height, new_tip.hash.to_vec()],
+                rusqlite::params![new_tip.height, new_tip.hash[..].to_vec()],
             )?;
             Ok(())
         })
@@ -612,7 +634,7 @@ mod tests {
         str::FromStr,
     };
 
-    use bitcoin::{hashes::Hash, util::bip32};
+    use bitcoin::{bip32, hashes::Hash};
 
     // The database schema used by the first versions of Liana (database version 0). Used to test
     // migrations starting from the first version.
@@ -687,7 +709,7 @@ CREATE TABLE spend_transactions (
 ";
 
     fn psbt_from_str(psbt_str: &str) -> Psbt {
-        bitcoin::consensus::deserialize(&base64::decode(psbt_str).unwrap()).unwrap()
+        Psbt::from_str(psbt_str).unwrap()
     }
 
     fn dummy_options() -> FreshDbOptions {
@@ -1449,14 +1471,13 @@ CREATE TABLE spend_transactions (
         // The helper that was used to store Spend transaction in previous versions of the software
         // when there was no associated timestamp.
         fn store_spend_old(conn: &mut rusqlite::Connection, psbt: &Psbt) {
-            let txid = psbt.unsigned_tx.txid().to_vec();
-            let psbt = encode::serialize(psbt);
+            let txid = &psbt.unsigned_tx.txid()[..].to_vec();
 
             db_exec(conn, |db_tx| {
                 db_tx.execute(
                     "INSERT into spend_transactions (psbt, txid) VALUES (?1, ?2) \
                      ON CONFLICT DO UPDATE SET psbt=excluded.psbt",
-                    rusqlite::params![psbt, txid],
+                    rusqlite::params![psbt.serialize(), txid],
                 )?;
                 Ok(())
             })

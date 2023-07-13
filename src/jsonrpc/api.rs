@@ -5,7 +5,7 @@ use crate::{
 
 use std::{collections::HashMap, convert::TryInto, str::FromStr};
 
-use miniscript::bitcoin::{self, consensus, util::psbt::PartiallySignedTransaction as Psbt};
+use miniscript::bitcoin::{self, psbt::PartiallySignedTransaction as Psbt};
 
 fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let destinations = params
@@ -19,7 +19,7 @@ fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
                     let amount: u64 = v.as_i64()?.try_into().ok()?;
                     Some((addr, amount))
                 })
-                .collect::<Option<HashMap<bitcoin::Address, u64>>>()
+                .collect::<Option<HashMap<bitcoin::Address<bitcoin::address::NetworkUnchecked>, u64>>>()
         })
         .ok_or_else(|| Error::invalid_params("Invalid 'destinations' parameter."))?;
     let outpoints = params
@@ -51,8 +51,7 @@ fn update_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
         .get(0, "psbt")
         .ok_or_else(|| Error::invalid_params("Missing 'psbt' parameter."))?
         .as_str()
-        .and_then(|s| base64::decode(s).ok())
-        .and_then(|bytes| consensus::deserialize(&bytes).ok())
+        .and_then(|s| Psbt::from_str(s).ok())
         .ok_or_else(|| Error::invalid_params("Invalid 'psbt' parameter."))?;
     control.update_spend(psbt)?;
 

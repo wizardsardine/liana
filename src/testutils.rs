@@ -9,9 +9,7 @@ use std::{collections::HashMap, env, fs, io, path, process, str::FromStr, sync, 
 
 use miniscript::{
     bitcoin::{
-        self, secp256k1,
-        util::{bip32, psbt::PartiallySignedTransaction as Psbt},
-        Transaction, Txid,
+        self, bip32, psbt::PartiallySignedTransaction as Psbt, secp256k1, Transaction, Txid,
     },
     descriptor,
 };

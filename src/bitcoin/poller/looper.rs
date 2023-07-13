@@ -31,16 +31,28 @@ fn update_coins(
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> UpdatedCoins {
+    let network = db_conn.network();
     let curr_coins = db_conn.coins(CoinType::All);
     log::debug!("Current coins: {:?}", curr_coins);
 
     // Start by fetching newly received coins.
     let mut received = Vec::new();
     for utxo in bit.received_coins(previous_tip, descs) {
+        let UTxO {
+            outpoint,
+            amount,
+            address,
+            ..
+        } = utxo;
         // We can only really treat them if we know the derivation index that was used.
-        if let Some((derivation_index, is_change)) =
-            db_conn.derivation_index_by_address(&utxo.address)
-        {
+        let address = match address.require_network(network) {
+            Ok(addr) => addr,
+            Err(e) => {
+                log::error!("Invalid network for address: {}", e);
+                continue;
+            }
+        };
+        if let Some((derivation_index, is_change)) = db_conn.derivation_index_by_address(&address) {
             // First of if we are receiving coins that are beyond our next derivation index,
             // adjust it.
             if derivation_index > db_conn.receive_index() {
@@ -52,9 +64,6 @@ fn update_coins(
 
             // Now record this coin as a newly received one.
             if !curr_coins.contains_key(&utxo.outpoint) {
-                let UTxO {
-                    outpoint, amount, ..
-                } = utxo;
                 let coin = Coin {
                     outpoint,
                     amount,
@@ -71,7 +80,7 @@ fn update_coins(
             log::error!(
                 "Could not get derivation index for coin '{}' (address: '{}')",
                 &utxo.outpoint,
-                &utxo.address
+                &address
             );
         }
     }
