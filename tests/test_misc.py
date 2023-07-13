@@ -4,6 +4,8 @@ from fixtures import *
 from test_framework.serializations import PSBT
 from test_framework.utils import wait_for, RpcError, OLD_LIANAD_PATH, LIANAD_PATH
 
+from threading import Thread
+
 
 def receive_and_send(lianad, bitcoind):
     n_coins = len(lianad.rpc.listcoins()["coins"])
@@ -16,11 +18,13 @@ def receive_and_send(lianad, bitcoind):
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == n_coins + 3)
 
     # Create a spend that will create a change output, sign and broadcast it.
-    outpoints = [next(
-        c["outpoint"]
-        for c in lianad.rpc.listcoins()["coins"]
-        if c["spend_info"] is None
-    )]
+    outpoints = [
+        next(
+            c["outpoint"]
+            for c in lianad.rpc.listcoins()["coins"]
+            if c["spend_info"] is None
+        )
+    ]
     destinations = {
         bitcoind.rpc.getnewaddress(): 200_000,
     }
@@ -218,3 +222,30 @@ def test_migration(lianad_multisig, bitcoind):
     receive_and_send(lianad, bitcoind)
     spend_txs = lianad.rpc.listspendtxs()["spend_txs"]
     assert len(spend_txs) == 2 and all(s["updated_at"] is not None for s in spend_txs)
+
+
+def test_retry_on_workqueue_exceeded(lianad, bitcoind):
+    """Make sure we retry requests to bitcoind if it is temporarily overloaded."""
+    # Start by reducing the work queue to a single slot. Note we need to stop lianad
+    # as we don't support yet restarting a bitcoind due to the cookie file getting
+    # overwritten.
+    lianad.stop()
+    bitcoind.cmd_line += ["-rpcworkqueue=1", "-rpcthreads=1"]
+    bitcoind.stop()
+    bitcoind.start()
+    lianad.start()
+
+    # Stuck the bitcoind RPC server working queue with a command that takes 5 seconds
+    # to be replied to, and make lianad send it a request. Make sure we detect this is
+    # a transient HTTP 503 error and we retry the request. Once the 5 seconds are past
+    # our request succeeds and we get the reply to the lianad RPC command.
+    t = Thread(target=bitcoind.rpc.waitfornewblock, args=(5_000,))
+    t.start()
+    lianad.rpc.getinfo()
+    lianad.wait_for_logs(
+        [
+            "Transient error when sending request to bitcoind.*(status: 503, body: Work queue depth exceeded)",
+            "Retrying RPC request to bitcoind",
+        ]
+    )
+    t.join()

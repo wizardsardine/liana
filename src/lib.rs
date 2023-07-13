@@ -513,10 +513,12 @@ mod tests {
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[]}\n".as_bytes();
 
         // Read the first echo, respond to it
-        let (mut stream, _) = server.accept().unwrap();
-        read_til_json_end(&mut stream);
-        stream.write_all(echo_resp).unwrap();
-        stream.flush().unwrap();
+        {
+            let (mut stream, _) = server.accept().unwrap();
+            read_til_json_end(&mut stream);
+            stream.write_all(echo_resp).unwrap();
+            stream.flush().unwrap();
+        }
 
         // Read the second echo, respond to it
         let (mut stream, _) = server.accept().unwrap();
@@ -549,23 +551,27 @@ mod tests {
 
     // Send them responses for the calls involved when creating a fresh wallet
     fn complete_wallet_creation(server: &net::TcpListener) {
-        let net_resp =
-            ["HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[]}\n".as_bytes()]
-                .concat();
-        let (mut stream, _) = server.accept().unwrap();
-        read_til_json_end(&mut stream);
-        stream.write_all(&net_resp).unwrap();
-        stream.flush().unwrap();
+        {
+            let net_resp =
+                ["HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[]}\n".as_bytes()]
+                    .concat();
+            let (mut stream, _) = server.accept().unwrap();
+            read_til_json_end(&mut stream);
+            stream.write_all(&net_resp).unwrap();
+            stream.flush().unwrap();
+        }
 
-        let net_resp = [
+        {
+            let net_resp = [
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"name\":\"dummy\"}}\n"
                 .as_bytes(),
-        ]
-        .concat();
-        let (mut stream, _) = server.accept().unwrap();
-        read_til_json_end(&mut stream);
-        stream.write_all(&net_resp).unwrap();
-        stream.flush().unwrap();
+            ]
+            .concat();
+            let (mut stream, _) = server.accept().unwrap();
+            read_til_json_end(&mut stream);
+            stream.write_all(&net_resp).unwrap();
+            stream.flush().unwrap();
+        }
 
         let net_resp = [
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[{\"success\":true}]}\n"
@@ -580,12 +586,14 @@ mod tests {
 
     // Send them a dummy result to loadwallet.
     fn complete_wallet_loading(server: &net::TcpListener) {
-        let listwallets_resp =
-            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[]}\n".as_bytes();
-        let (mut stream, _) = server.accept().unwrap();
-        read_til_json_end(&mut stream);
-        stream.write_all(listwallets_resp).unwrap();
-        stream.flush().unwrap();
+        {
+            let listwallets_resp =
+                "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[]}\n".as_bytes();
+            let (mut stream, _) = server.accept().unwrap();
+            read_til_json_end(&mut stream);
+            stream.write_all(listwallets_resp).unwrap();
+            stream.flush().unwrap();
+        }
 
         let loadwallet_resp =
             "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"name\":\"dummy\"}}\n"
