@@ -67,7 +67,7 @@ fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorPubli
 }
 
 struct DescKeyChecker {
-    keys_set: HashSet<bip32::ExtendedPubKey>,
+    keys_set: HashSet<(bip32::ExtendedPubKey, descriptor::DerivPaths)>,
 }
 
 impl DescKeyChecker {
@@ -85,11 +85,12 @@ impl DescKeyChecker {
     ///  - Have an xpub that is not a duplicate.
     pub fn check(&mut self, key: &descriptor::DescriptorPublicKey) -> Result<(), LianaPolicyError> {
         if let descriptor::DescriptorPublicKey::MultiXPub(ref xpub) = *key {
+            let key_identifier = (xpub.xkey, xpub.derivation_paths.clone());
             // First make sure it's not a duplicate and record seeing it.
-            if self.keys_set.contains(&xpub.xkey) {
+            if self.keys_set.contains(&key_identifier) {
                 return Err(LianaPolicyError::DuplicateKey(key.clone().into()));
             }
-            self.keys_set.insert(xpub.xkey);
+            self.keys_set.insert(key_identifier);
             // Then perform the contextless checks.
             let der_paths = xpub.derivation_paths.paths();
             // Rust-miniscript enforces BIP389 which states that all paths must have the same len.
