@@ -4,7 +4,7 @@ use std::sync::RwLock;
 use super::{model::*, Daemon, DaemonError};
 use liana::{
     config::Config,
-    miniscript::bitcoin::{util::psbt::Psbt, Address, OutPoint, Txid},
+    miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
     DaemonHandle,
 };
 
@@ -137,7 +137,7 @@ impl Daemon for EmbeddedDaemon {
     fn create_spend_tx(
         &self,
         coins_outpoints: &[OutPoint],
-        destinations: &HashMap<Address, u64>,
+        destinations: &HashMap<Address<address::NetworkUnchecked>, u64>,
         feerate_vb: u64,
     ) -> Result<CreateSpendResult, DaemonError> {
         self.handle
@@ -196,7 +196,7 @@ impl Daemon for EmbeddedDaemon {
 
     fn create_recovery(
         &self,
-        address: Address,
+        address: Address<address::NetworkUnchecked>,
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError> {

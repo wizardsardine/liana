@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use liana::{
     config::Config as DaemonConfig,
-    miniscript::bitcoin::{
-        util::{bip32::Fingerprint, psbt::Psbt},
-        Address,
-    },
+    miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Address},
 };
 
 use crate::{

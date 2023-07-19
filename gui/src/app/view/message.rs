@@ -1,5 +1,5 @@
 use crate::app::menu::Menu;
-use liana::miniscript::bitcoin::util::bip32::Fingerprint;
+use liana::miniscript::bitcoin::bip32::Fingerprint;
 
 #[derive(Debug, Clone)]
 pub enum Message {

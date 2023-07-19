@@ -13,7 +13,7 @@ use std::str::FromStr;
 use iced::Command;
 use liana::{
     config::BitcoindConfig,
-    miniscript::bitcoin::{util::bip32::Fingerprint, Network},
+    miniscript::bitcoin::{bip32::Fingerprint, Network},
 };
 
 use jsonrpc::{client::Client, simple_http::SimpleHttpTransport};
@@ -91,6 +91,9 @@ fn bitcoind_default_cookie_path(network: &Network) -> Option<String> {
             Network::Signet => {
                 path.push("signet/.cookie");
             }
+            _ => {
+                path.push(".cookie");
+            }
         }
 
         return path.to_str().map(|s| s.to_string());
@@ -104,6 +107,7 @@ fn bitcoind_default_address(network: &Network) -> String {
         Network::Testnet => "127.0.0.1:18332".to_string(),
         Network::Regtest => "127.0.0.1:18443".to_string(),
         Network::Signet => "127.0.0.1:38332".to_string(),
+        _ => "127.0.0.1:8332".to_string(),
     }
 }
 

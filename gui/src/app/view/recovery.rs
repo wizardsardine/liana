@@ -6,7 +6,7 @@ use iced::{
 };
 
 use liana::miniscript::bitcoin::{
-    util::bip32::{DerivationPath, Fingerprint},
+    bip32::{DerivationPath, Fingerprint},
     Amount,
 };
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use iced::Command;
 
-use liana::miniscript::bitcoin::util::bip32::{DerivationPath, Fingerprint};
+use liana::miniscript::bitcoin::bip32::{DerivationPath, Fingerprint};
 use liana_ui::{component::form, widget::Element};
 
 use crate::{

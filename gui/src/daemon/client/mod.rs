@@ -11,7 +11,7 @@ pub mod jsonrpc;
 
 use liana::{
     config::Config,
-    miniscript::bitcoin::{consensus, util::psbt::Psbt, Address, OutPoint, Txid},
+    miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
 };
 
 use super::{model::*, Daemon, DaemonError};
@@ -82,7 +82,7 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
     fn create_spend_tx(
         &self,
         coins_outpoints: &[OutPoint],
-        destinations: &HashMap<Address, u64>,
+        destinations: &HashMap<Address<address::NetworkUnchecked>, u64>,
         feerate_vb: u64,
     ) -> Result<CreateSpendResult, DaemonError> {
         self.call(
@@ -96,7 +96,7 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
     }
 
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
-        let spend_tx = base64::encode(consensus::serialize(psbt));
+        let spend_tx = base64::encode(psbt.serialize());
         let _res: serde_json::value::Value = self.call("updatespend", Some(vec![spend_tx]))?;
         Ok(())
     }
@@ -136,7 +136,7 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
 
     fn create_recovery(
         &self,
-        address: Address,
+        address: Address<address::NetworkUnchecked>,
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError> {

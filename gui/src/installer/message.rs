@@ -1,5 +1,5 @@
 use liana::miniscript::{
-    bitcoin::{util::bip32::Fingerprint, Network},
+    bitcoin::{bip32::Fingerprint, Network},
     DescriptorPublicKey,
 };
 use std::path::PathBuf;

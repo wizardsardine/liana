@@ -114,6 +114,7 @@ impl Launcher {
                                                             Network::Testnet => "Bitcoin Testnet",
                                                             Network::Signet => "Bitcoin Signet",
                                                             Network::Regtest => "Bitcoin Regtest",
+                                                            _ => "Bitcoin unknown",
                                                         })),
                                                 )
                                                 .on_press(ViewMessage::Check(*choice))

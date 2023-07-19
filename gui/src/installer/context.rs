@@ -24,11 +24,7 @@ pub struct Context {
     pub bitcoind_config: Option<BitcoindConfig>,
     pub descriptor: Option<LianaDescriptor>,
     pub keys: Vec<KeySetting>,
-    pub hws: Vec<(
-        DeviceKind,
-        bitcoin::util::bip32::Fingerprint,
-        Option<[u8; 32]>,
-    )>,
+    pub hws: Vec<(DeviceKind, bitcoin::bip32::Fingerprint, Option<[u8; 32]>)>,
     pub data_dir: PathBuf,
     pub hw_is_used: bool,
     // In case a user entered a mnemonic,

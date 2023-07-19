@@ -3,7 +3,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 
-use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Network};
+use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
 use serde::{Deserialize, Serialize};
 
 use crate::{app::wallet::Wallet, hw::HardwareWalletConfig};

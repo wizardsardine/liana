@@ -8,7 +8,7 @@ use iced::{
 
 use liana::{
     descriptors::LianaPolicy,
-    miniscript::bitcoin::{util::bip32::Fingerprint, Amount, Network},
+    miniscript::bitcoin::{bip32::Fingerprint, Amount, Network},
 };
 
 use liana_ui::{

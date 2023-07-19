@@ -10,7 +10,7 @@ use crate::{
 use liana::{miniscript::bitcoin, signer::HotSigner};
 
 use liana::descriptors::LianaDescriptor;
-use liana::miniscript::bitcoin::util::bip32::Fingerprint;
+use liana::miniscript::bitcoin::bip32::Fingerprint;
 
 pub const DEFAULT_WALLET_NAME: &str = "Liana";
 

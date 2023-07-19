@@ -14,11 +14,12 @@ name = "liana-gui"
 path = "src/main.rs"
 
 [dependencies]
-async-hwi = "0.0.7"
+async-hwi = "0.0.9"
 liana = { git = "https://github.com/wizardsardine/liana", branch = "master", default-features = false }
 liana_ui = { path = "ui" }
 backtrace = "0.3"
 base64 = "0.13"
+hex = "0.4.3"
 
 iced = { version = "0.9", default-features= false, features = ["tokio", "glow", "svg", "qr_code", "image"] }
 iced_native = "0.10"

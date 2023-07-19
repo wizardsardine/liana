@@ -7,7 +7,7 @@ use iced::{
     Alignment, Length,
 };
 
-use liana::miniscript::bitcoin::{util::bip32::Fingerprint, Network};
+use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
 
 use super::{dashboard, message::*};
 
