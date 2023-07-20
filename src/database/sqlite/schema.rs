@@ -39,6 +39,10 @@ CREATE TABLE wallets (
  *
  * The 'spend_block_height' and 'spend_block.time' are only present if the spending
  * transaction for this coin exists and was confirmed.
+ *
+ * The 'is_immature' field is for coinbase deposits that are not yet buried under 100
+ * blocks. Note coinbase deposits can't be change. They also technically can't be
+ * unconfirmed but we keep them as such until they become mature.
  */
 CREATE TABLE coins (
     id INTEGER PRIMARY KEY NOT NULL,
@@ -53,6 +57,8 @@ CREATE TABLE coins (
     spend_txid BLOB,
     spend_block_height INTEGER,
     spend_block_time INTEGER,
+    is_immature BOOLEAN NOT NULL CHECK (is_immature IN (0,1)),
+    CHECK (is_change IS 0 OR is_immature IS 0),
     UNIQUE (txid, vout),
     FOREIGN KEY (wallet_id) REFERENCES wallets (id)
         ON UPDATE RESTRICT
@@ -156,6 +162,8 @@ pub struct DbBlockInfo {
 pub struct DbCoin {
     pub id: i64,
     pub wallet_id: i64,
+    /// Whether this coin was created by a yet-to-be-mature coinbase transaction.
+    pub is_immature: bool,
     pub outpoint: bitcoin::OutPoint,
     pub block_info: Option<DbBlockInfo>,
     pub amount: bitcoin::Amount,
@@ -201,9 +209,16 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             time: spend_time.expect("Must be there if height is"),
         });
 
+        let is_immature: bool = row.get(12)?;
+        assert!(
+            !is_immature || !is_change,
+            "A coin cannot be both created in a coinbase and be change"
+        );
+
         Ok(DbCoin {
             id,
             wallet_id,
+            is_immature,
             outpoint,
             block_info,
             amount,

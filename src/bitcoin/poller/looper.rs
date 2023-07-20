@@ -66,6 +66,7 @@ fn update_coins(
             if !curr_coins.contains_key(&utxo.outpoint) {
                 let coin = Coin {
                     outpoint,
+                    is_immature: false,
                     amount,
                     derivation_index,
                     is_change,

@@ -976,6 +976,7 @@ mod tests {
         let mut db_conn = control.db().lock().unwrap().connection();
         db_conn.new_unspent_coins(&[Coin {
             outpoint: dummy_op,
+            is_immature: false,
             block_info: None,
             amount: bitcoin::Amount::from_sat(100_000),
             derivation_index: bip32::ChildNumber::from(13),
@@ -1081,6 +1082,7 @@ mod tests {
         };
         db_conn.new_unspent_coins(&[Coin {
             outpoint: dummy_op_dup,
+            is_immature: false,
             block_info: None,
             amount: bitcoin::Amount::from_sat(400_000),
             derivation_index: bip32::ChildNumber::from(42),
@@ -1127,6 +1129,7 @@ mod tests {
         db_conn.new_unspent_coins(&[
             Coin {
                 outpoint: dummy_op_a,
+                is_immature: false,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(100_000),
                 derivation_index: bip32::ChildNumber::from(13),
@@ -1136,6 +1139,7 @@ mod tests {
             },
             Coin {
                 outpoint: dummy_op_b,
+                is_immature: false,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(115_680),
                 derivation_index: bip32::ChildNumber::from(34),
@@ -1303,6 +1307,7 @@ mod tests {
             // Deposit 1
             Coin {
                 is_change: false,
+                is_immature: false,
                 outpoint: OutPoint {
                     txid: deposit1.txid(),
                     vout: 0,
@@ -1316,6 +1321,7 @@ mod tests {
             // Deposit 2
             Coin {
                 is_change: false,
+                is_immature: false,
                 outpoint: OutPoint {
                     txid: deposit2.txid(),
                     vout: 0,
@@ -1329,6 +1335,7 @@ mod tests {
             // This coin is a change output.
             Coin {
                 is_change: true,
+                is_immature: false,
                 outpoint: OutPoint::new(spend_tx.txid(), 1),
                 block_info: Some(BlockInfo { height: 3, time: 3 }),
                 spend_block: None,
@@ -1339,6 +1346,7 @@ mod tests {
             // Deposit 3
             Coin {
                 is_change: false,
+                is_immature: false,
                 outpoint: OutPoint {
                     txid: deposit3.txid(),
                     vout: 0,

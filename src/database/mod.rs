@@ -281,6 +281,7 @@ impl From<DbBlockInfo> for BlockInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Coin {
     pub outpoint: bitcoin::OutPoint,
+    pub is_immature: bool,
     pub block_info: Option<BlockInfo>,
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
@@ -293,6 +294,7 @@ impl std::convert::From<DbCoin> for Coin {
     fn from(db_coin: DbCoin) -> Coin {
         let DbCoin {
             outpoint,
+            is_immature,
             block_info,
             amount,
             derivation_index,
@@ -303,6 +305,7 @@ impl std::convert::From<DbCoin> for Coin {
         } = db_coin;
         Coin {
             outpoint,
+            is_immature,
             block_info: block_info.map(BlockInfo::from),
             amount,
             derivation_index,

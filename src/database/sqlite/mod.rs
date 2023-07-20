@@ -35,7 +35,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 1;
+const DB_VERSION: i64 = 2;
 
 #[derive(Debug)]
 pub enum SqliteDbError {
@@ -383,8 +383,8 @@ impl SqliteConn {
             for coin in coins {
                 let deriv_index: u32 = coin.derivation_index.into();
                 db_tx.execute(
-                    "INSERT INTO coins (wallet_id, txid, vout, amount_sat, derivation_index, is_change) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO coins (wallet_id, txid, vout, amount_sat, derivation_index, is_change, is_immature) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     rusqlite::params![
                         WALLET_ID,
                         coin.outpoint.txid[..].to_vec(),
@@ -392,6 +392,7 @@ impl SqliteConn {
                         coin.amount.to_sat(),
                         deriv_index,
                         coin.is_change,
+                        coin.is_immature,
                     ],
                 )?;
             }
@@ -593,11 +594,12 @@ impl SqliteConn {
         .expect("Db must not fail");
     }
 
+    // TODO: mark coinbase deposits that were mature and became immature as such.
     /// Unconfirm all data that was marked as being confirmed *after* the given chain
     /// tip, and set it as our new best block seen.
     ///
     /// This includes:
-    /// - Coins
+    /// - Coins (coinbase deposits that became immature isn't currently implemented)
     /// - Spending transactions confirmation
     /// - Tip
     ///
@@ -823,6 +825,7 @@ CREATE TABLE spend_transactions (
                     "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
                 )
                 .unwrap(),
+                is_immature: false,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(98765),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
@@ -855,6 +858,7 @@ CREATE TABLE spend_transactions (
                     "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571936f:12",
                 )
                 .unwrap(),
+                is_immature: false,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(1111),
                 derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
@@ -949,6 +953,31 @@ CREATE TABLE spend_transactions (
             assert!(coin.spend_block.is_some());
             assert_eq!(coin.spend_block.as_ref().unwrap().time, time);
             assert_eq!(coin.spend_block.unwrap().height, height);
+
+            // Add an immature coin. As all coins it's first registered as unconfirmed (even though
+            // it's not).
+            let coin_imma = Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571937a:42",
+                )
+                .unwrap(),
+                is_immature: true,
+                block_info: None,
+                amount: bitcoin::Amount::from_sat(424242),
+                derivation_index: bip32::ChildNumber::from_normal_idx(4103).unwrap(),
+                is_change: false, // Cannot be both a coinbase deposit and change.
+                spend_txid: None,
+                spend_block: None,
+            };
+            conn.new_unspent_coins(&[coin_imma]);
+            let outpoints: HashSet<bitcoin::OutPoint> = conn
+                .coins(CoinType::All)
+                .into_iter()
+                .map(|c| c.outpoint)
+                .collect();
+            assert!(outpoints.contains(&coin_imma.outpoint));
+            let coin = conn.db_coins(&[coin_imma.outpoint]).pop().unwrap();
+            assert!(coin.is_immature && !coin.is_change);
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
@@ -1084,12 +1113,14 @@ CREATE TABLE spend_transactions (
             // - One confirmed before the rollback height but spent after
             // - One confirmed after the rollback height
             // - One spent after the rollback height
+            // TODO: immature deposits
             let coins = [
                 Coin {
                     outpoint: bitcoin::OutPoint::from_str(
                         "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
                     )
                     .unwrap(),
+                    is_immature: false,
                     block_info: None,
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
@@ -1102,6 +1133,7 @@ CREATE TABLE spend_transactions (
                         "c449539458c60bee6c0d8905ba1dadb20b9187b82045d306a408b894cea492b0:2",
                     )
                     .unwrap(),
+                    is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_095,
                         time: 1_111_899,
@@ -1117,6 +1149,7 @@ CREATE TABLE spend_transactions (
                         "f0801fd9ca8bca0624c230ab422b2e2c4c8dc995e4e1dbc6412510959cce1e4f:3",
                     )
                     .unwrap(),
+                    is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_099,
                         time: 1_121_899,
@@ -1140,6 +1173,7 @@ CREATE TABLE spend_transactions (
                         "19f56e65069f0a7a3bfb00c6a7085cc0669e03e91befeca1ee9891c9e737b2fb:4",
                     )
                     .unwrap(),
+                    is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_100,
                         time: 1_131_899,
@@ -1155,6 +1189,7 @@ CREATE TABLE spend_transactions (
                         "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:5",
                     )
                     .unwrap(),
+                    is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_102,
                         time: 1_134_899,
@@ -1303,6 +1338,7 @@ CREATE TABLE spend_transactions (
                         "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
                     )
                     .unwrap(),
+                    is_immature: false,
                     block_info: None,
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
@@ -1315,6 +1351,7 @@ CREATE TABLE spend_transactions (
                         "c449539458c60bee6c0d8905ba1dadb20b9187b82045d306a408b894cea492b0:2",
                     )
                     .unwrap(),
+                    is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_095,
                         time: 1_121_000,
@@ -1330,6 +1367,7 @@ CREATE TABLE spend_transactions (
                         "f0801fd9ca8bca0624c230ab422b2e2c4c8dc995e4e1dbc6412510959cce1e4f:3",
                     )
                     .unwrap(),
+                    is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_099,
                         time: 1_122_000,
@@ -1353,6 +1391,7 @@ CREATE TABLE spend_transactions (
                         "19f56e65069f0a7a3bfb00c6a7085cc0669e03e91befeca1ee9891c9e737b2fb:4",
                     )
                     .unwrap(),
+                    is_immature: true,
                     block_info: Some(BlockInfo {
                         height: 101_100,
                         time: 1_124_000,
@@ -1368,6 +1407,7 @@ CREATE TABLE spend_transactions (
                         "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:5",
                     )
                     .unwrap(),
+                    is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_102,
                         time: 1_125_000,
@@ -1448,7 +1488,7 @@ CREATE TABLE spend_transactions (
     }
 
     #[test]
-    fn v0_to_v1_migration() {
+    fn v0_to_v2_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 0, using the old schema.
@@ -1490,11 +1530,66 @@ CREATE TABLE spend_transactions (
             store_spend_old(&mut conn, &first_psbt);
         }
 
-        // Migrate the DB. We should be able to insert another PSBT, to query both, and the first
-        // PSBT must have no associated timestamp.
+        // The helper that was used to store coins in previous versions of the software, stripped
+        // down to a single coin.
+        fn store_coin_old(
+            conn: &mut rusqlite::Connection,
+            outpoint: &bitcoin::OutPoint,
+            amount: bitcoin::Amount,
+            derivation_index: bip32::ChildNumber,
+            is_change: bool,
+        ) {
+            db_exec(conn, |db_tx| {
+                    let deriv_index: u32 = derivation_index.into();
+                    db_tx.execute(
+                        "INSERT INTO coins (wallet_id, txid, vout, amount_sat, derivation_index, is_change) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        rusqlite::params![
+                            WALLET_ID,
+                            outpoint.txid[..].to_vec(),
+                            outpoint.vout,
+                            amount.to_sat(),
+                            deriv_index,
+                            is_change,
+                        ],
+                    )?;
+                Ok(())
+            })
+            .expect("Database must be available")
+        }
+
+        // Store a couple coins before the migration.
+        {
+            let mut conn = rusqlite::Connection::open(&db_path).unwrap();
+            store_coin_old(
+                &mut conn,
+                &bitcoin::OutPoint::from_str(
+                    "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:5",
+                )
+                .unwrap(),
+                bitcoin::Amount::from_sat(14_000),
+                24.into(),
+                true,
+            );
+            store_coin_old(
+                &mut conn,
+                &bitcoin::OutPoint::from_str(
+                    "81b2f327d4c1fd67afd039374f8798fd9ff37932c6f5c221c1c569350eac5ac8:2",
+                )
+                .unwrap(),
+                bitcoin::Amount::from_sat(392_093_123),
+                24_567.into(),
+                false,
+            );
+        }
+
+        // Migrate the DB.
         maybe_apply_migration(&db_path).unwrap();
         maybe_apply_migration(&db_path).unwrap(); // Migrating twice will be a no-op.
         let db = SqliteDb::new(db_path, None, &secp).unwrap();
+
+        // We should now be able to insert another PSBT, to query both, and the first PSBT must
+        // have no associated timestamp.
         {
             let mut conn = db.connection().unwrap();
             conn.store_spend(&second_psbt);
@@ -1509,6 +1604,28 @@ CREATE TABLE spend_transactions (
                 .find(|db_spend| db_spend.psbt == second_psbt)
                 .unwrap();
             assert!(second_spend.updated_at.is_some());
+        }
+
+        // We should now be able to store an immature coin, query all of them, and the first two
+        // should not be immature.
+        {
+            let mut conn = db.connection().unwrap();
+            conn.new_unspent_coins(&[Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
+                )
+                .unwrap(),
+                is_immature: true,
+                block_info: None,
+                amount: bitcoin::Amount::from_sat(98765),
+                derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                is_change: false,
+                spend_txid: None,
+                spend_block: None,
+            }]);
+            let coins = conn.coins(CoinType::All);
+            assert_eq!(coins.len(), 3);
+            assert_eq!(coins.iter().filter(|c| !c.is_immature).count(), 2);
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
