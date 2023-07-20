@@ -92,17 +92,20 @@ impl DescKeyChecker {
             self.keys_set.insert(xpub.xkey);
             // Then perform the contextless checks.
             let der_paths = xpub.derivation_paths.paths();
+            let first_der_path = der_paths.get(0).expect("Cannot be empty");
             // Rust-miniscript enforces BIP389 which states that all paths must have the same len.
-            let len = der_paths.get(0).expect("Cannot be empty").len();
+            let len = first_der_path.len();
             // Technically the xpub could be for the master xpub and not have an origin. But it's
-            // no unlikely (and easily fixable) while users shooting themselves in the foot by
+            // unlikely (and easily fixable) while users shooting themselves in the foot by
             // forgetting to provide the origin is so likely that it's worth ruling out xpubs
             // without origin entirely.
+            // We also rule out xpubs with hardened derivation steps (non-normalized xpubs).
             let valid = xpub.origin.is_some()
                 && xpub.wildcard == descriptor::Wildcard::Unhardened
                 && der_paths.len() == 2
                 && der_paths[0][len - 1] == 0.into()
-                && der_paths[1][len - 1] == 1.into();
+                && der_paths[1][len - 1] == 1.into()
+                && first_der_path.into_iter().all(|step| step.is_normal());
             if valid {
                 return Ok(());
             }
