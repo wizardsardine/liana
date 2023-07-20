@@ -2,7 +2,7 @@ import pytest
 
 from fixtures import *
 from test_framework.serializations import PSBT
-from test_framework.utils import wait_for, RpcError, OLD_LIANAD_PATH, LIANAD_PATH
+from test_framework.utils import wait_for, RpcError, OLD_LIANAD_PATH, LIANAD_PATH, COIN
 
 from threading import Thread
 
@@ -182,16 +182,44 @@ def test_multipath(lianad_multipath, bitcoind):
 
 def test_coinbase_deposit(lianad, bitcoind):
     """Check we detect deposits from (mature) coinbase transactions."""
-    # Create a new deposit in a coinbase transaction.
+    wait_for_sync = lambda: wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
+    wait_for_sync()
+
+    # Create a new deposit in a coinbase transaction. We must detect it and treat it as immature.
     addr = lianad.rpc.getnewaddress()["address"]
     bitcoind.rpc.generatetoaddress(1, addr)
-    assert len(lianad.rpc.listcoins()["coins"]) == 0
+    wait_for_sync()
+    coins = lianad.rpc.listcoins()["coins"]
+    assert (
+        len(coins) == 1 and coins[0]["is_immature"] and coins[0]["spend_info"] is None
+    )
 
-    # Generate 100 blocks to make the coinbase mature.
+    # Generate 100 blocks to make the coinbase mature. We should detect it as such.
     bitcoind.generate_block(100)
+    wait_for_sync()
+    coin = lianad.rpc.listcoins()["coins"][0]
+    assert not coin["is_immature"] and coin["block_height"] is not None
 
-    # We must have detected a new deposit.
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
+    # We must be able to spend the mature coin.
+    destinations = {bitcoind.rpc.getnewaddress(): int(0.999999 * COIN)}
+    res = lianad.rpc.createspend(destinations, [coin["outpoint"]], 42)
+    psbt = PSBT.from_base64(res["psbt"])
+    txid = psbt.tx.txid().hex()
+    signed_psbt = lianad.signer.sign_psbt(psbt)
+    lianad.rpc.updatespend(signed_psbt.to_base64())
+    lianad.rpc.broadcastspend(txid)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for_sync()
+    coin = next(
+        c for c in lianad.rpc.listcoins()["coins"] if c["outpoint"] == coin["outpoint"]
+    )
+    assert (
+        not coin["is_immature"]
+        and coin["block_height"] is not None
+        and coin["spend_info"] is not None
+    )
 
 
 @pytest.mark.skipif(
