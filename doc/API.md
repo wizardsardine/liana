@@ -96,6 +96,7 @@ This command does not take any parameter for now.
 | `outpoint`     | string        | Transaction id and output index of this coin.                                                                      |
 | `block_height` | int or null   | Block height the transaction was confirmed at, or `null`.                                                          |
 | `spend_info`   | object        | Information about the transaction spending this coin. See [Spending transaction info](#spending_transaction_info). |
+| `is_immature`  | bool          | Whether this coin was created by a coinbase transaction that is still immature.                                    |
 
 
 ##### Spending transaction info

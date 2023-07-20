@@ -300,6 +300,7 @@ impl DaemonControl {
                     block_info,
                     spend_txid,
                     spend_block,
+                    is_immature,
                     ..
                 } = coin;
                 let spend_info = spend_txid.map(|txid| LCSpendInfo {
@@ -312,6 +313,7 @@ impl DaemonControl {
                     outpoint,
                     block_height,
                     spend_info,
+                    is_immature,
                 }
             })
             .collect();
@@ -846,6 +848,8 @@ pub struct ListCoinsEntry {
     pub block_height: Option<i32>,
     /// Information about the transaction spending this coin.
     pub spend_info: Option<LCSpendInfo>,
+    /// Whether this coin was created by a coinbase transaction that is still immature.
+    pub is_immature: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
