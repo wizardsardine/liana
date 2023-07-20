@@ -417,6 +417,9 @@ impl SqliteConn {
     }
 
     /// Mark a set of coins as confirmed.
+    ///
+    /// NOTE: this will also mark the coin as mature if it originates from an immature coinbase
+    /// deposit.
     pub fn confirm_coins<'a>(
         &mut self,
         outpoints: impl IntoIterator<Item = &'a (bitcoin::OutPoint, i32, u32)>,
@@ -424,7 +427,7 @@ impl SqliteConn {
         db_exec(&mut self.conn, |db_tx| {
             for (outpoint, height, time) in outpoints {
                 db_tx.execute(
-                    "UPDATE coins SET blockheight = ?1, blocktime = ?2 WHERE txid = ?3 AND vout = ?4",
+                    "UPDATE coins SET blockheight = ?1, blocktime = ?2, is_immature = 0 WHERE txid = ?3 AND vout = ?4",
                     rusqlite::params![height, time, outpoint.txid[..].to_vec(), outpoint.vout,],
                 )?;
             }
@@ -978,6 +981,12 @@ CREATE TABLE spend_transactions (
             assert!(outpoints.contains(&coin_imma.outpoint));
             let coin = conn.db_coins(&[coin_imma.outpoint]).pop().unwrap();
             assert!(coin.is_immature && !coin.is_change);
+
+            // Confirming an immature coin marks it as mature.
+            let (height, time) = (424242, 424241);
+            conn.confirm_coins(&[(coin_imma.outpoint, height, time)]);
+            let coin = conn.db_coins(&[coin_imma.outpoint]).pop().unwrap();
+            assert!(!coin.is_immature);
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();

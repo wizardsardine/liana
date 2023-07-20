@@ -24,6 +24,8 @@ struct UpdatedCoins {
 // or spent.
 // NOTE: A coin may be updated multiple times at once. That is, a coin may be received, confirmed,
 // and spent in a single poll.
+// NOTE: Coinbase transaction deposits are very much an afterthought here. We treat them as
+// unconfirmed until the CB tx matures.
 fn update_coins(
     bit: &impl BitcoinInterface,
     db_conn: &mut Box<dyn DatabaseConnection>,
@@ -42,6 +44,7 @@ fn update_coins(
             outpoint,
             amount,
             address,
+            is_immature,
             ..
         } = utxo;
         // We can only really treat them if we know the derivation index that was used.
@@ -66,7 +69,7 @@ fn update_coins(
             if !curr_coins.contains_key(&utxo.outpoint) {
                 let coin = Coin {
                     outpoint,
-                    is_immature: false,
+                    is_immature,
                     amount,
                     derivation_index,
                     is_change,

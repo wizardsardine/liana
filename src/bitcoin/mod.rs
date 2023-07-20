@@ -14,6 +14,8 @@ use std::{fmt, sync};
 
 use miniscript::bitcoin::{self, address};
 
+const COINBASE_MATURITY: i32 = 100;
+
 /// Information about a block
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub struct Block {
@@ -146,6 +148,7 @@ impl BitcoinInterface for d::BitcoinD {
                     block_height,
                     address,
                     parent_descs,
+                    is_immature,
                 } = entry;
                 if parent_descs
                     .iter()
@@ -156,6 +159,7 @@ impl BitcoinInterface for d::BitcoinD {
                         amount,
                         block_height,
                         address,
+                        is_immature,
                     })
                 } else {
                     None
@@ -184,6 +188,11 @@ impl BitcoinInterface for d::BitcoinD {
 
             // If the transaction was confirmed, mark the coin as such.
             if let Some(block) = res.block {
+                // Do not mark immature coinbase deposits as confirmed until they become mature.
+                if res.is_coinbase && res.confirmations < COINBASE_MATURITY {
+                    log::debug!("Coin at '{}' comes from an immature coinbase transaction with {} confirmations. Not marking it as confirmed for now.", op, res.confirmations);
+                    continue;
+                }
                 confirmed.push((*op, block.height, block.time));
                 continue;
             }
@@ -409,4 +418,5 @@ pub struct UTxO {
     pub amount: bitcoin::Amount,
     pub block_height: Option<i32>,
     pub address: bitcoin::Address<address::NetworkUnchecked>,
+    pub is_immature: bool,
 }

@@ -91,6 +91,9 @@ pub trait DatabaseConnection {
     fn remove_coins(&mut self, coins: &[bitcoin::OutPoint]);
 
     /// Mark a set of coins as being confirmed at a specified height and block time.
+    /// NOTE: if the coin comes from an immature coinbase transaction, this will mark it as mature.
+    /// Immature coinbase deposits must not be confirmed before they are 100 blocks deep in the
+    /// chain.
     fn confirm_coins(&mut self, outpoints: &[(bitcoin::OutPoint, i32, u32)]);
 
     /// Mark a set of coins as being spent by a specified txid of a pending transaction.

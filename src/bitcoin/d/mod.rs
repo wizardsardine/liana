@@ -1105,6 +1105,7 @@ pub struct LSBlockEntry {
     pub block_height: Option<i32>,
     pub address: bitcoin::Address<address::NetworkUnchecked>,
     pub parent_descs: Vec<descriptor::Descriptor<descriptor::DescriptorPublicKey>>,
+    pub is_immature: bool,
 }
 
 impl From<&Json> for LSBlockEntry {
@@ -1150,12 +1151,19 @@ impl From<&Json> for LSBlockEntry {
             })
             .expect("bitcoind can't give invalid descriptors");
 
+        let is_immature = json
+            .get("category")
+            .and_then(Json::as_str)
+            .expect("must be present")
+            == "immature";
+
         LSBlockEntry {
             outpoint,
             amount,
             block_height,
             address,
             parent_descs,
+            is_immature,
         }
     }
 }
@@ -1183,7 +1191,7 @@ impl From<Json> for LSBlockRes {
                     .get("category")
                     .and_then(Json::as_str)
                     .expect("must be present");
-                if category == "receive" || category == "generate" {
+                if ["receive", "generate", "immature"].contains(&category) {
                     let lsb_entry: LSBlockEntry = j.into();
                     Some(lsb_entry)
                 } else {
@@ -1201,6 +1209,8 @@ pub struct GetTxRes {
     pub conflicting_txs: Vec<bitcoin::Txid>,
     pub block: Option<Block>,
     pub tx: bitcoin::Transaction,
+    pub is_coinbase: bool,
+    pub confirmations: i32,
 }
 
 impl From<Json> for GetTxRes {
@@ -1238,10 +1248,21 @@ impl From<Json> for GetTxRes {
         let bytes = Vec::from_hex(hex).expect("bitcoind returned a wrong transaction format");
         let tx: bitcoin::Transaction = bitcoin::consensus::encode::deserialize(&bytes)
             .expect("bitcoind returned a wrong transaction format");
+        let is_coinbase = json
+            .get("generated")
+            .and_then(Json::as_bool)
+            .unwrap_or(false);
+        let confirmations = json
+            .get("confirmations")
+            .and_then(Json::as_i64)
+            .expect("Must be present in the response") as i32;
+
         GetTxRes {
             conflicting_txs: conflicting_txs.unwrap_or_default(),
             block,
             tx,
+            is_coinbase,
+            confirmations,
         }
     }
 }
