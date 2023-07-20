@@ -155,6 +155,7 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::UnknownOutpoint(..)
             | commands::CommandError::InvalidFeerate(..)
             | commands::CommandError::AlreadySpent(..)
+            | commands::CommandError::ImmatureCoinbase(..)
             | commands::CommandError::Address(..)
             | commands::CommandError::InvalidOutputValue(..)
             | commands::CommandError::InsufficientFunds(..)

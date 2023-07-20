@@ -50,6 +50,7 @@ pub enum CommandError {
     InvalidFeerate(/* sats/vb */ u64),
     UnknownOutpoint(bitcoin::OutPoint),
     AlreadySpent(bitcoin::OutPoint),
+    ImmatureCoinbase(bitcoin::OutPoint),
     Address(bitcoin::address::Error),
     InvalidOutputValue(bitcoin::Amount),
     InsufficientFunds(
@@ -77,6 +78,7 @@ impl fmt::Display for CommandError {
             Self::NoOutpoint => write!(f, "No provided outpoint. Need at least one."),
             Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {} sats/vb.", sats_vb),
             Self::AlreadySpent(op) => write!(f, "Coin at '{}' is already spent.", op),
+            Self::ImmatureCoinbase(op) => write!(f, "Coin at '{}' is from an immature coinbase transaction.", op),
             Self::UnknownOutpoint(op) => write!(f, "Unknown outpoint '{}'.", op),
             Self::Address(e) => write!(
                 f,
@@ -349,6 +351,10 @@ impl DaemonControl {
             if coin.is_spent() {
                 return Err(CommandError::AlreadySpent(*op));
             }
+            if coin.is_immature {
+                return Err(CommandError::ImmatureCoinbase(*op));
+            }
+
             // Fetch the transaction that created it if necessary
             if !spent_txs.contains_key(op) {
                 let tx = self
@@ -1095,6 +1101,26 @@ mod tests {
             Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(
                 1001
             )))
+        );
+
+        // Can't create a transaction that spends an immature coinbase deposit.
+        let imma_op = bitcoin::OutPoint::from_str(
+            "4753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:0",
+        )
+        .unwrap();
+        db_conn.new_unspent_coins(&[Coin {
+            outpoint: imma_op,
+            is_immature: true,
+            block_info: None,
+            amount: bitcoin::Amount::from_sat(100_000),
+            derivation_index: bip32::ChildNumber::from(13),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+        }]);
+        assert_eq!(
+            control.create_spend(&destinations, &[imma_op], 1_001),
+            Err(CommandError::ImmatureCoinbase(imma_op))
         );
 
         ms.shutdown();
