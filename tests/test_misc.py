@@ -232,13 +232,16 @@ def test_migration(lianad_multisig, bitcoind):
     # Set the old binary and re-create the datadir.
     lianad.cmd_line[0] = OLD_LIANAD_PATH
     lianad.restart_fresh(bitcoind)
-    assert lianad.rpc.getinfo()["version"] == "0.3.0"
+    old_lianad_ver = lianad.rpc.getinfo()["version"]
+    assert old_lianad_ver in ["0.3.0", "1.0.0"]
 
     # Perform some transactions. On Liana v0.3 there was no "updated_at" for Spend
     # transaction drafts.
     receive_and_send(lianad, bitcoind)
     spend_txs = lianad.rpc.listspendtxs()["spend_txs"]
-    assert len(spend_txs) == 2 and all("updated_at" not in s for s in spend_txs)
+    assert len(spend_txs) == 2
+    if old_lianad_ver == "0.3.0":
+        assert all("updated_at" not in s for s in spend_txs)
 
     # Set back the new binary. We should be able to read and, if necessary, upgrade
     # the old database and generally all files from the datadir.
