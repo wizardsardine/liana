@@ -78,6 +78,7 @@ pub enum ImportKeyModal {
     EditName,
     NameEdited(String),
     ConfirmXpub,
+    SelectKey(usize),
 }
 
 #[derive(Debug, Clone)]

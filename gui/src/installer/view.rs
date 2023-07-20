@@ -3,6 +3,7 @@ use iced::widget::{
 };
 use iced::{alignment, Alignment, Length};
 
+use async_hwi::DeviceKind;
 use std::{collections::HashSet, str::FromStr};
 
 use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
@@ -1139,12 +1140,10 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
     .into()
 }
 
-pub fn defined_descriptor_key(
-    name: &str,
-    valid: bool,
-    duplicate_key: bool,
+pub fn defined_descriptor_key<'a>(
+    name: String,
     duplicate_name: bool,
-) -> Element<message::DefineKey> {
+) -> Element<'a, message::DefineKey> {
     let col = Column::new()
         .width(Length::Fill)
         .align_items(Alignment::Center)
@@ -1182,33 +1181,7 @@ pub fn defined_descriptor_key(
         )
         .push(Space::with_height(Length::Fixed(5.0)));
 
-    if !valid {
-        Column::new()
-            .align_items(Alignment::Center)
-            .push(
-                card::invalid(col)
-                    .padding(5)
-                    .height(Length::Fixed(150.0))
-                    .width(Length::Fixed(150.0)),
-            )
-            .push(
-                text("Key is for a different network")
-                    .small()
-                    .style(color::RED),
-            )
-            .into()
-    } else if duplicate_key {
-        Column::new()
-            .align_items(Alignment::Center)
-            .push(
-                card::invalid(col)
-                    .padding(5)
-                    .height(Length::Fixed(150.0))
-                    .width(Length::Fixed(150.0)),
-            )
-            .push(text("Duplicate key").small().style(color::RED))
-            .into()
-    } else if duplicate_name {
+    if duplicate_name {
         Column::new()
             .align_items(Alignment::Center)
             .push(
@@ -1231,9 +1204,9 @@ pub fn defined_descriptor_key(
 #[allow(clippy::too_many_arguments)]
 pub fn edit_key_modal<'a>(
     network: bitcoin::Network,
-    hws: &'a [HardwareWallet],
+    hws: Vec<Element<'a, Message>>,
+    keys: Vec<Element<'a, Message>>,
     error: Option<&Error>,
-    processing: bool,
     chosen_signer: Option<Fingerprint>,
     hot_signer_fingerprint: &Fingerprint,
     signer_alias: Option<&'a String>,
@@ -1262,21 +1235,12 @@ pub fn edit_key_modal<'a>(
                                 ),
                         )
                         .spacing(10)
-                        .push(hws.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, hw)| {
-                                col.push(hw_list_view(
-                                    i,
-                                    hw,
-                                    hw.fingerprint() == chosen_signer,
-                                    processing,
-                                    !processing
-                                        && hw.fingerprint() == chosen_signer
-                                        && form_xpub.valid
-                                        && !form_xpub.value.is_empty(),
-                                ))
-                            },
-                        ))
+                        .push(
+                            Column::with_children(hws).spacing(10)
+                        )
+                        .push(
+                            Column::with_children(keys).spacing(10)
+                        )
                         .push(
                             Button::new(if Some(*hot_signer_fingerprint) == chosen_signer {
                                 hw::selected_hot_signer(hot_signer_fingerprint, signer_alias)
@@ -1312,7 +1276,6 @@ pub fn edit_key_modal<'a>(
                                     .padding(10),
                                 )
                                 .spacing(10)
-                                .push(Container::new(text("/<0;1>/*")).padding(5)),
                         ),
                 )
                 .push(
@@ -1475,7 +1438,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
     .into()
 }
 
-fn hw_list_view(
+pub fn hw_list_view(
     i: usize,
     hw: &HardwareWallet,
     chosen: bool,
@@ -1507,6 +1470,39 @@ fn hw_list_view(
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Select(i));
     }
+    Container::new(bttn)
+        .width(Length::Fill)
+        .style(theme::Container::Card(theme::Card::Simple))
+        .into()
+}
+
+pub fn key_list_view<'a>(
+    i: usize,
+    name: &'a str,
+    fingerprint: &'a Fingerprint,
+    kind: Option<&'a DeviceKind>,
+    chosen: bool,
+) -> Element<'a, Message> {
+    let bttn = Button::new(if chosen {
+        hw::selected_hardware_wallet(
+            kind.map(|k| k.to_string()).unwrap_or_else(String::new),
+            None::<String>,
+            fingerprint,
+            Some(name),
+        )
+    } else {
+        hw::supported_hardware_wallet(
+            kind.map(|k| k.to_string()).unwrap_or_else(String::new),
+            None::<String>,
+            fingerprint,
+            Some(name),
+        )
+    })
+    .style(theme::Button::Border)
+    .width(Length::Fill)
+    .on_press(Message::DefineDescriptor(
+        message::DefineDescriptor::KeyModal(message::ImportKeyModal::SelectKey(i)),
+    ));
     Container::new(bttn)
         .width(Length::Fill)
         .style(theme::Container::Card(theme::Card::Simple))

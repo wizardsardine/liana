@@ -309,19 +309,19 @@ pub fn signatures<'a>(
                             sigs.signed_pubkeys
                             .keys()
                             .fold(Row::new().spacing(5), |row, value| {
-                                row.push(if let Some(alias) = keys_aliases.get(&value.0) {
+                                row.push(if let Some(alias) = keys_aliases.get(value) {
                                 Container::new(
                                     tooltip::Tooltip::new(
                                         Container::new(text(alias))
                                             .padding(10)
                                             .style(theme::Container::Pill(theme::Pill::Simple)),
-                                            value.0.to_string(),
+                                            value.to_string(),
                                             tooltip::Position::Bottom,
                                     )
                                     .style(theme::Container::Card(theme::Card::Simple)),
                                 )
                             } else {
-                                Container::new(text(value.0.to_string()))
+                                Container::new(text(value.to_string()))
                                     .padding(10)
                                     .style(theme::Container::Pill(theme::Pill::Simple))
                             })
@@ -401,14 +401,14 @@ pub fn path_view<'a>(
     sigs: &'a PathSpendInfo,
     key_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
-    let mut keys: Vec<(Fingerprint, DerivationPath)> =
+    let mut keys: Vec<(Fingerprint, HashSet<DerivationPath>)> =
         path.thresh_origins().1.into_iter().collect();
     let missing_signatures = if sigs.sigs_count >= sigs.threshold {
         0
     } else {
         sigs.threshold - sigs.sigs_count
     };
-    keys.sort();
+    keys.sort_by_key(|a| a.0);
     scrollable(
         Row::new()
             .align_items(Alignment::Center)
@@ -439,7 +439,7 @@ pub fn path_view<'a>(
                 None
             } else {
                 Some(keys.iter().fold(Row::new().spacing(5), |row, value| {
-                    row.push_maybe(if !sigs.signed_pubkeys.contains_key(value) {
+                    row.push_maybe(if !sigs.signed_pubkeys.contains_key(&value.0) {
                         Some(if let Some(alias) = key_aliases.get(&value.0) {
                             Container::new(
                                 tooltip::Tooltip::new(
@@ -470,19 +470,19 @@ pub fn path_view<'a>(
                 sigs.signed_pubkeys
                     .keys()
                     .fold(Row::new().spacing(5), |row, value| {
-                        row.push(if let Some(alias) = key_aliases.get(&value.0) {
+                        row.push(if let Some(alias) = key_aliases.get(value) {
                             Container::new(
                                 tooltip::Tooltip::new(
                                     Container::new(text(alias))
                                         .padding(10)
                                         .style(theme::Container::Pill(theme::Pill::Simple)),
-                                    value.0.to_string(),
+                                    value.to_string(),
                                     tooltip::Position::Bottom,
                                 )
                                 .style(theme::Container::Card(theme::Card::Simple)),
                             )
                         } else {
-                            Container::new(text(value.0.to_string()))
+                            Container::new(text(value.to_string()))
                                 .padding(10)
                                 .style(theme::Container::Pill(theme::Pill::Simple))
                         })

@@ -230,12 +230,10 @@ fn ledger_version_supported(version: Option<&Version>) -> bool {
     }
 }
 
-pub async fn list_unregistered_hardware_wallets(
-    aliases: Option<&HashMap<Fingerprint, String>>,
-) -> Vec<HardwareWallet> {
+pub async fn list_unregistered_hardware_wallets() -> Vec<HardwareWallet> {
     let mut hws: Vec<HardwareWallet> = Vec::new();
     match specter::SpecterSimulator::try_connect().await {
-        Ok(device) => match HardwareWallet::new(Arc::new(device), aliases).await {
+        Ok(device) => match HardwareWallet::new(Arc::new(device), None).await {
             Ok(hw) => hws.push(hw),
             Err(e) => {
                 debug!("{}", e);
@@ -249,7 +247,7 @@ pub async fn list_unregistered_hardware_wallets(
     match specter::Specter::enumerate().await {
         Ok(devices) => {
             for device in devices {
-                match HardwareWallet::new(Arc::new(device), aliases).await {
+                match HardwareWallet::new(Arc::new(device), None).await {
                     Ok(hw) => hws.push(hw),
                     Err(e) => {
                         debug!("{}", e);
@@ -270,7 +268,7 @@ pub async fn list_unregistered_hardware_wallets(
                         device: Arc::new(device),
                         version,
                         registered: None,
-                        alias: aliases.and_then(|aliases| aliases.get(&fingerprint).cloned()),
+                        alias: None,
                     });
                 } else {
                     hws.push(HardwareWallet::Unsupported {
@@ -310,8 +308,7 @@ pub async fn list_unregistered_hardware_wallets(
                                     device: Arc::new(device),
                                     version,
                                     registered: None,
-                                    alias: aliases
-                                        .and_then(|aliases| aliases.get(&fingerprint).cloned()),
+                                    alias: None,
                                 });
                             } else {
                                 hws.push(HardwareWallet::Unsupported {

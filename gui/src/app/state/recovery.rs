@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -197,7 +198,7 @@ impl From<RecoveryPanel> for Box<dyn State> {
 pub struct RecoveryPath {
     threshold: usize,
     sequence: u16,
-    origins: Vec<(Fingerprint, DerivationPath)>,
+    origins: Vec<(Fingerprint, HashSet<DerivationPath>)>,
     total_amount: Amount,
     number_of_coins: usize,
 }
