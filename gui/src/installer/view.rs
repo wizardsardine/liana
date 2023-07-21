@@ -1304,9 +1304,9 @@ pub fn edit_key_modal<'a>(
                                         )
                                     })
                                     .warning(if network == bitcoin::Network::Bitcoin {
-                                        "Please enter correct xpub with origin"
+                                        "Please enter correct xpub with origin and without appended derivation path"
                                     } else {
-                                        "Please enter correct tpub with origin"
+                                        "Please enter correct tpub with origin and without appended derivation path"
                                     })
                                     .size(20)
                                     .padding(10),

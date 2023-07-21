@@ -883,7 +883,9 @@ impl DescriptorEditModal for EditXpubModal {
                 message::ImportKeyModal::XPubEdited(s) => {
                     if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&s) {
                         self.chosen_signer = None;
-                        if let Some((fingerprint, _)) = key.origin {
+                        if !key.derivation_path.is_master() {
+                            self.form_xpub.valid = false;
+                        } else if let Some((fingerprint, _)) = key.origin {
                             self.form_xpub.valid = true;
                             if let Some(alias) = self.keys_aliases.get(&fingerprint) {
                                 self.form_name.valid = true;
