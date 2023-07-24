@@ -4,6 +4,7 @@ use iced::widget::{
 use iced::{alignment, Alignment, Length};
 
 use async_hwi::DeviceKind;
+use std::path::PathBuf;
 use std::{collections::HashSet, str::FromStr};
 
 use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
@@ -20,6 +21,7 @@ use liana_ui::{
 };
 
 use crate::{
+    bitcoind::StartInternalBitcoindError,
     hw::HardwareWallet,
     installer::{
         context::Context,
@@ -897,6 +899,133 @@ pub fn define_bitcoin<'a>(
             .spacing(50),
         true,
         None,
+    )
+}
+
+pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
+    layout(
+        progress,
+        "Choose Bitcoin installation type",
+        Column::new().push(text(prompt::SELECT_BITCOIND_TYPE)).push(
+            Row::new()
+                .align_items(Alignment::End)
+                .spacing(20)
+                .push(
+                    Container::new(
+                        Column::new()
+                            .spacing(20)
+                            .align_items(Alignment::Center)
+                            .push(
+                                button::primary(None, "I want to manage my own node")
+                                    .width(Length::Fixed(300.0))
+                                    .on_press(Message::SelectBitcoindType(
+                                        message::SelectBitcoindTypeMsg::UseExternal(true),
+                                    )),
+                            )
+                            .align_items(Alignment::Center),
+                    )
+                    .padding(20),
+                )
+                .push(
+                    Container::new(
+                        Column::new()
+                            .spacing(20)
+                            .align_items(Alignment::Center)
+                            .push(
+                                button::primary(None, "Let Liana manage my node")
+                                    .width(Length::Fixed(300.0))
+                                    .on_press(Message::SelectBitcoindType(
+                                        message::SelectBitcoindTypeMsg::UseExternal(false),
+                                    )),
+                            )
+                            .align_items(Alignment::Center),
+                    )
+                    .padding(20),
+                ),
+        ),
+        true,
+        None,
+    )
+}
+
+pub fn start_internal_bitcoind<'a>(
+    progress: (usize, usize),
+    exe_path: Option<&PathBuf>,
+    started: Option<&Result<(), StartInternalBitcoindError>>,
+    error: Option<&'a String>,
+) -> Element<'a, Message> {
+    let start_button = button::primary(None, "Start bitcoind").width(Length::Fixed(200.0));
+
+    let mut next_button = button::primary(None, "Next").width(Length::Fixed(200.0));
+    if let Some(Ok(_)) = started {
+        next_button = next_button.on_press(Message::Next);
+    };
+    layout(
+        progress,
+        "Start Bitcoin full node",
+        Column::new()
+            .push(if exe_path.is_some() {
+                Container::new(
+                    Row::new()
+                        .spacing(10)
+                        .align_items(Alignment::Center)
+                        .push(icon::circle_check_icon().style(color::GREEN))
+                        .push(text("bitcoind already installed").style(color::GREEN)),
+                )
+            } else {
+                Container::new(
+                    Row::new()
+                        .spacing(10)
+                        .align_items(Alignment::Center)
+                        .push(icon::circle_cross_icon().style(color::RED))
+                        .push(text("Cannot find bitcoind").style(color::RED)),
+                )
+            })
+            .push_maybe(if started.is_some() {
+                started.map(|res| {
+                    if res.is_ok() {
+                        Container::new(
+                            Row::new()
+                                .spacing(10)
+                                .align_items(Alignment::Center)
+                                .push(icon::circle_check_icon().style(color::GREEN))
+                                .push(text("bitcoind started").style(color::GREEN)),
+                        )
+                    } else {
+                        Container::new(
+                            Row::new()
+                                .spacing(10)
+                                .align_items(Alignment::Center)
+                                .push(icon::circle_cross_icon().style(color::RED))
+                                .push(
+                                    text(res.as_ref().err().unwrap().to_string()).style(color::RED),
+                                ),
+                        )
+                    }
+                })
+            } else {
+                Some(Container::new(Space::with_height(Length::Fixed(25.0))))
+            })
+            .spacing(50)
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(Container::new(
+                        if exe_path.is_some() && started.is_none() && error.is_none() {
+                            start_button.on_press(Message::InternalBitcoind(
+                                message::InternalBitcoindMsg::Start,
+                            ))
+                        } else {
+                            start_button
+                        },
+                    ))
+                    .push(Row::new().spacing(10).push(next_button)),
+            )
+            .push_maybe(error.map(|e| card::invalid(text(e)))),
+        true,
+        Some(message::Message::InternalBitcoind(
+            message::InternalBitcoindMsg::Previous,
+        )),
     )
 }
 

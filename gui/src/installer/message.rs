@@ -26,6 +26,8 @@ pub enum Message {
     UseHotSigner,
     Installed(Result<PathBuf, Error>),
     Network(Network),
+    SelectBitcoindType(SelectBitcoindTypeMsg),
+    InternalBitcoind(InternalBitcoindMsg),
     DefineBitcoind(DefineBitcoind),
     DefineDescriptor(DefineDescriptor),
     ImportXpub(usize, Result<DescriptorPublicKey, Error>),
@@ -41,6 +43,19 @@ pub enum DefineBitcoind {
     AddressEdited(String),
     PingBitcoindResult(Result<(), Error>),
     PingBitcoind,
+}
+
+#[derive(Debug, Clone)]
+pub enum SelectBitcoindTypeMsg {
+    UseExternal(bool),
+}
+
+#[derive(Debug, Clone)]
+pub enum InternalBitcoindMsg {
+    Previous,
+    Reload,
+    DefineConfig,
+    Start,
 }
 
 #[derive(Debug, Clone)]

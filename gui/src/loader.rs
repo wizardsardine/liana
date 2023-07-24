@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use iced::{Alignment, Command, Length, Subscription};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use liana::{
     config::{Config, ConfigError},
@@ -21,10 +21,12 @@ use liana_ui::{
 use crate::{
     app::{
         cache::Cache,
-        config::Config as GUIConfig,
+        config::{Config as GUIConfig, InternalBitcoindExeConfig},
         wallet::{Wallet, WalletError},
     },
+    bitcoind::{start_internal_bitcoind, stop_internal_bitcoind, StartInternalBitcoindError},
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
+    utils,
 };
 
 type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
@@ -89,6 +91,9 @@ impl Loader {
                     daemon: daemon.clone(),
                     progress: 0.0,
                 };
+                if self.gui_config.internal_bitcoind_exe_config.is_some() {
+                    warn!("Ignoring internal bitcoind config because Liana daemon is external.");
+                }
                 return Command::perform(sync(daemon, false), Message::Syncing);
             }
             Err(e) => match e {
@@ -102,7 +107,10 @@ impl Loader {
                         self.step = Step::StartingDaemon;
                         self.daemon_started = true;
                         return Command::perform(
-                            start_daemon(daemon_config_path),
+                            start_bitcoind_and_daemon(
+                                daemon_config_path,
+                                self.gui_config.internal_bitcoind_exe_config.clone(),
+                            ),
                             Message::Started,
                         );
                     } else {
@@ -173,6 +181,13 @@ impl Loader {
                 info!("Stopping internal daemon...");
                 daemon.stop();
                 info!("Internal daemon stopped");
+                if self.gui_config.internal_bitcoind_exe_config.is_some() {
+                    if let Some(daemon_config) = daemon.config() {
+                        if let Some(bitcoind_config) = &daemon_config.bitcoind_config {
+                            stop_internal_bitcoind(bitcoind_config);
+                        }
+                    }
+                }
             }
         }
     }
@@ -327,10 +342,37 @@ async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, 
 }
 
 // Daemon can start only if a config path is given.
-pub async fn start_daemon(config_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
-    debug!("starting liana daemon");
-
+pub async fn start_bitcoind_and_daemon(
+    config_path: PathBuf,
+    bitcoind_exe_config: Option<InternalBitcoindExeConfig>,
+) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
+    if let Some(exe_config) = bitcoind_exe_config {
+        if let Some(bitcoind_config) = &config.bitcoind_config {
+            // Check if bitcoind is already running before trying to start it.
+            if liana::BitcoinD::new(bitcoind_config, "internal_bitcoind_start".to_string()).is_ok()
+            {
+                info!("Internal bitcoind is already running");
+            } else {
+                info!("Starting internal bitcoind");
+                start_internal_bitcoind(&config.bitcoin_config.network, exe_config)
+                    .map_err(Error::Bitcoind)?;
+                if !utils::poll_for_file(&bitcoind_config.cookie_path, 200, 15) {
+                    return Err(Error::Bitcoind(
+                        StartInternalBitcoindError::CookieFileNotFound(
+                            bitcoind_config.cookie_path.to_string_lossy().into_owned(),
+                        ),
+                    ));
+                }
+                liana::BitcoinD::new(bitcoind_config, "internal_bitcoind_start".to_string())
+                    .map_err(|e| {
+                        Error::Bitcoind(StartInternalBitcoindError::BitcoinDError(e.to_string()))
+                    })?;
+            }
+        }
+    }
+
+    debug!("starting liana daemon");
 
     let daemon = EmbeddedDaemon::start(config)?;
 
@@ -353,6 +395,7 @@ pub enum Error {
     Wallet(WalletError),
     Config(ConfigError),
     Daemon(DaemonError),
+    Bitcoind(StartInternalBitcoindError),
 }
 
 impl std::fmt::Display for Error {
@@ -361,6 +404,7 @@ impl std::fmt::Display for Error {
             Self::Config(e) => write!(f, "Config error: {}", e),
             Self::Wallet(e) => write!(f, "Wallet error: {}", e),
             Self::Daemon(e) => write!(f, "Liana daemon error: {}", e),
+            Self::Bitcoind(e) => write!(f, "Bitcoind error: {}", e),
         }
     }
 }

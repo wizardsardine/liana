@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::{
     app::{
+        config::InternalBitcoindExeConfig,
         settings::{KeySetting, Settings, WalletSetting},
         wallet::DEFAULT_WALLET_NAME,
     },
@@ -18,6 +19,8 @@ use liana::{
     miniscript::bitcoin,
 };
 
+use super::step::InternalBitcoindConfig;
+
 #[derive(Clone)]
 pub struct Context {
     pub bitcoin_config: BitcoinConfig,
@@ -30,6 +33,9 @@ pub struct Context {
     // In case a user entered a mnemonic,
     // we dont want to override the generated signer with it.
     pub recovered_signer: Option<Arc<Signer>>,
+    pub bitcoind_is_external: bool,
+    pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
+    pub internal_bitcoind_exe_config: Option<InternalBitcoindExeConfig>,
 }
 
 impl Context {
@@ -46,6 +52,9 @@ impl Context {
             data_dir,
             hw_is_used: false,
             recovered_signer: None,
+            bitcoind_is_external: true,
+            internal_bitcoind_config: None,
+            internal_bitcoind_exe_config: None,
         }
     }
 
