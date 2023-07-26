@@ -762,10 +762,7 @@ mod tests {
         // A simple descriptor with 1 keys as primary path and 1 recovery key.
         let desc = LianaDescriptor::from_str("wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr").unwrap();
         let desc_info = desc.policy();
-        let prim_key_origin = (
-            bip32::Fingerprint::from_str("f5acc2fd").unwrap(),
-            Vec::new().into(),
-        );
+        let prim_key_fg = bip32::Fingerprint::from_str("f5acc2fd").unwrap();
         let recov_key_origin: (_, bip32::DerivationPath) = (
             bip32::Fingerprint::from_str("8a64f2a9").unwrap(),
             Vec::new().into(),
@@ -806,12 +803,10 @@ mod tests {
         assert_eq!(signed_single_psbt.inputs[0].partial_sigs.len(), 1);
         assert_eq!(info.primary_path.threshold, 1);
         assert_eq!(info.primary_path.sigs_count, 1);
+        dbg!(&info.primary_path.signed_pubkeys);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info
-                    .primary_path
-                    .signed_pubkeys
-                    .contains_key(&prim_key_origin)
+                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
         );
         assert!(info.recovery_paths.is_empty());
 
@@ -852,7 +847,7 @@ mod tests {
         assert_eq!(recov_info.sigs_count, 1);
         assert!(
             recov_info.signed_pubkeys.len() == 1
-                && recov_info.signed_pubkeys.contains_key(&recov_key_origin)
+                && recov_info.signed_pubkeys.contains_key(&recov_key_origin.0)
         );
 
         // A PSBT with multiple inputs, all signed for the primary path.
@@ -866,10 +861,7 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info
-                    .primary_path
-                    .signed_pubkeys
-                    .contains_key(&prim_key_origin)
+                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
         );
         assert!(info.recovery_paths.is_empty());
 
@@ -887,10 +879,7 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info
-                    .primary_path
-                    .signed_pubkeys
-                    .contains_key(&prim_key_origin)
+                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
         );
         let recov_info = info.recovery_paths.get(&timelock).unwrap();
         assert_eq!(recov_info.threshold, 1);
@@ -927,10 +916,7 @@ mod tests {
         assert_eq!(info.primary_path.sigs_count, 1);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
-                && info
-                    .primary_path
-                    .signed_pubkeys
-                    .contains_key(&prim_key_origin)
+                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
         );
         assert!(info.recovery_paths.is_empty());
 

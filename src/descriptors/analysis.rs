@@ -292,10 +292,10 @@ impl PathInfo {
             // the (fingerprint, der_path) tuple is a UID for an xpub.
             if origins.contains(&parent_origin) {
                 sigs_count += 1;
-                if let Some(count) = signed_pubkeys.get_mut(&parent_origin) {
+                if let Some(count) = signed_pubkeys.get_mut(&parent_origin.0) {
                     *count += 1;
                 } else {
-                    signed_pubkeys.insert(parent_origin, 1);
+                    signed_pubkeys.insert(parent_origin.0, 1);
                 }
             }
         }
@@ -516,7 +516,7 @@ pub struct PathSpendInfo {
     pub sigs_count: usize,
     /// The keys for which a signature was provided and the number (always >=1) of
     /// signatures provided for this key.
-    pub signed_pubkeys: HashMap<(bip32::Fingerprint, bip32::DerivationPath), usize>,
+    pub signed_pubkeys: HashMap<bip32::Fingerprint, usize>,
 }
 
 /// Information about a partial spend of Liana coins
