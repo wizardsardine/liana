@@ -1,7 +1,7 @@
 task:
   name: 'Functional tests'
   container:
-    image: rust:1-bookworm
+    image: rust:1.70-bookworm
   timeout_in: 90m  # https://cirrus-ci.org/faq/#instance-timed-out
 
   env:

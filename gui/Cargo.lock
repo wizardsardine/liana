@@ -139,9 +139,9 @@ dependencies = [
 
 [[package]]
 name = "async-hwi"
-version = "0.0.6"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09be30d154c732f398ebe57645f2074c1993fb88b7a457dc41c73487737fcfc6"
+checksum = "fd74315dfee3384712b3f22849db68c6f4e77b86a483c57630abcd05eaba9a62"
 dependencies = [
  "async-trait",
  "base64",
@@ -1841,7 +1841,7 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "1.0.0"
-source = "git+https://github.com/wizardsardine/liana?branch=1.0#ebd21f8449192abc542afda646632965d02e1a3b"
+source = "git+https://github.com/wizardsardine/liana?branch=1.0#68c8f65b4911d715bd5aeae3305de76d59be3569"
 dependencies = [
  "backtrace",
  "base64",
@@ -2742,9 +2742,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.56"
+version = "1.0.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b63bdb0cd06f1f4dedf69b254734f9b45af66e4a031e42a7480257d9898b435"
+checksum = "78803b62cbf1f46fde80d7c0e803111524b9877184cfe7c3033659490ac7a7da"
 dependencies = [
  "unicode-ident",
 ]

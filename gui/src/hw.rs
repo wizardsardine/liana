@@ -7,7 +7,7 @@ use liana::miniscript::bitcoin::{
     util::bip32::Fingerprint,
 };
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, warn};
 
 #[derive(Debug, Clone)]
 pub enum HardwareWallet {
@@ -102,18 +102,18 @@ pub async fn list_hardware_wallets(wallet: &Wallet) -> Vec<HardwareWallet> {
             debug!("{}", e);
         }
     }
-    match specter::Specter::try_connect_serial().await {
-        Ok(device) => match HardwareWallet::new(Arc::new(device), Some(&wallet.keys_aliases)).await
-        {
-            Ok(hw) => hws.push(hw),
-            Err(e) => {
-                debug!("{}", e);
+    match specter::Specter::enumerate().await {
+        Ok(devices) => {
+            for device in devices {
+                match HardwareWallet::new(Arc::new(device), Some(&wallet.keys_aliases)).await {
+                    Ok(hw) => hws.push(hw),
+                    Err(e) => {
+                        debug!("{}", e);
+                    }
+                }
             }
-        },
-        Err(HWIError::DeviceNotFound) => {}
-        Err(e) => {
-            debug!("{}", e);
         }
+        Err(e) => warn!("Error while listing specter wallets: {}", e),
     }
     match ledger::LedgerSimulator::try_connect().await {
         Ok(mut device) => match device.get_master_fingerprint().await {
@@ -249,17 +249,18 @@ pub async fn list_unregistered_hardware_wallets(
             debug!("{}", e);
         }
     }
-    match specter::Specter::try_connect_serial().await {
-        Ok(device) => match HardwareWallet::new(Arc::new(device), aliases).await {
-            Ok(hw) => hws.push(hw),
-            Err(e) => {
-                debug!("{}", e);
+    match specter::Specter::enumerate().await {
+        Ok(devices) => {
+            for device in devices {
+                match HardwareWallet::new(Arc::new(device), aliases).await {
+                    Ok(hw) => hws.push(hw),
+                    Err(e) => {
+                        debug!("{}", e);
+                    }
+                }
             }
-        },
-        Err(HWIError::DeviceNotFound) => {}
-        Err(e) => {
-            debug!("{}", e);
         }
+        Err(e) => warn!("Error while listing specter wallets: {}", e),
     }
     match ledger::LedgerSimulator::try_connect().await {
         Ok(device) => match device.get_master_fingerprint().await {
