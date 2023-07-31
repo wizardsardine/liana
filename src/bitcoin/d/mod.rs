@@ -512,13 +512,19 @@ impl BitcoinD {
     }
 
     fn create_wallet(&self, wallet_path: String) -> Result<(), String> {
+        // NOTE: we set load_on_startup to make sure the wallet will get updated before the
+        // historical blocks are deleted in case the bitcoind is pruned.
         let res = self
             .make_fallible_node_request(
                 "createwallet",
                 &params!(
                     Json::String(wallet_path),
-                    Json::Bool(true), // watchonly
-                    Json::Bool(true), // blank
+                    Json::Bool(true),  // watchonly
+                    Json::Bool(true),  // blank
+                    Json::Null,        // passphrase
+                    Json::Bool(false), // avoid_reuse
+                    Json::Bool(true),  // descriptors
+                    Json::Bool(true)   // load_on_startup
                 ),
             )
             .map_err(|e| e.to_string())?;
