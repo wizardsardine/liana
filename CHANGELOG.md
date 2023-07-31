@@ -1,5 +1,22 @@
 # Liana daemon and GUI release notes
 
+## 1.1
+
+This is a tiny patch release for 1.0.
+
+### Features
+
+N/A
+
+### Fixes
+
+- Set `load_on_startup = true` when creating a watchonly wallet on `bitcoind`.
+
+#### GUI-specific
+
+- Fix an intermittent connection bug to the Specter DIY.
+
+
 ## 1.0
 
 This is the first non-beta release of Liana.
