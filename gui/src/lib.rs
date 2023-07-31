@@ -12,6 +12,6 @@ use liana::Version;
 
 pub const VERSION: Version = Version {
     major: 1,
-    minor: 0,
+    minor: 1,
     patch: 0,
 };
