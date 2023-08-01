@@ -132,6 +132,16 @@ def test_create_spend(lianad, bitcoind):
     # We can sign it and broadcast it.
     sign_and_broadcast(lianad, bitcoind, PSBT.from_base64(res["psbt"]))
 
+    # Try creating a transaction that spends an immature coinbase deposit.
+    addr = lianad.rpc.getnewaddress()["address"]
+    bitcoind.rpc.generatetoaddress(1, addr)
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
+    imma_coin = next(c for c in lianad.rpc.listcoins()["coins"] if c["is_immature"])
+    with pytest.raises(RpcError, match=".*is from an immature coinbase transaction."):
+        lianad.rpc.createspend(destinations, [imma_coin["outpoint"]], 1)
+
 
 def test_list_spend(lianad, bitcoind):
     # Start by creating two conflicting Spend PSBTs. The first one will have a change

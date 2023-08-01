@@ -165,6 +165,25 @@ fn migrate_v0_to_v1(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
     Ok(())
 }
 
+// After Liana 1.0 we upgraded the schema to record whether a coin originated from an immature
+// coinbase transaction.
+fn migrate_v1_to_v2(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError> {
+    db_exec(conn, |tx| {
+        tx.execute(
+            "ALTER TABLE coins ADD COLUMN is_immature",
+            rusqlite::params![],
+        )?;
+        tx.execute(
+            "UPDATE coins SET is_immature = 0 WHERE is_immature IS NULL",
+            rusqlite::params![],
+        )?;
+        tx.execute("UPDATE version SET version = 2", rusqlite::params![])?;
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
 /// Check the database version and if necessary apply the migrations to upgrade it to the current
 /// one.
 pub fn maybe_apply_migration(db_path: &path::Path) -> Result<(), SqliteDbError> {
@@ -182,6 +201,11 @@ pub fn maybe_apply_migration(db_path: &path::Path) -> Result<(), SqliteDbError> 
                 log::warn!("Upgrading database from version 0 to version 1.");
                 migrate_v0_to_v1(&mut conn)?;
                 log::warn!("Migration from database version 0 to version 1 successful.");
+            }
+            1 => {
+                log::warn!("Upgrading database from version 1 to version 2.");
+                migrate_v1_to_v2(&mut conn)?;
+                log::warn!("Migration from database version 1 to version 2 successful.");
             }
             _ => return Err(SqliteDbError::UnsupportedVersion(version)),
         }

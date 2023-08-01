@@ -50,6 +50,7 @@ pub enum CommandError {
     InvalidFeerate(/* sats/vb */ u64),
     UnknownOutpoint(bitcoin::OutPoint),
     AlreadySpent(bitcoin::OutPoint),
+    ImmatureCoinbase(bitcoin::OutPoint),
     Address(bitcoin::address::Error),
     InvalidOutputValue(bitcoin::Amount),
     InsufficientFunds(
@@ -77,6 +78,7 @@ impl fmt::Display for CommandError {
             Self::NoOutpoint => write!(f, "No provided outpoint. Need at least one."),
             Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {} sats/vb.", sats_vb),
             Self::AlreadySpent(op) => write!(f, "Coin at '{}' is already spent.", op),
+            Self::ImmatureCoinbase(op) => write!(f, "Coin at '{}' is from an immature coinbase transaction.", op),
             Self::UnknownOutpoint(op) => write!(f, "Unknown outpoint '{}'.", op),
             Self::Address(e) => write!(
                 f,
@@ -298,6 +300,7 @@ impl DaemonControl {
                     block_info,
                     spend_txid,
                     spend_block,
+                    is_immature,
                     ..
                 } = coin;
                 let spend_info = spend_txid.map(|txid| LCSpendInfo {
@@ -310,6 +313,7 @@ impl DaemonControl {
                     outpoint,
                     block_height,
                     spend_info,
+                    is_immature,
                 }
             })
             .collect();
@@ -349,6 +353,10 @@ impl DaemonControl {
             if coin.is_spent() {
                 return Err(CommandError::AlreadySpent(*op));
             }
+            if coin.is_immature {
+                return Err(CommandError::ImmatureCoinbase(*op));
+            }
+
             // Fetch the transaction that created it if necessary
             if !spent_txs.contains_key(op) {
                 let tx = self
@@ -840,6 +848,8 @@ pub struct ListCoinsEntry {
     pub block_height: Option<i32>,
     /// Information about the transaction spending this coin.
     pub spend_info: Option<LCSpendInfo>,
+    /// Whether this coin was created by a coinbase transaction that is still immature.
+    pub is_immature: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -976,6 +986,7 @@ mod tests {
         let mut db_conn = control.db().lock().unwrap().connection();
         db_conn.new_unspent_coins(&[Coin {
             outpoint: dummy_op,
+            is_immature: false,
             block_info: None,
             amount: bitcoin::Amount::from_sat(100_000),
             derivation_index: bip32::ChildNumber::from(13),
@@ -1081,6 +1092,7 @@ mod tests {
         };
         db_conn.new_unspent_coins(&[Coin {
             outpoint: dummy_op_dup,
+            is_immature: false,
             block_info: None,
             amount: bitcoin::Amount::from_sat(400_000),
             derivation_index: bip32::ChildNumber::from(42),
@@ -1093,6 +1105,26 @@ mod tests {
             Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(
                 1001
             )))
+        );
+
+        // Can't create a transaction that spends an immature coinbase deposit.
+        let imma_op = bitcoin::OutPoint::from_str(
+            "4753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:0",
+        )
+        .unwrap();
+        db_conn.new_unspent_coins(&[Coin {
+            outpoint: imma_op,
+            is_immature: true,
+            block_info: None,
+            amount: bitcoin::Amount::from_sat(100_000),
+            derivation_index: bip32::ChildNumber::from(13),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+        }]);
+        assert_eq!(
+            control.create_spend(&destinations, &[imma_op], 1_001),
+            Err(CommandError::ImmatureCoinbase(imma_op))
         );
 
         ms.shutdown();
@@ -1127,6 +1159,7 @@ mod tests {
         db_conn.new_unspent_coins(&[
             Coin {
                 outpoint: dummy_op_a,
+                is_immature: false,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(100_000),
                 derivation_index: bip32::ChildNumber::from(13),
@@ -1136,6 +1169,7 @@ mod tests {
             },
             Coin {
                 outpoint: dummy_op_b,
+                is_immature: false,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(115_680),
                 derivation_index: bip32::ChildNumber::from(34),
@@ -1303,6 +1337,7 @@ mod tests {
             // Deposit 1
             Coin {
                 is_change: false,
+                is_immature: false,
                 outpoint: OutPoint {
                     txid: deposit1.txid(),
                     vout: 0,
@@ -1316,6 +1351,7 @@ mod tests {
             // Deposit 2
             Coin {
                 is_change: false,
+                is_immature: false,
                 outpoint: OutPoint {
                     txid: deposit2.txid(),
                     vout: 0,
@@ -1329,6 +1365,7 @@ mod tests {
             // This coin is a change output.
             Coin {
                 is_change: true,
+                is_immature: false,
                 outpoint: OutPoint::new(spend_tx.txid(), 1),
                 block_info: Some(BlockInfo { height: 3, time: 3 }),
                 spend_block: None,
@@ -1339,6 +1376,7 @@ mod tests {
             // Deposit 3
             Coin {
                 is_change: false,
+                is_immature: false,
                 outpoint: OutPoint {
                     txid: deposit3.txid(),
                     vout: 0,
