@@ -170,11 +170,7 @@ fn migrate_v0_to_v1(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
 fn migrate_v1_to_v2(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError> {
     db_exec(conn, |tx| {
         tx.execute(
-            "ALTER TABLE coins ADD COLUMN is_immature",
-            rusqlite::params![],
-        )?;
-        tx.execute(
-            "UPDATE coins SET is_immature = 0 WHERE is_immature IS NULL",
+            "ALTER TABLE coins ADD COLUMN is_immature BOOLEAN NOT NULL DEFAULT 0 CHECK (is_immature IN (0,1))",
             rusqlite::params![],
         )?;
         tx.execute("UPDATE version SET version = 2", rusqlite::params![])?;
