@@ -90,12 +90,19 @@ pub enum Key {
 #[derive(Debug)]
 pub enum Message {
     CtrlC,
+    FontLoaded(Result<(), iced::font::Error>),
     Launch(Box<launcher::Message>),
     Install(Box<installer::Message>),
     Load(Box<loader::Message>),
     Run(Box<app::Message>),
-    Event(iced_native::Event),
     KeyPressed(Key),
+    Event(iced::Event),
+}
+
+impl From<Result<(), iced::font::Error>> for Message {
+    fn from(value: Result<(), iced::font::Error>) -> Self {
+        Self::FontLoaded(value)
+    }
 }
 
 async fn ctrl_c() -> Result<(), ()> {
@@ -121,17 +128,12 @@ impl Application for GUI {
 
     fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Command<Self::Message>) {
         let logger = Logger::setup(log_level.unwrap_or(LevelFilter::INFO));
-        match config {
+        let mut cmds = font::loads();
+        cmds.push(Command::perform(ctrl_c(), |_| Message::CtrlC));
+        let state = match config {
             Config::Launcher(datadir_path) => {
                 let launcher = Launcher::new(datadir_path);
-                (
-                    Self {
-                        state: State::Launcher(Box::new(launcher)),
-                        logger,
-                        log_level,
-                    },
-                    Command::perform(ctrl_c(), |_| Message::CtrlC),
-                )
+                State::Launcher(Box::new(launcher))
             }
             Config::Install(datadir_path, network) => {
                 if !datadir_path.exists() {
@@ -151,17 +153,8 @@ impl Application for GUI {
                     log_level.unwrap_or(LevelFilter::INFO),
                 );
                 let (install, command) = Installer::new(datadir_path, network);
-                (
-                    Self {
-                        state: State::Installer(Box::new(install)),
-                        logger,
-                        log_level,
-                    },
-                    Command::batch(vec![
-                        command.map(|msg| Message::Install(Box::new(msg))),
-                        Command::perform(ctrl_c(), |_| Message::CtrlC),
-                    ]),
-                )
+                cmds.push(command.map(|msg| Message::Install(Box::new(msg))));
+                State::Installer(Box::new(install))
             }
             Config::Run(datadir_path, cfg, network) => {
                 logger.set_running_mode(
@@ -170,30 +163,24 @@ impl Application for GUI {
                     log_level.unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                 );
                 let (loader, command) = Loader::new(datadir_path, cfg, network, None);
-                (
-                    Self {
-                        state: State::Loader(Box::new(loader)),
-                        logger,
-                        log_level,
-                    },
-                    Command::batch(vec![
-                        command.map(|msg| Message::Load(Box::new(msg))),
-                        Command::perform(ctrl_c(), |_| Message::CtrlC),
-                    ]),
-                )
+                cmds.push(command.map(|msg| Message::Load(Box::new(msg))));
+                State::Loader(Box::new(loader))
             }
-        }
+        };
+        (
+            Self {
+                state,
+                logger,
+                log_level,
+            },
+            Command::batch(cmds),
+        )
     }
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match (&mut self.state, message) {
             (_, Message::CtrlC)
-            | (
-                _,
-                Message::Event(iced_native::Event::Window(
-                    iced_native::window::Event::CloseRequested,
-                )),
-            ) => {
+            | (_, Message::Event(iced::Event::Window(iced::window::Event::CloseRequested))) => {
                 match &mut self.state {
                     State::Loader(s) => s.stop(),
                     State::Launcher(s) => s.stop(),
@@ -309,19 +296,12 @@ impl Application for GUI {
                     event::Status::Ignored,
                 ) => Some(Message::KeyPressed(Key::Tab(modifiers.shift()))),
                 (
-                    iced::Event::Window(iced_native::window::Event::CloseRequested),
+                    iced::Event::Window(iced::window::Event::CloseRequested),
                     event::Status::Ignored,
                 ) => Some(Message::Event(event)),
                 _ => None,
             }),
         ])
-        .with_filter(|(event, _status)| {
-            matches!(
-                event,
-                iced::Event::Window(iced_native::window::Event::CloseRequested)
-                    | iced::Event::Keyboard(_)
-            )
-        })
     }
 
     fn view(&self) -> Element<Self::Message> {
@@ -453,11 +433,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     setup_panic_hook();
 
     let mut settings = Settings::with_flags((config, log_level));
-    settings.id = Some("liana-gui".to_string());
     settings.window.icon = Some(image::liana_app_icon());
     settings.default_text_size = text::P1_SIZE.into();
-    settings.default_font = Some(font::REGULAR_BYTES);
+    settings.default_font = liana_ui::font::REGULAR;
     settings.exit_on_close_request = false;
+
+    settings.id = Some("Liana".to_string());
+
+    #[cfg(target_os = "linux")]
+    {
+        settings.window.platform_specific = iced::window::PlatformSpecific {
+            application_id: "Liana".to_string(),
+        };
+    }
 
     if let Err(e) = GUI::run(settings) {
         return Err(format!("Failed to launch UI: {}", e).into());

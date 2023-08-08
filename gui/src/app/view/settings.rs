@@ -633,9 +633,9 @@ pub fn wallet_settings<'a>(
                                 .push(text(descriptor.to_owned()).small())
                                 .push(Space::with_height(Length::Fixed(5.0))),
                         )
-                        .horizontal_scroll(
+                        .direction(scrollable::Direction::Horizontal(
                             scrollable::Properties::new().width(5).scroller_width(5),
-                        ),
+                        )),
                     )
                     .push(
                         Row::new()

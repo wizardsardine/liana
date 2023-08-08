@@ -21,9 +21,8 @@ liana_ui = { path = "ui" }
 backtrace = "0.3"
 hex = "0.4.3"
 
-iced = { version = "0.9", default-features= false, features = ["tokio", "glow", "svg", "qr_code", "image"] }
-iced_native = "0.10"
-iced_lazy = { version = "0.6"}
+iced = { version = "0.10", default-features = false, features = ["tokio", "svg", "qr_code", "image", "lazy", "wgpu"] }
+iced_runtime = "0.1.1"
 
 tokio = {version = "1.21.0", features = ["signal"]}
 serde = { version = "1.0", features = ["derive"] }
@@ -47,9 +46,6 @@ base64 = "0.21"
 bitcoin_hashes = "0.12"
 reqwest = { version = "0.11", default-features=false, features = ["rustls-tls"] }
 rust-ini = "0.19.0"
-
-[patch.crates-io]
-iced_futures = { git = "https://github.com/edouardparis/iced", branch = "fix-futures-recipe"}
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features=false, features = ["bzip2", "deflate"] }

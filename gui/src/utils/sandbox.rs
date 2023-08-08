@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use iced_native::command::Action;
+use iced_runtime::command::Action;
 
 use crate::{
     app::{cache::Cache, message::Message, state::State, wallet::Wallet},

@@ -2,11 +2,12 @@ mod section;
 
 use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::{executor, Application, Command, Length, Settings, Subscription};
-use liana_ui::{component::text::*, image, theme, widget::*};
+use liana_ui::{component::text::*, font, image, theme, widget::*};
 
 pub fn main() -> iced::Result {
     let mut settings = Settings::with_flags(Config {});
     settings.default_text_size = P1_SIZE.into();
+    settings.default_font = font::REGULAR;
     DesignSystem::run(settings)
 }
 
@@ -21,9 +22,16 @@ struct DesignSystem {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Event(iced_native::Event),
+    FontLoaded(Result<(), iced::font::Error>),
+    Event(iced::Event),
     Section(usize),
     Ignore,
+}
+
+impl From<Result<(), iced::font::Error>> for Message {
+    fn from(res: Result<(), iced::font::Error>) -> Message {
+        Message::FontLoaded(res)
+    }
 }
 
 impl Application for DesignSystem {
@@ -49,6 +57,9 @@ impl Application for DesignSystem {
             ],
             current: 0,
         };
+        #[allow(unused_mut)]
+        let mut cmds: Vec<Command<Self::Message>> = font::loads();
+
         #[cfg(target_arch = "wasm32")]
         {
             use iced_native::{command, window};
@@ -57,16 +68,12 @@ impl Application for DesignSystem {
                 (window.inner_width().unwrap().as_f64().unwrap()) as u32,
                 (window.inner_height().unwrap().as_f64().unwrap()) as u32,
             );
-            (
-                app,
-                Command::single(command::Action::Window(window::Action::Resize {
-                    width,
-                    height,
-                })),
-            )
+            cmds.push(Command::single(command::Action::Window(
+                window::Action::Resize { width, height },
+            )));
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        (app, Command::none())
+
+        (app, Command::batch(cmds))
     }
 
     fn update(&mut self, message: Message) -> Command<Self::Message> {
@@ -76,10 +83,7 @@ impl Application for DesignSystem {
                     self.current = i;
                 }
             }
-            Message::Event(iced::Event::Window(iced_native::window::Event::Resized {
-                width,
-                height,
-            })) => {
+            Message::Event(iced::Event::Window(iced::window::Event::Resized { width, height })) => {
                 #[cfg(target_arch = "wasm32")]
                 {
                     use iced_native::{command, window};
@@ -95,7 +99,7 @@ impl Application for DesignSystem {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        iced_native::subscription::events().map(Self::Message::Event)
+        iced::subscription::events().map(Self::Message::Event)
     }
 
     fn view(&self) -> Element<Message> {

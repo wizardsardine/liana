@@ -1,6 +1,5 @@
 use crate::widget::*;
-use iced::widget::column;
-use iced_lazy::{self, Component};
+use iced::widget::{column, component, Component};
 use std::marker::PhantomData;
 
 pub struct Collapse<'a, M, H, F, C> {
@@ -78,6 +77,6 @@ where
     C: Fn() -> Element<'a, T>,
 {
     fn from(c: Collapse<'a, Message, H, F, C>) -> Self {
-        iced_lazy::component(c)
+        component(c)
     }
 }

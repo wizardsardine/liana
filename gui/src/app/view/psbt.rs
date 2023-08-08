@@ -439,7 +439,9 @@ pub fn signatures<'a>(
                             },
                         )),
                 )
-                .horizontal_scroll(scrollable::Properties::new().width(2).scroller_width(2)),
+                .direction(scrollable::Direction::Horizontal(
+                    scrollable::Properties::new().width(2).scroller_width(2),
+                )),
             )
             .padding(15)
         } else {
@@ -594,7 +596,9 @@ pub fn path_view<'a>(
             )
             .push(row_signed),
     )
-    .horizontal_scroll(scrollable::Properties::new().width(2).scroller_width(2))
+    .direction(scrollable::Direction::Horizontal(
+        scrollable::Properties::new().width(2).scroller_width(2),
+    ))
     .into()
 }
 

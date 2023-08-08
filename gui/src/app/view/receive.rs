@@ -3,11 +3,10 @@ use std::collections::{HashMap, HashSet};
 use iced::{
     widget::{
         qr_code::{self, QRCode},
-        scrollable,
+        scrollable, Space,
     },
     Alignment, Length,
 };
-use iced_native::widget::Space;
 
 use liana::miniscript::bitcoin::{
     self,
@@ -94,10 +93,11 @@ pub fn receive<'a>(
                                                                 Length::Fixed(10.0),
                                                             )),
                                                     )
-                                                    .horizontal_scroll(
+                                                    .direction(scrollable::Direction::Horizontal(
                                                         scrollable::Properties::new()
-                                                            .scroller_width(5),
-                                                    ),
+                                                            .width(2)
+                                                            .scroller_width(2),
+                                                    )),
                                                 )
                                                 .width(Length::Fill),
                                             )

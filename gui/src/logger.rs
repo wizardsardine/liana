@@ -64,6 +64,7 @@ impl Logger {
                             && !metadata.target().starts_with("iced_glow")
                             && !metadata.target().starts_with("glow_glyph")
                             && !metadata.target().starts_with("naga")
+                            && !metadata.target().starts_with("winit")
                             && !metadata.target().starts_with("mio")
                             && !metadata.target().starts_with("ledger_transport_hid")
                     })),

@@ -2,10 +2,11 @@ use std::time::Instant;
 
 use super::theme::Theme;
 
+use iced::advanced::widget::{Operation, Tree};
+use iced::advanced::{layout, mouse, overlay, renderer};
+use iced::advanced::{Clipboard, Layout, Shell, Widget};
+use iced::event::{self, Event};
 use iced::{Alignment, Element, Length, Point, Rectangle, Size, Vector};
-use iced_native::widget::{Operation, Tree};
-use iced_native::{event, layout, mouse, overlay, renderer};
-use iced_native::{Clipboard, Event, Layout, Shell, Widget};
 
 pub trait Toast {
     fn title(&self) -> &str;
@@ -34,7 +35,7 @@ where
 
 impl<'a, Message, Renderer> Widget<Message, Renderer> for Manager<'a, Message, Renderer>
 where
-    Renderer: iced_native::Renderer,
+    Renderer: iced::advanced::Renderer,
 {
     fn width(&self) -> Length {
         self.content.as_widget().width()
@@ -48,13 +49,13 @@ where
         self.content.as_widget().layout(renderer, limits)
     }
 
-    fn tag(&self) -> iced_native::widget::tree::Tag {
+    fn tag(&self) -> iced::advanced::widget::tree::Tag {
         struct Marker(Vec<Instant>);
-        iced_native::widget::tree::Tag::of::<Marker>()
+        iced::advanced::widget::tree::Tag::of::<Marker>()
     }
 
-    fn state(&self) -> iced_native::widget::tree::State {
-        iced_native::widget::tree::State::new(Vec::<Option<Instant>>::new())
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(Vec::<Option<Instant>>::new())
     }
 
     fn children(&self) -> Vec<Tree> {
@@ -95,7 +96,7 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation<Message>,
     ) {
-        operation.container(None, &mut |operation| {
+        operation.container(None, layout.bounds(), &mut |operation| {
             self.content
                 .as_widget()
                 .operate(&mut state.children[0], layout, renderer, operation);
@@ -107,10 +108,11 @@ where
         state: &mut Tree,
         event: Event,
         layout: Layout<'_>,
-        cursor_position: Point,
+        cursor_position: iced::mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
     ) -> event::Status {
         self.content.as_widget_mut().on_event(
             &mut state.children[0],
@@ -120,6 +122,7 @@ where
             renderer,
             clipboard,
             shell,
+            viewport,
         )
     }
 
@@ -127,10 +130,10 @@ where
         &self,
         state: &Tree,
         renderer: &mut Renderer,
-        theme: &<Renderer as iced_native::Renderer>::Theme,
+        theme: &<Renderer as iced::advanced::Renderer>::Theme,
         style: &renderer::Style,
         layout: Layout<'_>,
-        cursor_position: Point,
+        cursor_position: iced::mouse::Cursor,
         viewport: &Rectangle,
     ) {
         self.content.as_widget().draw(
@@ -148,7 +151,7 @@ where
         &self,
         state: &Tree,
         layout: Layout<'_>,
-        cursor_position: Point,
+        cursor_position: iced::mouse::Cursor,
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
@@ -201,7 +204,7 @@ struct Overlay<'a, 'b, Message, Renderer> {
 impl<'a, 'b, Message, Renderer> overlay::Overlay<Message, Renderer>
     for Overlay<'a, 'b, Message, Renderer>
 where
-    Renderer: iced_native::Renderer,
+    Renderer: iced::advanced::Renderer,
 {
     fn layout(&self, renderer: &Renderer, bounds: Size, position: Point) -> layout::Node {
         let limits = layout::Limits::new(Size::ZERO, bounds)
@@ -224,11 +227,12 @@ where
         &mut self,
         event: Event,
         layout: Layout<'_>,
-        cursor_position: Point,
+        cursor_position: iced::mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) -> event::Status {
+        let viewport = layout.bounds();
         self.toasts
             .iter_mut()
             .zip(self.state.iter_mut())
@@ -246,6 +250,7 @@ where
                     renderer,
                     clipboard,
                     &mut local_shell,
+                    &viewport,
                 );
 
                 if !local_shell.is_empty() {
@@ -262,10 +267,10 @@ where
     fn draw(
         &self,
         renderer: &mut Renderer,
-        theme: &<Renderer as iced_native::Renderer>::Theme,
+        theme: &<Renderer as iced::advanced::Renderer>::Theme,
         style: &renderer::Style,
         layout: Layout<'_>,
-        cursor_position: Point,
+        cursor_position: iced::mouse::Cursor,
     ) {
         let viewport = layout.bounds();
 
@@ -291,9 +296,9 @@ where
         &mut self,
         layout: Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn iced_native::widget::Operation<Message>,
+        operation: &mut dyn iced::advanced::widget::Operation<Message>,
     ) {
-        operation.container(None, &mut |operation| {
+        operation.container(None, layout.bounds(), &mut |operation| {
             self.toasts
                 .iter()
                 .zip(self.state.iter_mut())
@@ -309,7 +314,7 @@ where
     fn mouse_interaction(
         &self,
         layout: Layout<'_>,
-        cursor_position: Point,
+        cursor_position: iced::mouse::Cursor,
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
@@ -330,7 +335,7 @@ where
             .unwrap_or_default()
     }
 
-    fn is_over(&self, layout: Layout<'_>, cursor_position: Point) -> bool {
+    fn is_over(&self, layout: Layout<'_>, _renderer: &Renderer, cursor_position: Point) -> bool {
         layout
             .children()
             .any(|layout| layout.bounds().contains(cursor_position))
@@ -339,7 +344,7 @@ where
 
 impl<'a, Message, Renderer> From<Manager<'a, Message, Renderer>> for Element<'a, Message, Renderer>
 where
-    Renderer: 'a + iced_native::Renderer,
+    Renderer: 'a + iced::advanced::Renderer,
     Message: 'a,
 {
     fn from(manager: Manager<'a, Message, Renderer>) -> Self {

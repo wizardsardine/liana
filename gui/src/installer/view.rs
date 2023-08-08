@@ -319,7 +319,9 @@ pub fn define_descriptor<'a>(
                             )
                             .padding(5),
                     )
-                    .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
+                    .direction(scrollable::Direction::Horizontal(
+                        Properties::new().width(3).scroller_width(3),
+                    )),
                 ),
         ))
         .spacing(10);
@@ -436,7 +438,9 @@ pub fn recovery_path_view(
                                 )
                                 .padding(5),
                         )
-                        .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
+                        .direction(scrollable::Direction::Horizontal(
+                            Properties::new().width(3).scroller_width(3),
+                        )),
                     ),
             ),
     )
@@ -568,9 +572,9 @@ pub fn signer_xpubs(xpubs: &[String]) -> Element<Message> {
                             .push(
                                 Container::new(
                                     scrollable(Container::new(text(xpub).small()).padding(10))
-                                        .horizontal_scroll(
+                                        .direction(scrollable::Direction::Horizontal(
                                             Properties::new().width(5).scroller_width(5),
-                                        ),
+                                        )),
                                 )
                                 .width(Length::Fill),
                             )
@@ -641,9 +645,9 @@ pub fn hardware_wallet_xpubs<'a>(
                             .push(
                                 Container::new(
                                     scrollable(Container::new(text(xpub).small()).padding(10))
-                                        .horizontal_scroll(
+                                        .direction(scrollable::Direction::Horizontal(
                                             Properties::new().width(5).scroller_width(5),
-                                        ),
+                                        )),
                                 )
                                 .width(Length::Fill),
                             )
@@ -1401,7 +1405,9 @@ pub fn defined_descriptor_key<'a>(
                                 .push(text(name).bold())
                                 .push(Space::with_height(Length::Fixed(5.0))),
                         )
-                        .horizontal_scroll(Properties::new().width(5).scroller_width(5)),
+                        .direction(scrollable::Direction::Horizontal(
+                            Properties::new().width(5).scroller_width(5),
+                        )),
                     )
                     .push(image::success_mark_icon().width(Length::Fixed(50.0)))
                     .push(Space::with_width(Length::Fixed(1.0))),
@@ -1997,8 +2003,8 @@ fn layout<'a>(
 
 mod threshsold_input {
     use iced::alignment::{self, Alignment};
+    use iced::widget::{component, Component};
     use iced::Length;
-    use iced_lazy::{self, Component};
     use liana_ui::{component::text::*, icon, theme, widget::*};
 
     pub struct ThresholdInput<Message> {
@@ -2085,7 +2091,7 @@ mod threshsold_input {
         Message: 'a,
     {
         fn from(numeric_input: ThresholdInput<Message>) -> Self {
-            iced_lazy::component(numeric_input)
+            component(numeric_input)
         }
     }
 }
