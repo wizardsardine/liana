@@ -20,6 +20,8 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`listconfirmed`](#listconfirmed)                           | List of confirmed transactions of incoming and outgoing funds |
 | [`listtransactions`](#listtransactions)                     | List of transactions with the given txids                     |
 | [`createrecovery`](#createrecovery)                         | Create a recovery transaction to sweep expired coins          |
+| [`updatelabels`](#updatelabels)                             | Update the labels                                             |
+| [`getlabels`](#getlabels)                                   | Get the labels for the given addresses, txids and outpoints   |
 
 # Reference
 
@@ -300,3 +302,31 @@ cover the requested feerate.
 | Field          | Type      | Description                                          |
 | -------------- | --------- | ---------------------------------------------------- |
 | `psbt`         | string    | PSBT of the recovery transaction, encoded as base64. |
+
+### `updatelabels`
+
+Update the labels from a given map of key/value, with the labelled bitcoin addresses, txids and outpoints as keys
+and the label as value. If a label already exist for the given item, the new label overrides the previous one. 
+
+#### Request
+
+| Field    | Type   | Description                                                                                                           |
+| -------- | ------ | --------------------------------------------------------------------------------------------------------------------- |
+| `labels` | object | A mapping from an item to be labelled (an address, a txid or an outpoint) to a label string (at most 100 chars long). |
+
+### `getlabels`
+
+Retrieve a map of items and their respective labels from a list of addresses, txids and outpoints.
+Items without labels are not present in the response map.
+
+#### Request
+
+| Field   | Type         | Description                                                    |
+| --------| ------------ | -------------------------------------------------------------- |
+| `items` | string array | Items (address, txid or outpoint) of which to fetch the label. | 
+
+#### Response
+
+| Field    | Type   | Description                                                                      |
+| -------- | ------ | -------------------------------------------------------------------------------- |
+| `labels` | object | A mapping of bitcoin addresses, txids and oupoints as keys, and string as values |

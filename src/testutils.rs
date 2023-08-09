@@ -1,11 +1,16 @@
 use crate::{
     bitcoin::{BitcoinInterface, Block, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
-    database::{BlockInfo, Coin, CoinType, DatabaseConnection, DatabaseInterface},
+    database::{BlockInfo, Coin, CoinType, DatabaseConnection, DatabaseInterface, LabelItem},
     descriptors, DaemonHandle,
 };
 
-use std::{collections::HashMap, env, fs, io, path, process, str::FromStr, sync, thread, time};
+use std::{
+    collections::{HashMap, HashSet},
+    env, fs, io, path, process,
+    str::FromStr,
+    sync, thread, time,
+};
 
 use miniscript::{
     bitcoin::{
@@ -331,6 +336,14 @@ impl DatabaseConnection for DummyDatabase {
     }
 
     fn complete_rescan(&mut self) {
+        todo!()
+    }
+
+    fn update_labels(&mut self, _items: &HashMap<LabelItem, String>) {
+        todo!()
+    }
+
+    fn labels(&mut self, _items: &HashSet<LabelItem>) -> HashMap<String, String> {
         todo!()
     }
 

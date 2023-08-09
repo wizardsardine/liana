@@ -1,9 +1,14 @@
 use crate::{
+    commands::LabelItem,
     jsonrpc::{Error, Params, Request, Response},
     DaemonControl,
 };
 
-use std::{collections::HashMap, convert::TryInto, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryInto,
+    str::FromStr,
+};
 
 use miniscript::bitcoin::{self, psbt::PartiallySignedTransaction as Psbt};
 
@@ -160,6 +165,68 @@ fn create_recovery(control: &DaemonControl, params: Params) -> Result<serde_json
     Ok(serde_json::json!(&res))
 }
 
+fn update_labels(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let mut items = HashMap::new();
+    for (item, value) in params
+        .get(0, "labels")
+        .ok_or_else(|| Error::invalid_params("Missing 'labels' parameter."))?
+        .as_object()
+        .ok_or_else(|| Error::invalid_params("Invalid 'labels' parameter."))?
+        .iter()
+    {
+        let value = value
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| Error::invalid_params(format!("Invalid 'labels.{}' value.", item)))?;
+        if value.len() > 100 {
+            return Err(Error::invalid_params(format!(
+                "Invalid 'labels.{}' value length: must be less or equal than 100 characters",
+                item
+            )));
+        }
+        let item =
+            LabelItem::from_str(item, control.config.bitcoin_config.network).ok_or_else(|| {
+                Error::invalid_params(format!(
+                    "Invalid 'labels.{}' parameter: must be an address, a txid or an outpoint",
+                    item
+                ))
+            })?;
+        items.insert(item, value);
+    }
+
+    control.update_labels(&items);
+    Ok(serde_json::json!({}))
+}
+
+fn get_labels(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let mut items = HashSet::new();
+    for item in params
+        .get(0, "items")
+        .ok_or_else(|| Error::invalid_params("Missing 'items' parameter."))?
+        .as_array()
+        .ok_or_else(|| Error::invalid_params("Invalid 'items' parameter."))?
+        .iter()
+    {
+        let item = item.as_str().ok_or_else(|| {
+            Error::invalid_params(format!(
+                "Invalid item {} format: must be an address, a txid or an outpoint",
+                item
+            ))
+        })?;
+
+        let item =
+            LabelItem::from_str(item, control.config.bitcoin_config.network).ok_or_else(|| {
+                Error::invalid_params(format!(
+                    "Invalid item {} format: must be an address, a txid or an outpoint",
+                    item
+                ))
+            })?;
+        items.insert(item);
+    }
+
+    Ok(serde_json::json!(control.get_labels(&items)))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -221,6 +288,18 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
                 .params
                 .ok_or_else(|| Error::invalid_params("Missing 'psbt' parameter."))?;
             update_spend(control, params)?
+        }
+        "updatelabels" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'labels' parameter."))?;
+            update_labels(control, params)?
+        }
+        "getlabels" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'items' parameter."))?;
+            get_labels(control, params)?
         }
         _ => {
             return Err(Error::method_not_found());

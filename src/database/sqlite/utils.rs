@@ -180,6 +180,20 @@ fn migrate_v1_to_v2(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
     Ok(())
 }
 
+// After Liana 1.1 we upgraded the schema to add the labels table.
+fn migrate_v2_to_v3(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError> {
+    db_exec(conn, |tx| {
+        tx.execute(
+            "CREATE TABLE labels (id INTEGER PRIMARY KEY NOT NULL, wallet_id INTEGER NOT NULL, item_kind INTEGER NOT NULL CHECK (item_kind IN (0,1,2)), item TEXT UNIQUE NOT NULL, value TEXT NOT NULL)",
+            rusqlite::params![],
+        )?;
+        tx.execute("UPDATE version SET version = 3", rusqlite::params![])?;
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
 /// Check the database version and if necessary apply the migrations to upgrade it to the current
 /// one.
 pub fn maybe_apply_migration(db_path: &path::Path) -> Result<(), SqliteDbError> {
@@ -202,6 +216,11 @@ pub fn maybe_apply_migration(db_path: &path::Path) -> Result<(), SqliteDbError> 
                 log::warn!("Upgrading database from version 1 to version 2.");
                 migrate_v1_to_v2(&mut conn)?;
                 log::warn!("Migration from database version 1 to version 2 successful.");
+            }
+            2 => {
+                log::warn!("Upgrading database from version 2 to version 3.");
+                migrate_v2_to_v3(&mut conn)?;
+                log::warn!("Migration from database version 2 to version 3 successful.");
             }
             _ => return Err(SqliteDbError::UnsupportedVersion(version)),
         }
