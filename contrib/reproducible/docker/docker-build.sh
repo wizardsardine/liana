@@ -24,7 +24,7 @@ docker run --rm -ti \
 
 
 # Sanity check the given MacOS SDK is the expected one.
-if ! $(echo "$XCODE_SHASUM $(basename $XCODE_PATH)" | sha256sum -c --status); then
+if ! $(echo "$XCODE_SHASUM $XCODE_PATH" | sha256sum -c --status); then
     echo "No or invalid Xcode SDK found. Need an Xcode_X.Y.xip archive whose hash is $XCODE_SHASUM. You can configure the path using \$XCODE_PATH.";
     exit 1;
 fi
