@@ -12,6 +12,7 @@ from test_framework.utils import (
     LIANAD_PATH,
     COIN,
     TIMEOUT,
+    IS_BITCOIND_25,
 )
 
 from threading import Thread
@@ -265,6 +266,7 @@ def test_migration(lianad_multisig, bitcoind):
     assert len(spend_txs) == 2 and all(s["updated_at"] is not None for s in spend_txs)
 
 
+@pytest.mark.skipif(not IS_BITCOIND_25, reason="Need 'generateblock' with 'submit=False'")
 def test_bitcoind_submit_block(bitcoind):
     block_count = bitcoind.rpc.getblockcount()
     block = bitcoind.rpc.generateblock(bitcoind.rpc.getnewaddress(), [], False)
@@ -283,6 +285,8 @@ def bitcoind_wait_new_block(bitcoind):
             time.sleep(0.1)
             continue
 
+
+@pytest.mark.skipif(not IS_BITCOIND_25, reason="Need 'generateblock' with 'submit=False'")
 def test_retry_on_workqueue_exceeded(lianad, bitcoind, executor):
     """Make sure we retry requests to bitcoind if it is temporarily overloaded."""
     # Start by reducing the work queue to a single slot. Note we need to stop lianad
@@ -317,7 +321,7 @@ def test_retry_on_workqueue_exceeded(lianad, bitcoind, executor):
                     "Transient error when sending request to bitcoind.*(status: 503, body: Work queue depth exceeded)",
                     "Retrying RPC request to bitcoind",
                 ],
-                timeout=5
+                timeout=5,
             )
         except TimeoutError:
             continue
