@@ -1,8 +1,19 @@
+import logging
 import pytest
+import time
 
 from fixtures import *
+from test_framework.authproxy import JSONRPCException
 from test_framework.serializations import PSBT
-from test_framework.utils import wait_for, RpcError, OLD_LIANAD_PATH, LIANAD_PATH, COIN
+from test_framework.utils import (
+    wait_for,
+    RpcError,
+    OLD_LIANAD_PATH,
+    LIANAD_PATH,
+    COIN,
+    TIMEOUT,
+    IS_BITCOIND_25,
+)
 
 from threading import Thread
 
@@ -255,7 +266,28 @@ def test_migration(lianad_multisig, bitcoind):
     assert len(spend_txs) == 2 and all(s["updated_at"] is not None for s in spend_txs)
 
 
-def test_retry_on_workqueue_exceeded(lianad, bitcoind):
+@pytest.mark.skipif(not IS_BITCOIND_25, reason="Need 'generateblock' with 'submit=False'")
+def test_bitcoind_submit_block(bitcoind):
+    block_count = bitcoind.rpc.getblockcount()
+    block = bitcoind.rpc.generateblock(bitcoind.rpc.getnewaddress(), [], False)
+    bitcoind.submit_block(block_count, block["hex"])
+    wait_for(lambda: bitcoind.rpc.getblockcount() == block_count + 1)
+
+
+def bitcoind_wait_new_block(bitcoind):
+    """Call 'waitfornewblock', retry on 503."""
+    while True:
+        try:
+            bitcoind.rpc.waitfornewblock()
+            return
+        except JSONRPCException as e:
+            logging.debug(f"Error calling waitfornewblock: {str(e)}")
+            time.sleep(0.1)
+            continue
+
+
+@pytest.mark.skipif(not IS_BITCOIND_25, reason="Need 'generateblock' with 'submit=False'")
+def test_retry_on_workqueue_exceeded(lianad, bitcoind, executor):
     """Make sure we retry requests to bitcoind if it is temporarily overloaded."""
     # Start by reducing the work queue to a single slot. Note we need to stop lianad
     # as we don't support yet restarting a bitcoind due to the cookie file getting
@@ -264,19 +296,44 @@ def test_retry_on_workqueue_exceeded(lianad, bitcoind):
     bitcoind.cmd_line += ["-rpcworkqueue=1", "-rpcthreads=1"]
     bitcoind.stop()
     bitcoind.start()
+
+    # Mine a block but don't submit it yet, we'll use it to unstuck `waitfornewblock`.
+    block_count = bitcoind.rpc.getblockcount()
+    block = bitcoind.rpc.generateblock(bitcoind.rpc.getnewaddress(), [], False)
+
+    # Only restart Liana now to make sure the above bitcoind RPCs don't conflict with the
+    # ones performed by Liana at startup.
     lianad.start()
 
-    # Stuck the bitcoind RPC server working queue with a command that takes 5 seconds
-    # to be replied to, and make lianad send it a request. Make sure we detect this is
-    # a transient HTTP 503 error and we retry the request. Once the 5 seconds are past
-    # our request succeeds and we get the reply to the lianad RPC command.
-    t = Thread(target=bitcoind.rpc.waitfornewblock, args=(5_000,))
-    t.start()
-    lianad.rpc.getinfo()
-    lianad.wait_for_logs(
-        [
-            "Transient error when sending request to bitcoind.*(status: 503, body: Work queue depth exceeded)",
-            "Retrying RPC request to bitcoind",
-        ]
-    )
-    t.join()
+    # Clog the bitcoind RPC server working queue until we get a new block. This is to
+    # make our upcoming call to bitcoind RPC through lianad fail with a 503 error.
+    f_wait = executor.submit(bitcoind_wait_new_block, bitcoind)
+
+    # Now send an RPC command to lianad that will involve it making one to bitcoind. This
+    # command to bitcoind should fail and we should retry it.
+    # We use a loop to make sure lianad hits a 503 when connecting to bitcoind, and not a
+    # (very long) timeout while awaiting the response.
+    while True:
+        f_liana = executor.submit(lianad.rpc.getinfo)
+        try:
+            lianad.wait_for_logs(
+                [
+                    "Transient error when sending request to bitcoind.*(status: 503, body: Work queue depth exceeded)",
+                    "Retrying RPC request to bitcoind",
+                ],
+                timeout=5,
+            )
+        except TimeoutError:
+            continue
+        finally:
+            logging.info("Didn't raise. Trying again.")
+            break
+
+    # Submit the mined block to bitcoind through its P2P interface, it would make `waitfornewblock`
+    # return, thereby unclogging the RPC work queue and unstucking the `getinfo` call to Liana.
+    bitcoind.submit_block(block_count, block["hex"])
+    f_wait.result(TIMEOUT)
+
+    # We should have retried the request to bitcoind, which should now succeed along with the call.
+    # This just checks the response we get is sane, nothing particular with this field.
+    assert "block_height" in f_liana.result(TIMEOUT)

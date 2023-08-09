@@ -1,5 +1,8 @@
+import hashlib
 import logging
 import os
+import socket
+import time
 
 from decimal import Decimal
 from ephemeral_port_reserve import reserve
@@ -53,11 +56,13 @@ class Bitcoind(TailableProc):
             "-datadir={}".format(bitcoin_dir),
             "-printtoconsole",
             "-server",
+            "-debug=1",
+            "-debugexclude=libevent",
+            "-debugexclude=tor",
         ]
         bitcoind_conf = {
             "port": self.p2pport,
             "rpcport": rpcport,
-            "debug": 1,
             "fallbackfee": Decimal(1000) / COIN,
             "rpcthreads": 32,
         }
@@ -178,6 +183,76 @@ class Bitcoind(TailableProc):
             self.generate_empty_blocks(shift)
             self.generate_block(1 + final_len - (height + shift), memp)
         self.wait_for_log(r"UpdateTip: new best=.* height={}".format(final_len))
+
+    def send_p2p_message(self, s, command, payload):
+        magic_bytes = b"\xfa\xbf\xb5\xda"
+        checksum = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
+        payload_len = len(payload).to_bytes(4, "little")
+        message = (
+            magic_bytes
+            + command.encode("ascii")
+            + bytes(12 - len(command))
+            + payload_len
+            + checksum
+            + payload
+        )
+        s.sendall(message)
+        logging.debug(f"Sent message to bitcoind: {command}")
+
+    def connect_p2p(self, cur_height):
+        version = int(70016).to_bytes(4, "little")
+        services = int((1 << 0) | (1 << 3)).to_bytes(8, "little")
+        timestamp = int(time.time()).to_bytes(8, "little")
+        addr_recv = services + bytes(16) + self.p2pport.to_bytes(2, "little")
+        addr_from = addr_recv
+        nonce = os.urandom(8)
+        user_agent = b"\x00"
+        start_height = cur_height.to_bytes(4, "little")
+        relay = b"\x00"
+        ver_payload = (
+            version
+            + services
+            + timestamp
+            + addr_recv
+            + addr_from
+            + nonce
+            + user_agent
+            + start_height
+            + relay
+        )
+
+        logging.debug("Connecting to bitcoind p2p port")
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect(("127.0.0.1", self.p2pport))
+        self.send_p2p_message(s, "version", ver_payload)
+        s.recv(102 + 24)  # Recv version
+        s.recv(0 + 24)  # Recv wtxidrelay
+        s.recv(0 + 24)  # Recv sendaddrv2
+        s.recv(0 + 24)  # Recv verack
+        self.send_p2p_message(s, "verack", b"")
+        s.recv(9 + 24)  # Recv sendcmpct
+        ping = s.recv(8 + 24)  # Recv ping, reply with pong
+        assert ping[4:8].decode("ascii") == "ping", ping
+        self.send_p2p_message(s, "pong", ping[-8:])
+        s.recv(613 + 24)  # Recv getheaders (ignore it)
+        s.recv(8 + 24)  # Recv feefilter
+
+        logging.debug("Handshake to bitcoind complete")
+        return s
+
+    def submit_block(self, cur_height, block_hex):
+        """Submit a block through the P2P interface."""
+        s = self.connect_p2p(cur_height)
+        self.send_p2p_message(s, "block", bytes.fromhex(block_hex))
+
+        # Make sure the block was received by waiting for the inv.
+        inv = s.recv(37 + 24)
+        assert (
+            inv[4:7].decode("ascii") == "inv"
+            and int.from_bytes(inv[24 + 1 : 24 + 1 + 4], "little") == 2
+        ), inv
+
+        s.close()
 
     def startup(self):
         try:
