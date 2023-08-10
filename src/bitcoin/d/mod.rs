@@ -646,7 +646,10 @@ impl BitcoinD {
         }
         let res = self.make_fallible_node_request(
             "loadwallet",
-            &params!(Json::String(self.watchonly_wallet_path.clone()),),
+            &params!(
+                Json::String(self.watchonly_wallet_path.clone()),
+                Json::Bool(true), // load_on_startup
+            ),
         );
         match res {
             Err(BitcoindError::Server(jsonrpc::Error::Rpc(ref e))) => {
