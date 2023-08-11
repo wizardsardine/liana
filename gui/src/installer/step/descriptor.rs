@@ -1312,7 +1312,6 @@ impl From<ImportDescriptor> for Box<dyn Step> {
     }
 }
 
-#[derive(Default)]
 pub struct RegisterDescriptor {
     descriptor: Option<LianaDescriptor>,
     keys_aliases: HashMap<Fingerprint, String>,
@@ -1323,6 +1322,36 @@ pub struct RegisterDescriptor {
     registered: HashSet<Fingerprint>,
     error: Option<Error>,
     done: bool,
+    /// Whether this step is part of the descriptor creation process. This is used to detect when
+    /// it's instead shown as part of the descriptor *import* process, where we can't detect
+    /// whether a signing device is used, to explicit this step is not required if the user isn't
+    /// using a signing device.
+    created_desc: bool,
+}
+
+impl RegisterDescriptor {
+    fn new(created_desc: bool) -> Self {
+        Self {
+            created_desc,
+            descriptor: Default::default(),
+            keys_aliases: Default::default(),
+            processing: Default::default(),
+            chosen_hw: Default::default(),
+            hws: Default::default(),
+            hmacs: Default::default(),
+            registered: Default::default(),
+            error: Default::default(),
+            done: Default::default(),
+        }
+    }
+
+    pub fn new_create_wallet() -> Self {
+        Self::new(true)
+    }
+
+    pub fn new_import_wallet() -> Self {
+        Self::new(false)
+    }
 }
 
 impl Step for RegisterDescriptor {
@@ -1413,6 +1442,7 @@ impl Step for RegisterDescriptor {
             self.processing,
             self.chosen_hw,
             self.done,
+            self.created_desc,
         )
     }
 }

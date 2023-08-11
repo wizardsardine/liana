@@ -6,6 +6,6 @@ pub const DEFINE_DESCRIPTOR_RECOVERY_PATH_TOOLTIP: &str =
     "Set key(s) that can be used to spend coins after a defined period of time.\n Different sets of keys can be set to become available at different times.";
 pub const DEFINE_DESCRIPTOR_FINGERPRINT_TOOLTIP: &str =
     "The alias is applied on all the keys derived from the same seed";
-pub const REGISTER_DESCRIPTOR_HELP: &str = "To be used with the wallet, a device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor.";
+pub const REGISTER_DESCRIPTOR_HELP: &str = "To be used with the wallet, a signing device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor.";
 pub const MNEMONIC_HELP: &str = "A hot key generated on this computer was used for creating this wallet. It needs to be backed up. \n Keep it in a safe place. Never share it with anyone.";
 pub const RECOVER_MNEMONIC_HELP: &str = "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from mnemonics to be able to sign transactions again. Otherwise you can directly go the next step.";

@@ -113,7 +113,7 @@ impl Installer {
                     DefineDescriptor::new(self.signer.clone()).into(),
                     BackupMnemonic::new(self.signer.clone()).into(),
                     BackupDescriptor::default().into(),
-                    RegisterDescriptor::default().into(),
+                    RegisterDescriptor::new_create_wallet().into(),
                     DefineBitcoind::new().into(),
                     Final::new(hot_signer_fingerprint).into(),
                 ];
@@ -126,7 +126,7 @@ impl Installer {
                     ImportDescriptor::new(false).into(),
                     BackupMnemonic::new(self.signer.clone()).into(),
                     BackupDescriptor::default().into(),
-                    RegisterDescriptor::default().into(),
+                    RegisterDescriptor::new_import_wallet().into(),
                     DefineBitcoind::new().into(),
                     Final::new(hot_signer_fingerprint).into(),
                 ];
@@ -137,7 +137,7 @@ impl Installer {
                     Welcome::default().into(),
                     ImportDescriptor::new(true).into(),
                     RecoverMnemonic::default().into(),
-                    RegisterDescriptor::default().into(),
+                    RegisterDescriptor::new_import_wallet().into(),
                     DefineBitcoind::new().into(),
                     Final::new(hot_signer_fingerprint).into(),
                 ];
