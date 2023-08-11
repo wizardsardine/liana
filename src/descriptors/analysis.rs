@@ -80,9 +80,9 @@ impl DescKeyChecker {
     /// We require the descriptor key to:
     ///  - Be deriveable (to contain a wildcard)
     ///  - Be multipath (to contain a step in the derivation path with multiple indexes)
-    ///  - The multipath step to only contain two indexes, 0 and 1.
+    ///  - The multipath step to only contain two indexes. These can be any indexes, which is
+    ///     useful for deriving multiple keys from the same xpub.
     ///  - Be 'signable' by an external signer (to contain an origin)
-    ///  - Have an xpub that is not a duplicate.
     pub fn check(&mut self, key: &descriptor::DescriptorPublicKey) -> Result<(), LianaPolicyError> {
         if let descriptor::DescriptorPublicKey::MultiXPub(ref xpub) = *key {
             let key_identifier = (xpub.xkey, xpub.derivation_paths.clone());
@@ -94,8 +94,6 @@ impl DescKeyChecker {
             // Then perform the contextless checks.
             let der_paths = xpub.derivation_paths.paths();
             let first_der_path = der_paths.get(0).expect("Cannot be empty");
-            // Rust-miniscript enforces BIP389 which states that all paths must have the same len.
-            let len = first_der_path.len();
             // Technically the xpub could be for the master xpub and not have an origin. But it's
             // unlikely (and easily fixable) while users shooting themselves in the foot by
             // forgetting to provide the origin is so likely that it's worth ruling out xpubs
@@ -104,8 +102,6 @@ impl DescKeyChecker {
             let valid = xpub.origin.is_some()
                 && xpub.wildcard == descriptor::Wildcard::Unhardened
                 && der_paths.len() == 2
-                && der_paths[0][len - 1] == 0.into()
-                && der_paths[1][len - 1] == 1.into()
                 && first_der_path.into_iter().all(|step| step.is_normal());
             if valid {
                 return Ok(());
