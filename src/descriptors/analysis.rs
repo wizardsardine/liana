@@ -130,13 +130,27 @@ fn csv_check(csv_value: u32) -> Result<u16, LianaPolicyError> {
     }
 }
 
-// Get the origin of a key in a multipath descriptors.
-// Returns None if the given key isn't a multixpub.
-fn key_origin(
+// Get the fingerprint and the full derivation paths (path from the master fingerprint in the
+// origin, with the xpub derivation path appended) for a multipath xpub.
+fn key_origins(
     key: &descriptor::DescriptorPublicKey,
-) -> Option<&(bip32::Fingerprint, bip32::DerivationPath)> {
+) -> Option<(bip32::Fingerprint, HashSet<bip32::DerivationPath>)> {
     match key {
-        descriptor::DescriptorPublicKey::MultiXPub(ref xpub) => xpub.origin.as_ref(),
+        descriptor::DescriptorPublicKey::MultiXPub(ref xpub) => {
+            xpub.origin.as_ref().map(|(fg, orig_path)| {
+                let mut der_paths = HashSet::with_capacity(xpub.derivation_paths.paths().len());
+                for der_path in xpub.derivation_paths.paths() {
+                    der_paths.insert(
+                        orig_path
+                            .into_iter()
+                            .chain(der_path.into_iter())
+                            .copied()
+                            .collect(),
+                    );
+                }
+                (*fg, der_paths)
+            })
+        }
         _ => None,
     }
 }
@@ -241,28 +255,36 @@ impl PathInfo {
     }
 
     /// Get the required number of keys for spending through this path, and the set of keys
-    /// that can be used to provide a signature for this path.
-    pub fn thresh_origins(&self) -> (usize, HashSet<(bip32::Fingerprint, bip32::DerivationPath)>) {
+    /// that can be used to provide a signature for this path. The set of keys is represented as a
+    /// mapping from a master extended key fingerprint, to a set of derivation paths. This is
+    /// because we are using multipath descriptors. The derivation paths included the xpub's
+    /// derivation path appended to the origin's derivation path (without the wildcard step).
+    pub fn thresh_origins(
+        &self,
+    ) -> (
+        usize,
+        HashMap<bip32::Fingerprint, HashSet<bip32::DerivationPath>>,
+    ) {
         match self {
             PathInfo::Single(key) => {
-                let mut origins = HashSet::with_capacity(1);
-                origins.insert(
-                    key_origin(key)
-                        .expect("Must be a multixpub with an origin.")
-                        .clone(),
-                );
-                (1, origins)
+                let mut all_origins = HashMap::with_capacity(1);
+                let (fg, der_path) = key_origins(key).expect("Must be a multixpub with an origin.");
+                all_origins.insert(fg, der_path);
+                (1, all_origins)
             }
-            PathInfo::Multi(k, keys) => (
-                *k,
-                keys.iter()
-                    .map(|key| {
-                        key_origin(key)
-                            .expect("Must be a multixpub with an origin.")
-                            .clone()
-                    })
-                    .collect(),
-            ),
+            PathInfo::Multi(k, keys) => {
+                let mut all_origins: HashMap<_, HashSet<_>> = HashMap::with_capacity(keys.len());
+                for key in keys {
+                    let (fg, der_paths) =
+                        key_origins(key).expect("Must be a multixpub with an origin.");
+                    if let Some(existing_der_paths) = all_origins.get_mut(&fg) {
+                        existing_der_paths.extend(der_paths)
+                    } else {
+                        all_origins.insert(fg, der_paths);
+                    }
+                }
+                (*k, all_origins)
+            }
         }
     }
 
@@ -278,24 +300,28 @@ impl PathInfo {
 
         // For all existing signatures, pick those that are from one of our pubkeys.
         for (fg, der_path) in all_pubkeys_signed {
-            // For all xpubs in the descriptor, we derive at /0/* or /1/*, so the xpub's origin's
-            // derivation path is the key's one without the last two derivation indexes.
-            if der_path.len() < 2 {
+            // All xpubs in the descriptor must be wildcard, and therefore have a derivation with
+            // at least one step. (In practice there is at least two, for `/<0;1>/*`.)
+            if der_path.is_empty() {
                 continue;
             }
-            let parent_der_path: bip32::DerivationPath = der_path[..der_path.len() - 2].into();
-            let parent_origin = (*fg, parent_der_path);
 
-            // Now if the origin of this key without the two final derivation indexes is part of
-            // the set of our keys, count it as a signature for it. Note it won't mixup keys
-            // between spending paths, since we can't have duplicate xpubs in the descriptor and
-            // the (fingerprint, der_path) tuple is a UID for an xpub.
-            if origins.contains(&parent_origin) {
-                sigs_count += 1;
-                if let Some(count) = signed_pubkeys.get_mut(&parent_origin) {
-                    *count += 1;
-                } else {
-                    signed_pubkeys.insert(parent_origin, 1);
+            // Now check if this signature is for a public key derived from the fingerprint of one
+            // of our known master xpubs.
+            if let Some(parent_der_paths) = origins.get(fg) {
+                // If it is, make sure it's for one of the xpubs included in the descriptor. Remove
+                // the wilcard step and check if it's in the set of the derivation paths.
+                let der_path_wo_wc: bip32::DerivationPath = der_path[..der_path.len() - 1].into();
+                if parent_der_paths.contains(&der_path_wo_wc) {
+                    // If the origin of the key without the wilcard step is part of our keys, count
+                    // it as a signature. Also record how many times this master extended key
+                    // signed.
+                    sigs_count += 1;
+                    if let Some(count) = signed_pubkeys.get_mut(fg) {
+                        *count += 1;
+                    } else {
+                        signed_pubkeys.insert(*fg, 1);
+                    }
                 }
             }
         }
@@ -516,7 +542,7 @@ pub struct PathSpendInfo {
     pub sigs_count: usize,
     /// The keys for which a signature was provided and the number (always >=1) of
     /// signatures provided for this key.
-    pub signed_pubkeys: HashMap<(bip32::Fingerprint, bip32::DerivationPath), usize>,
+    pub signed_pubkeys: HashMap<bip32::Fingerprint, usize>,
 }
 
 /// Information about a partial spend of Liana coins
