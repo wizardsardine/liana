@@ -1,5 +1,14 @@
+import copy
+
 from fixtures import *
-from test_framework.utils import wait_for, get_txid, spend_coins, RpcError, COIN, sign_and_broadcast
+from test_framework.utils import (
+    wait_for,
+    get_txid,
+    spend_coins,
+    RpcError,
+    COIN,
+    sign_and_broadcast,
+)
 from test_framework.serializations import PSBT
 
 
@@ -305,6 +314,7 @@ def test_deposit_replacement(lianad, bitcoind):
     bitcoind.rpc.sendtoaddress(addr, 2)
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
 
+
 def test_rescan_and_recovery(lianad, bitcoind):
     """Test user recovery flow"""
     # Get initial_tip to use for rescan later
@@ -339,3 +349,55 @@ def test_rescan_and_recovery(lianad, bitcoind):
     assert len(reco_psbt.tx.vout) == 1
     assert int(0.4999 * COIN) < int(reco_psbt.tx.vout[0].nValue) < int(0.5 * COIN)
     sign_and_broadcast(lianad, bitcoind, reco_psbt, recovery=True)
+
+
+def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
+    """Test we'll update the spending txid of a coin if a conflicting spend enters our mempool."""
+    # Get an (unconfirmed, on purpose) coin to be spent by 2 different txs.
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
+    spent_coin = lianad.rpc.listcoins()["coins"][0]
+
+    # Create a first transaction, register it in our wallet.
+    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins()["coins"]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 100_000,
+    }
+    res = lianad.rpc.createspend(destinations, outpoints, 2)
+    psbt_a = PSBT.from_base64(res["psbt"])
+    txid_a = psbt_a.tx.txid()
+
+    # Create a conflicting transaction, not to be registered in our wallet.
+    psbt_b = copy.deepcopy(psbt_a)
+    psbt_b.tx.vout[0].scriptPubKey = bytes.fromhex(
+        "0014218612c653e0827f73a6a040d7805acefa6530cb"
+    )
+    psbt_b.tx.vout[0].nValue -= 10_000
+    psbt_b.tx.rehash()
+    txid_b = psbt_b.tx.txid()
+
+    # Sign and broadcast the first Spend transaction.
+    signed_psbt = lianad.signer.sign_psbt(psbt_a)
+    lianad.rpc.updatespend(signed_psbt.to_base64())
+    lianad.rpc.broadcastspend(txid_a.hex())
+
+    # We detect the coin as being spent by the first transaction.
+    wait_for(lambda: get_coin(lianad, spent_coin["outpoint"])["spend_info"] is not None)
+    assert (
+        get_coin(lianad, spent_coin["outpoint"])["spend_info"]["txid"] == txid_a.hex()
+    )
+
+    # Now sign and broadcast the conflicting transaction, as if coming from an external
+    # wallet.
+    signed_psbt = lianad.signer.sign_psbt(psbt_b)
+    finalized_psbt = lianad.finalize_psbt(signed_psbt)
+    tx_hex = finalized_psbt.tx.serialize_with_witness().hex()
+    bitcoind.rpc.sendrawtransaction(tx_hex)
+
+    # We must now detect the coin as being spent by the second transaction.
+    wait_for(
+        lambda: get_coin(lianad, spent_coin["outpoint"])["spend_info"] is not None
+        and get_coin(lianad, spent_coin["outpoint"])["spend_info"]["txid"]
+        == txid_b.hex()
+    )

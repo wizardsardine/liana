@@ -115,7 +115,8 @@ fn update_coins(
         .values()
         .chain(received.iter())
         .filter_map(|coin| {
-            if coin.spend_txid.is_none() {
+            // Always check for spends when the spend tx is not confirmed as it might get RBF'd.
+            if coin.spend_txid.is_none() || coin.spend_block.is_none() {
                 Some(coin.outpoint)
             } else {
                 None
