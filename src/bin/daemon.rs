@@ -7,15 +7,23 @@ use std::{
 
 use liana::{config::Config, DaemonHandle};
 
+fn print_help_exit() {
+    eprintln!("A TOML configuration file is required to run lianad. By default lianad looks for a 'config.toml' file in its data directory. A different one may be provided like so: '--conf <config file path>'.");
+    eprintln!("A documented sample is available at 'contrib/lianad_config_example.toml' in the source tree (https://github.com/wizardsardine/liana/blob/v1.0/contrib/lianad_config_example.toml).");
+    eprintln!("The default data directory path is a 'liana/' folder in the XDG standard configuration directory for all OSes but Linux ones, where it's '~/.liana/'.");
+    process::exit(1);
+}
+
 fn parse_args(args: Vec<String>) -> Option<PathBuf> {
     if args.len() == 1 {
         return None;
     }
 
-    if args.len() != 3 {
-        eprintln!("Unknown arguments '{:?}'.", args);
-        eprintln!("Only '--conf <configuration file path>' is supported.");
-        process::exit(1);
+    let is_help = args
+        .iter()
+        .any(|arg| arg.contains("help") || arg.contains("-h"));
+    if args.len() != 3 || is_help {
+        print_help_exit();
     }
 
     Some(PathBuf::from(args[2].to_owned()))
@@ -52,7 +60,8 @@ fn main() {
 
     let config = Config::from_file(conf_file).unwrap_or_else(|e| {
         eprintln!("Error parsing config: {}", e);
-        process::exit(1);
+        print_help_exit();
+        unreachable!();
     });
     setup_logger(config.log_level).unwrap_or_else(|e| {
         eprintln!("Error setting up logger: {}", e);
