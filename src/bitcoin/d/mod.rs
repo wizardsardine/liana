@@ -1096,6 +1096,11 @@ impl BitcoinD {
             }
         }
     }
+
+    /// Stop bitcoind.
+    pub fn stop(&self) {
+        self.make_node_request("stop", &[]);
+    }
 }
 
 /// An entry in the 'listdescriptors' result.

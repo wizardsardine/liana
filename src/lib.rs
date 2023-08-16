@@ -15,11 +15,11 @@ mod testutils;
 pub use bip39;
 pub use miniscript;
 
-pub use crate::bitcoin::d::{BitcoindError, WalletError};
+pub use crate::bitcoin::d::{BitcoinD, BitcoindError, WalletError};
 #[cfg(feature = "daemon")]
 use crate::jsonrpc::server::{rpcserver_loop, rpcserver_setup};
 use crate::{
-    bitcoin::{d::BitcoinD, poller, BitcoinInterface},
+    bitcoin::{poller, BitcoinInterface},
     config::Config,
     database::{
         sqlite::{FreshDbOptions, SqliteDb, SqliteDbError},
