@@ -106,12 +106,12 @@ impl SpendTx {
 
     pub fn signers(&self) -> HashSet<Fingerprint> {
         let mut signers = HashSet::new();
-        for (fg, _) in self.sigs.primary_path().signed_pubkeys.keys() {
+        for fg in self.sigs.primary_path().signed_pubkeys.keys() {
             signers.insert(*fg);
         }
 
         for path in self.sigs.recovery_paths().values() {
-            for (fg, _) in path.signed_pubkeys.keys() {
+            for fg in path.signed_pubkeys.keys() {
                 signers.insert(*fg);
             }
         }

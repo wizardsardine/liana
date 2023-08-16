@@ -136,24 +136,28 @@ mod tests {
                 amount: bitcoin::Amount::from_sat(1),
                 block_height: Some(3),
                 spend_info: None,
+                is_immature: false,
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 3 },
                 amount: bitcoin::Amount::from_sat(1),
                 block_height: None,
                 spend_info: None,
+                is_immature: false,
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 0 },
                 amount: bitcoin::Amount::from_sat(1),
                 block_height: Some(2),
                 spend_info: None,
+                is_immature: false,
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 1 },
                 amount: bitcoin::Amount::from_sat(1),
                 block_height: Some(3),
                 spend_info: None,
+                is_immature: false,
             },
         ]);
 

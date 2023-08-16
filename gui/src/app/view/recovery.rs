@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use iced::{
     widget::{checkbox, tooltip, Space},
@@ -137,7 +137,7 @@ pub fn recovery<'a>(
 pub fn recovery_path_view<'a>(
     index: usize,
     threshold: usize,
-    origins: &'a [(Fingerprint, DerivationPath)],
+    origins: &'a [(Fingerprint, HashSet<DerivationPath>)],
     total_amount: Amount,
     number_of_coins: usize,
     key_aliases: &'a HashMap<Fingerprint, String>,

@@ -133,9 +133,9 @@ dependencies = [
 
 [[package]]
 name = "async-hwi"
-version = "0.0.9"
+version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85192c0f286ebcf3f154ea7220ac343a097aa327a0e748c001b685a0c7f05e4f"
+checksum = "22355924b351ed9bad0e8b400d0b039eb624259e80ad4afb978e04a35e81ea93"
 dependencies = [
  "async-trait",
  "base64 0.13.1",
@@ -1907,9 +1907,9 @@ dependencies = [
 
 [[package]]
 name = "ledger_bitcoin_client"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd0a13c32d94c0313fa58f77f14f7aa425fddc6cd13aa375bde12f98740f0e6a"
+checksum = "53b3850bd03537874d58c09dcdd15cfab272b3e9d3381e57843b4f9e1c9ceae7"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -1919,7 +1919,7 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "1.0.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#ebea147c2fd6768a8fee9aea8255721e305d568d"
+source = "git+https://github.com/wizardsardine/liana?branch=master#6c969aeacdde28a84f0a04060b280343a1e22afe"
 dependencies = [
  "backtrace",
  "bip39",

@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use iced::Command;
+use liana::miniscript::bitcoin::bip32::ExtendedPubKey;
 use liana::{
     descriptors::{LianaDescriptor, LianaPolicy, PathInfo},
     miniscript::{
@@ -46,7 +47,7 @@ pub trait DescriptorEditModal {
 }
 
 pub struct RecoveryPath {
-    keys: Vec<DescriptorKey>,
+    keys: Vec<Option<Fingerprint>>,
     threshold: usize,
     sequence: u16,
     duplicate_sequence: bool,
@@ -55,7 +56,7 @@ pub struct RecoveryPath {
 impl RecoveryPath {
     pub fn new() -> Self {
         Self {
-            keys: vec![DescriptorKey::default()],
+            keys: vec![None],
             threshold: 1,
             sequence: u16::MAX,
             duplicate_sequence: false,
@@ -63,18 +64,14 @@ impl RecoveryPath {
     }
 
     fn valid(&self) -> bool {
-        !self.keys.is_empty()
-            && !self.keys.iter().any(|k| k.key.is_none())
-            && !self.duplicate_sequence
+        !self.keys.is_empty() && !self.keys.iter().any(|k| k.is_none()) && !self.duplicate_sequence
     }
 
-    fn check_network(&mut self, network: Network) {
-        for key in self.keys.iter_mut() {
-            key.check_network(network);
-        }
-    }
-
-    fn view(&self) -> Element<message::DefinePath> {
+    fn view(
+        &self,
+        aliases: &HashMap<Fingerprint, String>,
+        duplicate_name: &HashSet<Fingerprint>,
+    ) -> Element<message::DefinePath> {
         view::recovery_path_view(
             self.sequence,
             self.duplicate_sequence,
@@ -82,9 +79,82 @@ impl RecoveryPath {
             self.keys
                 .iter()
                 .enumerate()
-                .map(|(i, key)| key.view().map(move |msg| message::DefinePath::Key(i, msg)))
+                .map(|(i, key)| {
+                    if let Some(key) = key {
+                        view::defined_descriptor_key(
+                            aliases.get(key).unwrap().to_string(),
+                            duplicate_name.contains(key),
+                        )
+                    } else {
+                        view::undefined_descriptor_key()
+                    }
+                    .map(move |msg| message::DefinePath::Key(i, msg))
+                })
                 .collect(),
         )
+    }
+}
+
+struct Setup {
+    keys: Vec<Key>,
+    duplicate_name: HashSet<Fingerprint>,
+    spending_keys: Vec<Option<Fingerprint>>,
+    spending_threshold: usize,
+    recovery_paths: Vec<RecoveryPath>,
+}
+
+impl Setup {
+    fn new() -> Self {
+        Self {
+            keys: Vec::new(),
+            duplicate_name: HashSet::new(),
+            spending_keys: vec![None],
+            spending_threshold: 1,
+            recovery_paths: vec![RecoveryPath::new()],
+        }
+    }
+
+    fn valid(&self) -> bool {
+        !self.spending_keys.is_empty()
+            && !self.spending_keys.iter().any(|k| k.is_none())
+            && !self.recovery_paths.iter().any(|path| !path.valid())
+            && self.duplicate_name.is_empty()
+    }
+
+    // Mark as duplicate every defined key that have the same name but not the same fingerprint.
+    // And every undefined_key that have a same name than an other key.
+    fn check_for_duplicate(&mut self) {
+        self.duplicate_name = HashSet::new();
+        for a in &self.keys {
+            for b in &self.keys {
+                if a.name == b.name && a.fingerprint != b.fingerprint {
+                    self.duplicate_name.insert(a.fingerprint);
+                    self.duplicate_name.insert(b.fingerprint);
+                }
+            }
+        }
+
+        let mut all_sequence = HashSet::new();
+        let mut duplicate_sequence = HashSet::new();
+        for path in &mut self.recovery_paths {
+            if all_sequence.contains(&path.sequence) {
+                duplicate_sequence.insert(path.sequence);
+            } else {
+                all_sequence.insert(path.sequence);
+            }
+        }
+
+        for path in &mut self.recovery_paths {
+            path.duplicate_sequence = duplicate_sequence.contains(&path.sequence);
+        }
+    }
+
+    fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
+        let mut map = HashMap::new();
+        for key in &self.keys {
+            map.insert(key.key.master_fingerprint(), key.name.clone());
+        }
+        map
     }
 }
 
@@ -92,9 +162,7 @@ pub struct DefineDescriptor {
     network: Network,
     network_valid: bool,
     data_dir: Option<PathBuf>,
-    spending_keys: Vec<DescriptorKey>,
-    spending_threshold: usize,
-    recovery_paths: Vec<RecoveryPath>,
+    setup: HashMap<Network, Setup>,
 
     modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Mutex<Signer>>,
@@ -106,11 +174,10 @@ impl DefineDescriptor {
     pub fn new(signer: Arc<Mutex<Signer>>) -> Self {
         Self {
             network: Network::Bitcoin,
+            setup: HashMap::from([(Network::Bitcoin, Setup::new())]),
             data_dir: None,
             network_valid: true,
-            spending_keys: vec![DescriptorKey::default()],
-            spending_threshold: 1,
-            recovery_paths: vec![RecoveryPath::new()],
+
             modal: None,
             signer,
             error: None,
@@ -118,161 +185,24 @@ impl DefineDescriptor {
     }
 
     fn valid(&self) -> bool {
-        !self.spending_keys.is_empty()
-            && !self.spending_keys.iter().any(|k| k.key.is_none())
-            && !self.recovery_paths.iter().any(|path| !path.valid())
+        self.setup[&self.network].valid()
+    }
+    fn setup_mut(&mut self) -> &mut Setup {
+        self.setup
+            .get_mut(&self.network)
+            .expect("There is always one")
     }
 
     fn set_network(&mut self, network: Network) {
         self.network = network;
+        if self.setup.get(&self.network).is_none() {
+            self.setup.insert(self.network, Setup::new());
+        }
         self.signer.lock().unwrap().set_network(network);
         if let Some(mut network_datadir) = self.data_dir.clone() {
             network_datadir.push(self.network.to_string());
             self.network_valid = !network_datadir.exists();
         }
-        for key in self.spending_keys.iter_mut() {
-            key.check_network(self.network);
-        }
-        for path in self.recovery_paths.iter_mut() {
-            path.check_network(self.network);
-        }
-    }
-
-    // TODO: Improve algo
-    // Mark as duplicate every defined key that have the same name but not the same fingerprint.
-    // And every undefined_key that have a same name than an other key.
-    fn check_for_duplicate(&mut self) {
-        let mut all_keys = HashSet::new();
-        let mut duplicate_keys = HashSet::new();
-        let mut all_names: HashMap<String, Fingerprint> = HashMap::new();
-        let mut duplicate_names = HashSet::new();
-        let mut all_sequence = HashSet::new();
-        let mut duplicate_sequence = HashSet::new();
-        for spending_key in &self.spending_keys {
-            if let Some(key) = &spending_key.key {
-                if let Some(fg) = all_names.get(&spending_key.name) {
-                    if fg != &key.master_fingerprint() {
-                        duplicate_names.insert(spending_key.name.clone());
-                    }
-                } else {
-                    all_names.insert(spending_key.name.clone(), key.master_fingerprint());
-                }
-                if all_keys.contains(key) {
-                    duplicate_keys.insert(key.clone());
-                } else {
-                    all_keys.insert(key.clone());
-                }
-            }
-        }
-        for path in &mut self.recovery_paths {
-            if all_sequence.contains(&path.sequence) {
-                duplicate_sequence.insert(path.sequence);
-            } else {
-                all_sequence.insert(path.sequence);
-            }
-            for recovery_key in &path.keys {
-                if let Some(key) = &recovery_key.key {
-                    if let Some(fg) = all_names.get(&recovery_key.name) {
-                        if fg != &key.master_fingerprint() {
-                            duplicate_names.insert(recovery_key.name.clone());
-                        }
-                    } else {
-                        all_names.insert(recovery_key.name.clone(), key.master_fingerprint());
-                    }
-                    if all_keys.contains(key) {
-                        duplicate_keys.insert(key.clone());
-                    } else {
-                        all_keys.insert(key.clone());
-                    }
-                }
-            }
-        }
-        for spending_key in self.spending_keys.iter_mut() {
-            spending_key.duplicate_name = duplicate_names.contains(&spending_key.name);
-            if let Some(key) = &spending_key.key {
-                spending_key.duplicate_key = duplicate_keys.contains(key);
-            }
-        }
-
-        for path in &mut self.recovery_paths {
-            path.duplicate_sequence = duplicate_sequence.contains(&path.sequence);
-            for recovery_key in path.keys.iter_mut() {
-                recovery_key.duplicate_name = duplicate_names.contains(&recovery_key.name);
-                if let Some(key) = &recovery_key.key {
-                    recovery_key.duplicate_key = duplicate_keys.contains(key);
-                }
-            }
-        }
-    }
-
-    fn edit_alias_for_key_with_same_fingerprint(&mut self, name: String, fingerprint: Fingerprint) {
-        for spending_key in &mut self.spending_keys {
-            if spending_key.key.as_ref().map(|k| k.master_fingerprint()) == Some(fingerprint) {
-                spending_key.name = name.clone();
-            }
-        }
-        for path in &mut self.recovery_paths {
-            for recovery_key in &mut path.keys {
-                if recovery_key.key.as_ref().map(|k| k.master_fingerprint()) == Some(fingerprint) {
-                    recovery_key.name = name.clone();
-                }
-            }
-        }
-    }
-
-    /// Returns the maximum account index per key fingerprint
-    fn fingerprint_account_index_mappping(&self) -> HashMap<Fingerprint, ChildNumber> {
-        let mut mapping = HashMap::new();
-        let update_mapping =
-            |keys: &[DescriptorKey], mapping: &mut HashMap<Fingerprint, ChildNumber>| {
-                for key in keys {
-                    if let Some(DescriptorPublicKey::XPub(key)) = key.key.as_ref() {
-                        if let Some((fingerprint, derivation_path)) = key.origin.as_ref() {
-                            let index = if derivation_path.len() >= 4 {
-                                if derivation_path[0].to_string() == "48'" {
-                                    Some(derivation_path[2])
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            };
-                            if let Some(index) = index {
-                                if let Some(previous_index) = mapping.get(fingerprint) {
-                                    if index > *previous_index {
-                                        mapping.insert(*fingerprint, index);
-                                    }
-                                } else {
-                                    mapping.insert(*fingerprint, index);
-                                }
-                            }
-                        }
-                    }
-                }
-            };
-        update_mapping(&self.spending_keys, &mut mapping);
-
-        for path in &self.recovery_paths {
-            update_mapping(&path.keys, &mut mapping);
-        }
-        mapping
-    }
-
-    fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
-        let mut map = HashMap::new();
-        for spending_key in &self.spending_keys {
-            if let Some(key) = spending_key.key.as_ref() {
-                map.insert(key.master_fingerprint(), spending_key.name.clone());
-            }
-        }
-        for path in &self.recovery_paths {
-            for recovery_key in &path.keys {
-                if let Some(key) = recovery_key.key.as_ref() {
-                    map.insert(key.master_fingerprint(), recovery_key.name.clone());
-                }
-            }
-        }
-        map
     }
 }
 
@@ -280,6 +210,7 @@ impl Step for DefineDescriptor {
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, message: Message) -> Command<Message> {
+        let network = self.network;
         self.error = None;
         match message {
             Message::Close => {
@@ -287,58 +218,69 @@ impl Step for DefineDescriptor {
             }
             Message::Network(network) => self.set_network(network),
             Message::DefineDescriptor(message::DefineDescriptor::AddRecoveryPath) => {
-                self.recovery_paths.push(RecoveryPath::new());
+                self.setup_mut().recovery_paths.push(RecoveryPath::new());
             }
             Message::DefineDescriptor(message::DefineDescriptor::PrimaryPath(msg)) => match msg {
                 message::DefinePath::ThresholdEdited(value) => {
-                    self.spending_threshold = value;
+                    self.setup_mut().spending_threshold = value;
                 }
                 message::DefinePath::AddKey => {
-                    self.spending_keys.push(DescriptorKey::default());
-                    self.spending_threshold += 1;
+                    self.setup_mut().spending_keys.push(None);
+                    self.setup_mut().spending_threshold += 1;
                 }
                 message::DefinePath::Key(i, msg) => match msg {
                     message::DefineKey::Clipboard(key) => {
                         return Command::perform(async move { key }, Message::Clibpboard);
                     }
                     message::DefineKey::Edited(name, imported_key, kind) => {
-                        self.edit_alias_for_key_with_same_fingerprint(
-                            name.clone(),
-                            imported_key.master_fingerprint(),
-                        );
-
-                        if let Some(spending_key) = self.spending_keys.get_mut(i) {
-                            spending_key.name = name;
-                            spending_key.key = Some(imported_key);
-                            spending_key.device_kind = kind;
-                            spending_key.check_network(self.network);
+                        let fingerprint = imported_key.master_fingerprint();
+                        if let Some(key) = self
+                            .setup_mut()
+                            .keys
+                            .iter_mut()
+                            .find(|k| k.fingerprint == fingerprint)
+                        {
+                            key.name = name;
+                        } else {
+                            self.setup_mut().keys.push(Key {
+                                fingerprint,
+                                name,
+                                key: imported_key,
+                                device_kind: kind,
+                            });
                         }
+
+                        self.setup_mut().spending_keys[i] = Some(fingerprint);
+
                         self.modal = None;
-                        self.check_for_duplicate();
+                        self.setup_mut().check_for_duplicate();
                     }
                     message::DefineKey::Edit => {
-                        if let Some(spending_key) = self.spending_keys.get(i) {
-                            let modal = EditXpubModal::new(
-                                spending_key.name.clone(),
-                                spending_key.key.as_ref(),
-                                None,
-                                i,
-                                self.network,
-                                self.fingerprint_account_index_mappping(),
-                                self.keys_aliases(),
-                                self.signer.clone(),
-                            );
-                            let cmd = modal.load();
-                            self.modal = Some(Box::new(modal));
-                            return cmd;
-                        }
+                        let modal = EditXpubModal::new(
+                            self.setup_mut().spending_keys[i],
+                            None,
+                            i,
+                            network,
+                            self.signer.clone(),
+                            self.setup_mut()
+                                .keys
+                                .iter()
+                                .filter(|k| check_key_network(&k.key, network))
+                                .cloned()
+                                .collect(),
+                        );
+                        let cmd = modal.load();
+                        self.modal = Some(Box::new(modal));
+                        return cmd;
                     }
                     message::DefineKey::Delete => {
-                        self.spending_keys.remove(i);
-                        if self.spending_threshold > self.spending_keys.len() {
-                            self.spending_threshold -= 1;
+                        self.setup_mut().spending_keys.remove(i);
+                        if self.setup_mut().spending_threshold
+                            > self.setup_mut().spending_keys.len()
+                        {
+                            self.setup_mut().spending_threshold -= 1;
                         }
-                        self.check_for_duplicate();
+                        self.setup_mut().check_for_duplicate();
                     }
                 },
                 _ => {}
@@ -346,25 +288,25 @@ impl Step for DefineDescriptor {
             Message::DefineDescriptor(message::DefineDescriptor::RecoveryPath(i, msg)) => match msg
             {
                 message::DefinePath::ThresholdEdited(value) => {
-                    if let Some(path) = self.recovery_paths.get_mut(i) {
+                    if let Some(path) = self.setup_mut().recovery_paths.get_mut(i) {
                         path.threshold = value;
                     }
                 }
                 message::DefinePath::SequenceEdited(seq) => {
                     self.modal = None;
-                    if let Some(path) = self.recovery_paths.get_mut(i) {
+                    if let Some(path) = self.setup_mut().recovery_paths.get_mut(i) {
                         path.sequence = seq;
                     }
-                    self.check_for_duplicate();
+                    self.setup_mut().check_for_duplicate();
                 }
                 message::DefinePath::EditSequence => {
-                    if let Some(path) = self.recovery_paths.get(i) {
+                    if let Some(path) = self.setup_mut().recovery_paths.get(i) {
                         self.modal = Some(Box::new(EditSequenceModal::new(i, path.sequence)));
                     }
                 }
                 message::DefinePath::AddKey => {
-                    if let Some(path) = self.recovery_paths.get_mut(i) {
-                        path.keys.push(DescriptorKey::default());
+                    if let Some(path) = self.setup_mut().recovery_paths.get_mut(i) {
+                        path.keys.push(None);
                         path.threshold += 1;
                     }
                 }
@@ -373,59 +315,58 @@ impl Step for DefineDescriptor {
                         return Command::perform(async move { key }, Message::Clibpboard);
                     }
                     message::DefineKey::Edited(name, imported_key, kind) => {
-                        self.edit_alias_for_key_with_same_fingerprint(
-                            name.clone(),
-                            imported_key.master_fingerprint(),
-                        );
-
+                        let fingerprint = imported_key.master_fingerprint();
                         if let Some(key) = self
-                            .recovery_paths
-                            .get_mut(i)
-                            .and_then(|path| path.keys.get_mut(j))
+                            .setup_mut()
+                            .keys
+                            .iter_mut()
+                            .find(|k| k.fingerprint == fingerprint)
                         {
                             key.name = name;
-                            key.key = Some(imported_key);
-                            key.device_kind = kind;
-                            key.check_network(self.network);
+                        } else {
+                            self.setup_mut().keys.push(Key {
+                                fingerprint,
+                                name,
+                                key: imported_key,
+                                device_kind: kind,
+                            });
                         }
+
+                        self.setup_mut().recovery_paths[i].keys[j] = Some(fingerprint);
+
                         self.modal = None;
-                        self.check_for_duplicate();
+                        self.setup_mut().check_for_duplicate();
                     }
                     message::DefineKey::Edit => {
-                        if let Some(key) =
-                            self.recovery_paths.get(i).and_then(|path| path.keys.get(j))
-                        {
-                            let modal = EditXpubModal::new(
-                                key.name.clone(),
-                                key.key.as_ref(),
-                                Some(i),
-                                j,
-                                self.network,
-                                self.fingerprint_account_index_mappping(),
-                                self.keys_aliases(),
-                                self.signer.clone(),
-                            );
-                            let cmd = modal.load();
-                            self.modal = Some(Box::new(modal));
-                            return cmd;
-                        }
+                        let modal = EditXpubModal::new(
+                            self.setup[&self.network].recovery_paths[i].keys[j],
+                            Some(i),
+                            j,
+                            self.network,
+                            self.signer.clone(),
+                            self.setup[&self.network].keys.clone(),
+                        );
+                        let cmd = modal.load();
+                        self.modal = Some(Box::new(modal));
+                        return cmd;
                     }
                     message::DefineKey::Delete => {
-                        if let Some(path) = self.recovery_paths.get_mut(i) {
+                        if let Some(path) = self.setup_mut().recovery_paths.get_mut(i) {
                             path.keys.remove(j);
                             if path.threshold > path.keys.len() {
                                 path.threshold -= 1;
                             }
                         }
                         if self
+                            .setup_mut()
                             .recovery_paths
                             .get(i)
                             .map(|path| path.keys.is_empty())
                             .unwrap_or(false)
                         {
-                            self.recovery_paths.remove(i);
+                            self.setup_mut().recovery_paths.remove(i);
                         }
-                        self.check_for_duplicate();
+                        self.setup_mut().check_for_duplicate();
                     }
                 },
             },
@@ -448,57 +389,61 @@ impl Step for DefineDescriptor {
         ctx.keys = Vec::new();
         let mut hw_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
-        for spending_key in self.spending_keys.iter().clone() {
-            if let Some(DescriptorPublicKey::XPub(xpub)) = spending_key.key.as_ref() {
+        let mut key_derivation_index = HashMap::<Fingerprint, usize>::new();
+        for spending_key in self.setup[&self.network].spending_keys.iter().clone() {
+            let fingerprint = spending_key.expect("Must be present at this step");
+            let key = self.setup[&self.network]
+                .keys
+                .iter()
+                .find(|key| key.key.master_fingerprint() == fingerprint)
+                .expect("Must be present at this step");
+            if let DescriptorPublicKey::XPub(xpub) = &key.key {
                 if let Some((master_fingerprint, _)) = xpub.origin {
                     ctx.keys.push(KeySetting {
                         master_fingerprint,
-                        name: spending_key.name.clone(),
+                        name: key.name.clone(),
                     });
-                    if spending_key.device_kind.is_some() {
+                    if key.device_kind.is_some() {
                         hw_is_used = true;
                     }
                 }
-                let xpub = DescriptorMultiXKey {
-                    origin: xpub.origin.clone(),
-                    xkey: xpub.xkey,
-                    derivation_paths: DerivPaths::new(vec![
-                        DerivationPath::from_str("m/0").unwrap(),
-                        DerivationPath::from_str("m/1").unwrap(),
-                    ])
-                    .unwrap(),
-                    wildcard: Wildcard::Unhardened,
-                };
-                spending_keys.push(DescriptorPublicKey::MultiXPub(xpub));
+                let derivation_index = key_derivation_index.get(&fingerprint).unwrap_or(&0);
+                spending_keys.push(DescriptorPublicKey::MultiXPub(new_multixkey_from_xpub(
+                    xpub.clone(),
+                    *derivation_index,
+                )));
+                key_derivation_index.insert(fingerprint, derivation_index + 1);
             }
         }
 
         let mut recovery_paths = BTreeMap::new();
 
-        for path in self.recovery_paths.iter_mut() {
+        for path in &self.setup[&self.network].recovery_paths {
             let mut recovery_keys: Vec<DescriptorPublicKey> = Vec::new();
             for recovery_key in path.keys.iter().clone() {
-                if let Some(DescriptorPublicKey::XPub(xpub)) = recovery_key.key.as_ref() {
+                let fingerprint = recovery_key.expect("Must be present at this step");
+                let key = self.setup[&self.network]
+                    .keys
+                    .iter()
+                    .find(|key| key.key.master_fingerprint() == fingerprint)
+                    .expect("Must be present at this step");
+                if let DescriptorPublicKey::XPub(xpub) = &key.key {
                     if let Some((master_fingerprint, _)) = xpub.origin {
                         ctx.keys.push(KeySetting {
                             master_fingerprint,
-                            name: recovery_key.name.clone(),
+                            name: key.name.clone(),
                         });
-                        if recovery_key.device_kind.is_some() {
+                        if key.device_kind.is_some() {
                             hw_is_used = true;
                         }
                     }
-                    let xpub = DescriptorMultiXKey {
-                        origin: xpub.origin.clone(),
-                        xkey: xpub.xkey,
-                        derivation_paths: DerivPaths::new(vec![
-                            DerivationPath::from_str("m/0").unwrap(),
-                            DerivationPath::from_str("m/1").unwrap(),
-                        ])
-                        .unwrap(),
-                        wildcard: Wildcard::Unhardened,
-                    };
-                    recovery_keys.push(DescriptorPublicKey::MultiXPub(xpub));
+
+                    let derivation_index = key_derivation_index.get(&fingerprint).unwrap_or(&0);
+                    recovery_keys.push(DescriptorPublicKey::MultiXPub(new_multixkey_from_xpub(
+                        xpub.clone(),
+                        *derivation_index,
+                    )));
+                    key_derivation_index.insert(fingerprint, derivation_index + 1);
                 }
             }
 
@@ -518,7 +463,7 @@ impl Step for DefineDescriptor {
         let spending_keys = if spending_keys.len() == 1 {
             PathInfo::Single(spending_keys[0].clone())
         } else {
-            PathInfo::Multi(self.spending_threshold, spending_keys)
+            PathInfo::Multi(self.setup[&self.network].spending_threshold, spending_keys)
         };
 
         let policy = match LianaPolicy::new(spending_keys, recovery_paths) {
@@ -535,29 +480,43 @@ impl Step for DefineDescriptor {
     }
 
     fn view(&self, progress: (usize, usize)) -> Element<Message> {
+        let aliases = self.setup[&self.network].keys_aliases();
         let content = view::define_descriptor(
             progress,
             self.network,
             self.network_valid,
-            self.spending_keys
+            self.setup[&self.network]
+                .spending_keys
                 .iter()
                 .enumerate()
                 .map(|(i, key)| {
-                    key.view().map(move |msg| {
+                    if let Some(key) = key {
+                        view::defined_descriptor_key(
+                            aliases.get(key).unwrap().to_string(),
+                            self.setup[&self.network].duplicate_name.contains(key),
+                        )
+                    } else {
+                        view::undefined_descriptor_key()
+                    }
+                    .map(move |msg| {
                         Message::DefineDescriptor(message::DefineDescriptor::PrimaryPath(
                             message::DefinePath::Key(i, msg),
                         ))
                     })
                 })
                 .collect(),
-            self.spending_threshold,
-            self.recovery_paths
+            self.setup[&self.network].spending_threshold,
+            self.setup[&self.network]
+                .recovery_paths
                 .iter()
                 .enumerate()
                 .map(|(i, path)| {
-                    path.view().map(move |msg| {
-                        Message::DefineDescriptor(message::DefineDescriptor::RecoveryPath(i, msg))
-                    })
+                    path.view(&aliases, &self.setup[&self.network].duplicate_name)
+                        .map(move |msg| {
+                            Message::DefineDescriptor(message::DefineDescriptor::RecoveryPath(
+                                i, msg,
+                            ))
+                        })
                 })
                 .collect(),
             self.valid(),
@@ -577,46 +536,28 @@ impl Step for DefineDescriptor {
     }
 }
 
-pub struct DescriptorKey {
-    pub name: String,
+fn new_multixkey_from_xpub(
+    xpub: DescriptorXKey<ExtendedPubKey>,
+    derivation_index: usize,
+) -> DescriptorMultiXKey<ExtendedPubKey> {
+    DescriptorMultiXKey {
+        origin: xpub.origin,
+        xkey: xpub.xkey,
+        derivation_paths: DerivPaths::new(vec![
+            DerivationPath::from_str(&format!("m/{}", 2 * derivation_index)).unwrap(),
+            DerivationPath::from_str(&format!("m/{}", 2 * derivation_index + 1)).unwrap(),
+        ])
+        .unwrap(),
+        wildcard: Wildcard::Unhardened,
+    }
+}
+
+#[derive(Clone)]
+pub struct Key {
     pub device_kind: Option<DeviceKind>,
-    pub valid: bool,
-    pub key: Option<DescriptorPublicKey>,
-    pub duplicate_key: bool,
-    pub duplicate_name: bool,
-}
-
-impl Default for DescriptorKey {
-    fn default() -> Self {
-        Self {
-            name: "".to_string(),
-            device_kind: None,
-            valid: true,
-            key: None,
-            duplicate_key: false,
-            duplicate_name: false,
-        }
-    }
-}
-
-impl DescriptorKey {
-    pub fn check_network(&mut self, network: Network) {
-        if let Some(key) = &self.key {
-            self.valid = check_key_network(key, network);
-        }
-    }
-
-    pub fn view(&self) -> Element<message::DefineKey> {
-        match &self.key {
-            None => view::undefined_descriptor_key(),
-            Some(_) => view::defined_descriptor_key(
-                &self.name,
-                self.valid,
-                self.duplicate_key,
-                self.duplicate_name,
-            ),
-        }
-    }
+    pub name: String,
+    pub fingerprint: Fingerprint,
+    pub key: DescriptorPublicKey,
 }
 
 fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
@@ -713,13 +654,11 @@ pub struct EditXpubModal {
     error: Option<Error>,
     processing: bool,
 
-    keys_aliases: HashMap<Fingerprint, String>,
-    account_indexes: HashMap<Fingerprint, ChildNumber>,
-
     form_name: form::Value<String>,
     form_xpub: form::Value<String>,
     edit_name: bool,
 
+    keys: Vec<Key>,
     hws: Vec<HardwareWallet>,
     hot_signer: Arc<Mutex<Signer>>,
     hot_signer_fingerprint: Fingerprint,
@@ -729,27 +668,40 @@ pub struct EditXpubModal {
 impl EditXpubModal {
     #[allow(clippy::too_many_arguments)]
     fn new(
-        name: String,
-        key: Option<&DescriptorPublicKey>,
+        key: Option<Fingerprint>,
         path_index: Option<usize>,
         key_index: usize,
         network: Network,
-        account_indexes: HashMap<Fingerprint, ChildNumber>,
-        keys_aliases: HashMap<Fingerprint, String>,
         hot_signer: Arc<Mutex<Signer>>,
+        keys: Vec<Key>,
     ) -> Self {
         let hot_signer_fingerprint = hot_signer.lock().unwrap().fingerprint();
         Self {
             form_name: form::Value {
                 valid: true,
-                value: name,
+                value: key
+                    .map(|fg| {
+                        keys.iter()
+                            .find(|k| k.fingerprint == fg)
+                            .expect("must be stored")
+                            .name
+                            .clone()
+                    })
+                    .unwrap_or_else(String::new),
             },
             form_xpub: form::Value {
                 valid: true,
-                value: key.map(|k| k.to_string()).unwrap_or_else(String::new),
+                value: key
+                    .map(|fg| {
+                        keys.iter()
+                            .find(|k| k.fingerprint == fg)
+                            .expect("must be stored")
+                            .key
+                            .to_string()
+                    })
+                    .unwrap_or_else(String::new),
             },
-            keys_aliases,
-            account_indexes,
+            keys,
             path_index,
             key_index,
             processing: false,
@@ -757,15 +709,14 @@ impl EditXpubModal {
             error: None,
             network,
             edit_name: false,
-            chosen_signer: key.map(|k| (k.master_fingerprint(), None)),
+            chosen_signer: key.map(|k| (k, None)),
             hot_signer_fingerprint,
             hot_signer,
         }
     }
     fn load(&self) -> Command<Message> {
-        let keys_aliases = self.keys_aliases.clone();
         Command::perform(
-            async move { list_unregistered_hardware_wallets(Some(&keys_aliases)).await },
+            async move { list_unregistered_hardware_wallets().await },
             Message::ConnectedHardwareWallets,
         )
     }
@@ -788,18 +739,8 @@ impl DescriptorEditModal for EditXpubModal {
                 {
                     self.chosen_signer = Some((*fingerprint, Some(*kind)));
                     self.processing = true;
-                    // If another account n exists, the key is retrieved for the account n+1
-                    let account_index = self
-                        .account_indexes
-                        .get(fingerprint)
-                        .map(|account_index| account_index.increment().unwrap())
-                        .unwrap_or_else(|| ChildNumber::from_hardened_idx(0).unwrap());
                     return Command::perform(
-                        get_extended_pubkey(
-                            device.clone(),
-                            *fingerprint,
-                            generate_derivation_path(self.network, account_index),
-                        ),
+                        get_extended_pubkey(device.clone(), *fingerprint, self.network),
                         |res| {
                             Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
                                 message::ImportKeyModal::HWXpubImported(res),
@@ -827,20 +768,20 @@ impl DescriptorEditModal for EditXpubModal {
                 let fingerprint = self.hot_signer.lock().unwrap().fingerprint();
                 self.chosen_signer = Some((fingerprint, None));
                 self.form_xpub.valid = true;
-                if let Some(alias) = self.keys_aliases.get(&fingerprint) {
+                if let Some(alias) = self
+                    .keys
+                    .iter()
+                    .find(|key| key.fingerprint == fingerprint)
+                    .map(|k| k.name.clone())
+                {
                     self.form_name.valid = true;
-                    self.form_name.value = alias.clone();
+                    self.form_name.value = alias;
                     self.edit_name = false;
                 } else {
                     self.edit_name = true;
                     self.form_name.value = String::new();
                 }
-                let account_index = self
-                    .account_indexes
-                    .get(&fingerprint)
-                    .map(|account_index| account_index.increment().unwrap())
-                    .unwrap_or_else(|| ChildNumber::from_hardened_idx(0).unwrap());
-                let derivation_path = generate_derivation_path(self.network, account_index);
+                let derivation_path = default_derivation_path(self.network);
                 self.form_xpub.value = format!(
                     "[{}{}]{}",
                     fingerprint,
@@ -856,15 +797,20 @@ impl DescriptorEditModal for EditXpubModal {
                     self.processing = false;
                     match res {
                         Ok(key) => {
-                            if let Some(alias) = self.keys_aliases.get(&key.master_fingerprint()) {
+                            if let Some(alias) = self
+                                .keys
+                                .iter()
+                                .find(|k| k.fingerprint == key.master_fingerprint())
+                                .map(|k| k.name.clone())
+                            {
                                 self.form_name.valid = true;
-                                self.form_name.value = alias.clone();
+                                self.form_name.value = alias;
                                 self.edit_name = false;
                             } else {
                                 self.edit_name = true;
                                 self.form_name.value = String::new();
                             }
-                            self.form_xpub.valid = true;
+                            self.form_xpub.valid = check_key_network(&key, self.network);
                             self.form_xpub.value = key.to_string();
                         }
                         Err(e) => {
@@ -886,10 +832,19 @@ impl DescriptorEditModal for EditXpubModal {
                         if !key.derivation_path.is_master() {
                             self.form_xpub.valid = false;
                         } else if let Some((fingerprint, _)) = key.origin {
-                            self.form_xpub.valid = true;
-                            if let Some(alias) = self.keys_aliases.get(&fingerprint) {
+                            self.form_xpub.valid = if self.network == Network::Bitcoin {
+                                key.xkey.network == Network::Bitcoin
+                            } else {
+                                key.xkey.network == Network::Testnet
+                            };
+                            if let Some(alias) = self
+                                .keys
+                                .iter()
+                                .find(|k| k.fingerprint == fingerprint)
+                                .map(|k| k.name.clone())
+                            {
                                 self.form_name.valid = true;
-                                self.form_name.value = alias.clone();
+                                self.form_name.value = alias;
                                 self.edit_name = false;
                             } else {
                                 self.edit_name = true;
@@ -937,20 +892,75 @@ impl DescriptorEditModal for EditXpubModal {
                         }
                     }
                 }
+                message::ImportKeyModal::SelectKey(i) => {
+                    if let Some(key) = self.keys.get(i) {
+                        self.chosen_signer = Some((key.fingerprint, key.device_kind));
+                        self.form_xpub.value = key.key.to_string();
+                        self.form_xpub.valid = true;
+                        self.form_name.value = key.name.clone();
+                        self.form_name.valid = true;
+                    }
+                }
             },
             _ => {}
         };
         Command::none()
     }
     fn view(&self) -> Element<Message> {
+        let chosen_signer = self.chosen_signer.map(|s| s.0);
         view::edit_key_modal(
             self.network,
-            &self.hws,
+            self.hws
+                .iter()
+                .enumerate()
+                .filter_map(|(i, hw)| {
+                    if self
+                        .keys
+                        .iter()
+                        .any(|k| Some(k.fingerprint) == hw.fingerprint())
+                    {
+                        None
+                    } else {
+                        Some(view::hw_list_view(
+                            i,
+                            hw,
+                            hw.fingerprint() == chosen_signer,
+                            self.processing,
+                            !self.processing
+                                && hw.fingerprint() == chosen_signer
+                                && self.form_xpub.valid
+                                && !self.form_xpub.value.is_empty(),
+                        ))
+                    }
+                })
+                .collect(),
+            self.keys
+                .iter()
+                .enumerate()
+                .filter_map(|(i, key)| {
+                    if key.fingerprint == self.hot_signer_fingerprint {
+                        None
+                    } else {
+                        Some(view::key_list_view(
+                            i,
+                            &key.name,
+                            &key.fingerprint,
+                            key.device_kind.as_ref(),
+                            Some(key.fingerprint) == chosen_signer,
+                        ))
+                    }
+                })
+                .collect(),
             self.error.as_ref(),
-            self.processing,
             self.chosen_signer.map(|s| s.0),
             &self.hot_signer_fingerprint,
-            self.keys_aliases.get(&self.hot_signer_fingerprint),
+            self.keys.iter().find_map(|k| {
+                if k.fingerprint == self.hot_signer_fingerprint {
+                    Some(&k.name)
+                } else {
+                    None
+                }
+            }),
             &self.form_xpub,
             &self.form_name,
             self.edit_name,
@@ -958,12 +968,12 @@ impl DescriptorEditModal for EditXpubModal {
     }
 }
 
-fn generate_derivation_path(network: Network, account_index: ChildNumber) -> DerivationPath {
-    DerivationPath::from_str(&{
+fn default_derivation_path(network: Network) -> DerivationPath {
+    DerivationPath::from_str({
         if network == Network::Bitcoin {
-            format!("m/48'/0'/{}/2'", account_index)
+            "m/48'/0'/0'/2'"
         } else {
-            format!("m/48'/1'/{}/2'", account_index)
+            "m/48'/1'/0'/2'"
         }
     })
     .unwrap()
@@ -974,8 +984,9 @@ fn generate_derivation_path(network: Network, account_index: ChildNumber) -> Der
 async fn get_extended_pubkey(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     fingerprint: Fingerprint,
-    derivation_path: DerivationPath,
+    network: Network,
 ) -> Result<DescriptorPublicKey, Error> {
+    let derivation_path = default_derivation_path(network);
     let xkey = hw
         .get_extended_pubkey(&derivation_path)
         .await
@@ -1038,14 +1049,8 @@ impl HardwareWalletXpubs {
             let fingerprint = *fingerprint;
             self.processing = true;
             self.error = None;
-            let derivation_path = generate_derivation_path(network, self.next_account);
             Command::perform(
-                async move {
-                    (
-                        i,
-                        get_extended_pubkey(device, fingerprint, derivation_path).await,
-                    )
-                },
+                async move { (i, get_extended_pubkey(device, fingerprint, network).await) },
                 |(i, res)| Message::ImportXpub(i, res),
             )
         } else {
@@ -1085,9 +1090,9 @@ impl SignerXpubs {
     }
 
     fn select(&mut self, network: Network) {
-        let derivation_path = generate_derivation_path(network, self.next_account);
         self.next_account = self.next_account.increment().unwrap();
         let signer = self.signer.lock().unwrap();
+        let derivation_path = default_derivation_path(network);
         self.xpubs.push(format!(
             "[{}{}]{}",
             signer.fingerprint(),
@@ -1191,7 +1196,7 @@ impl Step for ParticipateXpub {
 
     fn load(&self) -> Command<Message> {
         Command::perform(
-            list_unregistered_hardware_wallets(None),
+            list_unregistered_hardware_wallets(),
             Message::ConnectedHardwareWallets,
         )
     }
@@ -1396,9 +1401,8 @@ impl Step for RegisterDescriptor {
         true
     }
     fn load(&self) -> Command<Message> {
-        let keys_aliases = self.keys_aliases.clone();
         Command::perform(
-            async move { list_unregistered_hardware_wallets(Some(&keys_aliases)).await },
+            async move { list_unregistered_hardware_wallets().await },
             Message::ConnectedHardwareWallets,
         )
     }
@@ -1494,6 +1498,9 @@ mod tests {
                 }
             }
         }
+        pub async fn load(&self, ctx: &Context) {
+            self.step.lock().unwrap().load_context(ctx);
+        }
     }
 
     #[tokio::test]
@@ -1579,10 +1586,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_define_descriptor_stores_if_hw_is_used() {
-        let mut ctx = Context::new(Network::Signet, PathBuf::from_str("/").unwrap());
+        let mut ctx = Context::new(Network::Testnet, PathBuf::from_str("/").unwrap());
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(Arc::new(
-            Mutex::new(Signer::generate(Network::Bitcoin).unwrap()),
+            Mutex::new(Signer::generate(Network::Testnet).unwrap()),
         )));
+        sandbox.load(&ctx).await;
 
         let specter_key = message::DefinePath::Key(
             0,
