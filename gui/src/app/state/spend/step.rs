@@ -26,10 +26,25 @@ use crate::{
 /// See: https://github.com/wizardsardine/liana/blob/master/src/commands/mod.rs#L32
 const DUST_OUTPUT_SATS: u64 = 5_000;
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct TransactionDraft {
+    network: Network,
     inputs: Vec<Coin>,
     generated: Option<Psbt>,
+    batch_label: Option<String>,
+    labels: HashMap<String, String>,
+}
+
+impl TransactionDraft {
+    pub fn new(network: Network) -> Self {
+        Self {
+            network,
+            inputs: Vec::new(),
+            generated: None,
+            batch_label: None,
+            labels: HashMap::new(),
+        }
+    }
 }
 
 pub trait Step {
@@ -53,6 +68,8 @@ pub struct DefineSpend {
     descriptor: LianaDescriptor,
     timelock: u16,
     coins: Vec<(Coin, bool)>,
+    coins_labels: HashMap<String, String>,
+    batch_label: form::Value<String>,
     amount_left_to_select: Option<Amount>,
     feerate: form::Value<String>,
     generated: Option<Psbt>,
@@ -88,6 +105,8 @@ impl DefineSpend {
             timelock,
             generated: None,
             coins,
+            coins_labels: HashMap::new(),
+            batch_label: form::Value::default(),
             recipients: vec![Recipient::default()],
             is_valid: false,
             is_duplicate: false,
@@ -128,7 +147,9 @@ impl DefineSpend {
     }
 
     fn check_valid(&mut self) {
-        self.is_valid = self.feerate.valid && !self.feerate.value.is_empty();
+        self.is_valid = self.feerate.valid
+            && !self.feerate.value.is_empty()
+            && (self.batch_label.valid || self.recipients.len() < 2);
         self.is_duplicate = false;
         if !self.coins.iter().any(|(_, selected)| *selected) {
             self.is_valid = false;
@@ -216,94 +237,145 @@ impl Step for DefineSpend {
         cache: &Cache,
         message: Message,
     ) -> Command<Message> {
-        if let Message::View(view::Message::CreateSpend(msg)) = message {
-            match msg {
-                view::CreateSpendMessage::AddRecipient => {
-                    self.recipients.push(Recipient::default());
-                }
-                view::CreateSpendMessage::DeleteRecipient(i) => {
-                    self.recipients.remove(i);
-                }
-                view::CreateSpendMessage::RecipientEdited(i, _, _) => {
-                    self.recipients
-                        .get_mut(i)
-                        .unwrap()
-                        .update(cache.network, msg);
-                }
-
-                view::CreateSpendMessage::FeerateEdited(s) => {
-                    if let Ok(value) = s.parse::<u64>() {
-                        self.feerate.value = s;
-                        self.feerate.valid = value != 0;
-                        self.amount_left_to_select();
-                    } else if s.is_empty() {
-                        self.feerate.value = "".to_string();
-                        self.feerate.valid = true;
-                        self.amount_left_to_select = None;
-                    } else {
-                        self.feerate.valid = false;
-                        self.amount_left_to_select = None;
+        match message {
+            Message::View(view::Message::CreateSpend(msg)) => {
+                match msg {
+                    view::CreateSpendMessage::BatchLabelEdited(label) => {
+                        self.batch_label.valid = label.len() <= 100;
+                        self.batch_label.value = label;
                     }
-                    self.warning = None;
-                }
-                view::CreateSpendMessage::Generate => {
-                    let inputs: Vec<OutPoint> = self
-                        .coins
-                        .iter()
-                        .filter_map(
-                            |(coin, selected)| if *selected { Some(coin.outpoint) } else { None },
-                        )
-                        .collect();
-                    let mut outputs: HashMap<Address<address::NetworkUnchecked>, u64> =
-                        HashMap::new();
-                    for recipient in &self.recipients {
-                        outputs.insert(
-                            Address::from_str(&recipient.address.value).expect("Checked before"),
-                            recipient.amount().expect("Checked before"),
+                    view::CreateSpendMessage::AddRecipient => {
+                        self.recipients.push(Recipient::default());
+                    }
+                    view::CreateSpendMessage::DeleteRecipient(i) => {
+                        self.recipients.remove(i);
+                        if self.recipients.len() < 2 {
+                            self.batch_label.valid = true;
+                            self.batch_label.value = "".to_string();
+                        }
+                    }
+                    view::CreateSpendMessage::RecipientEdited(i, _, _) => {
+                        self.recipients
+                            .get_mut(i)
+                            .unwrap()
+                            .update(cache.network, msg);
+                    }
+
+                    view::CreateSpendMessage::FeerateEdited(s) => {
+                        if let Ok(value) = s.parse::<u64>() {
+                            self.feerate.value = s;
+                            self.feerate.valid = value != 0;
+                            self.amount_left_to_select();
+                        } else if s.is_empty() {
+                            self.feerate.value = "".to_string();
+                            self.feerate.valid = true;
+                            self.amount_left_to_select = None;
+                        } else {
+                            self.feerate.valid = false;
+                            self.amount_left_to_select = None;
+                        }
+                        self.warning = None;
+                    }
+                    view::CreateSpendMessage::Generate => {
+                        let inputs: Vec<OutPoint> = self
+                            .coins
+                            .iter()
+                            .filter_map(
+                                |(coin, selected)| {
+                                    if *selected {
+                                        Some(coin.outpoint)
+                                    } else {
+                                        None
+                                    }
+                                },
+                            )
+                            .collect();
+                        let mut outputs: HashMap<Address<address::NetworkUnchecked>, u64> =
+                            HashMap::new();
+                        for recipient in &self.recipients {
+                            outputs.insert(
+                                Address::from_str(&recipient.address.value)
+                                    .expect("Checked before"),
+                                recipient.amount().expect("Checked before"),
+                            );
+                        }
+                        let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
+                        self.warning = None;
+                        return Command::perform(
+                            async move {
+                                daemon
+                                    .create_spend_tx(&inputs, &outputs, feerate_vb)
+                                    .map(|res| res.psbt)
+                                    .map_err(|e| e.into())
+                            },
+                            Message::Psbt,
                         );
                     }
-                    let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
-                    self.warning = None;
-                    return Command::perform(
-                        async move {
-                            daemon
-                                .create_spend_tx(&inputs, &outputs, feerate_vb)
-                                .map(|res| res.psbt)
-                                .map_err(|e| e.into())
-                        },
-                        Message::Psbt,
-                    );
-                }
-                view::CreateSpendMessage::SelectCoin(i) => {
-                    if let Some(coin) = self.coins.get_mut(i) {
-                        coin.1 = !coin.1;
-                        self.amount_left_to_select();
+                    view::CreateSpendMessage::SelectCoin(i) => {
+                        if let Some(coin) = self.coins.get_mut(i) {
+                            coin.1 = !coin.1;
+                            self.amount_left_to_select();
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
+                self.check_valid();
             }
-            self.check_valid();
-            Command::none()
-        } else {
-            if let Message::Psbt(res) = message {
-                match res {
-                    Ok(psbt) => {
-                        self.generated = Some(psbt);
-                        return Command::perform(async {}, |_| Message::View(view::Message::Next));
-                    }
-                    Err(e) => self.warning = Some(e),
+            Message::Psbt(res) => match res {
+                Ok(psbt) => {
+                    self.generated = Some(psbt);
+                    return Command::perform(async {}, |_| Message::View(view::Message::Next));
                 }
-            }
-            Command::none()
-        }
+                Err(e) => self.warning = Some(e),
+            },
+            Message::Labels(res) => match res {
+                Ok(labels) => {
+                    self.coins_labels = labels;
+                }
+                Err(e) => self.warning = Some(e),
+            },
+            _ => {}
+        };
+        Command::none()
     }
 
     fn apply(&self, draft: &mut TransactionDraft) {
         draft.inputs = self
             .coins
             .iter()
-            .filter_map(|(coin, selected)| if *selected { Some(coin.clone()) } else { None })
+            .filter_map(|(coin, selected)| if *selected { Some(coin) } else { None })
+            .cloned()
             .collect();
+        if let Some(psbt) = &self.generated {
+            draft.labels = self.coins_labels.clone();
+            for (i, output) in psbt.unsigned_tx.output.iter().enumerate() {
+                if let Some(label) = self
+                    .recipients
+                    .iter()
+                    .find(|recipient| {
+                        !recipient.label.value.is_empty()
+                            && Address::from_str(&recipient.address.value)
+                                .unwrap()
+                                .payload
+                                .matches_script_pubkey(&output.script_pubkey)
+                            && output.value == recipient.amount().unwrap()
+                    })
+                    .map(|recipient| recipient.label.value.to_string())
+                {
+                    draft.labels.insert(
+                        OutPoint {
+                            txid: psbt.unsigned_tx.txid(),
+                            vout: i as u32,
+                        }
+                        .to_string(),
+                        label,
+                    );
+                }
+            }
+        }
+        if self.recipients.len() > 1 {
+            draft.batch_label = Some(self.batch_label.value.clone());
+        }
         draft.generated = self.generated.clone();
     }
 
@@ -326,6 +398,8 @@ impl Step for DefineSpend {
             self.is_duplicate,
             self.timelock,
             &self.coins,
+            &self.coins_labels,
+            &self.batch_label,
             self.amount_left_to_select.as_ref(),
             &self.feerate,
             self.warning.as_ref(),
@@ -335,6 +409,7 @@ impl Step for DefineSpend {
 
 #[derive(Default)]
 struct Recipient {
+    label: form::Value<String>,
     address: form::Value<String>,
     amount: form::Value<String>,
 }
@@ -372,6 +447,7 @@ impl Recipient {
             && self.address.valid
             && !self.amount.value.is_empty()
             && self.amount.valid
+            && self.label.valid
     }
 
     fn update(&mut self, network: Network, message: view::CreateSpendMessage) {
@@ -399,12 +475,16 @@ impl Recipient {
                     self.amount.valid = true;
                 }
             }
+            view::CreateSpendMessage::RecipientEdited(_, "label", label) => {
+                self.label.valid = label.len() <= 100;
+                self.label.value = label;
+            }
             _ => {}
         };
     }
 
     fn view(&self, i: usize) -> Element<view::CreateSpendMessage> {
-        view::spend::recipient_view(i, &self.address, &self.amount)
+        view::spend::recipient_view(i, &self.address, &self.amount, &self.label)
     }
 }
 
@@ -430,17 +510,22 @@ impl Step for SaveSpend {
             .main_descriptor
             .partial_spend_info(&psbt)
             .unwrap();
-        self.spend = Some(psbt::PsbtState::new(
-            self.wallet.clone(),
-            SpendTx::new(
-                None,
-                psbt,
-                draft.inputs.clone(),
-                sigs,
-                self.wallet.main_descriptor.max_sat_vbytes(),
-            ),
-            false,
-        ));
+
+        let mut tx = SpendTx::new(
+            None,
+            psbt,
+            draft.inputs.clone(),
+            sigs,
+            self.wallet.main_descriptor.max_sat_vbytes(),
+            draft.network,
+        );
+        tx.labels = draft.labels.clone();
+        if let Some(label) = &draft.batch_label {
+            tx.labels
+                .insert(tx.psbt.unsigned_tx.txid().to_string(), label.clone());
+        }
+
+        self.spend = Some(psbt::PsbtState::new(self.wallet.clone(), tx, false));
     }
 
     fn update(
@@ -464,7 +549,9 @@ impl Step for SaveSpend {
             spend.saved,
             &spend.desc_policy,
             &spend.wallet.keys_aliases,
+            &spend.labels_edited.cache(),
             cache.network,
+            spend.warning.as_ref(),
         );
         if let Some(action) = &spend.action {
             modal::Modal::new(content, action.view())

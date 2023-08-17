@@ -1,4 +1,5 @@
 mod coins;
+mod label;
 mod psbt;
 mod psbts;
 mod recovery;
@@ -6,6 +7,7 @@ mod settings;
 mod spend;
 mod transactions;
 
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,10 +19,11 @@ use liana_ui::widget::*;
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet};
 
 use crate::daemon::{
-    model::{remaining_sequence, Coin, HistoryTransaction},
+    model::{remaining_sequence, Coin, HistoryTransaction, LabelItem, Labelled},
     Daemon,
 };
 pub use coins::CoinsPanel;
+use label::LabelsEdited;
 pub use psbts::PsbtsPanel;
 pub use recovery::RecoveryPanel;
 pub use settings::SettingsState;
@@ -54,6 +57,7 @@ pub struct Home {
     pending_events: Vec<HistoryTransaction>,
     events: Vec<HistoryTransaction>,
     selected_event: Option<(usize, usize)>,
+    labels_edited: LabelsEdited,
     warning: Option<Error>,
 }
 
@@ -80,6 +84,7 @@ impl Home {
             selected_event: None,
             events: Vec::new(),
             pending_events: Vec::new(),
+            labels_edited: LabelsEdited::default(),
             warning: None,
         }
     }
@@ -93,7 +98,13 @@ impl State for Home {
             } else {
                 &self.events[i - self.pending_events.len()]
             };
-            view::home::payment_view(cache, event, output_index, self.warning.as_ref())
+            view::home::payment_view(
+                cache,
+                event,
+                output_index,
+                &self.labels_edited.cache(),
+                self.warning.as_ref(),
+            )
         } else {
             view::dashboard(
                 &Menu::Home,
@@ -174,6 +185,23 @@ impl State for Home {
                     }
                 }
             },
+            Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
+                match self.labels_edited.update(
+                    daemon,
+                    message,
+                    self.pending_events
+                        .iter_mut()
+                        .map(|tx| tx as &mut dyn Labelled)
+                        .chain(self.events.iter_mut().map(|tx| tx as &mut dyn Labelled)),
+                ) {
+                    Ok(cmd) => {
+                        return cmd;
+                    }
+                    Err(e) => {
+                        self.warning = Some(e);
+                    }
+                };
+            }
             Message::View(view::Message::Close) => {
                 self.selected_event = None;
             }
@@ -265,9 +293,28 @@ impl From<Home> for Box<dyn State> {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct Addresses {
+    list: Vec<Address>,
+    labels: HashMap<String, String>,
+}
+
+impl Labelled for Addresses {
+    fn labelled(&self) -> Vec<LabelItem> {
+        self.list
+            .iter()
+            .map(|a| LabelItem::Address(a.clone()))
+            .collect()
+    }
+    fn labels(&mut self) -> &mut HashMap<String, String> {
+        &mut self.labels
+    }
+}
+
 #[derive(Default)]
 pub struct ReceivePanel {
-    addresses: Vec<Address>,
+    addresses: Addresses,
+    labels_edited: LabelsEdited,
     qr_code: Option<qr_code::State>,
     warning: Option<Error>,
 }
@@ -278,7 +325,12 @@ impl State for ReceivePanel {
             &Menu::Receive,
             cache,
             self.warning.as_ref(),
-            view::receive::receive(&self.addresses, self.qr_code.as_ref()),
+            view::receive::receive(
+                &self.addresses.list,
+                self.qr_code.as_ref(),
+                &self.addresses.labels,
+                &self.labels_edited.cache(),
+            ),
         )
     }
     fn update(
@@ -288,12 +340,25 @@ impl State for ReceivePanel {
         message: Message,
     ) -> Command<Message> {
         match message {
+            Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
+                match self.labels_edited.update(
+                    daemon,
+                    message,
+                    std::iter::once(&mut self.addresses).map(|a| a as &mut dyn Labelled),
+                ) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        self.warning = Some(e);
+                        Command::none()
+                    }
+                }
+            }
             Message::ReceiveAddress(res) => {
                 match res {
                     Ok(address) => {
                         self.warning = None;
                         self.qr_code = Some(qr_code::State::new(address.to_qr_uri()).unwrap());
-                        self.addresses.push(address);
+                        self.addresses.list.push(address);
                     }
                     Err(e) => self.warning = Some(e),
                 }
@@ -363,6 +428,6 @@ mod tests {
         let sandbox = sandbox.load(client, &Cache::default()).await;
 
         let panel = sandbox.state();
-        assert_eq!(panel.addresses, vec![addr]);
+        assert_eq!(panel.addresses.list, vec![addr]);
     }
 }

@@ -1,6 +1,8 @@
 use crate::{
+    color,
     component::{amount, badge, text},
     theme,
+    util::Collection,
     widget::*,
 };
 use bitcoin::Amount;
@@ -9,30 +11,8 @@ use iced::{
     Alignment, Length,
 };
 
-pub fn unconfirmed_outgoing_event<'a, T: Clone + 'a>(amount: &Amount, msg: T) -> Container<'a, T> {
-    Container::new(
-        button(
-            row!(
-                row!(badge::spend(), badge::unconfirmed())
-                    .spacing(10)
-                    .align_items(Alignment::Center)
-                    .width(Length::Fill),
-                row!(text::p1_regular("-"), amount::amount(amount))
-                    .spacing(5)
-                    .align_items(Alignment::Center),
-            )
-            .align_items(Alignment::Center)
-            .padding(5)
-            .spacing(20),
-        )
-        .on_press(msg)
-        .style(theme::Button::TransparentBorder),
-    )
-    .style(theme::Container::Card(theme::Card::Simple))
-}
-
-pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
-    date: chrono::NaiveDateTime,
+pub fn unconfirmed_outgoing_event<'a, T: Clone + 'a>(
+    label: Option<iced::widget::Text<'a, iced::Renderer<theme::Theme>>>,
     amount: &Amount,
     msg: T,
 ) -> Container<'a, T> {
@@ -41,7 +21,7 @@ pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
             row!(
                 row!(
                     badge::spend(),
-                    text::p2_regular(date.format("%b. %d, %Y - %T").to_string())
+                    Column::new().push_maybe(label).push(badge::unconfirmed())
                 )
                 .spacing(10)
                 .align_items(Alignment::Center)
@@ -60,14 +40,54 @@ pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
     .style(theme::Container::Card(theme::Card::Simple))
 }
 
-pub fn unconfirmed_incoming_event<'a, T: Clone + 'a>(amount: &Amount, msg: T) -> Container<'a, T> {
+pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
+    label: Option<iced::widget::Text<'a, iced::Renderer<theme::Theme>>>,
+    date: chrono::NaiveDateTime,
+    amount: &Amount,
+    msg: T,
+) -> Container<'a, T> {
     Container::new(
         button(
             row!(
-                row!(badge::receive(), badge::unconfirmed())
-                    .spacing(10)
-                    .align_items(Alignment::Center)
-                    .width(Length::Fill),
+                row!(
+                    badge::spend(),
+                    Column::new().push_maybe(label).push(
+                        text::p2_regular(date.format("%b. %d, %Y - %T").to_string())
+                            .style(color::GREY_3)
+                    )
+                )
+                .spacing(10)
+                .align_items(Alignment::Center)
+                .width(Length::Fill),
+                row!(text::p1_regular("-"), amount::amount(amount))
+                    .spacing(5)
+                    .align_items(Alignment::Center),
+            )
+            .align_items(Alignment::Center)
+            .padding(5)
+            .spacing(20),
+        )
+        .on_press(msg)
+        .style(theme::Button::TransparentBorder),
+    )
+    .style(theme::Container::Card(theme::Card::Simple))
+}
+
+pub fn unconfirmed_incoming_event<'a, T: Clone + 'a>(
+    label: Option<iced::widget::Text<'a, iced::Renderer<theme::Theme>>>,
+    amount: &Amount,
+    msg: T,
+) -> Container<'a, T> {
+    Container::new(
+        button(
+            row!(
+                row!(
+                    badge::receive(),
+                    Column::new().push_maybe(label).push(badge::unconfirmed())
+                )
+                .spacing(10)
+                .align_items(Alignment::Center)
+                .width(Length::Fill),
                 row!(text::p1_regular("+"), amount::amount(amount))
                     .spacing(5)
                     .align_items(Alignment::Center),
@@ -83,6 +103,7 @@ pub fn unconfirmed_incoming_event<'a, T: Clone + 'a>(amount: &Amount, msg: T) ->
 }
 
 pub fn confirmed_incoming_event<'a, T: Clone + 'a>(
+    label: Option<iced::widget::Text<'a, iced::Renderer<theme::Theme>>>,
     date: chrono::NaiveDateTime,
     amount: &Amount,
     msg: T,
@@ -92,7 +113,10 @@ pub fn confirmed_incoming_event<'a, T: Clone + 'a>(
             row!(
                 row!(
                     badge::receive(),
-                    text::p2_regular(date.format("%b. %d, %Y - %T").to_string())
+                    Column::new().push_maybe(label).push(
+                        text::p2_regular(date.format("%b. %d, %Y - %T").to_string())
+                            .style(color::GREY_3)
+                    )
                 )
                 .spacing(10)
                 .align_items(Alignment::Center)

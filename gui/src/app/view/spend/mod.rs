@@ -35,23 +35,26 @@ pub fn spend_view<'a>(
     saved: bool,
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
     network: Network,
+    warning: Option<&Error>,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::CreateSpendTx,
         cache,
-        None,
+        warning,
         Column::new()
             .spacing(20)
             .push(Container::new(h3("Send")).width(Length::Fill))
-            .push(psbt::spend_header(tx))
+            .push(psbt::spend_header(tx, labels_editing))
             .push(psbt::spend_overview_view(tx, desc_info, key_aliases))
             .push(psbt::inputs_and_outputs_view(
                 &tx.coins,
                 &tx.psbt.unsigned_tx,
                 network,
                 Some(tx.change_indexes.clone()),
-                None,
+                &tx.labels,
+                labels_editing,
             ))
             .push(if saved {
                 Row::new()
@@ -89,6 +92,8 @@ pub fn create_spend_tx<'a>(
     duplicate: bool,
     timelock: u16,
     coins: &[(Coin, bool)],
+    coins_labels: &'a HashMap<String, String>,
+    batch_label: &form::Value<String>,
     amount_left: Option<&Amount>,
     feerate: &form::Value<String>,
     error: Option<&Error>,
@@ -104,6 +109,18 @@ pub fn create_spend_tx<'a>(
             } else {
                 "Send"
             }))
+            .push_maybe(if recipients.len() > 1 {
+                Some(
+                    form::Form::new("Batch label", batch_label, |s| {
+                        Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
+                    })
+                    .warning("Invalid label length, cannot be superior to 100")
+                    .size(30)
+                    .padding(10),
+                )
+            } else {
+                None
+            })
             .push(
                 Column::new()
                     .push(Column::with_children(recipients).spacing(10))
@@ -112,7 +129,7 @@ pub fn create_spend_tx<'a>(
                             .push_maybe(if duplicate {
                                 Some(
                                     Container::new(
-                                        text("Two recipient addresses are the same")
+                                        text("Two payment addresses are the same")
                                             .style(color::RED),
                                     )
                                     .padding(10),
@@ -125,7 +142,7 @@ pub fn create_spend_tx<'a>(
                                 None
                             } else {
                                 Some(
-                                    button::secondary(Some(icon::plus_icon()), "Add recipient")
+                                    button::secondary(Some(icon::plus_icon()), "Add payment")
                                         .on_press(Message::CreateSpend(
                                             CreateSpendMessage::AddRecipient,
                                         )),
@@ -201,6 +218,7 @@ pub fn create_spend_tx<'a>(
                                     col.push(coin_list_view(
                                         i,
                                         coin,
+                                        coins_labels,
                                         timelock,
                                         cache.blockheight as u32,
                                         *selected,
@@ -246,6 +264,7 @@ pub fn recipient_view<'a>(
     index: usize,
     address: &form::Value<String>,
     amount: &form::Value<String>,
+    label: &form::Value<String>,
 ) -> Element<'a, CreateSpendMessage> {
     Container::new(
         Column::new()
@@ -263,10 +282,10 @@ pub fn recipient_view<'a>(
                     .align_items(Alignment::Start)
                     .spacing(10)
                     .push(
-                        Container::new(p1_bold("Pay to"))
+                        Container::new(p1_bold("Address"))
                             .align_x(alignment::Horizontal::Right)
                             .padding(10)
-                            .width(Length::Fixed(80.0)),
+                            .width(Length::Fixed(110.0)),
                     )
                     .push(
                         form::Form::new_trimmed("Address", address, move |msg| {
@@ -282,10 +301,29 @@ pub fn recipient_view<'a>(
                     .align_items(Alignment::Start)
                     .spacing(10)
                     .push(
+                        Container::new(p1_bold("Description"))
+                            .align_x(alignment::Horizontal::Right)
+                            .padding(10)
+                            .width(Length::Fixed(110.0)),
+                    )
+                    .push(
+                        form::Form::new("Payment label", label, move |msg| {
+                            CreateSpendMessage::RecipientEdited(index, "label", msg)
+                        })
+                        .warning("Label length is too long (> 100 char)")
+                        .size(20)
+                        .padding(10),
+                    ),
+            )
+            .push(
+                Row::new()
+                    .align_items(Alignment::Start)
+                    .spacing(10)
+                    .push(
                         Container::new(p1_bold("Amount"))
                             .padding(10)
                             .align_x(alignment::Horizontal::Right)
-                            .width(Length::Fixed(80.0)),
+                            .width(Length::Fixed(110.0)),
                     )
                     .push(
                         form::Form::new_trimmed("0.001 (in BTC)", amount, move |msg| {
@@ -308,6 +346,7 @@ pub fn recipient_view<'a>(
 fn coin_list_view<'a>(
     i: usize,
     coin: &Coin,
+    coins_labels: &'a HashMap<String, String>,
     timelock: u16,
     blockheight: u32,
     selected: bool,
@@ -318,6 +357,13 @@ fn coin_list_view<'a>(
                 .push(checkbox("", selected, move |_| {
                     Message::CreateSpend(CreateSpendMessage::SelectCoin(i))
                 }))
+                .push(
+                    if let Some(label) = coins_labels.get(&coin.outpoint.to_string()) {
+                        Container::new(p1_bold(label)).width(Length::Fill)
+                    } else {
+                        Container::new(p1_bold("")).width(Length::Fill)
+                    },
+                )
                 .push(if coin.spend_info.is_some() {
                     badge::spent()
                 } else if coin.block_height.is_none() {

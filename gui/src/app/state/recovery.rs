@@ -140,22 +140,29 @@ impl State for RecoveryPanel {
                         .recovery_paths
                         .get(self.selected_path.expect("A path must be selected"))
                         .map(|p| p.sequence);
+                    let network = cache.network;
                     return Command::perform(
                         async move {
                             let psbt = daemon.create_recovery(address, feerate_vb, sequence)?;
                             let coins = daemon.list_coins().map(|res| res.coins)?;
                             let coins = coins
-                                .iter()
+                                .into_iter()
                                 .filter(|coin| {
                                     psbt.unsigned_tx
                                         .input
                                         .iter()
                                         .any(|input| input.previous_output == coin.outpoint)
                                 })
-                                .cloned()
                                 .collect();
                             let sigs = desc.partial_spend_info(&psbt).unwrap();
-                            Ok(SpendTx::new(None, psbt, coins, sigs, desc.max_sat_vbytes()))
+                            Ok(SpendTx::new(
+                                None,
+                                psbt,
+                                coins,
+                                sigs,
+                                desc.max_sat_vbytes(),
+                                network,
+                            ))
                         },
                         Message::Recovery,
                     );

@@ -1,18 +1,48 @@
-use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::{cmp::Ordering, collections::HashSet};
 
 use iced::Command;
 
 use liana_ui::widget::Element;
 
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu, message::Message, state::State, view},
-    daemon::{model::Coin, Daemon},
+    app::{
+        cache::Cache,
+        error::Error,
+        menu::Menu,
+        message::Message,
+        state::{label::LabelsEdited, State},
+        view,
+    },
+    daemon::{
+        model::{Coin, LabelItem, Labelled},
+        Daemon,
+    },
 };
 
+#[derive(Debug, Default)]
+pub struct Coins {
+    list: Vec<Coin>,
+    labels: HashMap<String, String>,
+}
+
+impl Labelled for Coins {
+    fn labelled(&self) -> Vec<LabelItem> {
+        self.list
+            .iter()
+            .map(|a| LabelItem::OutPoint(a.outpoint))
+            .collect()
+    }
+    fn labels(&mut self) -> &mut HashMap<String, String> {
+        &mut self.labels
+    }
+}
+
 pub struct CoinsPanel {
-    coins: Vec<Coin>,
+    coins: Coins,
     selected: Vec<usize>,
+    labels_edited: LabelsEdited,
     warning: Option<Error>,
     /// timelock value to pass for the heir to consume a coin.
     timelock: u16,
@@ -21,7 +51,8 @@ pub struct CoinsPanel {
 impl CoinsPanel {
     pub fn new(coins: &[Coin], timelock: u16) -> Self {
         let mut panel = Self {
-            coins: Vec::new(),
+            labels_edited: LabelsEdited::default(),
+            coins: Coins::default(),
             selected: Vec::new(),
             warning: None,
             timelock,
@@ -31,18 +62,20 @@ impl CoinsPanel {
     }
 
     fn update_coins(&mut self, coins: &[Coin]) {
-        self.coins = coins
+        self.coins.list = coins
             .iter()
             .filter_map(|coin| {
                 if coin.spend_info.is_none() {
-                    Some(coin.clone())
+                    Some(coin)
                 } else {
                     None
                 }
             })
+            .cloned()
             .collect();
 
         self.coins
+            .list
             .sort_by(|a, b| match (a.block_height, b.block_height) {
                 (Some(a_height), Some(b_height)) => {
                     if a_height == b_height {
@@ -64,13 +97,20 @@ impl State for CoinsPanel {
             &Menu::Coins,
             cache,
             self.warning.as_ref(),
-            view::coins::coins_view(cache, &self.coins, self.timelock, &self.selected),
+            view::coins::coins_view(
+                cache,
+                &self.coins.list,
+                self.timelock,
+                &self.selected,
+                &self.coins.labels,
+                self.labels_edited.cache(),
+            ),
         )
     }
 
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
     ) -> Command<Message> {
@@ -83,6 +123,24 @@ impl State for CoinsPanel {
                     self.update_coins(&coins);
                 }
             },
+            Message::Labels(res) => match res {
+                Err(e) => self.warning = Some(e),
+                Ok(labels) => {
+                    self.coins.labels = labels;
+                }
+            },
+            Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
+                match self.labels_edited.update(
+                    daemon,
+                    message,
+                    std::iter::once(&mut self.coins).map(|a| a as &mut dyn Labelled),
+                ) {
+                    Ok(cmd) => return cmd,
+                    Err(e) => {
+                        self.warning = Some(e);
+                    }
+                }
+            }
             Message::View(view::Message::Select(i)) => {
                 if let Some(position) = self.selected.iter().position(|j| *j == i) {
                     self.selected.remove(position);
@@ -96,16 +154,34 @@ impl State for CoinsPanel {
     }
 
     fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        let daemon = daemon.clone();
-        Command::perform(
-            async move {
-                daemon
-                    .list_coins()
-                    .map(|res| res.coins)
-                    .map_err(|e| e.into())
-            },
-            Message::Coins,
-        )
+        let daemon1 = daemon.clone();
+        let daemon2 = daemon.clone();
+        Command::batch(vec![
+            Command::perform(
+                async move {
+                    daemon1
+                        .list_coins()
+                        .map(|res| res.coins)
+                        .map_err(|e| e.into())
+                },
+                Message::Coins,
+            ),
+            Command::perform(
+                async move {
+                    let coins = daemon2
+                        .list_coins()
+                        .map(|res| res.coins)
+                        .map_err(|e| Error::from(e))?;
+                    let mut targets = HashSet::<LabelItem>::new();
+                    for coin in coins {
+                        targets.insert(LabelItem::OutPoint(coin.outpoint));
+                        targets.insert(LabelItem::Address(coin.address));
+                    }
+                    daemon2.get_labels(&targets).map_err(|e| e.into())
+                },
+                Message::Labels,
+            ),
+        ])
     }
 }
 
@@ -172,6 +248,7 @@ mod tests {
         assert_eq!(
             panel
                 .coins
+                .list
                 .iter()
                 .map(|c| c.outpoint)
                 .collect::<Vec<bitcoin::OutPoint>>(),

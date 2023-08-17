@@ -2,11 +2,12 @@ pub mod client;
 pub mod embedded;
 pub mod model;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::ErrorKind;
 
 use liana::{
+    commands::LabelItem,
     config::Config,
     miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
     StartupError,
@@ -75,6 +76,11 @@ pub trait Daemon: Debug {
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError>;
     fn list_txs(&self, txid: &[Txid]) -> Result<model::ListTransactionsResult, DaemonError>;
+    fn get_labels(
+        &self,
+        labels: &HashSet<LabelItem>,
+    ) -> Result<HashMap<String, String>, DaemonError>;
+    fn update_labels(&self, labels: &HashMap<LabelItem, String>) -> Result<(), DaemonError>;
 
     fn list_spend_transactions(&self) -> Result<Vec<model::SpendTx>, DaemonError> {
         let info = self.get_info()?;
@@ -103,8 +109,10 @@ pub trait Daemon: Debug {
                 coins,
                 sigs,
                 info.descriptors.main.max_sat_vbytes(),
+                info.network,
             ))
         }
+        load_labels(self, &mut spend_txs)?;
         spend_txs.sort_by(|a, b| {
             if a.status == b.status {
                 // last updated first
@@ -123,9 +131,10 @@ pub trait Daemon: Debug {
         end: u32,
         limit: u64,
     ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
+        let info = self.get_info()?;
         let coins = self.list_coins()?.coins;
         let txs = self.list_confirmed_txs(start, end, limit)?.transactions;
-        Ok(txs
+        let mut txs = txs
             .into_iter()
             .map(|tx| {
                 let mut tx_coins = Vec::new();
@@ -142,12 +151,22 @@ pub trait Daemon: Debug {
                         tx_coins.push(coin.clone());
                     }
                 }
-                model::HistoryTransaction::new(tx.tx, tx.height, tx.time, tx_coins, change_indexes)
+                model::HistoryTransaction::new(
+                    tx.tx,
+                    tx.height,
+                    tx.time,
+                    tx_coins,
+                    change_indexes,
+                    info.network,
+                )
             })
-            .collect())
+            .collect();
+        load_labels(self, &mut txs)?;
+        Ok(txs)
     }
 
     fn list_pending_txs(&self) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
+        let info = self.get_info()?;
         let coins = self.list_coins()?.coins;
         let mut txids: Vec<Txid> = Vec::new();
         for coin in &coins {
@@ -163,7 +182,7 @@ pub trait Daemon: Debug {
         }
 
         let txs = self.list_txs(&txids)?.transactions;
-        Ok(txs
+        let mut txs = txs
             .into_iter()
             .map(|tx| {
                 let mut tx_coins = Vec::new();
@@ -180,8 +199,38 @@ pub trait Daemon: Debug {
                         tx_coins.push(coin.clone());
                     }
                 }
-                model::HistoryTransaction::new(tx.tx, tx.height, tx.time, tx_coins, change_indexes)
+                model::HistoryTransaction::new(
+                    tx.tx,
+                    tx.height,
+                    tx.time,
+                    tx_coins,
+                    change_indexes,
+                    info.network,
+                )
             })
-            .collect())
+            .collect();
+
+        load_labels(self, &mut txs)?;
+        Ok(txs)
     }
+}
+
+fn load_labels<T: model::Labelled, D: Daemon + ?Sized>(
+    daemon: &D,
+    targets: &mut Vec<T>,
+) -> Result<(), DaemonError> {
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let mut items = HashSet::<LabelItem>::new();
+    for target in &*targets {
+        for item in target.labelled() {
+            items.insert(item);
+        }
+    }
+    let labels = daemon.get_labels(&items)?;
+    for target in targets {
+        target.load_labels(&labels);
+    }
+    Ok(())
 }

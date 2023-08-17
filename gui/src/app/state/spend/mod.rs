@@ -1,15 +1,20 @@
 mod step;
+
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use iced::Command;
 
-use liana::miniscript::bitcoin::OutPoint;
+use liana::miniscript::bitcoin::{Network, OutPoint};
 use liana_ui::widget::Element;
 
 use super::{redirect, State};
 use crate::{
-    app::{cache::Cache, menu::Menu, message::Message, view, wallet::Wallet},
-    daemon::{model::Coin, Daemon},
+    app::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet},
+    daemon::{
+        model::{Coin, LabelItem},
+        Daemon,
+    },
 };
 
 pub struct CreateSpendPanel {
@@ -19,11 +24,11 @@ pub struct CreateSpendPanel {
 }
 
 impl CreateSpendPanel {
-    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: u32) -> Self {
+    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: u32, network: Network) -> Self {
         let descriptor = wallet.main_descriptor.clone();
         let timelock = descriptor.first_timelock_value();
         Self {
-            draft: step::TransactionDraft::default(),
+            draft: step::TransactionDraft::new(network),
             current: 0,
             steps: vec![
                 Box::new(
@@ -40,11 +45,12 @@ impl CreateSpendPanel {
         coins: &[Coin],
         blockheight: u32,
         preselected_coins: &[OutPoint],
+        network: Network,
     ) -> Self {
         let descriptor = wallet.main_descriptor.clone();
         let timelock = descriptor.first_timelock_value();
         Self {
-            draft: step::TransactionDraft::default(),
+            draft: step::TransactionDraft::new(network),
             current: 0,
             steps: vec![
                 Box::new(
@@ -99,16 +105,33 @@ impl State for CreateSpendPanel {
     }
 
     fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        let daemon = daemon.clone();
-        Command::perform(
-            async move {
-                daemon
-                    .list_coins()
-                    .map(|res| res.coins)
-                    .map_err(|e| e.into())
-            },
-            Message::Coins,
-        )
+        let daemon1 = daemon.clone();
+        let daemon2 = daemon.clone();
+        Command::batch(vec![
+            Command::perform(
+                async move {
+                    daemon1
+                        .list_coins()
+                        .map(|res| res.coins)
+                        .map_err(|e| e.into())
+                },
+                Message::Coins,
+            ),
+            Command::perform(
+                async move {
+                    let coins = daemon
+                        .list_coins()
+                        .map(|res| res.coins)
+                        .map_err(|e| Error::from(e))?;
+                    let mut targets = HashSet::<LabelItem>::new();
+                    for coin in coins {
+                        targets.insert(LabelItem::OutPoint(coin.outpoint));
+                    }
+                    daemon2.get_labels(&targets).map_err(|e| e.into())
+                },
+                Message::Labels,
+            ),
+        ])
     }
 }
 

@@ -9,6 +9,7 @@ pub enum Message {
     Close,
     Select(usize),
     SelectSub(usize, usize),
+    Label(String, LabelMessage),
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
@@ -19,8 +20,16 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone)]
+pub enum LabelMessage {
+    Edited(String),
+    Cancel,
+    Confirm,
+}
+
+#[derive(Debug, Clone)]
 pub enum CreateSpendMessage {
     AddRecipient,
+    BatchLabelEdited(String),
     DeleteRecipient(usize),
     SelectCoin(usize),
     RecipientEdited(usize, &'static str, String),

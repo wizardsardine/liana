@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use std::iter::FromIterator;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,7 @@ pub mod error;
 pub mod jsonrpc;
 
 use liana::{
+    commands::LabelItem,
     config::Config,
     miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
 };
@@ -144,6 +146,22 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
             Some(vec![json!(address), json!(feerate_vb), json!(sequence)]),
         )?;
         Ok(res.psbt)
+    }
+
+    fn get_labels(
+        &self,
+        items: &HashSet<LabelItem>,
+    ) -> Result<HashMap<String, String>, DaemonError> {
+        let items = items.iter().map(|a| a.to_string()).collect::<Vec<String>>();
+        let res: GetLabelsResult = self.call("getlabels", Some(vec![items]))?;
+        Ok(res.labels)
+    }
+
+    fn update_labels(&self, items: &HashMap<LabelItem, String>) -> Result<(), DaemonError> {
+        let labels: HashMap<String, String> =
+            HashMap::from_iter(items.iter().map(|(a, l)| (a.to_string(), l.clone())));
+        let _res: serde_json::value::Value = self.call("updatelabels", Some(vec![labels]))?;
+        Ok(())
     }
 }
 

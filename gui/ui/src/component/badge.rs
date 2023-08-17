@@ -100,6 +100,19 @@ pub fn unconfirmed<'a, T: 'a>() -> Container<'a, T> {
     )
 }
 
+pub fn batch<'a, T: 'a>() -> Container<'a, T> {
+    Container::new(
+        tooltip::Tooltip::new(
+            Container::new(text::p2_regular("  Batch  "))
+                .padding(10)
+                .style(theme::Container::Pill(theme::Pill::Simple)),
+            "This transaction contains multiple payments",
+            tooltip::Position::Top,
+        )
+        .style(theme::Container::Card(theme::Card::Simple)),
+    )
+}
+
 pub fn deprecated<'a, T: 'a>() -> Container<'a, T> {
     Container::new(
         tooltip::Tooltip::new(
