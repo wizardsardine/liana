@@ -310,7 +310,11 @@ impl DaemonControl {
                     height: spend_block.map(|b| b.height),
                 });
                 let block_height = block_info.map(|b| b.height);
+                let address = self
+                    .derived_desc(&coin)
+                    .address(self.config.bitcoin_config.network);
                 ListCoinsEntry {
+                    address,
                     amount,
                     outpoint,
                     block_height,
@@ -856,7 +860,7 @@ pub struct LCSpendInfo {
     pub height: Option<i32>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListCoinsEntry {
     #[serde(
         serialize_with = "ser_amount",
@@ -864,6 +868,11 @@ pub struct ListCoinsEntry {
     )]
     pub amount: bitcoin::Amount,
     pub outpoint: bitcoin::OutPoint,
+    #[serde(
+        serialize_with = "ser_to_string",
+        deserialize_with = "deser_addr_assume_checked"
+    )]
+    pub address: bitcoin::Address,
     pub block_height: Option<i32>,
     /// Information about the transaction spending this coin.
     pub spend_info: Option<LCSpendInfo>,

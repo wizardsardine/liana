@@ -94,6 +94,7 @@ This command does not take any parameter for now.
 
 | Field          | Type          | Description                                                                                                        |
 | -------------- | ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `address`      | string        | Address containing the script pubkey of the coin                                                                   |
 | `amount`       | int           | Value of the TxO in satoshis.                                                                                      |
 | `outpoint`     | string        | Transaction id and output index of this coin.                                                                      |
 | `block_height` | int or null   | Block height the transaction was confirmed at, or `null`.                                                          |
