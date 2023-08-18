@@ -56,6 +56,22 @@ as on [his Twitter profile](https://twitter.com/darosior) or his [personal
 website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
 against this key.
 
+For Arch users, a `liana-bin` is also available at the [AUR](https://aur.archlinux.org/). For
+instance if you use `paru`:
+```
+paru -S liana-bin
+```
+If you use `yay`:
+```
+yay -S liana-bin
+```
+Or manually:
+```
+git clone https://aur.archlinux.org/liana-bin.git
+cd liana-bin
+makepkg -si
+```
+
 #### A note on Linux binaries and glibc version
 
 *Skip this section if you are not running Linux or don't plan on using a released binary.*
