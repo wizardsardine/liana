@@ -660,11 +660,15 @@ pub fn register_descriptor<'a>(
     processing: bool,
     chosen_hw: Option<usize>,
     done: bool,
+    created_desc: bool,
 ) -> Element<'a, Message> {
     layout(
         progress,
         "Register descriptor",
         Column::new()
+            .push_maybe((!created_desc).then_some(
+                text("This step is only necessary if you are using a signing device.").bold(),
+            ))
             .push(card::simple(
                 Column::new()
                     .push(text("The descriptor:").small().bold())
@@ -687,8 +691,13 @@ pub fn register_descriptor<'a>(
                             .align_items(Alignment::Center)
                             .push(
                                 Container::new(
-                                    text("Select hardware wallet to register descriptor on:")
-                                        .bold(),
+                                    if created_desc {
+                                        text("Select hardware wallet to register descriptor on:")
+                                        .bold()
+                                    } else {
+                                        text("If necessary, please select the signing device to register descriptor on:")
+                                        .bold()
+                                    },
                                 )
                                 .width(Length::Fill),
                             )
@@ -715,12 +724,12 @@ pub fn register_descriptor<'a>(
                     )
                     .width(Length::Fill),
             )
-            .push(checkbox(
+            .push_maybe(created_desc.then_some(checkbox(
                 "I have registered the descriptor on my device(s)",
                 done,
                 Message::UserActionDone,
-            ))
-            .push(if done && !processing {
+            )))
+            .push(if !created_desc || (done && !processing) {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
                     .width(Length::Fixed(200.0))
