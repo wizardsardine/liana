@@ -34,13 +34,21 @@ create_dir "$BUILD_DIR"
 OUT_DIR="$BUILD_DIR" ./contrib/reproducible/guix/guix-build.sh
 TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
 
-# Create the Linux archive
+# Create the Linux archive and Debian binary package.
 (
     cd "$BUILD_DIR"
     create_dir "$LINUX_DIR_NAME"
     cp "$BUILD_DIR/release/lianad" "$BUILD_DIR/release/liana-cli" "$BUILD_DIR/gui/release/liana-gui" ../README.md "$LINUX_DIR_NAME"
     tar -czf "$LINUX_ARCHIVE" "$LINUX_DIR_NAME"
     cp "$LINUX_ARCHIVE" "$RELEASE_DIR"
+
+    unzip ../contrib/release/debian/package.zip
+    sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./package/DEBIAN/control
+    cp "$BUILD_DIR/release/lianad" "$BUILD_DIR/release/liana-cli" "$BUILD_DIR/gui/release/liana-gui" ../README.md ./package/usr/local/bin/
+    DIRNAME="liana_$VERSION-1_amd64"
+    mv ./package "$DIRNAME"
+    dpkg-deb --build "$DIRNAME"
+    mv "$DIRNAME.deb" "$RELEASE_DIR"
 )
 
 # Create the Windows archive and the raw executable
@@ -61,7 +69,7 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
     tar -czf "$MAC_ARCHIVE" "$MAC_DIR_NAME"
     cp "$MAC_ARCHIVE" "$RELEASE_DIR"
 
-    cp -r ../contrib/release/macos/Liana.app ./
+    unzip ../contrib/release/macos/Liana.app.zip ./
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
     cp "$BUILD_DIR/gui/x86_64-apple-darwin/release/liana-gui" ./Liana.app/Contents/MacOS/Liana
     zip -ry Liana-noncodesigned.zip Liana.app
