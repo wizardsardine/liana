@@ -45,8 +45,8 @@ Head to the [release page](https://github.com/wizardsardine/liana/releases) and 
 executable for your platform. If you are not sure what is the "right" executable for your platform,
 choose:
 - `Liana.zip` if you are on MacOS,
-- `liana-1.0.exe` if you are on Windows,
-- `liana-1.0-x86_64-linux-gnu.tar.gz` if you are on Linux. Note you may have to compile the software
+- `liana-1.1.exe` if you are on Windows,
+- `liana-1.1-x86_64-linux-gnu.tar.gz` if you are on Linux. Note you may have to compile the software
   yourself if you are on Linux. See the [section below](#a-note-on-linux-binaries-and-glibc-version).
 
 For every file available on the release page, there is an accompanying `.asc` file with the same
