@@ -53,6 +53,15 @@ as on [his Twitter profile](https://twitter.com/darosior) or his [personal
 website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
 against this key.
 
+For Arch users, a `liana-bin` is also available at the [AUR](https://aur.archlinux.org/). You can
+install it using your favourite wrapper (eg `paru -S liana-bin` or `yay -S liana-bin`), or manually:
+```bash
+git clone https://aur.archlinux.org/liana-bin.git
+cd liana-bin
+cat PKGBUILD # Review the PKGBUILD script
+makepkg -si
+```
+
 #### Apple, Windows, codesigned and notarized binaries
 
 We distribute both a non-codesigned and a codesigned-and-notarized MacOS application
