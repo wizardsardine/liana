@@ -43,8 +43,8 @@ source, see [`doc/BUILD.md`](doc/BUILD.md) instead.
 
 Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
 executable for your platform. If you are not sure what is the "right" executable for your platform,
-choose `liana-1.0.exe` if you are on Windows, `Liana.zip` if you are on MacOS and
-`liana-1.0-x86_64-linux-gnu.tar.gz` if you are on Linux.
+choose `liana-1.1.exe` if you are on Windows, `Liana.zip` if you are on MacOS and
+`liana-1.1-x86_64-linux-gnu.tar.gz` if you are on Linux.
 
 For every file available on the release page, there is an accompanying `.asc` file with the same
 name. This is a GPG signature made with Antoine Poinsot's key:
@@ -52,6 +52,15 @@ name. This is a GPG signature made with Antoine Poinsot's key:
 as on [his Twitter profile](https://twitter.com/darosior) or his [personal
 website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
 against this key.
+
+For Arch users, a `liana-bin` is also available at the [AUR](https://aur.archlinux.org/). You can
+install it using your favourite wrapper (eg `paru -S liana-bin` or `yay -S liana-bin`), or manually:
+```bash
+git clone https://aur.archlinux.org/liana-bin.git
+cd liana-bin
+cat PKGBUILD # Review the PKGBUILD script
+makepkg -si
+```
 
 #### Apple, Windows, codesigned and notarized binaries
 
