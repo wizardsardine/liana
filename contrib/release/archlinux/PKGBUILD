@@ -1,0 +1,23 @@
+# Maintainer: Antoine Poinsot <My first name at wizardsardine.com>
+
+pkgname=liana-bin
+pkgver=1.0
+pkgrel=1
+pkgdesc="The Liana wallet (daemon and GUI). A Bitcoin wallet focused on recovery options."
+arch=('x86_64')
+url=https://github.com/wizardsardine/liana
+license=('BSD')
+# systemd-libs for libudev
+depends=('glibc>=2.33' 'fontconfig>=2.12.6' 'freetype2>=2.8' 'systemd-libs')
+
+binary_archive="https://github.com/wizardsardine/liana/releases/download/v$pkgver/liana-$pkgver-x86_64-linux-gnu.tar.gz"
+source=("$binary_archive")
+sha256sums=("bd425e3e08fcb74b6d2d641c7f6bd553062d49dbd42898823082990f862de43b")
+
+package() {
+    bin_folder="${srcdir}/liana-$pkgver-x86_64-linux-gnu"
+
+    install -D "$bin_folder/lianad" "${pkgdir}/usr/local/bin/lianad"
+    install -D "$bin_folder/liana-cli" "${pkgdir}/usr/local/bin/liana-cli"
+    install -D "$bin_folder/liana-gui" "${pkgdir}/usr/local/bin/liana-gui"
+}
