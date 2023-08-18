@@ -11,8 +11,9 @@ license=('BSD')
 depends=('glibc>=2.33' 'fontconfig>=2.12.6' 'freetype2>=2.8' 'systemd-libs')
 
 binary_archive="https://github.com/wizardsardine/liana/releases/download/v$pkgver/liana-$pkgver-x86_64-linux-gnu.tar.gz"
-source=("$binary_archive")
-sha256sums=("bd425e3e08fcb74b6d2d641c7f6bd553062d49dbd42898823082990f862de43b")
+source=("$binary_archive" "$binary_archive.asc")
+validpgpkeys=("590B7292695AFFA5B672CBB2E13FC145CD3F4304")
+sha256sums=("bd425e3e08fcb74b6d2d641c7f6bd553062d49dbd42898823082990f862de43b" "SKIP")
 
 package() {
     bin_folder="${srcdir}/liana-$pkgver-x86_64-linux-gnu"
