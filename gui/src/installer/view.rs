@@ -299,6 +299,7 @@ pub fn define_descriptor<'a>(
             .push(Space::with_height(Length::Fixed(20.0)))
             .spacing(50),
         false,
+        None,
     )
 }
 
@@ -416,6 +417,7 @@ pub fn import_descriptor<'a>(
             .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
             .spacing(50),
         true,
+        None,
     )
 }
 
@@ -646,7 +648,8 @@ pub fn participate_xpub<'a>(
                 button::primary(None, "Next").width(Length::Fixed(200.0))
             })
             .spacing(50),
-        true
+        true,
+        None,
     )
 }
 
@@ -738,6 +741,7 @@ pub fn register_descriptor<'a>(
             })
             .spacing(50),
         true,
+        None,
     )
 }
 
@@ -805,6 +809,7 @@ pub fn backup_descriptor<'a>(
             })
             .spacing(50),
         true,
+        None,
     )
 }
 
@@ -891,6 +896,7 @@ pub fn define_bitcoin<'a>(
             )
             .spacing(50),
         true,
+        None,
     )
 }
 
@@ -1049,6 +1055,7 @@ pub fn install<'a>(
             .spacing(10)
             .width(Length::Fill),
         true,
+        None,
     )
 }
 
@@ -1558,6 +1565,7 @@ pub fn backup_mnemonic<'a>(
             })
             .spacing(50),
         true,
+        None,
     )
 }
 
@@ -1660,6 +1668,7 @@ pub fn recover_mnemonic<'a>(
             })
             .spacing(50),
         true,
+        None,
     )
 }
 
@@ -1668,6 +1677,7 @@ fn layout<'a>(
     title: &'static str,
     content: impl Into<Element<'a, Message>>,
     padding_left: bool,
+    previous_message: Option<Message>,
 ) -> Element<'a, Message> {
     Container::new(scrollable(
         Column::new()
@@ -1679,7 +1689,7 @@ fn layout<'a>(
                     .push(
                         Container::new(
                             button::transparent(Some(icon::previous_icon()), "Previous")
-                                .on_press(Message::Previous),
+                                .on_press(previous_message.unwrap_or(Message::Previous)),
                         )
                         .width(Length::FillPortion(2))
                         .center_x(),
