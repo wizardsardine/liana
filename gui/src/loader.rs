@@ -171,11 +171,8 @@ impl Loader {
         if let Step::Syncing { daemon, .. } = &mut self.step {
             if !daemon.is_external() {
                 info!("Stopping internal daemon...");
-                if let Some(d) = Arc::get_mut(daemon) {
-                    d.stop().expect("Daemon is internal");
-                    info!("Internal daemon stopped");
-                } else {
-                }
+                daemon.stop();
+                info!("Internal daemon stopped");
             }
         }
     }
@@ -335,8 +332,7 @@ pub async fn start_daemon(config_path: PathBuf) -> Result<Arc<dyn Daemon + Sync 
 
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
 
-    let mut daemon = EmbeddedDaemon::new(config);
-    daemon.start()?;
+    let daemon = EmbeddedDaemon::start(config)?;
 
     Ok(Arc::new(daemon))
 }

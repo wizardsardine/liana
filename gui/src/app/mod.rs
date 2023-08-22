@@ -31,7 +31,7 @@ use state::{
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
-    daemon::Daemon,
+    daemon::{embedded::EmbeddedDaemon, Daemon},
 };
 
 pub struct App {
@@ -113,11 +113,8 @@ impl App {
     pub fn stop(&mut self) {
         info!("Close requested");
         if !self.daemon.is_external() {
-            info!("Stopping internal daemon...");
-            if let Some(d) = Arc::get_mut(&mut self.daemon) {
-                d.stop().expect("Daemon is internal");
-                info!("Internal daemon stopped");
-            }
+            self.daemon.stop();
+            info!("Internal daemon stopped");
         }
     }
 
@@ -171,12 +168,9 @@ impl App {
         daemon_config_path: &PathBuf,
         cfg: DaemonConfig,
     ) -> Result<(), Error> {
-        loop {
-            if let Some(daemon) = Arc::get_mut(&mut self.daemon) {
-                daemon.load_config(cfg)?;
-                break;
-            }
-        }
+        self.daemon.stop();
+        let daemon = EmbeddedDaemon::start(cfg)?;
+        self.daemon = Arc::new(daemon);
 
         let mut daemon_config_file = OpenOptions::new()
             .write(true)
