@@ -43,11 +43,8 @@ impl std::fmt::Display for DaemonError {
 
 pub trait Daemon: Debug {
     fn is_external(&self) -> bool;
-    fn load_config(&mut self, _cfg: Config) -> Result<(), DaemonError> {
-        Ok(())
-    }
     fn config(&self) -> Option<&Config>;
-    fn stop(&mut self) -> Result<(), DaemonError>;
+    fn stop(&self);
     fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;
     fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;
     fn list_coins(&self) -> Result<model::ListCoinsResult, DaemonError>;

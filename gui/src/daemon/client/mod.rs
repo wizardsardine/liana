@@ -58,9 +58,8 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         None
     }
 
-    fn stop(&mut self) -> Result<(), DaemonError> {
-        let _res: serde_json::value::Value = self.call("stop", Option::<Request>::None)?;
-        Ok(())
+    fn stop(&self) {
+        unreachable!("GUI should not ask external client to stop")
     }
 
     fn get_info(&self) -> Result<GetInfoResult, DaemonError> {
