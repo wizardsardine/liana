@@ -916,9 +916,25 @@ impl BitcoinD {
                 let input_outpoint = bitcoin::OutPoint { txid, vout };
 
                 if spent_outpoint == &input_outpoint {
-                    return bitcoin::Txid::from_str(spending_txid)
-                        .map(Some)
-                        .expect("Must be a valid txid");
+                    let spending_txid =
+                        bitcoin::Txid::from_str(spending_txid).expect("Must be a valid txid");
+
+                    // If the spending transaction is unconfirmed, there may more than one of them.
+                    // Make sure to not return one that RBF'd.
+                    let confs = gettx_res
+                        .get("confirmations")
+                        .and_then(Json::as_i64)
+                        .expect("A valid number of confirmations must always be present.");
+                    let conflicts = gettx_res
+                        .get("walletconflicts")
+                        .and_then(Json::as_array)
+                        .expect("A valid list of wallet conflicts must always be present.");
+                    if confs == 0 && !conflicts.is_empty() && !self.is_in_mempool(&spending_txid) {
+                        log::debug!("Noticed '{}' as spending '{}', but is unconfirmed with conflicts and is not in mempool anymore. Discarding it.", &spending_txid, &spent_outpoint);
+                        break;
+                    }
+
+                    return Some(spending_txid);
                 }
             }
         }
