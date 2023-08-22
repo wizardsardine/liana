@@ -19,10 +19,7 @@ fn parse_args(args: Vec<String>) -> Option<PathBuf> {
         return None;
     }
 
-    let is_help = args
-        .iter()
-        .any(|arg| arg.contains("help") || arg.contains("-h"));
-    if args.len() != 3 || is_help {
+    if args.len() != 3 {
         print_help_exit();
     }
 
