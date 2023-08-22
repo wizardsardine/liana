@@ -306,6 +306,16 @@ fn maybe_initialize_tip(bit: &impl BitcoinInterface, db: &impl DatabaseInterface
     }
 }
 
+fn sync_poll_interval() -> time::Duration {
+    // TODO: be smarter, like in revaultd, but more generic too.
+    #[cfg(not(test))]
+    {
+        time::Duration::from_secs(30)
+    }
+    #[cfg(test)]
+    time::Duration::from_secs(0)
+}
+
 /// Main event loop. Repeatedly polls the Bitcoin interface until told to stop through the
 /// `shutdown` atomic.
 pub fn looper(
@@ -329,7 +339,15 @@ pub fn looper(
         let now = time::Instant::now();
 
         if let Some(last_poll) = last_poll {
-            if now.duration_since(last_poll) < poll_interval {
+            let time_since_poll = now.duration_since(last_poll);
+            let poll_interval = if synced {
+                poll_interval
+            } else {
+                // Until we are synced we poll less often to avoid harassing bitcoind and impeding
+                // the sync. As a function since it's mocked for the tests.
+                sync_poll_interval()
+            };
+            if time_since_poll < poll_interval {
                 thread::sleep(time::Duration::from_millis(500));
                 continue;
             }
@@ -345,10 +363,6 @@ pub fn looper(
             );
             synced = sync_progress == 1.0;
             if !synced {
-                // Avoid harassing bitcoind..
-                // TODO: be smarter, like in revaultd, but more generic too.
-                #[cfg(not(test))]
-                thread::sleep(time::Duration::from_secs(30));
                 continue;
             }
         }
