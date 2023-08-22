@@ -36,9 +36,21 @@ impl Poller {
         Poller { shutdown, handle }
     }
 
-    pub fn stop(self) {
+    pub fn trigger_stop(&self) {
         self.shutdown.store(true, atomic::Ordering::Relaxed);
+    }
+
+    pub fn stop(self) {
+        self.trigger_stop();
         self.handle.join().expect("The poller loop must not fail");
+    }
+
+    #[cfg(feature = "nonblocking_shutdown")]
+    pub fn is_stopped(&self) -> bool {
+        // Doc says "This might return true for a brief moment after the thread’s main function has
+        // returned, but before the thread itself has stopped running.". But it's not an issue for
+        // us, as long as the main poller function has returned we are good.
+        self.handle.is_finished()
     }
 
     #[cfg(test)]

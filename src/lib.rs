@@ -458,10 +458,22 @@ impl DaemonHandle {
         Ok(())
     }
 
-    // NOTE: this moves out the data as it should not be reused after shutdown
     /// Shut down the Liana daemon.
     pub fn shutdown(self) {
         self.bitcoin_poller.stop();
+    }
+
+    /// Tell the daemon to shut down. This will return before the shutdown completes. The structure
+    /// must not be reused after triggering shutdown.
+    #[cfg(feature = "nonblocking_shutdown")]
+    pub fn trigger_shutdown(&self) {
+        self.bitcoin_poller.trigger_stop()
+    }
+
+    /// Whether the daemon has finished shutting down.
+    #[cfg(feature = "nonblocking_shutdown")]
+    pub fn shutdown_complete(&self) -> bool {
+        self.bitcoin_poller.is_stopped()
     }
 
     // We need a shutdown utility that does not move for implementing Drop for the DummyLiana
