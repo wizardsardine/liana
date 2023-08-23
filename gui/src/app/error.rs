@@ -25,6 +25,7 @@ impl std::fmt::Display for Error {
             Self::Daemon(e) => match e {
                 DaemonError::Unexpected(e) => write!(f, "{}", e),
                 DaemonError::NoAnswer => write!(f, "Daemon did not answer"),
+                DaemonError::DaemonStopped => write!(f, "Daemon stopped"),
                 DaemonError::Transport(Some(ErrorKind::ConnectionRefused), _) => {
                     write!(f, "Failed to connect to daemon")
                 }

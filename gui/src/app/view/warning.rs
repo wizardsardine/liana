@@ -33,6 +33,7 @@ impl From<&Error> for WarningMessage {
                 DaemonError::NoAnswer | DaemonError::Transport(..) => {
                     WarningMessage("Communication with Daemon failed".to_string())
                 }
+                DaemonError::DaemonStopped => WarningMessage("Daemon stopped".to_string()),
             },
             Error::Unexpected(_) => WarningMessage("Unknown error".to_string()),
             Error::HardwareWallet(_) => WarningMessage("Hardware wallet error".to_string()),

@@ -22,6 +22,8 @@ pub enum DaemonError {
     Unexpected(String),
     /// No response.
     NoAnswer,
+    /// Daemon stopped
+    DaemonStopped,
     // Error at start up.
     Start(StartupError),
     // Error if the client is not supported.
@@ -33,6 +35,7 @@ impl std::fmt::Display for DaemonError {
         match self {
             Self::Rpc(code, e) => write!(f, "Daemon error rpc call: [{:?}] {}", code, e),
             Self::NoAnswer => write!(f, "Daemon returned no answer"),
+            Self::DaemonStopped => write!(f, "Daemon stopped"),
             Self::Transport(kind, e) => write!(f, "Daemon transport error: [{:?}] {}", kind, e),
             Self::Unexpected(e) => write!(f, "Daemon unexpected error: {}", e),
             Self::Start(e) => write!(f, "Daemon did not start: {}", e),
