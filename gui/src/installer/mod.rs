@@ -16,14 +16,17 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::{
+    app::config::InternalBitcoindExeConfig,
     app::{config as gui_config, settings as gui_settings},
+    bitcoind::stop_internal_bitcoind,
     signer::Signer,
 };
 
 pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor,
-    ParticipateXpub, RecoverMnemonic, RegisterDescriptor, Step, Welcome,
+    InternalBitcoindStep, ParticipateXpub, RecoverMnemonic, RegisterDescriptor,
+    SelectBitcoindTypeStep, Step, Welcome,
 };
 
 pub struct Installer {
@@ -71,7 +74,19 @@ impl Installer {
         Subscription::none()
     }
 
-    pub fn stop(&mut self) {}
+    pub fn stop(&mut self) {
+        // Use current step's `stop()` method for any changes not yet written to context.
+        self.steps
+            .get_mut(self.current)
+            .expect("There is always a step")
+            .stop();
+        // Now use context to determine what to stop.
+        if self.context.internal_bitcoind_config.is_some() {
+            if let Some(bitcoind_config) = &self.context.bitcoind_config {
+                stop_internal_bitcoind(bitcoind_config);
+            }
+        }
+    }
 
     fn next(&mut self) -> Command<Message> {
         let current_step = self
@@ -114,6 +129,8 @@ impl Installer {
                     BackupMnemonic::new(self.signer.clone()).into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::new_create_wallet().into(),
+                    SelectBitcoindTypeStep::new().into(),
+                    InternalBitcoindStep::new(&self.context.data_dir).into(),
                     DefineBitcoind::new().into(),
                     Final::new(hot_signer_fingerprint).into(),
                 ];
@@ -127,6 +144,8 @@ impl Installer {
                     BackupMnemonic::new(self.signer.clone()).into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::new_import_wallet().into(),
+                    SelectBitcoindTypeStep::new().into(),
+                    InternalBitcoindStep::new(&self.context.data_dir).into(),
                     DefineBitcoind::new().into(),
                     Final::new(hot_signer_fingerprint).into(),
                 ];
@@ -138,6 +157,8 @@ impl Installer {
                     ImportDescriptor::new(true).into(),
                     RecoverMnemonic::default().into(),
                     RegisterDescriptor::new_import_wallet().into(),
+                    SelectBitcoindTypeStep::new().into(),
+                    InternalBitcoindStep::new(&self.context.data_dir).into(),
                     DefineBitcoind::new().into(),
                     Final::new(hot_signer_fingerprint).into(),
                 ];
@@ -230,6 +251,13 @@ pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
     }
 }
 
+/// Data directory used by internal bitcoind.
+pub fn internal_bitcoind_datadir(liana_datadir: &PathBuf) -> PathBuf {
+    let mut datadir = PathBuf::from(liana_datadir);
+    datadir.push("bitcoind_datadir");
+    datadir
+}
+
 pub async fn install(ctx: Context, signer: Arc<Mutex<Signer>>) -> Result<PathBuf, Error> {
     let mut cfg: liana::config::Config = ctx.extract_daemon_config();
     let data_dir = cfg.data_dir.unwrap();
@@ -295,6 +323,7 @@ pub async fn install(ctx: Context, signer: Arc<Mutex<Signer>>) -> Result<PathBuf
             daemon_config_path.canonicalize().map_err(|e| {
                 Error::Unexpected(format!("Failed to canonicalize daemon config path: {}", e))
             })?,
+            ctx.internal_bitcoind_exe_config.clone(),
         ))
         .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
         .as_bytes(),
@@ -337,6 +366,7 @@ pub enum Error {
     CannotCreateDatadir(String),
     CannotCreateFile(String),
     CannotWriteToFile(String),
+    CannotGetAvailablePort(String),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
 }
@@ -364,6 +394,7 @@ impl std::fmt::Display for Error {
         match self {
             Self::Bitcoind(e) => write!(f, "Failed to ping bitcoind: {}", e),
             Self::CannotCreateDatadir(e) => write!(f, "Failed to create datadir: {}", e),
+            Self::CannotGetAvailablePort(e) => write!(f, "Failed to get available port: {}", e),
             Self::CannotWriteToFile(e) => write!(f, "Failed to write to file: {}", e),
             Self::CannotCreateFile(e) => write!(f, "Failed to create file: {}", e),
             Self::Unexpected(e) => write!(f, "Unexpected: {}", e),

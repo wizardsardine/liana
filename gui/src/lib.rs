@@ -1,4 +1,5 @@
 pub mod app;
+pub mod bitcoind;
 pub mod daemon;
 pub mod hw;
 pub mod installer;

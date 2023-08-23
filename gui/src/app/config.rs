@@ -3,6 +3,15 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::filter;
 
+/// Config required to start internal bitcoind.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InternalBitcoindExeConfig {
+    /// Internal bitcoind executable path.
+    pub exe_path: PathBuf,
+    /// Internal bitcoind data dir.
+    pub data_dir: PathBuf,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     /// Path to lianad configuration file.
@@ -16,18 +25,24 @@ pub struct Config {
     /// hardware wallets config.
     /// LEGACY: Use Settings module instead.
     pub hardware_wallets: Option<Vec<HardwareWalletConfig>>,
+    /// Internal bitcoind executable config.
+    pub internal_bitcoind_exe_config: Option<InternalBitcoindExeConfig>,
 }
 
 pub const DEFAULT_FILE_NAME: &str = "gui.toml";
 
 impl Config {
-    pub fn new(daemon_config_path: PathBuf) -> Self {
+    pub fn new(
+        daemon_config_path: PathBuf,
+        internal_bitcoind_exe_config: Option<InternalBitcoindExeConfig>,
+    ) -> Self {
         Self {
             daemon_config_path: Some(daemon_config_path),
             daemon_rpc_path: None,
             log_level: None,
             debug: None,
             hardware_wallets: None,
+            internal_bitcoind_exe_config,
         }
     }
 

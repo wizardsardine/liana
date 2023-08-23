@@ -31,6 +31,7 @@ use state::{
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
+    bitcoind::stop_internal_bitcoind,
     daemon::{embedded::EmbeddedDaemon, Daemon},
 };
 
@@ -115,6 +116,13 @@ impl App {
         if !self.daemon.is_external() {
             self.daemon.stop();
             info!("Internal daemon stopped");
+            if self.config.internal_bitcoind_exe_config.is_some() {
+                if let Some(daemon_config) = self.daemon.config() {
+                    if let Some(bitcoind_config) = &daemon_config.bitcoind_config {
+                        stop_internal_bitcoind(bitcoind_config);
+                    }
+                }
+            }
         }
     }
 

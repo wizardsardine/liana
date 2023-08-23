@@ -147,9 +147,18 @@ mnemonic as well as the descriptor in the next two screens. Otherwise just make 
 ticking the boxes. If you are using a signing device simulator you'll have a step for registering
 the descriptor on it.
 
-Finally, configure the connection to `bitcoind`. The default should work for what we did in this
-guide. Click on continue and finalize the installation.
+You can then decide whether you would like to manage `bitcoind` yourself or let Liana configure
+and start/stop it while the GUI is being used:
+- If you choose to manage `bitcoind` yourself, the next step will be to configure the connection.
+The default should work for what we did in this guide.
+- If you choose to let Liana manage `bitcoind`, the next step will search for a `bitcoind`
+executable on your computer and start it, using `<Liana data directory>/bitcoind_datadir` as the
+data directory and creating a `bitcoin.conf` file therein.
 
+Click on continue and finalize the installation.
+
+In the case of a Liana-managed `bitcoind`, it will be automatically started the next time you
+start Liana for the given network.
 
 ## Step 3: have fun
 
