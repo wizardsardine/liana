@@ -1,6 +1,7 @@
 pub mod app;
 pub mod bitcoind;
 pub mod daemon;
+pub mod download;
 pub mod hw;
 pub mod installer;
 pub mod launcher;
