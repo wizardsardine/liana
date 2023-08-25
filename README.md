@@ -44,6 +44,7 @@ source, see [`doc/BUILD.md`](doc/BUILD.md) instead.
 Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
 executable for your platform. If you are not sure what is the "right" executable for your platform,
 choose:
+- `Liana.zip` if you are on MacOS,
 - `liana-1.1.exe` if you are on Windows,
 - `liana_1.1-1_amd64.deb` if you are running a Debian-based Linux (such as Ubuntu). Use `apt install
   ./liana_1.1-1_amd64.deb` as root (or preceded by `sudo`) to install it.
