@@ -14,7 +14,7 @@ pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
 
 use std::path::PathBuf;
 
-use iced::Command;
+use iced::{Command, Subscription};
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 
 use liana_ui::widget::*;
@@ -24,6 +24,9 @@ use crate::installer::{context::Context, message::Message, view};
 pub trait Step {
     fn update(&mut self, _message: Message) -> Command<Message> {
         Command::none()
+    }
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
     }
     fn view(&self, progress: (usize, usize)) -> Element<Message>;
     fn load_context(&mut self, _ctx: &Context) {}

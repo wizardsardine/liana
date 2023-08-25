@@ -71,7 +71,10 @@ impl Installer {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        self.steps
+            .get(self.current)
+            .expect("There is always a step")
+            .subscription()
     }
 
     pub fn stop(&mut self) {
