@@ -181,13 +181,21 @@ impl Loader {
                 info!("Stopping internal daemon...");
                 daemon.stop();
                 info!("Internal daemon stopped");
-                if self.gui_config.internal_bitcoind_exe_config.is_some() {
-                    if let Some(daemon_config) = daemon.config() {
-                        if let Some(bitcoind_config) = &daemon_config.bitcoind_config {
-                            stop_internal_bitcoind(bitcoind_config);
-                        }
-                    }
+            }
+        }
+        if self.gui_config.internal_bitcoind_exe_config.is_some() {
+            if let Ok(daemon_config) =
+                Config::from_file(self.gui_config.daemon_config_path.as_ref().cloned())
+            {
+                if let Some(bitcoind_config) = &daemon_config.bitcoind_config {
+                    info!("Stopping liana managed bitcoind...");
+                    stop_internal_bitcoind(bitcoind_config);
+                    info!("Stopped liana managed bitcoind");
+                } else {
+                    warn!("Liana daemon config does not have bitcoind config");
                 }
+            } else {
+                warn!("Liana gui cannot access daemon config to stop bitcoind");
             }
         }
     }
