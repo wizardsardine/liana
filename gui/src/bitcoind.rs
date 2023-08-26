@@ -4,10 +4,17 @@ use tracing::{info, warn};
 
 use crate::app::config::InternalBitcoindExeConfig;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// Possible errors when starting bitcoind.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum StartInternalBitcoindError {
     CommandError(String),
+    CouldNotCanonicalizeExePath(String),
     CouldNotCanonicalizeDataDir(String),
     CouldNotCanonicalizeCookiePath(String),
     CookieFileNotFound(String),
@@ -19,6 +26,9 @@ impl std::fmt::Display for StartInternalBitcoindError {
         match self {
             Self::CommandError(e) => {
                 write!(f, "Command to start bitcoind returned an error: {}", e)
+            }
+            Self::CouldNotCanonicalizeExePath(e) => {
+                write!(f, "Failed to canonicalize executable path: {}", e)
             }
             Self::CouldNotCanonicalizeDataDir(e) => {
                 write!(f, "Failed to canonicalize datadir: {}", e)
@@ -43,22 +53,31 @@ pub fn start_internal_bitcoind(
     network: &bitcoin::Network,
     exe_config: InternalBitcoindExeConfig,
 ) -> Result<std::process::Child, StartInternalBitcoindError> {
+    let datadir_path_str = exe_config
+        .data_dir
+        .canonicalize()
+        .map_err(|e| StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()))?
+        .to_str()
+        .ok_or_else(|| {
+            StartInternalBitcoindError::CouldNotCanonicalizeDataDir(
+                "Couldn't convert path to str.".to_string(),
+            )
+        })?
+        .to_string();
+    #[cfg(target_os = "windows")]
+    // See https://github.com/rust-lang/rust/issues/42869.
+    let datadir_path_str = datadir_path_str.replace("\\\\?\\", "").replace("\\\\?", "");
     let args = vec![
         format!("-chain={}", network.to_core_arg()),
-        format!(
-            "-datadir={}",
-            exe_config
-                .data_dir
-                .canonicalize()
-                .map_err(|e| StartInternalBitcoindError::CouldNotCanonicalizeDataDir(
-                    e.to_string()
-                ))?
-                .to_string_lossy()
-        ),
+        format!("-datadir={}", datadir_path_str),
     ];
-    std::process::Command::new(exe_config.exe_path)
+    let mut command = std::process::Command::new(exe_config.exe_path);
+    #[cfg(target_os = "windows")]
+    let command = command.creation_flags(CREATE_NO_WINDOW);
+    command
         .args(&args)
         .stdout(std::process::Stdio::null()) // We still get bitcoind's logs in debug.log.
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))
 }
