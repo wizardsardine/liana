@@ -8,6 +8,7 @@ use crate::app::config::InternalBitcoindExeConfig;
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum StartInternalBitcoindError {
     CommandError(String),
+    CouldNotCanonicalizeExePath(String),
     CouldNotCanonicalizeDataDir(String),
     CouldNotCanonicalizeCookiePath(String),
     CookieFileNotFound(String),
@@ -19,6 +20,9 @@ impl std::fmt::Display for StartInternalBitcoindError {
         match self {
             Self::CommandError(e) => {
                 write!(f, "Command to start bitcoind returned an error: {}", e)
+            }
+            Self::CouldNotCanonicalizeExePath(e) => {
+                write!(f, "Failed to canonicalize executable path: {}", e)
             }
             Self::CouldNotCanonicalizeDataDir(e) => {
                 write!(f, "Failed to canonicalize datadir: {}", e)
