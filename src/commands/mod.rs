@@ -10,13 +10,15 @@ use crate::{
     descriptors, DaemonControl, VERSION,
 };
 
+pub use crate::database::LabelItem;
+
 use utils::{
     deser_addr_assume_checked, deser_amount_from_sats, deser_fromstr, deser_hex, ser_amount,
     ser_hex, ser_to_string,
 };
 
 use std::{
-    collections::{hash_map, BTreeMap, HashMap},
+    collections::{hash_map, BTreeMap, HashMap, HashSet},
     convert::TryInto,
     fmt,
 };
@@ -308,7 +310,11 @@ impl DaemonControl {
                     height: spend_block.map(|b| b.height),
                 });
                 let block_height = block_info.map(|b| b.height);
+                let address = self
+                    .derived_desc(&coin)
+                    .address(self.config.bitcoin_config.network);
                 ListCoinsEntry {
+                    address,
                     amount,
                     outpoint,
                     block_height,
@@ -575,6 +581,18 @@ impl DaemonControl {
         Ok(())
     }
 
+    pub fn update_labels(&self, items: &HashMap<LabelItem, String>) {
+        let mut db_conn = self.db.connection();
+        db_conn.update_labels(items);
+    }
+
+    pub fn get_labels(&self, items: &HashSet<LabelItem>) -> GetLabelsResult {
+        let mut db_conn = self.db.connection();
+        GetLabelsResult {
+            labels: db_conn.labels(items),
+        }
+    }
+
     pub fn list_spend(&self) -> ListSpendResult {
         let mut db_conn = self.db.connection();
         let spend_txs = db_conn
@@ -820,6 +838,11 @@ pub struct GetAddressResult {
     address: bitcoin::Address,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetLabelsResult {
+    pub labels: HashMap<String, String>,
+}
+
 impl GetAddressResult {
     pub fn new(address: bitcoin::Address) -> Self {
         Self { address }
@@ -837,7 +860,7 @@ pub struct LCSpendInfo {
     pub height: Option<i32>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListCoinsEntry {
     #[serde(
         serialize_with = "ser_amount",
@@ -845,6 +868,11 @@ pub struct ListCoinsEntry {
     )]
     pub amount: bitcoin::Amount,
     pub outpoint: bitcoin::OutPoint,
+    #[serde(
+        serialize_with = "ser_to_string",
+        deserialize_with = "deser_addr_assume_checked"
+    )]
+    pub address: bitcoin::Address,
     pub block_height: Option<i32>,
     /// Information about the transaction spending this coin.
     pub spend_info: Option<LCSpendInfo>,

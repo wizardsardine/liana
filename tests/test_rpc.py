@@ -596,3 +596,116 @@ def test_create_recovery(lianad, bitcoind):
     assert len(reco_psbt.tx.vout) == 1
     assert int(0.39999 * COIN) < int(reco_psbt.tx.vout[0].nValue) < int(0.4 * COIN)
     sign_and_broadcast(lianad, bitcoind, reco_psbt, recovery=True)
+
+
+def test_labels(lianad, bitcoind):
+    """Test the creation and updating of labels."""
+    # We can set a label for an address.
+    addr = lianad.rpc.getnewaddress()["address"]
+    lianad.rpc.updatelabels({addr: "first-addr"})
+    assert lianad.rpc.getlabels([addr])["labels"] == {addr: "first-addr"}
+    # And also update it.
+    lianad.rpc.updatelabels({addr: "first-addr-1"})
+    assert lianad.rpc.getlabels([addr])["labels"] == {addr: "first-addr-1"}
+    # But we can't set a label larger than 100 characters
+    with pytest.raises(RpcError, match=".*must be less or equal than 100 characters"):
+        lianad.rpc.updatelabels({addr: "".join("a" for _ in range(101))})
+
+    # We can set a label for a coin.
+    sec_addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(sec_addr, 1)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
+    coin = lianad.rpc.listcoins()["coins"][0]
+    lianad.rpc.updatelabels({coin["outpoint"]: "first-coin"})
+    assert lianad.rpc.getlabels([coin["outpoint"]])["labels"] == {
+        coin["outpoint"]: "first-coin"
+    }
+    # And also update it.
+    lianad.rpc.updatelabels({coin["outpoint"]: "first-coin-1"})
+    assert lianad.rpc.getlabels([coin["outpoint"]])["labels"] == {
+        coin["outpoint"]: "first-coin-1"
+    }
+    # Its address though has no label.
+    assert lianad.rpc.getlabels([sec_addr])["labels"] == {}
+    # But we can receive a coin to the address that has a label set, and query both.
+    sec_txid = bitcoind.rpc.sendtoaddress(addr, 1)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 2)
+    sec_coin = next(
+        c for c in lianad.rpc.listcoins()["coins"] if sec_txid in c["outpoint"]
+    )
+    lianad.rpc.updatelabels({sec_coin["outpoint"]: "sec-coin"})
+    res = lianad.rpc.getlabels([sec_coin["outpoint"], addr])["labels"]
+    assert len(res) == 2
+    assert res[sec_coin["outpoint"]] == "sec-coin"
+    assert res[addr] == "first-addr-1"
+    # We can also query the labels for both coins, of course.
+    res = lianad.rpc.getlabels([coin["outpoint"], sec_coin["outpoint"]])["labels"]
+    assert len(res) == 2
+    assert res[coin["outpoint"]] == "first-coin-1"
+    assert res[sec_coin["outpoint"]] == "sec-coin"
+
+    # We can set, update and query labels for deposit transactions.
+    lianad.rpc.updatelabels({txid: "first-deposit"})
+    assert lianad.rpc.getlabels([txid, sec_txid])["labels"] == {txid: "first-deposit"}
+    lianad.rpc.updatelabels({txid: "first-deposit-1", sec_txid: "second-deposit"})
+    res = lianad.rpc.getlabels([txid, sec_txid])["labels"]
+    assert len(res) == 2
+    assert res[txid] == "first-deposit-1"
+    assert res[sec_txid] == "second-deposit"
+
+    # We can set and update a label for a spend transaction.
+    spend_txid = get_txid(spend_coins(lianad, bitcoind, [coin, sec_coin]))
+    lianad.rpc.updatelabels({spend_txid: "spend-tx"})
+    assert lianad.rpc.getlabels([spend_txid])["labels"] == {spend_txid: "spend-tx"}
+    lianad.rpc.updatelabels({spend_txid: "spend-tx-1"})
+    assert lianad.rpc.getlabels([spend_txid])["labels"] == {spend_txid: "spend-tx-1"}
+
+    # We can set labels for inexistent stuff, as long as the format of the item being
+    # labelled is valid.
+    inexistent_txid = "".join("0" for _ in range(64))
+    inexistent_outpoint = "".join("1" for _ in range(64)) + ":42"
+    random_address = bitcoind.rpc.getnewaddress()
+    lianad.rpc.updatelabels(
+        {
+            inexistent_txid: "inex_txid",
+            inexistent_outpoint: "inex_outpoint",
+            random_address: "bitcoind-addr",
+        }
+    )
+    res = lianad.rpc.getlabels([inexistent_txid, inexistent_outpoint, random_address])[
+        "labels"
+    ]
+    assert len(res) == 3
+    assert res[inexistent_txid] == "inex_txid"
+    assert res[inexistent_outpoint] == "inex_outpoint"
+    assert res[random_address] == "bitcoind-addr"
+
+    # We'll confirm everything, shouldn't affect any of the labels.
+    bitcoind.generate_block(1, wait_for_mempool=spend_txid)
+    wait_for(
+        lambda: bitcoind.rpc.getblockcount() == lianad.rpc.getinfo()["block_height"]
+    )
+    res = lianad.rpc.getlabels(
+        [
+            addr,
+            sec_addr,  # No label for this one.
+            txid,
+            sec_txid,
+            coin["outpoint"],
+            sec_coin["outpoint"],
+            spend_txid,
+            inexistent_txid,
+            inexistent_outpoint,
+            random_address,
+        ]
+    )["labels"]
+    assert len(res) == 9
+    assert res[sec_coin["outpoint"]] == "sec-coin"
+    assert res[addr] == "first-addr-1"
+    assert res[coin["outpoint"]] == "first-coin-1"
+    assert res[txid] == "first-deposit-1"
+    assert res[sec_txid] == "second-deposit"
+    assert res[spend_txid] == "spend-tx-1"
+    assert res[inexistent_txid] == "inex_txid"
+    assert res[inexistent_outpoint] == "inex_outpoint"
+    assert res[random_address] == "bitcoind-addr"

@@ -81,6 +81,15 @@ CREATE TABLE spend_transactions (
     txid BLOB UNIQUE NOT NULL,
     updated_at INTEGER
 );
+
+/* Labels applied on addresses (0), outpoints (1), txids (2) */
+CREATE TABLE labels (
+    id INTEGER PRIMARY KEY NOT NULL,
+    wallet_id INTEGER NOT NULL,
+    item_kind INTEGER NOT NULL CHECK (item_kind IN (0,1,2)),
+    item TEXT UNIQUE NOT NULL,
+    value TEXT NOT NULL
+);
 ";
 
 /// A row in the "tip" table.
@@ -290,6 +299,57 @@ impl TryFrom<&rusqlite::Row<'_>> for DbSpendTransaction {
             psbt,
             txid,
             updated_at,
+        })
+    }
+}
+
+/// A row in the "labels" table
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DbLabel {
+    pub id: i64,
+    pub wallet_id: i64,
+    pub item_kind: DbLabelledKind,
+    pub item: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(i64)]
+pub enum DbLabelledKind {
+    Address = 0,
+    OutPoint = 1,
+    Txid = 2,
+}
+
+impl From<i64> for DbLabelledKind {
+    fn from(value: i64) -> Self {
+        if value == 0 {
+            Self::Address
+        } else if value == 1 {
+            Self::OutPoint
+        } else {
+            assert_eq!(value, 2);
+            Self::Txid
+        }
+    }
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbLabel {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let id: i64 = row.get(0)?;
+        let wallet_id: i64 = row.get(1)?;
+        let item_kind: i64 = row.get(2)?;
+        let item: String = row.get(3)?;
+        let value: String = row.get(4)?;
+
+        Ok(DbLabel {
+            id,
+            wallet_id,
+            item_kind: item_kind.into(),
+            item,
+            value,
         })
     }
 }

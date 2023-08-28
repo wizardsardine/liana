@@ -12,7 +12,13 @@ use crate::{
     },
 };
 
-use std::{collections::HashMap, sync};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+    iter::FromIterator,
+    str::FromStr,
+    sync,
+};
 
 use miniscript::bitcoin::{self, bip32, psbt::PartiallySignedTransaction as Psbt, secp256k1};
 
@@ -118,6 +124,10 @@ pub trait DatabaseConnection {
 
     /// Delete a Spend transaction from database.
     fn delete_spend(&mut self, txid: &bitcoin::Txid);
+
+    fn update_labels(&mut self, items: &HashMap<LabelItem, String>);
+
+    fn labels(&mut self, labels: &HashSet<LabelItem>) -> HashMap<String, String>;
 
     /// Mark the given tip as the new best seen block. Update stored data accordingly.
     fn rollback_tip(&mut self, new_tip: &BlockChainTip);
@@ -257,6 +267,15 @@ impl DatabaseConnection for SqliteConn {
         self.delete_spend(txid)
     }
 
+    fn update_labels(&mut self, items: &HashMap<LabelItem, String>) {
+        self.update_labels(items)
+    }
+
+    fn labels(&mut self, items: &HashSet<LabelItem>) -> HashMap<String, String> {
+        let labels = self.db_labels(items);
+        HashMap::from_iter(labels.into_iter().map(|label| (label.item, label.value)))
+    }
+
     fn rollback_tip(&mut self, new_tip: &BlockChainTip) {
         self.rollback_tip(new_tip)
     }
@@ -334,4 +353,57 @@ pub enum CoinType {
     All,
     Unspent,
     Spent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LabelItem {
+    Address(bitcoin::Address),
+    Txid(bitcoin::Txid),
+    OutPoint(bitcoin::OutPoint),
+}
+
+impl From<bitcoin::Address> for LabelItem {
+    fn from(value: bitcoin::Address) -> Self {
+        Self::Address(value)
+    }
+}
+
+impl From<bitcoin::Txid> for LabelItem {
+    fn from(value: bitcoin::Txid) -> Self {
+        Self::Txid(value)
+    }
+}
+
+impl From<bitcoin::OutPoint> for LabelItem {
+    fn from(value: bitcoin::OutPoint) -> Self {
+        Self::OutPoint(value)
+    }
+}
+
+impl Display for LabelItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            LabelItem::Address(a) => write!(f, "{}", a),
+            LabelItem::Txid(a) => write!(f, "{}", a),
+            LabelItem::OutPoint(a) => write!(f, "{}", a),
+        }
+    }
+}
+
+impl LabelItem {
+    pub fn from_str(s: &str, network: bitcoin::Network) -> Option<LabelItem> {
+        if let Ok(addr) = bitcoin::Address::from_str(s) {
+            if !addr.is_valid_for_network(network) {
+                None
+            } else {
+                Some(LabelItem::Address(addr.assume_checked()))
+            }
+        } else if let Ok(txid) = bitcoin::Txid::from_str(s) {
+            Some(LabelItem::Txid(txid))
+        } else if let Ok(outpoint) = bitcoin::OutPoint::from_str(s) {
+            Some(LabelItem::OutPoint(outpoint))
+        } else {
+            None
+        }
+    }
 }

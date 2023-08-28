@@ -14,18 +14,26 @@ use crate::{
     bitcoin::BlockChainTip,
     database::{
         sqlite::{
-            schema::{DbAddress, DbCoin, DbSpendTransaction, DbTip, DbWallet, SCHEMA},
+            schema::{
+                DbAddress, DbCoin, DbLabel, DbLabelledKind, DbSpendTransaction, DbTip, DbWallet,
+                SCHEMA,
+            },
             utils::{
                 create_fresh_db, curr_timestamp, db_exec, db_query, db_tx_query, db_version,
                 maybe_apply_migration, LOOK_AHEAD_LIMIT,
             },
         },
-        Coin, CoinType,
+        Coin, CoinType, LabelItem,
     },
     descriptors::LianaDescriptor,
 };
 
-use std::{cmp, convert::TryInto, fmt, io, path};
+use std::{
+    cmp,
+    collections::{HashMap, HashSet},
+    convert::TryInto,
+    fmt, io, path,
+};
 
 use miniscript::bitcoin::{
     self, bip32,
@@ -35,7 +43,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 2;
+const DB_VERSION: i64 = 3;
 
 #[derive(Debug)]
 pub enum SqliteDbError {
@@ -554,6 +562,43 @@ impl SqliteConn {
         .expect("Db must not fail")
     }
 
+    pub fn update_labels(&mut self, items: &HashMap<LabelItem, String>) {
+        db_exec(&mut self.conn, |db_tx| {
+            for (labelled, kind, value) in items
+                .iter()
+                .map(|(a, v)| {
+                     match a {
+                         LabelItem::Address(a) =>(a.to_string(), DbLabelledKind::Address, v),
+                         LabelItem::Txid(a) =>(a.to_string(), DbLabelledKind::Txid, v),
+                         LabelItem::OutPoint(a) =>(a.to_string(), DbLabelledKind::OutPoint, v),
+                     }
+                }) {
+                db_tx.execute(
+                    "INSERT INTO labels (wallet_id, item, item_kind, value) VALUES (?1, ?2, ?3, ?4) \
+                    ON CONFLICT DO UPDATE SET value=excluded.value",
+                    rusqlite::params![WALLET_ID, labelled, kind as i64, value],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("Db must not fail")
+    }
+
+    pub fn db_labels(&mut self, items: &HashSet<LabelItem>) -> Vec<DbLabel> {
+        let query = format!(
+            "SELECT * FROM labels where item in ({})",
+            items
+                .iter()
+                .map(|a| format!("'{}'", a))
+                .collect::<Vec<String>>()
+                .join(",")
+        );
+        db_query(&mut self.conn, &query, rusqlite::params![], |row| {
+            row.try_into()
+        })
+        .expect("Db must not fail")
+    }
+
     /// Retrieves a limited and ordered list of transactions ids that happened during the given
     /// range.
     pub fn db_list_txids(&mut self, start: u32, end: u32, limit: u64) -> Vec<bitcoin::Txid> {
@@ -807,6 +852,38 @@ CREATE TABLE spend_transactions (
             let db_tip = conn.db_tip();
             assert_eq!(db_tip.block_height.unwrap(), new_tip.height);
             assert_eq!(db_tip.block_hash.unwrap(), new_tip.hash);
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn db_labels_update() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        {
+            let txid_str = "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7";
+            let txid = LabelItem::from_str(txid_str, bitcoin::Network::Bitcoin).unwrap();
+            let mut items = HashSet::new();
+            items.insert(txid.clone());
+
+            let mut conn = db.connection().unwrap();
+            let db_labels = conn.db_labels(&items);
+            assert!(db_labels.is_empty());
+
+            let mut txids_labels = HashMap::new();
+            txids_labels.insert(txid.clone(), "hello".to_string());
+
+            conn.update_labels(&txids_labels);
+
+            let db_labels = conn.db_labels(&items);
+            assert_eq!(db_labels[0].value, "hello");
+
+            txids_labels.insert(txid, "hello again".to_string());
+            conn.update_labels(&txids_labels);
+
+            let db_labels = conn.db_labels(&items);
+            assert_eq!(db_labels[0].value, "hello again");
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
@@ -1635,6 +1712,44 @@ CREATE TABLE spend_transactions (
             let coins = conn.coins(CoinType::All);
             assert_eq!(coins.len(), 3);
             assert_eq!(coins.iter().filter(|c| !c.is_immature).count(), 2);
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn v0_to_v3_migration() {
+        let secp = secp256k1::Secp256k1::verification_only();
+
+        // Create a database with version 0, using the old schema.
+        let tmp_dir = tmp_dir();
+        fs::create_dir_all(&tmp_dir).unwrap();
+        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v0.sqlite3")]
+            .iter()
+            .collect();
+        let mut options = dummy_options();
+        options.schema = V0_SCHEMA;
+        options.version = 0;
+        create_fresh_db(&db_path, options, &secp).unwrap();
+
+        // SqliteDb new is doing the migration.
+        let db = SqliteDb::new(db_path, None, &secp).unwrap();
+
+        {
+            let mut conn = db.connection().unwrap();
+            let version = conn.db_version();
+            assert_eq!(version, 3);
+
+            let txid_str = "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7";
+            let txid = LabelItem::from_str(txid_str, bitcoin::Network::Bitcoin).unwrap();
+            let mut txids_labels = HashMap::new();
+            txids_labels.insert(txid.clone(), "hello".to_string());
+            conn.update_labels(&txids_labels);
+
+            let mut items = HashSet::new();
+            items.insert(txid);
+            let db_labels = conn.db_labels(&items);
+            assert_eq!(db_labels[0].value, "hello");
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
