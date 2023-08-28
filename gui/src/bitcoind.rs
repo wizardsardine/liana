@@ -69,6 +69,7 @@ pub fn stop_internal_bitcoind(bitcoind_config: &BitcoindConfig) {
         Ok(bitcoind) => {
             info!("Stopping internal bitcoind...");
             bitcoind.stop();
+            info!("Stopped liana managed bitcoind");
         }
         Err(e) => {
             warn!("Could not create interface to internal bitcoind: '{}'.", e);

@@ -188,9 +188,7 @@ impl Loader {
                 Config::from_file(self.gui_config.daemon_config_path.as_ref().cloned())
             {
                 if let Some(bitcoind_config) = &daemon_config.bitcoind_config {
-                    info!("Stopping liana managed bitcoind...");
                     stop_internal_bitcoind(bitcoind_config);
-                    info!("Stopped liana managed bitcoind");
                 } else {
                     warn!("Liana daemon config does not have bitcoind config");
                 }
