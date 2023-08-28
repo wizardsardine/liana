@@ -182,6 +182,14 @@ For the daemon, see the [`createrecovery`](doc/API.md#createrecovery) command. I
 sweep PSBT to the requested address with the specified feerate, filled with all available coins.
 
 
+#### Recovering a Liana wallet backup on another wallet
+
+You can always restore a Liana wallet backup using the Liana software. In the extremely unlikely
+scenario that you lose access to a Liana software (all copies of the binaries and source code are
+entirely wiped from the surface of the planet) or are otherwise unable to use it, we've got [a guide
+on how to recover a Liana wallet backup with Bitcoin Core 25.0 and above](doc/RECOVER.md).
+
+
 ### Reproducible builds
 
 Releases of Liana are reproducibly built. Linux binaries are also bootstrappable. See
