@@ -292,12 +292,14 @@ fn setup_bitcoind(
             wo_name,
         )?;
 
+        log::info!("Creating a new watchonly wallet on bitcoind.");
         bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
-        log::info!("Created a new watchonly wallet on bitcoind.");
+        log::info!("Watchonly wallet created.");
     }
+    log::info!("Loading our watchonly wallet on bitcoind.");
     bitcoind.maybe_load_watchonly_wallet()?;
     bitcoind.wallet_sanity_checks(&config.main_descriptor)?;
-    log::info!("Connection to bitcoind established and checked.");
+    log::info!("Watchonly wallet loaded on bitcoind and sanity checked.");
 
     Ok(bitcoind)
 }

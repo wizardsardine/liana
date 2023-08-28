@@ -119,7 +119,6 @@ class Lianad(TailableProc):
         self.wait_for_logs(
             [
                 "Database initialized and checked",
-                "Connection to bitcoind established and checked.",
                 "JSONRPC server started.",
             ]
         )

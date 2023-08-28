@@ -265,7 +265,9 @@ impl BitcoinD {
             watchonly_wallet_path: watchonly_wallet_path.clone(),
             retries: 0,
         };
+        log::info!("Checking the connection to bitcoind.");
         dummy_bitcoind.check_connection()?;
+        log::info!("Connection to bitcoind checked.");
 
         // Now the connection is checked, create the clients with an appropriate timeout.
         let node_client = Client::with_transport(
