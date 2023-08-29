@@ -508,7 +508,7 @@ impl BitcoinD {
         None
     }
 
-    pub fn unload_wallet(&self, wallet_path: String) -> Option<String> {
+    fn unload_wallet(&self, wallet_path: String) -> Option<String> {
         let res = self.make_node_request("unloadwallet", &params!(Json::String(wallet_path),));
         self.warning_from_res(&res)
     }
@@ -607,16 +607,10 @@ impl BitcoinD {
             .collect()
     }
 
-    /// Create the watchonly wallet on bitcoind, and import it the main descriptor.
-    pub fn create_watchonly_wallet(
-        &self,
-        main_descriptor: &LianaDescriptor,
-    ) -> Result<(), BitcoindError> {
-        // Remove any leftover. This can happen if we delete the watchonly wallet but don't restart
-        // bitcoind.
-        while self.list_wallets().contains(&self.watchonly_wallet_path) {
+    pub fn maybe_unload_watchonly_wallet(&self, watchonly_wallet_path: String) {
+        while self.list_wallets().contains(&watchonly_wallet_path) {
             log::info!("Found a leftover watchonly wallet loaded on bitcoind. Removing it.");
-            if let Some(e) = self.unload_wallet(self.watchonly_wallet_path.clone()) {
+            if let Some(e) = self.unload_wallet(watchonly_wallet_path.clone()) {
                 log::error!(
                     "Unloading wallet '{}': '{}'",
                     &self.watchonly_wallet_path,
@@ -624,6 +618,16 @@ impl BitcoinD {
                 );
             }
         }
+    }
+
+    /// Create the watchonly wallet on bitcoind, and import it the main descriptor.
+    pub fn create_watchonly_wallet(
+        &self,
+        main_descriptor: &LianaDescriptor,
+    ) -> Result<(), BitcoindError> {
+        // Remove any leftover. This can happen if we delete the watchonly wallet but don't restart
+        // bitcoind.
+        self.maybe_unload_watchonly_wallet(self.watchonly_wallet_path.clone());
 
         // Now create the wallet and import the main descriptor.
         self.create_wallet(self.watchonly_wallet_path.clone())

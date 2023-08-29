@@ -229,16 +229,11 @@ fn maybe_delete_watchonly_wallet(
     };
 
     if wallet_path.exists() {
+        bitcoind.maybe_unload_watchonly_wallet(wallet_path.to_string_lossy().to_string());
         log::info!(
-            "Found a leftover watchonly wallet at '{}'. Deleting it.",
+            "Deleting the leftover watchonly wallet at '{}'.",
             wallet_path.as_path().to_string_lossy()
         );
-        if let Some(warning) = bitcoind.unload_wallet(wallet_path.to_string_lossy().to_string()) {
-            log::warn!(
-                "Warning when unloading watchonly wallet on bitcoind: '{}'",
-                warning
-            );
-        }
         fs::remove_dir_all(&wallet_path)
             .map_err(|e| StartupError::WindowsBitcoindWatchonlyDeletion(wallet_path, e))?;
     } else {
