@@ -35,7 +35,7 @@ impl CoinsPanel {
             .iter()
             .filter_map(|coin| {
                 if coin.spend_info.is_none() {
-                    Some(*coin)
+                    Some(coin.clone())
                 } else {
                     None
                 }
@@ -129,6 +129,10 @@ mod tests {
             "f7bd1b2a995b689d326e51eb742eb1088c4a8f110d9cb56128fd553acc9f88e5",
         )
         .unwrap();
+        let dummy_address =
+            bitcoin::Address::from_str("bc1qvrl2849aggm6qry9ea7xqp2kk39j8vaa8r3cwg")
+                .unwrap()
+                .assume_checked();
 
         panel.update_coins(&[
             Coin {
@@ -137,6 +141,7 @@ mod tests {
                 block_height: Some(3),
                 spend_info: None,
                 is_immature: false,
+                address: dummy_address.clone(),
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 3 },
@@ -144,6 +149,7 @@ mod tests {
                 block_height: None,
                 spend_info: None,
                 is_immature: false,
+                address: dummy_address.clone(),
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 0 },
@@ -151,6 +157,7 @@ mod tests {
                 block_height: Some(2),
                 spend_info: None,
                 is_immature: false,
+                address: dummy_address.clone(),
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 1 },
@@ -158,6 +165,7 @@ mod tests {
                 block_height: Some(3),
                 spend_info: None,
                 is_immature: false,
+                address: dummy_address,
             },
         ]);
 

@@ -75,7 +75,7 @@ impl DefineSpend {
             .iter()
             .filter_map(|c| {
                 if c.spend_info.is_none() {
-                    Some((*c, false))
+                    Some((c.clone(), false))
                 } else {
                     None
                 }
@@ -302,7 +302,7 @@ impl Step for DefineSpend {
         draft.inputs = self
             .coins
             .iter()
-            .filter_map(|(coin, selected)| if *selected { Some(*coin) } else { None })
+            .filter_map(|(coin, selected)| if *selected { Some(coin.clone()) } else { None })
             .collect();
         draft.generated = self.generated.clone();
     }
