@@ -259,7 +259,7 @@ pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, 
         )
         .padding(10)
         .style(theme::Container::Pill(theme::Pill::Warning))
-    } else if seq < timelock as u32 * 10 / 100 {
+    } else if seq < timelock * 10 / 100 {
         Container::new(
             Row::new()
                 .spacing(5)

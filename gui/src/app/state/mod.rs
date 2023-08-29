@@ -102,7 +102,7 @@ impl State for Home {
                 cache,
                 event,
                 output_index,
-                &self.labels_edited.cache(),
+                self.labels_edited.cache(),
                 self.warning.as_ref(),
             )
         } else {
@@ -329,7 +329,7 @@ impl State for ReceivePanel {
                 &self.addresses.list,
                 self.qr_code.as_ref(),
                 &self.addresses.labels,
-                &self.labels_edited.cache(),
+                self.labels_edited.cache(),
             ),
         )
     }

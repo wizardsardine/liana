@@ -9,11 +9,11 @@ use liana_ui::{
 
 use crate::app::view;
 
-pub fn label_editable<'a>(
+pub fn label_editable(
     labelled: String,
-    label: Option<&'a String>,
+    label: Option<&String>,
     size: u16,
-) -> Element<'a, view::Message> {
+) -> Element<'_, view::Message> {
     if let Some(label) = label {
         if !label.is_empty() {
             return Container::new(

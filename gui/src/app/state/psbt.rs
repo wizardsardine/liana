@@ -89,7 +89,7 @@ impl PsbtState {
                     self.action = None;
                 }
                 view::SpendTxMessage::Delete => {
-                    self.action = Some(Box::new(DeleteAction::default()));
+                    self.action = Some(Box::<DeleteAction>::default());
                 }
                 view::SpendTxMessage::Sign => {
                     let action = SignAction::new(self.tx.signers(), self.wallet.clone());
@@ -104,10 +104,10 @@ impl PsbtState {
                     return cmd;
                 }
                 view::SpendTxMessage::Broadcast => {
-                    self.action = Some(Box::new(BroadcastAction::default()));
+                    self.action = Some(Box::<BroadcastAction>::default());
                 }
                 view::SpendTxMessage::Save => {
-                    self.action = Some(Box::new(SaveAction::default()));
+                    self.action = Some(Box::<SaveAction>::default());
                 }
                 _ => {
                     if let Some(action) = self.action.as_mut() {
@@ -151,7 +151,7 @@ impl PsbtState {
             self.saved,
             &self.desc_policy,
             &self.wallet.keys_aliases,
-            &self.labels_edited.cache(),
+            self.labels_edited.cache(),
             cache.network,
             self.warning.as_ref(),
         );

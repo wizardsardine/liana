@@ -84,7 +84,7 @@ pub fn transactions_view<'a>(
     )
 }
 
-fn tx_list_view<'a>(i: usize, tx: &'a HistoryTransaction) -> Element<'a, Message> {
+fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
     Container::new(
         Button::new(
             Row::new()
@@ -99,11 +99,7 @@ fn tx_list_view<'a>(i: usize, tx: &'a HistoryTransaction) -> Element<'a, Message
                         })
                         .push(
                             Column::new()
-                                .push_maybe(
-                                    tx.labels
-                                        .get(&tx.tx.txid().to_string())
-                                        .map(|label| p1_bold(label)),
-                                )
+                                .push_maybe(tx.labels.get(&tx.tx.txid().to_string()).map(p1_bold))
                                 .push_maybe(tx.time.map(|t| {
                                     Container::new(
                                         text(format!(

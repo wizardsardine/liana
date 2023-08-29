@@ -64,13 +64,7 @@ impl CoinsPanel {
     fn update_coins(&mut self, coins: &[Coin]) {
         self.coins.list = coins
             .iter()
-            .filter_map(|coin| {
-                if coin.spend_info.is_none() {
-                    Some(coin)
-                } else {
-                    None
-                }
-            })
+            .filter(|coin| coin.spend_info.is_none())
             .cloned()
             .collect();
 
@@ -171,7 +165,7 @@ impl State for CoinsPanel {
                     let coins = daemon2
                         .list_coins()
                         .map(|res| res.coins)
-                        .map_err(|e| Error::from(e))?;
+                        .map_err(Error::from)?;
                     let mut targets = HashSet::<LabelItem>::new();
                     for coin in coins {
                         targets.insert(LabelItem::OutPoint(coin.outpoint));

@@ -549,7 +549,7 @@ impl Step for SaveSpend {
             spend.saved,
             &spend.desc_policy,
             &spend.wallet.keys_aliases,
-            &spend.labels_edited.cache(),
+            spend.labels_edited.cache(),
             cache.network,
             spend.warning.as_ref(),
         );

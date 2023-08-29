@@ -29,6 +29,7 @@ use crate::{
     daemon::model::{remaining_sequence, Coin, SpendTx},
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn spend_view<'a>(
     cache: &'a Cache,
     tx: &'a SpendTx,

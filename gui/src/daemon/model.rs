@@ -150,7 +150,7 @@ impl SpendTx {
             .output
             .iter()
             .enumerate()
-            .filter(|(i, _)| !self.change_indexes.contains(&i))
+            .filter(|(i, _)| !self.change_indexes.contains(i))
             .count()
             > 1
     }
@@ -166,7 +166,7 @@ impl Labelled for SpendTx {
         items.push(LabelItem::Txid(txid));
         for coin in &self.coins {
             items.push(LabelItem::Address(coin.address.clone()));
-            items.push(LabelItem::OutPoint(coin.outpoint.clone()));
+            items.push(LabelItem::OutPoint(coin.outpoint));
         }
         for (vout, output) in self.psbt.unsigned_tx.output.iter().enumerate() {
             items.push(LabelItem::OutPoint(OutPoint {
@@ -253,7 +253,7 @@ impl HistoryTransaction {
             .output
             .iter()
             .enumerate()
-            .filter(|(i, _)| !self.change_indexes.contains(&i))
+            .filter(|(i, _)| !self.change_indexes.contains(i))
             .count()
             > 1
     }
@@ -269,7 +269,7 @@ impl Labelled for HistoryTransaction {
         items.push(LabelItem::Txid(txid));
         for coin in &self.coins {
             items.push(LabelItem::Address(coin.address.clone()));
-            items.push(LabelItem::OutPoint(coin.outpoint.clone()));
+            items.push(LabelItem::OutPoint(coin.outpoint));
         }
         for (vout, output) in self.tx.output.iter().enumerate() {
             items.push(LabelItem::OutPoint(OutPoint {

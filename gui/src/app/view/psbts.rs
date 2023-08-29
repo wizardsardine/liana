@@ -59,7 +59,7 @@ pub fn import_psbt_success_view<'a>() -> Element<'a, Message> {
         .into()
 }
 
-pub fn psbts_view<'a>(spend_txs: &'a [SpendTx]) -> Element<'a, Message> {
+pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
     Column::new()
         .push(
             Row::new()
@@ -90,7 +90,7 @@ pub fn psbts_view<'a>(spend_txs: &'a [SpendTx]) -> Element<'a, Message> {
         .into()
 }
 
-fn spend_tx_list_view<'a>(i: usize, tx: &'a SpendTx) -> Element<'a, Message> {
+fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
     Container::new(
         Button::new(
             Row::new()
@@ -127,7 +127,7 @@ fn spend_tx_list_view<'a>(i: usize, tx: &'a SpendTx) -> Element<'a, Message> {
                         .push_maybe(
                             tx.labels
                                 .get(&tx.psbt.unsigned_tx.txid().to_string())
-                                .map(|label| p1_bold(label)),
+                                .map(p1_bold),
                         )
                         .spacing(10)
                         .align_items(Alignment::Center)

@@ -146,7 +146,7 @@ pub fn home_view<'a>(
         .into()
 }
 
-fn event_list_view<'a>(i: usize, event: &'a HistoryTransaction) -> Column<'a, Message> {
+fn event_list_view(i: usize, event: &HistoryTransaction) -> Column<'_, Message> {
     event.tx.output.iter().enumerate().fold(
         Column::new().spacing(10),
         |col, (output_index, output)| {
@@ -158,14 +158,15 @@ fn event_list_view<'a>(i: usize, event: &'a HistoryTransaction) -> Column<'a, Me
                 .to_string(),
             ) {
                 Some(p1_bold(label))
-            } else if let Some(label) = event.labels.get(
-                &bitcoin::Address::from_script(&output.script_pubkey, event.network)
-                    .unwrap()
-                    .to_string(),
-            ) {
-                Some(p1_bold(format!("address label: {}", label)).style(color::GREY_3))
             } else {
-                None
+                event
+                    .labels
+                    .get(
+                        &bitcoin::Address::from_script(&output.script_pubkey, event.network)
+                            .unwrap()
+                            .to_string(),
+                    )
+                    .map(|label| p1_bold(format!("address label: {}", label)).style(color::GREY_3))
             };
             if event.is_external() {
                 if !event.change_indexes.contains(&output_index) {

@@ -52,7 +52,7 @@ impl State for TransactionsPanel {
             view::transactions::tx_view(
                 cache,
                 tx,
-                &self.labels_edited.cache(),
+                self.labels_edited.cache(),
                 self.warning.as_ref(),
             )
         } else {

@@ -39,6 +39,7 @@ use crate::{
     hw::HardwareWallet,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn psbt_view<'a>(
     cache: &'a Cache,
     tx: &'a SpendTx,
@@ -590,7 +591,7 @@ pub fn inputs_and_outputs_view<'a>(
                 .enumerate()
                 .filter(|(i, _)| {
                     if let Some(indexes) = change_indexes_copy.as_ref() {
-                        !indexes.contains(&i)
+                        !indexes.contains(i)
                     } else {
                         true
                     }
@@ -640,7 +641,7 @@ pub fn inputs_and_outputs_view<'a>(
                             .enumerate()
                             .filter(|(i, _)| {
                                 if let Some(indexes) = change_indexes_copy.as_ref() {
-                                    !indexes.contains(&i)
+                                    !indexes.contains(i)
                                 } else {
                                     true
                                 }
@@ -703,7 +704,7 @@ pub fn inputs_and_outputs_view<'a>(
                             tx.output
                                 .iter()
                                 .enumerate()
-                                .filter(|(i, _)| change_indexes.as_ref().unwrap().contains(&i))
+                                .filter(|(i, _)| change_indexes.as_ref().unwrap().contains(i))
                                 .fold(
                                     Column::new().padding(20),
                                     |col: Column<'a, Message>, (i, output)| {

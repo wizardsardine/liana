@@ -1,3 +1,5 @@
+//! Settings is the module to handle the GUI settings file.
+//! The settings file is used by the GUI to store useful information.
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -8,8 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{app::wallet::Wallet, hw::HardwareWalletConfig};
 
-///! Settings is the module to handle the GUI settings file.
-///! The settings file is used by the GUI to store useful information.
 pub const DEFAULT_FILE_NAME: &str = "settings.json";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

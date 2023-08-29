@@ -122,7 +122,7 @@ impl State for CreateSpendPanel {
                     let coins = daemon
                         .list_coins()
                         .map(|res| res.coins)
-                        .map_err(|e| Error::from(e))?;
+                        .map_err(Error::from)?;
                     let mut targets = HashSet::<LabelItem>::new();
                     for coin in coins {
                         targets.insert(LabelItem::OutPoint(coin.outpoint));
