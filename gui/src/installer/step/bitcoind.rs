@@ -330,7 +330,7 @@ impl std::fmt::Display for InstallBitcoindError {
 // https://github.com/RCasatta/bitcoind/blob/bada7ebb7197b89fd67e607f815ce1e43e76da7f/build.rs#L73.
 
 /// Unpack the downloaded bytes in the specified directory.
-fn unpack_bitcoind(install_dir: &mut PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
+fn unpack_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         let d = GzDecoder::new(bytes);
@@ -343,7 +343,7 @@ fn unpack_bitcoind(install_dir: &mut PathBuf, bytes: &[u8]) -> Result<(), Instal
         {
             if let Ok(file) = entry.path() {
                 if file.ends_with("bitcoind") {
-                    if let Err(e) = entry.unpack_in(&install_dir) {
+                    if let Err(e) = entry.unpack_in(install_dir) {
                         return Err(InstallBitcoindError::UnpackingError(e.to_string()));
                     }
                 }
@@ -364,15 +364,14 @@ fn unpack_bitcoind(install_dir: &mut PathBuf, bytes: &[u8]) -> Result<(), Instal
                 None => continue,
             };
             if outpath.file_name().map(|s| s.to_str()) == Some(Some("bitcoind.exe")) {
+                let mut exe_path = PathBuf::from(install_dir);
                 for d in outpath.iter() {
-                    install_dir.push(d);
+                    exe_path.push(d);
                 }
-                let parent = install_dir
-                    .parent()
-                    .expect("bitcoind.exe should have parent.");
+                let parent = exe_path.parent().expect("bitcoind.exe should have parent.");
                 std::fs::create_dir_all(parent)
                     .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
-                let mut outfile = std::fs::File::create(&install_dir)
+                let mut outfile = std::fs::File::create(&exe_path)
                     .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
                 io::copy(&mut file, &mut outfile)
                     .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
@@ -392,7 +391,7 @@ fn verify_hash(bytes: &[u8]) -> bool {
 }
 
 /// Install bitcoind by verifying the download hash and unpacking in the specified directory.
-fn install_bitcoind(install_dir: &mut PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
+fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
     if !verify_hash(bytes) {
         return Err(InstallBitcoindError::HashMismatch);
     };
@@ -818,7 +817,7 @@ impl Step for InternalBitcoindStep {
                         if let DownloadState::Finished(bytes) = &download.state {
                             info!("Installing bitcoind...");
                             self.install_state = Some(InstallState::InProgress);
-                            match install_bitcoind(&mut self.liana_datadir, bytes) {
+                            match install_bitcoind(&self.liana_datadir, bytes) {
                                 Ok(_) => {
                                     info!("Installation of bitcoind complete.");
                                     self.install_state = Some(InstallState::Finished);
