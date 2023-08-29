@@ -90,7 +90,7 @@ pub trait Daemon: Debug {
                         .iter()
                         .any(|input| input.previous_output == coin.outpoint)
                 })
-                .copied()
+                .cloned()
                 .collect();
             let sigs = info
                 .descriptors
@@ -133,7 +133,7 @@ pub trait Daemon: Debug {
                         .iter()
                         .any(|input| input.previous_output == coin.outpoint)
                     {
-                        tx_coins.push(*coin);
+                        tx_coins.push(coin.clone());
                     }
                 }
                 model::HistoryTransaction::new(tx.tx, tx.height, tx.time, tx_coins, change_indexes)
@@ -171,7 +171,7 @@ pub trait Daemon: Debug {
                         .iter()
                         .any(|input| input.previous_output == coin.outpoint)
                     {
-                        tx_coins.push(*coin);
+                        tx_coins.push(coin.clone());
                     }
                 }
                 model::HistoryTransaction::new(tx.tx, tx.height, tx.time, tx_coins, change_indexes)

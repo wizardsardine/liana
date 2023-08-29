@@ -152,7 +152,7 @@ impl State for RecoveryPanel {
                                         .iter()
                                         .any(|input| input.previous_output == coin.outpoint)
                                 })
-                                .copied()
+                                .cloned()
                                 .collect();
                             let sigs = desc.partial_spend_info(&psbt).unwrap();
                             Ok(SpendTx::new(None, psbt, coins, sigs))
