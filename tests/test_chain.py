@@ -340,6 +340,7 @@ def test_rescan_and_recovery(lianad, bitcoind):
 
     # Start rescan
     lianad.rpc.startrescan(initial_tip["time"])
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
     wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
 
     # Create a recovery tx that sweeps the first coin.
