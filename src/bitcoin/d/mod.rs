@@ -429,7 +429,7 @@ impl BitcoinD {
     }
 
     fn make_node_request(&self, method: &str, params: &[Box<serde_json::value::RawValue>]) -> Json {
-        self.make_request(&self.sendonly_client, method, params)
+        self.make_request(&self.node_client, method, params)
             .expect("We must not fail to make a request for more than a minute")
     }
 
