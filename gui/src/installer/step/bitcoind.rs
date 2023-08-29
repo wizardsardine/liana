@@ -386,6 +386,7 @@ fn unpack_bitcoind(install_dir: &mut PathBuf, bytes: &[u8]) -> Result<(), Instal
 /// Verify the download hash against the expected value.
 fn verify_hash(bytes: &[u8]) -> bool {
     let bytes_hash = sha256::Hash::hash(bytes);
+    info!("Download hash: '{}'.", bytes_hash);
     let expected_hash = sha256::Hash::from_str(SHA256SUM).expect("This cannot fail.");
     expected_hash == bytes_hash
 }
@@ -796,7 +797,7 @@ impl Step for InternalBitcoindStep {
                 message::InternalBitcoindMsg::Download => {
                     if let Some(download) = &mut self.exe_download {
                         if let DownloadState::Idle = download.state {
-                            info!("Downloading bitcoind...");
+                            info!("Downloading bitcoind version {}...", &VERSION);
                             download.start();
                         }
                     }
