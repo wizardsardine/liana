@@ -30,6 +30,7 @@ const DUST_OUTPUT_SATS: u64 = 5_000;
 pub struct TransactionDraft {
     network: Network,
     inputs: Vec<Coin>,
+    recipients: Vec<Recipient>,
     generated: Option<Psbt>,
     batch_label: Option<String>,
     labels: HashMap<String, String>,
@@ -40,6 +41,7 @@ impl TransactionDraft {
         Self {
             network,
             inputs: Vec::new(),
+            recipients: Vec::new(),
             generated: None,
             batch_label: None,
             labels: HashMap::new(),
@@ -373,6 +375,7 @@ impl Step for DefineSpend {
                 }
             }
         }
+        draft.recipients = self.recipients.clone();
         if self.recipients.len() > 1 {
             draft.batch_label = Some(self.batch_label.value.clone());
         }
@@ -407,7 +410,7 @@ impl Step for DefineSpend {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Recipient {
     label: form::Value<String>,
     address: form::Value<String>,
@@ -520,9 +523,36 @@ impl Step for SaveSpend {
             draft.network,
         );
         tx.labels = draft.labels.clone();
-        if let Some(label) = &draft.batch_label {
-            tx.labels
-                .insert(tx.psbt.unsigned_tx.txid().to_string(), label.clone());
+
+        if tx.is_batch() {
+            if let Some(label) = &draft.batch_label {
+                tx.labels
+                    .insert(tx.psbt.unsigned_tx.txid().to_string(), label.clone());
+                for (i, output) in tx.psbt.unsigned_tx.output.iter().enumerate() {
+                    let address_str = Address::from_script(&output.script_pubkey, tx.network)
+                        .unwrap()
+                        .to_string();
+                    if tx.change_indexes.contains(&i) && tx.labels.contains_key(&address_str) {
+                        tx.labels
+                            .insert(address_str, format!("Change of {}", label.clone()));
+                    }
+                }
+            }
+        } else if let Some(recipient) = draft.recipients.first() {
+            if !recipient.label.value.is_empty() {
+                let label = recipient.label.value.clone();
+                tx.labels
+                    .insert(tx.psbt.unsigned_tx.txid().to_string(), label.clone());
+                for (i, output) in tx.psbt.unsigned_tx.output.iter().enumerate() {
+                    let address_str = Address::from_script(&output.script_pubkey, tx.network)
+                        .unwrap()
+                        .to_string();
+                    if tx.change_indexes.contains(&i) && tx.labels.contains_key(&address_str) {
+                        tx.labels
+                            .insert(address_str, format!("Change of {}", label.clone()));
+                    }
+                }
+            }
         }
 
         self.spend = Some(psbt::PsbtState::new(self.wallet.clone(), tx, false));

@@ -28,7 +28,7 @@ pub fn remaining_sequence(coin: &Coin, blockheight: u32, timelock: u16) -> u32 {
 
 #[derive(Debug, Clone)]
 pub struct SpendTx {
-    network: Network,
+    pub network: Network,
     pub coins: Vec<Coin>,
     pub labels: HashMap<String, String>,
     pub psbt: Psbt,
