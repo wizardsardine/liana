@@ -226,13 +226,14 @@ impl Application for GUI {
                         State::Launcher(Box::new(Launcher::new(loader.datadir_path.clone())));
                     Command::none()
                 }
-                loader::Message::Synced(Ok((wallet, cache, daemon))) => {
+                loader::Message::Synced(Ok((wallet, cache, daemon, bitcoind_started))) => {
                     let (app, command) = App::new(
                         cache,
                         wallet,
                         loader.gui_config.clone(),
                         daemon,
                         loader.datadir_path.clone(),
+                        bitcoind_started,
                     );
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))

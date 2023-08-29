@@ -32,14 +32,16 @@ pub struct SettingsState {
     data_dir: PathBuf,
     wallet: Arc<Wallet>,
     setting: Option<Box<dyn State>>,
+    bitcoind_started: bool,
 }
 
 impl SettingsState {
-    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>) -> Self {
+    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>, bitcoind_started: bool) -> Self {
         Self {
             data_dir,
             wallet,
             setting: None,
+            bitcoind_started,
         }
     }
 }
@@ -58,6 +60,7 @@ impl State for SettingsState {
                         daemon.config().cloned(),
                         cache,
                         daemon.is_external(),
+                        self.bitcoind_started,
                     )
                     .into(),
                 );

@@ -37,6 +37,7 @@ use crate::{
 
 pub struct App {
     data_dir: PathBuf,
+    bitcoind_started: bool,
     state: Box<dyn State>,
     cache: Cache,
     config: Config,
@@ -51,6 +52,7 @@ impl App {
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
         data_dir: PathBuf,
+        bitcoind_started: bool,
     ) -> (App, Command<Message>) {
         let state: Box<dyn State> = Home::new(wallet.clone(), &cache.coins).into();
         let cmd = state.load(daemon.clone());
@@ -62,6 +64,7 @@ impl App {
                 config,
                 daemon,
                 wallet,
+                bitcoind_started,
             },
             cmd,
         )
@@ -69,9 +72,12 @@ impl App {
 
     fn load_state(&mut self, menu: &Menu) -> Command<Message> {
         self.state = match menu {
-            menu::Menu::Settings => {
-                state::SettingsState::new(self.data_dir.clone(), self.wallet.clone()).into()
-            }
+            menu::Menu::Settings => state::SettingsState::new(
+                self.data_dir.clone(),
+                self.wallet.clone(),
+                self.bitcoind_started,
+            )
+            .into(),
             menu::Menu::Home => Home::new(self.wallet.clone(), &self.cache.coins).into(),
             menu::Menu::Coins => CoinsPanel::new(
                 &self.cache.coins,
@@ -116,7 +122,7 @@ impl App {
         if !self.daemon.is_external() {
             self.daemon.stop();
             info!("Internal daemon stopped");
-            if self.config.internal_bitcoind_exe_config.is_some() {
+            if self.bitcoind_started {
                 if let Some(daemon_config) = self.daemon.config() {
                     if let Some(bitcoind_config) = &daemon_config.bitcoind_config {
                         stop_internal_bitcoind(bitcoind_config);

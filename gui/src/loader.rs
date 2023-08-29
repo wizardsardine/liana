@@ -36,6 +36,7 @@ pub struct Loader {
     pub network: bitcoin::Network,
     pub gui_config: GUIConfig,
     pub daemon_started: bool,
+    pub bitcoind_started: bool,
 
     step: Step,
 }
@@ -55,8 +56,8 @@ pub enum Step {
 pub enum Message {
     View(ViewMessage),
     Syncing(Result<GetInfoResult, DaemonError>),
-    Synced(Result<(Arc<Wallet>, Cache, Arc<dyn Daemon + Sync + Send>), Error>),
-    Started(Result<Arc<dyn Daemon + Sync + Send>, Error>),
+    Synced(Result<(Arc<Wallet>, Cache, Arc<dyn Daemon + Sync + Send>, bool), Error>),
+    Started(Result<(Arc<dyn Daemon + Sync + Send>, bool), Error>),
     Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     Failure(DaemonError),
 }
@@ -79,6 +80,7 @@ impl Loader {
                 gui_config,
                 step: Step::Connecting,
                 daemon_started: false,
+                bitcoind_started: false,
             },
             Command::perform(connect(path), Message::Loaded),
         )
@@ -125,13 +127,17 @@ impl Loader {
         Command::none()
     }
 
-    fn on_start(&mut self, res: Result<Arc<dyn Daemon + Sync + Send>, Error>) -> Command<Message> {
+    fn on_start(
+        &mut self,
+        res: Result<(Arc<dyn Daemon + Sync + Send>, bool), Error>,
+    ) -> Command<Message> {
         match res {
-            Ok(daemon) => {
+            Ok((daemon, bitcoind_started)) => {
                 self.step = Step::Syncing {
                     daemon: daemon.clone(),
                     progress: 0.0,
                 };
+                self.bitcoind_started = bitcoind_started;
                 Command::perform(sync(daemon, false), Message::Syncing)
             }
             Err(e) => {
@@ -156,6 +162,7 @@ impl Loader {
                                     self.gui_config.clone(),
                                     self.datadir_path.clone(),
                                     self.network,
+                                    self.bitcoind_started,
                                 ),
                                 Message::Synced,
                             );
@@ -233,7 +240,8 @@ pub async fn load_application(
     gui_config: GUIConfig,
     datadir_path: PathBuf,
     network: bitcoin::Network,
-) -> Result<(Arc<Wallet>, Cache, Arc<dyn Daemon + Sync + Send>), Error> {
+    bitcoind_started: bool,
+) -> Result<(Arc<Wallet>, Cache, Arc<dyn Daemon + Sync + Send>, bool), Error> {
     let coins = daemon.list_coins().map(|res| res.coins)?;
     let spend_txs = daemon.list_spend_transactions()?;
     let cache = Cache {
@@ -247,7 +255,7 @@ pub async fn load_application(
     let wallet =
         Wallet::new(info.descriptors.main).load_settings(&gui_config, &datadir_path, network)?;
 
-    Ok((Arc::new(wallet), cache, daemon))
+    Ok((Arc::new(wallet), cache, daemon, bitcoind_started))
 }
 
 #[derive(Clone, Debug)]
@@ -345,8 +353,9 @@ async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, 
 pub async fn start_bitcoind_and_daemon(
     config_path: PathBuf,
     bitcoind_exe_config: Option<InternalBitcoindExeConfig>,
-) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
+) -> Result<(Arc<dyn Daemon + Sync + Send>, bool), Error> {
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
+    let mut bitcoind_started = false;
     if let Some(exe_config) = bitcoind_exe_config {
         if let Some(bitcoind_config) = &config.bitcoind_config {
             // Check if bitcoind is already running before trying to start it.
@@ -369,6 +378,9 @@ pub async fn start_bitcoind_and_daemon(
                         Error::Bitcoind(StartInternalBitcoindError::BitcoinDError(e.to_string()))
                     })?;
             }
+            // even if already running, bitcoind is considered then started by gui,
+            // certainly during the install process.
+            bitcoind_started = true;
         }
     }
 
@@ -376,7 +388,7 @@ pub async fn start_bitcoind_and_daemon(
 
     let daemon = EmbeddedDaemon::start(config)?;
 
-    Ok(Arc::new(daemon))
+    Ok((Arc::new(daemon), bitcoind_started))
 }
 
 async fn sync(
