@@ -907,8 +907,8 @@ pub fn define_bitcoin<'a>(
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
     layout(
         progress,
-        "Choose Bitcoin installation type",
-        Column::new().push(text("Liana requires a Bitcoin node running. Do you prefer to:")).push(
+        "Bitcoin node management",
+        Column::new().push(
             Row::new()
                 .align_items(Alignment::Start)
                 .spacing(20)
@@ -917,8 +917,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                         Column::new()
                             .spacing(20)
                             .width(Length::Fixed(300.0))
-                            .align_items(Alignment::Center)
-                            .push(text("Manage your own bitcoin node").bold())
+                            .push(text("Manage your own Bitcoin node").bold())
                     )
                     .padding(20),
                 )
@@ -927,7 +926,6 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                         Column::new()
                             .spacing(20)
                             .width(Length::Fixed(300.0))
-                            .align_items(Alignment::Center)
                             .push(text("Have Liana manage and run a dedicated Bitcoin node").bold())
                     )
                     .padding(20),
@@ -943,7 +941,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                             .spacing(20)
                             .width(Length::Fixed(300.0))
                             .align_items(Alignment::Start)
-                            .push(text("Liana will connect to your existing instance of bitcoind. You will have to make sure Bitcoin is running when you use Liana.\n\n(Use this if you already have a full node on your machine, and don't need a new instance)"))
+                            .push(text("Liana will connect to your existing instance of Bitcoin Core. You will have to make sure Bitcoin Core is running when you use Liana.\n\n(Use this if you already have a full node on your machine, and don't need a new instance)"))
                     )
                     .padding(20),
                 )
