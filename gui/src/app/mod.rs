@@ -31,7 +31,7 @@ use state::{
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
-    bitcoind::stop_internal_bitcoind,
+    bitcoind::Bitcoind,
     daemon::{embedded::EmbeddedDaemon, Daemon},
 };
 
@@ -42,6 +42,7 @@ pub struct App {
     config: Config,
     wallet: Arc<Wallet>,
     daemon: Arc<dyn Daemon + Sync + Send>,
+    internal_bitcoind: Option<Bitcoind>,
 }
 
 impl App {
@@ -51,6 +52,7 @@ impl App {
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
         data_dir: PathBuf,
+        internal_bitcoind: Option<Bitcoind>,
     ) -> (App, Command<Message>) {
         let state: Box<dyn State> = Home::new(wallet.clone(), &cache.coins).into();
         let cmd = state.load(daemon.clone());
@@ -62,6 +64,7 @@ impl App {
                 config,
                 daemon,
                 wallet,
+                internal_bitcoind,
             },
             cmd,
         )
@@ -116,12 +119,8 @@ impl App {
         if !self.daemon.is_external() {
             self.daemon.stop();
             info!("Internal daemon stopped");
-            if self.config.internal_bitcoind_exe_config.is_some() {
-                if let Some(daemon_config) = self.daemon.config() {
-                    if let Some(bitcoind_config) = &daemon_config.bitcoind_config {
-                        stop_internal_bitcoind(bitcoind_config);
-                    }
-                }
+            if let Some(bitcoind) = &self.internal_bitcoind {
+                bitcoind.stop();
             }
         }
     }

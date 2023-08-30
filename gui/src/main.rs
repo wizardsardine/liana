@@ -142,7 +142,7 @@ impl Application for GUI {
                     network,
                     cfg.log_level().unwrap_or(LevelFilter::INFO),
                 );
-                let (loader, command) = Loader::new(datadir_path, cfg, network);
+                let (loader, command) = Loader::new(datadir_path, cfg, network, None);
                 (
                     Self {
                         state: State::Loader(Box::new(loader)),
@@ -189,14 +189,14 @@ impl Application for GUI {
                         network,
                         cfg.log_level().unwrap_or(LevelFilter::INFO),
                     );
-                    let (loader, command) = Loader::new(datadir_path, cfg, network);
+                    let (loader, command) = Loader::new(datadir_path, cfg, network, None);
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 }
                 _ => l.update(*msg).map(|msg| Message::Launch(Box::new(msg))),
             },
             (State::Installer(i), Message::Install(msg)) => {
-                if let installer::Message::Exit(path) = *msg {
+                if let installer::Message::Exit(path, internal_bitcoind) = *msg {
                     let cfg = app::Config::from_file(&path).unwrap();
                     let daemon_cfg =
                         DaemonConfig::from_file(cfg.daemon_config_path.clone()).unwrap();
@@ -212,8 +212,12 @@ impl Application for GUI {
                         cfg.log_level().unwrap_or(LevelFilter::INFO),
                     );
                     self.logger.remove_install_log_file(datadir_path.clone());
-                    let (loader, command) =
-                        Loader::new(datadir_path, cfg, daemon_cfg.bitcoin_config.network);
+                    let (loader, command) = Loader::new(
+                        datadir_path,
+                        cfg,
+                        daemon_cfg.bitcoin_config.network,
+                        internal_bitcoind,
+                    );
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 } else {
@@ -226,13 +230,14 @@ impl Application for GUI {
                         State::Launcher(Box::new(Launcher::new(loader.datadir_path.clone())));
                     Command::none()
                 }
-                loader::Message::Synced(Ok((wallet, cache, daemon))) => {
+                loader::Message::Synced(Ok((wallet, cache, daemon, bitcoind))) => {
                     let (app, command) = App::new(
                         cache,
                         wallet,
                         loader.gui_config.clone(),
                         daemon,
                         loader.datadir_path.clone(),
+                        bitcoind,
                     );
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))

@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex};
 use crate::{
     app::config::InternalBitcoindExeConfig,
     app::{config as gui_config, settings as gui_settings},
-    bitcoind::stop_internal_bitcoind,
     signer::Signer,
 };
 
@@ -84,11 +83,10 @@ impl Installer {
             .expect("There is always a step")
             .stop();
         // Now use context to determine what to stop.
-        if self.context.internal_bitcoind_config.is_some() {
-            if let Some(bitcoind_config) = &self.context.bitcoind_config {
-                stop_internal_bitcoind(bitcoind_config);
-            }
+        if let Some(bitcoind) = &self.context.internal_bitcoind {
+            bitcoind.stop();
         }
+        self.context.internal_bitcoind = None;
     }
 
     fn next(&mut self) -> Command<Message> {

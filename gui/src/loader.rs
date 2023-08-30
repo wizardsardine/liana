@@ -24,9 +24,8 @@ use crate::{
         config::{Config as GUIConfig, InternalBitcoindExeConfig},
         wallet::{Wallet, WalletError},
     },
-    bitcoind::{start_internal_bitcoind, stop_internal_bitcoind, StartInternalBitcoindError},
+    bitcoind::{Bitcoind, StartInternalBitcoindError},
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
-    utils,
 };
 
 type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
@@ -36,6 +35,7 @@ pub struct Loader {
     pub network: bitcoin::Network,
     pub gui_config: GUIConfig,
     pub daemon_started: bool,
+    pub internal_bitcoind: Option<Bitcoind>,
 
     step: Step,
 }
@@ -55,8 +55,18 @@ pub enum Step {
 pub enum Message {
     View(ViewMessage),
     Syncing(Result<GetInfoResult, DaemonError>),
-    Synced(Result<(Arc<Wallet>, Cache, Arc<dyn Daemon + Sync + Send>), Error>),
-    Started(Result<Arc<dyn Daemon + Sync + Send>, Error>),
+    Synced(
+        Result<
+            (
+                Arc<Wallet>,
+                Cache,
+                Arc<dyn Daemon + Sync + Send>,
+                Option<Bitcoind>,
+            ),
+            Error,
+        >,
+    ),
+    Started(Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error>),
     Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     Failure(DaemonError),
 }
@@ -66,6 +76,7 @@ impl Loader {
         datadir_path: PathBuf,
         gui_config: GUIConfig,
         network: bitcoin::Network,
+        internal_bitcoind: Option<Bitcoind>,
     ) -> (Self, Command<Message>) {
         let path = gui_config
             .daemon_rpc_path
@@ -79,6 +90,7 @@ impl Loader {
                 gui_config,
                 step: Step::Connecting,
                 daemon_started: false,
+                internal_bitcoind,
             },
             Command::perform(connect(path), Message::Loaded),
         )
@@ -125,9 +137,13 @@ impl Loader {
         Command::none()
     }
 
-    fn on_start(&mut self, res: Result<Arc<dyn Daemon + Sync + Send>, Error>) -> Command<Message> {
+    fn on_start(
+        &mut self,
+        res: Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error>,
+    ) -> Command<Message> {
         match res {
-            Ok(daemon) => {
+            Ok((daemon, bitcoind)) => {
+                self.internal_bitcoind = bitcoind;
                 self.step = Step::Syncing {
                     daemon: daemon.clone(),
                     progress: 0.0,
@@ -156,6 +172,7 @@ impl Loader {
                                     self.gui_config.clone(),
                                     self.datadir_path.clone(),
                                     self.network,
+                                    self.internal_bitcoind.take(),
                                 ),
                                 Message::Synced,
                             );
@@ -183,18 +200,9 @@ impl Loader {
                 info!("Internal daemon stopped");
             }
         }
-        if self.gui_config.internal_bitcoind_exe_config.is_some() {
-            if let Ok(daemon_config) =
-                Config::from_file(self.gui_config.daemon_config_path.as_ref().cloned())
-            {
-                if let Some(bitcoind_config) = &daemon_config.bitcoind_config {
-                    stop_internal_bitcoind(bitcoind_config);
-                } else {
-                    warn!("Liana daemon config does not have bitcoind config");
-                }
-            } else {
-                warn!("Liana gui cannot access daemon config to stop bitcoind");
-            }
+
+        if let Some(bitcoind) = &self.internal_bitcoind {
+            bitcoind.stop();
         }
     }
 
@@ -205,6 +213,7 @@ impl Loader {
                     self.datadir_path.clone(),
                     self.gui_config.clone(),
                     self.network,
+                    self.internal_bitcoind.clone(),
                 );
                 *self = loader;
                 cmd
@@ -239,7 +248,16 @@ pub async fn load_application(
     gui_config: GUIConfig,
     datadir_path: PathBuf,
     network: bitcoin::Network,
-) -> Result<(Arc<Wallet>, Cache, Arc<dyn Daemon + Sync + Send>), Error> {
+    internal_bitcoind: Option<Bitcoind>,
+) -> Result<
+    (
+        Arc<Wallet>,
+        Cache,
+        Arc<dyn Daemon + Sync + Send>,
+        Option<Bitcoind>,
+    ),
+    Error,
+> {
     let coins = daemon.list_coins().map(|res| res.coins)?;
     let spend_txs = daemon.list_spend_transactions()?;
     let cache = Cache {
@@ -253,7 +271,7 @@ pub async fn load_application(
     let wallet =
         Wallet::new(info.descriptors.main).load_settings(&gui_config, &datadir_path, network)?;
 
-    Ok((Arc::new(wallet), cache, daemon))
+    Ok((Arc::new(wallet), cache, daemon, internal_bitcoind))
 }
 
 #[derive(Clone, Debug)]
@@ -351,8 +369,9 @@ async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, 
 pub async fn start_bitcoind_and_daemon(
     config_path: PathBuf,
     bitcoind_exe_config: Option<InternalBitcoindExeConfig>,
-) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
+) -> Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error> {
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
+    let mut bitcoind: Option<Bitcoind> = None;
     if let Some(exe_config) = bitcoind_exe_config {
         if let Some(bitcoind_config) = &config.bitcoind_config {
             // Check if bitcoind is already running before trying to start it.
@@ -361,23 +380,15 @@ pub async fn start_bitcoind_and_daemon(
                 info!("Internal bitcoind is already running");
             } else {
                 info!("Starting internal bitcoind");
-                start_internal_bitcoind(
-                    &config.bitcoin_config.network,
-                    &exe_config.data_dir,
-                    &exe_config.exe_path,
-                )
-                .map_err(Error::Bitcoind)?;
-                if !utils::poll_for_file(&bitcoind_config.cookie_path, 200, 15) {
-                    return Err(Error::Bitcoind(
-                        StartInternalBitcoindError::CookieFileNotFound(
-                            bitcoind_config.cookie_path.to_string_lossy().into_owned(),
-                        ),
-                    ));
-                }
-                liana::BitcoinD::new(bitcoind_config, "internal_bitcoind_start".to_string())
-                    .map_err(|e| {
-                        Error::Bitcoind(StartInternalBitcoindError::BitcoinDError(e.to_string()))
-                    })?;
+                bitcoind = Some(
+                    Bitcoind::start(
+                        &config.bitcoin_config.network,
+                        bitcoind_config.clone(),
+                        &exe_config.data_dir,
+                        &exe_config.exe_path,
+                    )
+                    .map_err(Error::Bitcoind)?,
+                );
             }
         }
     }
@@ -386,7 +397,7 @@ pub async fn start_bitcoind_and_daemon(
 
     let daemon = EmbeddedDaemon::start(config)?;
 
-    Ok(Arc::new(daemon))
+    Ok((Arc::new(daemon), bitcoind))
 }
 
 async fn sync(
