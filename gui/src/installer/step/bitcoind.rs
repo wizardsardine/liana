@@ -133,30 +133,6 @@ fn download_url() -> String {
     )
 }
 
-pub struct DefineBitcoind {
-    cookie_path: form::Value<String>,
-    address: form::Value<String>,
-    is_running: Option<Result<(), Error>>,
-}
-
-pub struct InternalBitcoindStep {
-    liana_datadir: PathBuf,
-    bitcoind_datadir: PathBuf,
-    network: Network,
-    started: Option<Result<(), StartInternalBitcoindError>>,
-    exe_path: Option<PathBuf>,
-    bitcoind_config: Option<BitcoindConfig>,
-    exe_config: Option<InternalBitcoindExeConfig>,
-    internal_bitcoind_config: Option<InternalBitcoindConfig>,
-    error: Option<String>,
-    exe_download: Option<Download>,
-    install_state: Option<InstallState>,
-}
-
-pub struct SelectBitcoindTypeStep {
-    use_external: bool,
-}
-
 /// Default prune value used by internal bitcoind.
 pub const PRUNE_DEFAULT: u32 = 15_000;
 /// Default ports used by bitcoind across all networks.
@@ -511,6 +487,10 @@ pub fn port_is_valid(port: &u16) -> bool {
     !BITCOIND_DEFAULT_PORTS.contains(port)
 }
 
+pub struct SelectBitcoindTypeStep {
+    use_external: bool,
+}
+
 impl Default for SelectBitcoindTypeStep {
     fn default() -> Self {
         Self::new()
@@ -558,6 +538,12 @@ impl Step for SelectBitcoindTypeStep {
     fn view(&self, progress: (usize, usize)) -> Element<Message> {
         view::select_bitcoind_type(progress)
     }
+}
+
+pub struct DefineBitcoind {
+    cookie_path: form::Value<String>,
+    address: form::Value<String>,
+    is_running: Option<Result<(), Error>>,
 }
 
 impl DefineBitcoind {
@@ -680,6 +666,20 @@ impl From<DefineBitcoind> for Box<dyn Step> {
     fn from(s: DefineBitcoind) -> Box<dyn Step> {
         Box::new(s)
     }
+}
+
+pub struct InternalBitcoindStep {
+    liana_datadir: PathBuf,
+    bitcoind_datadir: PathBuf,
+    network: Network,
+    started: Option<Result<(), StartInternalBitcoindError>>,
+    exe_path: Option<PathBuf>,
+    bitcoind_config: Option<BitcoindConfig>,
+    exe_config: Option<InternalBitcoindExeConfig>,
+    internal_bitcoind_config: Option<InternalBitcoindConfig>,
+    error: Option<String>,
+    exe_download: Option<Download>,
+    install_state: Option<InstallState>,
 }
 
 impl From<InternalBitcoindStep> for Box<dyn Step> {
