@@ -187,6 +187,70 @@ fn setup_sqlite(
     Ok(sqlite)
 }
 
+// Try to copy the watchonly wallet from its former location on Windows to its new location.
+fn copy_watchonly_wallet(
+    bitcoind_cookie_path: &path::Path,
+    bitcoin_net: miniscript::bitcoin::Network,
+    wallet_name: &str,
+    new_wallet_path: &path::Path,
+) -> bool {
+    // For the main network both the wallet and the cookie file are stored at the root of the
+    // datadir. For test networks the wallet is in "<datadir>/<network>/wallets/<wallet_name>/" and
+    // the cookie file in "<datadir>/<network>/".
+    let parent_dir = match bitcoind_cookie_path.parent() {
+        Some(d) => d,
+        None => {
+            log::error!("Could not find the parent directory of the bitcoind cookie file.");
+            return false;
+        }
+    };
+    let wallet_path = match bitcoin_net {
+        miniscript::bitcoin::Network::Bitcoin => parent_dir.join(wallet_name),
+        miniscript::bitcoin::Network::Testnet
+        | miniscript::bitcoin::Network::Signet
+        | miniscript::bitcoin::Network::Regtest => parent_dir
+            .join("wallets")
+            .join(wallet_name)
+            .join("wallet.dat"),
+        net => panic!(
+            "Unsupported network '{}', unknown at the time of writing.",
+            net
+        ),
+    };
+
+    if wallet_path.exists() {
+        log::info!(
+            "Found the watchonly wallet file at the former location: '{}'. Copying it to our own datadir.",
+            wallet_path.as_path().to_string_lossy()
+        );
+        if let Err(e) = fs::create_dir(new_wallet_path) {
+            log::error!(
+                "Error while creating the watchonly wallet directory at {}: {}",
+                wallet_path.to_string_lossy(),
+                e
+            );
+            return false;
+        }
+        let new_wallet_dat_path = new_wallet_path.join("wallet.dat");
+        if let Err(e) = fs::copy(wallet_path, new_wallet_dat_path) {
+            log::error!(
+                "Error while copying the watchonly wallet to our own datadir: {}",
+                e
+            );
+            false
+        } else {
+            log::info!("Successfully copied the watchonly wallet file.");
+            true
+        }
+    } else {
+        log::error!(
+            "No watchonly wallet found at '{}'.",
+            wallet_path.as_path().to_string_lossy()
+        );
+        false
+    }
+}
+
 // Connect to bitcoind. Setup the watchonly wallet, and do some sanity checks.
 // If all went well, returns the interface to bitcoind.
 fn setup_bitcoind(
@@ -220,6 +284,24 @@ fn setup_bitcoind(
         log::info!("Creating a new watchonly wallet on bitcoind.");
         bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
         log::info!("Watchonly wallet created.");
+    } else if !wo_path.exists() && !cfg!(test) {
+        // TODO: remove this hack.
+        // NOTE: this is Windows-specific but we don't gate it upon a windows target to be able to
+        // test this codepath in a functional test.
+        log::info!(
+            "A data directory exists with no watchonly wallet. This is most likely due to \
+             having been created to an older version of Liana on Windows, where the watchonly \
+             wallet would live under bitcoind's datadir. Trying to find the older wallet and copy it in our own datadir."
+        );
+        let wo_name = "lianad_watchonly_wallet";
+        if !copy_watchonly_wallet(
+            &bitcoind_config.cookie_path,
+            config.bitcoin_config.network,
+            wo_name,
+            wo_path.as_path(),
+        ) {
+            panic!("Cannot continue without a watchonly wallet. Please contact support.");
+        }
     }
     log::info!("Loading our watchonly wallet on bitcoind.");
     bitcoind.maybe_load_watchonly_wallet()?;
