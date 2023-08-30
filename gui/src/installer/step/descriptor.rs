@@ -1250,6 +1250,20 @@ impl ImportDescriptor {
             error: None,
         }
     }
+
+    fn check_descriptor(&mut self) {
+        if !self.imported_descriptor.value.is_empty() {
+            if let Ok(desc) = LianaDescriptor::from_str(&self.imported_descriptor.value) {
+                if self.network == Network::Bitcoin {
+                    self.imported_descriptor.valid = desc.all_xpubs_net_is(self.network);
+                } else {
+                    self.imported_descriptor.valid = desc.all_xpubs_net_is(Network::Testnet);
+                }
+            } else {
+                self.imported_descriptor.valid = false;
+            }
+        }
+    }
 }
 
 impl Step for ImportDescriptor {
@@ -1262,10 +1276,11 @@ impl Step for ImportDescriptor {
                 let mut network_datadir = self.data_dir.clone().unwrap();
                 network_datadir.push(self.network.to_string());
                 self.network_valid = !network_datadir.exists();
+                self.check_descriptor();
             }
             Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) => {
                 self.imported_descriptor.value = desc;
-                self.imported_descriptor.valid = true;
+                self.check_descriptor();
             }
             _ => {}
         };
@@ -1287,9 +1302,17 @@ impl Step for ImportDescriptor {
         // descriptor forms for import or creation cannot be both empty or filled.
         if !self.imported_descriptor.value.is_empty() {
             if let Ok(desc) = LianaDescriptor::from_str(&self.imported_descriptor.value) {
-                self.imported_descriptor.valid = true;
-                ctx.descriptor = Some(desc);
-                true
+                if self.network == Network::Bitcoin {
+                    self.imported_descriptor.valid = desc.all_xpubs_net_is(self.network);
+                } else {
+                    self.imported_descriptor.valid = desc.all_xpubs_net_is(Network::Testnet);
+                }
+                if self.imported_descriptor.valid {
+                    ctx.descriptor = Some(desc);
+                    true
+                } else {
+                    false
+                }
             } else {
                 self.imported_descriptor.valid = false;
                 false
