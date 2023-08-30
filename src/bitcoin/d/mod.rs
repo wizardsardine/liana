@@ -607,7 +607,7 @@ impl BitcoinD {
             .collect()
     }
 
-    pub fn maybe_unload_watchonly_wallet(&self, watchonly_wallet_path: String) {
+    fn maybe_unload_watchonly_wallet(&self, watchonly_wallet_path: String) {
         while self.list_wallets().contains(&watchonly_wallet_path) {
             log::info!("Found a leftover watchonly wallet loaded on bitcoind. Removing it.");
             if let Some(e) = self.unload_wallet(watchonly_wallet_path.clone()) {
