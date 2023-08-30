@@ -1,5 +1,7 @@
 use std::convert::From;
+use std::io::BufRead;
 use std::io::ErrorKind;
+use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -12,6 +14,7 @@ use liana::{
     StartupError,
 };
 use liana_ui::{
+    color,
     component::{button, notification, text::*},
     icon,
     util::Collection,
@@ -46,6 +49,7 @@ pub enum Step {
     Syncing {
         daemon: Arc<dyn Daemon + Sync + Send>,
         progress: f64,
+        bitcoind_logs: String,
     },
     Error(Box<Error>),
 }
@@ -68,6 +72,7 @@ pub enum Message {
     ),
     Started(Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error>),
     Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
+    BitcoindLog(Option<String>),
     Failure(DaemonError),
 }
 
@@ -102,6 +107,7 @@ impl Loader {
                 self.step = Step::Syncing {
                     daemon: daemon.clone(),
                     progress: 0.0,
+                    bitcoind_logs: String::new(),
                 };
                 if self.gui_config.internal_bitcoind_exe_config.is_some() {
                     warn!("Ignoring internal bitcoind config because Liana daemon is external.");
@@ -137,16 +143,30 @@ impl Loader {
         Command::none()
     }
 
+    fn on_log(&mut self, log: Option<String>) -> Command<Message> {
+        if let Step::Syncing { bitcoind_logs, .. } = &mut self.step {
+            if let Some(l) = log {
+                *bitcoind_logs = l;
+            }
+        }
+        Command::none()
+    }
+
     fn on_start(
         &mut self,
         res: Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error>,
     ) -> Command<Message> {
         match res {
             Ok((daemon, bitcoind)) => {
-                self.internal_bitcoind = bitcoind;
+                // bitcoind may have been already started and given to the loader
+                // We should not override with None the loader bitcoind field
+                if let Some(bitcoind) = bitcoind {
+                    self.internal_bitcoind = Some(bitcoind);
+                }
                 self.step = Step::Syncing {
                     daemon: daemon.clone(),
                     progress: 0.0,
+                    bitcoind_logs: String::new(),
                 };
                 Command::perform(sync(daemon, false), Message::Syncing)
             }
@@ -221,6 +241,7 @@ impl Loader {
             Message::Started(res) => self.on_start(res),
             Message::Loaded(res) => self.on_load(res),
             Message::Syncing(res) => self.on_sync(res),
+            Message::BitcoindLog(log) => self.on_log(log),
             Message::Synced(Err(e)) => {
                 self.step = Step::Error(Box::new(e));
                 Command::none()
@@ -234,7 +255,24 @@ impl Loader {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        if let Some(Some(bitcoind_stdout)) =
+            self.internal_bitcoind.as_ref().map(|b| b.stdout.clone())
+        {
+            iced::subscription::unfold(0, bitcoind_stdout, move |stdout| async {
+                let msg = {
+                    let mut s = stdout.lock().await;
+                    let mut s = std::io::BufReader::new(s.deref_mut());
+                    let mut buffer = String::new();
+                    match s.read_line(&mut buffer) {
+                        Err(e) => Message::BitcoindLog(Some(e.to_string())),
+                        Ok(_) => Message::BitcoindLog(Some(buffer)),
+                    }
+                };
+                (msg, stdout)
+            })
+        } else {
+            Subscription::none()
+        }
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -296,12 +334,17 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                 .push(ProgressBar::new(0.0..=1.0, 0.0).width(Length::Fill))
                 .push(text("Connecting to daemon...")),
         ),
-        Step::Syncing { progress, .. } => cover(
+        Step::Syncing {
+            progress,
+            bitcoind_logs,
+            ..
+        } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
                 .push(ProgressBar::new(0.0..=1.0, *progress as f32).width(Length::Fill))
-                .push(text("Syncing the wallet with the blockchain...")),
+                .push(text("Syncing the wallet with the blockchain..."))
+                .push(p2_regular(bitcoind_logs).style(color::GREY_3)),
         ),
         Step::Error(error) => cover(
             Some(("Error while starting the internal daemon", error)),

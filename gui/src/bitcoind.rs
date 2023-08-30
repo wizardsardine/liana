@@ -1,6 +1,7 @@
 use liana::{config::BitcoindConfig, miniscript::bitcoin};
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use tracing::{info, warn};
 
@@ -51,6 +52,7 @@ impl std::fmt::Display for StartInternalBitcoindError {
 pub struct Bitcoind {
     _process: Arc<std::process::Child>,
     pub config: BitcoindConfig,
+    pub stdout: Option<Arc<Mutex<std::process::ChildStdout>>>,
 }
 
 impl Bitcoind {
@@ -85,9 +87,9 @@ impl Bitcoind {
         #[cfg(target_os = "windows")]
         let command = command.creation_flags(CREATE_NO_WINDOW);
 
-        let process = command
+        let mut process = command
             .args(&args)
-            .stdout(std::process::Stdio::null()) // We still get bitcoind's logs in debug.log.
+            .stdout(std::process::Stdio::piped()) // We still get bitcoind's logs in debug.log.
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))?;
@@ -114,6 +116,7 @@ impl Bitcoind {
             .map_err(|e| StartInternalBitcoindError::BitcoinDError(e.to_string()))?;
 
         Ok(Self {
+            stdout: process.stdout.take().map(|s| Arc::new(Mutex::new(s))),
             config,
             _process: Arc::new(process),
         })
