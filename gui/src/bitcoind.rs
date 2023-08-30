@@ -1,5 +1,6 @@
 use liana::{config::BitcoindConfig, miniscript::bitcoin};
 
+use std::process::Stdio;
 use tracing::{info, warn};
 
 use crate::app::config::InternalBitcoindExeConfig;
@@ -62,7 +63,7 @@ pub fn start_internal_bitcoind(
     ];
     std::process::Command::new(exe_config.exe_path)
         .args(&args)
-        .stdout(std::process::Stdio::null()) // We still get bitcoind's logs in debug.log.
+        .stdout(std::process::Stdio::piped()) // We still get bitcoind's logs in debug.log.
         .spawn()
         .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))
 }

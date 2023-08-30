@@ -1,7 +1,10 @@
 use std::convert::From;
-use std::io::ErrorKind;
+use std::io::BufRead;
+use std::io::{ErrorKind, Read};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::{io::BufReader, sync::Mutex};
 
 use iced::{Alignment, Command, Length, Subscription};
 use tracing::{debug, info, warn};
@@ -46,6 +49,8 @@ pub enum Step {
     Syncing {
         daemon: Arc<dyn Daemon + Sync + Send>,
         progress: f64,
+        bitcoind_logs: String,
+        bitcoind_stdout: Option<Arc<Mutex<std::process::ChildStdout>>>,
     },
     Error(Box<Error>),
 }
@@ -56,7 +61,16 @@ pub enum Message {
     View(ViewMessage),
     Syncing(Result<GetInfoResult, DaemonError>),
     Synced(Result<(Arc<Wallet>, Cache, Arc<dyn Daemon + Sync + Send>), Error>),
-    Started(Result<Arc<dyn Daemon + Sync + Send>, Error>),
+    Started(
+        Result<
+            (
+                Arc<dyn Daemon + Sync + Send>,
+                Option<std::process::ChildStdout>,
+            ),
+            Error,
+        >,
+    ),
+    BitcoindLog(Option<String>),
     Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     Failure(DaemonError),
 }
@@ -90,6 +104,8 @@ impl Loader {
                 self.step = Step::Syncing {
                     daemon: daemon.clone(),
                     progress: 0.0,
+                    bitcoind_stdout: None,
+                    bitcoind_logs: String::new(),
                 };
                 if self.gui_config.internal_bitcoind_exe_config.is_some() {
                     warn!("Ignoring internal bitcoind config because Liana daemon is external.");
@@ -125,12 +141,23 @@ impl Loader {
         Command::none()
     }
 
-    fn on_start(&mut self, res: Result<Arc<dyn Daemon + Sync + Send>, Error>) -> Command<Message> {
+    fn on_start(
+        &mut self,
+        res: Result<
+            (
+                Arc<dyn Daemon + Sync + Send>,
+                Option<std::process::ChildStdout>,
+            ),
+            Error,
+        >,
+    ) -> Command<Message> {
         match res {
-            Ok(daemon) => {
+            Ok((daemon, stdout)) => {
                 self.step = Step::Syncing {
                     daemon: daemon.clone(),
                     progress: 0.0,
+                    bitcoind_logs: String::new(),
+                    bitcoind_stdout: stdout.map(|s| Arc::new(Mutex::new(s))),
                 };
                 Command::perform(sync(daemon, false), Message::Syncing)
             }
@@ -139,6 +166,15 @@ impl Loader {
                 Command::none()
             }
         }
+    }
+
+    fn on_log(&mut self, log: Option<String>) -> Command<Message> {
+        if let Step::Syncing { bitcoind_logs, .. } = &mut self.step {
+            if let Some(l) = log {
+                *bitcoind_logs = l;
+            }
+        }
+        Command::none()
     }
 
     fn on_sync(&mut self, res: Result<GetInfoResult, DaemonError>) -> Command<Message> {
@@ -212,6 +248,7 @@ impl Loader {
             Message::Started(res) => self.on_start(res),
             Message::Loaded(res) => self.on_load(res),
             Message::Syncing(res) => self.on_sync(res),
+            Message::BitcoindLog(log) => self.on_log(log),
             Message::Synced(Err(e)) => {
                 self.step = Step::Error(Box::new(e));
                 Command::none()
@@ -225,7 +262,29 @@ impl Loader {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        if let Step::Syncing {
+            bitcoind_stdout, ..
+        } = &self.step
+        {
+            if let Some(bitcoind_stdout) = bitcoind_stdout {
+                iced::subscription::unfold(0, bitcoind_stdout.clone(), move |stdout| async {
+                    let msg = {
+                        let mut s = stdout.lock().await;
+                        let mut s = std::io::BufReader::new(s.deref_mut());
+                        let mut buffer = String::new();
+                        match s.read_line(&mut buffer) {
+                            Err(_) => Message::BitcoindLog(None),
+                            Ok(_) => Message::BitcoindLog(Some(buffer)),
+                        }
+                    };
+                    (msg, stdout)
+                })
+            } else {
+                Subscription::none()
+            }
+        } else {
+            Subscription::none()
+        }
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -278,12 +337,17 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                 .push(ProgressBar::new(0.0..=1.0, 0.0).width(Length::Fill))
                 .push(text("Connecting to daemon...")),
         ),
-        Step::Syncing { progress, .. } => cover(
+        Step::Syncing {
+            progress,
+            bitcoind_logs,
+            ..
+        } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
                 .push(ProgressBar::new(0.0..=1.0, *progress as f32).width(Length::Fill))
-                .push(text("Syncing the wallet with the blockchain...")),
+                .push(text("Syncing the wallet with the blockchain..."))
+                .push(text(bitcoind_logs)),
         ),
         Step::Error(error) => cover(
             Some(("Error while starting the internal daemon", error)),
@@ -351,8 +415,15 @@ async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, 
 pub async fn start_bitcoind_and_daemon(
     config_path: PathBuf,
     bitcoind_exe_config: Option<InternalBitcoindExeConfig>,
-) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
+) -> Result<
+    (
+        Arc<dyn Daemon + Sync + Send>,
+        Option<std::process::ChildStdout>,
+    ),
+    Error,
+> {
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
+    let mut stream: Option<std::process::ChildStdout> = None;
     if let Some(exe_config) = bitcoind_exe_config {
         if let Some(bitcoind_config) = &config.bitcoind_config {
             // Check if bitcoind is already running before trying to start it.
@@ -361,8 +432,9 @@ pub async fn start_bitcoind_and_daemon(
                 info!("Internal bitcoind is already running");
             } else {
                 info!("Starting internal bitcoind");
-                start_internal_bitcoind(&config.bitcoin_config.network, exe_config)
+                let mut child = start_internal_bitcoind(&config.bitcoin_config.network, exe_config)
                     .map_err(Error::Bitcoind)?;
+                stream = child.stdout.take();
                 if !utils::poll_for_file(&bitcoind_config.cookie_path, 200, 15) {
                     return Err(Error::Bitcoind(
                         StartInternalBitcoindError::CookieFileNotFound(
@@ -382,7 +454,7 @@ pub async fn start_bitcoind_and_daemon(
 
     let daemon = EmbeddedDaemon::start(config)?;
 
-    Ok(Arc::new(daemon))
+    Ok((Arc::new(daemon), stream))
 }
 
 async fn sync(
