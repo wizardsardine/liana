@@ -361,8 +361,12 @@ pub async fn start_bitcoind_and_daemon(
                 info!("Internal bitcoind is already running");
             } else {
                 info!("Starting internal bitcoind");
-                start_internal_bitcoind(&config.bitcoin_config.network, exe_config)
-                    .map_err(Error::Bitcoind)?;
+                start_internal_bitcoind(
+                    &config.bitcoin_config.network,
+                    &exe_config.data_dir,
+                    &exe_config.exe_path,
+                )
+                .map_err(Error::Bitcoind)?;
                 if !utils::poll_for_file(&bitcoind_config.cookie_path, 200, 15) {
                     return Err(Error::Bitcoind(
                         StartInternalBitcoindError::CookieFileNotFound(

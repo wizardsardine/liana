@@ -865,16 +865,19 @@ impl Step for InternalBitcoindStep {
                                 return Command::none();
                             }
                         };
-                        let handle =
-                            match start_internal_bitcoind(&self.network, exe_config.clone()) {
-                                Err(e) => {
-                                    self.started = Some(Err(
-                                        StartInternalBitcoindError::CommandError(e.to_string()),
-                                    ));
-                                    return Command::none();
-                                }
-                                Ok(h) => h,
-                            };
+                        let handle = match start_internal_bitcoind(
+                            &self.network,
+                            &exe_config.data_dir,
+                            &exe_config.exe_path,
+                        ) {
+                            Err(e) => {
+                                self.started = Some(Err(StartInternalBitcoindError::CommandError(
+                                    e.to_string(),
+                                )));
+                                return Command::none();
+                            }
+                            Ok(h) => h,
+                        };
                         // Need to wait for cookie file to appear.
                         let cookie_path =
                             internal_bitcoind_cookie_path(&self.bitcoind_datadir, &self.network);

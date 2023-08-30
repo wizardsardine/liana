@@ -1,8 +1,7 @@
 use liana::{config::BitcoindConfig, miniscript::bitcoin};
+use std::path::Path;
 
 use tracing::{info, warn};
-
-use crate::app::config::InternalBitcoindExeConfig;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -51,10 +50,10 @@ impl std::fmt::Display for StartInternalBitcoindError {
 /// Start internal bitcoind for the given network.
 pub fn start_internal_bitcoind(
     network: &bitcoin::Network,
-    exe_config: InternalBitcoindExeConfig,
+    bitcoind_datadir: &Path,
+    exe_path: &Path,
 ) -> Result<std::process::Child, StartInternalBitcoindError> {
-    let datadir_path_str = exe_config
-        .data_dir
+    let datadir_path_str = bitcoind_datadir
         .canonicalize()
         .map_err(|e| StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()))?
         .to_str()
@@ -71,7 +70,7 @@ pub fn start_internal_bitcoind(
         format!("-chain={}", network.to_core_arg()),
         format!("-datadir={}", datadir_path_str),
     ];
-    let mut command = std::process::Command::new(exe_config.exe_path);
+    let mut command = std::process::Command::new(exe_path);
     #[cfg(target_os = "windows")]
     let command = command.creation_flags(CREATE_NO_WINDOW);
     command
