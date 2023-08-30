@@ -1,7 +1,7 @@
 use iced::widget::{
     checkbox, container, pick_list, scrollable, scrollable::Properties, slider, Space, TextInput,
 };
-use iced::{alignment, Alignment, Length};
+use iced::{alignment, widget::progress_bar, Alignment, Length};
 
 use async_hwi::DeviceKind;
 use std::path::PathBuf;
@@ -26,7 +26,9 @@ use crate::{
     installer::{
         context::Context,
         message::{self, Message},
-        prompt, Error,
+        prompt,
+        step::{DownloadState, InstallState},
+        Error,
     },
 };
 
@@ -907,24 +909,17 @@ pub fn define_bitcoin<'a>(
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
     layout(
         progress,
-        "Choose Bitcoin installation type",
-        Column::new().push(text(prompt::SELECT_BITCOIND_TYPE)).push(
+        "Bitcoin node management",
+        Column::new().push(
             Row::new()
-                .align_items(Alignment::End)
+                .align_items(Alignment::Start)
                 .spacing(20)
                 .push(
                     Container::new(
                         Column::new()
                             .spacing(20)
-                            .align_items(Alignment::Center)
-                            .push(
-                                button::primary(None, "I want to manage my own node")
-                                    .width(Length::Fixed(300.0))
-                                    .on_press(Message::SelectBitcoindType(
-                                        message::SelectBitcoindTypeMsg::UseExternal(true),
-                                    )),
-                            )
-                            .align_items(Alignment::Center),
+                            .width(Length::Fixed(300.0))
+                            .push(text("Manage your own Bitcoin node").bold())
                     )
                     .padding(20),
                 )
@@ -932,15 +927,70 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                     Container::new(
                         Column::new()
                             .spacing(20)
+                            .width(Length::Fixed(300.0))
+                            .push(text("Have Liana manage and run a dedicated Bitcoin node").bold())
+                    )
+                    .padding(20),
+                ),
+        )
+        .push(
+            Row::new()
+                .align_items(Alignment::Start)
+                .spacing(20)
+                .push(
+                    Container::new(
+                        Column::new()
+                            .spacing(20)
+                            .width(Length::Fixed(300.0))
+                            .align_items(Alignment::Start)
+                            .push(text("Liana will connect to your existing instance of Bitcoin Core. You will have to make sure Bitcoin Core is running when you use Liana.\n\n(Use this if you already have a full node on your machine, and don't need a new instance)"))
+                    )
+                    .padding(20),
+                )
+                .push(
+                    Container::new(
+                        Column::new()
+                            .spacing(20)
+                            .width(Length::Fixed(300.0))
+                            .align_items(Alignment::Start)
+                            .push(text("Liana will run its own instance of Bitcoin Core. This will use a pruned node, and perform the synchronization in the Liana folder.\n\nIf you select this option, Bitcoin Core will be downloaded, installed and started on the next step.\n\n(Use this if you don't want to deal with Bitcoin Core yourself, or need a new, dedicated instance for Liana)"))
+                    )
+                    .padding(20),
+                ),
+        )
+        .push(
+            Row::new()
+                .align_items(Alignment::End)
+                .spacing(20)
+                .push(
+                    Container::new(
+                        Column::new()
+                            .spacing(20)
+                            .width(Length::Fixed(300.0))
                             .align_items(Alignment::Center)
                             .push(
-                                button::primary(None, "Let Liana manage my node")
+                                button::primary(None, "Select")
+                                .width(Length::Fixed(300.0))
+                                    .on_press(Message::SelectBitcoindType(
+                                        message::SelectBitcoindTypeMsg::UseExternal(true),
+                                    )),
+                            )
+                    )
+                    .padding(20),
+                )
+                .push(
+                    Container::new(
+                        Column::new()
+                            .spacing(20)
+                            .width(Length::Fixed(300.0))
+                            .align_items(Alignment::Center)
+                            .push(
+                                button::primary(None, "Select")
                                     .width(Length::Fixed(300.0))
                                     .on_press(Message::SelectBitcoindType(
                                         message::SelectBitcoindTypeMsg::UseExternal(false),
                                     )),
                             )
-                            .align_items(Alignment::Center),
                     )
                     .padding(20),
                 ),
@@ -955,9 +1005,9 @@ pub fn start_internal_bitcoind<'a>(
     exe_path: Option<&PathBuf>,
     started: Option<&Result<(), StartInternalBitcoindError>>,
     error: Option<&'a String>,
+    download_state: Option<&DownloadState>,
+    install_state: Option<&InstallState>,
 ) -> Element<'a, Message> {
-    let start_button = button::primary(None, "Start bitcoind").width(Length::Fixed(200.0));
-
     let mut next_button = button::primary(None, "Next").width(Length::Fixed(200.0));
     if let Some(Ok(_)) = started {
         next_button = next_button.on_press(Message::Next);
@@ -966,23 +1016,56 @@ pub fn start_internal_bitcoind<'a>(
         progress,
         "Start Bitcoin full node",
         Column::new()
-            .push(if exe_path.is_some() {
-                Container::new(
-                    Row::new()
+            .push_maybe(download_state.map(|s| {
+                match s {
+                    DownloadState::Finished(_) => Row::new()
                         .spacing(10)
                         .align_items(Alignment::Center)
                         .push(icon::circle_check_icon().style(color::GREEN))
-                        .push(text("bitcoind already installed").style(color::GREEN)),
-                )
-            } else {
-                Container::new(
-                    Row::new()
+                        .push(text("Download complete").style(color::GREEN)),
+                    DownloadState::Downloading { progress } => Row::new()
+                        .spacing(10)
+                        .align_items(Alignment::Center)
+                        .push(text(format!("Downloading... {progress:.2}%"))),
+                    DownloadState::Errored(e) => Row::new()
                         .spacing(10)
                         .align_items(Alignment::Center)
                         .push(icon::circle_cross_icon().style(color::RED))
-                        .push(text("Cannot find bitcoind").style(color::RED)),
-                )
-            })
+                        .push(text(format!("Download failed: '{}'.", e)).style(color::RED)),
+                    _ => Row::new().spacing(10).align_items(Alignment::Center),
+                }
+            }))
+            .push(Container::new(if let Some(state) = install_state {
+                match state {
+                    InstallState::InProgress => Row::new()
+                        .spacing(10)
+                        .align_items(Alignment::Center)
+                        .push("Installing bitcoind..."),
+                    InstallState::Finished => Row::new()
+                        .spacing(10)
+                        .align_items(Alignment::Center)
+                        .push(icon::circle_check_icon().style(color::GREEN))
+                        .push(text("Installation complete").style(color::GREEN)),
+                    InstallState::Errored(e) => Row::new()
+                        .spacing(10)
+                        .align_items(Alignment::Center)
+                        .push(icon::circle_cross_icon().style(color::RED))
+                        .push(text(format!("Installation failed: '{}'.", e)).style(color::RED)),
+                }
+            } else if exe_path.is_some() {
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(icon::circle_check_icon().style(color::GREEN))
+                    .push(text("Liana-managed bitcoind already installed").style(color::GREEN))
+            } else if let Some(DownloadState::Downloading { progress }) = download_state {
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(progress_bar(0.0..=100.0, *progress))
+            } else {
+                Row::new().spacing(10).align_items(Alignment::Center)
+            }))
             .push_maybe(if started.is_some() {
                 started.map(|res| {
                     if res.is_ok() {
@@ -991,7 +1074,7 @@ pub fn start_internal_bitcoind<'a>(
                                 .spacing(10)
                                 .align_items(Alignment::Center)
                                 .push(icon::circle_check_icon().style(color::GREEN))
-                                .push(text("bitcoind started").style(color::GREEN)),
+                                .push(text("Started").style(color::GREEN)),
                         )
                     } else {
                         Container::new(
@@ -1005,6 +1088,13 @@ pub fn start_internal_bitcoind<'a>(
                         )
                     }
                 })
+            } else if let Some(InstallState::Finished) = install_state {
+                Some(Container::new(
+                    Row::new()
+                        .spacing(10)
+                        .align_items(Alignment::Center)
+                        .push(text("Starting...")),
+                ))
             } else {
                 Some(Container::new(Space::with_height(Length::Fixed(25.0))))
             })
@@ -1012,15 +1102,6 @@ pub fn start_internal_bitcoind<'a>(
             .push(
                 Row::new()
                     .spacing(10)
-                    .push(Container::new(
-                        if exe_path.is_some() && started.is_none() && error.is_none() {
-                            start_button.on_press(Message::InternalBitcoind(
-                                message::InternalBitcoindMsg::Start,
-                            ))
-                        } else {
-                            start_button
-                        },
-                    ))
                     .push(Row::new().spacing(10).push(next_button)),
             )
             .push_maybe(error.map(|e| card::invalid(text(e)))),

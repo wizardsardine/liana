@@ -5,7 +5,7 @@ use liana::miniscript::{
 use std::path::PathBuf;
 
 use super::Error;
-use crate::hw::HardwareWallet;
+use crate::{download::Progress, hw::HardwareWallet};
 use async_hwi::DeviceKind;
 
 #[derive(Debug, Clone)]
@@ -55,6 +55,9 @@ pub enum InternalBitcoindMsg {
     Previous,
     Reload,
     DefineConfig,
+    Download,
+    DownloadProgressed(Progress),
+    Install,
     Start,
 }
 
