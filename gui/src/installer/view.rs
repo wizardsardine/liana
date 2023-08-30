@@ -409,13 +409,15 @@ pub fn import_descriptor<'a>(
                     })
                     .push(col_descriptor),
             )
-            .push(if imported_descriptor.value.is_empty() {
-                button::primary(None, "Next").width(Length::Fixed(200.0))
-            } else {
-                button::primary(None, "Next")
-                    .width(Length::Fixed(200.0))
-                    .on_press(Message::Next)
-            })
+            .push(
+                if imported_descriptor.value.is_empty() || !imported_descriptor.valid {
+                    button::primary(None, "Next").width(Length::Fixed(200.0))
+                } else {
+                    button::primary(None, "Next")
+                        .width(Length::Fixed(200.0))
+                        .on_press(Message::Next)
+                },
+            )
             .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
             .spacing(50),
         true,
