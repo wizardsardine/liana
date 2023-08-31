@@ -652,9 +652,9 @@ impl Step for InternalBitcoindStep {
                 message::InternalBitcoindMsg::Previous => {
                     if let Some(bitcoind) = &self.internal_bitcoind {
                         bitcoind.stop();
-                        self.started = None;
                     }
                     self.internal_bitcoind = None;
+                    self.started = None; // clear both Ok and Err
                     return Command::perform(async {}, |_| Message::Previous);
                 }
                 message::InternalBitcoindMsg::Reload => {
