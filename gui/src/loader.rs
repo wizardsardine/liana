@@ -128,7 +128,8 @@ impl Loader {
                             start_bitcoind_and_daemon(
                                 daemon_config_path,
                                 self.datadir_path.clone(),
-                                self.gui_config.start_internal_bitcoind,
+                                self.gui_config.start_internal_bitcoind
+                                    && self.internal_bitcoind.is_none(),
                             ),
                             Message::Started,
                         );
@@ -193,7 +194,7 @@ impl Loader {
                                     self.gui_config.clone(),
                                     self.datadir_path.clone(),
                                     self.network,
-                                    self.internal_bitcoind.take(),
+                                    self.internal_bitcoind.clone(),
                                 ),
                                 Message::Synced,
                             );
