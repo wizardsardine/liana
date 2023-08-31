@@ -27,7 +27,7 @@ use crate::{
         config::Config as GUIConfig,
         wallet::{Wallet, WalletError},
     },
-    bitcoind::{Bitcoind, StartInternalBitcoindError},
+    bitcoind::{stop_bitcoind, Bitcoind, StartInternalBitcoindError},
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
 };
 
@@ -225,6 +225,15 @@ impl Loader {
 
         if let Some(bitcoind) = &self.internal_bitcoind {
             bitcoind.stop();
+        } else if self.gui_config.start_internal_bitcoind {
+            if let Ok(config) = Config::from_file(self.gui_config.daemon_config_path.clone()) {
+                if let Some(bitcoind_config) = &config.bitcoind_config {
+                    let mut stopped = false;
+                    while !stopped {
+                        stopped = stop_bitcoind(&bitcoind_config);
+                    }
+                }
+            }
         }
     }
 
