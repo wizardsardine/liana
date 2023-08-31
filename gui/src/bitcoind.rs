@@ -4,6 +4,8 @@ use liana::{
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread;
+use std::time;
 use tokio::sync::Mutex;
 
 use tracing::{info, warn};
@@ -112,6 +114,7 @@ pub enum StartInternalBitcoindError {
     CouldNotCanonicalizeCookiePath(String),
     CookieFileNotFound(String),
     BitcoinDError(String),
+    BitcoindAlreadyRunning,
 }
 
 impl std::fmt::Display for StartInternalBitcoindError {
@@ -137,6 +140,7 @@ impl std::fmt::Display for StartInternalBitcoindError {
                 )
             }
             Self::BitcoinDError(e) => write!(f, "bitcoind connection check failed: {}", e),
+            Self::BitcoindAlreadyRunning => write!(f, "bitcoind is already running."),
         }
     }
 }
@@ -180,12 +184,29 @@ impl Bitcoind {
         #[cfg(target_os = "windows")]
         let command = command.creation_flags(CREATE_NO_WINDOW);
 
-        let mut process = command
-            .args(&args)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))?;
+        let mut already_running_retries = 0;
+        let mut process = loop {
+            match command
+                .args(&args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+            {
+                Ok(process) => break process,
+                Err(e) => {
+                    log::error!("{}", e);
+                    if !e.to_string().contains("Bitcoin Core is probably already running") {
+                        return Err(StartInternalBitcoindError::CommandError(e.to_string()));
+                    }
+                    already_running_retries += 1;
+                    if already_running_retries > 4 {
+                        return Err(StartInternalBitcoindError::BitcoindAlreadyRunning);
+                    }
+                    log::error!("It seems like bitcoind is already running. Tentatively waiting for it to exit.");
+                    thread::sleep(time::Duration::from_millis(500));
+                }
+            };
+        };
 
         if !crate::utils::poll_for_file(&config.cookie_path, 200, 15) {
             match process.wait_with_output() {
