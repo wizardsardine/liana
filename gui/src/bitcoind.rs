@@ -234,15 +234,21 @@ impl Bitcoind {
 
     /// Stop (internal) bitcoind.
     pub fn stop(&self) {
-        match liana::BitcoinD::new(&self.config, "internal_bitcoind_stop".to_string()) {
-            Ok(bitcoind) => {
-                info!("Stopping internal bitcoind...");
-                bitcoind.stop();
-                info!("Stopped liana managed bitcoind");
-            }
-            Err(e) => {
-                warn!("Could not create interface to internal bitcoind: '{}'.", e);
-            }
+        stop_bitcoind(&self.config);
+    }
+}
+
+pub fn stop_bitcoind(config: &BitcoindConfig) -> bool {
+    match liana::BitcoinD::new(config, "internal_bitcoind_stop".to_string()) {
+        Ok(bitcoind) => {
+            info!("Stopping internal bitcoind...");
+            bitcoind.stop();
+            info!("Stopped liana managed bitcoind");
+            true
+        }
+        Err(e) => {
+            warn!("Could not create interface to internal bitcoind: '{}'.", e);
+            false
         }
     }
 }

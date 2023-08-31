@@ -27,7 +27,7 @@ use crate::{
         config::Config as GUIConfig,
         wallet::{Wallet, WalletError},
     },
-    bitcoind::{Bitcoind, StartInternalBitcoindError},
+    bitcoind::{stop_bitcoind, Bitcoind, StartInternalBitcoindError},
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
 };
 
@@ -39,6 +39,7 @@ pub struct Loader {
     pub gui_config: GUIConfig,
     pub daemon_started: bool,
     pub internal_bitcoind: Option<Bitcoind>,
+    pub waiting_daemon_bitcoind: bool,
 
     step: Step,
 }
@@ -96,6 +97,7 @@ impl Loader {
                 step: Step::Connecting,
                 daemon_started: false,
                 internal_bitcoind,
+                waiting_daemon_bitcoind: false,
             },
             Command::perform(connect(path), Message::Loaded),
         )
@@ -124,6 +126,7 @@ impl Loader {
                     if let Some(daemon_config_path) = self.gui_config.daemon_config_path.clone() {
                         self.step = Step::StartingDaemon;
                         self.daemon_started = true;
+                        self.waiting_daemon_bitcoind = true;
                         return Command::perform(
                             start_bitcoind_and_daemon(
                                 daemon_config_path,
@@ -165,6 +168,7 @@ impl Loader {
                 if let Some(bitcoind) = bitcoind {
                     self.internal_bitcoind = Some(bitcoind);
                 }
+                self.waiting_daemon_bitcoind = false;
                 self.step = Step::Syncing {
                     daemon: daemon.clone(),
                     progress: 0.0,
@@ -225,6 +229,16 @@ impl Loader {
 
         if let Some(bitcoind) = &self.internal_bitcoind {
             bitcoind.stop();
+        } else if self.waiting_daemon_bitcoind && self.gui_config.start_internal_bitcoind {
+            if let Ok(config) = Config::from_file(self.gui_config.daemon_config_path.clone()) {
+                if let Some(bitcoind_config) = &config.bitcoind_config {
+                    let mut retry = 0;
+                    while !stop_bitcoind(bitcoind_config) && retry < 10 {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        retry += 1;
+                    }
+                }
+            }
         }
     }
 
