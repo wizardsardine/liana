@@ -1,5 +1,54 @@
 # Liana daemon and GUI release notes
 
+## 2.0
+
+This release significantly simplifies the installation of Liana. It also fixes a number of small
+bugs and glitches.
+
+### Features
+
+- We made it possible to re-use an xpub within a descriptor, so long as it uses a different
+  derivation path.
+- We added new RPC commands allowing for updating and querying labels of txids, addresses and
+  outpoints.
+- We've made our RPC connection to `bitcoind` more robust.
+- We now distribute packages for Debian-based and Arch-based Linux distributions.
+- A guide on how to recover a Liana wallet backup with Bitcoin Core was added.
+- An example config file for running `lianad` was added.
+- We've worked around the use of prefixed-paths on Windows thereby allowing us to bring back the
+  watchonly wallet at the same location as for other operating systems, under our own datadir.
+
+#### GUI-specific
+
+- The UX for creating a descriptor where a signer is present in different spending paths was
+  significantly improved.
+- The installation process, as well as the usage of the wallet, was made more user friendly by
+  optionally encapsulating the management (download, start and stop) of the `bitcoind`.
+
+### Fixes
+
+- We more gracefully stop the Bitcoin backend poller when the block chain is still in the process of
+  being synchronized. This would previously appear to hang and could freeze the GUI.
+- The handling of conflicting unconfirmed spend transactions (RBFs) was fixed.
+- If paid directly through a coinbase transaction output, the wallet could have previously missed
+  it. This was fixed.
+- We now correctly treat immature coinbase deposits as unspendable. They are otherwise treated
+  similarly to unconfirmed coins.
+- We now tell `bitcoind` to load our watchonly wallet upon startup. Not loading the watchonly wallet
+  on startup could make `bitcoind` unable to load it without reindexing the block chain, if using an
+  aggressive pruning configuration.
+- `lianad` will now print a more helpful message on startup failure (and link to the newly added
+  config file example).
+
+#### GUI-specific
+
+- We now check the network of xpubs when importing a descriptor.
+- The GUI would sometimes fail to connect to the Specter DIY signing device.
+- We now convey the descriptor registration step on a signing device isn't necessary if none were
+  used.
+- We could previously appear to hang during shutdown.
+
+
 ## 1.0
 
 This is the first non-beta release of Liana.
