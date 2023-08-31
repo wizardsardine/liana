@@ -4,6 +4,8 @@ use liana::{
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread;
+use std::time;
 use tokio::sync::Mutex;
 
 use tracing::{info, warn};
@@ -187,24 +189,39 @@ impl Bitcoind {
             .spawn()
             .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))?;
 
-        if !crate::utils::poll_for_file(&config.cookie_path, 200, 15) {
-            match process.wait_with_output() {
-                Err(e) => {
-                    tracing::error!("Error while waiting for bitcoind to finish: {}", e)
-                }
-                Ok(o) => {
-                    tracing::error!("Exit status: {}", o.status);
-                    tracing::error!("stderr: {}", String::from_utf8_lossy(&o.stderr));
+        // We've started bitcoind in the background, however it may fail to start for whatever
+        // reason. And we need its JSONRPC interface to be available to continue. Thus wait for it
+        // to have created the cookie file, regularly checking it did not fail to start.
+        loop {
+            match process.try_wait() {
+                Ok(None) => {}
+                Err(e) => log::error!("Error while trying to wait for bitcoind: {}", e),
+                Ok(Some(status)) => {
+                    log::error!("Bitcoind exited with status '{}'", status);
+                    match process.wait_with_output() {
+                        Err(e) => {
+                            tracing::error!("Error while waiting for bitcoind to finish: {}", e)
+                        }
+                        Ok(o) => {
+                            tracing::error!("stderr: {}", String::from_utf8_lossy(&o.stderr));
+                        }
+                    }
+                    return Err(StartInternalBitcoindError::CookieFileNotFound(
+                        config.cookie_path.to_string_lossy().into_owned(),
+                    ));
                 }
             }
-            return Err(StartInternalBitcoindError::CookieFileNotFound(
-                config.cookie_path.to_string_lossy().into_owned(),
-            ));
+            if config.cookie_path.exists() {
+                log::info!("Bitcoind seems to have successfully started.");
+                break;
+            }
+            log::info!("Waiting for bitcoind to start.");
+            thread::sleep(time::Duration::from_millis(500));
         }
+
         config.cookie_path = config.cookie_path.canonicalize().map_err(|e| {
             StartInternalBitcoindError::CouldNotCanonicalizeCookiePath(e.to_string())
         })?;
-
         liana::BitcoinD::new(&config, "internal_bitcoind_start".to_string())
             .map_err(|e| StartInternalBitcoindError::BitcoinDError(e.to_string()))?;
 
