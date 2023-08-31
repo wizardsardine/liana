@@ -22,13 +22,19 @@ pub struct BitcoindSettingsState {
     warning: Option<Error>,
     config_updated: bool,
     daemon_is_external: bool,
+    bitcoind_is_internal: bool,
 
     settings: Vec<Box<dyn Setting>>,
     current: Option<usize>,
 }
 
 impl BitcoindSettingsState {
-    pub fn new(config: Option<Config>, cache: &Cache, daemon_is_external: bool) -> Self {
+    pub fn new(
+        config: Option<Config>,
+        cache: &Cache,
+        daemon_is_external: bool,
+        bitcoind_is_internal: bool,
+    ) -> Self {
         let settings = if let Some(config) = &config {
             vec![
                 BitcoindSettings::new(
@@ -44,6 +50,7 @@ impl BitcoindSettingsState {
 
         BitcoindSettingsState {
             daemon_is_external,
+            bitcoind_is_internal,
             warning: None,
             config_updated: false,
             settings,
@@ -106,7 +113,8 @@ impl State for BitcoindSettingsState {
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let can_edit = self.current.is_none() && !self.daemon_is_external;
+        let can_edit =
+            self.current.is_none() && !self.daemon_is_external && !self.bitcoind_is_internal;
         view::settings::bitcoind_settings(
             cache,
             self.warning.as_ref(),

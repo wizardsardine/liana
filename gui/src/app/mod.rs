@@ -72,9 +72,12 @@ impl App {
 
     fn load_state(&mut self, menu: &Menu) -> Command<Message> {
         self.state = match menu {
-            menu::Menu::Settings => {
-                state::SettingsState::new(self.data_dir.clone(), self.wallet.clone()).into()
-            }
+            menu::Menu::Settings => state::SettingsState::new(
+                self.data_dir.clone(),
+                self.wallet.clone(),
+                self.internal_bitcoind.is_some(),
+            )
+            .into(),
             menu::Menu::Home => Home::new(self.wallet.clone(), &self.cache.coins).into(),
             menu::Menu::Coins => CoinsPanel::new(
                 &self.cache.coins,
