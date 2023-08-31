@@ -70,7 +70,7 @@ pub enum Message {
             Error,
         >,
     ),
-    Started(Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error>),
+    Started(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     BitcoindLog(Option<String>),
     Failure(DaemonError),
@@ -121,17 +121,46 @@ impl Loader {
                 Error::Daemon(DaemonError::ClientNotSupported)
                 | Error::Daemon(DaemonError::Transport(Some(ErrorKind::ConnectionRefused), _))
                 | Error::Daemon(DaemonError::Transport(Some(ErrorKind::NotFound), _)) => {
-                    if let Some(daemon_config_path) = self.gui_config.daemon_config_path.clone() {
+                    if let Some(ref daemon_config_path) = self.gui_config.daemon_config_path.clone()
+                    {
+                        let config = match Config::from_file(Some(daemon_config_path.clone())) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                self.step = Step::Error(Box::new(Error::Config(e)));
+                                return Command::none();
+                            }
+                        };
+
+                        if self.gui_config.start_internal_bitcoind {
+                            if let Some(bitcoind_config) = &config.bitcoind_config {
+                                // Check if bitcoind is already running before trying to start it.
+                                if liana::BitcoinD::new(
+                                    bitcoind_config,
+                                    "internal_bitcoind_start".to_string(),
+                                )
+                                .is_ok()
+                                {
+                                    info!("Internal bitcoind is already running");
+                                } else {
+                                    info!("Starting internal bitcoind");
+                                    match Bitcoind::start(
+                                        &config.bitcoin_config.network,
+                                        bitcoind_config.clone(),
+                                        &self.datadir_path,
+                                    ) {
+                                        Ok(bitcoind) => self.internal_bitcoind = Some(bitcoind),
+                                        Err(e) => {
+                                            self.step = Step::Error(Box::new(Error::Bitcoind(e)));
+                                            return Command::none();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         self.step = Step::StartingDaemon;
                         self.daemon_started = true;
-                        return Command::perform(
-                            start_bitcoind_and_daemon(
-                                daemon_config_path,
-                                self.datadir_path.clone(),
-                                self.gui_config.start_internal_bitcoind,
-                            ),
-                            Message::Started,
-                        );
+                        return Command::perform(start_daemon(config), Message::Started);
                     } else {
                         self.step = Step::Error(Box::new(e));
                     }
@@ -155,15 +184,10 @@ impl Loader {
 
     fn on_start(
         &mut self,
-        res: Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error>,
+        res: Result<Arc<dyn Daemon + Sync + Send>, Error>,
     ) -> Command<Message> {
         match res {
-            Ok((daemon, bitcoind)) => {
-                // bitcoind may have been already started and given to the loader
-                // We should not override with None the loader bitcoind field
-                if let Some(bitcoind) = bitcoind {
-                    self.internal_bitcoind = Some(bitcoind);
-                }
+            Ok(daemon) => {
                 self.step = Step::Syncing {
                     daemon: daemon.clone(),
                     progress: 0.0,
@@ -410,38 +434,12 @@ async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, 
 }
 
 // Daemon can start only if a config path is given.
-pub async fn start_bitcoind_and_daemon(
-    config_path: PathBuf,
-    liana_datadir_path: PathBuf,
-    start_internal_bitcoind: bool,
-) -> Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error> {
-    let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
-    let mut bitcoind: Option<Bitcoind> = None;
-    if start_internal_bitcoind {
-        if let Some(bitcoind_config) = &config.bitcoind_config {
-            // Check if bitcoind is already running before trying to start it.
-            if liana::BitcoinD::new(bitcoind_config, "internal_bitcoind_start".to_string()).is_ok()
-            {
-                info!("Internal bitcoind is already running");
-            } else {
-                info!("Starting internal bitcoind");
-                bitcoind = Some(
-                    Bitcoind::start(
-                        &config.bitcoin_config.network,
-                        bitcoind_config.clone(),
-                        &liana_datadir_path,
-                    )
-                    .map_err(Error::Bitcoind)?,
-                );
-            }
-        }
-    }
-
+pub async fn start_daemon(config: Config) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
     debug!("starting liana daemon");
 
     let daemon = EmbeddedDaemon::start(config)?;
 
-    Ok((Arc::new(daemon), bitcoind))
+    Ok(Arc::new(daemon))
 }
 
 async fn sync(
