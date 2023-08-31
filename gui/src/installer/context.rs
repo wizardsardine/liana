@@ -8,6 +8,7 @@ use crate::{
         settings::{KeySetting, Settings, WalletSetting},
         wallet::DEFAULT_WALLET_NAME,
     },
+    bitcoind::Bitcoind,
     hw::HardwareWalletConfig,
     signer::Signer,
 };
@@ -36,6 +37,7 @@ pub struct Context {
     pub bitcoind_is_external: bool,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind_exe_config: Option<InternalBitcoindExeConfig>,
+    pub internal_bitcoind: Option<Bitcoind>,
 }
 
 impl Context {
@@ -55,6 +57,7 @@ impl Context {
             bitcoind_is_external: true,
             internal_bitcoind_config: None,
             internal_bitcoind_exe_config: None,
+            internal_bitcoind: None,
         }
     }
 

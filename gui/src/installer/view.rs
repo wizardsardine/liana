@@ -1248,7 +1248,10 @@ pub fn install<'a>(
                         .push(Container::new(text("Installed !")))
                         .push(Container::new(
                             button::primary(None, "Start")
-                                .on_press(Message::Exit(path.clone()))
+                                .on_press(Message::Exit(
+                                    path.clone(),
+                                    context.internal_bitcoind.clone(),
+                                ))
                                 .width(Length::Fixed(200.0)),
                         ))
                         .align_items(Alignment::Center)

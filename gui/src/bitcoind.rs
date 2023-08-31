@@ -1,8 +1,9 @@
 use liana::{config::BitcoindConfig, miniscript::bitcoin};
+use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use tracing::{info, warn};
-
-use crate::app::config::InternalBitcoindExeConfig;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -47,51 +48,91 @@ impl std::fmt::Display for StartInternalBitcoindError {
         }
     }
 }
-
-/// Start internal bitcoind for the given network.
-pub fn start_internal_bitcoind(
-    network: &bitcoin::Network,
-    exe_config: InternalBitcoindExeConfig,
-) -> Result<std::process::Child, StartInternalBitcoindError> {
-    let datadir_path_str = exe_config
-        .data_dir
-        .canonicalize()
-        .map_err(|e| StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()))?
-        .to_str()
-        .ok_or_else(|| {
-            StartInternalBitcoindError::CouldNotCanonicalizeDataDir(
-                "Couldn't convert path to str.".to_string(),
-            )
-        })?
-        .to_string();
-    #[cfg(target_os = "windows")]
-    // See https://github.com/rust-lang/rust/issues/42869.
-    let datadir_path_str = datadir_path_str.replace("\\\\?\\", "").replace("\\\\?", "");
-    let args = vec![
-        format!("-chain={}", network.to_core_arg()),
-        format!("-datadir={}", datadir_path_str),
-    ];
-    let mut command = std::process::Command::new(exe_config.exe_path);
-    #[cfg(target_os = "windows")]
-    let command = command.creation_flags(CREATE_NO_WINDOW);
-    command
-        .args(&args)
-        .stdout(std::process::Stdio::null()) // We still get bitcoind's logs in debug.log.
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))
+#[derive(Debug, Clone)]
+pub struct Bitcoind {
+    _process: Arc<std::process::Child>,
+    pub config: BitcoindConfig,
+    pub stdout: Option<Arc<Mutex<std::process::ChildStdout>>>,
 }
 
-/// Stop (internal) bitcoind.
-pub fn stop_internal_bitcoind(bitcoind_config: &BitcoindConfig) {
-    match liana::BitcoinD::new(bitcoind_config, "internal_bitcoind_stop".to_string()) {
-        Ok(bitcoind) => {
-            info!("Stopping internal bitcoind...");
-            bitcoind.stop();
-            info!("Stopped liana managed bitcoind");
+impl Bitcoind {
+    /// Start internal bitcoind for the given network.
+    pub fn start(
+        network: &bitcoin::Network,
+        mut config: BitcoindConfig,
+        bitcoind_datadir: &Path,
+        exe_path: &Path,
+    ) -> Result<Self, StartInternalBitcoindError> {
+        let datadir_path_str = bitcoind_datadir
+            .canonicalize()
+            .map_err(|e| StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()))?
+            .to_str()
+            .ok_or_else(|| {
+                StartInternalBitcoindError::CouldNotCanonicalizeDataDir(
+                    "Couldn't convert path to str.".to_string(),
+                )
+            })?
+            .to_string();
+
+        // See https://github.com/rust-lang/rust/issues/42869.
+        #[cfg(target_os = "windows")]
+        let datadir_path_str = datadir_path_str.replace("\\\\?\\", "").replace("\\\\?", "");
+
+        let args = vec![
+            format!("-chain={}", network.to_core_arg()),
+            format!("-datadir={}", datadir_path_str),
+        ];
+        let mut command = std::process::Command::new(exe_path);
+
+        #[cfg(target_os = "windows")]
+        let command = command.creation_flags(CREATE_NO_WINDOW);
+
+        let mut process = command
+            .args(&args)
+            .stdout(std::process::Stdio::piped()) // We still get bitcoind's logs in debug.log.
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))?;
+
+        if !crate::utils::poll_for_file(&config.cookie_path, 200, 15) {
+            match process.wait_with_output() {
+                Err(e) => {
+                    tracing::error!("Error while waiting for bitcoind to finish: {}", e)
+                }
+                Ok(o) => {
+                    tracing::error!("Exit status: {}", o.status);
+                    tracing::error!("stderr: {}", String::from_utf8_lossy(&o.stderr));
+                }
+            }
+            return Err(StartInternalBitcoindError::CookieFileNotFound(
+                config.cookie_path.to_string_lossy().into_owned(),
+            ));
         }
-        Err(e) => {
-            warn!("Could not create interface to internal bitcoind: '{}'.", e);
+        config.cookie_path = config.cookie_path.canonicalize().map_err(|e| {
+            StartInternalBitcoindError::CouldNotCanonicalizeCookiePath(e.to_string())
+        })?;
+
+        liana::BitcoinD::new(&config, "internal_bitcoind_start".to_string())
+            .map_err(|e| StartInternalBitcoindError::BitcoinDError(e.to_string()))?;
+
+        Ok(Self {
+            stdout: process.stdout.take().map(|s| Arc::new(Mutex::new(s))),
+            config,
+            _process: Arc::new(process),
+        })
+    }
+
+    /// Stop (internal) bitcoind.
+    pub fn stop(&self) {
+        match liana::BitcoinD::new(&self.config, "internal_bitcoind_stop".to_string()) {
+            Ok(bitcoind) => {
+                info!("Stopping internal bitcoind...");
+                bitcoind.stop();
+                info!("Stopped liana managed bitcoind");
+            }
+            Err(e) => {
+                warn!("Could not create interface to internal bitcoind: '{}'.", e);
+            }
         }
     }
 }

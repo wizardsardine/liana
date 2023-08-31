@@ -5,7 +5,7 @@ use liana::miniscript::{
 use std::path::PathBuf;
 
 use super::Error;
-use crate::{download::Progress, hw::HardwareWallet};
+use crate::{bitcoind::Bitcoind, download::Progress, hw::HardwareWallet};
 use async_hwi::DeviceKind;
 
 #[derive(Debug, Clone)]
@@ -14,7 +14,7 @@ pub enum Message {
     ParticipateWallet,
     ImportWallet,
     UserActionDone(bool),
-    Exit(PathBuf),
+    Exit(PathBuf, Option<Bitcoind>),
     Clibpboard(String),
     Next,
     Skip,

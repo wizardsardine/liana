@@ -12,14 +12,14 @@ use iced::{Command, Subscription};
 use liana::{config::BitcoindConfig, miniscript::bitcoin::Network};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use tar::Archive;
-use tracing::{error, info};
+use tracing::info;
 
 use jsonrpc::{client::Client, simple_http::SimpleHttpTransport};
 
 use liana_ui::{component::form, widget::*};
 
 use crate::{
-    bitcoind::{start_internal_bitcoind, stop_internal_bitcoind, StartInternalBitcoindError},
+    bitcoind::{Bitcoind, StartInternalBitcoindError},
     download,
     installer::{
         context::Context,
@@ -28,7 +28,6 @@ use crate::{
         step::Step,
         view, Error, InternalBitcoindExeConfig,
     },
-    utils::poll_for_file,
 };
 
 // The approach for tracking download progress is taken from
@@ -131,30 +130,6 @@ fn download_url() -> String {
         &VERSION,
         download_filename()
     )
-}
-
-pub struct DefineBitcoind {
-    cookie_path: form::Value<String>,
-    address: form::Value<String>,
-    is_running: Option<Result<(), Error>>,
-}
-
-pub struct InternalBitcoindStep {
-    liana_datadir: PathBuf,
-    bitcoind_datadir: PathBuf,
-    network: Network,
-    started: Option<Result<(), StartInternalBitcoindError>>,
-    exe_path: Option<PathBuf>,
-    bitcoind_config: Option<BitcoindConfig>,
-    exe_config: Option<InternalBitcoindExeConfig>,
-    internal_bitcoind_config: Option<InternalBitcoindConfig>,
-    error: Option<String>,
-    exe_download: Option<Download>,
-    install_state: Option<InstallState>,
-}
-
-pub struct SelectBitcoindTypeStep {
-    use_external: bool,
 }
 
 /// Default prune value used by internal bitcoind.
@@ -511,6 +486,10 @@ pub fn port_is_valid(port: &u16) -> bool {
     !BITCOIND_DEFAULT_PORTS.contains(port)
 }
 
+pub struct SelectBitcoindTypeStep {
+    use_external: bool,
+}
+
 impl Default for SelectBitcoindTypeStep {
     fn default() -> Self {
         Self::new()
@@ -558,6 +537,12 @@ impl Step for SelectBitcoindTypeStep {
     fn view(&self, progress: (usize, usize)) -> Element<Message> {
         view::select_bitcoind_type(progress)
     }
+}
+
+pub struct DefineBitcoind {
+    cookie_path: form::Value<String>,
+    address: form::Value<String>,
+    is_running: Option<Result<(), Error>>,
 }
 
 impl DefineBitcoind {
@@ -682,6 +667,21 @@ impl From<DefineBitcoind> for Box<dyn Step> {
     }
 }
 
+pub struct InternalBitcoindStep {
+    liana_datadir: PathBuf,
+    bitcoind_datadir: PathBuf,
+    network: Network,
+    started: Option<Result<(), StartInternalBitcoindError>>,
+    exe_path: Option<PathBuf>,
+    bitcoind_config: Option<BitcoindConfig>,
+    exe_config: Option<InternalBitcoindExeConfig>,
+    internal_bitcoind_config: Option<InternalBitcoindConfig>,
+    error: Option<String>,
+    exe_download: Option<Download>,
+    install_state: Option<InstallState>,
+    internal_bitcoind: Option<Bitcoind>,
+}
+
 impl From<InternalBitcoindStep> for Box<dyn Step> {
     fn from(s: InternalBitcoindStep) -> Box<dyn Step> {
         Box::new(s)
@@ -702,6 +702,7 @@ impl InternalBitcoindStep {
             error: None,
             exe_download: None,
             install_state: None,
+            internal_bitcoind: None,
         }
     }
 }
@@ -727,11 +728,9 @@ impl Step for InternalBitcoindStep {
         if let Message::InternalBitcoind(msg) = message {
             match msg {
                 message::InternalBitcoindMsg::Previous => {
-                    if self.internal_bitcoind_config.is_some() {
-                        if let Some(bitcoind_config) = &self.bitcoind_config {
-                            stop_internal_bitcoind(bitcoind_config);
-                            self.started = None;
-                        }
+                    if let Some(bitcoind) = &self.internal_bitcoind {
+                        bitcoind.stop();
+                        self.started = None;
                     }
                     return Command::perform(async {}, |_| Message::Previous);
                 }
@@ -865,36 +864,9 @@ impl Step for InternalBitcoindStep {
                                 return Command::none();
                             }
                         };
-                        let handle =
-                            match start_internal_bitcoind(&self.network, exe_config.clone()) {
-                                Err(e) => {
-                                    self.started = Some(Err(
-                                        StartInternalBitcoindError::CommandError(e.to_string()),
-                                    ));
-                                    return Command::none();
-                                }
-                                Ok(h) => h,
-                            };
-                        // Need to wait for cookie file to appear.
                         let cookie_path =
                             internal_bitcoind_cookie_path(&self.bitcoind_datadir, &self.network);
-                        if !poll_for_file(&cookie_path, 200, 15) {
-                            error!("Cookie file still not present after 3 seconds. Waiting for the bitcoind process to finish.");
-                            match handle.wait_with_output() {
-                                Err(e) => {
-                                    error!("Error while waiting for bitcoind to finish: {}", e)
-                                }
-                                Ok(o) => {
-                                    error!("Exit status: {}", o.status);
-                                    error!("stderr: {}", String::from_utf8_lossy(&o.stderr));
-                                }
-                            }
-                            self.started =
-                                Some(Err(StartInternalBitcoindError::CookieFileNotFound(
-                                    cookie_path.to_string_lossy().into_owned(),
-                                )));
-                            return Command::none();
-                        }
+
                         let rpc_port = self
                             .internal_bitcoind_config
                             .as_ref()
@@ -904,36 +876,30 @@ impl Step for InternalBitcoindStep {
                             .get(&self.network)
                             .expect("Already added")
                             .rpc_port;
-                        let bitcoind_config = match cookie_path.canonicalize() {
-                            Ok(cookie_path) => BitcoindConfig {
+
+                        match Bitcoind::start(
+                            &self.network,
+                            BitcoindConfig {
                                 cookie_path,
                                 addr: internal_bitcoind_address(rpc_port),
                             },
+                            &exe_config.data_dir,
+                            &exe_config.exe_path,
+                        ) {
                             Err(e) => {
-                                self.started = Some(Err(
-                                    StartInternalBitcoindError::CouldNotCanonicalizeCookiePath(
-                                        e.to_string(),
-                                    ),
-                                ));
+                                self.started = Some(Err(StartInternalBitcoindError::CommandError(
+                                    e.to_string(),
+                                )));
                                 return Command::none();
                             }
-                        };
-                        match liana::BitcoinD::new(
-                            &bitcoind_config,
-                            "internal_bitcoind_connection_check".to_string(),
-                        ) {
-                            Ok(_) => {
+                            Ok(bitcoind) => {
                                 self.error = None;
-                                self.bitcoind_config = Some(bitcoind_config);
+                                self.bitcoind_config = Some(bitcoind.config.clone());
                                 self.exe_config = Some(exe_config);
                                 self.started = Some(Ok(()));
+                                self.internal_bitcoind = Some(bitcoind);
                             }
-                            Err(e) => {
-                                self.started = Some(Err(
-                                    StartInternalBitcoindError::BitcoinDError(e.to_string()),
-                                ));
-                            }
-                        }
+                        };
                     }
                 }
             };
@@ -975,6 +941,7 @@ impl Step for InternalBitcoindStep {
             ctx.bitcoind_config = self.bitcoind_config.clone();
             ctx.internal_bitcoind_config = self.internal_bitcoind_config.clone();
             ctx.internal_bitcoind_exe_config = self.exe_config.clone();
+            ctx.internal_bitcoind = self.internal_bitcoind.clone();
             self.error = None;
             return true;
         }
@@ -994,10 +961,8 @@ impl Step for InternalBitcoindStep {
 
     fn stop(&self) {
         // In case the installer is closed before changes written to context, stop bitcoind.
-        if let Some(Ok(_)) = self.started {
-            if let Some(bitcoind_config) = &self.bitcoind_config {
-                stop_internal_bitcoind(bitcoind_config);
-            }
+        if let Some(bitcoind) = &self.internal_bitcoind {
+            bitcoind.stop();
         }
     }
 
