@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    app::config::InternalBitcoindExeConfig,
     app::{config as gui_config, settings as gui_settings},
     signer::Signer,
 };
@@ -317,7 +316,8 @@ pub async fn install(ctx: Context, signer: Arc<Mutex<Signer>>) -> Result<PathBuf
             daemon_config_path.canonicalize().map_err(|e| {
                 Error::Unexpected(format!("Failed to canonicalize daemon config path: {}", e))
             })?,
-            ctx.internal_bitcoind_exe_config.clone(),
+            // Installer started a bitcoind, it is expected that gui will start it on on startup
+            ctx.internal_bitcoind.is_some(),
         ))
         .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
         .as_bytes(),

@@ -28,7 +28,7 @@ use crate::{
         context::Context,
         message::{self, Message},
         step::Step,
-        view, Error, InternalBitcoindExeConfig,
+        view, Error,
     },
 };
 
@@ -453,7 +453,6 @@ impl Step for SelectBitcoindTypeStep {
             }
         } else {
             ctx.internal_bitcoind_config = None;
-            ctx.internal_bitcoind_exe_config = None;
         }
         ctx.bitcoind_is_external = self.use_external;
         true
@@ -599,7 +598,6 @@ pub struct InternalBitcoindStep {
     started: Option<Result<(), StartInternalBitcoindError>>,
     exe_path: Option<PathBuf>,
     bitcoind_config: Option<BitcoindConfig>,
-    exe_config: Option<InternalBitcoindExeConfig>,
     internal_bitcoind_config: Option<InternalBitcoindConfig>,
     error: Option<String>,
     exe_download: Option<Download>,
@@ -622,7 +620,6 @@ impl InternalBitcoindStep {
             started: None,
             exe_path: None,
             bitcoind_config: None,
-            exe_config: None,
             internal_bitcoind_config: None,
             error: None,
             exe_download: None,
@@ -657,6 +654,7 @@ impl Step for InternalBitcoindStep {
                         bitcoind.stop();
                         self.started = None;
                     }
+                    self.internal_bitcoind = None;
                     return Command::perform(async {}, |_| Message::Previous);
                 }
                 message::InternalBitcoindMsg::Reload => {
@@ -768,70 +766,48 @@ impl Step for InternalBitcoindStep {
                     }
                 }
                 message::InternalBitcoindMsg::Start => {
-                    if let Some(exe_path) = &self.exe_path {
-                        let exe_config = match (
-                            exe_path.canonicalize(),
-                            self.bitcoind_datadir.canonicalize(),
-                        ) {
-                            (Ok(exe_path), Ok(data_dir)) => {
-                                InternalBitcoindExeConfig { exe_path, data_dir }
-                            }
-                            (Err(e), Ok(_)) | (Err(e), Err(_)) => {
-                                self.started = Some(Err(
-                                    StartInternalBitcoindError::CouldNotCanonicalizeExePath(
-                                        e.to_string(),
-                                    ),
-                                ));
-                                return Command::none();
-                            }
-                            (Ok(_), Err(e)) => {
-                                self.started = Some(Err(
-                                    StartInternalBitcoindError::CouldNotCanonicalizeDataDir(
-                                        e.to_string(),
-                                    ),
-                                ));
-                                return Command::none();
-                            }
-                        };
-                        let cookie_path = bitcoind::internal_bitcoind_cookie_path(
-                            &self.bitcoind_datadir,
-                            &self.network,
-                        );
-
-                        let rpc_port = self
-                            .internal_bitcoind_config
-                            .as_ref()
-                            .expect("Already added")
-                            .clone()
-                            .networks
-                            .get(&self.network)
-                            .expect("Already added")
-                            .rpc_port;
-
-                        match Bitcoind::start(
-                            &self.network,
-                            BitcoindConfig {
-                                cookie_path,
-                                addr: internal_bitcoind_address(rpc_port),
-                            },
-                            &exe_config.data_dir,
-                            &exe_config.exe_path,
-                        ) {
-                            Err(e) => {
-                                self.started = Some(Err(StartInternalBitcoindError::CommandError(
-                                    e.to_string(),
-                                )));
-                                return Command::none();
-                            }
-                            Ok(bitcoind) => {
-                                self.error = None;
-                                self.bitcoind_config = Some(bitcoind.config.clone());
-                                self.exe_config = Some(exe_config);
-                                self.started = Some(Ok(()));
-                                self.internal_bitcoind = Some(bitcoind);
-                            }
-                        };
+                    if let Err(e) = self.bitcoind_datadir.canonicalize() {
+                        self.started = Some(Err(
+                            StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()),
+                        ));
+                        return Command::none();
                     }
+
+                    let cookie_path = bitcoind::internal_bitcoind_cookie_path(
+                        &self.bitcoind_datadir,
+                        &self.network,
+                    );
+
+                    let rpc_port = self
+                        .internal_bitcoind_config
+                        .as_ref()
+                        .expect("Already added")
+                        .clone()
+                        .networks
+                        .get(&self.network)
+                        .expect("Already added")
+                        .rpc_port;
+
+                    match Bitcoind::start(
+                        &self.network,
+                        BitcoindConfig {
+                            cookie_path,
+                            addr: internal_bitcoind_address(rpc_port),
+                        },
+                        &self.liana_datadir,
+                    ) {
+                        Err(e) => {
+                            self.started =
+                                Some(Err(StartInternalBitcoindError::CommandError(e.to_string())));
+                            return Command::none();
+                        }
+                        Ok(bitcoind) => {
+                            self.error = None;
+                            self.bitcoind_config = Some(bitcoind.config.clone());
+                            self.started = Some(Ok(()));
+                            self.internal_bitcoind = Some(bitcoind);
+                        }
+                    };
                 }
             };
         };
@@ -871,7 +847,6 @@ impl Step for InternalBitcoindStep {
         if let Some(Ok(_)) = self.started {
             ctx.bitcoind_config = self.bitcoind_config.clone();
             ctx.internal_bitcoind_config = self.internal_bitcoind_config.clone();
-            ctx.internal_bitcoind_exe_config = self.exe_config.clone();
             ctx.internal_bitcoind = self.internal_bitcoind.clone();
             self.error = None;
             return true;

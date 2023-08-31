@@ -152,9 +152,10 @@ impl Bitcoind {
     pub fn start(
         network: &bitcoin::Network,
         mut config: BitcoindConfig,
-        bitcoind_datadir: &Path,
-        exe_path: &Path,
+        liana_datadir: &PathBuf,
     ) -> Result<Self, StartInternalBitcoindError> {
+        let bitcoind_datadir = internal_bitcoind_datadir(liana_datadir);
+        let bitcoind_exe_path = internal_bitcoind_exe_path(liana_datadir);
         let datadir_path_str = bitcoind_datadir
             .canonicalize()
             .map_err(|e| StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()))?
@@ -174,7 +175,7 @@ impl Bitcoind {
             format!("-chain={}", network.to_core_arg()),
             format!("-datadir={}", datadir_path_str),
         ];
-        let mut command = std::process::Command::new(exe_path);
+        let mut command = std::process::Command::new(bitcoind_exe_path);
 
         #[cfg(target_os = "windows")]
         let command = command.creation_flags(CREATE_NO_WINDOW);

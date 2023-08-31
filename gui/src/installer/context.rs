@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use crate::{
     app::{
-        config::InternalBitcoindExeConfig,
         settings::{KeySetting, Settings, WalletSetting},
         wallet::DEFAULT_WALLET_NAME,
     },
@@ -36,7 +35,6 @@ pub struct Context {
     pub recovered_signer: Option<Arc<Signer>>,
     pub bitcoind_is_external: bool,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
-    pub internal_bitcoind_exe_config: Option<InternalBitcoindExeConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
 }
 
@@ -56,7 +54,6 @@ impl Context {
             recovered_signer: None,
             bitcoind_is_external: true,
             internal_bitcoind_config: None,
-            internal_bitcoind_exe_config: None,
             internal_bitcoind: None,
         }
     }
