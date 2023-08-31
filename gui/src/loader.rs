@@ -163,12 +163,12 @@ impl Loader {
     ) -> Command<Message> {
         match res {
             Ok((daemon, bitcoind)) => {
-                self.waiting_daemon_bitcoind = false;
                 // bitcoind may have been already started and given to the loader
                 // We should not override with None the loader bitcoind field
                 if let Some(bitcoind) = bitcoind {
                     self.internal_bitcoind = Some(bitcoind);
                 }
+                self.waiting_daemon_bitcoind = false;
                 self.step = Step::Syncing {
                     daemon: daemon.clone(),
                     progress: 0.0,
@@ -232,10 +232,10 @@ impl Loader {
         } else if self.waiting_daemon_bitcoind && self.gui_config.start_internal_bitcoind {
             if let Ok(config) = Config::from_file(self.gui_config.daemon_config_path.clone()) {
                 if let Some(bitcoind_config) = &config.bitcoind_config {
-                    let mut stopped = false;
-                    while !stopped {
-                        stopped = stop_bitcoind(bitcoind_config);
-                        std::thread::sleep(std::time::Duration::from_secs(1))
+                    let mut retry = 0;
+                    while !stop_bitcoind(bitcoind_config) && retry < 10 {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        retry += 1;
                     }
                 }
             }
