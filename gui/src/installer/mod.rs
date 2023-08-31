@@ -252,13 +252,6 @@ pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
     }
 }
 
-/// Data directory used by internal bitcoind.
-pub fn internal_bitcoind_datadir(liana_datadir: &PathBuf) -> PathBuf {
-    let mut datadir = PathBuf::from(liana_datadir);
-    datadir.push("bitcoind_datadir");
-    datadir
-}
-
 pub async fn install(ctx: Context, signer: Arc<Mutex<Signer>>) -> Result<PathBuf, Error> {
     let mut cfg: liana::config::Config = ctx.extract_daemon_config();
     let data_dir = cfg.data_dir.unwrap();
