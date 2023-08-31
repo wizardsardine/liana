@@ -39,6 +39,7 @@ pub struct Loader {
     pub gui_config: GUIConfig,
     pub daemon_started: bool,
     pub internal_bitcoind: Option<Bitcoind>,
+    pub waiting_daemon_bitcoind: bool,
 
     step: Step,
 }
@@ -96,6 +97,7 @@ impl Loader {
                 step: Step::Connecting,
                 daemon_started: false,
                 internal_bitcoind,
+                waiting_daemon_bitcoind: false,
             },
             Command::perform(connect(path), Message::Loaded),
         )
@@ -124,6 +126,7 @@ impl Loader {
                     if let Some(daemon_config_path) = self.gui_config.daemon_config_path.clone() {
                         self.step = Step::StartingDaemon;
                         self.daemon_started = true;
+                        self.waiting_daemon_bitcoind = true;
                         return Command::perform(
                             start_bitcoind_and_daemon(
                                 daemon_config_path,
@@ -160,6 +163,7 @@ impl Loader {
     ) -> Command<Message> {
         match res {
             Ok((daemon, bitcoind)) => {
+                self.waiting_daemon_bitcoind = false;
                 // bitcoind may have been already started and given to the loader
                 // We should not override with None the loader bitcoind field
                 if let Some(bitcoind) = bitcoind {
@@ -225,12 +229,13 @@ impl Loader {
 
         if let Some(bitcoind) = &self.internal_bitcoind {
             bitcoind.stop();
-        } else if self.gui_config.start_internal_bitcoind {
+        } else if self.waiting_daemon_bitcoind && self.gui_config.start_internal_bitcoind {
             if let Ok(config) = Config::from_file(self.gui_config.daemon_config_path.clone()) {
                 if let Some(bitcoind_config) = &config.bitcoind_config {
                     let mut stopped = false;
                     while !stopped {
-                        stopped = stop_bitcoind(&bitcoind_config);
+                        stopped = stop_bitcoind(bitcoind_config);
+                        std::thread::sleep(std::time::Duration::from_secs(1))
                     }
                 }
             }
