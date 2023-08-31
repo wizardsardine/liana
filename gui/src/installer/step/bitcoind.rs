@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 #[cfg(target_os = "windows")]
 use std::io::{self, Cursor};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use bitcoin_hashes::{sha256, Hash};
@@ -19,14 +19,16 @@ use jsonrpc::{client::Client, simple_http::SimpleHttpTransport};
 use liana_ui::{component::form, widget::*};
 
 use crate::{
-    bitcoind::{Bitcoind, StartInternalBitcoindError},
+    bitcoind::{
+        self, bitcoind_network_dir, internal_bitcoind_datadir, internal_bitcoind_directory,
+        Bitcoind, StartInternalBitcoindError,
+    },
     download,
     installer::{
         context::Context,
-        internal_bitcoind_datadir,
         message::{self, Message},
         step::Step,
-        view, Error, InternalBitcoindExeConfig,
+        view, Error,
     },
 };
 
@@ -86,50 +88,15 @@ impl Download {
 
     pub fn subscription(&self) -> Subscription<Message> {
         match self.state {
-            DownloadState::Downloading { .. } => {
-                download::file(self.id, download_url()).map(|(_, progress)| {
+            DownloadState::Downloading { .. } => download::file(self.id, bitcoind::download_url())
+                .map(|(_, progress)| {
                     Message::InternalBitcoind(message::InternalBitcoindMsg::DownloadProgressed(
                         progress,
                     ))
-                })
-            }
+                }),
             _ => Subscription::none(),
         }
     }
-}
-
-const VERSION: &str = "25.0";
-
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-const SHA256SUM: &str = "5708fc639cdfc27347cccfd50db9b73b53647b36fb5f3a4a93537cbe8828c27f";
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const SHA256SUM: &str = "33930d432593e49d58a9bff4c30078823e9af5d98594d2935862788ce8a20aec";
-
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-const SHA256SUM: &str = "7154b35ecc8247589070ae739b7c73c4dee4794bea49eb18dc66faed65b819e7";
-
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-fn download_filename() -> String {
-    format!("bitcoin-{}-x86_64-apple-darwin.tar.gz", &VERSION)
-}
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn download_filename() -> String {
-    format!("bitcoin-{}-x86_64-linux-gnu.tar.gz", &VERSION)
-}
-
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-fn download_filename() -> String {
-    format!("bitcoin-{}-win64.zip", &VERSION)
-}
-
-fn download_url() -> String {
-    format!(
-        "https://bitcoincore.org/bin/bitcoin-core-{}/{}",
-        &VERSION,
-        download_filename()
-    )
 }
 
 /// Default prune value used by internal bitcoind.
@@ -361,7 +328,7 @@ fn unpack_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBit
 fn verify_hash(bytes: &[u8]) -> bool {
     let bytes_hash = sha256::Hash::hash(bytes);
     info!("Download hash: '{}'.", bytes_hash);
-    let expected_hash = sha256::Hash::from_str(SHA256SUM).expect("This cannot fail.");
+    let expected_hash = sha256::Hash::from_str(bitcoind::SHA256SUM).expect("This cannot fail.");
     expected_hash == bytes_hash
 }
 
@@ -371,35 +338,6 @@ fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBi
         return Err(InstallBitcoindError::HashMismatch);
     };
     unpack_bitcoind(install_dir, bytes)
-}
-
-/// Internal bitcoind executable path.
-fn internal_bitcoind_exe_path(liana_datadir: &PathBuf) -> PathBuf {
-    PathBuf::from(liana_datadir)
-        .join(format!("bitcoin-{}", &VERSION))
-        .join("bin")
-        .join(if cfg!(target_os = "windows") {
-            "bitcoind.exe"
-        } else {
-            "bitcoind"
-        })
-}
-
-/// Path of the `bitcoin.conf` file used by internal bitcoind.
-fn internal_bitcoind_config_path(bitcoind_datadir: &PathBuf) -> PathBuf {
-    let mut config_path = PathBuf::from(bitcoind_datadir);
-    config_path.push("bitcoin.conf");
-    config_path
-}
-
-/// Path of the cookie file used by internal bitcoind on a given network.
-fn internal_bitcoind_cookie_path(bitcoind_datadir: &Path, network: &Network) -> PathBuf {
-    let mut cookie_path = bitcoind_datadir.to_path_buf();
-    if let Some(dir) = bitcoind_network_dir(network) {
-        cookie_path.push(dir);
-    }
-    cookie_path.push(".cookie");
-    cookie_path
 }
 
 /// RPC address for internal bitcoind.
@@ -424,19 +362,6 @@ fn bitcoind_default_datadir() -> Option<PathBuf> {
         return Some(path);
     }
     None
-}
-
-fn bitcoind_network_dir(network: &Network) -> Option<String> {
-    let dir = match network {
-        Network::Bitcoin => {
-            return None;
-        }
-        Network::Testnet => "testnet3",
-        Network::Regtest => "regtest",
-        Network::Signet => "signet",
-        _ => panic!("Directory required for this network is unknown."),
-    };
-    Some(dir.to_string())
 }
 
 fn bitcoind_default_cookie_path(network: &Network) -> Option<String> {
@@ -528,7 +453,6 @@ impl Step for SelectBitcoindTypeStep {
             }
         } else {
             ctx.internal_bitcoind_config = None;
-            ctx.internal_bitcoind_exe_config = None;
         }
         ctx.bitcoind_is_external = self.use_external;
         true
@@ -674,7 +598,6 @@ pub struct InternalBitcoindStep {
     started: Option<Result<(), StartInternalBitcoindError>>,
     exe_path: Option<PathBuf>,
     bitcoind_config: Option<BitcoindConfig>,
-    exe_config: Option<InternalBitcoindExeConfig>,
     internal_bitcoind_config: Option<InternalBitcoindConfig>,
     error: Option<String>,
     exe_download: Option<Download>,
@@ -697,7 +620,6 @@ impl InternalBitcoindStep {
             started: None,
             exe_path: None,
             bitcoind_config: None,
-            exe_config: None,
             internal_bitcoind_config: None,
             error: None,
             exe_download: None,
@@ -710,8 +632,8 @@ impl InternalBitcoindStep {
 impl Step for InternalBitcoindStep {
     fn load_context(&mut self, ctx: &Context) {
         if self.exe_path.is_none() {
-            if internal_bitcoind_exe_path(&ctx.data_dir).exists() {
-                self.exe_path = Some(internal_bitcoind_exe_path(&ctx.data_dir))
+            if bitcoind::internal_bitcoind_exe_path(&ctx.data_dir).exists() {
+                self.exe_path = Some(bitcoind::internal_bitcoind_exe_path(&ctx.data_dir))
             } else if self.exe_download.is_none() {
                 self.exe_download = Some(Download::new(0));
             };
@@ -732,6 +654,7 @@ impl Step for InternalBitcoindStep {
                         bitcoind.stop();
                         self.started = None;
                     }
+                    self.internal_bitcoind = None;
                     return Command::perform(async {}, |_| Message::Previous);
                 }
                 message::InternalBitcoindMsg::Reload => {
@@ -739,7 +662,7 @@ impl Step for InternalBitcoindStep {
                 }
                 message::InternalBitcoindMsg::DefineConfig => {
                     let mut conf = match InternalBitcoindConfig::from_file(
-                        &internal_bitcoind_config_path(&self.bitcoind_datadir),
+                        &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
                     ) {
                         Ok(conf) => conf,
                         Err(InternalBitcoindConfigError::FileNotFound) => {
@@ -780,9 +703,9 @@ impl Step for InternalBitcoindStep {
                         };
                         conf.networks.insert(self.network, network_conf);
                     }
-                    if let Err(e) =
-                        conf.to_file(&internal_bitcoind_config_path(&self.bitcoind_datadir))
-                    {
+                    if let Err(e) = conf.to_file(&bitcoind::internal_bitcoind_config_path(
+                        &self.bitcoind_datadir,
+                    )) {
                         self.error = Some(e.to_string());
                         return Command::none();
                     };
@@ -795,7 +718,7 @@ impl Step for InternalBitcoindStep {
                 message::InternalBitcoindMsg::Download => {
                     if let Some(download) = &mut self.exe_download {
                         if let DownloadState::Idle = download.state {
-                            info!("Downloading bitcoind version {}...", &VERSION);
+                            info!("Downloading bitcoind version {}...", &bitcoind::VERSION);
                             download.start();
                         }
                     }
@@ -816,12 +739,16 @@ impl Step for InternalBitcoindStep {
                         if let DownloadState::Finished(bytes) = &download.state {
                             info!("Installing bitcoind...");
                             self.install_state = Some(InstallState::InProgress);
-                            match install_bitcoind(&self.liana_datadir, bytes) {
+                            match install_bitcoind(
+                                &internal_bitcoind_directory(&self.liana_datadir),
+                                bytes,
+                            ) {
                                 Ok(_) => {
                                     info!("Installation of bitcoind complete.");
                                     self.install_state = Some(InstallState::Finished);
-                                    self.exe_path =
-                                        Some(internal_bitcoind_exe_path(&self.liana_datadir));
+                                    self.exe_path = Some(bitcoind::internal_bitcoind_exe_path(
+                                        &self.liana_datadir,
+                                    ));
                                     return Command::perform(async {}, |_| {
                                         Message::InternalBitcoind(
                                             message::InternalBitcoindMsg::Start,
@@ -839,68 +766,48 @@ impl Step for InternalBitcoindStep {
                     }
                 }
                 message::InternalBitcoindMsg::Start => {
-                    if let Some(exe_path) = &self.exe_path {
-                        let exe_config = match (
-                            exe_path.canonicalize(),
-                            self.bitcoind_datadir.canonicalize(),
-                        ) {
-                            (Ok(exe_path), Ok(data_dir)) => {
-                                InternalBitcoindExeConfig { exe_path, data_dir }
-                            }
-                            (Err(e), Ok(_)) | (Err(e), Err(_)) => {
-                                self.started = Some(Err(
-                                    StartInternalBitcoindError::CouldNotCanonicalizeExePath(
-                                        e.to_string(),
-                                    ),
-                                ));
-                                return Command::none();
-                            }
-                            (Ok(_), Err(e)) => {
-                                self.started = Some(Err(
-                                    StartInternalBitcoindError::CouldNotCanonicalizeDataDir(
-                                        e.to_string(),
-                                    ),
-                                ));
-                                return Command::none();
-                            }
-                        };
-                        let cookie_path =
-                            internal_bitcoind_cookie_path(&self.bitcoind_datadir, &self.network);
-
-                        let rpc_port = self
-                            .internal_bitcoind_config
-                            .as_ref()
-                            .expect("Already added")
-                            .clone()
-                            .networks
-                            .get(&self.network)
-                            .expect("Already added")
-                            .rpc_port;
-
-                        match Bitcoind::start(
-                            &self.network,
-                            BitcoindConfig {
-                                cookie_path,
-                                addr: internal_bitcoind_address(rpc_port),
-                            },
-                            &exe_config.data_dir,
-                            &exe_config.exe_path,
-                        ) {
-                            Err(e) => {
-                                self.started = Some(Err(StartInternalBitcoindError::CommandError(
-                                    e.to_string(),
-                                )));
-                                return Command::none();
-                            }
-                            Ok(bitcoind) => {
-                                self.error = None;
-                                self.bitcoind_config = Some(bitcoind.config.clone());
-                                self.exe_config = Some(exe_config);
-                                self.started = Some(Ok(()));
-                                self.internal_bitcoind = Some(bitcoind);
-                            }
-                        };
+                    if let Err(e) = self.bitcoind_datadir.canonicalize() {
+                        self.started = Some(Err(
+                            StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()),
+                        ));
+                        return Command::none();
                     }
+
+                    let cookie_path = bitcoind::internal_bitcoind_cookie_path(
+                        &self.bitcoind_datadir,
+                        &self.network,
+                    );
+
+                    let rpc_port = self
+                        .internal_bitcoind_config
+                        .as_ref()
+                        .expect("Already added")
+                        .clone()
+                        .networks
+                        .get(&self.network)
+                        .expect("Already added")
+                        .rpc_port;
+
+                    match Bitcoind::start(
+                        &self.network,
+                        BitcoindConfig {
+                            cookie_path,
+                            addr: internal_bitcoind_address(rpc_port),
+                        },
+                        &self.liana_datadir,
+                    ) {
+                        Err(e) => {
+                            self.started =
+                                Some(Err(StartInternalBitcoindError::CommandError(e.to_string())));
+                            return Command::none();
+                        }
+                        Ok(bitcoind) => {
+                            self.error = None;
+                            self.bitcoind_config = Some(bitcoind.config.clone());
+                            self.started = Some(Ok(()));
+                            self.internal_bitcoind = Some(bitcoind);
+                        }
+                    };
                 }
             };
         };
@@ -940,7 +847,6 @@ impl Step for InternalBitcoindStep {
         if let Some(Ok(_)) = self.started {
             ctx.bitcoind_config = self.bitcoind_config.clone();
             ctx.internal_bitcoind_config = self.internal_bitcoind_config.clone();
-            ctx.internal_bitcoind_exe_config = self.exe_config.clone();
             ctx.internal_bitcoind = self.internal_bitcoind.clone();
             self.error = None;
             return true;

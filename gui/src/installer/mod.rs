@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    app::config::InternalBitcoindExeConfig,
     app::{config as gui_config, settings as gui_settings},
     signer::Signer,
 };
@@ -252,13 +251,6 @@ pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
     }
 }
 
-/// Data directory used by internal bitcoind.
-pub fn internal_bitcoind_datadir(liana_datadir: &PathBuf) -> PathBuf {
-    let mut datadir = PathBuf::from(liana_datadir);
-    datadir.push("bitcoind_datadir");
-    datadir
-}
-
 pub async fn install(ctx: Context, signer: Arc<Mutex<Signer>>) -> Result<PathBuf, Error> {
     let mut cfg: liana::config::Config = ctx.extract_daemon_config();
     let data_dir = cfg.data_dir.unwrap();
@@ -324,7 +316,8 @@ pub async fn install(ctx: Context, signer: Arc<Mutex<Signer>>) -> Result<PathBuf
             daemon_config_path.canonicalize().map_err(|e| {
                 Error::Unexpected(format!("Failed to canonicalize daemon config path: {}", e))
             })?,
-            ctx.internal_bitcoind_exe_config.clone(),
+            // Installer started a bitcoind, it is expected that gui will start it on on startup
+            ctx.internal_bitcoind.is_some(),
         ))
         .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
         .as_bytes(),

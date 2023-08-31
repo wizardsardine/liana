@@ -24,7 +24,7 @@ use liana_ui::{
 use crate::{
     app::{
         cache::Cache,
-        config::{Config as GUIConfig, InternalBitcoindExeConfig},
+        config::Config as GUIConfig,
         wallet::{Wallet, WalletError},
     },
     bitcoind::{Bitcoind, StartInternalBitcoindError},
@@ -109,8 +109,8 @@ impl Loader {
                     progress: 0.0,
                     bitcoind_logs: String::new(),
                 };
-                if self.gui_config.internal_bitcoind_exe_config.is_some() {
-                    warn!("Ignoring internal bitcoind config because Liana daemon is external.");
+                if self.gui_config.start_internal_bitcoind {
+                    warn!("Lianad is external, gui will not start internal bitcoind");
                 }
                 return Command::perform(sync(daemon, false), Message::Syncing);
             }
@@ -127,7 +127,8 @@ impl Loader {
                         return Command::perform(
                             start_bitcoind_and_daemon(
                                 daemon_config_path,
-                                self.gui_config.internal_bitcoind_exe_config.clone(),
+                                self.datadir_path.clone(),
+                                self.gui_config.start_internal_bitcoind,
                             ),
                             Message::Started,
                         );
@@ -411,11 +412,12 @@ async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, 
 // Daemon can start only if a config path is given.
 pub async fn start_bitcoind_and_daemon(
     config_path: PathBuf,
-    bitcoind_exe_config: Option<InternalBitcoindExeConfig>,
+    liana_datadir_path: PathBuf,
+    start_internal_bitcoind: bool,
 ) -> Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error> {
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
     let mut bitcoind: Option<Bitcoind> = None;
-    if let Some(exe_config) = bitcoind_exe_config {
+    if start_internal_bitcoind {
         if let Some(bitcoind_config) = &config.bitcoind_config {
             // Check if bitcoind is already running before trying to start it.
             if liana::BitcoinD::new(bitcoind_config, "internal_bitcoind_start".to_string()).is_ok()
@@ -427,8 +429,7 @@ pub async fn start_bitcoind_and_daemon(
                     Bitcoind::start(
                         &config.bitcoin_config.network,
                         bitcoind_config.clone(),
-                        &exe_config.data_dir,
-                        &exe_config.exe_path,
+                        &liana_datadir_path,
                     )
                     .map_err(Error::Bitcoind)?,
                 );
