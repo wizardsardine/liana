@@ -144,7 +144,7 @@ impl std::fmt::Display for StartInternalBitcoindError {
 }
 #[derive(Debug, Clone)]
 pub struct Bitcoind {
-    _process: Arc<std::process::Child>,
+    process: Arc<Mutex<std::process::Child>>,
     pub config: BitcoindConfig,
     pub stdout: Option<Arc<Mutex<std::process::ChildStdout>>>,
 }
@@ -228,7 +228,7 @@ impl Bitcoind {
         Ok(Self {
             stdout: process.stdout.take().map(|s| Arc::new(Mutex::new(s))),
             config,
-            _process: Arc::new(process),
+            process: Arc::new(Mutex::new(process)),
         })
     }
 
@@ -238,6 +238,22 @@ impl Bitcoind {
             Ok(bitcoind) => {
                 info!("Stopping internal bitcoind...");
                 bitcoind.stop();
+                loop {
+                    match self.process.blocking_lock().try_wait() {
+                        Ok(None) => {
+                            log::info!("Waiting for bitcoind to stop..");
+                            thread::sleep(time::Duration::from_millis(500));
+                        }
+                        Err(e) => {
+                            log::error!("Error while trying to wait for bitcoind: {}", e);
+                            break;
+                        }
+                        Ok(Some(status)) => {
+                            log::info!("Bitcoind exited with status '{}'", status);
+                            break;
+                        }
+                    }
+                }
                 info!("Stopped liana managed bitcoind");
             }
             Err(e) => {
