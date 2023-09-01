@@ -69,7 +69,7 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
     tar -czf "$MAC_ARCHIVE" "$MAC_DIR_NAME"
     cp "$MAC_ARCHIVE" "$RELEASE_DIR"
 
-    unzip ../contrib/release/macos/Liana.app.zip ./
+    unzip ../contrib/release/macos/Liana.app.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
     cp "$BUILD_DIR/gui/x86_64-apple-darwin/release/liana-gui" ./Liana.app/Contents/MacOS/Liana
     zip -ry Liana-noncodesigned.zip Liana.app
