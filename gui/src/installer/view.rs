@@ -480,17 +480,6 @@ pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
                             ),
                     )
                 }))
-            })
-            .push_maybe(if !xpubs.is_empty() {
-                Some(
-                    Container::new(
-                        button::secondary(Some(icon::plus_icon()), "New public key")
-                            .on_press(Message::UseHotSigner),
-                    )
-                    .padding(10),
-                )
-            } else {
-                None
             }),
     )
     .style(theme::Container::Card(theme::Card::Simple))
@@ -563,19 +552,6 @@ pub fn hardware_wallet_xpubs<'a>(
                             ),
                     )
                 }))
-            })
-            .push_maybe(if !xpubs.is_empty() {
-                Some(
-                    Container::new(if !processing {
-                        button::secondary(Some(icon::plus_icon()), "New public key")
-                            .on_press(Message::Select(i))
-                    } else {
-                        button::secondary(Some(icon::plus_icon()), "New public key")
-                    })
-                    .padding(10),
-                )
-            } else {
-                None
             }),
     )
     .style(theme::Container::Card(theme::Card::Simple))
@@ -642,7 +618,7 @@ pub fn participate_xpub<'a>(
                     .width(Length::Fill),
             )
             .push(checkbox(
-                "I have shared my public keys",
+                "I have shared my extended public key",
                 shared,
                 Message::UserActionDone,
             ))
