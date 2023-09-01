@@ -5,6 +5,10 @@
 This release significantly simplifies the installation of Liana. It also fixes a number of small
 bugs and glitches.
 
+### Breaking changes
+
+- Descriptors created with Liana v2 may not be backward compatible with Liana v1.
+
 ### Features
 
 - We made it possible to re-use an xpub within a descriptor, so long as it uses a different
