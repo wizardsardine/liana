@@ -1750,8 +1750,7 @@ dependencies = [
 [[package]]
 name = "iced_futures"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "215d51fa4f70dbb63775d7141243c4d98d4d525d8949695601f8fbac7dcbc04e"
+source = "git+https://github.com/edouardparis/iced?branch=fix-futures-recipe#2d8318b13bdf8aaf31bc6d5a72b22313ed2d10cf"
 dependencies = [
  "futures",
  "log",
