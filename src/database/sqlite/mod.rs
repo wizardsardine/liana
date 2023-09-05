@@ -23,7 +23,7 @@ use crate::{
                 maybe_apply_migration, LOOK_AHEAD_LIMIT,
             },
         },
-        Coin, CoinType, LabelItem,
+        Coin, CoinStatus, LabelItem,
     },
     descriptors::LianaDescriptor,
 };
@@ -357,18 +357,66 @@ impl SqliteConn {
         .expect("Database must be available");
     }
 
-    /// Get all the coins from DB.
-    pub fn coins(&mut self, coin_type: CoinType) -> Vec<DbCoin> {
-        db_query(
-            &mut self.conn,
-            match coin_type {
-                CoinType::All => "SELECT * FROM coins",
-                CoinType::Unspent => "SELECT * FROM coins WHERE spend_txid IS NULL",
-                CoinType::Spent => "SELECT * FROM coins WHERE spend_txid IS NOT NULL",
-            },
-            rusqlite::params![],
-            |row| row.try_into(),
-        )
+    /// Get all the coins from DB, optionally filtered by coin status and/or outpoint.
+    pub fn coins(
+        &mut self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> Vec<DbCoin> {
+        let status_condition = statuses
+            .iter()
+            .map(|c| {
+                format!(
+                    "({})",
+                    match c {
+                        CoinStatus::Unconfirmed => {
+                            "blocktime IS NULL AND spend_txid IS NULL"
+                        }
+                        CoinStatus::Confirmed => {
+                            "blocktime IS NOT NULL AND spend_txid IS NULL"
+                        }
+                        CoinStatus::Spending => {
+                            "spend_txid IS NOT NULL AND spend_block_time IS NULL"
+                        }
+                        CoinStatus::Spent => "spend_block_time IS NOT NULL",
+                    }
+                )
+            })
+            .collect::<Vec<String>>()
+            .join(" OR ");
+        // SELECT * FROM coins WHERE (txid, vout) IN ((txidA, voutA), (txidB, voutB));
+        let op_condition = if !outpoints.is_empty() {
+            let mut cond = "(txid, vout) IN (VALUES ".to_string();
+            for (i, outpoint) in outpoints.iter().enumerate() {
+                // NOTE: SQLite doesn't know Satoshi decided txids would be displayed as little-endian
+                // hex.
+                cond += &format!(
+                    "(x'{}', {})",
+                    FrontwardHexTxid(outpoint.txid),
+                    outpoint.vout
+                );
+                if i != outpoints.len() - 1 {
+                    cond += ", ";
+                }
+            }
+            cond += ")";
+            cond
+        } else {
+            String::new()
+        };
+        let where_clause = if !status_condition.is_empty() && !op_condition.is_empty() {
+            format!(" WHERE ({}) AND ({})", status_condition, op_condition)
+        } else if status_condition.is_empty() && !op_condition.is_empty() {
+            format!(" WHERE {}", op_condition)
+        } else if !status_condition.is_empty() && op_condition.is_empty() {
+            format!(" WHERE {}", status_condition)
+        } else {
+            String::new()
+        };
+        let query = format!("SELECT * FROM coins{}", where_clause);
+        db_query(&mut self.conn, &query, rusqlite::params![], |row| {
+            row.try_into()
+        })
         .expect("Db must not fail")
     }
 
@@ -504,26 +552,7 @@ impl SqliteConn {
     }
 
     pub fn db_coins(&mut self, outpoints: &[bitcoin::OutPoint]) -> Vec<DbCoin> {
-        // SELECT * FROM coins WHERE (txid, vout) IN ((txidA, voutA), (txidB, voutB));
-        let mut query = "SELECT * FROM coins WHERE (txid, vout) IN (VALUES ".to_string();
-        for (i, outpoint) in outpoints.iter().enumerate() {
-            // NOTE: SQLite doesn't know Satoshi decided txids would be displayed as little-endian
-            // hex.
-            query += &format!(
-                "(x'{}', {})",
-                FrontwardHexTxid(outpoint.txid),
-                outpoint.vout
-            );
-            if i != outpoints.len() - 1 {
-                query += ", ";
-            }
-        }
-        query += ")";
-
-        db_query(&mut self.conn, &query, rusqlite::params![], |row| {
-            row.try_into()
-        })
-        .expect("Db must not fail")
+        self.coins(&[], outpoints)
     }
 
     pub fn db_spend(&mut self, txid: &bitcoin::Txid) -> Option<DbSpendTransaction> {
@@ -890,6 +919,315 @@ CREATE TABLE spend_transactions (
     }
 
     #[test]
+    fn db_coins() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        {
+            let mut conn = db.connection().unwrap();
+
+            // Necessarily empty at first.
+            assert!(conn.coins(&[], &[]).is_empty());
+
+            // Add one unconfirmed coin.
+            let outpoint_a = bitcoin::OutPoint::from_str(
+                "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
+            )
+            .unwrap();
+            let coin_a = Coin {
+                outpoint: outpoint_a,
+                is_immature: false,
+                block_info: None,
+                amount: bitcoin::Amount::from_sat(10000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                is_change: false,
+                spend_txid: None,
+                spend_block: None,
+            };
+            conn.new_unspent_coins(&[coin_a]);
+            // We can query by status and/or outpoint.
+            assert!(vec![
+                conn.coins(&[], &[]),
+                conn.coins(&[CoinStatus::Unconfirmed], &[]),
+                conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_a]),
+                conn.coins(&[], &[outpoint_a]),
+                conn.db_coins(&[outpoint_a]),
+            ]
+            .iter()
+            .all(|res| res.len() == 1 && res[0].outpoint == coin_a.outpoint));
+            // It will not be returned if we filter for other statuses.
+            assert!(conn
+                .coins(
+                    &[
+                        CoinStatus::Confirmed,
+                        CoinStatus::Spending,
+                        CoinStatus::Spent
+                    ],
+                    &[]
+                )
+                .is_empty());
+            // Filtering also for its outpoint will still not return it if status does not match.
+            assert!(conn
+                .coins(
+                    &[
+                        CoinStatus::Confirmed,
+                        CoinStatus::Spending,
+                        CoinStatus::Spent
+                    ],
+                    &[outpoint_a]
+                )
+                .is_empty());
+
+            // Add a second coin.
+            let outpoint_b = bitcoin::OutPoint::from_str(
+                "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571936f:12",
+            )
+            .unwrap();
+            let coin_b = Coin {
+                outpoint: outpoint_b,
+                is_immature: false,
+                block_info: None,
+                amount: bitcoin::Amount::from_sat(1111),
+                derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
+                is_change: true,
+                spend_txid: None,
+                spend_block: None,
+            };
+            conn.new_unspent_coins(&[coin_b]);
+            // Both coins are unconfirmed.
+            assert!(vec![
+                conn.coins(&[], &[]),
+                conn.coins(&[CoinStatus::Unconfirmed], &[]),
+                conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_a, outpoint_b]),
+                conn.coins(&[], &[outpoint_a, outpoint_b]),
+                conn.db_coins(&[outpoint_a, outpoint_b]),
+            ]
+            .iter()
+            .all(|c| c.len() == 2
+                && c[0].outpoint == coin_a.outpoint
+                && c[1].outpoint == coin_b.outpoint));
+            // We can filter for just the first coin.
+            assert!(vec![
+                conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_a]),
+                conn.coins(&[], &[outpoint_a]),
+                conn.db_coins(&[outpoint_a])
+            ]
+            .iter()
+            .all(|res| res.len() == 1 && res[0].outpoint == coin_a.outpoint));
+            // Or we can filter for just the second coin.
+            assert!(vec![
+                conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_b]),
+                conn.coins(&[], &[outpoint_b]),
+                conn.db_coins(&[outpoint_b])
+            ]
+            .iter()
+            .all(|res| res.len() == 1 && res[0].outpoint == coin_b.outpoint));
+            // There are no coins with other statuses.
+            assert!(conn
+                .coins(
+                    &[
+                        CoinStatus::Confirmed,
+                        CoinStatus::Spending,
+                        CoinStatus::Spent
+                    ],
+                    &[]
+                )
+                .is_empty());
+            // Now if we confirm one, it'll be marked as such.
+            conn.confirm_coins(&[(coin_a.outpoint, 174500, 174500)]);
+            assert!(vec![
+                conn.coins(&[CoinStatus::Confirmed], &[]),
+                conn.coins(&[CoinStatus::Confirmed], &[outpoint_a]),
+                conn.coins(&[], &[outpoint_a]),
+                conn.db_coins(&[outpoint_a]),
+            ]
+            .iter()
+            .all(|res| res.len() == 1 && res[0].outpoint == coin_a.outpoint));
+            // We can get both confirmed and unconfirmed.
+            assert!(vec![
+                conn.coins(&[], &[]),
+                conn.coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[]),
+                conn.coins(
+                    &[CoinStatus::Unconfirmed, CoinStatus::Confirmed],
+                    &[outpoint_a, outpoint_b]
+                ),
+                conn.coins(&[], &[outpoint_a, outpoint_b]),
+                conn.db_coins(&[outpoint_a, outpoint_b]),
+            ]
+            .iter()
+            .all(|c| c.len() == 2
+                && c[0].outpoint == coin_a.outpoint
+                && c[1].outpoint == coin_b.outpoint));
+
+            // Now if we spend one, it'll be marked as such.
+            conn.spend_coins(&[(
+                coin_a.outpoint,
+                bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
+            )]);
+            assert!(vec![
+                conn.coins(&[CoinStatus::Spending], &[]),
+                conn.coins(&[CoinStatus::Spending], &[outpoint_a]),
+                conn.coins(&[], &[outpoint_a]),
+                conn.list_spending_coins(),
+                conn.db_coins(&[outpoint_a])
+            ]
+            .iter()
+            .all(|res| res.len() == 1 && res[0].outpoint == coin_a.outpoint));
+            // The second coin is still unconfirmed.
+            assert!(vec![
+                conn.coins(&[CoinStatus::Unconfirmed], &[]),
+                conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_b]),
+                conn.coins(&[], &[outpoint_b]),
+                conn.db_coins(&[outpoint_b])
+            ]
+            .iter()
+            .all(|res| res.len() == 1 && res[0].outpoint == coin_b.outpoint));
+
+            // Now we confirm the spend.
+            conn.confirm_spend(&[(
+                coin_a.outpoint,
+                bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
+                128_097,
+                3_000_000,
+            )]);
+            // The coin no longer has spending status.
+            assert!(vec![
+                conn.coins(&[CoinStatus::Spending], &[]),
+                conn.coins(&[CoinStatus::Spending], &[outpoint_a]),
+                conn.list_spending_coins(),
+            ]
+            .iter()
+            .all(|res| res.is_empty()));
+
+            // Both coins are still in DB.
+            assert!(vec![
+                conn.coins(&[], &[]),
+                conn.coins(&[CoinStatus::Unconfirmed, CoinStatus::Spent], &[]),
+                conn.coins(
+                    &[CoinStatus::Unconfirmed, CoinStatus::Spent],
+                    &[outpoint_a, outpoint_b]
+                ),
+                conn.coins(&[], &[outpoint_a, outpoint_b]),
+                conn.db_coins(&[outpoint_a, outpoint_b]),
+            ]
+            .iter()
+            .all(|c| c.len() == 2
+                && c[0].outpoint == coin_a.outpoint
+                && c[1].outpoint == coin_b.outpoint));
+
+            // Add a third and fourth coin.
+            let outpoint_c = bitcoin::OutPoint::from_str(
+                "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571937a:42",
+            )
+            .unwrap();
+            let coin_c = Coin {
+                outpoint: outpoint_c,
+                is_immature: false,
+                block_info: None,
+                amount: bitcoin::Amount::from_sat(30000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(4103).unwrap(),
+                is_change: false,
+                spend_txid: None,
+                spend_block: None,
+            };
+            let outpoint_d = bitcoin::OutPoint::from_str(
+                "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571937a:43",
+            )
+            .unwrap();
+            let coin_d = Coin {
+                outpoint: outpoint_d,
+                is_immature: false,
+                block_info: None,
+                amount: bitcoin::Amount::from_sat(40000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(4104).unwrap(),
+                is_change: false,
+                spend_txid: None,
+                spend_block: None,
+            };
+            conn.new_unspent_coins(&[coin_c, coin_d]);
+
+            // We can get all three unconfirmed coins with different status/outpoint filters.
+            assert!(vec![
+                conn.coins(&[CoinStatus::Unconfirmed], &[]),
+                conn.coins(
+                    &[CoinStatus::Unconfirmed],
+                    &[outpoint_b, outpoint_c, outpoint_d]
+                ),
+                conn.coins(&[], &[outpoint_b, outpoint_c, outpoint_d]),
+                conn.db_coins(&[outpoint_b, outpoint_c, outpoint_d]),
+            ]
+            .iter()
+            .all(|coin| coin.len() == 3
+                && coin[0].outpoint == coin_b.outpoint
+                && coin[1].outpoint == coin_c.outpoint
+                && coin[2].outpoint == coin_d.outpoint));
+
+            // We can also get two of the three unconfirmed coins by filtering for their outpoints.
+            assert!(vec![
+                conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_b, outpoint_c]),
+                conn.coins(&[], &[outpoint_b, outpoint_c]),
+                conn.db_coins(&[outpoint_b, outpoint_c]),
+            ]
+            .iter()
+            .all(|coin| coin.len() == 2
+                && coin[0].outpoint == coin_b.outpoint
+                && coin[1].outpoint == coin_c.outpoint));
+
+            // Now spend second coin, even though it is still unconfirmed.
+            conn.spend_coins(&[(
+                coin_b.outpoint,
+                bitcoin::Txid::from_slice(&[1; 32][..]).unwrap(),
+            )]);
+            // The coin shows as spending.
+            assert!(vec![
+                conn.coins(&[CoinStatus::Spending], &[]),
+                conn.coins(&[CoinStatus::Spending], &[outpoint_b]),
+                conn.coins(&[], &[outpoint_b]),
+                conn.list_spending_coins(),
+                conn.db_coins(&[outpoint_b])
+            ]
+            .iter()
+            .all(|res| res.len() == 1 && res[0].outpoint == coin_b.outpoint));
+
+            // Now confirm the third coin.
+            conn.confirm_coins(&[(coin_c.outpoint, 175500, 175500)]);
+
+            // We now only have one unconfirmed coin.
+            assert!(vec![
+                conn.coins(&[CoinStatus::Unconfirmed], &[]),
+                conn.coins(
+                    &[CoinStatus::Unconfirmed],
+                    &[outpoint_a, outpoint_b, outpoint_c, outpoint_d]
+                ),
+                conn.coins(&[], &[outpoint_d]),
+                conn.db_coins(&[outpoint_d]),
+            ]
+            .iter()
+            .all(|c| c.len() == 1 && c[0].outpoint == coin_d.outpoint));
+
+            // There is now one coin for each status.
+            assert!(vec![
+                conn.coins(&[CoinStatus::Unconfirmed], &[]),
+                conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_d]),
+                conn.coins(&[CoinStatus::Confirmed], &[]),
+                conn.coins(&[CoinStatus::Confirmed], &[outpoint_c]),
+                conn.coins(&[CoinStatus::Spending], &[]),
+                conn.coins(&[CoinStatus::Spending], &[outpoint_b]),
+                conn.coins(&[CoinStatus::Spent], &[]),
+                conn.coins(&[CoinStatus::Spent], &[outpoint_a]),
+                conn.coins(&[], &[outpoint_a]),
+                conn.coins(&[], &[outpoint_b]),
+                conn.coins(&[], &[outpoint_c]),
+                conn.coins(&[], &[outpoint_d]),
+            ]
+            .iter()
+            .map(|c| c.len())
+            .all(|length| length == 1));
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
     fn db_coins_update() {
         let (tmp_dir, _, _, db) = dummy_db();
 
@@ -897,7 +1235,7 @@ CREATE TABLE spend_transactions (
             let mut conn = db.connection().unwrap();
 
             // Necessarily empty at first.
-            assert!(conn.coins(CoinType::All).is_empty());
+            assert!(conn.coins(&[], &[]).is_empty());
 
             // Add one, we'll get it.
             let coin_a = Coin {
@@ -914,11 +1252,11 @@ CREATE TABLE spend_transactions (
                 spend_block: None,
             };
             conn.new_unspent_coins(&[coin_a]);
-            assert_eq!(conn.coins(CoinType::All)[0].outpoint, coin_a.outpoint);
+            assert_eq!(conn.coins(&[], &[])[0].outpoint, coin_a.outpoint);
 
             // We can also remove it. Say the unconfirmed tx that created it got replaced.
             conn.remove_coins(&[coin_a.outpoint]);
-            assert!(conn.coins(CoinType::All).is_empty());
+            assert!(conn.coins(&[], &[]).is_empty());
 
             // Add it back for the rest of the test.
             conn.new_unspent_coins(&[coin_a]);
@@ -928,9 +1266,21 @@ CREATE TABLE spend_transactions (
             assert_eq!(coins.len(), 1);
             assert_eq!(coins[0].outpoint, coin_a.outpoint);
 
-            // It is unspent.
-            assert_eq!(conn.coins(CoinType::Unspent)[0].outpoint, coin_a.outpoint);
-            assert!(conn.coins(CoinType::Spent).is_empty());
+            // It is unconfirmed.
+            assert_eq!(
+                conn.coins(&[CoinStatus::Unconfirmed], &[])[0].outpoint,
+                coin_a.outpoint
+            );
+            assert!(conn
+                .coins(
+                    &[
+                        CoinStatus::Confirmed,
+                        CoinStatus::Spending,
+                        CoinStatus::Spent
+                    ],
+                    &[]
+                )
+                .is_empty());
 
             // Add a second one (this one is change), we'll get both.
             let coin_b = Coin {
@@ -948,7 +1298,7 @@ CREATE TABLE spend_transactions (
             };
             conn.new_unspent_coins(&[coin_b]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
-                .coins(CoinType::All)
+                .coins(&[], &[])
                 .into_iter()
                 .map(|c| c.outpoint)
                 .collect();
@@ -967,15 +1317,24 @@ CREATE TABLE spend_transactions (
             assert!(coins.iter().any(|c| c.outpoint == coin_a.outpoint));
             assert!(coins.iter().any(|c| c.outpoint == coin_b.outpoint));
 
-            // They are both unspent
-            assert_eq!(conn.coins(CoinType::Unspent).len(), 2);
-            assert!(conn.coins(CoinType::Spent).is_empty());
+            // They are both unconfirmed.
+            assert_eq!(conn.coins(&[CoinStatus::Unconfirmed], &[]).len(), 2);
+            assert!(conn
+                .coins(
+                    &[
+                        CoinStatus::Confirmed,
+                        CoinStatus::Spending,
+                        CoinStatus::Spent
+                    ],
+                    &[]
+                )
+                .is_empty());
 
             // Now if we confirm one, it'll be marked as such.
             let height = 174500;
             let time = 174500;
             conn.confirm_coins(&[(coin_a.outpoint, height, time)]);
-            let coins = conn.coins(CoinType::All);
+            let coins = conn.coins(&[], &[]);
             assert_eq!(coins[0].block_info, Some(DbBlockInfo { height, time }));
             assert!(coins[1].block_info.is_none());
 
@@ -985,7 +1344,7 @@ CREATE TABLE spend_transactions (
                 bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
             )]);
             let coins_map: HashMap<bitcoin::OutPoint, DbCoin> = conn
-                .coins(CoinType::All)
+                .coins(&[], &[])
                 .into_iter()
                 .map(|c| (c.outpoint, c))
                 .collect();
@@ -1003,9 +1362,15 @@ CREATE TABLE spend_transactions (
                 .collect();
             assert!(outpoints.contains(&coin_a.outpoint));
 
-            // The first one is spent, not the second one.
-            assert_eq!(conn.coins(CoinType::Spent)[0].outpoint, coin_a.outpoint);
-            assert_eq!(conn.coins(CoinType::Unspent)[0].outpoint, coin_b.outpoint);
+            // The first one is spending, not the second one.
+            assert_eq!(
+                conn.coins(&[CoinStatus::Spending], &[])[0].outpoint,
+                coin_a.outpoint
+            );
+            assert_eq!(
+                conn.coins(&[CoinStatus::Unconfirmed], &[])[0].outpoint,
+                coin_b.outpoint
+            );
 
             // Now if we confirm the spend.
             let height = 128_097;
@@ -1051,7 +1416,7 @@ CREATE TABLE spend_transactions (
             };
             conn.new_unspent_coins(&[coin_imma]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
-                .coins(CoinType::All)
+                .coins(&[], &[])
                 .into_iter()
                 .map(|c| c.outpoint)
                 .collect();
@@ -1709,7 +2074,7 @@ CREATE TABLE spend_transactions (
                 spend_txid: None,
                 spend_block: None,
             }]);
-            let coins = conn.coins(CoinType::All);
+            let coins = conn.coins(&[], &[]);
             assert_eq!(coins.len(), 3);
             assert_eq!(coins.iter().filter(|c| !c.is_immature).count(), 2);
         }
