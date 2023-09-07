@@ -17,6 +17,11 @@ replace-with = "vendored_sources"
 git = "https://github.com/wizardsardine/liana"
 branch = "master"
 replace-with = "vendored_sources"
+
+[source."https://github.com/edouardparis/iced"]
+git = "https://github.com/edouardparis/iced"
+branch = "fix-futures-recipe"
+replace-with = "vendored_sources"
 EOF
 
 # We need to set RUSTC_BOOTSTRAP=1 as a workaround to be able to use unstable
