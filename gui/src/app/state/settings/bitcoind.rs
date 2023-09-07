@@ -21,8 +21,6 @@ use crate::{
 pub struct BitcoindSettingsState {
     warning: Option<Error>,
     config_updated: bool,
-    daemon_is_external: bool,
-    bitcoind_is_internal: bool,
 
     settings: Vec<Box<dyn Setting>>,
     current: Option<usize>,
@@ -40,6 +38,8 @@ impl BitcoindSettingsState {
                 BitcoindSettings::new(
                     config.bitcoin_config.clone(),
                     config.bitcoind_config.clone().unwrap(),
+                    daemon_is_external,
+                    bitcoind_is_internal,
                 )
                 .into(),
                 RescanSetting::new(cache.rescan_progress).into(),
@@ -49,8 +49,6 @@ impl BitcoindSettingsState {
         };
 
         BitcoindSettingsState {
-            daemon_is_external,
-            bitcoind_is_internal,
             warning: None,
             config_updated: false,
             settings,
@@ -113,8 +111,7 @@ impl State for BitcoindSettingsState {
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let can_edit =
-            self.current.is_none() && !self.daemon_is_external && !self.bitcoind_is_internal;
+        let can_edit = self.current.is_none();
         view::settings::bitcoind_settings(
             cache,
             self.warning.as_ref(),
@@ -145,6 +142,8 @@ pub struct BitcoindSettings {
     processing: bool,
     cookie_path: form::Value<String>,
     addr: form::Value<String>,
+    daemon_is_external: bool,
+    bitcoind_is_internal: bool,
 }
 
 impl From<BitcoindSettings> for Box<dyn Setting> {
@@ -154,10 +153,17 @@ impl From<BitcoindSettings> for Box<dyn Setting> {
 }
 
 impl BitcoindSettings {
-    fn new(bitcoin_config: BitcoinConfig, bitcoind_config: BitcoindConfig) -> BitcoindSettings {
+    fn new(
+        bitcoin_config: BitcoinConfig,
+        bitcoind_config: BitcoindConfig,
+        daemon_is_external: bool,
+        bitcoind_is_internal: bool,
+    ) -> BitcoindSettings {
         let path = bitcoind_config.cookie_path.to_str().unwrap().to_string();
         let addr = bitcoind_config.addr.to_string();
         BitcoindSettings {
+            daemon_is_external,
+            bitcoind_is_internal,
             bitcoind_config,
             bitcoin_config,
             edit: false,
@@ -245,7 +251,7 @@ impl Setting for BitcoindSettings {
                 &self.bitcoind_config,
                 cache.blockheight,
                 Some(cache.blockheight != 0),
-                can_edit,
+                can_edit && !self.daemon_is_external && !self.bitcoind_is_internal,
             )
         }
     }
