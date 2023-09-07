@@ -45,10 +45,10 @@ Head to the [release page](https://github.com/wizardsardine/liana/releases) and 
 executable for your platform. If you are not sure what is the "right" executable for your platform,
 choose:
 - `Liana.zip` if you are on MacOS,
-- `liana-1.1.exe` if you are on Windows,
-- `liana_1.1-1_amd64.deb` if you are running a Debian-based Linux (such as Ubuntu). Use `apt install
-  ./liana_1.1-1_amd64.deb` as root (or preceded by `sudo`) to install it.
-- `liana-1.1-x86_64-linux-gnu.tar.gz` if you use another Linux distribution. Note you may have to
+- `liana-2.0.exe` if you are on Windows,
+- `liana_2.0-1_amd64.deb` if you are running a Debian-based Linux (such as Ubuntu). Use `apt install
+  ./liana_2.0-1_amd64.deb` as root (or preceded by `sudo`) to install it.
+- `liana-2.0-x86_64-linux-gnu.tar.gz` if you use another Linux distribution. Note you may have to
   compile the software yourself if you are on Linux. See the [section
   below](#a-note-on-linux-binaries-and-glibc-version).
 
