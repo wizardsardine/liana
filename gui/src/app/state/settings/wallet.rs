@@ -3,7 +3,7 @@ use std::convert::From;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iced::Command;
+use iced::{Command, Subscription};
 
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
 
@@ -17,7 +17,7 @@ use crate::{
         cache::Cache, error::Error, message::Message, settings, state::State, view, wallet::Wallet,
     },
     daemon::Daemon,
-    hw::{list_hardware_wallets, HardwareWallet, HardwareWalletConfig},
+    hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
 };
 
 pub struct WalletSettingsState {
@@ -91,6 +91,14 @@ impl State for WalletSettingsState {
         }
     }
 
+    fn subscription(&self) -> Subscription<Message> {
+        if let Some(modal) = &self.modal {
+            modal.subscription()
+        } else {
+            Subscription::none()
+        }
+    }
+
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -160,11 +168,9 @@ impl State for WalletSettingsState {
                 self.modal = Some(RegisterWalletModal::new(
                     self.data_dir.clone(),
                     self.wallet.clone(),
+                    cache.network,
                 ));
-                self.modal
-                    .as_ref()
-                    .map(|m| m.load(daemon))
-                    .unwrap_or_else(Command::none)
+                Command::none()
             }
             _ => self
                 .modal
@@ -193,23 +199,23 @@ pub struct RegisterWalletModal {
     wallet: Arc<Wallet>,
     warning: Option<Error>,
     chosen_hw: Option<usize>,
-    hws: Vec<HardwareWallet>,
+    hws: HardwareWallets,
     registered: HashSet<Fingerprint>,
     processing: bool,
 }
 
 impl RegisterWalletModal {
-    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>) -> Self {
+    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>, network: Network) -> Self {
         let mut registered = HashSet::new();
         for hw in &wallet.hardware_wallets {
             registered.insert(hw.fingerprint);
         }
         Self {
-            data_dir,
-            wallet,
+            data_dir: data_dir.clone(),
             warning: None,
             chosen_hw: None,
-            hws: Vec::new(),
+            hws: HardwareWallets::new(data_dir, network).with_wallet(wallet.clone()),
+            wallet,
             processing: false,
             registered,
         }
@@ -220,30 +226,36 @@ impl RegisterWalletModal {
     fn view(&self) -> Element<view::Message> {
         view::settings::register_wallet_modal(
             self.warning.as_ref(),
-            &self.hws,
+            &self.hws.list,
             self.processing,
             self.chosen_hw,
             &self.registered,
         )
     }
 
+    fn subscription(&self) -> Subscription<Message> {
+        self.hws.refresh().map(Message::HardwareWallets)
+    }
+
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
     ) -> Command<Message> {
         match message {
             Message::View(view::Message::Reload) => {
-                self.hws = Vec::new();
                 self.chosen_hw = None;
                 self.warning = None;
-                self.load(daemon)
-            }
-            Message::ConnectedHardwareWallets(hws) => {
-                self.hws = hws;
                 Command::none()
             }
+            Message::HardwareWallets(msg) => match self.hws.update(msg) {
+                Ok(cmd) => cmd.map(Message::HardwareWallets),
+                Err(e) => {
+                    self.warning = Some(e.into());
+                    Command::none()
+                }
+            },
             Message::WalletRegistered(res) => {
                 self.processing = false;
                 self.chosen_hw = None;
@@ -261,7 +273,7 @@ impl RegisterWalletModal {
                     fingerprint,
                     device,
                     ..
-                }) = self.hws.get(i)
+                }) = self.hws.list.get(i)
                 {
                     self.chosen_hw = Some(i);
                     self.processing = true;
@@ -281,14 +293,6 @@ impl RegisterWalletModal {
             }
             _ => Command::none(),
         }
-    }
-
-    fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        let wallet = self.wallet.clone();
-        Command::perform(
-            async move { list_hardware_wallets(&wallet).await },
-            Message::ConnectedHardwareWallets,
-        )
     }
 }
 

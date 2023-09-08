@@ -27,8 +27,8 @@ use liana_ui::{
 use async_hwi::DeviceKind;
 
 use crate::{
-    app::settings::KeySetting,
-    hw::{list_unregistered_hardware_wallets, HardwareWallet},
+    app::{settings::KeySetting, wallet::wallet_name},
+    hw::{HardwareWallet, HardwareWallets},
     installer::{
         message::{self, Message},
         step::{Context, Step},
@@ -41,10 +41,10 @@ pub trait DescriptorEditModal {
     fn processing(&self) -> bool {
         false
     }
-    fn update(&mut self, _message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, _message: Message) -> Command<Message> {
         Command::none()
     }
-    fn view(&self) -> Element<Message>;
+    fn view<'a>(&'a self, _hws: &'a HardwareWallets) -> Element<'a, Message>;
 }
 
 pub struct RecoveryPath {
@@ -210,14 +210,17 @@ impl DefineDescriptor {
 impl Step for DefineDescriptor {
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         let network = self.network;
         self.error = None;
         match message {
             Message::Close => {
                 self.modal = None;
             }
-            Message::Network(network) => self.set_network(network),
+            Message::Network(network) => {
+                hws.set_network(network);
+                self.set_network(network)
+            }
             Message::DefineDescriptor(message::DefineDescriptor::AddRecoveryPath) => {
                 self.setup_mut().recovery_paths.push(RecoveryPath::new());
             }
@@ -235,6 +238,7 @@ impl Step for DefineDescriptor {
                     }
                     message::DefineKey::Edited(name, imported_key, kind) => {
                         let fingerprint = imported_key.master_fingerprint();
+                        hws.set_alias(fingerprint, name.clone());
                         if let Some(key) = self
                             .setup_mut()
                             .keys
@@ -325,6 +329,7 @@ impl Step for DefineDescriptor {
                     }
                     message::DefineKey::Edited(name, imported_key, kind) => {
                         let fingerprint = imported_key.master_fingerprint();
+                        hws.set_alias(fingerprint, name.clone());
                         if let Some(key) = self
                             .setup_mut()
                             .keys
@@ -391,7 +396,7 @@ impl Step for DefineDescriptor {
             },
             _ => {
                 if let Some(modal) = &mut self.modal {
-                    return modal.update(message);
+                    return modal.update(hws, message);
                 }
             }
         };
@@ -498,7 +503,11 @@ impl Step for DefineDescriptor {
         true
     }
 
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        hws: &'a HardwareWallets,
+        progress: (usize, usize),
+    ) -> Element<'a, Message> {
         let aliases = self.setup[&self.network].keys_aliases();
         let content = view::define_descriptor(
             progress,
@@ -542,7 +551,7 @@ impl Step for DefineDescriptor {
             self.error.as_ref(),
         );
         if let Some(modal) = &self.modal {
-            Modal::new(content, modal.view())
+            Modal::new(content, modal.view(hws))
                 .on_blur(if modal.processing() {
                     None
                 } else {
@@ -627,7 +636,7 @@ impl DescriptorEditModal for EditSequenceModal {
         false
     }
 
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         if let Message::DefineDescriptor(message::DefineDescriptor::SequenceModal(msg)) = message {
             match msg {
                 message::SequenceModal::SequenceEdited(seq) => {
@@ -660,7 +669,7 @@ impl DescriptorEditModal for EditSequenceModal {
         Command::none()
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets) -> Element<Message> {
         view::edit_sequence_modal(&self.sequence)
     }
 }
@@ -681,7 +690,6 @@ pub struct EditXpubModal {
     duplicate_master_fg: bool,
 
     keys: Vec<Key>,
-    hws: Vec<HardwareWallet>,
     hot_signer: Arc<Mutex<Signer>>,
     hot_signer_fingerprint: Fingerprint,
     chosen_signer: Option<(Fingerprint, Option<DeviceKind>)>,
@@ -729,7 +737,6 @@ impl EditXpubModal {
             path_index,
             key_index,
             processing: false,
-            hws: Vec::new(),
             error: None,
             network,
             edit_name: false,
@@ -740,10 +747,7 @@ impl EditXpubModal {
         }
     }
     fn load(&self) -> Command<Message> {
-        Command::perform(
-            async move { list_unregistered_hardware_wallets().await },
-            Message::ConnectedHardwareWallets,
-        )
+        Command::none()
     }
 }
 
@@ -752,7 +756,7 @@ impl DescriptorEditModal for EditXpubModal {
         self.processing
     }
 
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         // Reset these fields.
         // the fonction will setup them again if something is wrong
         self.duplicate_master_fg = false;
@@ -764,7 +768,7 @@ impl DescriptorEditModal for EditXpubModal {
                     fingerprint,
                     kind,
                     ..
-                }) = self.hws.get(i)
+                }) = hws.list.get(i)
                 {
                     self.chosen_signer = Some((*fingerprint, Some(*kind)));
                     self.processing = true;
@@ -778,19 +782,7 @@ impl DescriptorEditModal for EditXpubModal {
                     );
                 }
             }
-            Message::ConnectedHardwareWallets(hws) => {
-                if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
-                    self.chosen_signer = Some((
-                        key.master_fingerprint(),
-                        hws.iter()
-                            .find(|hw| hw.fingerprint() == Some(key.master_fingerprint()))
-                            .map(|hw| *hw.kind()),
-                    ));
-                }
-                self.hws = hws;
-            }
             Message::Reload => {
-                self.hws = Vec::new();
                 return self.load();
             }
             Message::UseHotSigner => {
@@ -937,11 +929,11 @@ impl DescriptorEditModal for EditXpubModal {
         };
         Command::none()
     }
-    fn view(&self) -> Element<Message> {
+    fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
         let chosen_signer = self.chosen_signer.map(|s| s.0);
         view::edit_key_modal(
             self.network,
-            self.hws
+            hws.list
                 .iter()
                 .enumerate()
                 .filter_map(|(i, hw)| {
@@ -1032,72 +1024,16 @@ async fn get_extended_pubkey(
 }
 
 pub struct HardwareWalletXpubs {
-    hw: HardwareWallet,
+    fingerprint: Fingerprint,
     xpubs: Vec<String>,
     processing: bool,
     error: Option<Error>,
-    next_account: ChildNumber,
 }
 
 impl HardwareWalletXpubs {
-    fn new(hw: HardwareWallet) -> Self {
-        Self {
-            hw,
-            xpubs: Vec::new(),
-            processing: false,
-            error: None,
-            next_account: ChildNumber::from_hardened_idx(0).unwrap(),
-        }
-    }
-
-    fn update(&mut self, res: Result<DescriptorPublicKey, Error>) {
-        self.processing = false;
-        match res {
-            Err(e) => {
-                self.error = e.into();
-            }
-            Ok(xpub) => {
-                self.error = None;
-                self.next_account = self.next_account.increment().unwrap();
-                self.xpubs.push(xpub.to_string());
-            }
-        }
-    }
-
     fn reset(&mut self) {
         self.error = None;
-        self.next_account = ChildNumber::from_hardened_idx(0).unwrap();
         self.xpubs = Vec::new();
-    }
-
-    fn select(&mut self, i: usize, network: Network) -> Command<Message> {
-        if let HardwareWallet::Supported {
-            device,
-            fingerprint,
-            ..
-        } = &self.hw
-        {
-            let device = device.clone();
-            let fingerprint = *fingerprint;
-            self.processing = true;
-            self.error = None;
-            Command::perform(
-                async move { (i, get_extended_pubkey(device, fingerprint, network).await) },
-                |(i, res)| Message::ImportXpub(i, res),
-            )
-        } else {
-            Command::none()
-        }
-    }
-
-    pub fn view(&self, i: usize) -> Element<Message> {
-        view::hardware_wallet_xpubs(
-            i,
-            &self.xpubs,
-            &self.hw,
-            self.processing,
-            self.error.as_ref(),
-        )
     }
 }
 
@@ -1125,12 +1061,13 @@ impl SignerXpubs {
         self.next_account = self.next_account.increment().unwrap();
         let signer = self.signer.lock().unwrap();
         let derivation_path = default_derivation_path(network);
-        self.xpubs.push(format!(
+        // We keep only one for the moment.
+        self.xpubs = vec![format!(
             "[{}{}]{}",
             signer.fingerprint(),
             derivation_path.to_string().trim_start_matches('m'),
             signer.get_extended_pubkey(&derivation_path)
-        ));
+        )];
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -1145,7 +1082,7 @@ pub struct ParticipateXpub {
 
     shared: bool,
 
-    xpubs_hw: Vec<HardwareWalletXpubs>,
+    hw_xpubs: Vec<HardwareWalletXpubs>,
     xpubs_signer: SignerXpubs,
 }
 
@@ -1155,7 +1092,7 @@ impl ParticipateXpub {
             network: Network::Bitcoin,
             network_valid: true,
             data_dir: None,
-            xpubs_hw: Vec::new(),
+            hw_xpubs: Vec::new(),
             shared: false,
             xpubs_signer: SignerXpubs::new(signer),
         }
@@ -1163,7 +1100,7 @@ impl ParticipateXpub {
 
     fn set_network(&mut self, network: Network) {
         if network != self.network {
-            self.xpubs_hw.iter_mut().for_each(|hw| hw.reset());
+            self.hw_xpubs.iter_mut().for_each(|hw| hw.reset());
             self.xpubs_signer.reset();
         }
         self.network = network;
@@ -1182,39 +1119,66 @@ impl ParticipateXpub {
 impl Step for ParticipateXpub {
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         match message {
             Message::Network(network) => {
+                hws.set_network(network);
                 self.set_network(network);
             }
             Message::UserActionDone(shared) => self.shared = shared,
-            Message::ImportXpub(i, res) => {
-                if let Some(hw) = self.xpubs_hw.get_mut(i) {
-                    hw.update(res);
+            Message::ImportXpub(fg, res) => {
+                if let Some(hw_xpubs) = self.hw_xpubs.iter_mut().find(|x| x.fingerprint == fg) {
+                    hw_xpubs.processing = false;
+                    match res {
+                        Err(e) => {
+                            hw_xpubs.error = e.into();
+                        }
+                        Ok(xpub) => {
+                            hw_xpubs.error = None;
+                            // We keep only one for the moment.
+                            hw_xpubs.xpubs = vec![xpub.to_string()];
+                        }
+                    }
                 }
             }
             Message::UseHotSigner => {
                 self.xpubs_signer.select(self.network);
             }
             Message::Select(i) => {
-                if let Some(hw) = self.xpubs_hw.get_mut(i) {
-                    return hw.select(i, self.network);
-                }
-            }
-            Message::ConnectedHardwareWallets(hws) => {
-                for hw in hws {
-                    if let Some(xpub_hw) = self.xpubs_hw.iter_mut().find(|h| {
-                        h.hw.kind() == hw.kind()
-                            && (h.hw.fingerprint() == hw.fingerprint() || !h.hw.is_supported())
-                    }) {
-                        xpub_hw.hw = hw;
+                if let Some(HardwareWallet::Supported {
+                    device,
+                    fingerprint,
+                    ..
+                }) = hws.list.get(i)
+                {
+                    let device = device.clone();
+                    let fingerprint = *fingerprint;
+                    let network = self.network;
+                    if let Some(hw_xpubs) = self
+                        .hw_xpubs
+                        .iter_mut()
+                        .find(|x| x.fingerprint == fingerprint)
+                    {
+                        hw_xpubs.processing = true;
+                        hw_xpubs.error = None;
                     } else {
-                        self.xpubs_hw.push(HardwareWalletXpubs::new(hw));
+                        self.hw_xpubs.push(HardwareWalletXpubs {
+                            fingerprint,
+                            xpubs: Vec::new(),
+                            processing: true,
+                            error: None,
+                        });
                     }
+                    return Command::perform(
+                        async move {
+                            (
+                                fingerprint,
+                                get_extended_pubkey(device, fingerprint, network).await,
+                            )
+                        },
+                        |(fingerprint, res)| Message::ImportXpub(fingerprint, res),
+                    );
                 }
-            }
-            Message::Reload => {
-                return self.load();
             }
             _ => {}
         };
@@ -1226,29 +1190,38 @@ impl Step for ParticipateXpub {
         self.set_network(ctx.bitcoin_config.network);
     }
 
-    fn load(&self) -> Command<Message> {
-        Command::perform(
-            list_unregistered_hardware_wallets(),
-            Message::ConnectedHardwareWallets,
-        )
-    }
-
     fn apply(&mut self, ctx: &mut Context) -> bool {
         ctx.bitcoin_config.network = self.network;
         // Drop connections to hardware wallets.
-        self.xpubs_hw = Vec::new();
+        self.hw_xpubs = Vec::new();
         true
     }
 
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(&'a self, hws: &'a HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         view::participate_xpub(
             progress,
             self.network,
             self.network_valid,
-            self.xpubs_hw
+            hws.list
                 .iter()
                 .enumerate()
-                .map(|(i, hw)| hw.view(i))
+                .map(|(i, hw)| {
+                    if let Some(hw_xpubs) = self
+                        .hw_xpubs
+                        .iter()
+                        .find(|h| hw.fingerprint() == Some(h.fingerprint))
+                    {
+                        view::hardware_wallet_xpubs(
+                            i,
+                            hw,
+                            Some(&hw_xpubs.xpubs),
+                            hw_xpubs.processing,
+                            hw_xpubs.error.as_ref(),
+                        )
+                    } else {
+                        view::hardware_wallet_xpubs(i, hw, None, false, None)
+                    }
+                })
                 .collect(),
             self.xpubs_signer.view(),
             self.shared,
@@ -1301,7 +1274,7 @@ impl ImportDescriptor {
 impl Step for ImportDescriptor {
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         match message {
             Message::Network(network) => {
                 self.network = network;
@@ -1354,7 +1327,7 @@ impl Step for ImportDescriptor {
         }
     }
 
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         view::import_descriptor(
             progress,
             self.change_network,
@@ -1374,10 +1347,8 @@ impl From<ImportDescriptor> for Box<dyn Step> {
 
 pub struct RegisterDescriptor {
     descriptor: Option<LianaDescriptor>,
-    keys_aliases: HashMap<Fingerprint, String>,
     processing: bool,
     chosen_hw: Option<usize>,
-    hws: Vec<HardwareWallet>,
     hmacs: Vec<(Fingerprint, DeviceKind, Option<[u8; 32]>)>,
     registered: HashSet<Fingerprint>,
     error: Option<Error>,
@@ -1394,10 +1365,8 @@ impl RegisterDescriptor {
         Self {
             created_desc,
             descriptor: Default::default(),
-            keys_aliases: Default::default(),
             processing: Default::default(),
             chosen_hw: Default::default(),
-            hws: Default::default(),
             hmacs: Default::default(),
             registered: Default::default(),
             error: Default::default(),
@@ -1421,24 +1390,29 @@ impl Step for RegisterDescriptor {
         for key in ctx.keys.iter().filter(|k| !k.name.is_empty()) {
             map.insert(key.master_fingerprint, key.name.clone());
         }
-        self.keys_aliases = map;
     }
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         match message {
             Message::Select(i) => {
                 if let Some(HardwareWallet::Supported {
                     device,
                     fingerprint,
                     ..
-                }) = self.hws.get(i)
+                }) = hws.list.get(i)
                 {
                     if !self.registered.contains(fingerprint) {
-                        let descriptor = self.descriptor.as_ref().unwrap().to_string();
+                        let descriptor = self.descriptor.as_ref().unwrap();
+                        let name = wallet_name(descriptor);
                         self.chosen_hw = Some(i);
                         self.processing = true;
                         self.error = None;
                         return Command::perform(
-                            register_wallet(device.clone(), *fingerprint, descriptor),
+                            register_wallet(
+                                device.clone(),
+                                *fingerprint,
+                                name,
+                                descriptor.to_string(),
+                            ),
                             Message::WalletRegistered,
                         );
                     }
@@ -1449,8 +1423,8 @@ impl Step for RegisterDescriptor {
                 self.chosen_hw = None;
                 match res {
                     Ok((fingerprint, hmac)) => {
-                        if let Some(hw_h) = self
-                            .hws
+                        if let Some(hw_h) = hws
+                            .list
                             .iter()
                             .find(|hw_h| hw_h.fingerprint() == Some(fingerprint))
                         {
@@ -1461,11 +1435,7 @@ impl Step for RegisterDescriptor {
                     Err(e) => self.error = Some(e),
                 }
             }
-            Message::ConnectedHardwareWallets(hws) => {
-                self.hws = hws;
-            }
             Message::Reload => {
-                self.hws = Vec::new();
                 return self.load();
             }
             Message::UserActionDone(done) => {
@@ -1485,17 +1455,18 @@ impl Step for RegisterDescriptor {
         true
     }
     fn load(&self) -> Command<Message> {
-        Command::perform(
-            async move { list_unregistered_hardware_wallets().await },
-            Message::ConnectedHardwareWallets,
-        )
+        Command::none()
     }
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        hws: &'a HardwareWallets,
+        progress: (usize, usize),
+    ) -> Element<'a, Message> {
         let desc = self.descriptor.as_ref().unwrap();
         view::register_descriptor(
             progress,
             desc.to_string(),
-            &self.hws,
+            &hws.list,
             &self.registered,
             self.error.as_ref(),
             self.processing,
@@ -1509,10 +1480,11 @@ impl Step for RegisterDescriptor {
 async fn register_wallet(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     fingerprint: Fingerprint,
+    name: String,
     descriptor: String,
 ) -> Result<(Fingerprint, Option<[u8; 32]>), Error> {
     let hmac = hw
-        .register_wallet("Liana", &descriptor)
+        .register_wallet(&name, &descriptor)
         .await
         .map_err(Error::from)?;
     Ok((fingerprint, hmac))
@@ -1531,7 +1503,7 @@ pub struct BackupDescriptor {
 }
 
 impl Step for BackupDescriptor {
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         if let Message::UserActionDone(done) = message {
             self.done = done;
         }
@@ -1540,7 +1512,7 @@ impl Step for BackupDescriptor {
     fn load_context(&mut self, ctx: &Context) {
         self.descriptor = ctx.descriptor.clone();
     }
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         let desc = self.descriptor.as_ref().unwrap();
         view::backup_descriptor(progress, desc.to_string(), self.done)
     }
@@ -1575,11 +1547,12 @@ mod tests {
         }
 
         pub async fn update(&self, message: Message) {
-            let cmd = self.step.lock().unwrap().update(message);
+            let mut hws = HardwareWallets::new(PathBuf::from_str("/").unwrap(), Network::Bitcoin);
+            let cmd = self.step.lock().unwrap().update(&mut hws, message);
             for action in cmd.actions() {
                 if let Action::Future(f) = action {
                     let msg = f.await;
-                    let _cmd = self.step.lock().unwrap().update(msg);
+                    let _cmd = self.step.lock().unwrap().update(&mut hws, msg);
                 }
             }
         }

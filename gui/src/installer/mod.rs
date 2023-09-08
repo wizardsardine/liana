@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     app::{config as gui_config, settings as gui_settings},
+    hw::HardwareWallets,
     signer::Signer,
 };
 
@@ -30,6 +31,7 @@ use step::{
 pub struct Installer {
     current: usize,
     steps: Vec<Box<dyn Step>>,
+    hws: HardwareWallets,
     signer: Arc<Mutex<Signer>>,
 
     /// Context is data passed through each step.
@@ -60,6 +62,7 @@ impl Installer {
         (
             Installer {
                 current: 0,
+                hws: HardwareWallets::new(destination_path.clone(), network),
                 steps: vec![Welcome::default().into()],
                 context: Context::new(network, destination_path),
                 signer: Arc::new(Mutex::new(Signer::generate(network).unwrap())),
@@ -69,10 +72,17 @@ impl Installer {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        self.steps
-            .get(self.current)
-            .expect("There is always a step")
-            .subscription()
+        if self.current > 0 {
+            Subscription::batch(vec![
+                self.hws.refresh().map(Message::HardwareWallets),
+                self.steps
+                    .get(self.current)
+                    .expect("There is always a step")
+                    .subscription(),
+            ])
+        } else {
+            Subscription::none()
+        }
     }
 
     pub fn stop(&mut self) {
@@ -163,6 +173,13 @@ impl Installer {
                 ];
                 self.next()
             }
+            Message::HardwareWallets(msg) => match self.hws.update(msg) {
+                Ok(cmd) => cmd.map(Message::HardwareWallets),
+                Err(e) => {
+                    error!("{}", e);
+                    Command::none()
+                }
+            },
             Message::Clibpboard(s) => clipboard::write(s),
             Message::Next => self.next(),
             Message::Previous => {
@@ -174,7 +191,7 @@ impl Installer {
                     .steps
                     .get_mut(self.current)
                     .expect("There is always a step")
-                    .update(message);
+                    .update(&mut self.hws, message);
                 Command::perform(
                     install(self.context.clone(), self.signer.clone()),
                     Message::Installed,
@@ -201,13 +218,13 @@ impl Installer {
                 self.steps
                     .get_mut(self.current)
                     .expect("There is always a step")
-                    .update(Message::Installed(Err(e)))
+                    .update(&mut self.hws, Message::Installed(Err(e)))
             }
             _ => self
                 .steps
                 .get_mut(self.current)
                 .expect("There is always a step")
-                .update(message),
+                .update(&mut self.hws, message),
         }
     }
 
@@ -232,7 +249,7 @@ impl Installer {
         self.steps
             .get(self.current)
             .expect("There is always a step")
-            .view(self.progress())
+            .view(&self.hws, self.progress())
     }
 }
 

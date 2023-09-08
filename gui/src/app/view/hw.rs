@@ -43,6 +43,9 @@ pub fn hw_list_view(
         HardwareWallet::Unsupported { version, kind, .. } => {
             hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
         }
+        HardwareWallet::Locked {
+            kind, pairing_code, ..
+        } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
     })
     .style(theme::Button::Border)
     .width(Length::Fill);
@@ -90,6 +93,9 @@ pub fn hw_list_view_for_registration(
         HardwareWallet::Unsupported { version, kind, .. } => {
             hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
         }
+        HardwareWallet::Locked {
+            kind, pairing_code, ..
+        } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
     })
     .style(theme::Button::Border)
     .width(Length::Fill);

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use iced::Command;
+use iced::{Command, Subscription};
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
@@ -59,6 +59,9 @@ pub trait Step {
     ) -> Command<Message>;
     fn apply(&self, _draft: &mut TransactionDraft) {}
     fn load(&mut self, _draft: &TransactionDraft) {}
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
+    }
 }
 
 pub struct DefineSpend {
@@ -508,18 +511,11 @@ impl SaveSpend {
 impl Step for SaveSpend {
     fn load(&mut self, draft: &TransactionDraft) {
         let psbt = draft.generated.clone().unwrap();
-        let sigs = self
-            .wallet
-            .main_descriptor
-            .partial_spend_info(&psbt)
-            .unwrap();
-
         let mut tx = SpendTx::new(
             None,
             psbt,
             draft.inputs.clone(),
-            sigs,
-            self.wallet.main_descriptor.max_sat_vbytes(),
+            &self.wallet.main_descriptor,
             draft.network,
         );
         tx.labels = draft.labels.clone();
@@ -538,6 +534,14 @@ impl Step for SaveSpend {
         }
 
         self.spend = Some(psbt::PsbtState::new(self.wallet.clone(), tx, false));
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        if let Some(spend) = &self.spend {
+            spend.subscription()
+        } else {
+            Subscription::none()
+        }
     }
 
     fn update(

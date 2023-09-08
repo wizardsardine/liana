@@ -14,6 +14,20 @@ use liana::miniscript::bitcoin::bip32::Fingerprint;
 
 pub const DEFAULT_WALLET_NAME: &str = "Liana";
 
+pub fn wallet_name(main_descriptor: &LianaDescriptor) -> String {
+    let desc = main_descriptor.to_string();
+    let checksum = desc
+        .split_once('#')
+        .map(|(_, checksum)| checksum)
+        .unwrap_or("");
+    format!(
+        "{}{}{}",
+        DEFAULT_WALLET_NAME,
+        if checksum.is_empty() { "" } else { "-" },
+        checksum
+    )
+}
+
 #[derive(Debug)]
 pub struct Wallet {
     pub name: String,
@@ -26,7 +40,7 @@ pub struct Wallet {
 impl Wallet {
     pub fn new(main_descriptor: LianaDescriptor) -> Self {
         Self {
-            name: DEFAULT_WALLET_NAME.to_string(),
+            name: wallet_name(&main_descriptor),
             main_descriptor,
             keys_aliases: HashMap::new(),
             hardware_wallets: Vec::new(),

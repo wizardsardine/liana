@@ -9,7 +9,7 @@ use liana::{
 use crate::{
     app::{error::Error, view, wallet::Wallet},
     daemon::model::*,
-    hw::HardwareWallet,
+    hw::HardwareWalletMessage,
 };
 
 #[derive(Debug)]
@@ -32,7 +32,7 @@ pub enum Message {
     Updated(Result<(), Error>),
     Saved(Result<(), Error>),
     StartRescan(Result<(), Error>),
-    ConnectedHardwareWallets(Vec<HardwareWallet>),
+    HardwareWallets(HardwareWalletMessage),
     HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
     PendingTransactions(Result<Vec<HistoryTransaction>, Error>),
     LabelsUpdated(Result<HashMap<String, Option<String>>, Error>),

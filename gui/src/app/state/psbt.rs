@@ -1,10 +1,13 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
+
+use iced::Subscription;
 
 use iced::Command;
 use liana::{
     descriptors::LianaPolicy,
-    miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt},
+    miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Network},
 };
 
 use liana_ui::{
@@ -25,7 +28,7 @@ use crate::{
         model::{LabelItem, Labelled, SpendStatus, SpendTx},
         Daemon,
     },
-    hw::{list_hardware_wallets, HardwareWallet},
+    hw::{HardwareWallet, HardwareWallets},
 };
 
 pub trait Action {
@@ -34,6 +37,9 @@ pub trait Action {
     }
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         Command::none()
+    }
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
     }
     fn update(
         &mut self,
@@ -69,6 +75,14 @@ impl PsbtState {
         }
     }
 
+    pub fn subscription(&self) -> Subscription<Message> {
+        if let Some(action) = &self.action {
+            action.subscription()
+        } else {
+            Subscription::none()
+        }
+    }
+
     pub fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         if let Some(action) = &self.action {
             action.load(daemon)
@@ -80,7 +94,7 @@ impl PsbtState {
     pub fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
+        cache: &Cache,
         message: Message,
     ) -> Command<Message> {
         match &message {
@@ -92,7 +106,12 @@ impl PsbtState {
                     self.action = Some(Box::<DeleteAction>::default());
                 }
                 view::SpendTxMessage::Sign => {
-                    let action = SignAction::new(self.tx.signers(), self.wallet.clone());
+                    let action = SignAction::new(
+                        self.tx.signers(),
+                        self.wallet.clone(),
+                        cache.datadir_path.clone(),
+                        cache.network,
+                    );
                     let cmd = action.load(daemon);
                     self.action = Some(Box::new(action));
                     return cmd;
@@ -296,18 +315,23 @@ pub struct SignAction {
     wallet: Arc<Wallet>,
     chosen_hw: Option<usize>,
     processing: bool,
-    hws: Vec<HardwareWallet>,
+    hws: HardwareWallets,
     error: Option<Error>,
     signed: HashSet<Fingerprint>,
 }
 
 impl SignAction {
-    pub fn new(signed: HashSet<Fingerprint>, wallet: Arc<Wallet>) -> Self {
+    pub fn new(
+        signed: HashSet<Fingerprint>,
+        wallet: Arc<Wallet>,
+        datadir_path: PathBuf,
+        network: Network,
+    ) -> Self {
         Self {
-            wallet,
             chosen_hw: None,
             processing: false,
-            hws: Vec::new(),
+            hws: HardwareWallets::new(datadir_path, network).with_wallet(wallet.clone()),
+            wallet,
             error: None,
             signed,
         }
@@ -319,13 +343,10 @@ impl Action for SignAction {
         self.error.as_ref()
     }
 
-    fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        let wallet = self.wallet.clone();
-        Command::perform(
-            async move { list_hardware_wallets(&wallet).await },
-            Message::ConnectedHardwareWallets,
-        )
+    fn subscription(&self) -> Subscription<Message> {
+        self.hws.refresh().map(Message::HardwareWallets)
     }
+
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -338,7 +359,7 @@ impl Action for SignAction {
                     fingerprint,
                     device,
                     ..
-                }) = self.hws.get(i)
+                }) = self.hws.list.get(i)
                 {
                     self.chosen_hw = Some(i);
                     self.processing = true;
@@ -372,28 +393,23 @@ impl Action for SignAction {
             Message::Updated(res) => match res {
                 Ok(()) => {
                     self.processing = false;
-                    tx.sigs = self
-                        .wallet
-                        .main_descriptor
-                        .partial_spend_info(&tx.psbt)
-                        .unwrap();
+                    match self.wallet.main_descriptor.partial_spend_info(&tx.psbt) {
+                        Ok(sigs) => tx.sigs = sigs,
+                        Err(e) => self.error = Some(Error::Unexpected(e.to_string())),
+                    }
                 }
                 Err(e) => self.error = Some(e),
             },
-            // We add the new hws without dropping the reference of the previous ones.
-            Message::ConnectedHardwareWallets(hws) => {
-                for h in hws {
-                    if !self
-                        .hws
-                        .iter()
-                        .any(|hw| hw.fingerprint() == hw.fingerprint() && hw.kind() == h.kind())
-                    {
-                        self.hws.push(h);
-                    }
+
+            Message::HardwareWallets(msg) => match self.hws.update(msg) {
+                Ok(cmd) => {
+                    return cmd.map(Message::HardwareWallets);
                 }
-            }
+                Err(e) => {
+                    self.error = Some(e.into());
+                }
+            },
             Message::View(view::Message::Reload) => {
-                self.hws = Vec::new();
                 self.chosen_hw = None;
                 self.error = None;
                 return self.load(daemon);
@@ -405,7 +421,7 @@ impl Action for SignAction {
     fn view(&self) -> Element<view::Message> {
         view::psbt::sign_action(
             self.error.as_ref(),
-            &self.hws,
+            &self.hws.list,
             self.wallet.signer.as_ref().map(|s| s.fingerprint()),
             self.wallet
                 .signer

@@ -6,6 +6,27 @@ use iced::{
 use std::borrow::Cow;
 use std::fmt::Display;
 
+pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
+    kind: K,
+    pairing_code: Option<impl Into<Cow<'a, str>>>,
+) -> Container<'a, T> {
+    Container::new(
+        column(vec![
+            Row::new()
+                .spacing(5)
+                .push(text::p1_bold("Locked, check code:"))
+                .push_maybe(pairing_code.map(|a| text::p1_bold(a)))
+                .into(),
+            Row::new()
+                .spacing(5)
+                .push(text::caption(kind.to_string()))
+                .into(),
+        ])
+        .width(Length::Fill),
+    )
+    .padding(10)
+}
+
 pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
