@@ -422,13 +422,7 @@ impl SqliteConn {
 
     /// List coins that are being spent and whose spending transaction is still unconfirmed.
     pub fn list_spending_coins(&mut self) -> Vec<DbCoin> {
-        db_query(
-            &mut self.conn,
-            "SELECT * FROM coins WHERE spend_txid IS NOT NULL AND spend_block_time IS NULL",
-            rusqlite::params![],
-            |row| row.try_into(),
-        )
-        .expect("Db must not fail")
+        self.coins(&[CoinStatus::Spending], &[])
     }
 
     // FIXME: don't take the whole coin, we don't need it.
