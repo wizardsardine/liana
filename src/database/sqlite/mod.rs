@@ -487,7 +487,7 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
-    /// Mark a set of coins as spent.
+    /// Mark a set of coins as spending.
     pub fn spend_coins<'a>(
         &mut self,
         outpoints: impl IntoIterator<Item = &'a (bitcoin::OutPoint, bitcoin::Txid)>,
