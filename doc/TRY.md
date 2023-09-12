@@ -1,13 +1,14 @@
-# Quickly try out Liana
+# Quickly try out Liana in a test environment
 
-> *Just give me the TL;DR!*
 
-*(Updated on February the 28th of 2023)*
+*(Updated on  of 2023)*
 
-This document is a short set of instructions for trying out Liana on Bitcoin signet. It does not attempt to
+This document is a short set of instructions for trying out Liana on Bitcoin signet, a test network using value-less bitcoins. It does not attempt to
 give any nuance, details or describe alternative configurations.
 
-This guide will make use Liana as a "hot wallet". If you'd like to try out Liana using dummy
+This guide will make use Liana as a "hot wallet".
+You can also connect your Ledger or SpecterDIY hardware signer, (and maybe by the time you read this guide, Bitbox, Coldcard and Jade - integration is coming soon).
+If you'd like to try out Liana using emulators of
 hardware signing device you can use the [Specter
 simulator](https://github.com/cryptoadvance/specter-diy/blob/master/docs/simulator.md) or the
 [Ledger "Speculos" emulator](https://github.com/LedgerHQ/speculos).
@@ -17,14 +18,17 @@ simulator](https://github.com/cryptoadvance/specter-diy/blob/master/docs/simulat
 
 ### System dependencies
 
+*If you are using Windows or MacOS, you can skip this step.*
+
 Here is a list of the system dependencies: the tools and libraries you need to have installed on
 your system to follow the guide if you are running Linux.
 
-TL;DR:
-- Debian/Ubuntu: `apt install curl gpg udev libfontconfig1-dev libudev-dev`
-- Arch Linux: check if you have all the required packages: `pacman -Q coreutils tar curl gnupg fontconfig systemd-libs`.
-If any is listed as "was not found", get it with `pacman -S [missing package name]`
-- Other distribution: see the link to projects below to search for the name of your distribution's packages.
+- Debian/Ubuntu: dependencies are handled by the .deb package, you can skip this step
+- Arch Linux/Manjaro/Endeavor: The [AUR package](https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=liana-bin) handles the dependencies, you can skip this step.
+- NixOS: The Liana package handles the dependencies, you can skip this step.
+- Other distribution: see the link to projects below to search for the name of your distribution's packages.  
+    - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/) 
+    - [Libudev](https://www.freedesktop.org/software/systemd/man/libudev.html) 
 - Running binaries requires GLIBC >= 2.33 (Ubuntu >= 22.04 or Debian >= 12)
 
 We'll use basic tools which should already be present on your system, such as:
@@ -36,13 +40,13 @@ To download and verify binaries you will also need:
 - `gpg` (On Debian/Ubuntu `apt install gpg`)
 
 To run the GUI you will need some additional libraries:
-- [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/) (On Debian/Ubuntu `apt install libfontconfig1-dev`)
-- [Libudev](https://www.freedesktop.org/software/systemd/man/libudev.html) (On Debian/Ubuntu `apt install udev libudev-dev`)
 
 ### Throwaway folder
 
-You can follow the guide from any folder of your choice. We recommend using a dedicated folder you
-can wipe easily. On Linux:
+You can follow the guide from any folder of your choice. We recommend creating a new dedicated folder you
+can wipe easily after testing. 
+
+If you are using a Linux terminal:
 ```
 mkdir liana_quicktry
 cd liana_quicktry
@@ -53,42 +57,7 @@ cd liana_quicktry
 
 Liana needs `bitcoind` to communicate with the Bitcoin network. Minimum supported version is 24.0.1.
 
-### Download
 
-The following instructions are specific to Linux (they may work on MacOS but i'm not sure). For
-other platforms refer to
-[https://bitcoincore.org/en/download/#verify-your-download](https://bitcoincore.org/en/download).
-
-1. Download the `bitcoind` binary from [the official website of the Bitcoin Core
-project](https://bitcoincore.org/bin/bitcoin-core-25.0/) according to your platform (in the context
-of this guide, it is most likely `bitcoin-25.0-x86_64-linux-gnu.tar.gz`), and associated SHA256SUMS and SHA256SUMS.asc verification files.
-```
-curl -O https://bitcoincore.org/bin/bitcoin-core-25.0/bitcoin-25.0-x86_64-linux-gnu.tar.gz -O https://bitcoincore.org/bin/bitcoin-core-25.0/SHA256SUMS -O https://bitcoincore.org/bin/bitcoin-core-25.0/SHA256SUMS.asc
-```
-
-2. Verify the hash of the downloaded archive.
-```
-sha256sum --ignore-missing --check SHA256SUMS
-```
-
-3. Verify the signature against a key you trust. The Bitcoin Core Guix Attestations Github repo contains [a
-folder](https://github.com/bitcoin-core/guix.sigs) of signers for each release and a folder of their keys.
-Mine is `590B7292695AFFA5B672CBB2E13FC145CD3F4304`.
-```
-gpg --keyserver hkps://keys.openpgp.org --receive 590B7292695AFFA5B672CBB2E13FC145CD3F4304
-gpg --verify SHA256SUMS.asc
-```
-
-4. Finally, uncompress the archive to get access to the `bitcoind` binary.
-```
-tar -xzf bitcoin-25.0-x86_64-linux-gnu.tar.gz
-```
-
-### Start `bitcoind` on signet
-
-Run `bitcoind` in the background on the public signet network. On Linux:
-```
-./bitcoin-25.0/bin/bitcoind -signet -daemon
 ```
 
 If it is the first time you start a signet Bitcoin on this machine it will take a few minutes to
