@@ -107,7 +107,7 @@ A full Initial Blocks Download (Bitcoin network syncronization, from the beginni
 Click on continue until we finalize the installation.
 
 
-## Step 3: have fun
+## Step 2: have fun
 
 Once synchronized, Liana will open the wallet.
 You can generate a receive address in the "Receive" menu. You can get signet coins from the signet
