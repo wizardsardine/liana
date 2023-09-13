@@ -20,7 +20,10 @@ use liana::miniscript::bitcoin::bip32::Fingerprint;
 
 use liana_ui::widget::*;
 
-use crate::installer::{context::Context, message::Message, view};
+use crate::{
+    bitcoind::Bitcoind,
+    installer::{context::Context, message::Message, view},
+};
 
 pub trait Step {
     fn update(&mut self, _message: Message) -> Command<Message> {
@@ -60,7 +63,7 @@ impl From<Welcome> for Box<dyn Step> {
 
 pub struct Final {
     generating: bool,
-    context: Option<Context>,
+    internal_bitcoind: Option<Bitcoind>,
     warning: Option<String>,
     config_path: Option<PathBuf>,
     hot_signer_fingerprint: Fingerprint,
@@ -70,7 +73,7 @@ pub struct Final {
 impl Final {
     pub fn new(hot_signer_fingerprint: Fingerprint) -> Self {
         Self {
-            context: None,
+            internal_bitcoind: None,
             generating: false,
             warning: None,
             config_path: None,
@@ -82,7 +85,7 @@ impl Final {
 
 impl Step for Final {
     fn load_context(&mut self, ctx: &Context) {
-        self.context = Some(ctx.clone());
+        self.internal_bitcoind = ctx.internal_bitcoind.clone();
         if let Some(signer) = &ctx.recovered_signer {
             self.hot_signer_fingerprint = signer.fingerprint();
             self.hot_signer_is_not_used = false;
@@ -98,6 +101,13 @@ impl Step for Final {
             self.hot_signer_is_not_used = true;
         }
     }
+    fn load(&self) -> Command<Message> {
+        if !self.generating && self.config_path.is_none() {
+            Command::perform(async {}, |_| Message::Install)
+        } else {
+            Command::none()
+        }
+    }
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::Installed(res) => {
@@ -107,7 +117,13 @@ impl Step for Final {
                         self.config_path = None;
                         self.warning = Some(e.to_string());
                     }
-                    Ok(path) => self.config_path = Some(path),
+                    Ok(path) => {
+                        self.config_path = Some(path.clone());
+                        let internal_bitcoind = self.internal_bitcoind.clone();
+                        return Command::perform(async {}, move |_| {
+                            Message::Exit(path.clone(), internal_bitcoind)
+                        });
+                    }
                 }
             }
             Message::Install => {
@@ -121,20 +137,11 @@ impl Step for Final {
     }
 
     fn view(&self, progress: (usize, usize)) -> Element<Message> {
-        let ctx = self.context.as_ref().unwrap();
-        let desc = ctx.descriptor.as_ref().unwrap().to_string();
         view::install(
             progress,
-            ctx,
-            desc,
             self.generating,
             self.config_path.as_ref(),
             self.warning.as_ref(),
-            if self.hot_signer_is_not_used {
-                None
-            } else {
-                Some(self.hot_signer_fingerprint)
-            },
         )
     }
 }
