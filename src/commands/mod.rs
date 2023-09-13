@@ -6,11 +6,11 @@ mod utils;
 
 use crate::{
     bitcoin::BitcoinInterface,
-    database::{Coin, CoinType, DatabaseInterface},
+    database::{Coin, DatabaseInterface},
     descriptors, DaemonControl, VERSION,
 };
 
-pub use crate::database::LabelItem;
+pub use crate::database::{CoinStatus, LabelItem};
 
 use utils::{
     deser_addr_assume_checked, deser_amount_from_sats, deser_fromstr, deser_hex, ser_amount,
@@ -289,11 +289,15 @@ impl DaemonControl {
         GetAddressResult::new(address)
     }
 
-    /// Get a list of all known coins.
-    pub fn list_coins(&self) -> ListCoinsResult {
+    /// Get a list of all known coins, optionally by status and/or outpoint.
+    pub fn list_coins(
+        &self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> ListCoinsResult {
         let mut db_conn = self.db.connection();
         let coins: Vec<ListCoinsEntry> = db_conn
-            .coins(CoinType::All)
+            .coins(statuses, outpoints)
             .into_values()
             .map(|coin| {
                 let Coin {
@@ -747,12 +751,15 @@ impl DaemonControl {
         let timelock =
             timelock.unwrap_or_else(|| self.config.main_descriptor.first_timelock_value());
         let height_delta: i32 = timelock.try_into().expect("Must fit, it's a u16");
-        let sweepable_coins = db_conn.coins(CoinType::Unspent).into_values().filter(|c| {
-            // We are interested in coins available at the *next* block
-            c.block_info
-                .map(|b| current_height + 1 >= b.height + height_delta)
-                .unwrap_or(false)
-        });
+        let sweepable_coins = db_conn
+            .coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+            .into_values()
+            .filter(|c| {
+                // We are interested in coins available at the *next* block
+                c.block_info
+                    .map(|b| current_height + 1 >= b.height + height_delta)
+                    .unwrap_or(false)
+            });
 
         // Fill-in the transaction inputs and PSBT inputs information. Record the value
         // that is fed to the transaction while doing so, to compute the fees afterward.

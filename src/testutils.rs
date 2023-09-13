@@ -1,7 +1,7 @@
 use crate::{
     bitcoin::{BitcoinInterface, Block, BlockChainTip, UTxO},
     config::{BitcoinConfig, Config},
-    database::{BlockInfo, Coin, CoinType, DatabaseConnection, DatabaseInterface, LabelItem},
+    database::{BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem},
     descriptors, DaemonHandle,
 };
 
@@ -195,19 +195,43 @@ impl DatabaseConnection for DummyDatabase {
         self.db.write().unwrap().change_index = index;
     }
 
-    fn coins(&mut self, coin_type: CoinType) -> HashMap<bitcoin::OutPoint, Coin> {
-        let coins = self.db.read().unwrap().coins.clone();
-        match coin_type {
-            CoinType::All => coins,
-            CoinType::Unspent => coins
-                .into_iter()
-                .filter(|(_, c)| c.spend_txid.is_none())
-                .collect(),
-            CoinType::Spent => coins
-                .into_iter()
-                .filter(|(_, c)| c.spend_txid.is_some())
-                .collect(),
-        }
+    fn coins(
+        &mut self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, Coin> {
+        self.db
+            .read()
+            .unwrap()
+            .coins
+            .clone()
+            .into_iter()
+            .filter_map(|(op, c)| {
+                if (c.block_info.is_none()
+                    && c.spend_txid.is_none()
+                    && statuses.contains(&CoinStatus::Unconfirmed))
+                    || (c.block_info.is_some()
+                        && c.spend_txid.is_none()
+                        && statuses.contains(&CoinStatus::Confirmed))
+                    || (c.spend_txid.is_some()
+                        && c.spend_block.is_none()
+                        && statuses.contains(&CoinStatus::Spending))
+                    || (c.spend_block.is_some() && statuses.contains(&CoinStatus::Spent))
+                    || statuses.is_empty()
+                {
+                    Some((op, c))
+                } else {
+                    None
+                }
+            })
+            .filter_map(|(op, c)| {
+                if outpoints.contains(&op) || outpoints.is_empty() {
+                    Some((op, c))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin> {

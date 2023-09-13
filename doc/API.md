@@ -81,14 +81,20 @@ This command does not take any parameter for now.
 
 ### `listcoins`
 
-List all our transaction outputs, regardless of their state (unspent or not).
+List all our transaction outputs, optionally filtered by status and/or outpoint.
 
 #### Request
 
-This command does not take any parameter for now.
+| Field          | Type              | Description                                                       |
+| -------------- | ----------------- | ----------------------------------------------------------------- |
+| `statuses`     | list of string    | List of statuses to filter coins by (see below).                  |
+| `outpoints`    | list of string    | List of outpoints to filter coins by, as `txid:vout`.             |
 
-| Field         | Type              | Description                                                 |
-| ------------- | ----------------- | ----------------------------------------------------------- |
+A coin may have one of the following four statuses:
+- `unconfirmed`: deposit transaction has not yet been included in a block and coin has not been included in a spend transaction
+- `confirmed`: deposit transaction has been included in a block and coin has not been included in a spend transaction
+- `spending`: coin (whose deposit transaction may not yet have been confirmed) has been included in an unconfirmed spend transaction
+- `spent`: coin has been included in a confirmed spend transaction
 
 #### Response
 

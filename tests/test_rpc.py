@@ -1,5 +1,6 @@
 import pytest
 import random
+import re
 import time
 
 from fixtures import *
@@ -44,19 +45,45 @@ def test_listcoins(lianad, bitcoind):
 
     # If we send a coin, we'll get a new entry. Note we monitor for unconfirmed
     # funds as well.
-    addr = lianad.rpc.getnewaddress()["address"]
-    txid = bitcoind.rpc.sendtoaddress(addr, 1)
+    addr_a = lianad.rpc.getnewaddress()["address"]
+    txid_a = bitcoind.rpc.sendtoaddress(addr_a, 1)
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
     res = lianad.rpc.listcoins()["coins"]
-    assert txid == res[0]["outpoint"][:64]
+    outpoint_a = res[0]["outpoint"]
+    assert txid_a == outpoint_a[:64]
     assert res[0]["amount"] == 1 * COIN
     assert res[0]["block_height"] is None
     assert res[0]["spend_info"] is None
 
+    assert len(lianad.rpc.listcoins(["confirmed", "spent", "spending"])["coins"]) == 0
+    assert (
+        lianad.rpc.listcoins()
+        == lianad.rpc.listcoins([], [outpoint_a])
+        == lianad.rpc.listcoins(["unconfirmed"])
+        == lianad.rpc.listcoins(["unconfirmed"], [outpoint_a])
+        == lianad.rpc.listcoins(["unconfirmed", "confirmed"])
+        == lianad.rpc.listcoins(["spent", "unconfirmed", "confirmed"])
+        == lianad.rpc.listcoins(["spent", "unconfirmed", "confirmed"], [outpoint_a])
+    )
     # If the coin gets confirmed, it'll be marked as such.
-    bitcoind.generate_block(1, wait_for_mempool=txid)
+    bitcoind.generate_block(1, wait_for_mempool=txid_a)
     block_height = bitcoind.rpc.getblockcount()
     wait_for(lambda: lianad.rpc.listcoins()["coins"][0]["block_height"] == block_height)
+
+    assert (
+        len(lianad.rpc.listcoins())
+        == len(lianad.rpc.listcoins(["confirmed"])["coins"])
+        == 1
+    )
+    assert (
+        lianad.rpc.listcoins()
+        == lianad.rpc.listcoins([], [outpoint_a])
+        == lianad.rpc.listcoins(["confirmed"])
+        == lianad.rpc.listcoins(["confirmed"], [outpoint_a])
+        == lianad.rpc.listcoins(["unconfirmed", "confirmed"])
+        == lianad.rpc.listcoins(["spent", "unconfirmed", "confirmed"])
+        == lianad.rpc.listcoins(["spent", "unconfirmed", "confirmed"], [outpoint_a])
+    )
 
     # Same if the coin gets spent.
     spend_tx = spend_coins(lianad, bitcoind, (res[0],))
@@ -65,6 +92,8 @@ def test_listcoins(lianad, bitcoind):
     spend_info = lianad.rpc.listcoins()["coins"][0]["spend_info"]
     assert spend_info["txid"] == spend_txid
     assert spend_info["height"] is None
+    assert len(lianad.rpc.listcoins(["spent"])["coins"]) == 0
+    assert len(lianad.rpc.listcoins(["spending"])["coins"]) == 1
 
     # And if this spending tx gets confirmed.
     bitcoind.generate_block(1, wait_for_mempool=spend_txid)
@@ -73,6 +102,220 @@ def test_listcoins(lianad, bitcoind):
     spend_info = lianad.rpc.listcoins()["coins"][0]["spend_info"]
     assert spend_info["txid"] == spend_txid
     assert spend_info["height"] == curr_height
+    assert len(lianad.rpc.listcoins(["unconfirmed", "confirmed"])["coins"]) == 0
+    assert (
+        lianad.rpc.listcoins()
+        == lianad.rpc.listcoins(["spent"])
+        == lianad.rpc.listcoins(["spent", "unconfirmed", "confirmed"])
+    )
+
+    # Add a second coin.
+    addr_b = lianad.rpc.getnewaddress()["address"]
+    txid_b = bitcoind.rpc.sendtoaddress(addr_b, 2)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 2)
+    res = lianad.rpc.listcoins(["unconfirmed"], [])["coins"]
+    outpoint_b = res[0]["outpoint"]
+
+    # We have one unconfirmed coin and one spent coin.
+    assert (
+        len(lianad.rpc.listcoins()["coins"])
+        == len(lianad.rpc.listcoins([], [outpoint_a, outpoint_b])["coins"])
+        == len(lianad.rpc.listcoins(["unconfirmed", "spent"])["coins"])
+        == len(
+            lianad.rpc.listcoins(["unconfirmed", "spent"], [outpoint_a, outpoint_b])[
+                "coins"
+            ]
+        )
+        == 2
+    )
+    assert (
+        lianad.rpc.listcoins([], [outpoint_b])
+        == lianad.rpc.listcoins(["unconfirmed"])
+        == lianad.rpc.listcoins(["unconfirmed"], [outpoint_b])
+        == lianad.rpc.listcoins(["unconfirmed", "confirmed"])
+        == lianad.rpc.listcoins(["spending", "unconfirmed", "confirmed"])
+        == lianad.rpc.listcoins(["spending", "unconfirmed", "confirmed"], [outpoint_b])
+    )
+
+    # Now confirm the second coin.
+    bitcoind.generate_block(1, wait_for_mempool=txid_b)
+    block_height = bitcoind.rpc.getblockcount()
+    wait_for(
+        lambda: lianad.rpc.listcoins([], [outpoint_b])["coins"][0]["block_height"]
+        == block_height
+    )
+
+    # We have one confirmed coin and one spent coin.
+    assert (
+        len(lianad.rpc.listcoins()["coins"])
+        == len(lianad.rpc.listcoins([], [outpoint_a, outpoint_b])["coins"])
+        == len(lianad.rpc.listcoins(["confirmed", "spent"])["coins"])
+        == len(
+            lianad.rpc.listcoins(["confirmed", "spent"], [outpoint_a, outpoint_b])[
+                "coins"
+            ]
+        )
+        == 2
+    )
+    assert (
+        lianad.rpc.listcoins([], [outpoint_b])
+        == lianad.rpc.listcoins(["confirmed"])
+        == lianad.rpc.listcoins(["confirmed"], [outpoint_b])
+        == lianad.rpc.listcoins(["unconfirmed", "confirmed"])
+        == lianad.rpc.listcoins(["unconfirmed", "confirmed", "spending"])
+        == lianad.rpc.listcoins(["unconfirmed", "confirmed", "spending"], [outpoint_b])
+    )
+
+    # Add a third coin.
+    addr_c = lianad.rpc.getnewaddress()["address"]
+    txid_c = bitcoind.rpc.sendtoaddress(addr_c, 3)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 3)
+    res = lianad.rpc.listcoins(["unconfirmed"], [])["coins"]
+    outpoint_c = res[0]["outpoint"]
+
+    # We have three different statuses: unconfirmed, confirmed and spent.
+    assert (
+        len(lianad.rpc.listcoins()["coins"])
+        == len(lianad.rpc.listcoins([], [outpoint_a, outpoint_b, outpoint_c])["coins"])
+        == len(lianad.rpc.listcoins(["unconfirmed", "confirmed", "spent"])["coins"])
+        == len(
+            lianad.rpc.listcoins(
+                ["unconfirmed", "confirmed", "spent"],
+                [outpoint_a, outpoint_b, outpoint_c],
+            )["coins"]
+        )
+        == 3
+    )
+    assert (
+        lianad.rpc.listcoins([], [outpoint_c])
+        == lianad.rpc.listcoins(["unconfirmed"])
+        == lianad.rpc.listcoins(["unconfirmed"], [outpoint_c])
+        == lianad.rpc.listcoins(["unconfirmed", "spending"])
+        == lianad.rpc.listcoins(["spending", "unconfirmed"])
+        == lianad.rpc.listcoins(["spending", "unconfirmed", "confirmed"], [outpoint_c])
+    )
+
+    # Spend third coin, even though it is still unconfirmed.
+    spend_tx = spend_coins(lianad, bitcoind, (res[0],))
+    spend_txid = get_txid(spend_tx)
+    wait_for(
+        lambda: lianad.rpc.listcoins([], [outpoint_c])["coins"][0]["spend_info"]
+        is not None
+    )
+
+    assert len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 0
+    assert (
+        len(lianad.rpc.listcoins()["coins"])
+        == len(lianad.rpc.listcoins([], [outpoint_a, outpoint_b, outpoint_c])["coins"])
+        == len(lianad.rpc.listcoins(["confirmed", "spending", "spent"])["coins"])
+        == len(
+            lianad.rpc.listcoins(
+                ["confirmed", "spending", "spent"], [outpoint_a, outpoint_b, outpoint_c]
+            )["coins"]
+        )
+        == 3
+    )
+    # The unconfirmed coin now has spending status.
+    assert (
+        lianad.rpc.listcoins([], [outpoint_c])
+        == lianad.rpc.listcoins(["spending"])
+        == lianad.rpc.listcoins(["spending"], [outpoint_c])
+        == lianad.rpc.listcoins(["spending", "unconfirmed"])
+        == lianad.rpc.listcoins(["spending", "unconfirmed"], [outpoint_c])
+    )
+
+    # Add a fourth coin.
+    addr_d = lianad.rpc.getnewaddress()["address"]
+    txid_d = bitcoind.rpc.sendtoaddress(addr_d, 4)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 4)
+    res = lianad.rpc.listcoins(["unconfirmed"], [])["coins"]
+    outpoint_d = res[0]["outpoint"]
+
+    # We now have all four statuses.
+    assert (
+        len(lianad.rpc.listcoins(["unconfirmed"])["coins"])
+        == len(lianad.rpc.listcoins(["confirmed"])["coins"])
+        == len(lianad.rpc.listcoins(["spending"])["coins"])
+        == len(lianad.rpc.listcoins(["spent"])["coins"])
+        == 1
+    )
+    assert (
+        len(lianad.rpc.listcoins()["coins"])
+        == len(
+            lianad.rpc.listcoins([], [outpoint_a, outpoint_b, outpoint_c, outpoint_d])[
+                "coins"
+            ]
+        )
+        == len(
+            lianad.rpc.listcoins(["unconfirmed", "confirmed", "spending", "spent"])[
+                "coins"
+            ]
+        )
+        == len(
+            lianad.rpc.listcoins(
+                ["unconfirmed", "confirmed", "spending", "spent"],
+                [outpoint_a, outpoint_b, outpoint_c, outpoint_d],
+            )["coins"]
+        )
+        == 4
+    )
+
+    # We can filter for specific statuses/outpoints.
+    assert (
+        sorted(
+            lianad.rpc.listcoins(["spending", "spent"])["coins"],
+            key=lambda c: c["outpoint"],
+        )
+        == sorted(
+            lianad.rpc.listcoins(["spending", "spent"], [outpoint_a, outpoint_c])[
+                "coins"
+            ],
+            key=lambda c: c["outpoint"],
+        )
+        == sorted(
+            lianad.rpc.listcoins(
+                ["unconfirmed", "confirmed", "spending", "spent"],
+                [outpoint_a, outpoint_c],
+            )["coins"],
+            key=lambda c: c["outpoint"],
+        )
+        == sorted(
+            lianad.rpc.listcoins(
+                ["spending", "spent"], [outpoint_a, outpoint_b, outpoint_c, outpoint_d]
+            )["coins"],
+            key=lambda c: c["outpoint"],
+        )
+    )
+
+    # Finally, check that we return errors for invalid parameter values.
+    for statuses, outpoints in [
+        (["fake_status"], []),
+        (["spent", "fake_status"], []),
+        (["fake_status", "fake_status_2"], []),
+        (["confirmed", "spending", "fake_status"], ["fake_outpoint"]),
+        (["fake_status"], [outpoint_a, outpoint_b]),
+    ]:
+        with pytest.raises(
+            RpcError,
+            match=re.escape(
+                "Invalid params: Invalid value \"fake_status\" in \\'statuses\\' parameter."
+            ),
+        ):
+            lianad.rpc.listcoins(statuses, outpoints)
+
+    for statuses, outpoints in [
+        ([], ["fake_outpoint"]),
+        ([], [outpoint_a, "fake_outpoint", outpoint_b]),
+        ([], [outpoint_a, "fake_outpoint", "fake_outpoint_2"]),
+        ([], [outpoint_a, outpoint_b, "fake_outpoint"]),
+    ]:
+        with pytest.raises(
+            RpcError,
+            match=re.escape(
+                "Invalid params: Invalid value \"fake_outpoint\" in \\'outpoints\\' parameter."
+            ),
+        ):
+            lianad.rpc.listcoins(statuses, outpoints)
 
 
 def test_jsonrpc_server(lianad, bitcoind):

@@ -1,6 +1,6 @@
 use crate::{
     bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
-    database::{Coin, CoinType, DatabaseConnection, DatabaseInterface},
+    database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
 };
 
@@ -34,7 +34,7 @@ fn update_coins(
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> UpdatedCoins {
     let network = db_conn.network();
-    let curr_coins = db_conn.coins(CoinType::All);
+    let curr_coins = db_conn.coins(&[], &[]);
     log::debug!("Current coins: {:?}", curr_coins);
 
     // Start by fetching newly received coins.

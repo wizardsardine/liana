@@ -1,5 +1,5 @@
 use crate::{
-    commands::LabelItem,
+    commands::{CoinStatus, LabelItem},
     jsonrpc::{Error, Params, Request, Response},
     DaemonControl,
 };
@@ -85,6 +85,55 @@ fn broadcast_spend(control: &DaemonControl, params: Params) -> Result<serde_json
     control.broadcast_spend(&txid)?;
 
     Ok(serde_json::json!({}))
+}
+
+fn list_coins(control: &DaemonControl, params: Option<Params>) -> Result<serde_json::Value, Error> {
+    let statuses_arg = params
+        .as_ref()
+        .and_then(|p| p.get(0, "statuses"))
+        .and_then(|statuses| statuses.as_array());
+    let statuses: Vec<CoinStatus> = if let Some(statuses_arg) = statuses_arg {
+        statuses_arg
+            .iter()
+            .map(|status_arg| {
+                status_arg
+                    .as_str()
+                    .and_then(CoinStatus::from_arg)
+                    .ok_or_else(|| {
+                        Error::invalid_params(format!(
+                            "Invalid value {} in 'statuses' parameter.",
+                            status_arg
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<CoinStatus>, Error>>()?
+    } else {
+        Vec::new()
+    };
+    let outpoints_arg = params
+        .as_ref()
+        .and_then(|p| p.get(1, "outpoints"))
+        .and_then(|op| op.as_array());
+    let outpoints: Vec<bitcoin::OutPoint> = if let Some(outpoints_arg) = outpoints_arg {
+        outpoints_arg
+            .iter()
+            .map(|op_arg| {
+                op_arg
+                    .as_str()
+                    .and_then(|op| bitcoin::OutPoint::from_str(op).map_or_else(|_| None, Some))
+                    .ok_or_else(|| {
+                        Error::invalid_params(format!(
+                            "Invalid value {} in 'outpoints' parameter.",
+                            op_arg
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<bitcoin::OutPoint>, Error>>()?
+    } else {
+        Vec::new()
+    };
+    let res = control.list_coins(&statuses, &outpoints);
+    Ok(serde_json::json!(&res))
 }
 
 fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
@@ -258,7 +307,10 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
         }
         "getinfo" => serde_json::json!(&control.get_info()),
         "getnewaddress" => serde_json::json!(&control.get_new_address()),
-        "listcoins" => serde_json::json!(&control.list_coins()),
+        "listcoins" => {
+            let params = req.params;
+            list_coins(control, params)?
+        }
         "listconfirmed" => {
             let params = req.params.ok_or_else(|| {
                 Error::invalid_params(

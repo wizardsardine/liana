@@ -85,7 +85,11 @@ pub trait DatabaseConnection {
     ) -> Option<(bip32::ChildNumber, bool)>;
 
     /// Get all our coins, past or present, spent or not.
-    fn coins(&mut self, coin_type: CoinType) -> HashMap<bitcoin::OutPoint, Coin>;
+    fn coins(
+        &mut self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, Coin>;
 
     /// List coins that are being spent and whose spending transaction is still unconfirmed.
     fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
@@ -192,8 +196,12 @@ impl DatabaseConnection for SqliteConn {
         self.complete_wallet_rescan()
     }
 
-    fn coins(&mut self, coin_type: CoinType) -> HashMap<bitcoin::OutPoint, Coin> {
-        self.coins(coin_type)
+    fn coins(
+        &mut self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, Coin> {
+        self.coins(statuses, outpoints)
             .into_iter()
             .map(|db_coin| (db_coin.outpoint, db_coin.into()))
             .collect()
@@ -348,11 +356,29 @@ impl Coin {
     }
 }
 
+/// Possible (mutually exclusive) status of a coin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CoinType {
-    All,
-    Unspent,
+pub enum CoinStatus {
+    /// Has not yet been included in a block and has no spend transaction.
+    Unconfirmed,
+    /// Has been included in a block and has no spend transaction.
+    Confirmed,
+    /// Has an unconfirmed spend transaction, but coin itself may not yet have been included in a block.
+    Spending,
+    /// Has a confirmed spend transaction.
     Spent,
+}
+
+impl CoinStatus {
+    pub fn from_arg(s: &str) -> Option<CoinStatus> {
+        match s {
+            "unconfirmed" => Some(CoinStatus::Unconfirmed),
+            "confirmed" => Some(CoinStatus::Confirmed),
+            "spending" => Some(CoinStatus::Spending),
+            "spent" => Some(CoinStatus::Spent),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
