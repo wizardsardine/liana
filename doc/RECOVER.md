@@ -144,7 +144,7 @@ the simplest way of recovering from disaster.
 We'll use the `sendall` command to sweep all the funds of the wallet to the pre-defined address
 using a specific feerate. We'll use `20` sats/vbyte but use anything that fits.
 ```shell 
-bitcoin-cli -signet -rpcwallet=liana_recovery -named sendall recipients='["tb1qed7lyessqcecav5uxultf6zc8nefd9kalgaa7dwrglcc6ld5vd3qe20spe"]' 20
+bitcoin-cli -signet -rpcwallet=liana_recovery -named sendall recipients='["tb1qed7lyessqcecav5uxultf6zc8nefd9kalgaa7dwrglcc6ld5vd3qe20spe"]' fee_rate=20
 ```
 Output:
 ```
