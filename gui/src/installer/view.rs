@@ -1064,15 +1064,17 @@ pub fn start_internal_bitcoind<'a>(
                         )
                     }
                 })
-            } else if let Some(InstallState::Finished) = install_state {
-                Some(Container::new(
-                    Row::new()
-                        .spacing(10)
-                        .align_items(Alignment::Center)
-                        .push(text("Starting...")),
-                ))
             } else {
-                Some(Container::new(Space::with_height(Length::Fixed(25.0))))
+                match (install_state, exe_path) {
+                    // We have either just installed bitcoind or it was already installed.
+                    (Some(InstallState::Finished), _) | (None, Some(_)) => Some(Container::new(
+                        Row::new()
+                            .spacing(10)
+                            .align_items(Alignment::Center)
+                            .push(text("Starting...")),
+                    )),
+                    _ => Some(Container::new(Space::with_height(Length::Fixed(25.0)))),
+                }
             })
             .spacing(50)
             .push(
