@@ -6,7 +6,7 @@
 This document is a short set of instructions for trying out Liana on Bitcoin signet, a test network using value-less bitcoins. It does not attempt to
 give any nuance, details or describe alternative configurations.
 
-This guide will make use Liana as a "hot wallet", and use the "Liana managed" *bitcoind* option.
+This guide will make use Liana as a "hot wallet", and use the "Liana managed" `bitcoind` option.
 You can also connect your Ledger or SpecterDIY hardware signer if you have some at hand (and maybe by the time you read this guide, Bitbox, Coldcard and Jade - integration is coming soon).
 If you'd like to try out Liana using emulators of
 hardware signing device you can use the [Specter
