@@ -389,7 +389,7 @@ pub fn import_descriptor<'a>(
     let col_descriptor = Column::new()
         .push(text("Descriptor:").bold())
         .push(
-            form::Form::new("Descriptor", imported_descriptor, |msg| {
+            form::Form::new_trimmed("Descriptor", imported_descriptor, |msg| {
                 Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(msg))
             })
             .warning("Incompatible descriptor.")
@@ -808,7 +808,7 @@ pub fn define_bitcoin<'a>(
     let col_address = Column::new()
         .push(text("Address:").bold())
         .push(
-            form::Form::new("Address", address, |msg| {
+            form::Form::new_trimmed("Address", address, |msg| {
                 Message::DefineBitcoind(message::DefineBitcoind::AddressEdited(msg))
             })
             .warning("Please enter correct address")
@@ -820,7 +820,7 @@ pub fn define_bitcoin<'a>(
     let col_cookie = Column::new()
         .push(text("Cookie path:").bold())
         .push(
-            form::Form::new("Cookie path", cookie_path, |msg| {
+            form::Form::new_trimmed("Cookie path", cookie_path, |msg| {
                 Message::DefineBitcoind(message::DefineBitcoind::CookiePathEdited(msg))
             })
             .warning("Please enter correct path")
@@ -1467,7 +1467,7 @@ pub fn edit_key_modal<'a>(
                         .push(
                             Row::new()
                                 .push(
-                                    form::Form::new("Extended public key", form_xpub, |msg| {
+                                    form::Form::new_trimmed("Extended public key", form_xpub, |msg| {
                                         Message::DefineDescriptor(
                                             message::DefineDescriptor::KeyModal(
                                                 message::ImportKeyModal::XPubEdited(msg),
@@ -1581,7 +1581,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
             Row::new()
                 .push(
                     Container::new(
-                        form::Form::new("ex: 1000", sequence, |v| {
+                        form::Form::new_trimmed("ex: 1000", sequence, |v| {
                             Message::DefineDescriptor(message::DefineDescriptor::SequenceModal(
                                 message::SequenceModal::SequenceEdited(v),
                             ))

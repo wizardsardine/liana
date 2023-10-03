@@ -27,7 +27,7 @@ pub fn import_psbt_view<'a>(
                 .spacing(10)
                 .push(text("Insert PSBT:").bold())
                 .push(
-                    form::Form::new("PSBT", imported, move |msg| {
+                    form::Form::new_trimmed("PSBT", imported, move |msg| {
                         Message::ImportSpend(ImportSpendMessage::PsbtEdited(msg))
                     })
                     .warning("Please enter a base64 encoded PSBT")

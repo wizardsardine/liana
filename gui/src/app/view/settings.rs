@@ -247,7 +247,7 @@ pub fn bitcoind_edit<'a>(
             Column::new()
                 .push(text("Cookie file path:").bold().small())
                 .push(
-                    form::Form::new("Cookie file path", cookie_path, |value| {
+                    form::Form::new_trimmed("Cookie file path", cookie_path, |value| {
                         SettingsEditMessage::FieldEdited("cookie_file_path", value)
                     })
                     .warning("Please enter a valid filesystem path")
@@ -260,7 +260,7 @@ pub fn bitcoind_edit<'a>(
             Column::new()
                 .push(text("Socket address:").bold().small())
                 .push(
-                    form::Form::new("Socket address:", addr, |value| {
+                    form::Form::new_trimmed("Socket address:", addr, |value| {
                         SettingsEditMessage::FieldEdited("socket_address", value)
                     })
                     .warning("Please enter a valid address")
@@ -456,7 +456,7 @@ pub fn rescan<'a>(
                             Row::new()
                                 .push(text("Year:").bold().small())
                                 .push(
-                                    form::Form::new("2022", year, |value| {
+                                    form::Form::new_trimmed("2022", year, |value| {
                                         SettingsEditMessage::FieldEdited("rescan_year", value)
                                     })
                                     .size(20)
@@ -464,7 +464,7 @@ pub fn rescan<'a>(
                                 )
                                 .push(text("Month:").bold().small())
                                 .push(
-                                    form::Form::new("12", month, |value| {
+                                    form::Form::new_trimmed("12", month, |value| {
                                         SettingsEditMessage::FieldEdited("rescan_month", value)
                                     })
                                     .size(20)
@@ -472,7 +472,7 @@ pub fn rescan<'a>(
                                 )
                                 .push(text("Day:").bold().small())
                                 .push(
-                                    form::Form::new("31", day, |value| {
+                                    form::Form::new_trimmed("31", day, |value| {
                                         SettingsEditMessage::FieldEdited("rescan_day", value)
                                     })
                                     .size(20)
