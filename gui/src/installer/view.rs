@@ -302,7 +302,7 @@ pub fn define_descriptor<'a>(
             .push(Space::with_height(Length::Fixed(20.0)))
             .spacing(50),
         false,
-        None,
+        Some(Message::Previous),
     )
 }
 
@@ -422,7 +422,7 @@ pub fn import_descriptor<'a>(
             .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
             .spacing(50),
         true,
-        None,
+        Some(Message::Previous),
     )
 }
 
@@ -630,7 +630,7 @@ pub fn participate_xpub<'a>(
             })
             .spacing(50),
         true,
-        None,
+        Some(Message::Previous),
     )
 }
 
@@ -722,7 +722,7 @@ pub fn register_descriptor<'a>(
             })
             .spacing(50),
         true,
-        None,
+        Some(Message::Previous),
     )
 }
 
@@ -790,7 +790,7 @@ pub fn backup_descriptor<'a>(
             })
             .spacing(50),
         true,
-        None,
+        Some(Message::Previous),
     )
 }
 
@@ -877,7 +877,7 @@ pub fn define_bitcoin<'a>(
             )
             .spacing(50),
         true,
-        None,
+        Some(Message::Previous),
     )
 }
 
@@ -971,7 +971,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                 ),
         ),
         true,
-        None,
+        Some(Message::Previous),
     )
 }
 
@@ -1093,6 +1093,11 @@ pub fn install<'a>(
     config_path: Option<&std::path::PathBuf>,
     warning: Option<&'a String>,
 ) -> Element<'a, Message> {
+    let prev_msg = if !generating && warning.is_some() {
+        Some(Message::Previous)
+    } else {
+        None
+    };
     layout(
         progress,
         "Finalize installation",
@@ -1114,7 +1119,7 @@ pub fn install<'a>(
             .spacing(10)
             .width(Length::Fill),
         true,
-        None,
+        prev_msg,
     )
 }
 
@@ -1624,7 +1629,7 @@ pub fn backup_mnemonic<'a>(
             })
             .spacing(50),
         true,
-        None,
+        Some(Message::Previous),
     )
 }
 
@@ -1727,7 +1732,7 @@ pub fn recover_mnemonic<'a>(
             })
             .spacing(50),
         true,
-        None,
+        Some(Message::Previous),
     )
 }
 
@@ -1738,6 +1743,10 @@ fn layout<'a>(
     padding_left: bool,
     previous_message: Option<Message>,
 ) -> Element<'a, Message> {
+    let mut prev_button = button::transparent(Some(icon::previous_icon()), "Previous");
+    if let Some(msg) = previous_message {
+        prev_button = prev_button.on_press(msg);
+    }
     Container::new(scrollable(
         Column::new()
             .width(Length::Fill)
@@ -1746,12 +1755,9 @@ fn layout<'a>(
                 Row::new()
                     .align_items(Alignment::Center)
                     .push(
-                        Container::new(
-                            button::transparent(Some(icon::previous_icon()), "Previous")
-                                .on_press(previous_message.unwrap_or(Message::Previous)),
-                        )
-                        .width(Length::FillPortion(2))
-                        .center_x(),
+                        Container::new(prev_button)
+                            .width(Length::FillPortion(2))
+                            .center_x(),
                     )
                     .push(Container::new(h3(title)).width(Length::FillPortion(8)))
                     .push(
