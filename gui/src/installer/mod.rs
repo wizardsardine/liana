@@ -120,7 +120,6 @@ impl Installer {
     }
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
-        let hot_signer_fingerprint = self.signer.lock().unwrap().fingerprint();
         match message {
             Message::CreateWallet => {
                 self.steps = vec![
@@ -132,7 +131,7 @@ impl Installer {
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&self.context.data_dir).into(),
                     DefineBitcoind::new().into(),
-                    Final::new(hot_signer_fingerprint).into(),
+                    Final::new().into(),
                 ];
                 self.next()
             }
@@ -147,7 +146,7 @@ impl Installer {
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&self.context.data_dir).into(),
                     DefineBitcoind::new().into(),
-                    Final::new(hot_signer_fingerprint).into(),
+                    Final::new().into(),
                 ];
                 self.next()
             }
@@ -160,7 +159,7 @@ impl Installer {
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&self.context.data_dir).into(),
                     DefineBitcoind::new().into(),
-                    Final::new(hot_signer_fingerprint).into(),
+                    Final::new().into(),
                 ];
                 self.next()
             }
