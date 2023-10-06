@@ -127,11 +127,16 @@ def test_multipath(lianad_multipath, bitcoind):
     reco_psbt = PSBT.from_base64(res["psbt"])
     txid = reco_psbt.tx.txid().hex()
 
+    # NOTE: this test was commented out due to the introduced restriction to not include
+    # the BIP32 derivations for other spending paths in PSBT inputs to support the Bitbox2
+    # signing device (and most likely others).
+    # TODO: reintroduce these tests once we get rid of this restriction.
+
     # Try to sign with the keys for the next recovery spending path, it'll fail.
-    signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {20: range(3)})
-    lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
-    with pytest.raises(RpcError, match="Failed to finalize"):
-        lianad_multipath.rpc.broadcastspend(txid)
+    # signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {20: range(3)})
+    # lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
+    # with pytest.raises(RpcError, match="Failed to finalize"):
+    # lianad_multipath.rpc.broadcastspend(txid)
 
     # Try to sign with the right keys but only two of them, it'll fail.
     signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {10: range(2)})
@@ -144,52 +149,54 @@ def test_multipath(lianad_multipath, bitcoind):
     lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
     lianad_multipath.rpc.broadcastspend(txid)
 
+    # NOTE: commented out for the same reason as above.
+
     # Receive 3 more coins and make the second recovery path (20 blocks) available.
-    txids = []
-    for _ in range(3):
-        addr = lianad_multipath.rpc.getnewaddress()["address"]
-        txids.append(bitcoind.rpc.sendtoaddress(addr, 0.42))
-    bitcoind.generate_block(20, wait_for_mempool=txids)
-    wait_for(
-        lambda: lianad_multipath.rpc.getinfo()["block_height"]
-        == bitcoind.rpc.getblockcount()
-    )
+    # txids = []
+    # for _ in range(3):
+    # addr = lianad_multipath.rpc.getnewaddress()["address"]
+    # txids.append(bitcoind.rpc.sendtoaddress(addr, 0.42))
+    # bitcoind.generate_block(20, wait_for_mempool=txids)
+    # wait_for(
+    # lambda: lianad_multipath.rpc.getinfo()["block_height"]
+    # == bitcoind.rpc.getblockcount()
+    # )
 
     # We can create a recovery transaction for an earlier timelock.
-    lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
+    # lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
 
     # Sweep all coins through the second recovery path (that is available after 20 blocks).
     # It needs 3 signatures out of 5 keys.
-    res = lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
-    reco_psbt = PSBT.from_base64(res["psbt"])
-    txid = reco_psbt.tx.txid().hex()
+    # res = lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
+    # reco_psbt = PSBT.from_base64(res["psbt"])
+    # txid = reco_psbt.tx.txid().hex()
 
     # We can sign with any keys for the second recovery path (we need only 1 out of 10)
-    signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {20: [8]})
-    lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
-    lianad_multipath.rpc.broadcastspend(txid)
+    # signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {20: [8]})
+    # lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
+    # lianad_multipath.rpc.broadcastspend(txid)
 
     # Now do this again but with signing using keys for the first recovery path.
     # Receive 3 more coins and make the second recovery path (20 blocks) available. Note this
     # is possible since the CSV checks the nSequence is >= to the value, not ==.
-    txids = []
-    for _ in range(3):
-        addr = lianad_multipath.rpc.getnewaddress()["address"]
-        txids.append(bitcoind.rpc.sendtoaddress(addr, 0.398))
-    bitcoind.generate_block(20, wait_for_mempool=txids)
-    wait_for(
-        lambda: lianad_multipath.rpc.getinfo()["block_height"]
-        == bitcoind.rpc.getblockcount()
-    )
+    # txids = []
+    # for _ in range(3):
+    # addr = lianad_multipath.rpc.getnewaddress()["address"]
+    # txids.append(bitcoind.rpc.sendtoaddress(addr, 0.398))
+    # bitcoind.generate_block(20, wait_for_mempool=txids)
+    # wait_for(
+    # lambda: lianad_multipath.rpc.getinfo()["block_height"]
+    # == bitcoind.rpc.getblockcount()
+    # )
     # Sweep all coins through the second recovery path (that is available after 20 blocks).
     # It needs 3 signatures out of 5 keys.
-    res = lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
-    reco_psbt = PSBT.from_base64(res["psbt"])
-    txid = reco_psbt.tx.txid().hex()
+    # res = lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
+    # reco_psbt = PSBT.from_base64(res["psbt"])
+    # txid = reco_psbt.tx.txid().hex()
     # We can sign with keys for the first recovery path (we need 3 out of 5)
-    signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {10: range(2, 5)})
-    lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
-    lianad_multipath.rpc.broadcastspend(txid)
+    # signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {10: range(2, 5)})
+    # lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
+    # lianad_multipath.rpc.broadcastspend(txid)
 
 
 def test_coinbase_deposit(lianad, bitcoind):
