@@ -1,4 +1,5 @@
 from bip32 import BIP32
+from bip32.utils import _pubkey_to_fingerprint
 from bip380.descriptors import Descriptor
 from concurrent import futures
 from test_framework.bitcoind import Bitcoind
@@ -115,6 +116,10 @@ def bitcoind(directory):
     bitcoind.cleanup()
 
 
+def xpub_fingerprint(hd):
+    return _pubkey_to_fingerprint(hd.pubkey).hex()
+
+
 @pytest.fixture
 def lianad(bitcoind, directory):
     datadir = os.path.join(directory, "lianad")
@@ -122,13 +127,15 @@ def lianad(bitcoind, directory):
     bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
 
     signer = SingleSigner()
-    primary_xpub, recovery_xpub = (
-        signer.primary_hd.get_xpub(),
-        signer.recovery_hd.get_xpub(),
+    (prim_fingerprint, primary_xpub), (reco_fingerprint, recovery_xpub) = (
+        (xpub_fingerprint(signer.primary_hd), signer.primary_hd.get_xpub()),
+        (xpub_fingerprint(signer.recovery_hd), signer.recovery_hd.get_xpub()),
     )
     csv_value = 10
+    # NOTE: origins are the actual xpub themselves which is incorrect but make it
+    # possible to differentiate them.
     main_desc = Descriptor.from_str(
-        f"wsh(or_d(pk([aabbccdd]{primary_xpub}/<0;1>/*),and_v(v:pkh([aabbccdd]{recovery_xpub}/<0;1>/*),older({csv_value}))))"
+        f"wsh(or_d(pk([{prim_fingerprint}]{primary_xpub}/<0;1>/*),and_v(v:pkh([{reco_fingerprint}]{recovery_xpub}/<0;1>/*),older({csv_value}))))"
     )
 
     lianad = Lianad(
@@ -152,7 +159,10 @@ def lianad(bitcoind, directory):
 def multi_expression(thresh, keys):
     exp = f"multi({thresh},"
     for i, key in enumerate(keys):
-        exp += f"[aabbccdd]{key.get_xpub()}/<0;1>/*"
+        # NOTE: origins are the actual xpub themselves which is incorrect but make it
+        # possible to differentiate them.
+        fingerprint = xpub_fingerprint(key)
+        exp += f"[{fingerprint}]{key.get_xpub()}/<0;1>/*"
         if i != len(keys) - 1:
             exp += ","
     return exp + ")"
