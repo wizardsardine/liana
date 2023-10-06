@@ -66,7 +66,7 @@ pub fn recovery<'a>(
                     .push(text("Destination").bold())
                     .push(
                         Container::new(
-                            form::Form::new("Address", address, move |msg| {
+                            form::Form::new_trimmed("Address", address, move |msg| {
                                 Message::CreateSpend(CreateSpendMessage::RecipientEdited(
                                     0, "address", msg,
                                 ))
@@ -81,7 +81,7 @@ pub fn recovery<'a>(
                     .push(text("Feerate").bold())
                     .push(
                         Container::new(
-                            form::Form::new("42 (sats/vbyte)", feerate, move |msg| {
+                            form::Form::new_trimmed("42 (sats/vbyte)", feerate, move |msg| {
                                 Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
                             })
                             .warning("Invalid feerate")

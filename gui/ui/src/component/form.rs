@@ -44,6 +44,24 @@ where
         }
     }
 
+    /// Creates a new [`Form`] that trims input values before applying the `on_change` function.
+    ///
+    /// It expects:
+    /// - a placeholder
+    /// - the current value
+    /// - a function that produces a message when the [`Form`] changes
+    pub fn new_trimmed<F>(placeholder: &str, value: &Value<String>, on_change: F) -> Self
+    where
+        F: 'static + Fn(String) -> Message,
+    {
+        Self {
+            input: text_input::TextInput::new(placeholder, &value.value)
+                .on_input(move |s| on_change(s.trim().to_string())),
+            warning: None,
+            valid: value.valid,
+        }
+    }
+
     /// Sets the [`Form`] with a warning message
     pub fn warning(mut self, warning: &'a str) -> Self {
         self.warning = Some(warning);

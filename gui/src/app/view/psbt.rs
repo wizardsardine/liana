@@ -770,7 +770,7 @@ pub fn update_spend_view<'a>(
                         .spacing(10)
                         .push(text("Insert updated PSBT:").bold())
                         .push(
-                            form::Form::new("PSBT", updated, move |msg| {
+                            form::Form::new_trimmed("PSBT", updated, move |msg| {
                                 Message::ImportSpend(ImportSpendMessage::PsbtEdited(msg))
                             })
                             .warning("Please enter the correct base64 encoded PSBT")

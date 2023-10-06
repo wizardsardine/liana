@@ -141,9 +141,13 @@ pub fn create_spend_tx<'a>(
                             .push(Container::new(p1_bold("Feerate")).padding(10))
                             .spacing(10)
                             .push(
-                                form::Form::new("42 (in sats/vbyte)", feerate, move |msg| {
-                                    Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
-                                })
+                                form::Form::new_trimmed(
+                                    "42 (in sats/vbyte)",
+                                    feerate,
+                                    move |msg| {
+                                        Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
+                                    },
+                                )
                                 .warning("Invalid feerate")
                                 .size(20)
                                 .padding(10),
@@ -265,7 +269,7 @@ pub fn recipient_view<'a>(
                             .width(Length::Fixed(80.0)),
                     )
                     .push(
-                        form::Form::new("Address", address, move |msg| {
+                        form::Form::new_trimmed("Address", address, move |msg| {
                             CreateSpendMessage::RecipientEdited(index, "address", msg)
                         })
                         .warning("Invalid address (maybe it is for another network?)")
@@ -284,7 +288,7 @@ pub fn recipient_view<'a>(
                             .width(Length::Fixed(80.0)),
                     )
                     .push(
-                        form::Form::new("0.001 (in BTC)", amount, move |msg| {
+                        form::Form::new_trimmed("0.001 (in BTC)", amount, move |msg| {
                             CreateSpendMessage::RecipientEdited(index, "amount", msg)
                         })
                         .warning(
