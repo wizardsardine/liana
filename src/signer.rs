@@ -362,9 +362,9 @@ mod tests {
         let secp = secp256k1::Secp256k1::new();
         let network = bitcoin::Network::Bitcoin;
 
-        // Create a Liana descriptor with as primary path a 2-of-3 with two hot signers (2 keys are
-        // on the same signer) and a single hot signer as recovery path. Use various random
-        // derivation paths.
+        // Create a Liana descriptor with as primary path a 2-of-3 with three hot signers and a
+        // single hot signer as recovery path. (The recovery path signer is also used in the
+        // primary path.) Use various random derivation paths.
         let (prim_signer_a, prim_signer_b, recov_signer) = (
             HotSigner::generate(network).unwrap(),
             HotSigner::generate(network).unwrap(),
@@ -395,9 +395,9 @@ mod tests {
             wildcard: Wildcard::Unhardened,
         });
         let origin_der = bip32::DerivationPath::from_str("m/18'/25'").unwrap();
-        let xkey = prim_signer_b.xpub_at(&origin_der, &secp);
+        let xkey = recov_signer.xpub_at(&origin_der, &secp);
         let prim_key_c = DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
-            origin: Some((prim_signer_b.fingerprint(&secp), origin_der)),
+            origin: Some((recov_signer.fingerprint(&secp), origin_der)),
             xkey,
             derivation_paths: DerivPaths::new(vec![
                 bip32::DerivationPath::from_str("m/0").unwrap(),
@@ -466,15 +466,14 @@ mod tests {
             outputs: Vec::new(),
         };
 
-        // Sign the PSBT with the two primary signers. The second signer will sign for the two keys
+        // Sign the PSBT with the two primary signers. The recovery signer will sign for the two keys
         // that it manages.
-        // We can also add a signature for the recovery key with the recovery signer.
         let psbt = dummy_psbt.clone();
         assert!(psbt.inputs[0].partial_sigs.is_empty());
         let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 1);
         let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
-        assert_eq!(psbt.inputs[0].partial_sigs.len(), 3);
+        assert_eq!(psbt.inputs[0].partial_sigs.len(), 2);
         let psbt = recov_signer.sign_psbt(psbt, &secp).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 4);
 
@@ -490,7 +489,7 @@ mod tests {
         let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 1);
         let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
-        assert_eq!(psbt.inputs[0].partial_sigs.len(), 3);
+        assert_eq!(psbt.inputs[0].partial_sigs.len(), 2);
         let psbt = recov_signer.sign_psbt(psbt, &secp).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 4);
 
@@ -538,7 +537,7 @@ mod tests {
         assert!(psbt
             .inputs
             .iter()
-            .all(|psbt_in| psbt_in.partial_sigs.len() == 3));
+            .all(|psbt_in| psbt_in.partial_sigs.len() == 2));
         let psbt = recov_signer.sign_psbt(psbt, &secp).unwrap();
         assert!(psbt
             .inputs
@@ -573,7 +572,7 @@ mod tests {
         psbt.inputs[0].bip32_derivation.clear();
         let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
         assert!(psbt.inputs[0].partial_sigs.is_empty());
-        assert_eq!(psbt.inputs[1].partial_sigs.len(), 2);
+        assert_eq!(psbt.inputs[1].partial_sigs.len(), 1);
     }
 
     #[test]
