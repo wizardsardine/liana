@@ -37,6 +37,24 @@ def test_getaddress(lianad):
     assert res["address"] != lianad.rpc.getnewaddress()["address"]
 
 
+def test_listadresses(lianad):
+    list = lianad.rpc.listaddresses(2, 5)
+    list2 = lianad.rpc.listaddresses(start_index=2, count=5)
+    assert list == list2
+    assert "addresses" in list
+    addr = list["addresses"]
+    assert addr[0]["index"] == 2
+    assert addr[-1]["index"] == 6
+
+    list3 = lianad.rpc.listaddresses()  # start_index = 0, receive_index = 0
+    _ = lianad.rpc.getnewaddress()      # start_index = 0, receive_index = 1
+    _ = lianad.rpc.getnewaddress()      # start_index = 0, receive_index = 2
+    list4 = lianad.rpc.listaddresses()
+    assert len(list4["addresses"]) == len(list3["addresses"]) + 2 == 2
+    list5 = lianad.rpc.listaddresses(0)
+    assert list4 == list5
+
+
 def test_listcoins(lianad, bitcoind):
     # Initially empty
     res = lianad.rpc.listcoins()

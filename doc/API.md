@@ -7,9 +7,10 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 
 | Command                                                     | Description                                                   |
 | ----------------------------------------------------------- | ----------------------------------------------------          |
-| [`stop`](#stop)                                             | Stops liana daemon                                     |
+| [`stop`](#stop)                                             | Stops liana daemon                                            |
 | [`getinfo`](#getinfo)                                       | Get general information about the daemon                      |
 | [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                                   |
+| [`listaddresses`](#listaddresses)                           | List addresses given start_index and count                     |
 | [`listcoins`](#listcoins)                                   | List all wallet transaction outputs.                          |
 | [`createspend`](#createspend)                               | Create a new Spend transaction                                |
 | [`updatespend`](#updatespend)                               | Store a created Spend transaction                             |
@@ -77,6 +78,28 @@ This command does not take any parameter for now.
 | Field         | Type   | Description        |
 | ------------- | ------ | ------------------ |
 | `address`     | string | A Bitcoin address  |
+
+
+### `listaddresses`
+
+List receive and change addresses given start_index and count. Both arguments are optional.
+Default value for `start_index` is 0.
+If no value is passed for `count` the maximum generated index between receive and change is selected.
+
+#### Request
+
+| Field         | Type              | Description                                                 |
+| ------------- | ----------------- | ----------------------------------------------------------- |
+| `start_index` | integer(optional) | Index of the first address to list                          |
+| `count`       | integer(optional) | Number of addresses to list                                 |
+
+#### Response
+
+| Field         | Type              | Description                                                 |
+| ------------- | ----------------- | ----------------------------------------------------------- |
+| `index`       | integer           | Derivation index                                            |
+| `receive`     | string            | Receive address                                             |
+| `change`      | string            | Change address                                              |
 
 
 ### `listcoins`

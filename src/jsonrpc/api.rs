@@ -136,6 +136,26 @@ fn list_coins(control: &DaemonControl, params: Option<Params>) -> Result<serde_j
     Ok(serde_json::json!(&res))
 }
 
+fn list_addresses(
+    control: &DaemonControl,
+    params: Option<Params>,
+) -> Result<serde_json::Value, Error> {
+    let start_index: Option<u32> = params
+        .as_ref()
+        .and_then(|p| p.get(0, "start_index"))
+        .and_then(|i| i.as_u64())
+        .and_then(|i| i.try_into().ok());
+
+    let count: Option<u32> = params
+        .as_ref()
+        .and_then(|p| p.get(1, "count"))
+        .and_then(|c| c.as_u64())
+        .and_then(|i| i.try_into().ok());
+
+    let res = &control.list_addresses(start_index, count)?;
+    Ok(serde_json::json!(&res))
+}
+
 fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let start: u32 = params
         .get(0, "start")
@@ -310,6 +330,10 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
         "listcoins" => {
             let params = req.params;
             list_coins(control, params)?
+        }
+        "listaddresses" => {
+            let params = req.params;
+            list_addresses(control, params)?
         }
         "listconfirmed" => {
             let params = req.params.ok_or_else(|| {
