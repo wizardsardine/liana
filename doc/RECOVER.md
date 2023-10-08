@@ -93,7 +93,7 @@ while as it's going to be rescanning the block chain. The farther in the past th
 longer it will take. If the command times out you will be able to inspect the progress using the
 `getwalletinfo` command.
 ```shell
-bitcoin-cli -signet -rpcwallet=liana importdescriptors "[{\"desc\": \"wsh(or_d(pk([a5c6b76e/48'/1'/0'/2']tpubDF5861hj6vR3iJr3aPjGJz4rNbqDCRujQ21mczzKT5SiedaQqNVgHC8HT9ceyxvMFRoPMx4P6HAcL3NZrUPhRUbwCyj3TKSa64bAfnE3sLh/0/*),and_v(v:pkh([c477fd13/48'/1'/0'/2']tpubDFn7iPbFqGrTQ2aRACNsUK1MXQR4Z6dYfU2nD1WA9ifSaia642j3Wah4n5pBUEpERNWGJsyv3Dv5qwBabC9TLQrwSboKzukw9wmurGu7XVH/0/*),older(3))))#nhtumqkr\", \"range\": [0,10000], \"timestamp\": 1682920310, \"active\": true, \"internal\":false}, {\"desc\": \"wsh(or_d(pk([a5c6b76e/48'/1'/0'/2']tpubDF5861hj6vR3iJr3aPjGJz4rNbqDCRujQ21mczzKT5SiedaQqNVgHC8HT9ceyxvMFRoPMx4P6HAcL3NZrUPhRUbwCyj3TKSa64bAfnE3sLh/1/*),and_v(v:pkh([c477fd13/48'/1'/0'/2']tpubDFn7iPbFqGrTQ2aRACNsUK1MXQR4Z6dYfU2nD1WA9ifSaia642j3Wah4n5pBUEpERNWGJsyv3Dv5qwBabC9TLQrwSboKzukw9wmurGu7XVH/1/*),older(3))))#vpa5k5p6\", \"range\": [0,10000], \"timestamp\": 1682920310, \"active\": true, \"internal\":true}]"
+bitcoin-cli -signet -rpcwallet=liana_recovery importdescriptors "[{\"desc\": \"wsh(or_d(pk([a5c6b76e/48'/1'/0'/2']tpubDF5861hj6vR3iJr3aPjGJz4rNbqDCRujQ21mczzKT5SiedaQqNVgHC8HT9ceyxvMFRoPMx4P6HAcL3NZrUPhRUbwCyj3TKSa64bAfnE3sLh/0/*),and_v(v:pkh([c477fd13/48'/1'/0'/2']tpubDFn7iPbFqGrTQ2aRACNsUK1MXQR4Z6dYfU2nD1WA9ifSaia642j3Wah4n5pBUEpERNWGJsyv3Dv5qwBabC9TLQrwSboKzukw9wmurGu7XVH/0/*),older(3))))#nhtumqkr\", \"range\": [0,10000], \"timestamp\": 1682920310, \"active\": true, \"internal\":false}, {\"desc\": \"wsh(or_d(pk([a5c6b76e/48'/1'/0'/2']tpubDF5861hj6vR3iJr3aPjGJz4rNbqDCRujQ21mczzKT5SiedaQqNVgHC8HT9ceyxvMFRoPMx4P6HAcL3NZrUPhRUbwCyj3TKSa64bAfnE3sLh/1/*),and_v(v:pkh([c477fd13/48'/1'/0'/2']tpubDFn7iPbFqGrTQ2aRACNsUK1MXQR4Z6dYfU2nD1WA9ifSaia642j3Wah4n5pBUEpERNWGJsyv3Dv5qwBabC9TLQrwSboKzukw9wmurGu7XVH/1/*),older(3))))#vpa5k5p6\", \"range\": [0,10000], \"timestamp\": 1682920310, \"active\": true, \"internal\":true}]"
 ```
 Output:
 ```shell
@@ -144,7 +144,7 @@ the simplest way of recovering from disaster.
 We'll use the `sendall` command to sweep all the funds of the wallet to the pre-defined address
 using a specific feerate. We'll use `20` sats/vbyte but use anything that fits.
 ```shell 
-bitcoin-cli -signet -rpcwallet=liana -named sendall recipients='["tb1qed7lyessqcecav5uxultf6zc8nefd9kalgaa7dwrglcc6ld5vd3qe20spe"]' 20
+bitcoin-cli -signet -rpcwallet=liana_recovery -named sendall recipients='["tb1qed7lyessqcecav5uxultf6zc8nefd9kalgaa7dwrglcc6ld5vd3qe20spe"]' fee_rate=20
 ```
 Output:
 ```
