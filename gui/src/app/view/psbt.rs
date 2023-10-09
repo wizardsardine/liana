@@ -196,7 +196,13 @@ pub fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
                     Row::new()
                         .align_items(Alignment::Center)
                         .push(h3("Miner fee: ").style(color::GREY_3))
-                        .push(amount_with_size(&tx.fee_amount, H3_SIZE)),
+                        .push(amount_with_size(&tx.fee_amount, H3_SIZE))
+                        .push(text(" ").size(H3_SIZE))
+                        .push(
+                            text(format!("(~{} sats/vbyte)", &tx.min_feerate_vb()))
+                                .size(H4_SIZE)
+                                .style(color::GREY_3),
+                        ),
                 ),
         )
         .into()

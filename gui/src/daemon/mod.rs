@@ -97,7 +97,13 @@ pub trait Daemon: Debug {
                 .main
                 .partial_spend_info(&tx.psbt)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
-            spend_txs.push(model::SpendTx::new(tx.updated_at, tx.psbt, coins, sigs))
+            spend_txs.push(model::SpendTx::new(
+                tx.updated_at,
+                tx.psbt,
+                coins,
+                sigs,
+                info.descriptors.main.max_sat_vbytes(),
+            ))
         }
         spend_txs.sort_by(|a, b| {
             if a.status == b.status {

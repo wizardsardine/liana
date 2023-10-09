@@ -155,7 +155,7 @@ impl State for RecoveryPanel {
                                 .cloned()
                                 .collect();
                             let sigs = desc.partial_spend_info(&psbt).unwrap();
-                            Ok(SpendTx::new(None, psbt, coins, sigs))
+                            Ok(SpendTx::new(None, psbt, coins, sigs, desc.max_sat_vbytes()))
                         },
                         Message::Recovery,
                     );
