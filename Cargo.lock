@@ -97,7 +97,7 @@ dependencies = [
  "bitcoin_hashes 0.13.0",
  "hex-conservative",
  "hex_lit",
- "secp256k1",
+ "secp256k1 0.27.0",
  "serde",
 ]
 
@@ -170,6 +170,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a33c2bf77f2df06183c3aa30d1e96c0695a313d4f9c453cc3762a6db39f99200"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a22b2d63d4d1dc0b7f1b6b2747dd0088008a9be28b6ddf0b1e7d335e3037294"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "dirs"
 version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -201,6 +220,15 @@ name = "fallible-streaming-iterator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
+
+[[package]]
+name = "fastrand"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e51093e27b0797c359783294ca4f0a911c270184cb10f85783b118614a1501be"
+dependencies = [
+ "instant",
+]
 
 [[package]]
 name = "fern"
@@ -260,6 +288,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3011d1213f159867b13cfd6ac92d2cd5f1345762c63be3554e84092d85a50bbd"
 
 [[package]]
+name = "instant"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a5bbe824c507c5da5956355e86a746d82e0e1464f65d862cc5e71da70e94b2c"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -291,6 +328,7 @@ dependencies = [
  "libc",
  "log",
  "miniscript",
+ "nakamoto",
  "rdrand",
  "rusqlite",
  "serde",
@@ -339,14 +377,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "523dc4f511e55ab87b694dc30d0f820d60906ef06413f93d4d7a1385599cc149"
 
 [[package]]
+name = "microserde"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc73d64402c57ce913a4a4788ca4e0c60329a2e29782f8e88d510c1c951fac46"
+dependencies = [
+ "microserde-derive",
+]
+
+[[package]]
+name = "microserde-derive"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e3afa8ee462bb9ed735b544476a9e4ece0f10be76864ff9b80a6a525b837232"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "miniscript"
 version = "11.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86a23dd3ad145a980e231185d114399f25a0a307d2cd918010ddda6334323df9"
 dependencies = [
+<<<<<<< HEAD
  "bech32",
  "bitcoin",
  "bitcoin-internals",
+=======
+ "bitcoin 0.30.0",
+ "bitcoin-private",
+>>>>>>> 271acd1 (backend: wip including nakamoto)
  "serde",
 ]
 
@@ -369,6 +432,104 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "nakamoto"
+version = "0.4.0"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git#9b24b04675076a9584ea7c5366095467d2ee24f4"
+dependencies = [
+ "nakamoto-chain",
+ "nakamoto-client",
+ "nakamoto-common",
+ "nakamoto-net",
+ "nakamoto-net-poll",
+ "nakamoto-p2p",
+]
+
+[[package]]
+name = "nakamoto-chain"
+version = "0.4.0"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git#9b24b04675076a9584ea7c5366095467d2ee24f4"
+dependencies = [
+ "log",
+ "nakamoto-common",
+ "thiserror",
+]
+
+[[package]]
+name = "nakamoto-client"
+version = "0.4.0"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git#9b24b04675076a9584ea7c5366095467d2ee24f4"
+dependencies = [
+ "crossbeam-channel",
+ "fastrand",
+ "log",
+ "microserde",
+ "nakamoto-chain",
+ "nakamoto-common",
+ "nakamoto-net",
+ "nakamoto-p2p",
+ "thiserror",
+]
+
+[[package]]
+name = "nakamoto-common"
+version = "0.4.0"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git#9b24b04675076a9584ea7c5366095467d2ee24f4"
+dependencies = [
+ "bitcoin 0.29.2",
+ "bitcoin_hashes 0.11.0",
+ "fastrand",
+ "log",
+ "microserde",
+ "nakamoto-net",
+ "nonempty",
+ "thiserror",
+]
+
+[[package]]
+name = "nakamoto-net"
+version = "0.4.0"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git#9b24b04675076a9584ea7c5366095467d2ee24f4"
+dependencies = [
+ "crossbeam-channel",
+ "fastrand",
+ "log",
+ "thiserror",
+]
+
+[[package]]
+name = "nakamoto-net-poll"
+version = "0.4.0"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git#9b24b04675076a9584ea7c5366095467d2ee24f4"
+dependencies = [
+ "crossbeam-channel",
+ "libc",
+ "log",
+ "nakamoto-net",
+ "popol",
+ "socket2",
+]
+
+[[package]]
+name = "nakamoto-p2p"
+version = "0.4.0"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git#9b24b04675076a9584ea7c5366095467d2ee24f4"
+dependencies = [
+ "crossbeam-channel",
+ "fastrand",
+ "log",
+ "microserde",
+ "nakamoto-common",
+ "nakamoto-net",
+ "thiserror",
+]
+
+[[package]]
+name = "nonempty"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9e591e719385e6ebaeb5ce5d3887f7d5676fceca6411d1925ccc95745f3d6f7"
 
 [[package]]
 name = "object"
@@ -396,6 +557,15 @@ name = "pkg-config"
 version = "0.3.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69d3587f8a9e599cc7ec2c00e331f71c4e69a5f9a4b8a6efd5b07466b9736f9a"
+
+[[package]]
+name = "popol"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a953dd115cbe3b9d10340d47e6825a9700059a2fee12cee722975776caf3c531"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "proc-macro2"
@@ -481,18 +651,45 @@ checksum = "f98d2aa92eebf49b69786be48e4477826b256916e84a57ff2a4f21923b48eb4c"
 
 [[package]]
 name = "secp256k1"
+<<<<<<< HEAD
 version = "0.28.0"
+=======
+version = "0.24.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b1629c9c557ef9b293568b338dddfc8208c98a18c59d722a9d53f859d9c9b62"
+dependencies = [
+ "bitcoin_hashes 0.11.0",
+ "secp256k1-sys 0.6.1",
+]
+
+[[package]]
+name = "secp256k1"
+version = "0.27.0"
+>>>>>>> 271acd1 (backend: wip including nakamoto)
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2acea373acb8c21ecb5a23741452acd2593ed44ee3d343e72baaa143bc89d0d5"
 dependencies = [
  "bitcoin_hashes 0.12.0",
- "secp256k1-sys",
+ "secp256k1-sys 0.8.1",
  "serde",
 ]
 
 [[package]]
 name = "secp256k1-sys"
+<<<<<<< HEAD
 version = "0.9.1"
+=======
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83080e2c2fc1006e625be82e5d1eb6a43b7fd9578b617fcc55814daf286bba4b"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "secp256k1-sys"
+version = "0.8.1"
+>>>>>>> 271acd1 (backend: wip including nakamoto)
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4dd97a086ec737e30053fd5c46f097465d25bb81dd3608825f65298c4c98be83"
 dependencies = [
@@ -535,6 +732,16 @@ name = "smallvec"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4dccd0940a2dcdf68d092b8cbab7dc0ad8fa938bf95787e1b916b0e3d0e8e970"
+
+[[package]]
+name = "socket2"
+version = "0.4.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64a4a911eed85daf18834cfaa86a79b7d266ff93ff5ba14005426219480ed662"
+dependencies = [
+ "libc",
+ "winapi",
+]
 
 [[package]]
 name = "syn"
@@ -623,6 +830,28 @@ name = "wasi"
 version = "0.11.0+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
+
+[[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows-sys"

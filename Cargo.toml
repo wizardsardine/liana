@@ -27,6 +27,7 @@ nonblocking_shutdown = []
 [dependencies]
 # For managing transactions (it re-exports the bitcoin crate)
 miniscript = { version = "11.0", features = ["serde", "compiler", "base64"] }
+nakamoto = { git = "https://github.com/vincenzopalazzo/nakamoto.git", features = ["nakamoto-client", "nakamoto-net-poll"], commit = "e03c7dc4caf01605b050cc77718bfc663a323764"  }
 
 # Coin selection algorithms for spend transaction creation.
 bdk_coin_select = { version = "0.1.0" }

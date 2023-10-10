@@ -2,6 +2,8 @@
 //!
 //! We use the RPC interface and a watchonly descriptor wallet.
 
+// FIXME(vincenzopalazzo): move this outside of the bitcoind crate
+mod nakamoto;
 mod utils;
 use crate::{
     bitcoin::{Block, BlockChainTip},
