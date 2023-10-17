@@ -171,6 +171,15 @@ pub fn tx_view<'a>(
                                 .align_items(Alignment::Center)
                                 .push(h3("Miner fee: ").style(color::GREY_3))
                                 .push(amount_with_size(&fee_amount, H3_SIZE))
+                                .push(text(" ").size(H3_SIZE))
+                                .push(
+                                    text(format!(
+                                        "({} sats/vbyte)",
+                                        fee_amount.to_sat() / tx.tx.vsize() as u64
+                                    ))
+                                    .size(H4_SIZE)
+                                    .style(color::GREY_3),
+                                )
                         })),
                 ),
             )

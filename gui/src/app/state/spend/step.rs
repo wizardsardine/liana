@@ -432,7 +432,13 @@ impl Step for SaveSpend {
             .unwrap();
         self.spend = Some(psbt::PsbtState::new(
             self.wallet.clone(),
-            SpendTx::new(None, psbt, draft.inputs.clone(), sigs),
+            SpendTx::new(
+                None,
+                psbt,
+                draft.inputs.clone(),
+                sigs,
+                self.wallet.main_descriptor.max_sat_vbytes(),
+            ),
             false,
         ));
     }

@@ -30,6 +30,9 @@ pub struct SpendTx {
     pub change_indexes: Vec<usize>,
     pub spend_amount: Amount,
     pub fee_amount: Amount,
+    /// The maximum size difference (in virtual bytes) of
+    /// an input in this transaction before and after satisfaction.
+    pub max_sat_vbytes: usize,
     pub status: SpendStatus,
     pub sigs: PartialSpendInfo,
     pub updated_at: Option<u32>,
@@ -49,6 +52,7 @@ impl SpendTx {
         psbt: Psbt,
         coins: Vec<Coin>,
         sigs: PartialSpendInfo,
+        max_sat_vbytes: usize,
     ) -> Self {
         let mut change_indexes = Vec::new();
         let (change_amount, spend_amount) = psbt.unsigned_tx.output.iter().enumerate().fold(
@@ -87,6 +91,7 @@ impl SpendTx {
             change_indexes,
             spend_amount,
             fee_amount: inputs_amount - spend_amount - change_amount,
+            max_sat_vbytes,
             status,
             sigs,
         }
@@ -121,6 +126,14 @@ impl SpendTx {
 
     pub fn is_self_send(&self) -> bool {
         !self.coins.is_empty() && self.spend_amount == Amount::from_sat(0)
+    }
+
+    /// Feerate obtained if all transaction inputs have the maximum satisfaction size.
+    pub fn min_feerate_vb(&self) -> u64 {
+        // This assumes all inputs are internal (have same max satisfaction size).
+        let max_tx_vbytes =
+            self.psbt.unsigned_tx.vsize() + (self.max_sat_vbytes * self.psbt.inputs.len());
+        self.fee_amount.to_sat() / max_tx_vbytes as u64
     }
 }
 
