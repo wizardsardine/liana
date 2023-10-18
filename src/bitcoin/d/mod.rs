@@ -748,14 +748,28 @@ impl BitcoinD {
         self.make_node_request("getblockchaininfo", &[])
     }
 
-    pub fn sync_progress(&self) -> f64 {
+    pub fn sync_progress(&self) -> SyncProgress {
         // TODO: don't harass lianad, be smarter like in revaultd.
-        roundup_progress(
-            self.block_chain_info()
+        let chain_info = self.block_chain_info();
+        let percentage = roundup_progress(
+            chain_info
                 .get("verificationprogress")
                 .and_then(Json::as_f64)
                 .expect("No valid 'verificationprogress' in getblockchaininfo response?"),
-        )
+        );
+        let headers = chain_info
+            .get("headers")
+            .and_then(Json::as_u64)
+            .expect("No valid 'verificationprogress' in getblockchaininfo response?");
+        let blocks = chain_info
+            .get("blocks")
+            .and_then(Json::as_u64)
+            .expect("No valid 'blocks' in getblockchaininfo response?");
+        SyncProgress {
+            percentage,
+            headers,
+            blocks,
+        }
     }
 
     pub fn chain_tip(&self) -> BlockChainTip {
@@ -1120,6 +1134,17 @@ impl BitcoinD {
     pub fn stop(&self) {
         self.make_node_request("stop", &[]);
     }
+}
+
+/// Information about the block chain verification progress.
+#[derive(Debug, Clone, Copy)]
+pub struct SyncProgress {
+    /// Chain verification progress as a percentage between 0 and 1.
+    pub percentage: f64,
+    /// Headers count for the best known tip.
+    pub headers: u64,
+    /// Number of blocks validated toward the best known tip.
+    pub blocks: u64,
 }
 
 /// An entry in the 'listdescriptors' result.

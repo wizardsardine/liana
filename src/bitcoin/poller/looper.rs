@@ -1,5 +1,5 @@
 use crate::{
-    bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
+    bitcoin::{BitcoinInterface, BlockChainTip, SyncProgress, UTxO},
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
 };
@@ -356,12 +356,16 @@ pub fn looper(
 
         // Don't poll until the Bitcoin backend is fully synced.
         if !synced {
-            let sync_progress = bit.sync_progress();
+            let SyncProgress {
+                percentage,
+                headers,
+                blocks,
+            } = bit.sync_progress();
             log::info!(
                 "Block chain synchronization progress: {:.2}%",
-                sync_progress * 100.0
+                percentage * 100.0
             );
-            synced = sync_progress == 1.0;
+            synced = headers == blocks;
             if !synced {
                 continue;
             }

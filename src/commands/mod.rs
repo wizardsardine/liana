@@ -263,7 +263,7 @@ impl DaemonControl {
             version: VERSION.to_string(),
             network: self.config.bitcoin_config.network,
             block_height,
-            sync: self.bitcoin.sync_progress(),
+            sync: self.bitcoin.sync_progress().percentage,
             descriptors: GetInfoDescriptors {
                 main: self.config.main_descriptor.clone(),
             },

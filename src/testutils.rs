@@ -1,5 +1,5 @@
 use crate::{
-    bitcoin::{BitcoinInterface, Block, BlockChainTip, UTxO},
+    bitcoin::{BitcoinInterface, Block, BlockChainTip, SyncProgress, UTxO},
     config::{BitcoinConfig, Config},
     database::{BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem},
     descriptors, DaemonHandle,
@@ -42,8 +42,12 @@ impl BitcoinInterface for DummyBitcoind {
         BlockChainTip { hash, height: 0 }
     }
 
-    fn sync_progress(&self) -> f64 {
-        1.0
+    fn sync_progress(&self) -> SyncProgress {
+        SyncProgress {
+            percentage: 1.0,
+            headers: 1_000,
+            blocks: 1_000,
+        }
     }
 
     fn chain_tip(&self) -> BlockChainTip {
