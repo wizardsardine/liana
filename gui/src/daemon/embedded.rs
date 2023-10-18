@@ -60,7 +60,7 @@ impl Daemon for EmbeddedDaemon {
     }
 
     fn list_coins(&self) -> Result<ListCoinsResult, DaemonError> {
-        Ok(self.control()?.list_coins())
+        Ok(self.control()?.list_coins(&[], &[]))
     }
 
     fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
