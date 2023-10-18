@@ -104,7 +104,10 @@ impl State for TransactionsPanel {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    self.txs.iter_mut().map(|tx| tx as &mut dyn Labelled),
+                    self.pending_txs
+                        .iter_mut()
+                        .map(|tx| tx as &mut dyn Labelled)
+                        .chain(self.txs.iter_mut().map(|tx| tx as &mut dyn Labelled)),
                 ) {
                     Ok(cmd) => {
                         return cmd;
