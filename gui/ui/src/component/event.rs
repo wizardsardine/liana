@@ -19,13 +19,11 @@ pub fn unconfirmed_outgoing_event<'a, T: Clone + 'a>(
     Container::new(
         button(
             row!(
-                row!(
-                    badge::spend(),
-                    Column::new().push_maybe(label).push(badge::unconfirmed())
-                )
-                .spacing(10)
-                .align_items(Alignment::Center)
-                .width(Length::Fill),
+                row!(badge::spend(), Column::new().push_maybe(label),)
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .width(Length::Fill),
+                badge::unconfirmed(),
                 row!(text::p1_regular("-"), amount::amount(amount))
                     .spacing(5)
                     .align_items(Alignment::Center),
@@ -81,13 +79,11 @@ pub fn unconfirmed_incoming_event<'a, T: Clone + 'a>(
     Container::new(
         button(
             row!(
-                row!(
-                    badge::receive(),
-                    Column::new().push_maybe(label).push(badge::unconfirmed())
-                )
-                .spacing(10)
-                .align_items(Alignment::Center)
-                .width(Length::Fill),
+                row!(badge::receive(), Column::new().push_maybe(label))
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .width(Length::Fill),
+                badge::unconfirmed(),
                 row!(text::p1_regular("+"), amount::amount(amount))
                     .spacing(5)
                     .align_items(Alignment::Center),
