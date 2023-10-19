@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::iter::FromIterator;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -256,7 +257,15 @@ impl Step for DefineDescriptor {
                         self.setup_mut().check_for_duplicate();
                     }
                     message::DefineKey::Edit => {
+                        let setup = self.setup_mut();
                         let modal = EditXpubModal::new(
+                            HashSet::from_iter(setup.spending_keys.iter().filter_map(|key| {
+                                if key.is_some() && key != &setup.spending_keys[i] {
+                                    *key
+                                } else {
+                                    None
+                                }
+                            })),
                             self.setup_mut().spending_keys[i],
                             None,
                             i,
@@ -338,8 +347,18 @@ impl Step for DefineDescriptor {
                         self.setup_mut().check_for_duplicate();
                     }
                     message::DefineKey::Edit => {
+                        let setup = self.setup_mut();
                         let modal = EditXpubModal::new(
-                            self.setup[&self.network].recovery_paths[i].keys[j],
+                            HashSet::from_iter(setup.recovery_paths[i].keys.iter().filter_map(
+                                |key| {
+                                    if key.is_some() && key != &setup.recovery_paths[i].keys[j] {
+                                        *key
+                                    } else {
+                                        None
+                                    }
+                                },
+                            )),
+                            setup.recovery_paths[i].keys[j],
                             Some(i),
                             j,
                             self.network,
@@ -658,6 +677,9 @@ pub struct EditXpubModal {
     form_xpub: form::Value<String>,
     edit_name: bool,
 
+    other_path_keys: HashSet<Fingerprint>,
+    duplicate_master_fg: bool,
+
     keys: Vec<Key>,
     hws: Vec<HardwareWallet>,
     hot_signer: Arc<Mutex<Signer>>,
@@ -668,6 +690,7 @@ pub struct EditXpubModal {
 impl EditXpubModal {
     #[allow(clippy::too_many_arguments)]
     fn new(
+        other_path_keys: HashSet<Fingerprint>,
         key: Option<Fingerprint>,
         path_index: Option<usize>,
         key_index: usize,
@@ -677,6 +700,7 @@ impl EditXpubModal {
     ) -> Self {
         let hot_signer_fingerprint = hot_signer.lock().unwrap().fingerprint();
         Self {
+            other_path_keys,
             form_name: form::Value {
                 valid: true,
                 value: key
@@ -712,6 +736,7 @@ impl EditXpubModal {
             chosen_signer: key.map(|k| (k, None)),
             hot_signer_fingerprint,
             hot_signer,
+            duplicate_master_fg: false,
         }
     }
     fn load(&self) -> Command<Message> {
@@ -728,6 +753,10 @@ impl DescriptorEditModal for EditXpubModal {
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
+        // Reset these fields.
+        // the fonction will setup them again if something is wrong
+        self.duplicate_master_fg = false;
+        self.error = None;
         match message {
             Message::Select(i) => {
                 if let Some(HardwareWallet::Supported {
@@ -862,7 +891,9 @@ impl DescriptorEditModal for EditXpubModal {
                         let key_index = self.key_index;
                         let name = self.form_name.value.clone();
                         let device_kind = self.chosen_signer.and_then(|(_, kind)| kind);
-                        if let Some(path_index) = self.path_index {
+                        if self.other_path_keys.contains(&key.master_fingerprint()) {
+                            self.duplicate_master_fg = true;
+                        } else if let Some(path_index) = self.path_index {
                             return Command::perform(
                                 async move { (path_index, key_index, key) },
                                 move |(path_index, key_index, key)| {
@@ -964,6 +995,7 @@ impl DescriptorEditModal for EditXpubModal {
             &self.form_xpub,
             &self.form_name,
             self.edit_name,
+            self.duplicate_master_fg,
         )
     }
 }
