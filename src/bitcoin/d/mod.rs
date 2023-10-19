@@ -751,12 +751,10 @@ impl BitcoinD {
     pub fn sync_progress(&self) -> SyncProgress {
         // TODO: don't harass lianad, be smarter like in revaultd.
         let chain_info = self.block_chain_info();
-        let percentage = roundup_progress(
-            chain_info
-                .get("verificationprogress")
-                .and_then(Json::as_f64)
-                .expect("No valid 'verificationprogress' in getblockchaininfo response?"),
-        );
+        let percentage = chain_info
+            .get("verificationprogress")
+            .and_then(Json::as_f64)
+            .expect("No valid 'verificationprogress' in getblockchaininfo response?");
         let headers = chain_info
             .get("headers")
             .and_then(Json::as_u64)
@@ -1140,11 +1138,37 @@ impl BitcoinD {
 #[derive(Debug, Clone, Copy)]
 pub struct SyncProgress {
     /// Chain verification progress as a percentage between 0 and 1.
-    pub percentage: f64,
+    percentage: f64,
     /// Headers count for the best known tip.
     pub headers: u64,
     /// Number of blocks validated toward the best known tip.
     pub blocks: u64,
+}
+
+impl SyncProgress {
+    pub fn new(percentage: f64, headers: u64, blocks: u64) -> Self {
+        Self {
+            percentage,
+            headers,
+            blocks,
+        }
+    }
+
+    /// Get the verification progress, roundup up to to three decimal places. This will not return
+    /// 1.0 (ie 100% verification progress) until the verification is complete.
+    pub fn rounded_up_progress(&self) -> f64 {
+        let progress = roundup_progress(self.percentage);
+        if progress == 1.0 && self.blocks != self.headers {
+            // Don't return a 100% progress until we are actually done syncing.
+            0.999
+        } else {
+            progress
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.rounded_up_progress() == 1.0
+    }
 }
 
 /// An entry in the 'listdescriptors' result.

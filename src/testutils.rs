@@ -43,11 +43,7 @@ impl BitcoinInterface for DummyBitcoind {
     }
 
     fn sync_progress(&self) -> SyncProgress {
-        SyncProgress {
-            percentage: 1.0,
-            headers: 1_000,
-            blocks: 1_000,
-        }
+        SyncProgress::new(1.0, 1_000, 1_000)
     }
 
     fn chain_tip(&self) -> BlockChainTip {
