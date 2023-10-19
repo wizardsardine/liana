@@ -1,12 +1,15 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub use liana::{
     commands::{
-        CreateSpendResult, GetAddressResult, GetInfoResult, ListCoinsEntry, ListCoinsResult,
-        ListSpendEntry, ListSpendResult, ListTransactionsResult, TransactionInfo,
+        CreateSpendResult, GetAddressResult, GetInfoResult, GetLabelsResult, LabelItem,
+        ListCoinsEntry, ListCoinsResult, ListSpendEntry, ListSpendResult, ListTransactionsResult,
+        TransactionInfo,
     },
     descriptors::{PartialSpendInfo, PathSpendInfo},
-    miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Amount, Transaction},
+    miniscript::bitcoin::{
+        bip32::Fingerprint, psbt::Psbt, Address, Amount, Network, OutPoint, Transaction, Txid,
+    },
 };
 
 pub type Coin = ListCoinsEntry;
@@ -25,7 +28,9 @@ pub fn remaining_sequence(coin: &Coin, blockheight: u32, timelock: u16) -> u32 {
 
 #[derive(Debug, Clone)]
 pub struct SpendTx {
+    pub network: Network,
     pub coins: Vec<Coin>,
+    pub labels: HashMap<String, String>,
     pub psbt: Psbt,
     pub change_indexes: Vec<usize>,
     pub spend_amount: Amount,
@@ -53,6 +58,7 @@ impl SpendTx {
         coins: Vec<Coin>,
         sigs: PartialSpendInfo,
         max_sat_vbytes: usize,
+        network: Network,
     ) -> Self {
         let mut change_indexes = Vec::new();
         let (change_amount, spend_amount) = psbt.unsigned_tx.output.iter().enumerate().fold(
@@ -85,6 +91,7 @@ impl SpendTx {
         }
 
         Self {
+            labels: HashMap::new(),
             updated_at,
             coins,
             psbt,
@@ -94,6 +101,7 @@ impl SpendTx {
             max_sat_vbytes,
             status,
             sigs,
+            network,
         }
     }
 
@@ -135,10 +143,48 @@ impl SpendTx {
             self.psbt.unsigned_tx.vsize() + (self.max_sat_vbytes * self.psbt.inputs.len());
         self.fee_amount.to_sat() / max_tx_vbytes as u64
     }
+
+    pub fn is_batch(&self) -> bool {
+        self.psbt
+            .unsigned_tx
+            .output
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.change_indexes.contains(i))
+            .count()
+            > 1
+    }
+}
+
+impl Labelled for SpendTx {
+    fn labels(&mut self) -> &mut HashMap<String, String> {
+        &mut self.labels
+    }
+    fn labelled(&self) -> Vec<LabelItem> {
+        let mut items = Vec::new();
+        let txid = self.psbt.unsigned_tx.txid();
+        items.push(LabelItem::Txid(txid));
+        for coin in &self.coins {
+            items.push(LabelItem::Address(coin.address.clone()));
+            items.push(LabelItem::OutPoint(coin.outpoint));
+        }
+        for (vout, output) in self.psbt.unsigned_tx.output.iter().enumerate() {
+            items.push(LabelItem::OutPoint(OutPoint {
+                txid,
+                vout: vout as u32,
+            }));
+            items.push(LabelItem::Address(
+                Address::from_script(&output.script_pubkey, self.network).unwrap(),
+            ));
+        }
+        items
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct HistoryTransaction {
+    pub network: Network,
+    pub labels: HashMap<String, String>,
     pub coins: Vec<Coin>,
     pub change_indexes: Vec<usize>,
     pub tx: Transaction,
@@ -156,6 +202,7 @@ impl HistoryTransaction {
         time: Option<u32>,
         coins: Vec<Coin>,
         change_indexes: Vec<usize>,
+        network: Network,
     ) -> Self {
         let (incoming_amount, outgoing_amount) = tx.output.iter().enumerate().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
@@ -180,6 +227,7 @@ impl HistoryTransaction {
         };
 
         Self {
+            labels: HashMap::new(),
             tx,
             coins,
             change_indexes,
@@ -188,6 +236,7 @@ impl HistoryTransaction {
             fee_amount,
             height,
             time,
+            network,
         }
     }
 
@@ -197,5 +246,55 @@ impl HistoryTransaction {
 
     pub fn is_self_send(&self) -> bool {
         !self.coins.is_empty() && self.outgoing_amount == Amount::from_sat(0)
+    }
+
+    pub fn is_batch(&self) -> bool {
+        self.tx
+            .output
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.change_indexes.contains(i))
+            .count()
+            > 1
+    }
+}
+
+impl Labelled for HistoryTransaction {
+    fn labels(&mut self) -> &mut HashMap<String, String> {
+        &mut self.labels
+    }
+    fn labelled(&self) -> Vec<LabelItem> {
+        let mut items = Vec::new();
+        let txid = self.tx.txid();
+        items.push(LabelItem::Txid(txid));
+        for coin in &self.coins {
+            items.push(LabelItem::Address(coin.address.clone()));
+            items.push(LabelItem::OutPoint(coin.outpoint));
+        }
+        for (vout, output) in self.tx.output.iter().enumerate() {
+            items.push(LabelItem::OutPoint(OutPoint {
+                txid,
+                vout: vout as u32,
+            }));
+            items.push(LabelItem::Address(
+                Address::from_script(&output.script_pubkey, self.network).unwrap(),
+            ));
+        }
+        items
+    }
+}
+
+pub trait Labelled {
+    fn labelled(&self) -> Vec<LabelItem>;
+    fn labels(&mut self) -> &mut HashMap<String, String>;
+    fn load_labels(&mut self, new_labels: &HashMap<String, String>) {
+        let items = self.labelled();
+        let labels = self.labels();
+        for item in items {
+            let item_str = item.to_string();
+            if let Some(l) = new_labels.get(&item_str) {
+                labels.insert(item_str, l.to_string());
+            }
+        }
     }
 }

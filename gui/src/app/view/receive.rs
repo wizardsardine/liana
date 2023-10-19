@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use iced::{
     widget::{
         qr_code::{self, QRCode},
@@ -10,16 +12,23 @@ use liana::miniscript::bitcoin;
 
 use liana_ui::{
     color,
-    component::{button, card, text::*},
+    component::{
+        button, card, form,
+        text::{self, *},
+    },
     icon, theme,
     widget::*,
 };
+
+use crate::app::view::label;
 
 use super::message::Message;
 
 pub fn receive<'a>(
     addresses: &'a [bitcoin::Address],
     qr: Option<&'a qr_code::State>,
+    labels: &'a HashMap<String, String>,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
     Column::new()
         .push(
@@ -38,34 +47,54 @@ pub fn receive<'a>(
                 .push(addresses.iter().rev().fold(
                     Column::new().spacing(10).width(Length::Fill),
                     |col, address| {
+                        let addr = address.to_string();
                         col.push(
                             card::simple(
-                                Row::new()
-                                    .push(
-                                        Container::new(
-                                            scrollable(
-                                                Column::new()
-                                                    .push(Space::with_height(Length::Fixed(10.0)))
-                                                    .push(
-                                                        p2_regular(address.to_string())
-                                                            .small()
-                                                            .style(color::GREY_3),
-                                                    )
-                                                    // Space between the address and the scrollbar
-                                                    .push(Space::with_height(Length::Fixed(10.0))),
-                                            )
-                                            .horizontal_scroll(
-                                                scrollable::Properties::new().scroller_width(5),
-                                            ),
+                                Column::new()
+                                    .push(if let Some(label) = labels_editing.get(&addr) {
+                                        label::label_editing(addr.clone(), label, text::P1_SIZE)
+                                    } else {
+                                        label::label_editable(
+                                            addr.clone(),
+                                            labels.get(&addr),
+                                            text::P1_SIZE,
                                         )
-                                        .width(Length::Fill),
-                                    )
+                                    })
                                     .push(
-                                        Button::new(icon::clipboard_icon().style(color::GREY_3))
-                                            .on_press(Message::Clipboard(address.to_string()))
-                                            .style(theme::Button::TransparentBorder),
-                                    )
-                                    .align_items(Alignment::Center),
+                                        Row::new()
+                                            .push(
+                                                Container::new(
+                                                    scrollable(
+                                                        Column::new()
+                                                            .push(Space::with_height(
+                                                                Length::Fixed(10.0),
+                                                            ))
+                                                            .push(
+                                                                p2_regular(addr)
+                                                                    .small()
+                                                                    .style(color::GREY_3),
+                                                            )
+                                                            // Space between the address and the scrollbar
+                                                            .push(Space::with_height(
+                                                                Length::Fixed(10.0),
+                                                            )),
+                                                    )
+                                                    .horizontal_scroll(
+                                                        scrollable::Properties::new()
+                                                            .scroller_width(5),
+                                                    ),
+                                                )
+                                                .width(Length::Fill),
+                                            )
+                                            .push(
+                                                Button::new(
+                                                    icon::clipboard_icon().style(color::GREY_3),
+                                                )
+                                                .on_press(Message::Clipboard(address.to_string()))
+                                                .style(theme::Button::TransparentBorder),
+                                            )
+                                            .align_items(Alignment::Center),
+                                    ),
                             )
                             .padding(20),
                         )

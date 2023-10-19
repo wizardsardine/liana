@@ -9,14 +9,19 @@ use liana::{
     descriptors::{LianaPolicy, PathInfo, PathSpendInfo},
     miniscript::bitcoin::{
         bip32::{DerivationPath, Fingerprint},
-        Address, Amount, Network, Transaction,
+        blockdata::transaction::TxOut,
+        Address, Amount, Network, OutPoint, Transaction, Txid,
     },
 };
 
 use liana_ui::{
     color,
     component::{
-        amount::*, badge, button, card, collapse::Collapse, form, hw, separation, text::*,
+        amount::*,
+        badge, button, card,
+        collapse::Collapse,
+        form, hw, separation,
+        text::{self, *},
     },
     icon, theme,
     util::Collection,
@@ -28,24 +33,27 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{dashboard, hw::hw_list_view, message::*, warning::warn},
+        view::{dashboard, hw::hw_list_view, label, message::*, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn psbt_view<'a>(
     cache: &'a Cache,
     tx: &'a SpendTx,
     saved: bool,
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
     network: Network,
+    warning: Option<&Error>,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::PSBTs,
         cache,
-        None,
+        warning,
         Column::new()
             .spacing(20)
             .push(
@@ -65,14 +73,15 @@ pub fn psbt_view<'a>(
                         _ => None,
                     }),
             )
-            .push(spend_header(tx))
+            .push(spend_header(tx, labels_editing))
             .push(spend_overview_view(tx, desc_info, key_aliases))
             .push(inputs_and_outputs_view(
                 &tx.coins,
                 &tx.psbt.unsigned_tx,
                 network,
                 Some(tx.change_indexes.clone()),
-                None,
+                &tx.labels,
+                labels_editing,
             ))
             .push(if saved {
                 Row::new()
@@ -182,9 +191,18 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
     }
 }
 
-pub fn spend_header<'a>(tx: &SpendTx) -> Element<'a, Message> {
+pub fn spend_header<'a>(
+    tx: &'a SpendTx,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+) -> Element<'a, Message> {
+    let txid = tx.psbt.unsigned_tx.txid().to_string();
     Column::new()
         .spacing(20)
+        .push(if let Some(label) = labels_editing.get(&txid) {
+            label::label_editing(txid.clone(), label, H3_SIZE)
+        } else {
+            label::label_editable(txid.clone(), tx.labels.get(&txid), H1_SIZE)
+        })
         .push(
             Column::new()
                 .push(if tx.is_self_send() {
@@ -504,8 +522,10 @@ pub fn inputs_and_outputs_view<'a>(
     tx: &'a Transaction,
     network: Network,
     change_indexes: Option<Vec<usize>>,
-    receive_indexes: Option<Vec<usize>>,
+    labels: &'a HashMap<String, String>,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
+    let change_indexes_copy = change_indexes.clone();
     Column::new()
         .spacing(20)
         .push_maybe(if !coins.is_empty() {
@@ -551,29 +571,9 @@ pub fn inputs_and_outputs_view<'a>(
                         coins
                             .iter()
                             .fold(
-                                Column::new().padding(20),
+                                Column::new().spacing(10).padding(20),
                                 |col: Column<'a, Message>, coin| {
-                                    col.push(
-                                        Row::new()
-                                            .align_items(Alignment::Center)
-                                            .width(Length::Fill)
-                                            .push(
-                                                Row::new()
-                                                    .width(Length::Fill)
-                                                    .align_items(Alignment::Center)
-                                                    .push(p2_regular(coin.outpoint.to_string()).style(color::GREY_3))
-                                                    .push(
-                                                        Button::new(icon::clipboard_icon().style(color::GREY_3))
-                                                            .on_press(Message::Clipboard(
-                                                                coin.outpoint.to_string(),
-                                                            ))
-                                                            .style(
-                                                                theme::Button::TransparentBorder,
-                                                            ),
-                                                    ),
-                                            )
-                                            .push(amount(&coin.amount)),
-                                    )
+                                    col.push(input_view(coin, labels, labels_editing))
                                 },
                             )
                             .into()
@@ -584,107 +584,373 @@ pub fn inputs_and_outputs_view<'a>(
         } else {
             None
         })
-        .push(
-            Container::new(Collapse::new(
-                move || {
-                    Button::new(
-                        Row::new()
-                            .align_items(Alignment::Center)
-                            .push(
-                                h4_bold(format!(
-                                    "{} recipient{}",
-                                    tx.output.len(),
-                                    if tx.output.len() == 1 { "" } else { "s" }
-                                ))
-                                .width(Length::Fill),
-                            )
-                            .push(icon::collapse_icon()),
-                    )
-                    .padding(20)
-                    .width(Length::Fill)
-                    .style(theme::Button::TransparentBorder)
-                },
-                move || {
-                    Button::new(
-                        Row::new()
-                            .align_items(Alignment::Center)
-                            .push(
-                                h4_bold(format!(
-                                    "{} recipient{}",
-                                    tx.output.len(),
-                                    if tx.output.len() == 1 { "" } else { "s" }
-                                ))
-                                .width(Length::Fill),
-                            )
-                            .push(icon::collapsed_icon()),
-                    )
-                    .padding(20)
-                    .width(Length::Fill)
-                    .style(theme::Button::TransparentBorder)
-                },
-                move || {
-                    tx.output
-                        .iter()
-                        .enumerate()
-                        .fold(
-                            Column::new().padding(20),
-                            |col: Column<'a, Message>, (i, output)| {
-                                let addr =
-                                    Address::from_script(&output.script_pubkey, network).unwrap();
-                                col.push(
-                                Column::new()
-                                    .width(Length::Fill)
-                                    .spacing(5)
-                                    .push(
-                                        Row::new()
-                                            .align_items(Alignment::Center)
-                                            .width(Length::Fill)
-                                            .push(
-                                                Row::new()
-                                                    .align_items(Alignment::Center)
-                                                    .width(Length::Fill)
-                                                    .push(p2_regular(addr.to_string()).style(color::GREY_3))
-                                                    .push(
-                                                        Button::new(icon::clipboard_icon().style(color::GREY_3))
-                                                            .on_press(Message::Clipboard(
-                                                                addr.to_string(),
-                                                            ))
-                                                            .style(
-                                                                theme::Button::TransparentBorder,
-                                                            ),
-                                                    ),
-                                            )
-                                            .push(amount(&Amount::from_sat(output.value))),
-                                    )
-                                    .push_maybe(if let Some(indexes) = change_indexes.as_ref() {
-                                        if indexes.contains(&i) {
-                                            Some(Container::new(text("Change")).padding(5).style(
-                                                theme::Container::Pill(theme::Pill::Success),
-                                            ))
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    })
-                                    .push_maybe(if let Some(indexes) = receive_indexes.as_ref() {
-                                        if indexes.contains(&i) {
-                                            Some(Container::new(text("Deposit")).padding(5).style(
-                                                theme::Container::Pill(theme::Pill::Success),
-                                            ))
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    }),
-                            )
-                            },
+        .push({
+            let count = tx
+                .output
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    if let Some(indexes) = change_indexes_copy.as_ref() {
+                        !indexes.contains(i)
+                    } else {
+                        true
+                    }
+                })
+                .count();
+            if count > 0 {
+                Container::new(Collapse::new(
+                    move || {
+                        Button::new(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .push(
+                                    h4_bold(format!(
+                                        "{} payment{}",
+                                        count,
+                                        if count == 1 { "" } else { "s" }
+                                    ))
+                                    .width(Length::Fill),
+                                )
+                                .push(icon::collapse_icon()),
                         )
-                        .into()
-                },
-            ))
-            .style(theme::Container::Card(theme::Card::Simple)),
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(theme::Button::TransparentBorder)
+                    },
+                    move || {
+                        Button::new(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .push(
+                                    h4_bold(format!(
+                                        "{} payment{}",
+                                        count,
+                                        if count == 1 { "" } else { "s" }
+                                    ))
+                                    .width(Length::Fill),
+                                )
+                                .push(icon::collapsed_icon()),
+                        )
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(theme::Button::TransparentBorder)
+                    },
+                    move || {
+                        tx.output
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| {
+                                if let Some(indexes) = change_indexes_copy.as_ref() {
+                                    !indexes.contains(i)
+                                } else {
+                                    true
+                                }
+                            })
+                            .fold(
+                                Column::new().padding(20),
+                                |col: Column<'a, Message>, (i, output)| {
+                                    col.spacing(10).push(payment_view(
+                                        i,
+                                        tx.txid(),
+                                        output,
+                                        network,
+                                        labels,
+                                        labels_editing,
+                                    ))
+                                },
+                            )
+                            .into()
+                    },
+                ))
+                .style(theme::Container::Card(theme::Card::Simple))
+            } else {
+                Container::new(h4_bold("0 payment"))
+                    .padding(20)
+                    .width(Length::Fill)
+                    .style(theme::Container::Card(theme::Card::Simple))
+            }
+        })
+        .push_maybe(
+            if change_indexes
+                .as_ref()
+                .map(|indexes| !indexes.is_empty())
+                .unwrap_or(false)
+            {
+                Some(
+                    Container::new(Collapse::new(
+                        move || {
+                            Button::new(
+                                Row::new()
+                                    .align_items(Alignment::Center)
+                                    .push(h4_bold("Change").width(Length::Fill))
+                                    .push(icon::collapse_icon()),
+                            )
+                            .padding(20)
+                            .width(Length::Fill)
+                            .style(theme::Button::TransparentBorder)
+                        },
+                        move || {
+                            Button::new(
+                                Row::new()
+                                    .align_items(Alignment::Center)
+                                    .push(h4_bold("Change").width(Length::Fill))
+                                    .push(icon::collapsed_icon()),
+                            )
+                            .padding(20)
+                            .width(Length::Fill)
+                            .style(theme::Button::TransparentBorder)
+                        },
+                        move || {
+                            tx.output
+                                .iter()
+                                .enumerate()
+                                .filter(|(i, _)| change_indexes.as_ref().unwrap().contains(i))
+                                .fold(
+                                    Column::new().padding(20),
+                                    |col: Column<'a, Message>, (i, output)| {
+                                        col.spacing(10).push(change_view(
+                                            i,
+                                            tx.txid(),
+                                            output,
+                                            network,
+                                            labels,
+                                            labels_editing,
+                                        ))
+                                    },
+                                )
+                                .into()
+                        },
+                    ))
+                    .style(theme::Container::Card(theme::Card::Simple)),
+                )
+            } else {
+                None
+            },
+        )
+        .into()
+}
+
+fn input_view<'a>(
+    coin: &'a Coin,
+    labels: &'a HashMap<String, String>,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+) -> Element<'a, Message> {
+    let outpoint = coin.outpoint.to_string();
+    let addr = coin.address.to_string();
+    Column::new()
+        .width(Length::Fill)
+        .push(
+            Row::new()
+                .spacing(5)
+                .align_items(Alignment::Center)
+                .push(
+                    Container::new(if let Some(label) = labels_editing.get(&outpoint) {
+                        label::label_editing(outpoint.clone(), label, text::P1_SIZE)
+                    } else {
+                        label::label_editable(
+                            outpoint.clone(),
+                            labels.get(&outpoint),
+                            text::P1_SIZE,
+                        )
+                    })
+                    .width(Length::Fill),
+                )
+                .push(amount(&coin.amount)),
+        )
+        .push(
+            Column::new()
+                .push(
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .spacing(5)
+                        .push(p1_bold("Outpoint:").style(color::GREY_3))
+                        .push(p2_regular(outpoint.clone()).style(color::GREY_3))
+                        .push(
+                            Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                .on_press(Message::Clipboard(coin.outpoint.to_string()))
+                                .style(theme::Button::TransparentBorder),
+                        ),
+                )
+                .push(
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .width(Length::Fill)
+                        .push(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .width(Length::Fill)
+                                .spacing(5)
+                                .push(p1_bold("Address:").style(color::GREY_3))
+                                .push(p2_regular(addr.clone()).style(color::GREY_3))
+                                .push(
+                                    Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                        .on_press(Message::Clipboard(addr.clone()))
+                                        .style(theme::Button::TransparentBorder),
+                                ),
+                        ),
+                )
+                .push_maybe(labels.get(&addr).map(|label| {
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .width(Length::Fill)
+                        .push(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .width(Length::Fill)
+                                .spacing(5)
+                                .push(p1_bold("Address label:").style(color::GREY_3))
+                                .push(p2_regular(label).style(color::GREY_3)),
+                        )
+                })),
+        )
+        .spacing(5)
+        .into()
+}
+
+fn payment_view<'a>(
+    i: usize,
+    txid: Txid,
+    output: &'a TxOut,
+    network: Network,
+    labels: &'a HashMap<String, String>,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+) -> Element<'a, Message> {
+    let addr = Address::from_script(&output.script_pubkey, network)
+        .unwrap()
+        .to_string();
+    let outpoint = OutPoint {
+        txid,
+        vout: i as u32,
+    }
+    .to_string();
+    Column::new()
+        .width(Length::Fill)
+        .spacing(5)
+        .push(
+            Row::new()
+                .spacing(5)
+                .align_items(Alignment::Center)
+                .push(
+                    Container::new(if let Some(label) = labels_editing.get(&outpoint) {
+                        label::label_editing(outpoint.clone(), label, text::P1_SIZE)
+                    } else {
+                        label::label_editable(
+                            outpoint.clone(),
+                            labels.get(&outpoint),
+                            text::P1_SIZE,
+                        )
+                    })
+                    .width(Length::Fill),
+                )
+                .push(amount(&Amount::from_sat(output.value))),
+        )
+        .push(
+            Column::new()
+                .push(
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .width(Length::Fill)
+                        .push(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .width(Length::Fill)
+                                .spacing(5)
+                                .push(p1_bold("Address:").style(color::GREY_3))
+                                .push(p2_regular(addr.clone()).style(color::GREY_3))
+                                .push(
+                                    Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                        .on_press(Message::Clipboard(addr.clone()))
+                                        .style(theme::Button::TransparentBorder),
+                                ),
+                        ),
+                )
+                .push_maybe(labels.get(&addr).map(|label| {
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .width(Length::Fill)
+                        .push(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .width(Length::Fill)
+                                .spacing(5)
+                                .push(p1_bold("Address label:").style(color::GREY_3))
+                                .push(p2_regular(label).style(color::GREY_3)),
+                        )
+                })),
+        )
+        .into()
+}
+
+fn change_view<'a>(
+    i: usize,
+    txid: Txid,
+    output: &'a TxOut,
+    network: Network,
+    labels: &'a HashMap<String, String>,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+) -> Element<'a, Message> {
+    let addr = Address::from_script(&output.script_pubkey, network)
+        .unwrap()
+        .to_string();
+    let outpoint = OutPoint {
+        txid,
+        vout: i as u32,
+    }
+    .to_string();
+    Column::new()
+        .width(Length::Fill)
+        .spacing(5)
+        .push(
+            Row::new()
+                .spacing(5)
+                .align_items(Alignment::Center)
+                .push(
+                    Container::new(if let Some(label) = labels_editing.get(&outpoint) {
+                        label::label_editing(outpoint.clone(), label, text::P1_SIZE)
+                    } else {
+                        label::label_editable(
+                            outpoint.clone(),
+                            labels.get(&outpoint),
+                            text::P1_SIZE,
+                        )
+                    })
+                    .width(Length::Fill),
+                )
+                .push(amount(&Amount::from_sat(output.value))),
+        )
+        .push(
+            Column::new()
+                .push(
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .width(Length::Fill)
+                        .push(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .width(Length::Fill)
+                                .spacing(5)
+                                .push(p1_bold("Address:").style(color::GREY_3))
+                                .push(p2_regular(addr.clone()).style(color::GREY_3))
+                                .push(
+                                    Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                        .on_press(Message::Clipboard(addr.clone()))
+                                        .style(theme::Button::TransparentBorder),
+                                ),
+                        ),
+                )
+                .push_maybe(labels.get(&addr).map(|label| {
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .width(Length::Fill)
+                        .push(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .width(Length::Fill)
+                                .spacing(5)
+                                .push(p1_bold("Address label:").style(color::GREY_3))
+                                .push(p2_regular(label).style(color::GREY_3)),
+                        )
+                })),
         )
         .into()
 }

@@ -1,11 +1,12 @@
 use chrono::NaiveDateTime;
+use std::collections::HashMap;
 
-use iced::{alignment, Alignment, Length};
+use iced::{alignment, widget::Space, Alignment, Length};
 
 use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
-    component::{amount::*, button, card, event, text::*},
+    component::{amount::*, button, card, event, form, text::*},
     icon, theme,
     util::Collection,
     widget::*,
@@ -16,7 +17,7 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{coins, dashboard, message::Message},
+        view::{coins, dashboard, label, message::Message},
     },
     daemon::model::HistoryTransaction,
 };
@@ -28,8 +29,8 @@ pub fn home_view<'a>(
     unconfirmed_balance: &'a bitcoin::Amount,
     remaining_sequence: &Option<u32>,
     expiring_coins: &Vec<bitcoin::OutPoint>,
-    pending_events: &[HistoryTransaction],
-    events: &Vec<HistoryTransaction>,
+    pending_events: &'a [HistoryTransaction],
+    events: &'a Vec<HistoryTransaction>,
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
@@ -145,21 +146,41 @@ pub fn home_view<'a>(
         .into()
 }
 
-fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Column<'a, Message> {
+fn event_list_view(i: usize, event: &HistoryTransaction) -> Column<'_, Message> {
     event.tx.output.iter().enumerate().fold(
         Column::new().spacing(10),
         |col, (output_index, output)| {
+            let label = if let Some(label) = event.labels.get(
+                &bitcoin::OutPoint {
+                    txid: event.tx.txid(),
+                    vout: output_index as u32,
+                }
+                .to_string(),
+            ) {
+                Some(p1_bold(label))
+            } else {
+                event
+                    .labels
+                    .get(
+                        &bitcoin::Address::from_script(&output.script_pubkey, event.network)
+                            .unwrap()
+                            .to_string(),
+                    )
+                    .map(|label| p1_bold(format!("address label: {}", label)).style(color::GREY_3))
+            };
             if event.is_external() {
                 if !event.change_indexes.contains(&output_index) {
                     col
                 } else if let Some(t) = event.time {
                     col.push(event::confirmed_incoming_event(
+                        label,
                         NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
                         &Amount::from_sat(output.value),
                         Message::SelectSub(i, output_index),
                     ))
                 } else {
                     col.push(event::unconfirmed_incoming_event(
+                        label,
                         &Amount::from_sat(output.value),
                         Message::SelectSub(i, output_index),
                     ))
@@ -168,12 +189,14 @@ fn event_list_view<'a>(i: usize, event: &HistoryTransaction) -> Column<'a, Messa
                 col
             } else if let Some(t) = event.time {
                 col.push(event::confirmed_outgoing_event(
+                    label,
                     NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
                     &Amount::from_sat(output.value),
                     Message::SelectSub(i, output_index),
                 ))
             } else {
                 col.push(event::unconfirmed_outgoing_event(
+                    label,
                     &Amount::from_sat(output.value),
                     Message::SelectSub(i, output_index),
                 ))
@@ -186,8 +209,15 @@ pub fn payment_view<'a>(
     cache: &'a Cache,
     tx: &'a HistoryTransaction,
     output_index: usize,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
+    let txid = tx.tx.txid().to_string();
+    let outpoint = bitcoin::OutPoint {
+        txid: tx.tx.txid(),
+        vout: output_index as u32,
+    }
+    .to_string();
     dashboard(
         &Menu::Home,
         cache,
@@ -200,11 +230,22 @@ pub fn payment_view<'a>(
             } else {
                 Container::new(h3("Outgoing payment")).width(Length::Fill)
             })
+            .push(if let Some(label) = labels_editing.get(&outpoint) {
+                label::label_editing(outpoint.clone(), label, H3_SIZE)
+            } else {
+                label::label_editable(outpoint.clone(), tx.labels.get(&outpoint), H1_SIZE)
+            })
             .push(Container::new(amount_with_size(
                 &Amount::from_sat(tx.tx.output[output_index].value),
                 H1_SIZE,
             )))
+            .push(Space::with_height(H3_SIZE))
             .push(Container::new(h3("Transaction")).width(Length::Fill))
+            .push(if let Some(label) = labels_editing.get(&txid) {
+                label::label_editing(txid.clone(), label, H3_SIZE)
+            } else {
+                label::label_editable(txid.clone(), tx.labels.get(&txid), H3_SIZE)
+            })
             .push_maybe(tx.fee_amount.map(|fee_amount| {
                 Row::new()
                     .align_items(Alignment::Center)
@@ -259,11 +300,8 @@ pub fn payment_view<'a>(
                 } else {
                     Some(tx.change_indexes.clone())
                 },
-                if tx.is_external() {
-                    Some(tx.change_indexes.clone())
-                } else {
-                    None
-                },
+                &tx.labels,
+                labels_editing,
             ))
             .spacing(20),
     )

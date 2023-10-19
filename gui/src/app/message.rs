@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use liana::{
@@ -22,6 +23,7 @@ pub enum Message {
     Info(Result<GetInfoResult, Error>),
     ReceiveAddress(Result<Address, Error>),
     Coins(Result<Vec<Coin>, Error>),
+    Labels(Result<HashMap<String, String>, Error>),
     SpendTxs(Result<Vec<SpendTx>, Error>),
     Psbt(Result<Psbt, Error>),
     Recovery(Result<SpendTx, Error>),
@@ -33,4 +35,5 @@ pub enum Message {
     ConnectedHardwareWallets(Vec<HardwareWallet>),
     HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
     PendingTransactions(Result<Vec<HistoryTransaction>, Error>),
+    LabelsUpdated(Result<HashMap<String, String>, Error>),
 }

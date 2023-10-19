@@ -1,18 +1,30 @@
-use std::convert::TryInto;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    convert::TryInto,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use iced::Command;
 use liana_ui::widget::*;
 
-use crate::app::{cache::Cache, error::Error, message::Message, view, State};
+use crate::app::{
+    cache::Cache,
+    error::Error,
+    message::Message,
+    state::{label::LabelsEdited, State},
+    view,
+};
 
-use crate::daemon::{model::HistoryTransaction, Daemon};
+use crate::daemon::{
+    model::{HistoryTransaction, Labelled},
+    Daemon,
+};
 
 #[derive(Default)]
 pub struct TransactionsPanel {
     pending_txs: Vec<HistoryTransaction>,
     txs: Vec<HistoryTransaction>,
+    labels_edited: LabelsEdited,
     selected_tx: Option<usize>,
     warning: Option<Error>,
 }
@@ -23,6 +35,7 @@ impl TransactionsPanel {
             selected_tx: None,
             txs: Vec::new(),
             pending_txs: Vec::new(),
+            labels_edited: LabelsEdited::default(),
             warning: None,
         }
     }
@@ -36,7 +49,12 @@ impl State for TransactionsPanel {
             } else {
                 &self.txs[i - self.pending_txs.len()]
             };
-            view::transactions::tx_view(cache, tx, self.warning.as_ref())
+            view::transactions::tx_view(
+                cache,
+                tx,
+                self.labels_edited.cache(),
+                self.warning.as_ref(),
+            )
         } else {
             view::transactions::transactions_view(
                 cache,
@@ -81,6 +99,23 @@ impl State for TransactionsPanel {
             }
             Message::View(view::Message::Select(i)) => {
                 self.selected_tx = Some(i);
+            }
+            Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
+                match self.labels_edited.update(
+                    daemon,
+                    message,
+                    self.pending_txs
+                        .iter_mut()
+                        .map(|tx| tx as &mut dyn Labelled)
+                        .chain(self.txs.iter_mut().map(|tx| tx as &mut dyn Labelled)),
+                ) {
+                    Ok(cmd) => {
+                        return cmd;
+                    }
+                    Err(e) => {
+                        self.warning = Some(e);
+                    }
+                };
             }
             Message::View(view::Message::Next) => {
                 if let Some(last) = self.txs.last() {

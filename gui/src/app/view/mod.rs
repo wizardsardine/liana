@@ -1,3 +1,4 @@
+mod label;
 mod message;
 mod warning;
 

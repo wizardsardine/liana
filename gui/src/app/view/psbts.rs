@@ -59,7 +59,7 @@ pub fn import_psbt_success_view<'a>() -> Element<'a, Message> {
         .into()
 }
 
-pub fn psbts_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
+pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
     Column::new()
         .push(
             Row::new()
@@ -90,7 +90,7 @@ pub fn psbts_view<'a>(spend_txs: &[SpendTx]) -> Element<'a, Message> {
         .into()
 }
 
-fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
+fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
     Container::new(
         Button::new(
             Row::new()
@@ -124,6 +124,11 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                                     .push(icon::key_icon().style(color::GREY_3)),
                             )
                         })
+                        .push_maybe(
+                            tx.labels
+                                .get(&tx.psbt.unsigned_tx.txid().to_string())
+                                .map(p1_bold),
+                        )
                         .spacing(10)
                         .align_items(Alignment::Center)
                         .width(Length::Fill),
@@ -133,6 +138,11 @@ fn spend_tx_list_view<'a>(i: usize, tx: &SpendTx) -> Element<'a, Message> {
                     SpendStatus::Broadcast => Some(badge::unconfirmed()),
                     SpendStatus::Spent => Some(badge::spent()),
                     _ => None,
+                })
+                .push_maybe(if tx.is_batch() {
+                    Some(badge::batch())
+                } else {
+                    None
                 })
                 .push(
                     Column::new()

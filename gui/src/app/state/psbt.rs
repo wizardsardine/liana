@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use iced::Command;
@@ -17,11 +17,12 @@ use crate::{
         cache::Cache,
         error::Error,
         message::Message,
+        state::label::{label_item_from_str, LabelsEdited},
         view,
         wallet::{Wallet, WalletError},
     },
     daemon::{
-        model::{SpendStatus, SpendTx},
+        model::{LabelItem, Labelled, SpendStatus, SpendTx},
         Daemon,
     },
     hw::{list_hardware_wallets, HardwareWallet},
@@ -50,6 +51,8 @@ pub struct PsbtState {
     pub desc_policy: LianaPolicy,
     pub tx: SpendTx,
     pub saved: bool,
+    pub warning: Option<Error>,
+    pub labels_edited: LabelsEdited,
     pub action: Option<Box<dyn Action>>,
 }
 
@@ -58,6 +61,8 @@ impl PsbtState {
         Self {
             desc_policy: wallet.main_descriptor.policy(),
             wallet,
+            labels_edited: LabelsEdited::default(),
+            warning: None,
             action: None,
             tx,
             saved,
@@ -84,7 +89,7 @@ impl PsbtState {
                     self.action = None;
                 }
                 view::SpendTxMessage::Delete => {
-                    self.action = Some(Box::new(DeleteAction::default()));
+                    self.action = Some(Box::<DeleteAction>::default());
                 }
                 view::SpendTxMessage::Sign => {
                     let action = SignAction::new(self.tx.signers(), self.wallet.clone());
@@ -99,10 +104,10 @@ impl PsbtState {
                     return cmd;
                 }
                 view::SpendTxMessage::Broadcast => {
-                    self.action = Some(Box::new(BroadcastAction::default()));
+                    self.action = Some(Box::<BroadcastAction>::default());
                 }
                 view::SpendTxMessage::Save => {
-                    self.action = Some(Box::new(SaveAction::default()));
+                    self.action = Some(Box::<SaveAction>::default());
                 }
                 _ => {
                     if let Some(action) = self.action.as_mut() {
@@ -110,6 +115,20 @@ impl PsbtState {
                     }
                 }
             },
+            Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
+                match self.labels_edited.update(
+                    daemon,
+                    message,
+                    std::iter::once(&mut self.tx).map(|tx| tx as &mut dyn Labelled),
+                ) {
+                    Ok(cmd) => {
+                        return cmd;
+                    }
+                    Err(e) => {
+                        self.warning = Some(e);
+                    }
+                };
+            }
             Message::Updated(Ok(_)) => {
                 self.saved = true;
                 if let Some(action) = self.action.as_mut() {
@@ -132,7 +151,9 @@ impl PsbtState {
             self.saved,
             &self.desc_policy,
             &self.wallet.keys_aliases,
+            self.labels_edited.cache(),
             cache.network,
+            self.warning.as_ref(),
         );
         if let Some(action) = &self.action {
             modal::Modal::new(content, action.view())
@@ -161,8 +182,18 @@ impl Action for SaveAction {
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
                 let daemon = daemon.clone();
                 let psbt = tx.psbt.clone();
+                let mut labels = HashMap::<LabelItem, String>::new();
+                for (item, label) in tx.labels() {
+                    labels.insert(
+                        label_item_from_str(item).expect("Must be a LabelItem"),
+                        label.clone(),
+                    );
+                }
                 return Command::perform(
-                    async move { daemon.update_spend_tx(&psbt).map_err(|e| e.into()) },
+                    async move {
+                        daemon.update_spend_tx(&psbt)?;
+                        daemon.update_labels(&labels).map_err(|e| e.into())
+                    },
                     Message::Updated,
                 );
             }

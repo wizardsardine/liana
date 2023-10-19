@@ -1,10 +1,11 @@
 use chrono::NaiveDateTime;
+use std::collections::HashMap;
 
 use iced::{alignment, Alignment, Length};
 
 use liana_ui::{
     color,
-    component::{amount::*, badge, card, text::*},
+    component::{amount::*, badge, card, form, text::*},
     icon, theme,
     util::Collection,
     widget::*,
@@ -15,7 +16,7 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{dashboard, message::Message},
+        view::{dashboard, label, message::Message},
     },
     daemon::model::HistoryTransaction,
 };
@@ -24,8 +25,8 @@ pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
 pub fn transactions_view<'a>(
     cache: &'a Cache,
-    pending_txs: &[HistoryTransaction],
-    txs: &Vec<HistoryTransaction>,
+    pending_txs: &'a [HistoryTransaction],
+    txs: &'a Vec<HistoryTransaction>,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     dashboard(
@@ -83,7 +84,7 @@ pub fn transactions_view<'a>(
     )
 }
 
-fn tx_list_view<'a>(i: usize, tx: &HistoryTransaction) -> Element<'a, Message> {
+fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
     Container::new(
         Button::new(
             Row::new()
@@ -96,23 +97,36 @@ fn tx_list_view<'a>(i: usize, tx: &HistoryTransaction) -> Element<'a, Message> {
                         } else {
                             badge::spend()
                         })
-                        .push(if let Some(t) = tx.time {
-                            Container::new(
-                                text(format!(
-                                    "{}",
-                                    NaiveDateTime::from_timestamp_opt(t as i64, 0)
-                                        .unwrap()
-                                        .format("%b. %d, %Y - %T"),
-                                ))
-                                .small(),
-                            )
-                        } else {
-                            badge::unconfirmed()
-                        })
+                        .push(
+                            Column::new()
+                                .push_maybe(tx.labels.get(&tx.tx.txid().to_string()).map(p1_bold))
+                                .push_maybe(tx.time.map(|t| {
+                                    Container::new(
+                                        text(format!(
+                                            "{}",
+                                            NaiveDateTime::from_timestamp_opt(t as i64, 0)
+                                                .unwrap()
+                                                .format("%b. %d, %Y - %T"),
+                                        ))
+                                        .style(color::GREY_3)
+                                        .small(),
+                                    )
+                                })),
+                        )
                         .spacing(10)
                         .align_items(Alignment::Center)
                         .width(Length::Fill),
                 )
+                .push_maybe(if tx.time.is_none() {
+                    Some(badge::unconfirmed())
+                } else {
+                    None
+                })
+                .push_maybe(if tx.is_batch() {
+                    Some(badge::batch())
+                } else {
+                    None
+                })
                 .push(if tx.is_external() {
                     Row::new()
                         .spacing(5)
@@ -142,8 +156,10 @@ fn tx_list_view<'a>(i: usize, tx: &HistoryTransaction) -> Element<'a, Message> {
 pub fn tx_view<'a>(
     cache: &'a Cache,
     tx: &'a HistoryTransaction,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
+    let txid = tx.tx.txid().to_string();
     dashboard(
         &Menu::Transactions,
         cache,
@@ -155,6 +171,11 @@ pub fn tx_view<'a>(
                 Container::new(h3("Incoming transaction")).width(Length::Fill)
             } else {
                 Container::new(h3("Outgoing transaction")).width(Length::Fill)
+            })
+            .push(if let Some(label) = labels_editing.get(&txid) {
+                label::label_editing(txid.clone(), label, H3_SIZE)
+            } else {
+                label::label_editable(txid.clone(), tx.labels.get(&txid), H1_SIZE)
             })
             .push(
                 Column::new().spacing(20).push(
@@ -202,10 +223,10 @@ pub fn tx_view<'a>(
                             .push(
                                 Row::new()
                                     .align_items(Alignment::Center)
-                                    .push(Container::new(text(format!("{}", tx.tx.txid())).small()))
+                                    .push(Container::new(text(txid.clone()).small()))
                                     .push(
                                         Button::new(icon::clipboard_icon())
-                                            .on_press(Message::Clipboard(tx.tx.txid().to_string()))
+                                            .on_press(Message::Clipboard(txid.clone()))
                                             .style(theme::Button::TransparentBorder),
                                     )
                                     .width(Length::Shrink),
@@ -222,11 +243,8 @@ pub fn tx_view<'a>(
                 } else {
                     Some(tx.change_indexes.clone())
                 },
-                if tx.is_external() {
-                    Some(tx.change_indexes.clone())
-                } else {
-                    None
-                },
+                &tx.labels,
+                labels_editing,
             ))
             .spacing(20),
     )

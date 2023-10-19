@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{model::*, Daemon, DaemonError};
 use liana::{
+    commands::LabelItem,
     config::Config,
     miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
     DaemonControl, DaemonHandle,
@@ -59,7 +60,7 @@ impl Daemon for EmbeddedDaemon {
     }
 
     fn list_coins(&self) -> Result<ListCoinsResult, DaemonError> {
-        Ok(self.control()?.list_coins())
+        Ok(self.control()?.list_coins(&[], &[]))
     }
 
     fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
@@ -125,5 +126,17 @@ impl Daemon for EmbeddedDaemon {
             .create_recovery(address, feerate_vb, sequence)
             .map_err(|e| DaemonError::Unexpected(e.to_string()))
             .map(|res| res.psbt)
+    }
+
+    fn get_labels(
+        &self,
+        items: &HashSet<LabelItem>,
+    ) -> Result<HashMap<String, String>, DaemonError> {
+        Ok(self.handle.control.get_labels(items).labels)
+    }
+
+    fn update_labels(&self, items: &HashMap<LabelItem, String>) -> Result<(), DaemonError> {
+        self.handle.control.update_labels(items);
+        Ok(())
     }
 }
