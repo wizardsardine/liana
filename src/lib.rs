@@ -671,7 +671,7 @@ mod tests {
     // Send them a response to 'getblockchaininfo' saying we are far from being synced
     fn complete_sync_check(server: &net::TcpListener) {
         let net_resp = [
-            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"verificationprogress\":0.1}}\n".as_bytes(),
+            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"verificationprogress\":0.1,\"headers\":1000,\"blocks\":100}}\n".as_bytes(),
         ]
         .concat();
         let (mut stream, _) = server.accept().unwrap();

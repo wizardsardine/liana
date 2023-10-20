@@ -356,12 +356,14 @@ pub fn looper(
 
         // Don't poll until the Bitcoin backend is fully synced.
         if !synced {
-            let sync_progress = bit.sync_progress();
+            let progress = bit.sync_progress();
             log::info!(
-                "Block chain synchronization progress: {:.2}%",
-                sync_progress * 100.0
+                "Block chain synchronization progress: {:.2}% ({} blocks / {} headers)",
+                progress.rounded_up_progress() * 100.0,
+                progress.blocks,
+                progress.headers
             );
-            synced = sync_progress == 1.0;
+            synced = progress.is_complete();
             if !synced {
                 continue;
             }

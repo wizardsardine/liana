@@ -830,7 +830,6 @@ mod tests {
         assert_eq!(signed_single_psbt.inputs[0].partial_sigs.len(), 1);
         assert_eq!(info.primary_path.threshold, 1);
         assert_eq!(info.primary_path.sigs_count, 1);
-        dbg!(&info.primary_path.signed_pubkeys);
         assert!(
             info.primary_path.signed_pubkeys.len() == 1
                 && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)

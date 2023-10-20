@@ -9,6 +9,7 @@ use crate::{
     bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry},
     descriptors,
 };
+pub use d::SyncProgress;
 
 use std::{fmt, sync};
 
@@ -42,8 +43,9 @@ pub trait BitcoinInterface: Send {
     fn genesis_block(&self) -> BlockChainTip;
 
     /// Get the progress of the block chain synchronization.
-    /// Returns a percentage between 0 and 1.
-    fn sync_progress(&self) -> f64;
+    /// Returns a rounded up percentage between 0 and 1. Use the `is_synced` method to be sure the
+    /// backend is completely synced to the best known tip.
+    fn sync_progress(&self) -> SyncProgress;
 
     /// Get the best block info.
     fn chain_tip(&self) -> BlockChainTip;
@@ -117,7 +119,7 @@ impl BitcoinInterface for d::BitcoinD {
         BlockChainTip { hash, height }
     }
 
-    fn sync_progress(&self) -> f64 {
+    fn sync_progress(&self) -> SyncProgress {
         self.sync_progress()
     }
 
@@ -333,7 +335,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock().unwrap().genesis_block()
     }
 
-    fn sync_progress(&self) -> f64 {
+    fn sync_progress(&self) -> SyncProgress {
         self.lock().unwrap().sync_progress()
     }
 
