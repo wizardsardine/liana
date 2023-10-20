@@ -75,7 +75,25 @@ fn coin_list_view<'a>(
                                 .push(badge::coin())
                                 .push(if !collapsed {
                                     if let Some(label) = labels.get(&outpoint) {
-                                        Container::new(p1_bold(label)).width(Length::Fill)
+                                        if !label.is_empty() {
+                                            Container::new(p1_bold(label)).width(Length::Fill)
+                                        } else if let Some(label) = labels.get(&txid) {
+                                            Container::new(
+                                                Row::new()
+                                                    .spacing(5)
+                                                    .push(
+                                                        // It it not possible to know if a coin is a
+                                                        // change coin or not so for now, From is
+                                                        // enough
+                                                        p1_bold("From").style(color::GREY_3),
+                                                    )
+                                                    .push(p1_bold(label)),
+                                            )
+                                            .width(Length::Fill)
+                                        } else {
+                                            Container::new(Space::with_width(Length::Fill))
+                                                .width(Length::Fill)
+                                        }
                                     } else if let Some(label) = labels.get(&txid) {
                                         Container::new(
                                             Row::new()
@@ -124,10 +142,10 @@ fn coin_list_view<'a>(
                         .spacing(5)
                         .push(
                             Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                                label::label_editing(outpoint.clone(), label, P1_SIZE)
+                                label::label_editing(vec![outpoint.clone()], label, P1_SIZE)
                             } else {
                                 label::label_editable(
-                                    outpoint.clone(),
+                                    vec![outpoint.clone()],
                                     labels.get(&outpoint),
                                     P1_SIZE,
                                 )

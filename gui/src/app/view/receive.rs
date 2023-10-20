@@ -52,10 +52,14 @@ pub fn receive<'a>(
                             card::simple(
                                 Column::new()
                                     .push(if let Some(label) = labels_editing.get(&addr) {
-                                        label::label_editing(addr.clone(), label, text::P1_SIZE)
+                                        label::label_editing(
+                                            vec![addr.clone()],
+                                            label,
+                                            text::P1_SIZE,
+                                        )
                                     } else {
                                         label::label_editable(
-                                            addr.clone(),
+                                            vec![addr.clone()],
                                             labels.get(&addr),
                                             text::P1_SIZE,
                                         )

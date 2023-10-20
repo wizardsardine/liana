@@ -533,7 +533,7 @@ impl Step for SaveSpend {
             if !recipient.label.value.is_empty() {
                 let label = recipient.label.value.clone();
                 tx.labels
-                    .insert(tx.psbt.unsigned_tx.txid().to_string(), label.clone());
+                    .insert(tx.psbt.unsigned_tx.txid().to_string(), label);
             }
         }
 

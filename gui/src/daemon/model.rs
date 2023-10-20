@@ -193,6 +193,7 @@ pub struct HistoryTransaction {
     pub fee_amount: Option<Amount>,
     pub height: Option<i32>,
     pub time: Option<u32>,
+    pub kind: TransactionKind,
 }
 
 impl HistoryTransaction {
@@ -228,6 +229,47 @@ impl HistoryTransaction {
 
         Self {
             labels: HashMap::new(),
+            kind: if coins.is_empty() {
+                if change_indexes.len() == 1 {
+                    TransactionKind::IncomingSinglePayment(OutPoint {
+                        txid: tx.txid(),
+                        vout: change_indexes[0] as u32,
+                    })
+                } else {
+                    TransactionKind::IncomingPaymentBatch(
+                        change_indexes
+                            .iter()
+                            .map(|i| OutPoint {
+                                txid: tx.txid(),
+                                vout: *i as u32,
+                            })
+                            .collect(),
+                    )
+                }
+            } else if outgoing_amount == Amount::from_sat(0) {
+                TransactionKind::SendToSelf
+            } else {
+                let outpoints: Vec<OutPoint> = tx
+                    .output
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, _)| {
+                        if !change_indexes.contains(&i) {
+                            Some(OutPoint {
+                                txid: tx.txid(),
+                                vout: i as u32,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if outpoints.len() == 1 {
+                    TransactionKind::OutgoingSinglePayment(outpoints[0])
+                } else {
+                    TransactionKind::OutgoingPaymentBatch(outpoints)
+                }
+            },
             tx,
             coins,
             change_indexes,
@@ -241,22 +283,39 @@ impl HistoryTransaction {
     }
 
     pub fn is_external(&self) -> bool {
-        self.coins.is_empty()
+        matches!(
+            self.kind,
+            TransactionKind::IncomingSinglePayment(_) | TransactionKind::IncomingPaymentBatch(_)
+        )
     }
 
-    pub fn is_self_send(&self) -> bool {
-        !self.coins.is_empty() && self.outgoing_amount == Amount::from_sat(0)
+    pub fn is_send_to_self(&self) -> bool {
+        matches!(self.kind, TransactionKind::SendToSelf)
+    }
+
+    pub fn is_single_payment(&self) -> Option<OutPoint> {
+        match self.kind {
+            TransactionKind::IncomingSinglePayment(outpoint) => Some(outpoint),
+            TransactionKind::OutgoingSinglePayment(outpoint) => Some(outpoint),
+            _ => None,
+        }
     }
 
     pub fn is_batch(&self) -> bool {
-        self.tx
-            .output
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !self.change_indexes.contains(i))
-            .count()
-            > 1
+        matches!(
+            self.kind,
+            TransactionKind::IncomingPaymentBatch(_) | TransactionKind::OutgoingPaymentBatch(_)
+        )
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum TransactionKind {
+    IncomingSinglePayment(OutPoint),
+    IncomingPaymentBatch(Vec<OutPoint>),
+    SendToSelf,
+    OutgoingSinglePayment(OutPoint),
+    OutgoingPaymentBatch(Vec<OutPoint>),
 }
 
 impl Labelled for HistoryTransaction {

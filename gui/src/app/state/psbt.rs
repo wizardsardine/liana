@@ -184,10 +184,7 @@ impl Action for SaveAction {
                 let psbt = tx.psbt.clone();
                 let mut labels = HashMap::<LabelItem, String>::new();
                 for (item, label) in tx.labels() {
-                    labels.insert(
-                        label_item_from_str(item).expect("Must be a LabelItem"),
-                        label.clone(),
-                    );
+                    labels.insert(label_item_from_str(item), label.clone());
                 }
                 return Command::perform(
                     async move {

@@ -92,7 +92,7 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                     Row::new()
                         .push(if tx.is_external() {
                             badge::receive()
-                        } else if tx.is_self_send() {
+                        } else if tx.is_send_to_self() {
                             badge::cycle()
                         } else {
                             badge::spend()
@@ -165,22 +165,35 @@ pub fn tx_view<'a>(
         cache,
         warning,
         Column::new()
-            .push(if tx.is_self_send() {
+            .push(if tx.is_send_to_self() {
                 Container::new(h3("Transaction")).width(Length::Fill)
             } else if tx.is_external() {
                 Container::new(h3("Incoming transaction")).width(Length::Fill)
             } else {
                 Container::new(h3("Outgoing transaction")).width(Length::Fill)
             })
-            .push(if let Some(label) = labels_editing.get(&txid) {
-                label::label_editing(txid.clone(), label, H3_SIZE)
+            .push(if let Some(outpoint) = tx.is_single_payment() {
+                // if the payment is a payment of a single payment transaction then
+                // the label of the transaction is attached to the label of the payment outpoint
+                let outpoint = outpoint.to_string();
+                if let Some(label) = labels_editing.get(&outpoint) {
+                    label::label_editing(vec![outpoint.clone(), txid.clone()], label, H3_SIZE)
+                } else {
+                    label::label_editable(
+                        vec![outpoint.clone(), txid.clone()],
+                        tx.labels.get(&outpoint),
+                        H3_SIZE,
+                    )
+                }
+            } else if let Some(label) = labels_editing.get(&txid) {
+                label::label_editing(vec![txid.clone()], label, H3_SIZE)
             } else {
-                label::label_editable(txid.clone(), tx.labels.get(&txid), H1_SIZE)
+                label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H1_SIZE)
             })
             .push(
                 Column::new().spacing(20).push(
                     Column::new()
-                        .push(if tx.is_self_send() {
+                        .push(if tx.is_send_to_self() {
                             Container::new(h1("Self-transfer"))
                         } else if tx.is_external() {
                             Container::new(amount_with_size(&tx.incoming_amount, H1_SIZE))

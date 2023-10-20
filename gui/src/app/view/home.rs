@@ -19,7 +19,7 @@ use crate::{
         menu::Menu,
         view::{coins, dashboard, label, message::Message},
     },
-    daemon::model::HistoryTransaction,
+    daemon::model::{HistoryTransaction, TransactionKind},
 };
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
@@ -103,7 +103,7 @@ pub fn home_view<'a>(
                 .push(pending_events.iter().enumerate().fold(
                     Column::new().spacing(10),
                     |col, (i, event)| {
-                        if !event.is_self_send() {
+                        if !event.is_send_to_self() {
                             col.push(event_list_view(i, event))
                         } else {
                             col
@@ -113,7 +113,7 @@ pub fn home_view<'a>(
                 .push(events.iter().enumerate().fold(
                     Column::new().spacing(10),
                     |col, (i, event)| {
-                        if !event.is_self_send() {
+                        if !event.is_send_to_self() {
                             col.push(event_list_view(i + pending_events.len(), event))
                         } else {
                             col
@@ -223,17 +223,33 @@ pub fn payment_view<'a>(
         cache,
         warning,
         Column::new()
-            .push(if tx.is_self_send() {
-                Container::new(h3("Payment")).width(Length::Fill)
-            } else if tx.is_external() {
-                Container::new(h3("Incoming payment")).width(Length::Fill)
-            } else {
-                Container::new(h3("Outgoing payment")).width(Length::Fill)
+            .push(match tx.kind {
+                TransactionKind::OutgoingSinglePayment(_)
+                | TransactionKind::OutgoingPaymentBatch(_) => {
+                    Container::new(h3("Outgoing payment")).width(Length::Fill)
+                }
+                TransactionKind::IncomingSinglePayment(_)
+                | TransactionKind::IncomingPaymentBatch(_) => {
+                    Container::new(h3("Incoming payment")).width(Length::Fill)
+                }
+                _ => Container::new(h3("Payment")).width(Length::Fill),
             })
-            .push(if let Some(label) = labels_editing.get(&outpoint) {
-                label::label_editing(outpoint.clone(), label, H3_SIZE)
+            .push(if tx.is_single_payment().is_some() {
+                // if the payment is a payment of a single payment transaction then
+                // the label of the transaction is attached to the label of the payment outpoint
+                if let Some(label) = labels_editing.get(&outpoint) {
+                    label::label_editing(vec![outpoint.clone(), txid.clone()], label, H3_SIZE)
+                } else {
+                    label::label_editable(
+                        vec![outpoint.clone(), txid.clone()],
+                        tx.labels.get(&outpoint),
+                        H3_SIZE,
+                    )
+                }
+            } else if let Some(label) = labels_editing.get(&outpoint) {
+                label::label_editing(vec![outpoint.clone()], label, H3_SIZE)
             } else {
-                label::label_editable(outpoint.clone(), tx.labels.get(&outpoint), H1_SIZE)
+                label::label_editable(vec![outpoint.clone()], tx.labels.get(&outpoint), H3_SIZE)
             })
             .push(Container::new(amount_with_size(
                 &Amount::from_sat(tx.tx.output[output_index].value),
@@ -241,10 +257,18 @@ pub fn payment_view<'a>(
             )))
             .push(Space::with_height(H3_SIZE))
             .push(Container::new(h3("Transaction")).width(Length::Fill))
-            .push(if let Some(label) = labels_editing.get(&txid) {
-                label::label_editing(txid.clone(), label, H3_SIZE)
+            .push_maybe(if tx.is_batch() {
+                if let Some(label) = labels_editing.get(&txid) {
+                    Some(label::label_editing(vec![txid.clone()], label, H3_SIZE))
+                } else {
+                    Some(label::label_editable(
+                        vec![txid.clone()],
+                        tx.labels.get(&txid),
+                        H3_SIZE,
+                    ))
+                }
             } else {
-                label::label_editable(txid.clone(), tx.labels.get(&txid), H3_SIZE)
+                None
             })
             .push_maybe(tx.fee_amount.map(|fee_amount| {
                 Row::new()

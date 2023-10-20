@@ -9,7 +9,7 @@ pub enum Message {
     Close,
     Select(usize),
     SelectSub(usize, usize),
-    Label(String, LabelMessage),
+    Label(Vec<String>, LabelMessage),
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),

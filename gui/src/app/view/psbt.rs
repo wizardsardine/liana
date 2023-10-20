@@ -199,9 +199,9 @@ pub fn spend_header<'a>(
     Column::new()
         .spacing(20)
         .push(if let Some(label) = labels_editing.get(&txid) {
-            label::label_editing(txid.clone(), label, H3_SIZE)
+            label::label_editing(vec![txid.clone()], label, H3_SIZE)
         } else {
-            label::label_editable(txid.clone(), tx.labels.get(&txid), H1_SIZE)
+            label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H1_SIZE)
         })
         .push(
             Column::new()
@@ -738,10 +738,10 @@ fn input_view<'a>(
                 .align_items(Alignment::Center)
                 .push(
                     Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(outpoint.clone(), label, text::P1_SIZE)
+                        label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
                     } else {
                         label::label_editable(
-                            outpoint.clone(),
+                            vec![outpoint.clone()],
                             labels.get(&outpoint),
                             text::P1_SIZE,
                         )
@@ -825,10 +825,10 @@ fn payment_view<'a>(
                 .align_items(Alignment::Center)
                 .push(
                     Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(outpoint.clone(), label, text::P1_SIZE)
+                        label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
                     } else {
                         label::label_editable(
-                            outpoint.clone(),
+                            vec![outpoint.clone()],
                             labels.get(&outpoint),
                             text::P1_SIZE,
                         )

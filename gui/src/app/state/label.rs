@@ -26,34 +26,45 @@ impl LabelsEdited {
         targets: T,
     ) -> Result<Command<Message>, Error> {
         match message {
-            Message::View(view::Message::Label(labelled, msg)) => match msg {
+            Message::View(view::Message::Label(items, msg)) => match msg {
                 view::LabelMessage::Edited(value) => {
                     let valid = value.len() <= 100;
-                    if let Some(label) = self.0.get_mut(&labelled) {
-                        label.valid = valid;
-                        label.value = value;
-                    } else {
-                        self.0.insert(labelled, form::Value { valid, value });
+                    for item in items {
+                        if let Some(label) = self.0.get_mut(&item) {
+                            label.valid = valid;
+                            label.value = value.clone();
+                        } else {
+                            self.0.insert(
+                                item,
+                                form::Value {
+                                    valid,
+                                    value: value.clone(),
+                                },
+                            );
+                        }
                     }
                 }
                 view::LabelMessage::Cancel => {
-                    self.0.remove(&labelled);
+                    for item in items {
+                        self.0.remove(&item);
+                    }
                 }
                 view::LabelMessage::Confirm => {
-                    if let Some(label) = self.0.get(&labelled).cloned() {
-                        return Ok(Command::perform(
-                            async move {
-                                if let Some(item) = label_item_from_str(&labelled) {
-                                    daemon.update_labels(&HashMap::from([(
-                                        item,
-                                        label.value.clone(),
-                                    )]))?;
-                                }
-                                Ok(HashMap::from([(labelled, label.value)]))
-                            },
-                            Message::LabelsUpdated,
-                        ));
+                    let mut updated_labels = HashMap::<LabelItem, String>::new();
+                    let mut updated_labels_str = HashMap::<String, String>::new();
+                    for item in items {
+                        if let Some(label) = self.0.get(&item).cloned() {
+                            updated_labels.insert(label_item_from_str(&item), label.value.clone());
+                            updated_labels_str.insert(item, label.value);
+                        }
                     }
+                    return Ok(Command::perform(
+                        async move {
+                            daemon.update_labels(&updated_labels)?;
+                            Ok(updated_labels_str)
+                        },
+                        Message::LabelsUpdated,
+                    ));
                 }
             },
             Message::LabelsUpdated(res) => match res {
@@ -75,14 +86,14 @@ impl LabelsEdited {
     }
 }
 
-pub fn label_item_from_str(s: &str) -> Option<LabelItem> {
+pub fn label_item_from_str(s: &str) -> LabelItem {
     if let Ok(addr) = bitcoin::Address::from_str(s) {
-        Some(LabelItem::Address(addr.assume_checked()))
+        LabelItem::Address(addr.assume_checked())
     } else if let Ok(txid) = bitcoin::Txid::from_str(s) {
-        Some(LabelItem::Txid(txid))
+        LabelItem::Txid(txid)
     } else if let Ok(outpoint) = bitcoin::OutPoint::from_str(s) {
-        Some(LabelItem::OutPoint(outpoint))
+        LabelItem::OutPoint(outpoint)
     } else {
-        None
+        unreachable!()
     }
 }

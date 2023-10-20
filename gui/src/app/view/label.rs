@@ -10,7 +10,7 @@ use liana_ui::{
 use crate::app::view;
 
 pub fn label_editable(
-    labelled: String,
+    labelled: Vec<String>,
     label: Option<&String>,
     size: u16,
 ) -> Element<'_, view::Message> {
@@ -50,7 +50,7 @@ pub fn label_editable(
 }
 
 pub fn label_editing(
-    labelled: String,
+    labelled: Vec<String>,
     label: &form::Value<String>,
     size: u16,
 ) -> Element<view::Message> {
