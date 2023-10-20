@@ -17,7 +17,7 @@ pub use keys::*;
 pub mod analysis;
 pub use analysis::*;
 
-const WITNESS_FACTOR: usize = 4;
+pub const WITNESS_FACTOR: usize = 4;
 
 #[derive(Debug)]
 pub enum LianaDescError {
