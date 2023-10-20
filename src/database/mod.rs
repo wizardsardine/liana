@@ -130,6 +130,7 @@ pub trait DatabaseConnection {
     fn delete_spend(&mut self, txid: &bitcoin::Txid);
 
     fn update_labels(&mut self, items: &HashMap<LabelItem, String>);
+    fn delete_labels(&mut self, items: &[LabelItem]);
 
     fn labels(&mut self, labels: &HashSet<LabelItem>) -> HashMap<String, String>;
 
@@ -277,6 +278,10 @@ impl DatabaseConnection for SqliteConn {
 
     fn update_labels(&mut self, items: &HashMap<LabelItem, String>) {
         self.update_labels(items)
+    }
+
+    fn delete_labels(&mut self, items: &[LabelItem]) {
+        self.delete_labels(items)
     }
 
     fn labels(&mut self, items: &HashSet<LabelItem>) -> HashMap<String, String> {

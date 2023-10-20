@@ -223,15 +223,14 @@ fn update_labels(control: &DaemonControl, params: Params) -> Result<serde_json::
         .ok_or_else(|| Error::invalid_params("Invalid 'labels' parameter."))?
         .iter()
     {
-        let value = value
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| Error::invalid_params(format!("Invalid 'labels.{}' value.", item)))?;
-        if value.len() > 100 {
-            return Err(Error::invalid_params(format!(
-                "Invalid 'labels.{}' value length: must be less or equal than 100 characters",
-                item
-            )));
+        let value = value.as_str().map(|s| s.to_string());
+        if let Some(value) = &value {
+            if value.len() > 100 {
+                return Err(Error::invalid_params(format!(
+                    "Invalid 'labels.{}' value length: must be less or equal than 100 characters",
+                    item
+                )));
+            }
         }
         let item =
             LabelItem::from_str(item, control.config.bitcoin_config.network).ok_or_else(|| {

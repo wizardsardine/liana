@@ -607,6 +607,23 @@ impl SqliteConn {
         .expect("Db must not fail")
     }
 
+    pub fn delete_labels(&mut self, items: &[LabelItem]) {
+        let query = format!(
+            "DELETE FROM labels WHERE wallet_id = {} AND item IN ({})",
+            WALLET_ID,
+            items
+                .iter()
+                .map(|a| format!("'{}'", a))
+                .collect::<Vec<String>>()
+                .join(",")
+        );
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(&query, rusqlite::params![])?;
+            Ok(())
+        })
+        .expect("Db must not fail")
+    }
+
     pub fn db_labels(&mut self, items: &HashSet<LabelItem>) -> Vec<DbLabel> {
         let query = format!(
             "SELECT * FROM labels where item in ({})",
@@ -907,6 +924,34 @@ CREATE TABLE spend_transactions (
 
             let db_labels = conn.db_labels(&items);
             assert_eq!(db_labels[0].value, "hello again");
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn db_labels_delete() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        {
+            let txid_str = "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7";
+            let txid = LabelItem::from_str(txid_str, bitcoin::Network::Bitcoin).unwrap();
+            let mut items = HashSet::new();
+            items.insert(txid.clone());
+
+            let mut conn = db.connection().unwrap();
+
+            let mut txids_labels = HashMap::new();
+            txids_labels.insert(txid.clone(), "hello".to_string());
+
+            conn.update_labels(&txids_labels);
+            let db_labels = conn.db_labels(&items);
+            assert_eq!(db_labels[0].value, "hello");
+
+            conn.delete_labels(&[txid]);
+
+            let db_labels = conn.db_labels(&items);
+            assert!(db_labels.is_empty());
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();

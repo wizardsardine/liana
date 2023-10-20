@@ -367,6 +367,10 @@ impl DatabaseConnection for DummyDatabase {
         todo!()
     }
 
+    fn delete_labels(&mut self, _items: &[LabelItem]) {
+        todo!()
+    }
+
     fn labels(&mut self, _items: &HashSet<LabelItem>) -> HashMap<String, String> {
         todo!()
     }

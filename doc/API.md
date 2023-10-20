@@ -314,6 +314,7 @@ cover the requested feerate.
 
 Update the labels from a given map of key/value, with the labelled bitcoin addresses, txids and outpoints as keys
 and the label as value. If a label already exist for the given item, the new label overrides the previous one. 
+In order to delete a label, the client has to send a `null` as json value.
 
 #### Request
 

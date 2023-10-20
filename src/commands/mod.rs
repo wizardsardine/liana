@@ -592,9 +592,24 @@ impl DaemonControl {
         Ok(())
     }
 
-    pub fn update_labels(&self, items: &HashMap<LabelItem, String>) {
+    pub fn update_labels(&self, items: &HashMap<LabelItem, Option<String>>) {
         let mut db_conn = self.db.connection();
-        db_conn.update_labels(items);
+        let mut update_labels = HashMap::<LabelItem, String>::new();
+        let mut delete_labels = Vec::<LabelItem>::new();
+        for (item, label) in items {
+            if let Some(label) = label {
+                update_labels.insert(item.clone(), label.clone());
+            } else {
+                delete_labels.push(item.clone());
+            }
+        }
+
+        if !update_labels.is_empty() {
+            db_conn.update_labels(&update_labels);
+        }
+        if !delete_labels.is_empty() {
+            db_conn.delete_labels(&delete_labels);
+        }
     }
 
     pub fn get_labels(&self, items: &HashSet<LabelItem>) -> GetLabelsResult {
