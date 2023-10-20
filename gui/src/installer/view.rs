@@ -1295,6 +1295,7 @@ pub fn edit_key_modal<'a>(
     form_xpub: &form::Value<String>,
     form_name: &'a form::Value<String>,
     edit_name: bool,
+    duplicate_master_fg: bool,
 ) -> Element<'a, Message> {
     Column::new()
         .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
@@ -1411,8 +1412,15 @@ pub fn edit_key_modal<'a>(
                         Column::new()
                     },
                 )
+                .push_maybe(
+                    if duplicate_master_fg {
+                        Some(text("A single signing device may not be used more than once per path. (It can still be used in other paths.)").style(color::RED))
+                    } else {
+                        None
+                    }
+                )
                 .push(
-                    if form_xpub.valid && !form_xpub.value.is_empty() && !form_name.value.is_empty()
+                    if form_xpub.valid && !form_xpub.value.is_empty() && !form_name.value.is_empty() && !duplicate_master_fg
                     {
                         button::primary(None, "Apply")
                             .on_press(Message::DefineDescriptor(
