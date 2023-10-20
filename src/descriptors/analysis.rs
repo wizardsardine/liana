@@ -17,6 +17,8 @@ pub enum LianaPolicyError {
     InsaneTimelock(u32),
     InvalidKey(Box<descriptor::DescriptorPublicKey>),
     DuplicateKey(Box<descriptor::DescriptorPublicKey>),
+    /// The same signer was used more than once in a single spending path.
+    DuplicateOriginSamePath(Box<descriptor::DescriptorPublicKey>),
     InvalidMultiThresh(usize),
     InvalidMultiKeys(usize),
     IncompatibleDesc,
@@ -43,6 +45,9 @@ impl std::fmt::Display for LianaPolicyError {
             Self::InvalidMultiKeys(n_keys) => write!(f, "Invalid number of keys '{}'. Between 2 and 20 keys must be given to use multiple keys in a specific path.", n_keys),
             Self::DuplicateKey(key) => {
                 write!(f, "Duplicate key '{}'.", key)
+            }
+            Self::DuplicateOriginSamePath(key) => {
+                write!(f, "Key '{}' is derived from the same origin as another key present in the same spending path. It is not possible to use a signer more than once within a single spending path.", key)
             }
             Self::IncompatibleDesc => write!(
                 f,
@@ -83,7 +88,13 @@ impl DescKeyChecker {
     ///  - The multipath step to only contain two indexes. These can be any indexes, which is
     ///     useful for deriving multiple keys from the same xpub.
     ///  - Be 'signable' by an external signer (to contain an origin)
-    pub fn check(&mut self, key: &descriptor::DescriptorPublicKey) -> Result<(), LianaPolicyError> {
+    ///
+    /// This returns the origin fingerprint for this xpub, to make it possible for the caller to
+    /// check the same signer is never used twice in the same spending path.
+    pub fn check(
+        &mut self,
+        key: &descriptor::DescriptorPublicKey,
+    ) -> Result<bip32::Fingerprint, LianaPolicyError> {
         if let descriptor::DescriptorPublicKey::MultiXPub(ref xpub) = *key {
             let key_identifier = (xpub.xkey, xpub.derivation_paths.clone());
             // First make sure it's not a duplicate and record seeing it.
@@ -91,20 +102,21 @@ impl DescKeyChecker {
                 return Err(LianaPolicyError::DuplicateKey(key.clone().into()));
             }
             self.keys_set.insert(key_identifier);
-            // Then perform the contextless checks.
-            let der_paths = xpub.derivation_paths.paths();
-            let first_der_path = der_paths.get(0).expect("Cannot be empty");
+            // Then perform the contextless checks (origin, deriv paths, ..).
             // Technically the xpub could be for the master xpub and not have an origin. But it's
             // unlikely (and easily fixable) while users shooting themselves in the foot by
             // forgetting to provide the origin is so likely that it's worth ruling out xpubs
             // without origin entirely.
-            // We also rule out xpubs with hardened derivation steps (non-normalized xpubs).
-            let valid = xpub.origin.is_some()
-                && xpub.wildcard == descriptor::Wildcard::Unhardened
-                && der_paths.len() == 2
-                && first_der_path.into_iter().all(|step| step.is_normal());
-            if valid {
-                return Ok(());
+            if let Some(ref origin) = xpub.origin {
+                let der_paths = xpub.derivation_paths.paths();
+                let first_der_path = der_paths.get(0).expect("Cannot be empty");
+                // We also rule out xpubs with hardened derivation steps (non-normalized xpubs).
+                let valid = xpub.wildcard == descriptor::Wildcard::Unhardened
+                    && der_paths.len() == 2
+                    && first_der_path.into_iter().all(|step| step.is_normal());
+                if valid {
+                    return Ok(origin.0);
+                }
             }
         }
         Err(LianaPolicyError::InvalidKey(key.clone().into()))
@@ -387,10 +399,24 @@ impl LianaPolicy {
         let mut key_checker = DescKeyChecker::new();
         for path in spending_paths {
             match path {
-                PathInfo::Single(ref key) => key_checker.check(key)?,
+                PathInfo::Single(ref key) => {
+                    let _ = key_checker.check(key)?;
+                }
                 PathInfo::Multi(_, ref keys) => {
+                    // Record the origins of the keys for this spending path. If any two keys share
+                    // the same origin, they are from the same signer. We restrict using a signer
+                    // more than once within a single spending path as it can lead to surprising
+                    // behaviour. For details see:
+                    // https://github.com/wizardsardine/liana/pull/706#issuecomment-1744705808
+                    let mut origin_fingerprints = HashSet::with_capacity(keys.len());
                     for key in keys {
-                        key_checker.check(key)?
+                        let fg = key_checker.check(key)?;
+                        if origin_fingerprints.contains(&fg) {
+                            return Err(LianaPolicyError::DuplicateOriginSamePath(
+                                key.clone().into(),
+                            ));
+                        }
+                        origin_fingerprints.insert(fg);
                     }
                 }
             }
@@ -436,8 +462,8 @@ impl LianaPolicy {
         }
         .ok_or(LianaPolicyError::IncompatibleDesc)?;
 
-        // Fetch the two spending paths' semantic policies. The primary path is identified as the
-        // only one that isn't timelocked.
+        // Fetch all spending paths' semantic policies. The primary path is identified as the only
+        // one that isn't timelocked.
         let (mut primary_path, mut recovery_paths) = (None::<PathInfo>, BTreeMap::new());
         for sub in subs {
             // This is a (multi)key check. It must be the primary path.
@@ -456,7 +482,8 @@ impl LianaPolicy {
                     primary_path = Some(PathInfo::from_primary_path(sub)?);
                 }
             } else {
-                // If it's not a simple (multi)key check, it must be the timelocked recovery path.
+                // If it's not a simple (multi)key check, it must be (one of) the timelocked
+                // recovery path(s).
                 let (timelock, path_info) = PathInfo::from_recovery_path(sub)?;
                 if recovery_paths.contains_key(&timelock) {
                     return Err(LianaPolicyError::IncompatibleDesc);
