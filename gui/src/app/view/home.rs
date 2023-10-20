@@ -237,7 +237,7 @@ pub fn payment_view<'a>(
             })
             .push(Container::new(amount_with_size(
                 &Amount::from_sat(tx.tx.output[output_index].value),
-                H1_SIZE,
+                H3_SIZE,
             )))
             .push(Space::with_height(H3_SIZE))
             .push(Container::new(h3("Transaction")).width(Length::Fill))
