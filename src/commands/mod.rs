@@ -202,7 +202,14 @@ fn sanity_check_psbt(
     }
 
     // Check the feerate isn't insane.
-    let tx_vb = (tx.vsize() + spent_desc.max_sat_vbytes() * tx.input.len()) as u64;
+    // Add weights together before converting to vbytes to avoid rounding up multiple times
+    // and increasing the result, which could lead to the feerate in sats/vb falling below 1.
+    let tx_wu = tx.weight().to_wu() + (spent_desc.max_sat_weight() * tx.input.len()) as u64;
+    let tx_vb = tx_wu
+        .checked_add(descriptors::WITNESS_FACTOR as u64 - 1)
+        .unwrap()
+        .checked_div(descriptors::WITNESS_FACTOR as u64)
+        .unwrap();
     let feerate_sats_vb = abs_fee
         .checked_div(tx_vb)
         .ok_or(CommandError::InsaneFees(InsaneFeeInfo::InvalidFeerate))?;
