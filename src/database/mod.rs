@@ -129,7 +129,9 @@ pub trait DatabaseConnection {
     /// Delete a Spend transaction from database.
     fn delete_spend(&mut self, txid: &bitcoin::Txid);
 
-    fn update_labels(&mut self, items: &HashMap<LabelItem, String>);
+    /// Update, for a set of items (as key), their label (as value). A `None` value deletes the
+    /// label.
+    fn update_labels(&mut self, items: &HashMap<LabelItem, Option<String>>);
 
     fn labels(&mut self, labels: &HashSet<LabelItem>) -> HashMap<String, String>;
 
@@ -275,7 +277,7 @@ impl DatabaseConnection for SqliteConn {
         self.delete_spend(txid)
     }
 
-    fn update_labels(&mut self, items: &HashMap<LabelItem, String>) {
+    fn update_labels(&mut self, items: &HashMap<LabelItem, Option<String>>) {
         self.update_labels(items)
     }
 

@@ -952,3 +952,17 @@ def test_labels(lianad, bitcoind):
     assert res[inexistent_txid] == "inex_txid"
     assert res[inexistent_outpoint] == "inex_outpoint"
     assert res[random_address] == "bitcoind-addr"
+
+    # Delete 2 of the labels set above. They shouldn't be returned anymore.
+    lianad.rpc.updatelabels(
+        {
+            addr: None,
+            sec_addr: None,
+            random_address: "this address is random",
+        }
+    )
+    res = lianad.rpc.getlabels([addr, sec_addr, random_address])["labels"]
+    assert len(res) == 1
+    assert addr not in res
+    assert sec_addr not in res
+    assert res[random_address] == "this address is random"

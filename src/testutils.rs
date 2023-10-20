@@ -363,7 +363,7 @@ impl DatabaseConnection for DummyDatabase {
         todo!()
     }
 
-    fn update_labels(&mut self, _items: &HashMap<LabelItem, String>) {
+    fn update_labels(&mut self, _items: &HashMap<LabelItem, Option<String>>) {
         todo!()
     }
 
