@@ -135,7 +135,7 @@ impl Daemon for EmbeddedDaemon {
         Ok(self.handle.control.get_labels(items).labels)
     }
 
-    fn update_labels(&self, items: &HashMap<LabelItem, String>) -> Result<(), DaemonError> {
+    fn update_labels(&self, items: &HashMap<LabelItem, Option<String>>) -> Result<(), DaemonError> {
         self.handle.control.update_labels(items);
         Ok(())
     }

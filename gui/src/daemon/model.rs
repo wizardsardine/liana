@@ -346,13 +346,17 @@ impl Labelled for HistoryTransaction {
 pub trait Labelled {
     fn labelled(&self) -> Vec<LabelItem>;
     fn labels(&mut self) -> &mut HashMap<String, String>;
-    fn load_labels(&mut self, new_labels: &HashMap<String, String>) {
+    fn load_labels(&mut self, new_labels: &HashMap<String, Option<String>>) {
         let items = self.labelled();
         let labels = self.labels();
         for item in items {
             let item_str = item.to_string();
-            if let Some(l) = new_labels.get(&item_str) {
-                labels.insert(item_str, l.to_string());
+            if let Some(label) = new_labels.get(&item_str) {
+                if let Some(l) = label {
+                    labels.insert(item_str, l.to_string());
+                } else {
+                    labels.remove(&item_str);
+                }
             }
         }
     }

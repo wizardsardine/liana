@@ -5,6 +5,7 @@ pub mod model;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::ErrorKind;
+use std::iter::FromIterator;
 
 use liana::{
     commands::LabelItem,
@@ -80,7 +81,8 @@ pub trait Daemon: Debug {
         &self,
         labels: &HashSet<LabelItem>,
     ) -> Result<HashMap<String, String>, DaemonError>;
-    fn update_labels(&self, labels: &HashMap<LabelItem, String>) -> Result<(), DaemonError>;
+    fn update_labels(&self, labels: &HashMap<LabelItem, Option<String>>)
+        -> Result<(), DaemonError>;
 
     fn list_spend_transactions(&self) -> Result<Vec<model::SpendTx>, DaemonError> {
         let info = self.get_info()?;
@@ -228,7 +230,12 @@ fn load_labels<T: model::Labelled, D: Daemon + ?Sized>(
             items.insert(item);
         }
     }
-    let labels = daemon.get_labels(&items)?;
+    let labels = HashMap::from_iter(
+        daemon
+            .get_labels(&items)?
+            .into_iter()
+            .map(|(k, v)| (k, Some(v))),
+    );
     for target in targets {
         target.load_labels(&labels);
     }

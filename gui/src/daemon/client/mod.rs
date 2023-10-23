@@ -157,8 +157,8 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         Ok(res.labels)
     }
 
-    fn update_labels(&self, items: &HashMap<LabelItem, String>) -> Result<(), DaemonError> {
-        let labels: HashMap<String, String> =
+    fn update_labels(&self, items: &HashMap<LabelItem, Option<String>>) -> Result<(), DaemonError> {
+        let labels: HashMap<String, Option<String>> =
             HashMap::from_iter(items.iter().map(|(a, l)| (a.to_string(), l.clone())));
         let _res: serde_json::value::Value = self.call("updatelabels", Some(vec![labels]))?;
         Ok(())

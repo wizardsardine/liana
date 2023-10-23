@@ -50,12 +50,18 @@ impl LabelsEdited {
                     }
                 }
                 view::LabelMessage::Confirm => {
-                    let mut updated_labels = HashMap::<LabelItem, String>::new();
-                    let mut updated_labels_str = HashMap::<String, String>::new();
+                    let mut updated_labels = HashMap::<LabelItem, Option<String>>::new();
+                    let mut updated_labels_str = HashMap::<String, Option<String>>::new();
                     for item in items {
                         if let Some(label) = self.0.get(&item).cloned() {
-                            updated_labels.insert(label_item_from_str(&item), label.value.clone());
-                            updated_labels_str.insert(item, label.value);
+                            let item_str = label_item_from_str(&item);
+                            if label.value.is_empty() {
+                                updated_labels.insert(item_str, None);
+                                updated_labels_str.insert(item, None);
+                            } else {
+                                updated_labels.insert(item_str, Some(label.value.clone()));
+                                updated_labels_str.insert(item, Some(label.value));
+                            }
                         }
                     }
                     return Ok(Command::perform(

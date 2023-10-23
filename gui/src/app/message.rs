@@ -35,5 +35,5 @@ pub enum Message {
     ConnectedHardwareWallets(Vec<HardwareWallet>),
     HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
     PendingTransactions(Result<Vec<HistoryTransaction>, Error>),
-    LabelsUpdated(Result<HashMap<String, String>, Error>),
+    LabelsUpdated(Result<HashMap<String, Option<String>>, Error>),
 }
