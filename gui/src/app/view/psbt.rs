@@ -198,14 +198,25 @@ pub fn spend_header<'a>(
     let txid = tx.psbt.unsigned_tx.txid().to_string();
     Column::new()
         .spacing(20)
-        .push(if let Some(label) = labels_editing.get(&txid) {
-            label::label_editing(txid.clone(), label, H3_SIZE)
+        .push(if let Some(outpoint) = tx.is_single_payment() {
+            let outpoint = outpoint.to_string();
+            if let Some(label) = labels_editing.get(&outpoint) {
+                label::label_editing(vec![outpoint.clone(), txid.clone()], label, H3_SIZE)
+            } else {
+                label::label_editable(
+                    vec![outpoint.clone(), txid.clone()],
+                    tx.labels.get(&outpoint),
+                    H3_SIZE,
+                )
+            }
+        } else if let Some(label) = labels_editing.get(&txid) {
+            label::label_editing(vec![txid.clone()], label, H3_SIZE)
         } else {
-            label::label_editable(txid.clone(), tx.labels.get(&txid), H1_SIZE)
+            label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H3_SIZE)
         })
         .push(
             Column::new()
-                .push(if tx.is_self_send() {
+                .push(if tx.is_send_to_self() {
                     Container::new(h1("Self-transfer"))
                 } else {
                     Container::new(amount_with_size(&tx.spend_amount, H1_SIZE))
@@ -707,15 +718,8 @@ pub fn inputs_and_outputs_view<'a>(
                                 .filter(|(i, _)| change_indexes.as_ref().unwrap().contains(i))
                                 .fold(
                                     Column::new().padding(20),
-                                    |col: Column<'a, Message>, (i, output)| {
-                                        col.spacing(10).push(change_view(
-                                            i,
-                                            tx.txid(),
-                                            output,
-                                            network,
-                                            labels,
-                                            labels_editing,
-                                        ))
+                                    |col: Column<'a, Message>, (_, output)| {
+                                        col.spacing(10).push(change_view(output, network))
                                     },
                                 )
                                 .into()
@@ -745,10 +749,10 @@ fn input_view<'a>(
                 .align_items(Alignment::Center)
                 .push(
                     Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(outpoint.clone(), label, text::P1_SIZE)
+                        label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
                     } else {
                         label::label_editable(
-                            outpoint.clone(),
+                            vec![outpoint.clone()],
                             labels.get(&outpoint),
                             text::P1_SIZE,
                         )
@@ -832,10 +836,10 @@ fn payment_view<'a>(
                 .align_items(Alignment::Center)
                 .push(
                     Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(outpoint.clone(), label, text::P1_SIZE)
+                        label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
                     } else {
                         label::label_editable(
-                            outpoint.clone(),
+                            vec![outpoint.clone()],
                             labels.get(&outpoint),
                             text::P1_SIZE,
                         )
@@ -881,77 +885,32 @@ fn payment_view<'a>(
         .into()
 }
 
-fn change_view<'a>(
-    i: usize,
-    txid: Txid,
-    output: &'a TxOut,
-    network: Network,
-    labels: &'a HashMap<String, String>,
-    labels_editing: &'a HashMap<String, form::Value<String>>,
-) -> Element<'a, Message> {
+fn change_view(output: &TxOut, network: Network) -> Element<Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .unwrap()
         .to_string();
-    let outpoint = OutPoint {
-        txid,
-        vout: i as u32,
-    }
-    .to_string();
-    Column::new()
+    Row::new()
         .width(Length::Fill)
         .spacing(5)
         .push(
             Row::new()
-                .spacing(5)
                 .align_items(Alignment::Center)
-                .push(
-                    Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(outpoint.clone(), label, text::P1_SIZE)
-                    } else {
-                        label::label_editable(
-                            outpoint.clone(),
-                            labels.get(&outpoint),
-                            text::P1_SIZE,
-                        )
-                    })
-                    .width(Length::Fill),
-                )
-                .push(amount(&Amount::from_sat(output.value))),
-        )
-        .push(
-            Column::new()
+                .width(Length::Fill)
                 .push(
                     Row::new()
                         .align_items(Alignment::Center)
                         .width(Length::Fill)
+                        .spacing(5)
+                        .push(p1_bold("Address:").style(color::GREY_3))
+                        .push(p2_regular(addr.clone()).style(color::GREY_3))
                         .push(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .width(Length::Fill)
-                                .spacing(5)
-                                .push(p1_bold("Address:").style(color::GREY_3))
-                                .push(p2_regular(addr.clone()).style(color::GREY_3))
-                                .push(
-                                    Button::new(icon::clipboard_icon().style(color::GREY_3))
-                                        .on_press(Message::Clipboard(addr.clone()))
-                                        .style(theme::Button::TransparentBorder),
-                                ),
+                            Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                .on_press(Message::Clipboard(addr))
+                                .style(theme::Button::TransparentBorder),
                         ),
-                )
-                .push_maybe(labels.get(&addr).map(|label| {
-                    Row::new()
-                        .align_items(Alignment::Center)
-                        .width(Length::Fill)
-                        .push(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .width(Length::Fill)
-                                .spacing(5)
-                                .push(p1_bold("Address label:").style(color::GREY_3))
-                                .push(p2_regular(label).style(color::GREY_3)),
-                        )
-                })),
+                ),
         )
+        .push(amount(&Amount::from_sat(output.value)))
         .into()
 }
 

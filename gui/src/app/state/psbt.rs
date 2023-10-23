@@ -182,12 +182,11 @@ impl Action for SaveAction {
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
                 let daemon = daemon.clone();
                 let psbt = tx.psbt.clone();
-                let mut labels = HashMap::<LabelItem, String>::new();
+                let mut labels = HashMap::<LabelItem, Option<String>>::new();
                 for (item, label) in tx.labels() {
-                    labels.insert(
-                        label_item_from_str(item).expect("Must be a LabelItem"),
-                        label.clone(),
-                    );
+                    if !label.is_empty() {
+                        labels.insert(label_item_from_str(item), Some(label.clone()));
+                    }
                 }
                 return Command::perform(
                     async move {

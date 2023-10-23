@@ -96,7 +96,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
             Row::new()
                 .push(
                     Row::new()
-                        .push(if tx.is_self_send() {
+                        .push(if tx.is_send_to_self() {
                             badge::cycle()
                         } else {
                             badge::spend()
@@ -127,7 +127,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                         .push_maybe(
                             tx.labels
                                 .get(&tx.psbt.unsigned_tx.txid().to_string())
-                                .map(p1_bold),
+                                .map(p1_regular),
                         )
                         .spacing(10)
                         .align_items(Alignment::Center)
@@ -147,7 +147,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                 .push(
                     Column::new()
                         .align_items(Alignment::End)
-                        .push(if !tx.is_self_send() {
+                        .push(if !tx.is_send_to_self() {
                             Container::new(amount(&tx.spend_amount))
                         } else {
                             Container::new(p1_regular("Self-transfer"))

@@ -64,6 +64,7 @@ fn coin_list_view<'a>(
 ) -> Container<'a, Message> {
     let outpoint = coin.outpoint.to_string();
     let address = coin.address.to_string();
+    let txid = coin.outpoint.txid.to_string();
     Container::new(
         Column::new()
             .push(
@@ -74,7 +75,38 @@ fn coin_list_view<'a>(
                                 .push(badge::coin())
                                 .push(if !collapsed {
                                     if let Some(label) = labels.get(&outpoint) {
-                                        Container::new(p1_bold(label)).width(Length::Fill)
+                                        if !label.is_empty() {
+                                            Container::new(p1_regular(label)).width(Length::Fill)
+                                        } else if let Some(label) = labels.get(&txid) {
+                                            Container::new(
+                                                Row::new()
+                                                    .spacing(5)
+                                                    .push(
+                                                        // It it not possible to know if a coin is a
+                                                        // change coin or not so for now, From is
+                                                        // enough
+                                                        p1_regular("From").style(color::GREY_3),
+                                                    )
+                                                    .push(p1_regular(label)),
+                                            )
+                                            .width(Length::Fill)
+                                        } else {
+                                            Container::new(Space::with_width(Length::Fill))
+                                                .width(Length::Fill)
+                                        }
+                                    } else if let Some(label) = labels.get(&txid) {
+                                        Container::new(
+                                            Row::new()
+                                                .spacing(5)
+                                                .push(
+                                                    // It it not possible to know if a coin is a
+                                                    // change coin or not so for now, From is
+                                                    // enough
+                                                    p1_regular("From").style(color::GREY_3),
+                                                )
+                                                .push(p1_regular(label)),
+                                        )
+                                        .width(Length::Fill)
                                     } else {
                                         Container::new(Space::with_width(Length::Fill))
                                             .width(Length::Fill)
@@ -110,10 +142,10 @@ fn coin_list_view<'a>(
                         .spacing(5)
                         .push(
                             Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                                label::label_editing(outpoint.clone(), label, P1_SIZE)
+                                label::label_editing(vec![outpoint.clone()], label, P1_SIZE)
                             } else {
                                 label::label_editable(
-                                    outpoint.clone(),
+                                    vec![outpoint.clone()],
                                     labels.get(&outpoint),
                                     P1_SIZE,
                                 )
@@ -144,6 +176,21 @@ fn coin_list_view<'a>(
                                 .push(
                                     Row::new()
                                         .align_items(Alignment::Center)
+                                        .push(
+                                            p2_regular("Address label:")
+                                                .bold()
+                                                .style(color::GREY_2),
+                                        )
+                                        .push(if let Some(label) = labels.get(&address) {
+                                            p2_regular(label).style(color::GREY_2)
+                                        } else {
+                                            p2_regular("No label").style(color::GREY_2)
+                                        })
+                                        .spacing(5),
+                                )
+                                .push(
+                                    Row::new()
+                                        .align_items(Alignment::Center)
                                         .push(p2_regular("Address:").bold().style(color::GREY_2))
                                         .push(
                                             Row::new()
@@ -166,11 +213,11 @@ fn coin_list_view<'a>(
                                     Row::new()
                                         .align_items(Alignment::Center)
                                         .push(
-                                            p2_regular("Address label:")
+                                            p2_regular("Deposit transaction label:")
                                                 .bold()
                                                 .style(color::GREY_2),
                                         )
-                                        .push(if let Some(label) = labels.get(&address) {
+                                        .push(if let Some(label) = labels.get(&txid) {
                                             p2_regular(label).style(color::GREY_2)
                                         } else {
                                             p2_regular("No label").style(color::GREY_2)

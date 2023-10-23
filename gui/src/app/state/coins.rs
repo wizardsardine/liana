@@ -29,10 +29,13 @@ pub struct Coins {
 
 impl Labelled for Coins {
     fn labelled(&self) -> Vec<LabelItem> {
-        self.list
-            .iter()
-            .map(|a| LabelItem::OutPoint(a.outpoint))
-            .collect()
+        let mut items = Vec::new();
+        for coin in &self.list {
+            items.push(LabelItem::OutPoint(coin.outpoint));
+            items.push(LabelItem::Txid(coin.outpoint.txid));
+            items.push(LabelItem::Address(coin.address.clone()));
+        }
+        items
     }
     fn labels(&mut self) -> &mut HashMap<String, String> {
         &mut self.labels
@@ -169,6 +172,7 @@ impl State for CoinsPanel {
                     let mut targets = HashSet::<LabelItem>::new();
                     for coin in coins {
                         targets.insert(LabelItem::OutPoint(coin.outpoint));
+                        targets.insert(LabelItem::Txid(coin.outpoint.txid));
                         targets.insert(LabelItem::Address(coin.address));
                     }
                     daemon2.get_labels(&targets).map_err(|e| e.into())

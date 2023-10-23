@@ -528,30 +528,12 @@ impl Step for SaveSpend {
             if let Some(label) = &draft.batch_label {
                 tx.labels
                     .insert(tx.psbt.unsigned_tx.txid().to_string(), label.clone());
-                for (i, output) in tx.psbt.unsigned_tx.output.iter().enumerate() {
-                    let address_str = Address::from_script(&output.script_pubkey, tx.network)
-                        .unwrap()
-                        .to_string();
-                    if tx.change_indexes.contains(&i) && tx.labels.contains_key(&address_str) {
-                        tx.labels
-                            .insert(address_str, format!("Change of {}", label.clone()));
-                    }
-                }
             }
         } else if let Some(recipient) = draft.recipients.first() {
             if !recipient.label.value.is_empty() {
                 let label = recipient.label.value.clone();
                 tx.labels
-                    .insert(tx.psbt.unsigned_tx.txid().to_string(), label.clone());
-                for (i, output) in tx.psbt.unsigned_tx.output.iter().enumerate() {
-                    let address_str = Address::from_script(&output.script_pubkey, tx.network)
-                        .unwrap()
-                        .to_string();
-                    if tx.change_indexes.contains(&i) && tx.labels.contains_key(&address_str) {
-                        tx.labels
-                            .insert(address_str, format!("Change of {}", label.clone()));
-                    }
-                }
+                    .insert(tx.psbt.unsigned_tx.txid().to_string(), label);
             }
         }
 

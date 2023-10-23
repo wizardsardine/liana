@@ -126,6 +126,7 @@ impl State for CreateSpendPanel {
                     let mut targets = HashSet::<LabelItem>::new();
                     for coin in coins {
                         targets.insert(LabelItem::OutPoint(coin.outpoint));
+                        targets.insert(LabelItem::Txid(coin.outpoint.txid));
                     }
                     daemon2.get_labels(&targets).map_err(|e| e.into())
                 },

@@ -3,14 +3,14 @@ use iced::{widget::row, Alignment};
 use liana_ui::{
     color,
     component::{button, form},
-    font, icon,
+    icon,
     widget::*,
 };
 
 use crate::app::view;
 
 pub fn label_editable(
-    labelled: String,
+    labelled: Vec<String>,
     label: Option<&String>,
     size: u16,
 ) -> Element<'_, view::Message> {
@@ -18,7 +18,7 @@ pub fn label_editable(
         if !label.is_empty() {
             return Container::new(
                 row!(
-                    iced::widget::Text::new(label).size(size).font(font::BOLD),
+                    iced::widget::Text::new(label).size(size),
                     button::primary(Some(icon::pencil_icon()), "Edit").on_press(
                         view::Message::Label(
                             labelled,
@@ -36,7 +36,6 @@ pub fn label_editable(
         row!(
             iced::widget::Text::new("Add Label")
                 .size(size)
-                .font(font::BOLD)
                 .style(color::GREY_3),
             button::primary(Some(icon::pencil_icon()), "Edit").on_press(view::Message::Label(
                 labelled,
@@ -50,7 +49,7 @@ pub fn label_editable(
 }
 
 pub fn label_editing(
-    labelled: String,
+    labelled: Vec<String>,
     label: &form::Value<String>,
     size: u16,
 ) -> Element<view::Message> {
@@ -60,7 +59,11 @@ pub fn label_editing(
                 .warning("Invalid label length, cannot be superior to 100")
                 .size(size)
                 .padding(10),
-            button::primary(None, "Save").on_press(view::message::LabelMessage::Confirm),
+            if label.valid {
+                button::primary(None, "Save").on_press(view::message::LabelMessage::Confirm)
+            } else {
+                button::primary(None, "Save")
+            },
             button::primary(None, "Cancel").on_press(view::message::LabelMessage::Cancel)
         )
         .spacing(5)
