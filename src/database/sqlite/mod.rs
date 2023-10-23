@@ -585,7 +585,7 @@ impl SqliteConn {
         .expect("Db must not fail")
     }
 
-    pub fn update_labels(&mut self, items: &HashMap<LabelItem, String>) {
+    pub fn update_labels(&mut self, items: &HashMap<LabelItem, Option<String>>) {
         db_exec(&mut self.conn, |db_tx| {
             for (labelled, kind, value) in items
                 .iter()
@@ -596,11 +596,18 @@ impl SqliteConn {
                          LabelItem::OutPoint(a) =>(a.to_string(), DbLabelledKind::OutPoint, v),
                      }
                 }) {
-                db_tx.execute(
-                    "INSERT INTO labels (wallet_id, item, item_kind, value) VALUES (?1, ?2, ?3, ?4) \
-                    ON CONFLICT DO UPDATE SET value=excluded.value",
-                    rusqlite::params![WALLET_ID, labelled, kind as i64, value],
-                )?;
+                if let Some(value) = value {
+                    db_tx.execute(
+                        "INSERT INTO labels (wallet_id, item, item_kind, value) VALUES (?1, ?2, ?3, ?4) \
+                        ON CONFLICT DO UPDATE SET value=excluded.value",
+                        rusqlite::params![WALLET_ID, labelled, kind as i64, value],
+                    )?;
+                } else {
+                    db_tx.execute(
+                        "DELETE FROM labels WHERE wallet_id = ?1 AND item = ?2",
+                        rusqlite::params![WALLET_ID, labelled],
+                    )?;
+                }
             }
             Ok(())
         })
@@ -895,18 +902,24 @@ CREATE TABLE spend_transactions (
             assert!(db_labels.is_empty());
 
             let mut txids_labels = HashMap::new();
-            txids_labels.insert(txid.clone(), "hello".to_string());
+            txids_labels.insert(txid.clone(), Some("hello".to_string()));
 
             conn.update_labels(&txids_labels);
 
             let db_labels = conn.db_labels(&items);
             assert_eq!(db_labels[0].value, "hello");
 
-            txids_labels.insert(txid, "hello again".to_string());
+            txids_labels.insert(txid.clone(), Some("hello again".to_string()));
             conn.update_labels(&txids_labels);
 
             let db_labels = conn.db_labels(&items);
             assert_eq!(db_labels[0].value, "hello again");
+
+            // Now delete the label by passing a None value.
+            *txids_labels.get_mut(&txid).unwrap() = None;
+            conn.update_labels(&txids_labels);
+            let db_labels = conn.db_labels(&items);
+            assert!(db_labels.is_empty());
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
@@ -2102,7 +2115,7 @@ CREATE TABLE spend_transactions (
             let txid_str = "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7";
             let txid = LabelItem::from_str(txid_str, bitcoin::Network::Bitcoin).unwrap();
             let mut txids_labels = HashMap::new();
-            txids_labels.insert(txid.clone(), "hello".to_string());
+            txids_labels.insert(txid.clone(), Some("hello".to_string()));
             conn.update_labels(&txids_labels);
 
             let mut items = HashSet::new();

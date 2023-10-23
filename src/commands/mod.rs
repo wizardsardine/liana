@@ -592,7 +592,7 @@ impl DaemonControl {
         Ok(())
     }
 
-    pub fn update_labels(&self, items: &HashMap<LabelItem, String>) {
+    pub fn update_labels(&self, items: &HashMap<LabelItem, Option<String>>) {
         let mut db_conn = self.db.connection();
         db_conn.update_labels(items);
     }
