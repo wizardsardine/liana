@@ -41,6 +41,7 @@ pub struct SpendTx {
     pub status: SpendStatus,
     pub sigs: PartialSpendInfo,
     pub updated_at: Option<u32>,
+    pub kind: TransactionKind,
 }
 
 #[derive(PartialOrd, Ord, Debug, Clone, PartialEq, Eq)]
@@ -92,6 +93,31 @@ impl SpendTx {
 
         Self {
             labels: HashMap::new(),
+            kind: if spend_amount == Amount::from_sat(0) {
+                TransactionKind::SendToSelf
+            } else {
+                let outpoints: Vec<OutPoint> = psbt
+                    .unsigned_tx
+                    .output
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, _)| {
+                        if !change_indexes.contains(&i) {
+                            Some(OutPoint {
+                                txid: psbt.unsigned_tx.txid(),
+                                vout: i as u32,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if outpoints.len() == 1 {
+                    TransactionKind::OutgoingSinglePayment(outpoints[0])
+                } else {
+                    TransactionKind::OutgoingPaymentBatch(outpoints)
+                }
+            },
             updated_at,
             coins,
             psbt,
@@ -132,10 +158,6 @@ impl SpendTx {
         signers
     }
 
-    pub fn is_self_send(&self) -> bool {
-        !self.coins.is_empty() && self.spend_amount == Amount::from_sat(0)
-    }
-
     /// Feerate obtained if all transaction inputs have the maximum satisfaction size.
     pub fn min_feerate_vb(&self) -> u64 {
         // This assumes all inputs are internal (have same max satisfaction size).
@@ -144,15 +166,23 @@ impl SpendTx {
         self.fee_amount.to_sat() / max_tx_vbytes as u64
     }
 
+    pub fn is_send_to_self(&self) -> bool {
+        matches!(self.kind, TransactionKind::SendToSelf)
+    }
+
+    pub fn is_single_payment(&self) -> Option<OutPoint> {
+        match self.kind {
+            TransactionKind::IncomingSinglePayment(outpoint) => Some(outpoint),
+            TransactionKind::OutgoingSinglePayment(outpoint) => Some(outpoint),
+            _ => None,
+        }
+    }
+
     pub fn is_batch(&self) -> bool {
-        self.psbt
-            .unsigned_tx
-            .output
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !self.change_indexes.contains(i))
-            .count()
-            > 1
+        matches!(
+            self.kind,
+            TransactionKind::IncomingPaymentBatch(_) | TransactionKind::OutgoingPaymentBatch(_)
+        )
     }
 }
 

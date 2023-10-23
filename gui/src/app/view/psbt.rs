@@ -198,14 +198,25 @@ pub fn spend_header<'a>(
     let txid = tx.psbt.unsigned_tx.txid().to_string();
     Column::new()
         .spacing(20)
-        .push(if let Some(label) = labels_editing.get(&txid) {
+        .push(if let Some(outpoint) = tx.is_single_payment() {
+            let outpoint = outpoint.to_string();
+            if let Some(label) = labels_editing.get(&outpoint) {
+                label::label_editing(vec![outpoint.clone(), txid.clone()], label, H3_SIZE)
+            } else {
+                label::label_editable(
+                    vec![outpoint.clone(), txid.clone()],
+                    tx.labels.get(&outpoint),
+                    H3_SIZE,
+                )
+            }
+        } else if let Some(label) = labels_editing.get(&txid) {
             label::label_editing(vec![txid.clone()], label, H3_SIZE)
         } else {
-            label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H1_SIZE)
+            label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H3_SIZE)
         })
         .push(
             Column::new()
-                .push(if tx.is_self_send() {
+                .push(if tx.is_send_to_self() {
                     Container::new(h1("Self-transfer"))
                 } else {
                     Container::new(amount_with_size(&tx.spend_amount, H1_SIZE))
