@@ -127,7 +127,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                         .push_maybe(
                             tx.labels
                                 .get(&tx.psbt.unsigned_tx.txid().to_string())
-                                .map(p1_bold),
+                                .map(p1_regular),
                         )
                         .spacing(10)
                         .align_items(Alignment::Center)

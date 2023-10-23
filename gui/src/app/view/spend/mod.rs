@@ -360,7 +360,7 @@ fn coin_list_view<'a>(
                 }))
                 .push(
                     if let Some(label) = coins_labels.get(&coin.outpoint.to_string()) {
-                        Container::new(p1_bold(label)).width(Length::Fill)
+                        Container::new(p1_regular(label)).width(Length::Fill)
                     } else if let Some(label) = coins_labels.get(&coin.outpoint.txid.to_string()) {
                         Container::new(
                             Row::new()
@@ -369,13 +369,13 @@ fn coin_list_view<'a>(
                                     // It it not possible to know if a coin is a
                                     // change coin or not so for now, From is
                                     // enough
-                                    p1_bold("From").style(color::GREY_3),
+                                    p1_regular("From").style(color::GREY_3),
                                 )
-                                .push(p1_bold(label)),
+                                .push(p1_regular(label)),
                         )
                         .width(Length::Fill)
                     } else {
-                        Container::new(p1_bold("")).width(Length::Fill)
+                        Container::new(p1_regular("")).width(Length::Fill)
                     },
                 )
                 .push(if coin.spend_info.is_some() {

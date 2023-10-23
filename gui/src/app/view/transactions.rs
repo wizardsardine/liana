@@ -99,7 +99,9 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                         })
                         .push(
                             Column::new()
-                                .push_maybe(tx.labels.get(&tx.tx.txid().to_string()).map(p1_bold))
+                                .push_maybe(
+                                    tx.labels.get(&tx.tx.txid().to_string()).map(p1_regular),
+                                )
                                 .push_maybe(tx.time.map(|t| {
                                     Container::new(
                                         text(format!(

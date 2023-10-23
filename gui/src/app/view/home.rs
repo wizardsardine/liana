@@ -157,7 +157,7 @@ fn event_list_view(i: usize, event: &HistoryTransaction) -> Column<'_, Message> 
                 }
                 .to_string(),
             ) {
-                Some(p1_bold(label))
+                Some(p1_regular(label))
             } else {
                 event
                     .labels
@@ -166,7 +166,9 @@ fn event_list_view(i: usize, event: &HistoryTransaction) -> Column<'_, Message> 
                             .unwrap()
                             .to_string(),
                     )
-                    .map(|label| p1_bold(format!("address label: {}", label)).style(color::GREY_3))
+                    .map(|label| {
+                        p1_regular(format!("address label: {}", label)).style(color::GREY_3)
+                    })
             };
             if event.is_external() {
                 if !event.change_indexes.contains(&output_index) {
