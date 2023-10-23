@@ -60,7 +60,11 @@ pub fn label_editing(
                 .warning("Invalid label length, cannot be superior to 100")
                 .size(size)
                 .padding(10),
-            button::primary(None, "Save").on_press(view::message::LabelMessage::Confirm),
+            if label.valid {
+                button::primary(None, "Save").on_press(view::message::LabelMessage::Confirm)
+            } else {
+                button::primary(None, "Save")
+            },
             button::primary(None, "Cancel").on_press(view::message::LabelMessage::Cancel)
         )
         .spacing(5)
