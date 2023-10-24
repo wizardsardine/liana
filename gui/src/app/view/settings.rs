@@ -656,12 +656,7 @@ pub fn register_wallet_modal<'a>(
             Column::new()
                 .push(
                     Column::new()
-                        .push(
-                            Row::new()
-                                .push(text("Select device:").bold().width(Length::Fill))
-                                .push(button::secondary(None, "Refresh").on_press(Message::Reload))
-                                .align_items(Alignment::Center),
-                        )
+                        .push(text("Select device:").bold().width(Length::Fill))
                         .spacing(10)
                         .push(hws.iter().enumerate().fold(
                             Column::new().spacing(10),
@@ -673,7 +668,13 @@ pub fn register_wallet_modal<'a>(
                                     processing,
                                     hw.fingerprint()
                                         .map(|f| registered.contains(&f))
-                                        .unwrap_or(false),
+                                        .unwrap_or(false)
+                                        || if let HardwareWallet::Supported { registered, .. } = hw
+                                        {
+                                            registered == &Some(true)
+                                        } else {
+                                            false
+                                        },
                                 ))
                             },
                         ))

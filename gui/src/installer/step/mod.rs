@@ -21,17 +21,23 @@ use liana_ui::widget::*;
 
 use crate::{
     bitcoind::Bitcoind,
+    hw::HardwareWallets,
     installer::{context::Context, message::Message, view},
 };
 
 pub trait Step {
-    fn update(&mut self, _message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, _message: Message) -> Command<Message> {
         Command::none()
     }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
     }
-    fn view(&self, progress: (usize, usize)) -> Element<Message>;
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+    ) -> Element<'a, Message>;
+
     fn load_context(&mut self, _ctx: &Context) {}
     fn load(&self) -> Command<Message> {
         Command::none()
@@ -49,7 +55,7 @@ pub trait Step {
 pub struct Welcome {}
 
 impl Step for Welcome {
-    fn view(&self, _progress: (usize, usize)) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets, _progress: (usize, usize)) -> Element<Message> {
         view::welcome()
     }
 }
@@ -95,7 +101,7 @@ impl Step for Final {
             Command::none()
         }
     }
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         match message {
             Message::Installed(res) => {
                 self.generating = false;
@@ -123,7 +129,7 @@ impl Step for Final {
         Command::none()
     }
 
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         view::install(
             progress,
             self.generating,

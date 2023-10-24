@@ -5,7 +5,7 @@ use liana::miniscript::{
 use std::path::PathBuf;
 
 use super::Error;
-use crate::{bitcoind::Bitcoind, download::Progress, hw::HardwareWallet};
+use crate::{bitcoind::Bitcoind, download::Progress, hw::HardwareWalletMessage};
 use async_hwi::DeviceKind;
 
 #[derive(Debug, Clone)]
@@ -30,8 +30,8 @@ pub enum Message {
     InternalBitcoind(InternalBitcoindMsg),
     DefineBitcoind(DefineBitcoind),
     DefineDescriptor(DefineDescriptor),
-    ImportXpub(usize, Result<DescriptorPublicKey, Error>),
-    ConnectedHardwareWallets(Vec<HardwareWallet>),
+    ImportXpub(Fingerprint, Result<DescriptorPublicKey, Error>),
+    HardwareWallets(HardwareWalletMessage),
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
     MnemonicWord(usize, String),
     ImportMnemonic(bool),

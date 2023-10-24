@@ -93,6 +93,14 @@ impl State for SettingsState {
         }
     }
 
+    fn subscription(&self) -> iced::Subscription<Message> {
+        if let Some(setting) = &self.setting {
+            setting.subscription()
+        } else {
+            iced::Subscription::none()
+        }
+    }
+
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(setting) = &self.setting {
             setting.view(cache)

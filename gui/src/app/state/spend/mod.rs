@@ -70,6 +70,10 @@ impl State for CreateSpendPanel {
         self.steps.get(self.current).unwrap().view(cache)
     }
 
+    fn subscription(&self) -> iced::Subscription<Message> {
+        self.steps.get(self.current).unwrap().subscription()
+    }
+
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,

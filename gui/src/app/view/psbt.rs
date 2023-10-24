@@ -328,8 +328,7 @@ pub fn signatures<'a>(
     keys_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(
-            if let Some(sigs) = tx.path_ready() {
+        .push(if let Some(sigs) = tx.path_ready() {
             Container::new(
                 scrollable(
                     Row::new()
@@ -340,94 +339,95 @@ pub fn signatures<'a>(
                         .push(icon::circle_check_icon().style(color::GREEN))
                         .push(text("Ready").bold().style(color::GREEN))
                         .push(text("  signed by"))
-                        .push(
-                            sigs.signed_pubkeys
-                            .keys()
-                            .fold(Row::new().spacing(5), |row, value| {
+                        .push(sigs.signed_pubkeys.keys().fold(
+                            Row::new().spacing(5),
+                            |row, value| {
                                 row.push(if let Some(alias) = keys_aliases.get(value) {
-                                Container::new(
-                                    tooltip::Tooltip::new(
-                                        Container::new(text(alias))
-                                            .padding(10)
-                                            .style(theme::Container::Pill(theme::Pill::Simple)),
+                                    Container::new(
+                                        tooltip::Tooltip::new(
+                                            Container::new(text(alias))
+                                                .padding(10)
+                                                .style(theme::Container::Pill(theme::Pill::Simple)),
                                             value.to_string(),
                                             tooltip::Position::Bottom,
+                                        )
+                                        .style(theme::Container::Card(theme::Card::Simple)),
                                     )
-                                    .style(theme::Container::Card(theme::Card::Simple)),
-                                )
-                            } else {
-                                Container::new(text(value.to_string()))
-                                    .padding(10)
-                                    .style(theme::Container::Pill(theme::Pill::Simple))
-                            })
-                            }),
+                                } else {
+                                    Container::new(text(value.to_string()))
+                                        .padding(10)
+                                        .style(theme::Container::Pill(theme::Pill::Simple))
+                                })
+                            },
+                        )),
+                )
+                .horizontal_scroll(scrollable::Properties::new().width(2).scroller_width(2)),
+            )
+            .padding(15)
+        } else {
+            Container::new(Collapse::new(
+                move || {
+                    Button::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(20)
+                            .push(p1_bold("Status"))
+                            .push(
+                                Row::new()
+                                    .spacing(5)
+                                    .align_items(Alignment::Center)
+                                    .push(icon::circle_cross_icon().style(color::RED))
+                                    .push(text("Not ready").style(color::RED))
+                                    .width(Length::Fill),
+                            )
+                            .push(icon::collapse_icon()),
                     )
-                ).horizontal_scroll(scrollable::Properties::new().width(2).scroller_width(2))
-            ).padding(15)
-        } else{
-            Container::new(
-            Collapse::new(
-            move || {
-                Button::new(
-                    Row::new()
-                        .align_items(Alignment::Center)
-                        .spacing(20)
-                        .push(p1_bold("Status"))
-                        .push(Row::new()
-                                .spacing(5)
-                                .align_items(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(color::RED))
-                                .push(text("Not ready").style(color::RED))
-                                .width(Length::Fill)
-                        )
-                        .push(icon::collapse_icon()),
-                )
-                .padding(15)
-                .width(Length::Fill)
-                .style(theme::Button::TransparentBorder)
-            },
-            move || {
-                Button::new(
-                    Row::new()
-                        .align_items(Alignment::Center)
-                        .spacing(20)
-                        .push(p1_bold("Status"))
-                        .push(
-                            Row::new()
-                                .spacing(5)
-                                .align_items(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(color::RED))
-                                .push(text("Not ready").style(color::RED))
-                                .width(Length::Fill)
-                        )
-                        .push(icon::collapsed_icon()),
-                )
-                .padding(15)
-                .width(Length::Fill)
-                .style(theme::Button::TransparentBorder)
-            },
-            move || {
-                Into::<Element<'a, Message>>::into(
+                    .padding(15)
+                    .width(Length::Fill)
+                    .style(theme::Button::TransparentBorder)
+                },
+                move || {
+                    Button::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(20)
+                            .push(p1_bold("Status"))
+                            .push(
+                                Row::new()
+                                    .spacing(5)
+                                    .align_items(Alignment::Center)
+                                    .push(icon::circle_cross_icon().style(color::RED))
+                                    .push(text("Not ready").style(color::RED))
+                                    .width(Length::Fill),
+                            )
+                            .push(icon::collapsed_icon()),
+                    )
+                    .padding(15)
+                    .width(Length::Fill)
+                    .style(theme::Button::TransparentBorder)
+                },
+                move || {
+                    Into::<Element<'a, Message>>::into(
                         Column::new()
                             .padding(15)
                             .spacing(10)
-                            .push(text(if !tx.sigs.recovery_paths().is_empty() {
-                                "Multiple spending paths are available. Finalizing this transaction requires either:"
+                            .push(text("Finalizing this transaction requires:"))
+                            .push_maybe(if tx.sigs.recovery_paths().is_empty() {
+                                Some(path_view(
+                                    desc_info.primary_path(),
+                                    tx.sigs.primary_path(),
+                                    keys_aliases,
+                                ))
                             } else {
-                                "1 spending path is available. Finalizing this transaction requires:"
-                            }))
-                            .push(path_view(
-                                desc_info.primary_path(),
-                                tx.sigs.primary_path(),
-                                keys_aliases,
-                            ))
-                            .push(tx.sigs.recovery_paths().iter().fold(Column::new().spacing(10), |col, (seq, path)| {
-                                let keys = &desc_info.recovery_paths()[seq];
-                                col.push(path_view(keys, path, keys_aliases))
-                            })),
-                )
-            },
-        ))})
+                                tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
+                                    let keys = &desc_info.recovery_paths()[seq];
+                                    path_view(keys, path, keys_aliases)
+                                })
+                            }),
+                    )
+                },
+            ))
+        })
         .into()
 }
 
@@ -473,28 +473,35 @@ pub fn path_view<'a>(
             .push_maybe(if keys.is_empty() {
                 None
             } else {
-                Some(keys.iter().fold(Row::new().spacing(5), |row, value| {
-                    row.push_maybe(if !sigs.signed_pubkeys.contains_key(&value.0) {
-                        Some(if let Some(alias) = key_aliases.get(&value.0) {
-                            Container::new(
-                                tooltip::Tooltip::new(
-                                    Container::new(text(alias))
-                                        .padding(10)
-                                        .style(theme::Container::Pill(theme::Pill::Simple)),
-                                    value.0.to_string(),
-                                    tooltip::Position::Bottom,
-                                )
-                                .style(theme::Container::Card(theme::Card::Simple)),
+                Some(
+                    keys.iter()
+                        .fold(Row::new().spacing(5), |row, (key_fg, paths)| {
+                            row.push_maybe(
+                                if !sigs.signed_pubkeys.iter().any(|(fg, &total_sigs)| {
+                                    fg == key_fg && paths.len() == total_sigs
+                                }) {
+                                    Some(if let Some(alias) = key_aliases.get(key_fg) {
+                                        Container::new(
+                                            tooltip::Tooltip::new(
+                                                Container::new(text(alias)).padding(10).style(
+                                                    theme::Container::Pill(theme::Pill::Simple),
+                                                ),
+                                                key_fg.to_string(),
+                                                tooltip::Position::Bottom,
+                                            )
+                                            .style(theme::Container::Card(theme::Card::Simple)),
+                                        )
+                                    } else {
+                                        Container::new(text(key_fg.to_string()))
+                                            .padding(10)
+                                            .style(theme::Container::Pill(theme::Pill::Simple))
+                                    })
+                                } else {
+                                    None
+                                },
                             )
-                        } else {
-                            Container::new(text(value.0.to_string()))
-                                .padding(10)
-                                .style(theme::Container::Pill(theme::Pill::Simple))
-                        })
-                    } else {
-                        None
-                    })
-                }))
+                        }),
+                )
             })
             .push_maybe(if sigs.signed_pubkeys.is_empty() {
                 None
@@ -930,14 +937,9 @@ pub fn sign_action<'a>(
                 .push(
                     Column::new()
                         .push(
-                            Row::new()
-                                .push(
-                                    text("Select signing device to sign with:")
-                                        .bold()
-                                        .width(Length::Fill),
-                                )
-                                .push(button::secondary(None, "Refresh").on_press(Message::Reload))
-                                .align_items(Alignment::Center),
+                            text("Select signing device to sign with:")
+                                .bold()
+                                .width(Length::Fill),
                         )
                         .spacing(10)
                         .push(hws.iter().enumerate().fold(

@@ -7,6 +7,7 @@ use liana::{bip39, signer::HotSigner};
 use liana_ui::widget::Element;
 
 use crate::{
+    hw::HardwareWallets,
     installer::{context::Context, message::Message, step::Step, view},
     signer::Signer,
 };
@@ -35,7 +36,7 @@ impl From<BackupMnemonic> for Box<dyn Step> {
 }
 
 impl Step for BackupMnemonic {
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         if let Message::UserActionDone(done) = message {
             self.done = done;
         }
@@ -50,7 +51,7 @@ impl Step for BackupMnemonic {
             false
         }
     }
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         view::backup_mnemonic(progress, &self.words, self.done)
     }
 }
@@ -86,7 +87,7 @@ impl From<RecoverMnemonic> for Box<dyn Step> {
 }
 
 impl Step for RecoverMnemonic {
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         match message {
             Message::MnemonicWord(index, value) => {
                 if let Some((word, valid)) = self.words.get_mut(index) {
@@ -162,7 +163,7 @@ impl Step for RecoverMnemonic {
         ctx.recovered_signer = Some(Arc::new(signer));
         true
     }
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         view::recover_mnemonic(
             progress,
             &self.words,

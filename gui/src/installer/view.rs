@@ -487,8 +487,8 @@ pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
 
 pub fn hardware_wallet_xpubs<'a>(
     i: usize,
-    xpubs: &'a Vec<String>,
     hw: &'a HardwareWallet,
+    xpubs: Option<&'a Vec<String>>,
     processing: bool,
     error: Option<&Error>,
 ) -> Element<'a, Message> {
@@ -509,6 +509,9 @@ pub fn hardware_wallet_xpubs<'a>(
         HardwareWallet::Unsupported { version, kind, .. } => {
             hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
         }
+        HardwareWallet::Locked {
+            kind, pairing_code, ..
+        } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
     })
     .style(theme::Button::Secondary)
     .width(Length::Fill);
@@ -519,15 +522,13 @@ pub fn hardware_wallet_xpubs<'a>(
         Column::new()
             .push_maybe(error.map(|e| card::warning(e.to_string()).width(Length::Fill)))
             .push(bttn)
-            .push_maybe(if xpubs.is_empty() {
+            .push_maybe(if xpubs.is_none() {
                 None
             } else {
                 Some(separation().width(Length::Fill))
             })
-            .push_maybe(if xpubs.is_empty() {
-                None
-            } else {
-                Some(xpubs.iter().fold(Column::new().padding(15), |col, xpub| {
+            .push_maybe(xpubs.map(|xpubs| {
+                xpubs.iter().fold(Column::new().padding(15), |col, xpub| {
                     col.push(
                         Row::new()
                             .spacing(5)
@@ -550,8 +551,8 @@ pub fn hardware_wallet_xpubs<'a>(
                                 .padding(10),
                             ),
                     )
-                }))
-            }),
+                })
+            })),
     )
     .style(theme::Container::Card(theme::Card::Simple))
     .into()
@@ -599,17 +600,11 @@ pub fn participate_xpub<'a>(
             .push(
                 Column::new()
                     .push(
-                        Row::new()
-                            .spacing(10)
-                            .align_items(Alignment::Center)
-                            .push(
-                                Container::new(text("Generate an extended public key by selecting a signing device:").bold())
-                                    .width(Length::Fill),
-                            )
-                            .push(
-                                button::secondary(Some(icon::reload_icon()), "Refresh")
-                                    .on_press(Message::Reload),
-                            ),
+                        Container::new(
+                            text("Generate an extended public key by selecting a signing device:")
+                                .bold(),
+                        )
+                        .width(Length::Fill),
                     )
                     .spacing(10)
                     .push(Column::with_children(hws).spacing(10))
@@ -670,25 +665,16 @@ pub fn register_descriptor<'a>(
             .push(
                 Column::new()
                     .push(
-                        Row::new()
-                            .spacing(10)
-                            .align_items(Alignment::Center)
-                            .push(
-                                Container::new(
-                                    if created_desc {
-                                        text("Select hardware wallet to register descriptor on:")
-                                        .bold()
-                                    } else {
-                                        text("If necessary, please select the signing device to register descriptor on:")
-                                        .bold()
-                                    },
-                                )
-                                .width(Length::Fill),
-                            )
-                            .push(
-                                button::secondary(Some(icon::reload_icon()), "Refresh")
-                                    .on_press(Message::Reload),
-                            ),
+                        Container::new(
+                            if created_desc {
+                                text("Select hardware wallet to register descriptor on:")
+                                    .bold()
+                            } else {
+                                text("If necessary, please select the signing device to register descriptor on:")
+                                    .bold()
+                            },
+                        )
+                        .width(Length::Fill),
                     )
                     .spacing(10)
                     .push(
@@ -1305,17 +1291,8 @@ pub fn edit_key_modal<'a>(
                 .push(
                     Column::new()
                         .push(
-                            Row::new()
-                                .spacing(10)
-                                .align_items(Alignment::Center)
-                                .push(
-                                    Container::new(text("Select a signing device:").bold())
-                                        .width(Length::Fill),
-                                )
-                                .push(
-                                    button::secondary(Some(icon::reload_icon()), "Refresh")
-                                        .on_press(Message::Reload),
-                                ),
+                            Container::new(text("Select a signing device:").bold())
+                                .width(Length::Fill),
                         )
                         .spacing(10)
                         .push(
@@ -1554,6 +1531,9 @@ pub fn hw_list_view(
         HardwareWallet::Unsupported { version, kind, .. } => {
             hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
         }
+        HardwareWallet::Locked {
+            kind, pairing_code, ..
+        } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
     })
     .style(theme::Button::Border)
     .width(Length::Fill);

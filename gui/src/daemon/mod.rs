@@ -100,19 +100,14 @@ pub trait Daemon: Debug {
                 })
                 .cloned()
                 .collect();
-            let sigs = info
-                .descriptors
-                .main
-                .partial_spend_info(&tx.psbt)
-                .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
+
             spend_txs.push(model::SpendTx::new(
                 tx.updated_at,
                 tx.psbt,
                 coins,
-                sigs,
-                info.descriptors.main.max_sat_vbytes(),
+                &info.descriptors.main,
                 info.network,
-            ))
+            ));
         }
         load_labels(self, &mut spend_txs)?;
         spend_txs.sort_by(|a, b| {

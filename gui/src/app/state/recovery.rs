@@ -51,6 +51,14 @@ impl RecoveryPanel {
 }
 
 impl State for RecoveryPanel {
+    fn subscription(&self) -> iced::Subscription<Message> {
+        if let Some(psbt) = &self.generated {
+            psbt.subscription()
+        } else {
+            iced::Subscription::none()
+        }
+    }
+
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(generated) = &self.generated {
             generated.view(cache)
@@ -154,15 +162,7 @@ impl State for RecoveryPanel {
                                         .any(|input| input.previous_output == coin.outpoint)
                                 })
                                 .collect();
-                            let sigs = desc.partial_spend_info(&psbt).unwrap();
-                            Ok(SpendTx::new(
-                                None,
-                                psbt,
-                                coins,
-                                sigs,
-                                desc.max_sat_vbytes(),
-                                network,
-                            ))
+                            Ok(SpendTx::new(None, psbt, coins, &desc, network))
                         },
                         Message::Recovery,
                     );

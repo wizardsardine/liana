@@ -24,6 +24,7 @@ use crate::{
         Bitcoind, StartInternalBitcoindError,
     },
     download,
+    hw::HardwareWallets,
     installer::{
         context::Context,
         message::{self, Message},
@@ -434,7 +435,7 @@ impl SelectBitcoindTypeStep {
 }
 
 impl Step for SelectBitcoindTypeStep {
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         if let Message::SelectBitcoindType(msg) = message {
             match msg {
                 message::SelectBitcoindTypeMsg::UseExternal(selected) => {
@@ -458,7 +459,7 @@ impl Step for SelectBitcoindTypeStep {
         true
     }
 
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         view::select_bitcoind_type(progress)
     }
 }
@@ -510,7 +511,7 @@ impl Step for DefineBitcoind {
             self.address.value = bitcoind_default_address(&ctx.bitcoin_config.network);
         }
     }
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         if let Message::DefineBitcoind(msg) = message {
             match msg {
                 message::DefineBitcoind::PingBitcoind => {
@@ -561,7 +562,7 @@ impl Step for DefineBitcoind {
         }
     }
 
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         view::define_bitcoin(
             progress,
             &self.address,
@@ -646,7 +647,7 @@ impl Step for InternalBitcoindStep {
             }
         }
     }
-    fn update(&mut self, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         if let Message::InternalBitcoind(msg) = message {
             match msg {
                 message::InternalBitcoindMsg::Previous => {
@@ -854,7 +855,7 @@ impl Step for InternalBitcoindStep {
         false
     }
 
-    fn view(&self, progress: (usize, usize)) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         view::start_internal_bitcoind(
             progress,
             self.exe_path.as_ref(),

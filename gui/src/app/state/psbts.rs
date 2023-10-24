@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use iced::Command;
+use iced::{Command, Subscription};
 
 use liana::miniscript::bitcoin::psbt::Psbt;
 use liana_ui::{
@@ -107,6 +107,14 @@ impl State for PsbtsPanel {
             }
         }
         Command::none()
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        if let Some(psbt) = &self.selected_tx {
+            psbt.subscription()
+        } else {
+            Subscription::none()
+        }
     }
 
     fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
