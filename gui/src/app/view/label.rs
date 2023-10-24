@@ -1,7 +1,6 @@
 use iced::{widget::row, Alignment};
 
 use liana_ui::{
-    color,
     component::{button, form},
     icon,
     widget::*,
@@ -33,17 +32,10 @@ pub fn label_editable(
         }
     }
     Container::new(
-        row!(
-            iced::widget::Text::new("Add Label")
-                .size(size)
-                .style(color::GREY_3),
-            button::primary(Some(icon::pencil_icon()), "Edit").on_press(view::Message::Label(
-                labelled,
-                view::message::LabelMessage::Edited(String::default())
-            ))
-        )
-        .spacing(5)
-        .align_items(Alignment::Center),
+        button::primary(Some(icon::pencil_icon()), "Add label").on_press(view::Message::Label(
+            labelled,
+            view::message::LabelMessage::Edited(String::default()),
+        )),
     )
     .into()
 }
