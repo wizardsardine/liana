@@ -410,6 +410,12 @@ def test_create_spend(lianad, bitcoind):
     assert res_spend_keys.intersection(res_reco_keys) == set()
 
 
+def test_create_spend_duplicate_signer(lianad_same_signer, bitcoind):
+    """Test spend creation (esp. around what bip32 derivations are added to the PSBT) but
+    with a Liana setup where a single signer is repeated between paths."""
+    test_create_spend(lianad_same_signer, bitcoind)
+
+
 def test_list_spend(lianad, bitcoind):
     # Start by creating two conflicting Spend PSBTs. The first one will have a change
     # output but not the second one.

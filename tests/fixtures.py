@@ -156,6 +156,41 @@ def lianad(bitcoind, directory):
     lianad.cleanup()
 
 
+@pytest.fixture
+def lianad_same_signer(bitcoind, directory):
+    """A simple lianad but the same signer is used for primary and recovery."""
+    datadir = os.path.join(directory, "lianad")
+    os.makedirs(datadir, exist_ok=True)
+    bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
+
+    # We use the same xpub for both paths, but /0/<0;1>/* for the primary and /1/<0;1>/*
+    # for the recovery.
+    signer = SingleSigner()
+    fingerprint = xpub_fingerprint(signer.primary_hd)
+    xpub = signer.primary_hd.get_xpub()
+    csv_value = 10
+    main_desc = Descriptor.from_str(
+        f"wsh(or_d(pk([{fingerprint}]{xpub}/0/<0;1>/*),and_v(v:pkh([{fingerprint}]{xpub}/1/<0;1>/*),older({csv_value}))))"
+    )
+
+    lianad = Lianad(
+        datadir,
+        signer,
+        main_desc,
+        bitcoind.rpcport,
+        bitcoind_cookie,
+    )
+
+    try:
+        lianad.start()
+        yield lianad
+    except Exception:
+        lianad.cleanup()
+        raise
+
+    lianad.cleanup()
+
+
 def multi_expression(thresh, keys):
     exp = f"multi({thresh},"
     for i, key in enumerate(keys):
