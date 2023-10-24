@@ -456,7 +456,7 @@ mod tests {
             unknown: BTreeMap::new(),
             inputs: vec![PsbtIn {
                 witness_script: Some(spent_coin_desc.witness_script()),
-                bip32_derivation: spent_coin_desc.bip32_derivations(),
+                bip32_derivation: spent_coin_desc.bip32_derivations(|_| true),
                 witness_utxo: Some(bitcoin::TxOut {
                     value: 19_000,
                     script_pubkey: spent_coin_desc.script_pubkey(),
@@ -498,7 +498,7 @@ mod tests {
         let other_spent_coin_desc = desc.receive_descriptor().derive(84.into(), &secp);
         dummy_psbt.inputs.push(PsbtIn {
             witness_script: Some(other_spent_coin_desc.witness_script()),
-            bip32_derivation: other_spent_coin_desc.bip32_derivations(),
+            bip32_derivation: other_spent_coin_desc.bip32_derivations(|_| true),
             witness_utxo: Some(bitcoin::TxOut {
                 value: 19_000,
                 script_pubkey: other_spent_coin_desc.script_pubkey(),
