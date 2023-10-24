@@ -19,6 +19,11 @@ fn parse_args(args: Vec<String>) -> Option<PathBuf> {
         return None;
     }
 
+    if args[1] != "--conf" {
+        eprintln!("Only a single command line argument is supported: --conf. All other configuration parameters must be specified in the configuration file.");
+        print_help_exit();
+    }
+
     if args.len() != 3 {
         print_help_exit();
     }
