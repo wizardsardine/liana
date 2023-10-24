@@ -79,14 +79,14 @@ class Lianad(TailableProc):
                 int.from_bytes(raw_der_path[i : i + 4], byteorder="little", signed=True)
                 for i in range(0, len(raw_der_path), 4)
             ]
-            assert len(der_path) == 2
 
             # Create a copy of the descriptor to derive it at the index used in this input.
             # Then create a satisfaction for it using the signature we just created.
+            is_change = der_path[len(der_path) - 2] == 1
             desc = Descriptor.from_str(
-                str(self.receive_desc if der_path[0] == 0 else self.change_desc)
+                str(self.change_desc if is_change else self.receive_desc)
             )
-            desc.derive(der_path[1])
+            desc.derive(der_path[len(der_path) - 1])
             sat_material = SatisfactionMaterial(
                 signatures=psbt_in.map[PSBT_IN_PARTIAL_SIG],
             )

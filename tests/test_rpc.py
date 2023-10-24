@@ -398,12 +398,22 @@ def test_create_spend(lianad, bitcoind):
     res_spend = lianad.rpc.createspend(destinations, outpoints, 1)
     res_reco = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
 
-    # The two PSBTs don't share any BIP32 derivation paths in their input.
+    # The two PSBTs don't share any BIP32 derivation paths in their inputs.
     res_spend_psbt = PSBT.from_base64(res_spend["psbt"])
+    res_spend_keys = set()
+    for i in res_spend_psbt.i:
+        res_spend_keys = res_spend_keys | set(i.map[PSBT_IN_BIP32_DERIVATION])
     res_reco_psbt = PSBT.from_base64(res_reco["psbt"])
-    res_spend_keys = set(res_spend_psbt.i[0].map[PSBT_IN_BIP32_DERIVATION])
-    res_reco_keys = set(res_reco_psbt.i[0].map[PSBT_IN_BIP32_DERIVATION])
+    res_reco_keys = set()
+    for i in res_reco_psbt.i:
+        res_reco_keys = res_reco_keys | set(i.map[PSBT_IN_BIP32_DERIVATION])
     assert res_spend_keys.intersection(res_reco_keys) == set()
+
+
+def test_create_spend_duplicate_signer(lianad_same_signer, bitcoind):
+    """Test spend creation (esp. around what bip32 derivations are added to the PSBT) but
+    with a Liana setup where a single signer is repeated between paths."""
+    test_create_spend(lianad_same_signer, bitcoind)
 
 
 def test_list_spend(lianad, bitcoind):
