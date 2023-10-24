@@ -158,17 +158,14 @@ fn event_list_view(i: usize, event: &HistoryTransaction) -> Column<'_, Message> 
                 .to_string(),
             ) {
                 Some(p1_regular(label))
+            } else if let Ok(addr) =
+                bitcoin::Address::from_script(&output.script_pubkey, event.network)
+            {
+                event.labels.get(&addr.to_string()).map(|label| {
+                    p1_regular(format!("address label: {}", label)).style(color::GREY_3)
+                })
             } else {
-                event
-                    .labels
-                    .get(
-                        &bitcoin::Address::from_script(&output.script_pubkey, event.network)
-                            .unwrap()
-                            .to_string(),
-                    )
-                    .map(|label| {
-                        p1_regular(format!("address label: {}", label)).style(color::GREY_3)
-                    })
+                None
             };
             if event.is_external() {
                 if !event.change_indexes.contains(&output_index) {

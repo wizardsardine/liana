@@ -820,8 +820,8 @@ fn payment_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
-        .unwrap()
-        .to_string();
+        .ok()
+        .map(|a| a.to_string());
     let outpoint = OutPoint {
         txid,
         vout: i as u32,
@@ -848,7 +848,7 @@ fn payment_view<'a>(
                 )
                 .push(amount(&Amount::from_sat(output.value))),
         )
-        .push(
+        .push_maybe(addr.map(|addr| {
             Column::new()
                 .push(
                     Row::new()
@@ -880,8 +880,8 @@ fn payment_view<'a>(
                                 .push(p1_bold("Address label:").style(color::GREY_3))
                                 .push(p2_regular(label).style(color::GREY_3)),
                         )
-                })),
-        )
+                }))
+        }))
         .into()
 }
 
