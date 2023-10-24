@@ -365,9 +365,9 @@ impl Labelled for HistoryTransaction {
                 txid,
                 vout: vout as u32,
             }));
-            items.push(LabelItem::Address(
-                Address::from_script(&output.script_pubkey, self.network).unwrap(),
-            ));
+            if let Ok(addr) = Address::from_script(&output.script_pubkey, self.network) {
+                items.push(LabelItem::Address(addr));
+            }
         }
         items
     }
