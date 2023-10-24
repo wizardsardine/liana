@@ -260,19 +260,18 @@ impl HotSigner {
                 .expect("Sighash is always 32 bytes.");
 
             // Then provide a signature for all the keys they asked for.
-            // FIXME: get rid of this clone somehow.. Can't we just tell the borrow checker it's
-            // fine?
-            for (curr_pubkey, (fingerprint, der_path)) in psbt.inputs[i].bip32_derivation.clone() {
-                if fingerprint != master_fingerprint {
+            let input = &mut psbt.inputs[i]; // for borrowck reasons
+            for (curr_pubkey, (fingerprint, der_path)) in input.bip32_derivation.iter() {
+                if *fingerprint != master_fingerprint {
                     continue;
                 }
-                let privkey = self.xpriv_at(&der_path, secp).to_priv();
+                let privkey = self.xpriv_at(der_path, secp).to_priv();
                 let pubkey = privkey.public_key(secp);
-                if pubkey.inner != curr_pubkey {
+                if pubkey.inner != *curr_pubkey {
                     return Err(SignerError::InsanePsbt);
                 }
                 let sig = secp.sign_ecdsa_low_r(&sighash, &privkey.inner);
-                psbt.inputs[i].partial_sigs.insert(
+                input.partial_sigs.insert(
                     pubkey,
                     ecdsa::Signature {
                         sig,
