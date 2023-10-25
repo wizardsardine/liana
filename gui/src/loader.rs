@@ -46,13 +46,17 @@ pub struct Loader {
     pub daemon_started: bool,
     pub internal_bitcoind: Option<Bitcoind>,
     pub waiting_daemon_bitcoind: bool,
+    /// Receiver from Liana log stream channel.
+    pub log_receiver: crossbeam_channel::Receiver<String>,
 
     step: Step,
 }
 
 pub enum Step {
     Connecting,
-    StartingDaemon,
+    StartingDaemon {
+        liana_logs: String,
+    },
     Syncing {
         daemon: Arc<dyn Daemon + Sync + Send>,
         progress: f64,
@@ -79,7 +83,7 @@ pub enum Message {
     ),
     Started(Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error>),
     Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
-    BitcoindLog(Option<String>),
+    LogMessage(Option<String>),
     Failure(DaemonError),
     None,
 }
@@ -90,6 +94,7 @@ impl Loader {
         gui_config: GUIConfig,
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
+        log_receiver: crossbeam_channel::Receiver<String>,
     ) -> (Self, Command<Message>) {
         let path = gui_config
             .daemon_rpc_path
@@ -105,6 +110,7 @@ impl Loader {
                 daemon_started: false,
                 internal_bitcoind,
                 waiting_daemon_bitcoind: false,
+                log_receiver,
             },
             Command::perform(connect(path), Message::Loaded),
         )
@@ -131,7 +137,9 @@ impl Loader {
                 | Error::Daemon(DaemonError::Transport(Some(ErrorKind::ConnectionRefused), _))
                 | Error::Daemon(DaemonError::Transport(Some(ErrorKind::NotFound), _)) => {
                     if let Some(daemon_config_path) = self.gui_config.daemon_config_path.clone() {
-                        self.step = Step::StartingDaemon;
+                        self.step = Step::StartingDaemon {
+                            liana_logs: String::new(),
+                        };
                         self.daemon_started = true;
                         self.waiting_daemon_bitcoind = true;
                         return Command::perform(
@@ -156,7 +164,11 @@ impl Loader {
     }
 
     fn on_log(&mut self, log: Option<String>) -> Command<Message> {
-        if let Step::Syncing { bitcoind_logs, .. } = &mut self.step {
+        if let Step::StartingDaemon { liana_logs } = &mut self.step {
+            if let Some(l) = log {
+                *liana_logs = l;
+            }
+        } else if let Step::Syncing { bitcoind_logs, .. } = &mut self.step {
             if let Some(l) = log {
                 *bitcoind_logs = l;
             }
@@ -261,6 +273,7 @@ impl Loader {
                     self.gui_config.clone(),
                     self.network,
                     self.internal_bitcoind.clone(),
+                    self.log_receiver.clone(),
                 );
                 *self = loader;
                 cmd
@@ -268,7 +281,7 @@ impl Loader {
             Message::Started(res) => self.on_start(res),
             Message::Loaded(res) => self.on_load(res),
             Message::Syncing(res) => self.on_sync(res),
-            Message::BitcoindLog(log) => self.on_log(log),
+            Message::LogMessage(log) => self.on_log(log),
             Message::Synced(Err(e)) => {
                 self.step = Step::Error(Box::new(e));
                 Command::none()
@@ -283,7 +296,17 @@ impl Loader {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        if self.internal_bitcoind.is_some() {
+        if let Step::StartingDaemon { .. } = self.step {
+            iced::subscription::unfold(1, self.log_receiver.clone(), move |recv| async {
+                let log_msg = match recv.recv() {
+                    Ok(msg) => msg,
+                    Err(e) => e.to_string(),
+                };
+
+                (Message::LogMessage(Some(log_msg)), recv)
+            })
+        }
+        else if self.internal_bitcoind.is_some() {
             let log_path = internal_bitcoind_debug_log_path(&self.datadir_path, self.network);
             iced::subscription::unfold(0, log_path, move |log_path| async move {
                 // Reduce the io load.
@@ -329,7 +352,7 @@ impl Loader {
                     })
                     .last();
                 match last_update_tip {
-                    Some(Ok(line)) => (Message::BitcoindLog(Some(line)), log_path),
+                    Some(Ok(line)) => (Message::LogMessage(Some(line)), log_path),
                     res => {
                         if let Some(Err(e)) = res {
                             log::error!("Reading bitcoind log file: {}", e);
@@ -392,12 +415,13 @@ pub enum ViewMessage {
 
 pub fn view(step: &Step) -> Element<ViewMessage> {
     match &step {
-        Step::StartingDaemon => cover(
+        Step::StartingDaemon { liana_logs } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
                 .push(ProgressBar::new(0.0..=1.0, 0.0).width(Length::Fill))
-                .push(text("Starting daemon...")),
+                .push(text("Starting daemon..."))
+                .push(p2_regular(liana_logs).style(color::GREY_3)),
         ),
         Step::Connecting => cover(
             None,

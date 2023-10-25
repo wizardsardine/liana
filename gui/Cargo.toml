@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 async-hwi = "0.0.13"
+crossbeam-channel = "0.5"
 liana = { git = "https://github.com/wizardsardine/liana", branch = "master", default-features = false, features = ["nonblocking_shutdown"] }
 liana_ui = { path = "ui" }
 backtrace = "0.3"
