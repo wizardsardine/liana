@@ -21,7 +21,7 @@ use liana_ui::{component::form, widget::*};
 use crate::{
     bitcoind::{
         self, bitcoind_network_dir, internal_bitcoind_datadir, internal_bitcoind_directory,
-        Bitcoind, StartInternalBitcoindError,
+        Bitcoind, StartInternalBitcoindError, VERSION,
     },
     download,
     hw::HardwareWallets,
@@ -633,8 +633,11 @@ impl InternalBitcoindStep {
 impl Step for InternalBitcoindStep {
     fn load_context(&mut self, ctx: &Context) {
         if self.exe_path.is_none() {
-            if bitcoind::internal_bitcoind_exe_path(&ctx.data_dir).exists() {
-                self.exe_path = Some(bitcoind::internal_bitcoind_exe_path(&ctx.data_dir))
+            // Check if current managed bitcoind version is already installed.
+            // For new installations, we ignore any previous managed bitcoind versions that might be installed.
+            let exe_path = bitcoind::internal_bitcoind_exe_path(&ctx.data_dir, VERSION);
+            if exe_path.exists() {
+                self.exe_path = Some(exe_path)
             } else if self.exe_download.is_none() {
                 self.exe_download = Some(Download::new(0));
             };
@@ -749,6 +752,7 @@ impl Step for InternalBitcoindStep {
                                     self.install_state = Some(InstallState::Finished);
                                     self.exe_path = Some(bitcoind::internal_bitcoind_exe_path(
                                         &self.liana_datadir,
+                                        VERSION,
                                     ));
                                     return Command::perform(async {}, |_| {
                                         Message::InternalBitcoind(

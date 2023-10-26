@@ -16,7 +16,11 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-pub const VERSION: &str = "25.0";
+/// Current and previous managed bitcoind versions, in order of descending version.
+pub const VERSIONS: [&str; 1] = ["25.0"];
+
+/// Current managed bitcoind version for new installations.
+pub const VERSION: &str = VERSIONS[0];
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 pub const SHA256SUM: &str = "5708fc639cdfc27347cccfd50db9b73b53647b36fb5f3a4a93537cbe8828c27f";
@@ -64,9 +68,9 @@ pub fn internal_bitcoind_datadir(liana_datadir: &PathBuf) -> PathBuf {
 }
 
 /// Internal bitcoind executable path.
-pub fn internal_bitcoind_exe_path(liana_datadir: &PathBuf) -> PathBuf {
+pub fn internal_bitcoind_exe_path(liana_datadir: &PathBuf, bitcoind_version: &str) -> PathBuf {
     internal_bitcoind_directory(liana_datadir)
-        .join(format!("bitcoin-{}", &VERSION))
+        .join(format!("bitcoin-{}", bitcoind_version))
         .join("bin")
         .join(if cfg!(target_os = "windows") {
             "bitcoind.exe"
@@ -114,6 +118,7 @@ pub enum StartInternalBitcoindError {
     CouldNotCanonicalizeCookiePath(String),
     CookieFileNotFound(String),
     BitcoinDError(String),
+    ExecutableNotFound,
 }
 
 impl std::fmt::Display for StartInternalBitcoindError {
@@ -139,6 +144,7 @@ impl std::fmt::Display for StartInternalBitcoindError {
                 )
             }
             Self::BitcoinDError(e) => write!(f, "bitcoind connection check failed: {}", e),
+            Self::ExecutableNotFound => write!(f, "bitcoind executable not found."),
         }
     }
 }
@@ -157,7 +163,23 @@ impl Bitcoind {
         liana_datadir: &PathBuf,
     ) -> Result<Self, StartInternalBitcoindError> {
         let bitcoind_datadir = internal_bitcoind_datadir(liana_datadir);
-        let bitcoind_exe_path = internal_bitcoind_exe_path(liana_datadir);
+        // Find most recent bitcoind version available.
+        let bitcoind_exe_path = VERSIONS
+            .iter()
+            .filter_map(|v| {
+                let path = internal_bitcoind_exe_path(liana_datadir, v);
+                if path.exists() {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .next()
+            .ok_or(StartInternalBitcoindError::ExecutableNotFound)?;
+        info!(
+            "Found bitcoind executable at '{}'.",
+            bitcoind_exe_path.to_string_lossy()
+        );
         let datadir_path_str = bitcoind_datadir
             .canonicalize()
             .map_err(|e| StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()))?
