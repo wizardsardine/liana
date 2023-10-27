@@ -26,7 +26,7 @@ use std::{
 
 use miniscript::{
     bitcoin::{
-        self, address, bip32,
+        self, address,
         locktime::absolute,
         psbt::{Input as PsbtIn, Output as PsbtOut, PartiallySignedTransaction as Psbt},
     },
@@ -237,25 +237,6 @@ fn serializable_size<T: bitcoin::consensus::Encodable + ?Sized>(t: &T) -> u64 {
     bitcoin::consensus::serialize(t).len().try_into().unwrap()
 }
 
-// Whether a given key was derived from the keys of a specific spending path.
-fn is_key_for_spending_path(
-    pubkey: &descriptors::keys::DerivedPublicKey,
-    path_origins: &HashMap<bip32::Fingerprint, HashSet<bip32::DerivationPath>>,
-) -> bool {
-    // If it comes from a signer used in this path
-    if let Some(der_paths) = path_origins.get(&pubkey.origin.0) {
-        // Get the derivation path of the parent used to derive this key. Note this is fine
-        // to only drop the last derivation step, because the keys in the policy are
-        // normalized (so the derivation path up to the wildcard is part of the origin).
-        if let Some((_, der_path_no_wildcard)) = pubkey.origin.1[..].split_last() {
-            // Now make sure it was actually derived from the xpub used in this derivation
-            // path, and not from the same signer used in another path.
-            return der_paths.contains(&(der_path_no_wildcard.into()));
-        }
-    }
-    false
-}
-
 impl DaemonControl {
     // Get the derived descriptor for this coin
     fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedSinglePathLianaDesc {
@@ -389,7 +370,7 @@ impl DaemonControl {
             .primary_path()
             .thresh_origins();
         let is_prim_path_key =
-            |pubkey: &keys::DerivedPublicKey| is_key_for_spending_path(pubkey, &prim_path_origins);
+            |pubkey: &keys::DerivedPublicKey| prim_path_origins.contains_key(&pubkey.origin.0);
 
         // Iterate through given outpoints to fetch the coins (hence checking their existence
         // at the same time). We checked there is at least one, therefore after this loop the
@@ -833,7 +814,7 @@ impl DaemonControl {
             .ok_or(CommandError::UnknownRecoveryTimelock(timelock))?
             .thresh_origins();
         let is_key_for_this_path =
-            |pubkey: &keys::DerivedPublicKey| is_key_for_spending_path(pubkey, &reco_path_origins);
+            |pubkey: &keys::DerivedPublicKey| reco_path_origins.contains_key(&pubkey.origin.0);
 
         // Fill-in the transaction inputs and PSBT inputs information. Record the value
         // that is fed to the transaction while doing so, to compute the fees afterward.
