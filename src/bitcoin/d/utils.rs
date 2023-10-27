@@ -28,15 +28,15 @@ pub fn block_before_date<Fh, Fs>(
 ) -> Option<BlockChainTip>
 where
     Fh: FnMut(i32) -> Option<bitcoin::BlockHash>,
-    Fs: FnMut(bitcoin::BlockHash) -> BlockStats,
+    Fs: FnMut(bitcoin::BlockHash) -> Option<BlockStats>,
 {
     log::debug!("Looking for the first block before {}", target_timestamp);
 
     let mut start_height = 0;
     let mut end_height = chain_tip.height;
 
-    let genesis_stats = get_stats(get_hash(0).expect("Genesis hash"));
-    let tip_stats = get_stats(chain_tip.hash);
+    let genesis_stats = get_stats(get_hash(0).expect("Genesis hash"))?;
+    let tip_stats = get_stats(chain_tip.hash)?;
     if !(genesis_stats.time..tip_stats.time).contains(&target_timestamp) {
         return None;
     }
@@ -47,7 +47,7 @@ where
         let current_height = start_height + delta.checked_div(2).unwrap();
         // We want the last block with a timestamp below, not the first with a higher one.
         let next_height = current_height.checked_add(1).unwrap();
-        let next_stats = get_stats(get_hash(next_height)?);
+        let next_stats = get_stats(get_hash(next_height)?)?;
         log::debug!("Current next block: {:?}", next_stats);
 
         if target_timestamp > next_stats.time {
@@ -85,13 +85,18 @@ mod tests {
     }
 
     // Inefficient dummy implementation of BitcoinD's self.get_block_stats
-    fn get_stats(chain: &[(BlockChainTip, BlockStats)], hash: bitcoin::BlockHash) -> BlockStats {
-        chain
-            .iter()
-            .find(|(tip, _)| tip.hash == hash)
-            .unwrap()
-            .1
-            .clone()
+    fn get_stats(
+        chain: &[(BlockChainTip, BlockStats)],
+        hash: bitcoin::BlockHash,
+    ) -> Option<BlockStats> {
+        Some(
+            chain
+                .iter()
+                .find(|(tip, _)| tip.hash == hash)
+                .unwrap()
+                .1
+                .clone(),
+        )
     }
 
     macro_rules! bh {

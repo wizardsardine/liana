@@ -272,11 +272,11 @@ impl BitcoinInterface for d::BitcoinD {
     }
 
     fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
-        let mut stats = self.get_block_stats(tip.hash);
+        let mut stats = self.get_block_stats(tip.hash)?;
         let mut ancestor = *tip;
 
         while stats.confirmations == -1 {
-            stats = self.get_block_stats(stats.previous_blockhash?);
+            stats = self.get_block_stats(stats.previous_blockhash?)?;
             ancestor = BlockChainTip {
                 hash: stats.blockhash,
                 height: stats.height,
@@ -318,7 +318,7 @@ impl BitcoinInterface for d::BitcoinD {
 
     fn tip_time(&self) -> Option<u32> {
         let tip = self.chain_tip();
-        Some(self.get_block_stats(tip.hash).time)
+        Some(self.get_block_stats(tip.hash)?.time)
     }
 
     fn wallet_transaction(
