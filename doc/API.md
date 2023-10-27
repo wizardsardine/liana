@@ -287,22 +287,14 @@ Create a transaction that sweeps all coins for which a timelocked recovery path 
 currently available to a provided address with the provided feerate.
 
 The `timelock` parameter can be used to specify which recovery path to use. By default,
-we'll use the first recovery path available. The provided timelock must match the value of one
-of the recovery path.
+we'll use the first recovery path available. If created for a later timelock a recovery
+transaction may be satisfied using an earlier timelock but not the opposite.
 
 Due to the fact coins are generally received at different block heights, not all coins may be
 spendable through a single recovery path at the same time.
 
 This command will error if no such coins are available or the sum of their value is not enough to
 cover the requested feerate.
-
-Note that although a transaction created for a later available timelock can be satisfied using the
-keys for an earlier timelock, a PSBT created with this command will only be usable for a single
-recovery path. If the user creates a PSBT for recovery path "B" and then ends up willing to satisfy
-it using signatures for earlier recovery path "A", they will have to create a new recovery PSBT for
-path "A" using `createrecovery`. This is because we do not include the information necessary to sign
-using other recovery paths to workaround some signing devices' surprising behaviour. (See
-https://github.com/wizardsardine/liana/pull/706#issuecomment-1744705808 for more details.)
 
 #### Request
 

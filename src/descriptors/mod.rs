@@ -378,11 +378,7 @@ impl DerivedSinglePathLianaDesc {
         self.0.explicit_script().expect("Not a Taproot descriptor")
     }
 
-    /// Get the BIP32 derivations for this derived descriptor, filtered by the given predicate.
-    pub fn bip32_derivations<P>(&self, mut predicate: P) -> Bip32Deriv
-    where
-        P: FnMut(&DerivedPublicKey) -> bool,
-    {
+    pub fn bip32_derivations(&self) -> Bip32Deriv {
         let ms = match self.0 {
             descriptor::Descriptor::Wsh(ref wsh) => match wsh.as_inner() {
                 descriptor::WshInner::Ms(ms) => ms,
@@ -395,13 +391,7 @@ impl DerivedSinglePathLianaDesc {
 
         // For DerivedPublicKey, Pk::Hash == Self.
         ms.iter_pk()
-            .filter_map(|k| {
-                if predicate(&k) {
-                    Some((k.key.inner, (k.origin.0, k.origin.1)))
-                } else {
-                    None
-                }
-            })
+            .map(|k| (k.key.inner, (k.origin.0, k.origin.1)))
             .collect()
     }
 }
@@ -688,7 +678,7 @@ mod tests {
         // Sanity check we can call the methods on the derived desc
         der_desc.script_pubkey();
         der_desc.witness_script();
-        assert!(!der_desc.bip32_derivations(|_| true).is_empty());
+        assert!(!der_desc.bip32_derivations().is_empty());
     }
 
     #[test]

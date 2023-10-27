@@ -7,8 +7,7 @@ mod utils;
 use crate::{
     bitcoin::BitcoinInterface,
     database::{Coin, DatabaseInterface},
-    descriptors::{self, keys},
-    DaemonControl, VERSION,
+    descriptors, DaemonControl, VERSION,
 };
 
 pub use crate::database::{CoinStatus, LabelItem};
@@ -72,7 +71,6 @@ pub enum CommandError {
     InsaneRescanTimestamp(u32),
     /// An error that might occur in the racy rescan triggering logic.
     RescanTrigger(String),
-    UnknownRecoveryTimelock(u16),
     RecoveryNotAvailable,
 }
 
@@ -134,7 +132,6 @@ impl fmt::Display for CommandError {
             ),
             Self::InsaneRescanTimestamp(t) => write!(f, "Insane timestamp '{}'.", t),
             Self::RescanTrigger(s) => write!(f, "Error while starting rescan: '{}'", s),
-            Self::UnknownRecoveryTimelock(tl) => write!(f, "Provided timelock does not correspond to any recovery path: '{}'.", tl),
             Self::RecoveryNotAvailable => write!(
                 f,
                 "No coin currently spendable through this timelocked recovery path."
@@ -355,23 +352,6 @@ impl DaemonControl {
         }
         let mut db_conn = self.db.connection();
 
-        // Some signing devices (such as the Bitbox02) would not sign for all keys present in a
-        // script. This can lead to disruptions. For instance it could not provide a signature for
-        // the same key across a PSBT inputs. (See
-        // https://github.com/wizardsardine/liana/pull/706#issuecomment-1744705808 for details.)
-        // Therefore, only include in the PSBT_IN_BIP32_DERIVATION field the keys for the spending
-        // path we are interested in. Here the primary path. This guides the signer to sign for
-        // what we expect, and as long as the same signer isn't reused within the same spending
-        // path the signatures it will return will be consistent across inputs.
-        let (_, prim_path_origins) = self
-            .config
-            .main_descriptor
-            .policy()
-            .primary_path()
-            .thresh_origins();
-        let is_prim_path_key =
-            |pubkey: &keys::DerivedPublicKey| prim_path_origins.contains_key(&pubkey.origin.0);
-
         // Iterate through given outpoints to fetch the coins (hence checking their existence
         // at the same time). We checked there is at least one, therefore after this loop the
         // list of coins is not empty.
@@ -420,7 +400,7 @@ impl DaemonControl {
                 script_pubkey: coin_desc.script_pubkey(),
             });
             let non_witness_utxo = spent_txs.get(op).cloned();
-            let bip32_derivation = coin_desc.bip32_derivations(is_prim_path_key);
+            let bip32_derivation = coin_desc.bip32_derivations();
             psbt_ins.push(PsbtIn {
                 witness_script,
                 witness_utxo,
@@ -455,9 +435,7 @@ impl DaemonControl {
                     } else {
                         self.config.main_descriptor.receive_descriptor()
                     };
-                    // NOTE: include all derivations for change outputs, to make sure signers are
-                    // able to re-compute change addresses.
-                    desc.derive(index, &self.secp).bip32_derivations(|_| true)
+                    desc.derive(index, &self.secp).bip32_derivations()
                 } else {
                     Default::default()
                 };
@@ -535,10 +513,8 @@ impl DaemonControl {
                     // TODO: shuffle once we have Taproot
                     change_txo.value = change_amount.to_sat();
                     tx.output.push(change_txo);
-                    // NOTE: include all derivations for change outputs, to make sure signers are
-                    // able to re-compute change addresses.
                     psbt_outs.push(PsbtOut {
-                        bip32_derivation: change_desc.bip32_derivations(|_| true),
+                        bip32_derivation: change_desc.bip32_derivations(),
                         ..PsbtOut::default()
                     });
                 } else if is_self_send {
@@ -792,30 +768,6 @@ impl DaemonControl {
                     .unwrap_or(false)
             });
 
-        // Some signing devices (such as the Bitbox02) would not sign for all keys present in a
-        // script. This can lead to disruptions. For instance it could not provide a signature for
-        // the same key across a PSBT inputs. (See
-        // https://github.com/wizardsardine/liana/pull/706#issuecomment-1744705808 for details.)
-        // Therefore, only include in the PSBT_IN_BIP32_DERIVATION field the keys for the requested
-        // recovery path. This guides the signer toward signing only for this path, and as long as
-        // the same signer isn't reused within the same spending path the signatures it will return
-        // will be consistent across inputs.
-        // Note it's particularly unfortunate for a recovery PSBT. This is because absent this
-        // restriction a (set of) user(s) could satisfy any previously available paths (the primary
-        // path and any timelocked path which necessitates a lower sequence) to finalize a PSBT.
-        // Now they can only create and pass around a PSBT that can be used to sign for a single
-        // recovery path.
-        let (_, reco_path_origins) = self
-            .config
-            .main_descriptor
-            .policy()
-            .recovery_paths()
-            .get(&timelock)
-            .ok_or(CommandError::UnknownRecoveryTimelock(timelock))?
-            .thresh_origins();
-        let is_key_for_this_path =
-            |pubkey: &keys::DerivedPublicKey| reco_path_origins.contains_key(&pubkey.origin.0);
-
         // Fill-in the transaction inputs and PSBT inputs information. Record the value
         // that is fed to the transaction while doing so, to compute the fees afterward.
         let mut in_value = bitcoin::Amount::from_sat(0);
@@ -848,7 +800,7 @@ impl DaemonControl {
                 script_pubkey: coin_desc.script_pubkey(),
             });
             let non_witness_utxo = spent_txs.get(&coin.outpoint).cloned();
-            let bip32_derivation = coin_desc.bip32_derivations(is_key_for_this_path);
+            let bip32_derivation = coin_desc.bip32_derivations();
             psbt.inputs.push(PsbtIn {
                 witness_script,
                 witness_utxo,
