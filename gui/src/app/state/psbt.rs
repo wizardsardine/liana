@@ -365,7 +365,7 @@ impl Action for SignAction {
                     self.processing = true;
                     let psbt = tx.psbt.clone();
                     return Command::perform(
-                        sign_psbt(device.clone(), *fingerprint, psbt),
+                        sign_psbt(self.wallet.clone(), device.clone(), *fingerprint, psbt),
                         Message::Signed,
                     );
                 }
@@ -449,11 +449,39 @@ async fn sign_psbt_with_hot_signer(
 }
 
 async fn sign_psbt(
+    wallet: Arc<Wallet>,
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     fingerprint: Fingerprint,
     mut psbt: Psbt,
 ) -> Result<(Psbt, Fingerprint), Error> {
-    hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
+    // The BitBox02 is only going to produce a signature for a single key in the Script. In order
+    // to make sure it doesn't sign for a public key from another spending path we remove the BIP32
+    // derivation for the other paths.
+    if matches!(hw.device_kind(), async_hwi::DeviceKind::BitBox02) {
+        // We need to make sure we don't prune the BIP32 derivations from the original PSBT (which
+        // would end up being updated in the daemon's database and erase the previously unpruned
+        // one). To this end we create a new, pruned, psbt we use for signing and then merge its
+        // signatures back into the original PSBT.
+        let mut pruned_psbt = wallet
+            .main_descriptor
+            .prune_bip32_derivs_last_avail(psbt.clone())
+            .map_err(Error::Desc)?;
+        hw.sign_tx(&mut pruned_psbt).await.map_err(Error::from)?;
+        for (i, psbt_in) in psbt.inputs.iter_mut().enumerate() {
+            if let Some(pruned_psbt_in) = pruned_psbt.inputs.get_mut(i) {
+                psbt_in
+                    .partial_sigs
+                    .append(&mut pruned_psbt_in.partial_sigs);
+            } else {
+                log::error!(
+                    "Not all PSBT inputs are present in the pruned psbt. Pruned psbt: '{}'.",
+                    &pruned_psbt
+                );
+            }
+        }
+    } else {
+        hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
+    }
     Ok((psbt, fingerprint))
 }
 
