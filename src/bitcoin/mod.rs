@@ -51,7 +51,7 @@ pub trait BitcoinInterface: Send {
     fn chain_tip(&self) -> BlockChainTip;
 
     /// Get the timestamp set in the best block's header.
-    fn tip_time(&self) -> u32;
+    fn tip_time(&self) -> Option<u32>;
 
     /// Check whether this former tip is part of the current best chain.
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool;
@@ -316,9 +316,9 @@ impl BitcoinInterface for d::BitcoinD {
         self.tip_before_timestamp(timestamp)
     }
 
-    fn tip_time(&self) -> u32 {
+    fn tip_time(&self) -> Option<u32> {
         let tip = self.chain_tip();
-        self.get_block_stats(tip.hash).time
+        Some(self.get_block_stats(tip.hash).time)
     }
 
     fn wallet_transaction(
@@ -400,7 +400,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock().unwrap().block_before_date(timestamp)
     }
 
-    fn tip_time(&self) -> u32 {
+    fn tip_time(&self) -> Option<u32> {
         self.lock().unwrap().tip_time()
     }
 

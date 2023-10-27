@@ -694,7 +694,12 @@ impl DaemonControl {
     pub fn start_rescan(&self, timestamp: u32) -> Result<(), CommandError> {
         let mut db_conn = self.db.connection();
 
-        if timestamp < MAINNET_GENESIS_TIME || timestamp >= self.bitcoin.tip_time() {
+        let future_timestamp = self
+            .bitcoin
+            .tip_time()
+            .map(|t| timestamp >= t)
+            .unwrap_or(false);
+        if timestamp < MAINNET_GENESIS_TIME || future_timestamp {
             return Err(CommandError::InsaneRescanTimestamp(timestamp));
         }
         if db_conn.rescan_timestamp().is_some() || self.bitcoin.rescan_progress().is_some() {
