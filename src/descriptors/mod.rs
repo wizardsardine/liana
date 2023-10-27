@@ -300,7 +300,7 @@ impl LianaDescriptor {
         Ok(spend_info)
     }
 
-    /// Prune the BIP32 derivation in all the PSBT inputs for all the spending paths but the given
+    /// Prune the BIP32 derivations in all the PSBT inputs for all the spending paths but the given
     /// one.
     pub fn prune_bip32_derivs(&self, mut psbt: Psbt, spending_path: &PathInfo) -> Psbt {
         // (Fingerprint, derivation path) pairs uniquely identify a key used in this spending path.
@@ -330,6 +330,30 @@ impl LianaDescriptor {
         }
 
         psbt
+    }
+
+    /// Prune the BIP32 derivations in all the PSBT inputs for all the spending paths but the
+    /// latest available one. For instance:
+    /// - If there is two recovery paths, and the PSBT's first input nSequence isn't set to unlock
+    /// any of them, prune all but the primary path's bip32 derivations.
+    /// - If there is two recovery paths, and the PSBT's first input nSequence is set to unlock the
+    /// first one, prune all but the first recovery path's bip32 derivations.
+    /// - Etc..
+    pub fn prune_bip32_derivs_last_avail(&self, psbt: Psbt) -> Result<Psbt, LianaDescError> {
+        let spend_info = self.partial_spend_info(&psbt)?;
+        let policy = self.policy();
+        let path_info = spend_info
+            .recovery_paths
+            .iter()
+            .last()
+            .map(|(tl, _)| {
+                policy
+                    .recovery_paths
+                    .get(tl)
+                    .expect("Same timelocks must be keys in both mappings.")
+            })
+            .unwrap_or(&policy.primary_path);
+        Ok(self.prune_bip32_derivs(psbt, path_info))
     }
 }
 
@@ -1214,6 +1238,15 @@ mod tests {
 
         // After pruning it the PSBT only has an entry per key in the primary path.
         assert_eq!(psbt.inputs[0].bip32_derivation.len(), 3);
+
+        // Same but with recovery PSBTs.
+        let psbt = Psbt::from_str("cHNidP8BAFICAAAAAc+3IQFejOVro5Hlwy18au5Jr5mJX+tNMGk0ZE1hydIbAQAAAAADAAAAAbSFAQAAAAAAFgAUBSY69rqtGQLCmhuT29Ep4ZO5Sk8AAAAAAAEAzQIAAAAAAQEIoAeUdfZj04Ds8EspEK222TJdDNy1WZb/Mg1PJbQekwAAAAAA/f///wKQCQQAAAAAACJRIPJojBgnDc9oUS5lDNx/YJznYR2NPQue7h/d+o5Z+2FQoIYBAAAAAAAiACDZrCBvscZpg+S+IaoZBJjyKDdrNS3oXPaF17DNaB+4mAFAe9yuRS3Vn8A5NUglhwiX7vN0wpQ0Q43ClWtJRnC2HJ66h5HYJ/p8xHgHOhRDUWRzcXLLGl+brc5dW+k0OvIZEyuLAgABASughgEAAAAAACIAINmsIG+xxmmD5L4hqhkEmPIoN2s1Lehc9oXXsM1oH7iYAQX9GQFjdqkU2zK+b9oTL/KfnOSYtq3wmtf4qP6IrGt2qRTSNOD0U7fuHdAnKchIf8GmUO904YisbJNrdqkUE5TQk5mdyYtviaGAsIiOgc4y6wGIrGyTU4hWsmdTIQOirPI1KXBtP2Tg2FQxSo4BjFBTf+dCKtZwDQt056slgCEDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkhA2nPUthIMe1SeFegiZEKZF69yJerP1RFVlyu66C5lOVVU65zZHapFEUmCTccyLJXczvUfPUOCXr7CN0uiKxrdqkUeJmVqUt1Q4aFREOUWKX9U/SuZZ2IrGyTa3apFBDmKn40ceTWVbwxRI21c2qji1tOiKxsk1KIU7JoaCIGAjCZLg7xtlG43xEvns0TRd5gHpPrZWzAaYjo3lheMw/hHJAxFe8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgI0Y2/HRNvXA3niUE3RvrzQcCDiJ4F6vVog0uIanRUWHhwXK6G8MAAAgAEAAIAAAACAAgAAgAIAAAAIAAAAIgYCQKZf/IBUWv4F4mGVTv5PlqCceXFtlhfOgW0kIAPI74scFyuhvDAAAIABAACAAAAAgAIAAIAEAAAACAAAACIGAkDfArY5kwHyHvKllcCMhQLErtDmT/A13vABH8PBQ6yIHGNq3z8wAACAAQAAgAAAAIACAACABAAAAAgAAAAiBgLp9dq4ku0u9UKpIRasIb5QEPgPkDcxdcSXYBfW7mUcqByQMRXvMAAAgAEAAIAAAACAAgAAgAQAAAAIAAAAIgYDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkcFyuhvDAAAIABAACAAAAAgAIAAIAAAAAACAAAACIGA0SIq7IkQJYb7brFx54mPzwUl/DzCGja0pdwFFckfm6WHGNq3z8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgNpz1LYSDHtUnhXoImRCmRevciXqz9URVZcruuguZTlVRyQMRXvMAAAgAEAAIAAAACAAgAAgAAAAAAIAAAAIgYDoqzyNSlwbT9k4NhUMUqOAYxQU3/nQirWcA0LdOerJYAcY2rfPzAAAIABAACAAAAAgAIAAIAAAAAACAAAAAAA").unwrap();
+        let pruned_psbt = Psbt::from_str("cHNidP8BAFICAAAAAc+3IQFejOVro5Hlwy18au5Jr5mJX+tNMGk0ZE1hydIbAQAAAAADAAAAAbSFAQAAAAAAFgAUBSY69rqtGQLCmhuT29Ep4ZO5Sk8AAAAAAAEAzQIAAAAAAQEIoAeUdfZj04Ds8EspEK222TJdDNy1WZb/Mg1PJbQekwAAAAAA/f///wKQCQQAAAAAACJRIPJojBgnDc9oUS5lDNx/YJznYR2NPQue7h/d+o5Z+2FQoIYBAAAAAAAiACDZrCBvscZpg+S+IaoZBJjyKDdrNS3oXPaF17DNaB+4mAFAe9yuRS3Vn8A5NUglhwiX7vN0wpQ0Q43ClWtJRnC2HJ66h5HYJ/p8xHgHOhRDUWRzcXLLGl+brc5dW+k0OvIZEyuLAgABASughgEAAAAAACIAINmsIG+xxmmD5L4hqhkEmPIoN2s1Lehc9oXXsM1oH7iYAQX9GQFjdqkU2zK+b9oTL/KfnOSYtq3wmtf4qP6IrGt2qRTSNOD0U7fuHdAnKchIf8GmUO904YisbJNrdqkUE5TQk5mdyYtviaGAsIiOgc4y6wGIrGyTU4hWsmdTIQOirPI1KXBtP2Tg2FQxSo4BjFBTf+dCKtZwDQt056slgCEDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkhA2nPUthIMe1SeFegiZEKZF69yJerP1RFVlyu66C5lOVVU65zZHapFEUmCTccyLJXczvUfPUOCXr7CN0uiKxrdqkUeJmVqUt1Q4aFREOUWKX9U/SuZZ2IrGyTa3apFBDmKn40ceTWVbwxRI21c2qji1tOiKxsk1KIU7JoaCIGAjCZLg7xtlG43xEvns0TRd5gHpPrZWzAaYjo3lheMw/hHJAxFe8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgI0Y2/HRNvXA3niUE3RvrzQcCDiJ4F6vVog0uIanRUWHhwXK6G8MAAAgAEAAIAAAACAAgAAgAIAAAAIAAAAIgYDRIirsiRAlhvtusXHniY/PBSX8PMIaNrSl3AUVyR+bpYcY2rfPzAAAIABAACAAAAAgAIAAIACAAAACAAAAAAA").unwrap();
+        assert_ne!(psbt, pruned_psbt);
+        assert_eq!(psbt.inputs[0].bip32_derivation.len(), 9);
+        let psbt = desc.prune_bip32_derivs_last_avail(psbt).unwrap();
+        assert_eq!(psbt.inputs[0].bip32_derivation.len(), 3);
+        assert_eq!(psbt, pruned_psbt);
     }
 
     // TODO: test error conditions of deserialization.
