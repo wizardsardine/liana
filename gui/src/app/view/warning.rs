@@ -37,6 +37,7 @@ impl From<&Error> for WarningMessage {
             },
             Error::Unexpected(_) => WarningMessage("Unknown error".to_string()),
             Error::HardwareWallet(_) => WarningMessage("Hardware wallet error".to_string()),
+            Error::Desc(e) => WarningMessage(format!("Descriptor analysis error: '{}'.", e)),
         }
     }
 }

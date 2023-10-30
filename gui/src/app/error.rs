@@ -1,7 +1,7 @@
 use std::convert::From;
 use std::io::ErrorKind;
 
-use liana::config::ConfigError;
+use liana::{config::ConfigError, descriptors::LianaDescError};
 
 use crate::{
     app::{settings::SettingsError, wallet::WalletError},
@@ -15,6 +15,7 @@ pub enum Error {
     Daemon(DaemonError),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
+    Desc(LianaDescError),
 }
 
 impl std::fmt::Display for Error {
@@ -48,6 +49,7 @@ impl std::fmt::Display for Error {
             },
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
             Self::HardwareWallet(e) => write!(f, "{}", e),
+            Self::Desc(e) => write!(f, "Liana descriptor error: {}", e),
         }
     }
 }
