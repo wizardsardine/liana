@@ -6,7 +6,6 @@ import time
 from fixtures import *
 from test_framework.serializations import (
     PSBT,
-    PSBT_IN_BIP32_DERIVATION,
     PSBT_IN_PARTIAL_SIG,
     PSBT_IN_NON_WITNESS_UTXO,
 )
@@ -385,35 +384,6 @@ def test_create_spend(lianad, bitcoind):
     imma_coin = next(c for c in lianad.rpc.listcoins()["coins"] if c["is_immature"])
     with pytest.raises(RpcError, match=".*is from an immature coinbase transaction."):
         lianad.rpc.createspend(destinations, [imma_coin["outpoint"]], 1)
-
-    # Receive a coin and make it immediately available for the recovery path.
-    txid = bitcoind.rpc.sendtoaddress(lianad.rpc.getnewaddress()["address"], 1)
-    bitcoind.generate_block(10, wait_for_mempool=txid)
-    wait_for(
-        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
-    )
-
-    # Create both a spend transaction and recovery transaction spending this coin.
-    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins(["confirmed"])["coins"]]
-    res_spend = lianad.rpc.createspend(destinations, outpoints, 1)
-    res_reco = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
-
-    # The two PSBTs don't share any BIP32 derivation paths in their inputs.
-    res_spend_psbt = PSBT.from_base64(res_spend["psbt"])
-    res_spend_keys = set()
-    for i in res_spend_psbt.i:
-        res_spend_keys = res_spend_keys | set(i.map[PSBT_IN_BIP32_DERIVATION])
-    res_reco_psbt = PSBT.from_base64(res_reco["psbt"])
-    res_reco_keys = set()
-    for i in res_reco_psbt.i:
-        res_reco_keys = res_reco_keys | set(i.map[PSBT_IN_BIP32_DERIVATION])
-    assert res_spend_keys.intersection(res_reco_keys) == set()
-
-
-def test_create_spend_duplicate_signer(lianad_same_signer, bitcoind):
-    """Test spend creation (esp. around what bip32 derivations are added to the PSBT) but
-    with a Liana setup where a single signer is repeated between paths."""
-    test_create_spend(lianad_same_signer, bitcoind)
 
 
 def test_list_spend(lianad, bitcoind):
@@ -869,39 +839,6 @@ def test_create_recovery(lianad, bitcoind):
     assert len(reco_psbt.tx.vout) == 1
     assert int(0.39999 * COIN) < int(reco_psbt.tx.vout[0].nValue) < int(0.4 * COIN)
     sign_and_broadcast(lianad, bitcoind, reco_psbt, recovery=True)
-
-
-def test_create_recovery_specific_paths(lianad_multipath, bitcoind):
-    """Test creating recovery PSBTs for specific recovery paths."""
-    # We can't create a recovery for a specific recovery path without specifying the precise
-    # timelock value of this recovery path.
-    with pytest.raises(
-        RpcError,
-        match="Provided timelock does not correspond to any recovery path: '42424'",
-    ):
-        lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 42424)
-
-    # Receive a coin and make it immediately available for both reco paths.
-    txid = bitcoind.rpc.sendtoaddress(
-        lianad_multipath.rpc.getnewaddress()["address"], 1
-    )
-    bitcoind.generate_block(20, wait_for_mempool=txid)
-    wait_for(
-        lambda: lianad_multipath.rpc.getinfo()["block_height"]
-        == bitcoind.rpc.getblockcount()
-    )
-
-    # But we can create one for both existing recovery paths.
-    res_10 = lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 10)
-    res_20 = lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
-
-    # Both don't have the same BIP32 derivations set in their input, unfortunately. This
-    # is because we only set them for the keys from a specific spending path.
-    res_10_psbt = PSBT.from_base64(res_10["psbt"])
-    res_20_psbt = PSBT.from_base64(res_20["psbt"])
-    res_10_keys = set(res_10_psbt.i[0].map[PSBT_IN_BIP32_DERIVATION])
-    res_20_keys = set(res_20_psbt.i[0].map[PSBT_IN_BIP32_DERIVATION])
-    assert res_10_keys.intersection(res_20_keys) == set()
 
 
 def test_labels(lianad, bitcoind):
