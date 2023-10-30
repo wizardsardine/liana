@@ -12,7 +12,7 @@ use liana::{miniscript::bitcoin, signer::HotSigner};
 use liana::descriptors::LianaDescriptor;
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 
-pub const DEFAULT_WALLET_NAME: &str = "Liana";
+const DEFAULT_WALLET_NAME: &str = "Liana";
 
 pub fn wallet_name(main_descriptor: &LianaDescriptor) -> String {
     let desc = main_descriptor.to_string();
