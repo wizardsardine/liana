@@ -48,6 +48,11 @@ impl Wallet {
         }
     }
 
+    pub fn with_name(mut self, name: String) -> Self {
+        self.name = name;
+        self
+    }
+
     pub fn with_key_aliases(mut self, aliases: HashMap<Fingerprint, String>) -> Self {
         self.keys_aliases = aliases;
         self
@@ -101,7 +106,8 @@ impl Wallet {
         let mut wallet = match settings::Settings::from_file(datadir_path.to_path_buf(), network) {
             Ok(settings) => {
                 if let Some(wallet_setting) = settings.wallets.first() {
-                    self.with_hardware_wallets(wallet_setting.hardware_wallets.clone())
+                    self.with_name(wallet_setting.name.clone())
+                        .with_hardware_wallets(wallet_setting.hardware_wallets.clone())
                         .with_key_aliases(wallet_setting.keys_aliases())
                 } else {
                     self.with_hardware_wallets(gui_config_hws)
