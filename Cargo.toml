@@ -5,7 +5,7 @@ authors = ["Antoine Poinsot <darosior@protonmail.com>"]
 edition = "2018"
 repository = "https://github.com/wizardsardine/liana"
 license-file = "LICENCE"
-keywords = ["bitcoin", "wallet", "safe", "script", "miniscript", "inheritance", "recovery"]
+keywords = ["bitcoin", "wallet", "miniscript", "inheritance", "recovery"]
 description = "Liana wallet daemon"
 exclude = [".github/", ".cirrus.yml", "tests/",  "test_data/", "contrib/", "pyproject.toml"]
 
