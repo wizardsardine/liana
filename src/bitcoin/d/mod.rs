@@ -957,11 +957,17 @@ impl BitcoinD {
         None
     }
 
-    pub fn get_block_stats(&self, blockhash: bitcoin::BlockHash) -> BlockStats {
-        let res = self.make_node_request(
+    pub fn get_block_stats(&self, blockhash: bitcoin::BlockHash) -> Option<BlockStats> {
+        let res = match self.make_fallible_node_request(
             "getblockheader",
             &params!(Json::String(blockhash.to_string()),),
-        );
+        ) {
+            Ok(res) => res,
+            Err(e) => {
+                log::warn!("Error when fetching block header {}: {}", &blockhash, e);
+                return None;
+            }
+        };
         let confirmations = res
             .get("confirmations")
             .and_then(Json::as_i64)
@@ -989,14 +995,14 @@ impl BitcoinD {
             .and_then(Json::as_u64)
             .expect("Invalid median timestamp in `getblockheader` response: not an u64")
             as u32;
-        BlockStats {
+        Some(BlockStats {
             confirmations,
             previous_blockhash,
             height,
             blockhash,
             time,
             median_time_past,
-        }
+        })
     }
 
     pub fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoindError> {
