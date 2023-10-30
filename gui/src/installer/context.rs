@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::{
     app::{
         settings::{KeySetting, Settings, WalletSetting},
-        wallet::DEFAULT_WALLET_NAME,
+        wallet::wallet_name,
     },
     bitcoind::Bitcoind,
     hw::HardwareWalletConfig,
@@ -68,13 +68,14 @@ impl Context {
                     .map(|token| HardwareWalletConfig::new(kind, *fingerprint, token))
             })
             .collect();
+        let descriptor = self
+            .descriptor
+            .as_ref()
+            .expect("Must be a descriptor at this point");
         Settings {
             wallets: vec![WalletSetting {
-                name: DEFAULT_WALLET_NAME.to_string(),
-                descriptor_checksum: self
-                    .descriptor
-                    .as_ref()
-                    .unwrap()
+                name: wallet_name(descriptor),
+                descriptor_checksum: descriptor
                     .to_string()
                     .split_once('#')
                     .map(|(_, checksum)| checksum)
