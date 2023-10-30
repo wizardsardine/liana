@@ -111,6 +111,7 @@ impl PsbtState {
                         self.wallet.clone(),
                         cache.datadir_path.clone(),
                         cache.network,
+                        self.saved,
                     );
                     let cmd = action.load(daemon);
                     self.action = Some(Box::new(action));
@@ -318,6 +319,7 @@ pub struct SignAction {
     hws: HardwareWallets,
     error: Option<Error>,
     signed: HashSet<Fingerprint>,
+    is_saved: bool,
 }
 
 impl SignAction {
@@ -326,6 +328,7 @@ impl SignAction {
         wallet: Arc<Wallet>,
         datadir_path: PathBuf,
         network: Network,
+        is_saved: bool,
     ) -> Self {
         Self {
             chosen_hw: None,
@@ -334,6 +337,7 @@ impl SignAction {
             wallet,
             error: None,
             signed,
+            is_saved,
         }
     }
 }
@@ -384,10 +388,28 @@ impl Action for SignAction {
                     self.signed.insert(fingerprint);
                     let daemon = daemon.clone();
                     tx.psbt = psbt.clone();
-                    return Command::perform(
-                        async move { daemon.update_spend_tx(&psbt).map_err(|e| e.into()) },
-                        Message::Updated,
-                    );
+                    if self.is_saved {
+                        return Command::perform(
+                            async move { daemon.update_spend_tx(&psbt).map_err(|e| e.into()) },
+                            Message::Updated,
+                        );
+                    // If the spend transaction was never saved before, then both the psbt and
+                    // labels attached to it must be updated.
+                    } else {
+                        let mut labels = HashMap::<LabelItem, Option<String>>::new();
+                        for (item, label) in tx.labels() {
+                            if !label.is_empty() {
+                                labels.insert(label_item_from_str(item), Some(label.clone()));
+                            }
+                        }
+                        return Command::perform(
+                            async move {
+                                daemon.update_spend_tx(&psbt)?;
+                                daemon.update_labels(&labels).map_err(|e| e.into())
+                            },
+                            Message::Updated,
+                        );
+                    }
                 }
             },
             Message::Updated(res) => match res {
