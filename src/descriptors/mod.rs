@@ -299,6 +299,62 @@ impl LianaDescriptor {
 
         Ok(spend_info)
     }
+
+    /// Prune the BIP32 derivations in all the PSBT inputs for all the spending paths but the given
+    /// one.
+    pub fn prune_bip32_derivs(&self, mut psbt: Psbt, spending_path: &PathInfo) -> Psbt {
+        // (Fingerprint, derivation path) pairs uniquely identify a key used in this spending path.
+        let (_, path_origins) = spending_path.thresh_origins();
+
+        // Go through all the PSBT inputs and drop the BIP32 derivations for keys that are not from
+        // this spending path.
+        for psbt_in in psbt.inputs.iter_mut() {
+            psbt_in.bip32_derivation.retain(|_, (fg, der_path)| {
+                // Does it come from a signer used in this spending path?
+                if let Some(der_paths) = path_origins.get(fg) {
+                    // Get the derivation path from the master fingerprint to the parent used to
+                    // derive this key, in order to check whether it's part of the derivation paths
+                    // used in this spending path (only checking the fingerprint isn't sufficient
+                    // as a single signer may be used in more than one spending path).
+                    // NOTE: this assumes there is only one derivation step after the key used in
+                    // the policy. This is fine, because the keys in the policy are normalized (so
+                    // the derivation path up to the wildcard is part of the origin).
+                    if let Some((_, der_path_no_wildcard)) = der_path[..].split_last() {
+                        if der_paths.contains(&der_path_no_wildcard.into()) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            });
+        }
+
+        psbt
+    }
+
+    /// Prune the BIP32 derivations in all the PSBT inputs for all the spending paths but the
+    /// latest available one. For instance:
+    /// - If there is two recovery paths, and the PSBT's first input nSequence isn't set to unlock
+    /// any of them, prune all but the primary path's bip32 derivations.
+    /// - If there is two recovery paths, and the PSBT's first input nSequence is set to unlock the
+    /// first one, prune all but the first recovery path's bip32 derivations.
+    /// - Etc..
+    pub fn prune_bip32_derivs_last_avail(&self, psbt: Psbt) -> Result<Psbt, LianaDescError> {
+        let spend_info = self.partial_spend_info(&psbt)?;
+        let policy = self.policy();
+        let path_info = spend_info
+            .recovery_paths
+            .iter()
+            .last()
+            .map(|(tl, _)| {
+                policy
+                    .recovery_paths
+                    .get(tl)
+                    .expect("Same timelocks must be keys in both mappings.")
+            })
+            .unwrap_or(&policy.primary_path);
+        Ok(self.prune_bip32_derivs(psbt, path_info))
+    }
 }
 
 impl SinglePathLianaDesc {
@@ -1160,6 +1216,37 @@ mod tests {
         for rec_path in partial_info.recovery_paths.values() {
             assert_eq!(rec_path.sigs_count, rec_path.signed_pubkeys.len());
         }
+    }
+
+    #[test]
+    fn bip32_derivs_pruning() {
+        // A signet descriptor created using Liana v2.
+        let desc = LianaDescriptor::from_str("wsh(or_i(and_v(v:thresh(3,pkh([636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<4;5>/*),a:pkh([172ba1bc/48'/1'/0'/2']tpubDEgTZEAraUrKmnbyKJuXYGFPzNCm82bjMqd2GRy2HKviJ1moLtEZrHoUeG2o6uyWLEGx4yBWpctAmxcBx1b5nrrrBo5LjskRxRMDmwkuKxq/<4;5>/*),a:pkh([903115ef/48'/1'/0'/2']tpubDF2Hqd3HXUn5bDMVa2gssqmdTjQsLm9Vc8CSSJFk4YwQg8PChCZiWopAeQ6ZCEWt21n1W8ApEGxEvtB8uPnWW6EG3fwPAFnFM8US4QmgKvp/<4;5>/*)),older(6)),or_d(multi(3,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*,[172ba1bc/48'/1'/0'/2']tpubDEgTZEAraUrKmnbyKJuXYGFPzNCm82bjMqd2GRy2HKviJ1moLtEZrHoUeG2o6uyWLEGx4yBWpctAmxcBx1b5nrrrBo5LjskRxRMDmwkuKxq/<0;1>/*,[903115ef/48'/1'/0'/2']tpubDF2Hqd3HXUn5bDMVa2gssqmdTjQsLm9Vc8CSSJFk4YwQg8PChCZiWopAeQ6ZCEWt21n1W8ApEGxEvtB8uPnWW6EG3fwPAFnFM8US4QmgKvp/<0;1>/*),and_v(v:thresh(2,pkh([636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<2;3>/*),a:pkh([172ba1bc/48'/1'/0'/2']tpubDEgTZEAraUrKmnbyKJuXYGFPzNCm82bjMqd2GRy2HKviJ1moLtEZrHoUeG2o6uyWLEGx4yBWpctAmxcBx1b5nrrrBo5LjskRxRMDmwkuKxq/<2;3>/*),a:pkh([903115ef/48'/1'/0'/2']tpubDF2Hqd3HXUn5bDMVa2gssqmdTjQsLm9Vc8CSSJFk4YwQg8PChCZiWopAeQ6ZCEWt21n1W8ApEGxEvtB8uPnWW6EG3fwPAFnFM8US4QmgKvp/<2;3>/*)),older(3)))))#jxya9h7u").unwrap();
+        // A spend PSBT created using Liana v2.
+        let psbt = Psbt::from_str("cHNidP8BAFICAAAAAc+3IQFejOVro5Hlwy18au5Jr5mJX+tNMGk0ZE1hydIbAQAAAAD9////ARhzAQAAAAAAFgAUqJZUU7Fqu+bIvxjNw+TAtTwP9HQAAAAAAAEAzQIAAAAAAQEIoAeUdfZj04Ds8EspEK222TJdDNy1WZb/Mg1PJbQekwAAAAAA/f///wKQCQQAAAAAACJRIPJojBgnDc9oUS5lDNx/YJznYR2NPQue7h/d+o5Z+2FQoIYBAAAAAAAiACDZrCBvscZpg+S+IaoZBJjyKDdrNS3oXPaF17DNaB+4mAFAe9yuRS3Vn8A5NUglhwiX7vN0wpQ0Q43ClWtJRnC2HJ66h5HYJ/p8xHgHOhRDUWRzcXLLGl+brc5dW+k0OvIZEyuLAgABASughgEAAAAAACIAINmsIG+xxmmD5L4hqhkEmPIoN2s1Lehc9oXXsM1oH7iYAQX9GQFjdqkU2zK+b9oTL/KfnOSYtq3wmtf4qP6IrGt2qRTSNOD0U7fuHdAnKchIf8GmUO904YisbJNrdqkUE5TQk5mdyYtviaGAsIiOgc4y6wGIrGyTU4hWsmdTIQOirPI1KXBtP2Tg2FQxSo4BjFBTf+dCKtZwDQt056slgCEDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkhA2nPUthIMe1SeFegiZEKZF69yJerP1RFVlyu66C5lOVVU65zZHapFEUmCTccyLJXczvUfPUOCXr7CN0uiKxrdqkUeJmVqUt1Q4aFREOUWKX9U/SuZZ2IrGyTa3apFBDmKn40ceTWVbwxRI21c2qji1tOiKxsk1KIU7JoaCIGAjCZLg7xtlG43xEvns0TRd5gHpPrZWzAaYjo3lheMw/hHJAxFe8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgI0Y2/HRNvXA3niUE3RvrzQcCDiJ4F6vVog0uIanRUWHhwXK6G8MAAAgAEAAIAAAACAAgAAgAIAAAAIAAAAIgYCQKZf/IBUWv4F4mGVTv5PlqCceXFtlhfOgW0kIAPI74scFyuhvDAAAIABAACAAAAAgAIAAIAEAAAACAAAACIGAkDfArY5kwHyHvKllcCMhQLErtDmT/A13vABH8PBQ6yIHGNq3z8wAACAAQAAgAAAAIACAACABAAAAAgAAAAiBgLp9dq4ku0u9UKpIRasIb5QEPgPkDcxdcSXYBfW7mUcqByQMRXvMAAAgAEAAIAAAACAAgAAgAQAAAAIAAAAIgYDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkcFyuhvDAAAIABAACAAAAAgAIAAIAAAAAACAAAACIGA0SIq7IkQJYb7brFx54mPzwUl/DzCGja0pdwFFckfm6WHGNq3z8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgNpz1LYSDHtUnhXoImRCmRevciXqz9URVZcruuguZTlVRyQMRXvMAAAgAEAAIAAAACAAgAAgAAAAAAIAAAAIgYDoqzyNSlwbT9k4NhUMUqOAYxQU3/nQirWcA0LdOerJYAcY2rfPzAAAIABAACAAAAAgAIAAIAAAAAACAAAAAAA").unwrap();
+        // The above PSBT with BIP32 derivs manually pruned using bip174.org.
+        let pruned_psbt = Psbt::from_str("cHNidP8BAFICAAAAAc+3IQFejOVro5Hlwy18au5Jr5mJX+tNMGk0ZE1hydIbAQAAAAD9////ARhzAQAAAAAAFgAUqJZUU7Fqu+bIvxjNw+TAtTwP9HQAAAAAAAEAzQIAAAAAAQEIoAeUdfZj04Ds8EspEK222TJdDNy1WZb/Mg1PJbQekwAAAAAA/f///wKQCQQAAAAAACJRIPJojBgnDc9oUS5lDNx/YJznYR2NPQue7h/d+o5Z+2FQoIYBAAAAAAAiACDZrCBvscZpg+S+IaoZBJjyKDdrNS3oXPaF17DNaB+4mAFAe9yuRS3Vn8A5NUglhwiX7vN0wpQ0Q43ClWtJRnC2HJ66h5HYJ/p8xHgHOhRDUWRzcXLLGl+brc5dW+k0OvIZEyuLAgABASughgEAAAAAACIAINmsIG+xxmmD5L4hqhkEmPIoN2s1Lehc9oXXsM1oH7iYAQX9GQFjdqkU2zK+b9oTL/KfnOSYtq3wmtf4qP6IrGt2qRTSNOD0U7fuHdAnKchIf8GmUO904YisbJNrdqkUE5TQk5mdyYtviaGAsIiOgc4y6wGIrGyTU4hWsmdTIQOirPI1KXBtP2Tg2FQxSo4BjFBTf+dCKtZwDQt056slgCEDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkhA2nPUthIMe1SeFegiZEKZF69yJerP1RFVlyu66C5lOVVU65zZHapFEUmCTccyLJXczvUfPUOCXr7CN0uiKxrdqkUeJmVqUt1Q4aFREOUWKX9U/SuZZ2IrGyTa3apFBDmKn40ceTWVbwxRI21c2qji1tOiKxsk1KIU7JoaCIGAwxxOx6cavvibI2XW38LD4gOqZqtHVdNLUd4XNrLrPCpHBcrobwwAACAAQAAgAAAAIACAACAAAAAAAgAAAAiBgNpz1LYSDHtUnhXoImRCmRevciXqz9URVZcruuguZTlVRyQMRXvMAAAgAEAAIAAAACAAgAAgAAAAAAIAAAAIgYDoqzyNSlwbT9k4NhUMUqOAYxQU3/nQirWcA0LdOerJYAcY2rfPzAAAIABAACAAAAAgAIAAIAAAAAACAAAAAAA").unwrap();
+
+        // Before pruning it the PSBT has an entry per key in the descriptor.
+        assert_eq!(psbt.inputs[0].bip32_derivation.len(), 9);
+
+        // Prune the PSBT. It should result in the same as when manually pruned using bip174.org.
+        assert_ne!(psbt, pruned_psbt);
+        let prim_path_info = desc.policy().primary_path;
+        let psbt = desc.prune_bip32_derivs(psbt, &prim_path_info);
+        assert_eq!(psbt, pruned_psbt);
+
+        // After pruning it the PSBT only has an entry per key in the primary path.
+        assert_eq!(psbt.inputs[0].bip32_derivation.len(), 3);
+
+        // Same but with recovery PSBTs.
+        let psbt = Psbt::from_str("cHNidP8BAFICAAAAAc+3IQFejOVro5Hlwy18au5Jr5mJX+tNMGk0ZE1hydIbAQAAAAADAAAAAbSFAQAAAAAAFgAUBSY69rqtGQLCmhuT29Ep4ZO5Sk8AAAAAAAEAzQIAAAAAAQEIoAeUdfZj04Ds8EspEK222TJdDNy1WZb/Mg1PJbQekwAAAAAA/f///wKQCQQAAAAAACJRIPJojBgnDc9oUS5lDNx/YJznYR2NPQue7h/d+o5Z+2FQoIYBAAAAAAAiACDZrCBvscZpg+S+IaoZBJjyKDdrNS3oXPaF17DNaB+4mAFAe9yuRS3Vn8A5NUglhwiX7vN0wpQ0Q43ClWtJRnC2HJ66h5HYJ/p8xHgHOhRDUWRzcXLLGl+brc5dW+k0OvIZEyuLAgABASughgEAAAAAACIAINmsIG+xxmmD5L4hqhkEmPIoN2s1Lehc9oXXsM1oH7iYAQX9GQFjdqkU2zK+b9oTL/KfnOSYtq3wmtf4qP6IrGt2qRTSNOD0U7fuHdAnKchIf8GmUO904YisbJNrdqkUE5TQk5mdyYtviaGAsIiOgc4y6wGIrGyTU4hWsmdTIQOirPI1KXBtP2Tg2FQxSo4BjFBTf+dCKtZwDQt056slgCEDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkhA2nPUthIMe1SeFegiZEKZF69yJerP1RFVlyu66C5lOVVU65zZHapFEUmCTccyLJXczvUfPUOCXr7CN0uiKxrdqkUeJmVqUt1Q4aFREOUWKX9U/SuZZ2IrGyTa3apFBDmKn40ceTWVbwxRI21c2qji1tOiKxsk1KIU7JoaCIGAjCZLg7xtlG43xEvns0TRd5gHpPrZWzAaYjo3lheMw/hHJAxFe8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgI0Y2/HRNvXA3niUE3RvrzQcCDiJ4F6vVog0uIanRUWHhwXK6G8MAAAgAEAAIAAAACAAgAAgAIAAAAIAAAAIgYCQKZf/IBUWv4F4mGVTv5PlqCceXFtlhfOgW0kIAPI74scFyuhvDAAAIABAACAAAAAgAIAAIAEAAAACAAAACIGAkDfArY5kwHyHvKllcCMhQLErtDmT/A13vABH8PBQ6yIHGNq3z8wAACAAQAAgAAAAIACAACABAAAAAgAAAAiBgLp9dq4ku0u9UKpIRasIb5QEPgPkDcxdcSXYBfW7mUcqByQMRXvMAAAgAEAAIAAAACAAgAAgAQAAAAIAAAAIgYDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkcFyuhvDAAAIABAACAAAAAgAIAAIAAAAAACAAAACIGA0SIq7IkQJYb7brFx54mPzwUl/DzCGja0pdwFFckfm6WHGNq3z8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgNpz1LYSDHtUnhXoImRCmRevciXqz9URVZcruuguZTlVRyQMRXvMAAAgAEAAIAAAACAAgAAgAAAAAAIAAAAIgYDoqzyNSlwbT9k4NhUMUqOAYxQU3/nQirWcA0LdOerJYAcY2rfPzAAAIABAACAAAAAgAIAAIAAAAAACAAAAAAA").unwrap();
+        let pruned_psbt = Psbt::from_str("cHNidP8BAFICAAAAAc+3IQFejOVro5Hlwy18au5Jr5mJX+tNMGk0ZE1hydIbAQAAAAADAAAAAbSFAQAAAAAAFgAUBSY69rqtGQLCmhuT29Ep4ZO5Sk8AAAAAAAEAzQIAAAAAAQEIoAeUdfZj04Ds8EspEK222TJdDNy1WZb/Mg1PJbQekwAAAAAA/f///wKQCQQAAAAAACJRIPJojBgnDc9oUS5lDNx/YJznYR2NPQue7h/d+o5Z+2FQoIYBAAAAAAAiACDZrCBvscZpg+S+IaoZBJjyKDdrNS3oXPaF17DNaB+4mAFAe9yuRS3Vn8A5NUglhwiX7vN0wpQ0Q43ClWtJRnC2HJ66h5HYJ/p8xHgHOhRDUWRzcXLLGl+brc5dW+k0OvIZEyuLAgABASughgEAAAAAACIAINmsIG+xxmmD5L4hqhkEmPIoN2s1Lehc9oXXsM1oH7iYAQX9GQFjdqkU2zK+b9oTL/KfnOSYtq3wmtf4qP6IrGt2qRTSNOD0U7fuHdAnKchIf8GmUO904YisbJNrdqkUE5TQk5mdyYtviaGAsIiOgc4y6wGIrGyTU4hWsmdTIQOirPI1KXBtP2Tg2FQxSo4BjFBTf+dCKtZwDQt056slgCEDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkhA2nPUthIMe1SeFegiZEKZF69yJerP1RFVlyu66C5lOVVU65zZHapFEUmCTccyLJXczvUfPUOCXr7CN0uiKxrdqkUeJmVqUt1Q4aFREOUWKX9U/SuZZ2IrGyTa3apFBDmKn40ceTWVbwxRI21c2qji1tOiKxsk1KIU7JoaCIGAjCZLg7xtlG43xEvns0TRd5gHpPrZWzAaYjo3lheMw/hHJAxFe8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgI0Y2/HRNvXA3niUE3RvrzQcCDiJ4F6vVog0uIanRUWHhwXK6G8MAAAgAEAAIAAAACAAgAAgAIAAAAIAAAAIgYDRIirsiRAlhvtusXHniY/PBSX8PMIaNrSl3AUVyR+bpYcY2rfPzAAAIABAACAAAAAgAIAAIACAAAACAAAAAAA").unwrap();
+        assert_ne!(psbt, pruned_psbt);
+        assert_eq!(psbt.inputs[0].bip32_derivation.len(), 9);
+        let psbt = desc.prune_bip32_derivs_last_avail(psbt).unwrap();
+        assert_eq!(psbt.inputs[0].bip32_derivation.len(), 3);
+        assert_eq!(psbt, pruned_psbt);
     }
 
     // TODO: test error conditions of deserialization.
