@@ -73,12 +73,12 @@ pub struct Version {
 
 impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}.{}.{}-dev", self.major, self.minor, self.patch)
+        write!(f, "{}.{}.{}rc1", self.major, self.minor, self.patch)
     }
 }
 
 pub const VERSION: Version = Version {
-    major: 2,
+    major: 3,
     minor: 0,
     patch: 0,
 };
