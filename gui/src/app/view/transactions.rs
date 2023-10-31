@@ -260,6 +260,7 @@ pub fn tx_view<'a>(
                 },
                 &tx.labels,
                 labels_editing,
+                tx.is_single_payment().is_some(),
             ))
             .spacing(20),
     )
