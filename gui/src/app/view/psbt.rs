@@ -82,6 +82,7 @@ pub fn psbt_view<'a>(
                 Some(tx.change_indexes.clone()),
                 &tx.labels,
                 labels_editing,
+                tx.is_single_payment().is_some(),
             ))
             .push(if saved {
                 Row::new()
@@ -542,6 +543,7 @@ pub fn inputs_and_outputs_view<'a>(
     change_indexes: Option<Vec<usize>>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
+    is_single_payment: bool,
 ) -> Element<'a, Message> {
     let change_indexes_copy = change_indexes.clone();
     Column::new()
@@ -674,6 +676,7 @@ pub fn inputs_and_outputs_view<'a>(
                                         network,
                                         labels,
                                         labels_editing,
+                                        is_single_payment,
                                     ))
                                 },
                             )
@@ -825,6 +828,7 @@ fn payment_view<'a>(
     network: Network,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
+    is_single: bool,
 ) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .ok()
@@ -834,6 +838,13 @@ fn payment_view<'a>(
         vout: i as u32,
     }
     .to_string();
+    // if the payment is single in the transaction, then the label of the txid
+    // is attached to the label of the payment.
+    let change_labels = if is_single {
+        vec![outpoint.clone(), txid.to_string()]
+    } else {
+        vec![outpoint.clone()]
+    };
     Column::new()
         .width(Length::Fill)
         .spacing(5)
@@ -843,13 +854,9 @@ fn payment_view<'a>(
                 .align_items(Alignment::Center)
                 .push(
                     Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
+                        label::label_editing(change_labels, label, text::P1_SIZE)
                     } else {
-                        label::label_editable(
-                            vec![outpoint.clone()],
-                            labels.get(&outpoint),
-                            text::P1_SIZE,
-                        )
+                        label::label_editable(change_labels, labels.get(&outpoint), text::P1_SIZE)
                     })
                     .width(Length::Fill),
                 )
