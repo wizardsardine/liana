@@ -56,6 +56,7 @@ pub fn spend_view<'a>(
                 Some(tx.change_indexes.clone()),
                 &tx.labels,
                 labels_editing,
+                tx.is_single_payment().is_some(),
             ))
             .push(if saved {
                 Row::new()
