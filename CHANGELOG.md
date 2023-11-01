@@ -46,6 +46,8 @@ payments, batches of payments, coins and addresses.
 - Selecting a coinbase transaction won't make the GUI crash anymore.
 - At startup there could previously be a small lag before the home page gets updated with the list
   of payments and correct balance.
+- During installation, when using a managed bitcoind, the GUI could previously freeze after starting
+  up bitcoind.
 
 ## 2.0
 
