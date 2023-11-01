@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time;
-use tokio::sync::Mutex;
 
 use tracing::{info, warn};
 
@@ -96,6 +95,16 @@ pub fn internal_bitcoind_cookie_path(bitcoind_datadir: &Path, network: &Network)
     cookie_path
 }
 
+/// Path of the cookie file used by internal bitcoind on a given network.
+pub fn internal_bitcoind_debug_log_path(lianad_datadir: &PathBuf, network: Network) -> PathBuf {
+    let mut debug_log_path = internal_bitcoind_datadir(lianad_datadir);
+    if let Some(dir) = bitcoind_network_dir(&network) {
+        debug_log_path.push(dir);
+    }
+    debug_log_path.push("debug.log");
+    debug_log_path
+}
+
 pub fn bitcoind_network_dir(network: &Network) -> Option<String> {
     let dir = match network {
         Network::Bitcoin => {
@@ -152,7 +161,6 @@ impl std::fmt::Display for StartInternalBitcoindError {
 pub struct Bitcoind {
     _process: Arc<std::process::Child>,
     pub config: BitcoindConfig,
-    pub stdout: Option<Arc<Mutex<std::process::ChildStdout>>>,
 }
 
 impl Bitcoind {
@@ -206,8 +214,8 @@ impl Bitcoind {
 
         let mut process = command
             .args(&args)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            // FIXME: can we pipe stderr to our logging system somehow?
+            .stdout(std::process::Stdio::null())
             .spawn()
             .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))?;
 
@@ -220,14 +228,6 @@ impl Bitcoind {
                 Err(e) => log::error!("Error while trying to wait for bitcoind: {}", e),
                 Ok(Some(status)) => {
                     log::error!("Bitcoind exited with status '{}'", status);
-                    match process.wait_with_output() {
-                        Err(e) => {
-                            tracing::error!("Error while waiting for bitcoind to finish: {}", e)
-                        }
-                        Ok(o) => {
-                            tracing::error!("stderr: {}", String::from_utf8_lossy(&o.stderr));
-                        }
-                    }
                     return Err(StartInternalBitcoindError::CookieFileNotFound(
                         config.cookie_path.to_string_lossy().into_owned(),
                     ));
@@ -248,7 +248,6 @@ impl Bitcoind {
             .map_err(|e| StartInternalBitcoindError::BitcoinDError(e.to_string()))?;
 
         Ok(Self {
-            stdout: process.stdout.take().map(|s| Arc::new(Mutex::new(s))),
             config,
             _process: Arc::new(process),
         })
