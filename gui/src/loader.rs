@@ -1,9 +1,9 @@
 use std::convert::From;
-use std::io::BufRead;
-use std::io::ErrorKind;
-use std::ops::DerefMut;
+use std::fs::File;
+use std::io::{BufRead, BufReader, ErrorKind, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use iced::{Alignment, Command, Length, Subscription};
 use tracing::{debug, info, warn};
@@ -27,7 +27,9 @@ use crate::{
         config::Config as GUIConfig,
         wallet::{Wallet, WalletError},
     },
-    bitcoind::{stop_bitcoind, Bitcoind, StartInternalBitcoindError},
+    bitcoind::{
+        internal_bitcoind_debug_log_path, stop_bitcoind, Bitcoind, StartInternalBitcoindError,
+    },
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
 };
 
@@ -79,6 +81,7 @@ pub enum Message {
     Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     BitcoindLog(Option<String>),
     Failure(DaemonError),
+    None,
 }
 
 impl Loader {
@@ -231,8 +234,12 @@ impl Loader {
             }
         }
 
-        if let Some(bitcoind) = &self.internal_bitcoind {
+        // NOTE: we take() the internal_bitcoind here to make sure the debug.log reader
+        // subscription is dropped.
+        if let Some(bitcoind) = self.internal_bitcoind.take() {
+            log::info!("Stopping managed bitcoind..");
             bitcoind.stop();
+            log::info!("Managed bitcoind stopped.");
         } else if self.waiting_daemon_bitcoind && self.gui_config.start_internal_bitcoind {
             if let Ok(config) = Config::from_file(self.gui_config.daemon_config_path.clone()) {
                 if let Some(bitcoind_config) = &config.bitcoind_config {
@@ -270,25 +277,64 @@ impl Loader {
                 self.daemon_started = false;
                 Command::none()
             }
+            Message::None => Command::none(),
             _ => Command::none(),
         }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        if let Some(Some(bitcoind_stdout)) =
-            self.internal_bitcoind.as_ref().map(|b| b.stdout.clone())
-        {
-            iced::subscription::unfold(0, bitcoind_stdout, move |stdout| async {
-                let msg = {
-                    let mut s = stdout.lock().await;
-                    let mut s = std::io::BufReader::new(s.deref_mut());
-                    let mut buffer = String::new();
-                    match s.read_line(&mut buffer) {
-                        Err(e) => Message::BitcoindLog(Some(e.to_string())),
-                        Ok(_) => Message::BitcoindLog(Some(buffer)),
+        if self.internal_bitcoind.is_some() {
+            let log_path = internal_bitcoind_debug_log_path(&self.datadir_path, self.network);
+            iced::subscription::unfold(0, log_path, move |log_path| async move {
+                // Reduce the io load.
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
+                // Open the log file and seek to its end, with some breathing room to make sure
+                // we don't skip all "UpdateTip" lines. This is to avoid making BufReader read
+                // the whole file every single time below.
+                let mut file = match File::open(&log_path) {
+                    Ok(file) => file,
+                    Err(e) => {
+                        log::warn!("Opening bitcoind log file: {}", e);
+                        return (Message::None, log_path);
                     }
                 };
-                (msg, stdout)
+                match file.metadata() {
+                    Ok(m) => {
+                        let file_len = m.len();
+                        let offset = 1024 * 1024;
+                        if file_len > offset {
+                            if let Err(e) =
+                                file.seek(SeekFrom::Start(file_len.saturating_sub(offset)))
+                            {
+                                log::error!("Seeking to end of bitcoind log file: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Getting bitcoind log file metadata: {}", e);
+                    }
+                };
+
+                // Find the latest tip update line in bitcoind's debug.log. BufReader is only
+                // used to facilitates searching through the lines.
+                let reader = BufReader::new(file);
+                let last_update_tip = reader
+                    .lines()
+                    .into_iter()
+                    .filter(|l| l.as_ref().map(|l| l.contains("UpdateTip")).unwrap_or(false))
+                    .last();
+                match last_update_tip {
+                    Some(Ok(line)) => (Message::BitcoindLog(Some(line)), log_path),
+                    res => {
+                        if let Some(Err(e)) = res {
+                            log::error!("Reading bitcoind log file: {}", e);
+                        } else {
+                            log::warn!("Couldn't find an UpdateTip line in bitcoind log file.");
+                        }
+                        (Message::None, log_path)
+                    }
+                }
             })
         } else {
             Subscription::none()
@@ -490,6 +536,7 @@ pub enum Error {
     Config(ConfigError),
     Daemon(DaemonError),
     Bitcoind(StartInternalBitcoindError),
+    BitcoindLogs(std::io::Error),
 }
 
 impl std::fmt::Display for Error {
@@ -499,6 +546,7 @@ impl std::fmt::Display for Error {
             Self::Wallet(e) => write!(f, "Wallet error: {}", e),
             Self::Daemon(e) => write!(f, "Liana daemon error: {}", e),
             Self::Bitcoind(e) => write!(f, "Bitcoind error: {}", e),
+            Self::BitcoindLogs(e) => write!(f, "Bitcoind logs error: {}", e),
         }
     }
 }
