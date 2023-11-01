@@ -106,6 +106,10 @@ impl Installer {
         if current_step.apply(&mut self.context) {
             if self.current < self.steps.len() - 1 {
                 self.current += 1;
+            } else {
+                // The step is already the last current step.
+                // No need to reload the current step.
+                return Command::none();
             }
             // skip the step according to the current context.
             while self
