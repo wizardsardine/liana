@@ -8,9 +8,8 @@ use iced::{
 use liana::{
     descriptors::{LianaPolicy, PathInfo, PathSpendInfo},
     miniscript::bitcoin::{
-        bip32::{DerivationPath, Fingerprint},
-        blockdata::transaction::TxOut,
-        Address, Amount, Network, OutPoint, Transaction, Txid,
+        bip32::Fingerprint, blockdata::transaction::TxOut, Address, Amount, Network, OutPoint,
+        Transaction, Txid,
     },
 };
 
@@ -432,25 +431,64 @@ pub fn signatures<'a>(
         .into()
 }
 
+// Display a fingerprint first by its alias if there is any, or in hex otherwise.
+fn container_from_fg(
+    fg: Fingerprint,
+    aliases: &HashMap<Fingerprint, String>,
+) -> Container<Message> {
+    if let Some(alias) = aliases.get(&fg) {
+        Container::new(
+            tooltip::Tooltip::new(
+                Container::new(text(alias))
+                    .padding(10)
+                    .style(theme::Container::Pill(theme::Pill::Simple)),
+                fg.to_string(),
+                tooltip::Position::Bottom,
+            )
+            .style(theme::Container::Card(theme::Card::Simple)),
+        )
+    } else {
+        Container::new(text(fg.to_string()))
+            .padding(10)
+            .style(theme::Container::Pill(theme::Pill::Simple))
+    }
+}
+
 pub fn path_view<'a>(
     path: &'a PathInfo,
     sigs: &'a PathSpendInfo,
     key_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
-    let mut keys: Vec<(Fingerprint, HashSet<DerivationPath>)> =
-        path.thresh_origins().1.into_iter().collect();
-    let missing_signatures = if sigs.sigs_count >= sigs.threshold {
-        0
-    } else {
-        sigs.threshold - sigs.sigs_count
-    };
-    keys.sort_by_key(|a| a.0);
+    // We get a sorted list of all the fingerprints (which correspond to a signer) from this
+    // spending path, and from it get an iterator on those of these fingerprints for which a
+    // signature was provided in the PSBT, and those for which there isn't any.
+    let mut all_fgs: Vec<Fingerprint> = path.thresh_origins().1.into_keys().collect();
+    all_fgs.sort();
+    let signed_fgs = sigs.signed_pubkeys.keys();
+    let non_signed_fgs = all_fgs
+        .into_iter()
+        .filter(|fg| !sigs.signed_pubkeys.contains_key(fg));
+    let missing_signatures = sigs.threshold.saturating_sub(sigs.sigs_count);
+
+    // From these iterators, create the appropriate rows to be displayed.
+    let row_unsigned = non_signed_fgs.into_iter().fold(None, |row, fg| {
+        Some(
+            row.unwrap_or_else(|| Row::new().spacing(5))
+                .push(container_from_fg(fg, key_aliases)),
+        )
+    });
+    let row_signed = signed_fgs
+        .into_iter()
+        .fold(Row::new().spacing(5), |row, fg| {
+            row.push(container_from_fg(*fg, key_aliases))
+        });
+
     scrollable(
         Row::new()
             .align_items(Alignment::Center)
             .push(
                 Row::new()
-                    .push(if sigs.sigs_count >= sigs.threshold {
+                    .push(if missing_signatures == 0 {
                         icon::circle_check_icon().style(color::GREEN)
                     } else {
                         icon::circle_cross_icon().style(color::GREY_3)
@@ -471,66 +509,12 @@ pub fn path_view<'a>(
                 ))
                 .style(color::GREY_3),
             )
-            .push_maybe(if keys.is_empty() {
-                None
-            } else {
-                Some(
-                    keys.iter()
-                        .fold(Row::new().spacing(5), |row, (key_fg, paths)| {
-                            row.push_maybe(
-                                if !sigs.signed_pubkeys.iter().any(|(fg, &total_sigs)| {
-                                    fg == key_fg && paths.len() == total_sigs
-                                }) {
-                                    Some(if let Some(alias) = key_aliases.get(key_fg) {
-                                        Container::new(
-                                            tooltip::Tooltip::new(
-                                                Container::new(text(alias)).padding(10).style(
-                                                    theme::Container::Pill(theme::Pill::Simple),
-                                                ),
-                                                key_fg.to_string(),
-                                                tooltip::Position::Bottom,
-                                            )
-                                            .style(theme::Container::Card(theme::Card::Simple)),
-                                        )
-                                    } else {
-                                        Container::new(text(key_fg.to_string()))
-                                            .padding(10)
-                                            .style(theme::Container::Pill(theme::Pill::Simple))
-                                    })
-                                } else {
-                                    None
-                                },
-                            )
-                        }),
-                )
-            })
-            .push_maybe(if sigs.signed_pubkeys.is_empty() {
-                None
-            } else {
-                Some(p1_regular(", already signed by ").style(color::GREY_3))
-            })
-            .push(
-                sigs.signed_pubkeys
-                    .keys()
-                    .fold(Row::new().spacing(5), |row, value| {
-                        row.push(if let Some(alias) = key_aliases.get(value) {
-                            Container::new(
-                                tooltip::Tooltip::new(
-                                    Container::new(text(alias))
-                                        .padding(10)
-                                        .style(theme::Container::Pill(theme::Pill::Simple)),
-                                    value.to_string(),
-                                    tooltip::Position::Bottom,
-                                )
-                                .style(theme::Container::Card(theme::Card::Simple)),
-                            )
-                        } else {
-                            Container::new(text(value.to_string()))
-                                .padding(10)
-                                .style(theme::Container::Pill(theme::Pill::Simple))
-                        })
-                    }),
-            ),
+            .push_maybe(row_unsigned)
+            .push_maybe(
+                (!sigs.signed_pubkeys.is_empty())
+                    .then_some(p1_regular(", already signed by ").style(color::GREY_3)),
+            )
+            .push(row_signed),
     )
     .horizontal_scroll(scrollable::Properties::new().width(2).scroller_width(2))
     .into()
