@@ -132,9 +132,13 @@ payment.)
 Liana can be used as a hot wallet. Note that mnemonics would be stored in clear on your drive. We
 strongly recommend using a hardware signing device for any non-trivial amount.
 
-For now, only the Ledger and Specter DIY signing devices are supported, as Miniscript compatibility
-of the signer is a must. More signing devices are expected to implement Miniscript capability in the
-near future. For more information (such as minimum supported versions, please read the [signing
+For now, the following signing devices are supported:
+- Ledger Nano S and S+
+- BitBox02
+- Specter DIY
+
+With more signing devices implementing Miniscript capability, support for new ones will be added in
+the near future. For more information (such as minimum supported versions) please read the [signing
 devices documentation](./doc/signing_devices.md).
 
 

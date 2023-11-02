@@ -1,7 +1,6 @@
 # Signing devices
 
-Documentation related to signing devices. For now only Specter and Ledger are supported since we
-need signers to support Miniscript descriptors.
+Documentation related to signing devices. It is required signers support Miniscript descriptors.
 
 The connection to the signing devices is implemented in [another
 repository](https://github.com/wizardsardine/async-hwi).
@@ -15,3 +14,8 @@ repository](https://github.com/wizardsardine/async-hwi).
 
 Minimum supported version of the Bitcoin application is 2.1.0 (the first version to have full
 Miniscript descriptors support).
+
+## BitBox02
+
+[BitBox02](https://github.com/digitalbitbox/bitbox02-firmware) version 9.15.0 and above is
+supported.
