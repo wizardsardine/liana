@@ -1,5 +1,54 @@
 # Liana daemon and GUI release notes
 
+## 3.0
+
+This release introduces support for the BitBox02 signing device, as well as the possibility to label
+payments, batches of payments, coins and addresses.
+
+### Breaking changes
+
+- Descriptors with duplicate signers **within a single spending path** are not supported anymore.
+  Note re-using a signer across spending paths (for instance for a decaying multisig) is still
+  supported, this only concerns pathological descriptor where the same signer would be repeated in
+  the same path.
+
+### Features
+
+- Two new optional parameters were introduced to the `listcoins` command to be able to filter coins
+  by status (confirmed, spent, etc..) and outpoints (to query specific coins).
+- We updated the ["quick try"](https://github.com/wizardsardine/liana/blob/master/doc/TRY.md) guide
+  to make use of the managed `bitcoind`. Trying out Liana on Signet is now easier than ever!
+
+#### GUI-specific
+
+- You can now use the [BitBox02](https://bitbox.swiss/bitbox02/) signing device. The minimum
+  supported version of the firmware is v9.15.0, so make sure to upgrade!
+- It's now possible to label coins and payments (that is, a transactions output). It's also possible
+  to label batches of payments (that is, a transaction itself) and addresses.
+- The number of steps in the installer was reduced by dropping the final confirmation screen. The
+  wallet will now start automatically after configuration, reducing the information load and number
+  of clicks for the user.
+- All text inputs are now sanitized to remove whitespaces. No need to manually remove a trailing
+  whitespace when importing a PSBT for instance!
+- Various loading screens at startup were updated to include more information.
+- The transaction fee rate is now displayed in addition to the absolute fee in the details.
+- The managed bitcoind version was bumped to 25.1 for new installations.
+
+### Fixes
+
+- We fixed the minimum glibc version in the dependencies of the Debian package.
+- We could previously crash if we were started up against a bitcoind itself recovering from a previous
+  crash and in the process of re-connecting the entire chain.
+- A few incorrect commands were corrected in the wallet recovery documentation.
+
+#### GUI-specific
+
+- Selecting a coinbase transaction won't make the GUI crash anymore.
+- At startup there could previously be a small lag before the home page gets updated with the list
+  of payments and correct balance.
+- During installation, when using a managed bitcoind, the GUI could previously freeze after starting
+  up bitcoind.
+
 ## 2.0
 
 This release significantly simplifies the installation of Liana. It also fixes a number of small
