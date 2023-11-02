@@ -658,6 +658,13 @@ impl Step for InternalBitcoindStep {
                         bitcoind.stop();
                     }
                     self.internal_bitcoind = None;
+                    if let Some(download) = self.exe_download.as_ref() {
+                        // Clear exe_download if not Finished.
+                        if let DownloadState::Finished { .. } = download.state {
+                        } else {
+                            self.exe_download = None;
+                        }
+                    }
                     self.started = None; // clear both Ok and Err
                     return Command::perform(async {}, |_| Message::Previous);
                 }
