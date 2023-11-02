@@ -5,7 +5,7 @@ Cargo takes care of downloading and compiling the project's dependencies, as wel
 project itself. Dependencies are specified in a [`Cargo.toml`](../Cargo.toml) file at the root of
 this repository. They are pinned in a [`Cargo.lock`](../Cargo.lock) file at the same place.
 
-We take security very seriously, and toolchain is a big part of that. We are moderatly conservative
+We take security very seriously, and toolchain is a big part of that. We are moderately conservative
 with dependencies and aim to target reasonable compiler versions that have had time to mature (ie
 that had the chance to be reviewed and distributed by third parties, as well as tested by the
 community).  The minimum supported Rust version for `lianad` currently is `1.54`.

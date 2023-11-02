@@ -101,8 +101,8 @@ the descriptor on it.
 
 You can then decide whether you would like to manage `bitcoind` yourself or let Liana configure
 and start/stop it while the GUI is being used:
-For the purpose of this guide, we will use the simpler option: to let Liana download and managed Bitcoin Core for us. It will get the software on [bitcoincore.org](https://bitcoincore.org/) and configure it in pruned mode with about 20GB of disk usage.
-A full Initial Blocks Download (Bitcoin network syncronization, from the beginning of the chain) will take place, as we are using Signet it will be pretty quick.
+For the purpose of this guide, we will use the simpler option: to let Liana download and manage Bitcoin Core for us. It will get the software on [bitcoincore.org](https://bitcoincore.org/) and configure it in pruned mode with about 20GB of disk usage.
+A full Initial Blocks Download (Bitcoin network synchronization, from the beginning of the chain) will take place, as we are using Signet it will be pretty quick.
 
 Click on continue until we finalize the installation.
 
