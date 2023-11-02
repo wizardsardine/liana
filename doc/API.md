@@ -313,7 +313,7 @@ cover the requested feerate.
 ### `updatelabels`
 
 Update the labels from a given map of key/value, with the labelled bitcoin addresses, txids and
-outpoints as keys and the label as value. If a label already exist for the given item, the new label
+outpoints as keys and the label as value. If a label already exists for the given item, the new label
 overrides the previous one. If a `null` value is passed, the label is deleted.
 
 #### Request
@@ -337,4 +337,4 @@ Items without labels are not present in the response map.
 
 | Field    | Type   | Description                                                                      |
 | -------- | ------ | -------------------------------------------------------------------------------- |
-| `labels` | object | A mapping of bitcoin addresses, txids and oupoints as keys, and string as values |
+| `labels` | object | A mapping of bitcoin addresses, txids and outpoints as keys, and string as values |
