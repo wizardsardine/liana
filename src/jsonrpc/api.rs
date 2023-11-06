@@ -98,6 +98,31 @@ fn broadcast_spend(control: &DaemonControl, params: Params) -> Result<serde_json
     Ok(serde_json::json!({}))
 }
 
+fn rbf_psbt(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let txid = params
+        .get(0, "txid")
+        .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?
+        .as_str()
+        .and_then(|s| bitcoin::Txid::from_str(s).ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'txid' parameter."))?;
+    let is_cancel: bool = params
+        .get(1, "is_cancel")
+        .ok_or_else(|| Error::invalid_params("Missing 'is_cancel' parameter."))?
+        .as_bool()
+        .ok_or_else(|| Error::invalid_params("Invalid 'is_cancel' parameter."))?;
+    let feerate_vb: Option<u64> = if let Some(feerate) = params.get(2, "feerate") {
+        Some(
+            feerate
+                .as_u64()
+                .ok_or_else(|| Error::invalid_params("Invalid 'feerate' parameter."))?,
+        )
+    } else {
+        None
+    };
+    let res = control.rbf_psbt(&txid, is_cancel, feerate_vb)?;
+    Ok(serde_json::json!(&res))
+}
+
 fn list_coins(control: &DaemonControl, params: Option<Params>) -> Result<serde_json::Value, Error> {
     let statuses_arg = params
         .as_ref()
@@ -341,6 +366,12 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
                 .params
                 .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?;
             delete_spend(control, params)?
+        }
+        "rbfpsbt" => {
+            let params = req.params.ok_or_else(|| {
+                Error::invalid_params("Missing 'txid', 'feerate' and 'is_cancel' parameters.")
+            })?;
+            rbf_psbt(control, params)?
         }
         "getinfo" => serde_json::json!(&control.get_info()),
         "getnewaddress" => serde_json::json!(&control.get_new_address()),

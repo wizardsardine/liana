@@ -165,6 +165,7 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::InsaneRescanTimestamp(..)
             | commands::CommandError::AlreadyRescanning
             | commands::CommandError::InvalidDerivationIndex
+            | commands::CommandError::RbfError(..)
             | commands::CommandError::RecoveryNotAvailable => {
                 Error::new(ErrorCode::InvalidParams, e.to_string())
             }
