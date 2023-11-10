@@ -322,7 +322,11 @@ impl Loader {
                 let last_update_tip = reader
                     .lines()
                     .into_iter()
-                    .filter(|l| l.as_ref().map(|l| l.contains("UpdateTip")).unwrap_or(false))
+                    .filter(|l| {
+                        l.as_ref()
+                            .map(|l| l.contains("UpdateTip") || l.contains("blockheaders"))
+                            .unwrap_or(false)
+                    })
                     .last();
                 match last_update_tip {
                     Some(Ok(line)) => (Message::BitcoindLog(Some(line)), log_path),
