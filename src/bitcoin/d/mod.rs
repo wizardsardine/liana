@@ -1120,18 +1120,47 @@ impl BitcoinD {
 
     /// Whether this transaction is in the mempool.
     pub fn is_in_mempool(&self, txid: &bitcoin::Txid) -> bool {
+        self.mempool_entry(txid).is_some()
+    }
+
+    /// Get mempool entry of the given transaction.
+    /// Returns `None` if it is not in the mempool.
+    pub fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry> {
         match self
             .make_fallible_node_request("getmempoolentry", &params!(Json::String(txid.to_string())))
         {
-            Ok(_) => true,
+            Ok(json) => Some(MempoolEntry::from(json)),
             Err(BitcoindError::Server(jsonrpc::Error::Rpc(jsonrpc::error::RpcError {
                 code: -5,
                 ..
-            }))) => false,
+            }))) => None,
             Err(e) => {
                 panic!("Unexpected error returned by bitcoind {}", e);
             }
         }
+    }
+
+    /// Get the list of txids spending those outpoints in mempool.
+    pub fn mempool_txs_spending_prevouts(
+        &self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> Vec<bitcoin::Txid> {
+        let prevouts: Json = outpoints
+            .iter()
+            .map(|op| serde_json::json!({"txid": op.txid.to_string(), "vout": op.vout}))
+            .collect();
+        self.make_node_request("gettxspendingprevout", &params!(prevouts))
+            .as_array()
+            .expect("Always returns an array")
+            .iter()
+            .filter_map(|e| {
+                e.get("spendingtxid").map(|e| {
+                    e.as_str()
+                        .and_then(|s| bitcoin::Txid::from_str(s).ok())
+                        .expect("Must be a valid txid if present")
+                })
+            })
+            .collect()
     }
 
     /// Stop bitcoind.
@@ -1392,5 +1421,50 @@ impl<'a> CachedTxGetter<'a> {
         } else {
             None
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MempoolEntry {
+    pub vsize: u64,
+    pub fees: MempoolEntryFees,
+}
+
+impl From<Json> for MempoolEntry {
+    fn from(json: Json) -> MempoolEntry {
+        let vsize = json
+            .get("vsize")
+            .and_then(Json::as_u64)
+            .expect("Must be present in bitcoind response");
+        let fees = json
+            .get("fees")
+            .as_ref()
+            .expect("Must be present in bitcoind response")
+            .into();
+
+        MempoolEntry { vsize, fees }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MempoolEntryFees {
+    pub base: bitcoin::Amount,
+    pub descendant: bitcoin::Amount,
+}
+
+impl From<&&Json> for MempoolEntryFees {
+    fn from(json: &&Json) -> MempoolEntryFees {
+        let json = json.as_object().expect("fees must be an object");
+        let base = json
+            .get("base")
+            .and_then(Json::as_f64)
+            .and_then(|a| bitcoin::Amount::from_btc(a).ok())
+            .expect("Must be present and a valid amount");
+        let descendant = json
+            .get("descendant")
+            .and_then(Json::as_f64)
+            .and_then(|a| bitcoin::Amount::from_btc(a).ok())
+            .expect("Must be present and a valid amount");
+        MempoolEntryFees { base, descendant }
     }
 }
