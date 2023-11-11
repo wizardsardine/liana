@@ -37,7 +37,7 @@ def test_getaddress(lianad):
     assert res["address"] != lianad.rpc.getnewaddress()["address"]
 
 
-def test_listadresses(lianad):
+def test_listaddresses(lianad):
     list = lianad.rpc.listaddresses(2, 5)
     list2 = lianad.rpc.listaddresses(start_index=2, count=5)
     assert list == list2
