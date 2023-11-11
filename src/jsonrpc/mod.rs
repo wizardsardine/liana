@@ -164,6 +164,8 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::SpendFinalization(..)
             | commands::CommandError::InsaneRescanTimestamp(..)
             | commands::CommandError::AlreadyRescanning
+            | commands::CommandError::InvalidAddressCount
+            | commands::CommandError::InvalidAddressIndex
             | commands::CommandError::RecoveryNotAvailable => {
                 Error::new(ErrorCode::InvalidParams, e.to_string())
             }

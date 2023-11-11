@@ -25,7 +25,7 @@ use std::{
 
 use miniscript::{
     bitcoin::{
-        self, address,
+        self, address, bip32,
         locktime::absolute,
         psbt::{Input as PsbtIn, Output as PsbtOut, PartiallySignedTransaction as Psbt},
     },
@@ -72,6 +72,8 @@ pub enum CommandError {
     /// An error that might occur in the racy rescan triggering logic.
     RescanTrigger(String),
     RecoveryNotAvailable,
+    InvalidAddressCount,
+    InvalidAddressIndex,
 }
 
 impl fmt::Display for CommandError {
@@ -136,6 +138,8 @@ impl fmt::Display for CommandError {
                 f,
                 "No coin currently spendable through this timelocked recovery path."
            ),
+            Self::InvalidAddressCount => write!(f, "Invalid address count, should be under 2^31-1"),
+            Self::InvalidAddressIndex => write!(f, "Invalid address index, should be under 2^31-1"),
         }
     }
 }
@@ -294,6 +298,69 @@ impl DaemonControl {
             .derive(index, &self.secp)
             .address(self.config.bitcoin_config.network);
         GetAddressResult::new(address)
+    }
+
+    /// list addresses
+    pub fn list_addresses(
+        &self,
+        start_index: Option<u32>,
+        count: Option<u32>,
+    ) -> Result<ListAddressesResult, CommandError> {
+        let mut db_conn = self.db.connection();
+        let receive_index: u32 = db_conn.receive_index().into();
+        let change_index: u32 = db_conn.change_index().into();
+
+        let start_index = start_index.unwrap_or(0);
+
+        if start_index > (2u32.pow(31) - 1) {
+            return Err(CommandError::InvalidAddressIndex);
+        }
+
+        let count = count.unwrap_or_else(|| receive_index.max(change_index) - start_index);
+
+        if count == 0 {
+            let out: Vec<AddressInfo> = Vec::new();
+            return Ok(ListAddressesResult::new(out));
+        }
+
+        let index = start_index
+            .checked_add(count)
+            .and_then(|index| index.checked_sub(1))
+            .and_then(|index| {
+                if index > (2u32.pow(31) - 1) {
+                    None
+                } else {
+                    Some(index)
+                }
+            })
+            .ok_or(CommandError::InvalidAddressCount)?;
+
+        let addresses: Vec<AddressInfo> = (start_index..=index)
+            .map(|index| {
+                let child = bip32::ChildNumber::from_normal_idx(index).expect("Cannot fail here");
+
+                let receive = self
+                    .config
+                    .main_descriptor
+                    .receive_descriptor()
+                    .derive(child, &self.secp)
+                    .address(self.config.bitcoin_config.network);
+
+                let change = self
+                    .config
+                    .main_descriptor
+                    .change_descriptor()
+                    .derive(child, &self.secp)
+                    .address(self.config.bitcoin_config.network);
+
+                AddressInfo {
+                    index,
+                    receive,
+                    change,
+                }
+            })
+            .collect();
+        Ok(ListAddressesResult::new(addresses))
     }
 
     /// Get a list of all known coins, optionally by status and/or outpoint.
@@ -872,6 +939,24 @@ impl GetAddressResult {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AddressInfo {
+    index: u32,
+    receive: bitcoin::Address,
+    change: bitcoin::Address,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListAddressesResult {
+    addresses: Vec<AddressInfo>,
+}
+
+impl ListAddressesResult {
+    pub fn new(addresses: Vec<AddressInfo>) -> Self {
+        ListAddressesResult { addresses }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct LCSpendInfo {
     pub txid: bitcoin::Txid,
@@ -980,6 +1065,55 @@ mod tests {
         // We won't get the same twice.
         let addr2 = control.get_new_address().address;
         assert_ne!(addr, addr2);
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn listaddresses() {
+        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+
+        let control = &ms.handle.control;
+
+        let list = control.list_addresses(Some(2), Some(5)).unwrap();
+
+        assert_eq!(list.addresses[0].index, 2);
+        assert_eq!(list.addresses.last().unwrap().index, 6);
+
+        let addr0 = control.get_new_address().address;
+        let addr1 = control.get_new_address().address;
+        let _addr2 = control.get_new_address().address;
+        let addr3 = control.get_new_address().address;
+        let addr4 = control.get_new_address().address;
+
+        let list = control.list_addresses(Some(0), None).unwrap();
+
+        assert_eq!(list.addresses[0].index, 0);
+        assert_eq!(list.addresses[0].receive, addr0);
+        assert_eq!(list.addresses.last().unwrap().index, 4);
+        assert_eq!(list.addresses.last().unwrap().receive, addr4);
+
+        let list = control.list_addresses(None, None).unwrap();
+
+        assert_eq!(list.addresses[0].index, 0);
+        assert_eq!(list.addresses[0].receive, addr0);
+        assert_eq!(list.addresses.last().unwrap().index, 4);
+        assert_eq!(list.addresses.last().unwrap().receive, addr4);
+
+        let list = control.list_addresses(Some(1), Some(3)).unwrap();
+
+        assert_eq!(list.addresses[0].index, 1);
+        assert_eq!(list.addresses[0].receive, addr1);
+        assert_eq!(list.addresses.last().unwrap().index, 3);
+        assert_eq!(list.addresses.last().unwrap().receive, addr3);
+
+        let addr5 = control.get_new_address().address;
+        let list = control.list_addresses(Some(5), None).unwrap();
+
+        assert_eq!(list.addresses[0].index, 5);
+        assert_eq!(list.addresses[0].receive, addr5);
+        assert_eq!(list.addresses.last().unwrap().index, 5);
+        assert_eq!(list.addresses.last().unwrap().receive, addr5);
 
         ms.shutdown();
     }
