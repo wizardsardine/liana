@@ -72,8 +72,8 @@ pub enum CommandError {
     /// An error that might occur in the racy rescan triggering logic.
     RescanTrigger(String),
     RecoveryNotAvailable,
-    InvalidAddressCount,
-    InvalidAddressIndex,
+    /// Overflowing or unhardened derivation index.
+    InvalidDerivationIndex,
 }
 
 impl fmt::Display for CommandError {
@@ -138,8 +138,7 @@ impl fmt::Display for CommandError {
                 f,
                 "No coin currently spendable through this timelocked recovery path."
            ),
-            Self::InvalidAddressCount => write!(f, "Invalid address count, should be under 2^31-1"),
-            Self::InvalidAddressIndex => write!(f, "Invalid address index, should be under 2^31-1"),
+            Self::InvalidDerivationIndex => write!(f, "Unhardened or overflowing BIP32 derivation index."),
         }
     }
 }
@@ -310,34 +309,28 @@ impl DaemonControl {
         let receive_index: u32 = db_conn.receive_index().into();
         let change_index: u32 = db_conn.change_index().into();
 
-        let start_index = start_index.unwrap_or(0);
+        // If a start index isn't provided, we derive from index 0. Make sure the provided index is
+        // unhardened.
+        let start_index = bip32::ChildNumber::from_normal_idx(start_index.unwrap_or(0))
+            .map_err(|_| CommandError::InvalidDerivationIndex)?;
+        let start_index_u32: u32 = start_index.into();
 
-        if start_index > (2u32.pow(31) - 1) {
-            return Err(CommandError::InvalidAddressIndex);
-        }
+        // Derive the end index (ie, the first index to not be returned) from the count of
+        // addresses to provide. If no count was passed, use the next derivation index between
+        // change and receive as end index.
+        let end_index = if let Some(c) = count {
+            start_index_u32
+                .checked_add(c)
+                .ok_or(CommandError::InvalidDerivationIndex)?
+        } else {
+            receive_index.max(change_index)
+        };
 
-        let count = count.unwrap_or_else(|| receive_index.max(change_index) - start_index);
-
-        if count == 0 {
-            let out: Vec<AddressInfo> = Vec::new();
-            return Ok(ListAddressesResult::new(out));
-        }
-
-        let index = start_index
-            .checked_add(count)
-            .and_then(|index| index.checked_sub(1))
-            .and_then(|index| {
-                if index > (2u32.pow(31) - 1) {
-                    None
-                } else {
-                    Some(index)
-                }
-            })
-            .ok_or(CommandError::InvalidAddressCount)?;
-
-        let addresses: Vec<AddressInfo> = (start_index..=index)
+        // Derive all receive and change addresses for the queried range.
+        let addresses: Result<Vec<AddressInfo>, _> = (start_index_u32..end_index)
             .map(|index| {
-                let child = bip32::ChildNumber::from_normal_idx(index).expect("Cannot fail here");
+                let child = bip32::ChildNumber::from_normal_idx(index)
+                    .map_err(|_| CommandError::InvalidDerivationIndex)?;
 
                 let receive = self
                     .config
@@ -353,14 +346,14 @@ impl DaemonControl {
                     .derive(child, &self.secp)
                     .address(self.config.bitcoin_config.network);
 
-                AddressInfo {
+                Ok(AddressInfo {
                     index,
                     receive,
                     change,
-                }
+                })
             })
             .collect();
-        Ok(ListAddressesResult::new(addresses))
+        Ok(ListAddressesResult::new(addresses?))
     }
 
     /// Get a list of all known coins, optionally by status and/or outpoint.
@@ -939,14 +932,14 @@ impl GetAddressResult {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AddressInfo {
     index: u32,
     receive: bitcoin::Address,
     change: bitcoin::Address,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ListAddressesResult {
     addresses: Vec<AddressInfo>,
 }
@@ -1114,6 +1107,72 @@ mod tests {
         assert_eq!(list.addresses[0].receive, addr5);
         assert_eq!(list.addresses.last().unwrap().index, 5);
         assert_eq!(list.addresses.last().unwrap().receive, addr5);
+
+        // We can get no address for the last unhardened index.
+        let max_unhardened_index = 2u32.pow(31) - 1;
+        let res = control
+            .list_addresses(Some(max_unhardened_index), Some(0))
+            .unwrap();
+        // This is equivalent to not passing a count.
+        assert_eq!(
+            res,
+            control
+                .list_addresses(Some(max_unhardened_index), None)
+                .unwrap()
+        );
+        // We can also get the one last unhardened index.
+        control
+            .list_addresses(Some(max_unhardened_index), Some(1))
+            .unwrap();
+        // However we can't get into hardened territory.
+        assert_eq!(
+            control
+                .list_addresses(Some(max_unhardened_index), Some(2))
+                .unwrap_err(),
+            CommandError::InvalidDerivationIndex
+        );
+
+        // We also can't pass a hardened start index.
+        let first_hardened_index = max_unhardened_index + 1;
+        assert_eq!(
+            control
+                .list_addresses(Some(first_hardened_index), None)
+                .unwrap_err(),
+            CommandError::InvalidDerivationIndex
+        );
+        assert_eq!(
+            control
+                .list_addresses(Some(first_hardened_index), Some(0))
+                .unwrap_err(),
+            CommandError::InvalidDerivationIndex
+        );
+        assert_eq!(
+            control
+                .list_addresses(Some(first_hardened_index), Some(1))
+                .unwrap_err(),
+            CommandError::InvalidDerivationIndex
+        );
+
+        // Much less so overflow.
+        assert_eq!(
+            control.list_addresses(Some(u32::MAX), None).unwrap_err(),
+            CommandError::InvalidDerivationIndex
+        );
+        assert_eq!(
+            control.list_addresses(Some(u32::MAX), Some(0)).unwrap_err(),
+            CommandError::InvalidDerivationIndex
+        );
+        assert_eq!(
+            control.list_addresses(Some(u32::MAX), Some(1)).unwrap_err(),
+            CommandError::InvalidDerivationIndex
+        );
+
+        // We won't crash if we pass a start index larger than the next derivation index without
+        // passing a count. (ie no underflow.)
+        let next_deriv_index = list.addresses.last().unwrap().index + 1;
+        control
+            .list_addresses(Some(next_deriv_index + 1), None)
+            .unwrap();
 
         ms.shutdown();
     }

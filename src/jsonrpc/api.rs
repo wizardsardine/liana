@@ -136,21 +136,28 @@ fn list_coins(control: &DaemonControl, params: Option<Params>) -> Result<serde_j
     Ok(serde_json::json!(&res))
 }
 
+fn get_opt_u32<Q>(params: &Option<Params>, index: usize, name: &Q) -> Result<Option<u32>, Error>
+where
+    String: std::borrow::Borrow<Q>,
+    Q: ?Sized + Ord + Eq + std::hash::Hash + std::fmt::Display,
+{
+    Ok(
+        if let Some(i) = params.as_ref().and_then(|p| p.get(index, name)) {
+            Some(i.as_u64().and_then(|i| i.try_into().ok()).ok_or_else(|| {
+                Error::invalid_params(format!("Invalid value for '{}': {}", name, i))
+            })?)
+        } else {
+            None
+        },
+    )
+}
+
 fn list_addresses(
     control: &DaemonControl,
     params: Option<Params>,
 ) -> Result<serde_json::Value, Error> {
-    let start_index: Option<u32> = params
-        .as_ref()
-        .and_then(|p| p.get(0, "start_index"))
-        .and_then(|i| i.as_u64())
-        .and_then(|i| i.try_into().ok());
-
-    let count: Option<u32> = params
-        .as_ref()
-        .and_then(|p| p.get(1, "count"))
-        .and_then(|c| c.as_u64())
-        .and_then(|i| i.try_into().ok());
+    let start_index = get_opt_u32(&params, 0, "start_index")?;
+    let count = get_opt_u32(&params, 1, "count")?;
 
     let res = &control.list_addresses(start_index, count)?;
     Ok(serde_json::json!(&res))

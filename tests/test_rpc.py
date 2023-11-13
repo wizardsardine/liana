@@ -37,7 +37,7 @@ def test_getaddress(lianad):
     assert res["address"] != lianad.rpc.getnewaddress()["address"]
 
 
-def test_listadresses(lianad):
+def test_listaddresses(lianad):
     list = lianad.rpc.listaddresses(2, 5)
     list2 = lianad.rpc.listaddresses(start_index=2, count=5)
     assert list == list2
@@ -47,12 +47,28 @@ def test_listadresses(lianad):
     assert addr[-1]["index"] == 6
 
     list3 = lianad.rpc.listaddresses()  # start_index = 0, receive_index = 0
-    _ = lianad.rpc.getnewaddress()      # start_index = 0, receive_index = 1
-    _ = lianad.rpc.getnewaddress()      # start_index = 0, receive_index = 2
+    _ = lianad.rpc.getnewaddress()  # start_index = 0, receive_index = 1
+    _ = lianad.rpc.getnewaddress()  # start_index = 0, receive_index = 2
     list4 = lianad.rpc.listaddresses()
     assert len(list4["addresses"]) == len(list3["addresses"]) + 2 == 2
     list5 = lianad.rpc.listaddresses(0)
     assert list4 == list5
+
+    # Will explicitly error on invalid start_index.
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Invalid params: Invalid value for \\'start_index\\': \"blabla\""
+        ),
+    ):
+        lianad.rpc.listaddresses("blabla", None)
+
+    # Will explicitly error on invalid count.
+    with pytest.raises(
+        RpcError,
+        match=re.escape("Invalid params: Invalid value for \\'count\\': \"blb\""),
+    ):
+        lianad.rpc.listaddresses(0, "blb")
 
 
 def test_listcoins(lianad, bitcoind):
