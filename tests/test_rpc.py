@@ -399,12 +399,13 @@ def test_create_spend(lianad, bitcoind):
     assert len(spend_psbt.o) == 4
     assert len(spend_psbt.tx.vout) == 4
 
-    # The transaction must contain the spent transaction for each input
-    spent_txs = [bitcoind.rpc.gettransaction(op[:64]) for op in outpoints]
-    for i, psbt_in in enumerate(spend_psbt.i):
-        assert psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] == bytes.fromhex(
-            spent_txs[i]["hex"]
-        )
+    # The transaction must contain the spent transaction for each input.
+    # We don't make assumptions about the ordering of PSBT inputs.
+    assert sorted(
+        [psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in spend_psbt.i]
+    ) == sorted(
+        [bytes.fromhex(bitcoind.rpc.gettransaction(op[:64])["hex"]) for op in outpoints]
+    )
 
     # We can sign it and broadcast it.
     sign_and_broadcast(lianad, bitcoind, PSBT.from_base64(res["psbt"]))

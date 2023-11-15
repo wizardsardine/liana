@@ -28,6 +28,8 @@ nonblocking_shutdown = []
 # For managing transactions (it re-exports the bitcoin crate)
 miniscript = { version = "10.0", features = ["serde", "compiler", "base64"] }
 
+bdk_coin_select = { git = "https://github.com/evanlinjin/bdk", branch = "new_bdk_coin_select" }
+
 # Don't reinvent the wheel
 dirs = "5.0"
 

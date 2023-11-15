@@ -12,9 +12,10 @@ use crate::{
 
 pub use crate::database::{CoinStatus, LabelItem};
 
+use bdk_coin_select::InsufficientFunds;
 use utils::{
-    deser_addr_assume_checked, deser_amount_from_sats, deser_fromstr, deser_hex, ser_amount,
-    ser_hex, ser_to_string,
+    deser_addr_assume_checked, deser_amount_from_sats, deser_fromstr, deser_hex,
+    select_coins_for_spend, ser_amount, ser_hex, ser_to_string,
 };
 
 use std::{
@@ -37,6 +38,9 @@ use serde::{Deserialize, Serialize};
 // That's 1$ at 20_000$ per BTC.
 const DUST_OUTPUT_SATS: u64 = 5_000;
 
+// Long-term feerate (sats/vb) used for coin selection considerations.
+const LONG_TERM_FEERATE_VB: f32 = 10.0;
+
 // Assume that paying more than 1BTC in fee is a bug.
 const MAX_FEE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
 
@@ -48,7 +52,7 @@ const MAINNET_GENESIS_TIME: u32 = 1231006505;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
-    NoOutpoint,
+    NoOutpointForSelfSend,
     InvalidFeerate(/* sats/vb */ u64),
     UnknownOutpoint(bitcoin::OutPoint),
     AlreadySpent(bitcoin::OutPoint),
@@ -74,12 +78,13 @@ pub enum CommandError {
     RecoveryNotAvailable,
     /// Overflowing or unhardened derivation index.
     InvalidDerivationIndex,
+    CoinSelectionError(InsufficientFunds),
 }
 
 impl fmt::Display for CommandError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::NoOutpoint => write!(f, "No provided outpoint. Need at least one."),
+            Self::NoOutpointForSelfSend => write!(f, "No provided outpoint for self-send. Need at least one."),
             Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {} sats/vb.", sats_vb),
             Self::AlreadySpent(op) => write!(f, "Coin at '{}' is already spent.", op),
             Self::ImmatureCoinbase(op) => write!(f, "Coin at '{}' is from an immature coinbase transaction.", op),
@@ -139,6 +144,7 @@ impl fmt::Display for CommandError {
                 "No coin currently spendable through this timelocked recovery path."
            ),
             Self::InvalidDerivationIndex => write!(f, "Unhardened or overflowing BIP32 derivation index."),
+           Self::CoinSelectionError(e) => write!(f, "Coin selection error: '{}'", e),
         }
     }
 }
@@ -163,6 +169,15 @@ pub enum InsaneFeeInfo {
     InvalidFeerate,
     TooHighFee(u64),
     TooHighFeerate(u64),
+}
+
+/// A candidate for coin selection when creating a transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CandidateCoin {
+    /// The candidate coin.
+    coin: Coin,
+    /// Whether or not this coin must be selected by the coin selection algorithm.
+    must_select: bool,
 }
 
 // Apply some sanity checks on a created transaction's PSBT.
@@ -230,11 +245,6 @@ fn sanity_check_psbt(
     }
 
     Ok(())
-}
-
-// Get the size of a type that can be serialized (txos, transactions, ..)
-fn serializable_size<T: bitcoin::consensus::Encodable + ?Sized>(t: &T) -> u64 {
-    bitcoin::consensus::serialize(t).len().try_into().unwrap()
 }
 
 impl DaemonControl {
@@ -403,86 +413,45 @@ impl DaemonControl {
         coins_outpoints: &[bitcoin::OutPoint],
         feerate_vb: u64,
     ) -> Result<CreateSpendResult, CommandError> {
+        // This method is a bit convoluted, but it's the nature of creating a Bitcoin transaction
+        // with a target feerate and outputs. In addition, we support different modes (coin control
+        // vs automated coin selection, self-spend, etc..) which make the logic a bit more
+        // intricate. Here is a brief overview of what we're doing here:
+        // 1. Create a transaction with all the target outputs (if this is a self-send, none are
+        //    added at this step the only output will be added as a change output).
+        // 2. Automatically select the coins if necessary and determine whether a change output
+        //    will be necessary for this transaction from the set of (automatically or manually)
+        //    selected coins. The output for a self-send is added there.
+        // 3. Fetch the selected coins from database and add them as inputs to the transaction.
+        // 4. Finalize the PSBT and sanity check it before returning it.
+
         let is_self_send = destinations.is_empty();
-        if coins_outpoints.is_empty() {
-            return Err(CommandError::NoOutpoint);
+        // For self-send, the coins must be specified.
+        if is_self_send && coins_outpoints.is_empty() {
+            return Err(CommandError::NoOutpointForSelfSend);
         }
         if feerate_vb < 1 {
             return Err(CommandError::InvalidFeerate(feerate_vb));
         }
         let mut db_conn = self.db.connection();
 
-        // Iterate through given outpoints to fetch the coins (hence checking their existence
-        // at the same time). We checked there is at least one, therefore after this loop the
-        // list of coins is not empty.
-        // While doing so, we record the total input value of the transaction to later compute
-        // fees, and add necessary information to the PSBT inputs.
-        let mut in_value = bitcoin::Amount::from_sat(0);
-        let txin_sat_vb = self.config.main_descriptor.max_sat_vbytes();
-        let mut sat_vb = 0;
-        let mut txins = Vec::with_capacity(coins_outpoints.len());
-        let mut psbt_ins = Vec::with_capacity(coins_outpoints.len());
-        let mut spent_txs = HashMap::with_capacity(coins_outpoints.len());
-        let coins = db_conn.coins_by_outpoints(coins_outpoints);
-        for op in coins_outpoints {
-            // Get the coin from our in-DB unspent txos
-            let coin = coins.get(op).ok_or(CommandError::UnknownOutpoint(*op))?;
-            if coin.is_spent() {
-                return Err(CommandError::AlreadySpent(*op));
-            }
-            if coin.is_immature {
-                return Err(CommandError::ImmatureCoinbase(*op));
-            }
-
-            // Fetch the transaction that created it if necessary
-            if !spent_txs.contains_key(op) {
-                let tx = self
-                    .bitcoin
-                    .wallet_transaction(&op.txid)
-                    .ok_or(CommandError::FetchingTransaction(*op))?;
-                spent_txs.insert(*op, tx.0);
-            }
-
-            in_value += coin.amount;
-            txins.push(bitcoin::TxIn {
-                previous_output: *op,
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                // TODO: once we move to Taproot, anti-fee-sniping using nSequence
-                ..bitcoin::TxIn::default()
-            });
-
-            // Populate the PSBT input with the information needed by signers.
-            let coin_desc = self.derived_desc(coin);
-            sat_vb += txin_sat_vb;
-            let witness_script = Some(coin_desc.witness_script());
-            let witness_utxo = Some(bitcoin::TxOut {
-                value: coin.amount.to_sat(),
-                script_pubkey: coin_desc.script_pubkey(),
-            });
-            let non_witness_utxo = spent_txs.get(op).cloned();
-            let bip32_derivation = coin_desc.bip32_derivations();
-            psbt_ins.push(PsbtIn {
-                witness_script,
-                witness_utxo,
-                bip32_derivation,
-                non_witness_utxo,
-                ..PsbtIn::default()
-            });
-        }
-
-        // Add the destinations outputs to the transaction and PSBT. At the same time record the
-        // total output value to later compute fees, and sanity check each output's value.
-        let mut out_value = bitcoin::Amount::from_sat(0);
-        let mut txouts = Vec::with_capacity(destinations.len());
+        // Create transaction with no inputs and no outputs.
+        let mut tx = bitcoin::Transaction {
+            version: 2,
+            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO), // TODO: randomized anti fee sniping
+            input: Vec::with_capacity(coins_outpoints.len()), // Will be zero capacity for coin selection.
+            output: Vec::with_capacity(destinations.len()),
+        };
+        // Add the destinations outputs to the transaction and PSBT. At the same time
+        // sanity check each output's value.
         let mut psbt_outs = Vec::with_capacity(destinations.len());
         for (address, value_sat) in destinations {
             let address = self.validate_address(address.clone())?;
 
             let amount = bitcoin::Amount::from_sat(*value_sat);
             check_output_value(amount)?;
-            out_value = out_value.checked_add(amount).unwrap();
 
-            txouts.push(bitcoin::TxOut {
+            tx.output.push(bitcoin::TxOut {
                 value: amount.to_sat(),
                 script_pubkey: address.script_pubkey(),
             });
@@ -504,87 +473,149 @@ impl DaemonControl {
                 ..PsbtOut::default()
             });
         }
-        assert_eq!(txouts.is_empty(), is_self_send);
+        assert_eq!(tx.output.is_empty(), is_self_send);
 
-        // Now create the transaction, compute its fees and already sanity check if its feerate
-        // isn't much less than what was asked (and obviously that fees aren't negative).
-        let mut tx = bitcoin::Transaction {
-            version: 2,
-            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO), // TODO: randomized anti fee sniping
-            input: txins,
-            output: txouts,
+        // Now compute whether we'll need a change output while automatically selecting coins to be
+        // used as input if necessary.
+        // We need to get the size of a potential change output to select coins / determine whether
+        // we should include one, so get a change address and create a dummy txo for this purpose.
+        let change_index = db_conn.change_index();
+        let change_desc = self
+            .config
+            .main_descriptor
+            .change_descriptor()
+            .derive(change_index, &self.secp);
+        let mut change_txo = bitcoin::TxOut {
+            value: std::u64::MAX,
+            script_pubkey: change_desc.script_pubkey(),
         };
-        let nochange_vb = (tx.vsize() + sat_vb) as u64;
-        let absolute_fee =
-            in_value
-                .checked_sub(out_value)
-                .ok_or(CommandError::InsufficientFunds(
-                    in_value,
-                    Some(out_value),
-                    feerate_vb,
-                ))?;
-        let nochange_feerate_vb = absolute_fee.to_sat().checked_div(nochange_vb).unwrap();
-        if nochange_feerate_vb.checked_mul(10).unwrap() < feerate_vb.checked_mul(9).unwrap() {
-            return Err(CommandError::InsufficientFunds(
-                in_value,
-                Some(out_value),
-                feerate_vb,
-            ));
-        }
-
-        // If necessary, add a change output. The computation here is a bit convoluted: we infer
-        // the needed change value from the target feerate and the size of the transaction *with
-        // an added output* (for the change).
-        if is_self_send || nochange_feerate_vb > feerate_vb {
-            // Get the change address to create a dummy change txo.
-            let change_index = db_conn.change_index();
-            let change_desc = self
+        // Now, either select the coins necessary or use the ones provided (verifying they do in
+        // fact exist and are still unspent) and determine whether there is any leftover to create a
+        // change output.
+        let (selected_coins, change_amount) = {
+            let candidate_coins: Vec<CandidateCoin> = if coins_outpoints.is_empty() {
+                // We only select confirmed coins for now. Including unconfirmed ones as well would
+                // introduce a whole bunch of additional complexity.
+                db_conn
+                    .coins(&[CoinStatus::Confirmed], &[])
+                    .into_values()
+                    .map(|c| CandidateCoin {
+                        coin: c,
+                        must_select: false, // No coin is mandatory.
+                    })
+                    .collect()
+            } else {
+                // Query from DB and sanity check the provided coins to spend.
+                let coins = db_conn.coins(&[], coins_outpoints);
+                for op in coins_outpoints {
+                    let coin = coins.get(op).ok_or(CommandError::UnknownOutpoint(*op))?;
+                    if coin.is_spent() {
+                        return Err(CommandError::AlreadySpent(*op));
+                    }
+                    if coin.is_immature {
+                        return Err(CommandError::ImmatureCoinbase(*op));
+                    }
+                }
+                coins
+                    .into_values()
+                    .map(|c| CandidateCoin {
+                        coin: c,
+                        must_select: true, // All coins must be selected.
+                    })
+                    .collect()
+            };
+            // At this point the transaction still has no input and no change output, as expected
+            // by the coins selection helper function.
+            assert!(tx.input.is_empty());
+            assert_eq!(tx.output.len(), destinations.len());
+            // TODO: Introduce general conversion error type.
+            let feerate_vb: f32 = {
+                let fr: u16 = feerate_vb.try_into().map_err(|_| {
+                    CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(feerate_vb))
+                })?;
+                fr
+            }
+            .try_into()
+            .expect("u16 must fit in f32");
+            let max_sat_wu = self
                 .config
                 .main_descriptor
-                .change_descriptor()
-                .derive(change_index, &self.secp);
+                .max_sat_weight()
+                .try_into()
+                .expect("Weight must fit in a u32");
+            select_coins_for_spend(
+                &candidate_coins,
+                tx.clone(),
+                change_txo.clone(),
+                feerate_vb,
+                0, // We only constrain the feerate.
+                max_sat_wu,
+            )
+            .map_err(CommandError::CoinSelectionError)?
+        };
+        // If necessary, add a change output.
+        if change_amount.to_sat() > 0 {
             // Don't forget to update our next change index!
             let next_index = change_index
                 .increment()
                 .expect("Must not get into hardened territory");
             db_conn.set_change_index(next_index, &self.secp);
-            let mut change_txo = bitcoin::TxOut {
-                value: std::u64::MAX,
-                script_pubkey: change_desc.script_pubkey(),
-            };
-            // Serialized size is equal to the virtual size for an output.
-            let change_vb: u64 = serializable_size(&change_txo);
-            // We assume the added output does not increase the size of the varint for
-            // the output count.
-            let with_change_vb = nochange_vb.checked_add(change_vb).unwrap();
-            let with_change_feerate_vb = absolute_fee.to_sat().checked_div(with_change_vb).unwrap();
+            check_output_value(change_amount)?;
 
-            if with_change_feerate_vb > feerate_vb {
-                // TODO: try first with the exact feerate, then try again with 90% of the feerate
-                // if it fails. Otherwise with small transactions and large feerates it's possible
-                // the feerate increase from the target be dramatically higher.
-                let target_fee = with_change_vb.checked_mul(feerate_vb).unwrap();
-                let change_amount = absolute_fee
-                    .checked_sub(bitcoin::Amount::from_sat(target_fee))
-                    .unwrap();
-                if change_amount.to_sat() >= DUST_OUTPUT_SATS {
-                    check_output_value(change_amount)?;
-
-                    // TODO: shuffle once we have Taproot
-                    change_txo.value = change_amount.to_sat();
-                    tx.output.push(change_txo);
-                    psbt_outs.push(PsbtOut {
-                        bip32_derivation: change_desc.bip32_derivations(),
-                        ..PsbtOut::default()
-                    });
-                } else if is_self_send {
-                    return Err(CommandError::InsufficientFunds(in_value, None, feerate_vb));
-                }
-            } else if is_self_send {
-                return Err(CommandError::InsufficientFunds(in_value, None, feerate_vb));
-            }
+            // TODO: shuffle once we have Taproot
+            change_txo.value = change_amount.to_sat();
+            tx.output.push(change_txo);
+            psbt_outs.push(PsbtOut {
+                bip32_derivation: change_desc.bip32_derivations(),
+                ..PsbtOut::default()
+            });
+        } else if is_self_send {
+            return Err(CommandError::InsufficientFunds(
+                selected_coins.iter().map(|c| c.amount).sum(),
+                None,
+                feerate_vb,
+            ));
         }
 
+        // Iterate through selected coins and add necessary information to the PSBT inputs.
+        let mut psbt_ins = Vec::with_capacity(selected_coins.len());
+        let mut spent_txs = HashMap::with_capacity(selected_coins.len());
+        for coin in &selected_coins {
+            // Fetch the transaction that created it if necessary
+            if let hash_map::Entry::Vacant(e) = spent_txs.entry(coin.outpoint) {
+                let tx = self
+                    .bitcoin
+                    .wallet_transaction(&coin.outpoint.txid)
+                    .ok_or(CommandError::FetchingTransaction(coin.outpoint))?;
+                e.insert(tx.0);
+            }
+
+            tx.input.push(bitcoin::TxIn {
+                previous_output: coin.outpoint,
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                // TODO: once we move to Taproot, anti-fee-sniping using nSequence
+                ..bitcoin::TxIn::default()
+            });
+
+            // Populate the PSBT input with the information needed by signers.
+            let coin_desc = self.derived_desc(coin);
+            let witness_script = Some(coin_desc.witness_script());
+            let witness_utxo = Some(bitcoin::TxOut {
+                value: coin.amount.to_sat(),
+                script_pubkey: coin_desc.script_pubkey(),
+            });
+            let non_witness_utxo = spent_txs.get(&coin.outpoint).cloned();
+            let bip32_derivation = coin_desc.bip32_derivations();
+            psbt_ins.push(PsbtIn {
+                witness_script,
+                witness_utxo,
+                bip32_derivation,
+                non_witness_utxo,
+                ..PsbtIn::default()
+            });
+        }
+
+        // Finally, create the PSBT with all inputs and outputs, sanity check it and return it.
         let psbt = Psbt {
             unsigned_tx: tx,
             version: 0,
@@ -1203,15 +1234,20 @@ mod tests {
         let dummy_addr =
             bitcoin::Address::from_str("bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv").unwrap();
         let dummy_value = 10_000;
-        let mut destinations: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
-            [(dummy_addr.clone(), dummy_value)]
-                .iter()
-                .cloned()
-                .collect();
+        let mut destinations = <HashMap<bitcoin::Address<address::NetworkUnchecked>, u64>>::new();
         assert_eq!(
             control.create_spend(&destinations, &[], 1),
-            Err(CommandError::NoOutpoint)
+            Err(CommandError::NoOutpointForSelfSend)
         );
+        destinations = [(dummy_addr.clone(), dummy_value)]
+            .iter()
+            .cloned()
+            .collect();
+        // Insufficient funds for coin selection.
+        assert!(matches!(
+            control.create_spend(&destinations, &[], 1),
+            Err(CommandError::CoinSelectionError(..))
+        ));
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 0),
             Err(CommandError::InvalidFeerate(0))
@@ -1234,6 +1270,12 @@ mod tests {
             spend_txid: None,
             spend_block: None,
         }]);
+        // If we try to use coin selection, the unconfirmed coin will not be used as a candidate
+        // and so we get a coin selection error due to insufficient funds.
+        assert!(matches!(
+            control.create_spend(&destinations, &[], 1),
+            Err(CommandError::CoinSelectionError(..))
+        ));
         let res = control.create_spend(&destinations, &[dummy_op], 1).unwrap();
         assert!(res.psbt.inputs[0].non_witness_utxo.is_some());
         let tx = res.psbt.unsigned_tx;
@@ -1260,23 +1302,15 @@ mod tests {
             .unwrap();
 
         // If we ask for a too high feerate, or a too large/too small output, it'll fail.
-        assert_eq!(
+        assert!(matches!(
             control.create_spend(&destinations, &[dummy_op], 10_000),
-            Err(CommandError::InsufficientFunds(
-                bitcoin::Amount::from_sat(100_000),
-                Some(bitcoin::Amount::from_sat(10_000)),
-                10_000
-            ))
-        );
+            Err(CommandError::CoinSelectionError(..))
+        ));
         *destinations.get_mut(&dummy_addr).unwrap() = 100_001;
-        assert_eq!(
+        assert!(matches!(
             control.create_spend(&destinations, &[dummy_op], 1),
-            Err(CommandError::InsufficientFunds(
-                bitcoin::Amount::from_sat(100_000),
-                Some(bitcoin::Amount::from_sat(100_001)),
-                1
-            ))
-        );
+            Err(CommandError::CoinSelectionError(..))
+        ));
         *destinations.get_mut(&dummy_addr).unwrap() = 4_500;
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 1),
@@ -1324,6 +1358,12 @@ mod tests {
             control.create_spend(&destinations, &[dummy_op], 1),
             Err(CommandError::AlreadySpent(dummy_op))
         );
+        // If we try to use coin selection, the spent coin will not be used as a candidate
+        // and so we get a coin selection error due to insufficient funds.
+        assert!(matches!(
+            control.create_spend(&destinations, &[], 1),
+            Err(CommandError::CoinSelectionError(..))
+        ));
 
         // We'd bail out if they tried to create a transaction with a too high feerate.
         let dummy_op_dup = bitcoin::OutPoint {
@@ -1340,12 +1380,139 @@ mod tests {
             spend_txid: None,
             spend_block: None,
         }]);
+        // Even though 1_000 is the max feerate allowed by our sanity check, we need to
+        // use 1_003 in order to exceed it and fail this test since coin selection is
+        // based on a minimum feerate of `feerate_vb / 4.0` sats/wu, which can result in
+        // the sats/vb feerate being lower than `feerate_vb`.
         assert_eq!(
-            control.create_spend(&destinations, &[dummy_op_dup], 1_001),
+            control.create_spend(&destinations, &[dummy_op_dup], 1_003),
             Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(
-                1001
+                1_001
             )))
         );
+
+        // Add a confirmed unspent coin to be used for coin selection.
+        let confirmed_op_1 = bitcoin::OutPoint {
+            txid: dummy_op.txid,
+            vout: dummy_op.vout + 100,
+        };
+        db_conn.new_unspent_coins(&[Coin {
+            outpoint: confirmed_op_1,
+            is_immature: false,
+            block_info: Some(BlockInfo {
+                height: 174500,
+                time: 174500,
+            }),
+            amount: bitcoin::Amount::from_sat(80_000),
+            derivation_index: bip32::ChildNumber::from(42),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+        }]);
+        // Coin selection error due to insufficient funds.
+        assert!(matches!(
+            control.create_spend(&destinations, &[], 1),
+            Err(CommandError::CoinSelectionError(..))
+        ));
+        // Set destination amount equal to value of confirmed coins.
+        *destinations.get_mut(&dummy_addr).unwrap() = 80_000;
+        // Coin selection error occurs due to insufficient funds to pay fee.
+        assert!(matches!(
+            control.create_spend(&destinations, &[], 1),
+            Err(CommandError::CoinSelectionError(..))
+        ));
+        let confirmed_op_2 = bitcoin::OutPoint {
+            txid: confirmed_op_1.txid,
+            vout: confirmed_op_1.vout + 10,
+        };
+        // Add new confirmed coin to cover the fee.
+        db_conn.new_unspent_coins(&[Coin {
+            outpoint: confirmed_op_2,
+            is_immature: false,
+            block_info: Some(BlockInfo {
+                height: 174500,
+                time: 174500,
+            }),
+            amount: bitcoin::Amount::from_sat(20_000),
+            derivation_index: bip32::ChildNumber::from(43),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+        }]);
+        // First, create a transaction using auto coin selection.
+        let res_auto = control.create_spend(&destinations, &[], 1).unwrap();
+        let tx_auto = res_auto.psbt.unsigned_tx;
+        let mut tx_prev_outpoints = tx_auto
+            .input
+            .iter()
+            .map(|txin| txin.previous_output)
+            .collect::<Vec<OutPoint>>();
+        tx_prev_outpoints.sort();
+        assert_eq!(tx_auto.input.len(), 2);
+        assert_eq!(tx_prev_outpoints, vec![confirmed_op_1, confirmed_op_2]);
+        // Output includes change.
+        assert_eq!(tx_auto.output.len(), 2);
+        assert_eq!(
+            tx_auto.output[0].script_pubkey,
+            dummy_addr.payload.script_pubkey()
+        );
+        assert_eq!(tx_auto.output[0].value, 80_000);
+
+        // Create a second transaction using manual coin selection.
+        let res_manual = control
+            .create_spend(&destinations, &[confirmed_op_1, confirmed_op_2], 1)
+            .unwrap();
+        let tx_manual = res_manual.psbt.unsigned_tx;
+        // Check that manual and auto selection give same outputs (including change).
+        assert_eq!(tx_auto.output, tx_manual.output);
+        // Check inputs are also the same. Need to sort as order is not guaranteed by `create_spend`.
+        let mut auto_input = tx_auto.input;
+        let mut manual_input = tx_manual.input;
+        auto_input.sort();
+        manual_input.sort();
+        assert_eq!(auto_input, manual_input);
+
+        // Add a confirmed coin with a value near the dust limit and check that
+        // `InsufficientFunds` error is returned if feerate is too high.
+        let confirmed_op_3 = bitcoin::OutPoint {
+            txid: confirmed_op_2.txid,
+            vout: confirmed_op_2.vout + 10,
+        };
+        db_conn.new_unspent_coins(&[Coin {
+            outpoint: confirmed_op_3,
+            is_immature: false,
+            block_info: Some(BlockInfo {
+                height: 174500,
+                time: 174500,
+            }),
+            amount: bitcoin::Amount::from_sat(5_250),
+            derivation_index: bip32::ChildNumber::from(56),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+        }]);
+        let empty_dest = &HashMap::<bitcoin::Address<address::NetworkUnchecked>, u64>::new();
+        assert_eq!(
+            control.create_spend(empty_dest, &[confirmed_op_3], 5),
+            Err(CommandError::InsufficientFunds(
+                bitcoin::Amount::from_sat(5_250),
+                None,
+                5
+            ))
+        );
+        // If we use a lower fee, the self-send will succeed.
+        let res = control
+            .create_spend(empty_dest, &[confirmed_op_3], 1)
+            .unwrap();
+        let tx = res.psbt.unsigned_tx;
+        let tx_prev_outpoints = tx
+            .input
+            .iter()
+            .map(|txin| txin.previous_output)
+            .collect::<Vec<OutPoint>>();
+        assert_eq!(tx.input.len(), 1);
+        assert_eq!(tx_prev_outpoints, vec![confirmed_op_3]);
+        assert_eq!(tx.output.len(), 1);
 
         // Can't create a transaction that spends an immature coinbase deposit.
         let imma_op = bitcoin::OutPoint::from_str(
