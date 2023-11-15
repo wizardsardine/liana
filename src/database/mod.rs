@@ -243,7 +243,10 @@ impl DatabaseConnection for SqliteConn {
         self.db_address(address).map(|db_addr| {
             (
                 db_addr.derivation_index,
-                address == &db_addr.change_address.assume_checked(),
+                // We only compare address strings in case `assume_checked()` uses a different network.
+                // E.g. An unchecked signet address would have its network set to testnet and so comparing
+                // to a signet `Address` would never match.
+                address.to_string() == db_addr.change_address.assume_checked().to_string(),
             )
         })
     }
