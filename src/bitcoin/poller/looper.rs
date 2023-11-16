@@ -112,6 +112,8 @@ fn update_coins(
     // We need to take the newly received ones into account as well, as they may have been
     // spent within the previous tip and the current one, and we may not poll this chunk of the
     // chain anymore.
+    // NOTE: curr_coins contain the "spending" coins. So this takes care of updating the spend_txid
+    // if a coin's spending transaction gets RBF'd.
     let to_be_spent: Vec<bitcoin::OutPoint> = curr_coins
         .values()
         .chain(received.iter())
