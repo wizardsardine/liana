@@ -269,28 +269,36 @@ impl BitcoinInterface for d::BitcoinD {
 
             // If a conflicting transaction was confirmed instead, replace the txid of the
             // spender for this coin with it and mark it as confirmed.
+            // If a conflicting transaction which doesn't spend this coin was mined or accepted in
+            // our local mempool, mark this spend as expired.
             enum Conflict {
                 // A replacement spending transaction was confirmed.
                 Replaced((bitcoin::Txid, Block)),
-                // A transaction conflicting with the former spending transaction was confirmed,
-                // but it doesn't spend this outpoint anymore.
+                // A transaction conflicting with the former spending transaction was confirmed or
+                // included in our local mempool.
                 Dropped,
             }
             let conflict = res.conflicting_txs.iter().find_map(|txid| {
                 tx_getter.get_transaction(txid).and_then(|tx| {
-                    // FIXME: if a conflict was mined we should somehow wipe the spend_txid of this
-                    // coin.
-                    tx.block.map(|block| {
-                        // Being part of our watchonly wallet isn't enough, as it could be a
-                        // conflicting transaction which spends a different set of coins. Make sure
-                        // it does actually spend this coin.
-                        for txin in tx.tx.input {
-                            if &txin.previous_output == op {
-                                return Conflict::Replaced((*txid, block));
+                    tx.block
+                        .map(|block| {
+                            // Being part of our watchonly wallet isn't enough, as it could be a
+                            // conflicting transaction which spends a different set of coins. Make sure
+                            // it does actually spend this coin.
+                            for txin in tx.tx.input {
+                                if &txin.previous_output == op {
+                                    return Conflict::Replaced((*txid, block));
+                                }
                             }
-                        }
-                        Conflict::Dropped
-                    })
+                            Conflict::Dropped
+                        })
+                        .or_else(|| {
+                            if self.is_in_mempool(txid) {
+                                Some(Conflict::Dropped)
+                            } else {
+                                None
+                            }
+                        })
                 })
             });
             match conflict {

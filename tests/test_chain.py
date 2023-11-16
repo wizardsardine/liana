@@ -454,7 +454,7 @@ def test_spend_replacement(lianad, bitcoind):
 
     # Now RBF the first transaction by the second one. The third coin should be
     # newly marked as spending, the second one's spend_txid should be updated and
-    # the first one should not be updated until the second one is mined.
+    # the first one's spend txid should be dropped.
     second_txid = sign_and_broadcast_psbt(lianad, second_psbt)
     wait_for(
         lambda: all(
@@ -462,9 +462,9 @@ def test_spend_replacement(lianad, bitcoind):
             for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
         )
     )
-    assert (
-        lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]["txid"]
-        == first_txid
+    wait_for(
+        lambda: lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]
+        is None
     )
 
     # Now RBF the second transaction with a send-to-self, just because.
@@ -476,11 +476,10 @@ def test_spend_replacement(lianad, bitcoind):
         )
     )
     assert (
-        lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]["txid"]
-        == first_txid
+        lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"] is None
     )
 
-    # Once the RBF gets mined, the first coin's spend txid is wiped.
+    # Once the RBF is mined, we detect it as confirmed and the first coin is still unspent.
     bitcoind.generate_block(1, wait_for_mempool=third_txid)
     wait_for(
         lambda: all(
@@ -488,7 +487,6 @@ def test_spend_replacement(lianad, bitcoind):
             for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
         )
     )
-    wait_for(
-        lambda: lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]
-        is None
+    assert (
+        lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"] is None
     )
