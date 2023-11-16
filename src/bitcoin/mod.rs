@@ -259,22 +259,25 @@ impl BitcoinInterface for d::BitcoinD {
 
             // If a conflicting transaction was confirmed instead, replace the txid of the
             // spender for this coin with it and mark it as confirmed.
-            for txid in &res.conflicting_txs {
-                if let Some(tx) = tx_getter.get_transaction(txid) {
+            let conflict = res.conflicting_txs.iter().find_map(|txid| {
+                tx_getter.get_transaction(txid).and_then(|tx| {
                     // FIXME: if a conflict was mined we should somehow wipe the spend_txid of this
                     // coin.
-                    if let Some(block) = tx.block {
+                    tx.block.and_then(|block| {
                         // Being part of our watchonly wallet isn't enough, as it could be a
                         // conflicting transaction which spends a different set of coins. Make sure
                         // it does actually spend this coin.
                         for txin in tx.tx.input {
                             if &txin.previous_output == op {
-                                spent.push((*op, *txid, block));
-                                break;
+                                return Some((*txid, block));
                             }
                         }
-                    }
-                }
+                        None
+                    })
+                })
+            });
+            if let Some((txid, block)) = conflict {
+                spent.push((*op, txid, block));
             }
         }
 
