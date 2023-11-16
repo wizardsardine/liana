@@ -306,7 +306,7 @@ impl DaemonControl {
             .receive_descriptor()
             .derive(index, &self.secp)
             .address(self.config.bitcoin_config.network);
-        GetAddressResult::new(address)
+        GetAddressResult::new(address, index)
     }
 
     /// list addresses
@@ -945,22 +945,22 @@ pub struct GetInfoResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetAddressResult {
     #[serde(deserialize_with = "deser_addr_assume_checked")]
-    address: bitcoin::Address,
+    pub address: bitcoin::Address,
+    pub derivation_index: bip32::ChildNumber,
+}
+
+impl GetAddressResult {
+    pub fn new(address: bitcoin::Address, derivation_index: bip32::ChildNumber) -> Self {
+        Self {
+            address,
+            derivation_index,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetLabelsResult {
     pub labels: HashMap<String, String>,
-}
-
-impl GetAddressResult {
-    pub fn new(address: bitcoin::Address) -> Self {
-        Self { address }
-    }
-
-    pub fn address(&self) -> &bitcoin::Address {
-        &self.address
-    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
