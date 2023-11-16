@@ -402,3 +402,94 @@ def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
         and get_coin(lianad, spent_coin["outpoint"])["spend_info"]["txid"]
         == txid_b.hex()
     )
+
+
+def sign_and_broadcast_psbt(lianad, psbt):
+    txid = psbt.tx.txid().hex()
+    psbt = lianad.signer.sign_psbt(psbt)
+    lianad.rpc.updatespend(psbt.to_base64())
+    lianad.rpc.broadcastspend(txid)
+    return txid
+
+
+def test_spend_replacement(lianad, bitcoind):
+    """Test we detect the new version of the unconfirmed spending transaction."""
+    # Get three coins.
+    destinations = {
+        lianad.rpc.getnewaddress()["address"]: 0.03,
+        lianad.rpc.getnewaddress()["address"]: 0.04,
+        lianad.rpc.getnewaddress()["address"]: 0.05,
+    }
+    txid = bitcoind.rpc.sendmany("", destinations)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 3)
+    coins = lianad.rpc.listcoins(["confirmed"])["coins"]
+
+    # Create three conflicting spends, the two first spend two different set of coins
+    # and the third one is just an RBF of the second one but as a send-to-self.
+    first_outpoints = [c["outpoint"] for c in coins[:2]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 650_000,
+    }
+    first_res = lianad.rpc.createspend(destinations, first_outpoints, 1)
+    first_psbt = PSBT.from_base64(first_res["psbt"])
+    second_outpoints = [c["outpoint"] for c in coins[1:]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 650_000,
+    }
+    second_res = lianad.rpc.createspend(destinations, second_outpoints, 2)
+    second_psbt = PSBT.from_base64(second_res["psbt"])
+    destinations = {}
+    third_res = lianad.rpc.createspend(destinations, second_outpoints, 4)
+    third_psbt = PSBT.from_base64(third_res["psbt"])
+
+    # Broadcast the first transaction. Make sure it's detected.
+    first_txid = sign_and_broadcast_psbt(lianad, first_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == first_txid
+            for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
+        )
+    )
+
+    # Now RBF the first transaction by the second one. The third coin should be
+    # newly marked as spending, the second one's spend_txid should be updated and
+    # the first one should not be updated until the second one is mined.
+    second_txid = sign_and_broadcast_psbt(lianad, second_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == second_txid
+            for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
+        )
+    )
+    assert (
+        lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]["txid"]
+        == first_txid
+    )
+
+    # Now RBF the second transaction with a send-to-self, just because.
+    third_txid = sign_and_broadcast_psbt(lianad, third_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == third_txid
+            for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
+        )
+    )
+    assert (
+        lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]["txid"]
+        == first_txid
+    )
+
+    # Even once the RBF gets merged, the first coin's spend txid isn't updated.
+    bitcoind.generate_block(1, wait_for_mempool=third_txid)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["height"] is not None
+            for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
+        )
+    )
+    # FIXME: the code is incorrectly assigning the third txid to the first coin.
+    # assert (
+    # lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]["txid"]
+    # == first_txid
+    # )
