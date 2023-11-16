@@ -17,6 +17,7 @@ struct UpdatedCoins {
     pub confirmed: Vec<(bitcoin::OutPoint, i32, u32)>,
     pub expired: Vec<bitcoin::OutPoint>,
     pub spending: Vec<(bitcoin::OutPoint, bitcoin::Txid)>,
+    pub expired_spending: Vec<bitcoin::OutPoint>,
     pub spent: Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)>,
 }
 
@@ -136,8 +137,8 @@ fn update_coins(
         .map(|coin| (coin.outpoint, coin.spend_txid.expect("Coin is spending")))
         .chain(spending.iter().cloned())
         .collect();
-    let spent = bit
-        .spent_coins(spending_coins.as_slice())
+    let (spent, expired_spending) = bit.spent_coins(spending_coins.as_slice());
+    let spent = spent
         .into_iter()
         .map(|(oupoint, txid, block)| (oupoint, txid, block.height, block.time))
         .collect();
@@ -148,6 +149,7 @@ fn update_coins(
         confirmed,
         expired,
         spending,
+        expired_spending,
         spent,
     }
 }
@@ -238,6 +240,7 @@ fn updates(
     db_conn.remove_coins(&updated_coins.expired);
     db_conn.confirm_coins(&updated_coins.confirmed);
     db_conn.spend_coins(&updated_coins.spending);
+    db_conn.unspend_coins(&updated_coins.expired_spending);
     db_conn.confirm_spend(&updated_coins.spent);
     if latest_tip != current_tip {
         db_conn.update_tip(&latest_tip);

@@ -76,11 +76,16 @@ pub trait BitcoinInterface: Send {
         outpoints: &[bitcoin::OutPoint],
     ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)>;
 
-    /// Get all coins that are spent with the final spend tx txid and blocktime.
+    /// Get all coins that are spent with the final spend tx txid and blocktime. Along with the
+    /// coins for which the spending transaction "expired" (a conflicting transaction was mined and
+    /// it wasn't spending this coin).
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>;
+    ) -> (
+        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
+        Vec<bitcoin::OutPoint>,
+    );
 
     /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
     fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip>;
@@ -237,9 +242,14 @@ impl BitcoinInterface for d::BitcoinD {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)> {
+    ) -> (
+        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
+        Vec<bitcoin::OutPoint>,
+    ) {
         // Spend coins to be returned.
         let mut spent = Vec::with_capacity(outpoints.len());
+        // Coins whose spending transaction isn't in our local mempool anymore.
+        let mut expired = Vec::new();
         // Cached calls to `gettransaction`.
         let mut tx_getter = CachedTxGetter::new(self);
 
@@ -259,29 +269,38 @@ impl BitcoinInterface for d::BitcoinD {
 
             // If a conflicting transaction was confirmed instead, replace the txid of the
             // spender for this coin with it and mark it as confirmed.
+            enum Conflict {
+                // A replacement spending transaction was confirmed.
+                Replaced((bitcoin::Txid, Block)),
+                // A transaction conflicting with the former spending transaction was confirmed,
+                // but it doesn't spend this outpoint anymore.
+                Dropped,
+            }
             let conflict = res.conflicting_txs.iter().find_map(|txid| {
                 tx_getter.get_transaction(txid).and_then(|tx| {
                     // FIXME: if a conflict was mined we should somehow wipe the spend_txid of this
                     // coin.
-                    tx.block.and_then(|block| {
+                    tx.block.map(|block| {
                         // Being part of our watchonly wallet isn't enough, as it could be a
                         // conflicting transaction which spends a different set of coins. Make sure
                         // it does actually spend this coin.
                         for txin in tx.tx.input {
                             if &txin.previous_output == op {
-                                return Some((*txid, block));
+                                return Conflict::Replaced((*txid, block));
                             }
                         }
-                        None
+                        Conflict::Dropped
                     })
                 })
             });
-            if let Some((txid, block)) = conflict {
-                spent.push((*op, txid, block));
+            match conflict {
+                Some(Conflict::Replaced((txid, block))) => spent.push((*op, txid, block)),
+                Some(Conflict::Dropped) => expired.push(*op),
+                None => {}
             }
         }
 
-        spent
+        (spent, expired)
     }
 
     fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
@@ -385,7 +404,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)> {
+    ) -> (
+        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
+        Vec<bitcoin::OutPoint>,
+    ) {
         self.lock().unwrap().spent_coins(outpoints)
     }
 

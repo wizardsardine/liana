@@ -480,7 +480,7 @@ def test_spend_replacement(lianad, bitcoind):
         == first_txid
     )
 
-    # Even once the RBF gets mined, the first coin's spend txid isn't updated.
+    # Once the RBF gets mined, the first coin's spend txid is wiped.
     bitcoind.generate_block(1, wait_for_mempool=third_txid)
     wait_for(
         lambda: all(
@@ -488,7 +488,7 @@ def test_spend_replacement(lianad, bitcoind):
             for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
         )
     )
-    assert (
-        lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]["txid"]
-        == first_txid
+    wait_for(
+        lambda: lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]
+        is None
     )

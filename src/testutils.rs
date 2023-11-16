@@ -82,8 +82,11 @@ impl BitcoinInterface for DummyBitcoind {
     fn spent_coins(
         &self,
         _: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)> {
-        Vec::new()
+    ) -> (
+        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
+        Vec<bitcoin::OutPoint>,
+    ) {
+        (Vec::new(), Vec::new())
     }
 
     fn common_ancestor(&self, _: &BlockChainTip) -> Option<BlockChainTip> {
