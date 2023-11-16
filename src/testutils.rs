@@ -278,6 +278,16 @@ impl DatabaseConnection for DummyDatabase {
         }
     }
 
+    fn unspend_coins<'a>(&mut self, outpoints: &[bitcoin::OutPoint]) {
+        for op in outpoints {
+            let mut db = self.db.write().unwrap();
+            let spent = &mut db.coins.get_mut(op).unwrap();
+            assert!(spent.spend_txid.is_some());
+            spent.spend_txid = None;
+            spent.spend_block = None;
+        }
+    }
+
     fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, i32, u32)]) {
         for (op, spend_txid, height, time) in outpoints {
             let mut db = self.db.write().unwrap();

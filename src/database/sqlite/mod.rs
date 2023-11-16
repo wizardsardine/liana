@@ -509,6 +509,27 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
+    /// Mark a set of coins as not being spent.
+    pub fn unspend_coins<'a>(
+        &mut self,
+        outpoints: impl IntoIterator<Item = &'a bitcoin::OutPoint>,
+    ) {
+        db_exec(&mut self.conn, |db_tx| {
+            for outpoint in outpoints {
+                db_tx.execute(
+                    "UPDATE coins SET spend_txid = NULL, spend_block_height = NULL, spend_block_time = NULL WHERE txid = ?1 AND vout = ?2",
+                    rusqlite::params![
+                        outpoint.txid[..].to_vec(),
+                        outpoint.vout,
+                    ],
+                )?;
+            }
+
+            Ok(())
+        })
+        .expect("Database must be available")
+    }
+
     /// Mark the Spend transaction of a given set of coins as being confirmed at a given
     /// block.
     pub fn confirm_spend<'a>(
@@ -1350,18 +1371,27 @@ CREATE TABLE spend_transactions (
                 coin_a.outpoint,
                 bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
             )]);
-            let coins_map: HashMap<bitcoin::OutPoint, DbCoin> = conn
-                .coins(&[], &[])
+            let coin = conn
+                .coins(&[], &[coin_a.outpoint])
                 .into_iter()
-                .map(|c| (c.outpoint, c))
-                .collect();
-            assert!(coins_map
-                .get(&coin_a.outpoint)
-                .unwrap()
-                .spend_txid
-                .is_some());
+                .next()
+                .unwrap();
+            assert!(coin.spend_txid.is_some());
 
-            // We will see it as 'spending'
+            // We can unspend it, if the spend transaction gets double spent.
+            conn.unspend_coins(&[coin_a.outpoint]);
+            let coin = conn
+                .coins(&[], &[coin_a.outpoint])
+                .into_iter()
+                .next()
+                .unwrap();
+            assert!(coin.spend_txid.is_none());
+
+            // Spend it back. We will see it as 'spending'
+            conn.spend_coins(&[(
+                coin_a.outpoint,
+                bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
+            )]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
                 .list_spending_coins()
                 .into_iter()
@@ -1405,6 +1435,16 @@ CREATE TABLE spend_transactions (
             assert!(coin.spend_block.is_some());
             assert_eq!(coin.spend_block.as_ref().unwrap().time, time);
             assert_eq!(coin.spend_block.unwrap().height, height);
+
+            // If we unspend it all spend info will be wiped.
+            conn.unspend_coins(&[coin_a.outpoint]);
+            let coin = conn
+                .coins(&[], &[coin_a.outpoint])
+                .into_iter()
+                .next()
+                .unwrap();
+            assert!(coin.spend_txid.is_none());
+            assert!(coin.spend_block.is_none());
 
             // Add an immature coin. As all coins it's first registered as unconfirmed (even though
             // it's not).
