@@ -75,9 +75,10 @@ This command does not take any parameter for now.
 
 #### Response
 
-| Field         | Type   | Description        |
-| ------------- | ------ | ------------------ |
-| `address`     | string | A Bitcoin address  |
+| Field                  | Type    | Description                           |
+| ---------------------- | ------- | ------------------------------------- |
+| `address`              | string  | A Bitcoin address                     |
+| `derivation_index`     | integer | The derivation index for this address |
 
 
 ### `listaddresses`
