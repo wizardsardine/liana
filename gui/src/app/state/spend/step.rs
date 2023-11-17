@@ -19,7 +19,7 @@ use crate::{
     app::{cache::Cache, error::Error, message::Message, state::psbt, view, wallet::Wallet},
     daemon::{
         model::{remaining_sequence, Coin, SpendTx},
-        Daemon,
+        Daemon, DaemonError,
     },
 };
 
@@ -67,6 +67,9 @@ pub trait Step {
 pub struct DefineSpend {
     balance_available: Amount,
     recipients: Vec<Recipient>,
+    /// Will be `true` if coins for spend were manually selected by user.
+    /// Otherwise, will be `false` (including for self-send).
+    is_user_coin_selection: bool,
     is_valid: bool,
     is_duplicate: bool,
 
@@ -113,6 +116,7 @@ impl DefineSpend {
             coins_labels: HashMap::new(),
             batch_label: form::Value::default(),
             recipients: vec![Recipient::default()],
+            is_user_coin_selection: false, // Start with auto-selection until user edits selection.
             is_valid: false,
             is_duplicate: false,
             feerate: form::Value::default(),
@@ -151,22 +155,65 @@ impl DefineSpend {
         self
     }
 
-    fn check_valid(&mut self) {
-        self.is_valid = self.feerate.valid
+    fn form_values_are_valid(&self) -> bool {
+        self.feerate.valid
             && !self.feerate.value.is_empty()
-            && (self.batch_label.valid || self.recipients.len() < 2);
+            && (self.batch_label.valid || self.recipients.len() < 2)
+            // Recipients will be empty for self-send.
+            && self.recipients.iter().all(|r| r.valid())
+    }
+
+    fn check_valid(&mut self) {
+        self.is_valid =
+            self.form_values_are_valid() && self.coins.iter().any(|(_, selected)| *selected);
         self.is_duplicate = false;
-        if !self.coins.iter().any(|(_, selected)| *selected) {
-            self.is_valid = false;
-        }
         for (i, recipient) in self.recipients.iter().enumerate() {
-            if !recipient.valid() {
-                self.is_valid = false;
-            }
             if !self.is_duplicate && !recipient.address.value.is_empty() {
                 self.is_duplicate = self.recipients[..i]
                     .iter()
                     .any(|r| r.address.value == recipient.address.value);
+            }
+        }
+    }
+    fn auto_select_coins(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) {
+        // Set non-input values in the same way as for user selection.
+        let mut outputs: HashMap<Address<address::NetworkUnchecked>, u64> = HashMap::new();
+        for recipient in &self.recipients {
+            outputs.insert(
+                Address::from_str(&recipient.address.value).expect("Checked before"),
+                recipient.amount().expect("Checked before"),
+            );
+        }
+        let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
+        // Create a spend with empty inputs in order to use auto-selection.
+        match daemon.create_spend_tx(&[], &outputs, feerate_vb) {
+            Ok(spend) => {
+                self.warning = None;
+                let selected_coins: Vec<OutPoint> = spend
+                    .psbt
+                    .unsigned_tx
+                    .input
+                    .iter()
+                    .map(|c| c.previous_output)
+                    .collect();
+                // Mark coins as selected.
+                for (coin, selected) in &mut self.coins {
+                    *selected = selected_coins.contains(&coin.outpoint);
+                }
+                // As coin selection was successful, we can assume there is nothing left to select.
+                self.amount_left_to_select = Some(Amount::from_sat(0));
+            }
+            Err(e) => {
+                if let DaemonError::CoinSelectionError = e {
+                    // For coin selection error (insufficient funds), do not make any changes to
+                    // selected coins on screen and just show user how much is left to select.
+                    // User can then either:
+                    // - modify recipient amounts and/or feerate and let coin selection run again, or
+                    // - select coins manually.
+                    self.amount_left_to_select();
+                } else {
+                    self.warning = Some(e.into());
+                }
             }
         }
     }
@@ -319,10 +366,23 @@ impl Step for DefineSpend {
                     view::CreateSpendMessage::SelectCoin(i) => {
                         if let Some(coin) = self.coins.get_mut(i) {
                             coin.1 = !coin.1;
+                            // Once user edits selection, auto-selection can no longer be used.
+                            self.is_user_coin_selection = true;
                             self.amount_left_to_select();
                         }
                     }
                     _ => {}
+                }
+
+                // Attempt to select coins automatically if:
+                // - all form values have been added and validated
+                // - not a self-send
+                // - user has not yet selected coins manually
+                if self.form_values_are_valid()
+                    && !self.recipients.is_empty()
+                    && !self.is_user_coin_selection
+                {
+                    self.auto_select_coins(daemon);
                 }
                 self.check_valid();
             }

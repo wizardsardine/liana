@@ -46,6 +46,7 @@ impl std::fmt::Display for Error {
                 DaemonError::Rpc(code, e) => {
                     write!(f, "[{:?}] {}", code, e)
                 }
+                DaemonError::CoinSelectionError => write!(f, "{}", e),
             },
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
             Self::HardwareWallet(e) => write!(f, "{}", e),

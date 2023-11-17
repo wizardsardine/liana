@@ -253,6 +253,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "bdk_coin_select"
+version = "0.1.0"
+source = "git+https://github.com/evanlinjin/bdk?branch=new_bdk_coin_select#2a06d73ac7a5dca933b19b51078f5279691364ed"
+
+[[package]]
 name = "bech32"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2415,9 +2420,10 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "2.0.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#87555a8da50702ebec04dbe876e7055432ca805a"
+source = "git+https://github.com/wizardsardine/liana?branch=master#2d303b139d4eeafc6b6505433e18b24cd561ab6b"
 dependencies = [
  "backtrace",
+ "bdk_coin_select",
  "bip39",
  "dirs 5.0.0",
  "fern",
