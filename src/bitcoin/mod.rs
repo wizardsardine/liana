@@ -293,6 +293,8 @@ impl BitcoinInterface for d::BitcoinD {
                             Conflict::Dropped
                         })
                         .or_else(|| {
+                            // If the coin is actually being spent, but by another transaction, it
+                            // will just be set at the next poll in `spending_coins()`.
                             if self.is_in_mempool(txid) {
                                 Some(Conflict::Dropped)
                             } else {
