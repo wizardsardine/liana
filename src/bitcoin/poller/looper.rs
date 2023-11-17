@@ -5,6 +5,7 @@ use crate::{
 };
 
 use std::{
+    collections::HashSet,
     sync::{self, atomic},
     thread, time,
 };
@@ -114,15 +115,18 @@ fn update_coins(
     // chain anymore.
     // NOTE: curr_coins contain the "spending" coins. So this takes care of updating the spend_txid
     // if a coin's spending transaction gets RBF'd.
+    let expired_set: HashSet<_> = expired.iter().collect();
     let to_be_spent: Vec<bitcoin::OutPoint> = curr_coins
         .values()
         .chain(received.iter())
         .filter_map(|coin| {
             // Always check for spends when the spend tx is not confirmed as it might get RBF'd.
-            if coin.spend_txid.is_none() || coin.spend_block.is_none() {
-                Some(coin.outpoint)
-            } else {
+            if (coin.spend_txid.is_some() && coin.spend_block.is_some())
+                || expired_set.contains(&coin.outpoint)
+            {
                 None
+            } else {
+                Some(coin.outpoint)
             }
         })
         .collect();
