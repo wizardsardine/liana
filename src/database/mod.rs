@@ -109,6 +109,9 @@ pub trait DatabaseConnection {
     /// Mark a set of coins as being spent by a specified txid of a pending transaction.
     fn spend_coins(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]);
 
+    /// Mark a set of coins as not being spent anymore.
+    fn unspend_coins(&mut self, outpoints: &[bitcoin::OutPoint]);
+
     /// Mark a set of coins as spent by a specified txid at a specified block time.
     fn confirm_spend(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, i32, u32)]);
 
@@ -230,6 +233,10 @@ impl DatabaseConnection for SqliteConn {
 
     fn spend_coins<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)]) {
         self.spend_coins(outpoints)
+    }
+
+    fn unspend_coins(&mut self, outpoints: &[bitcoin::OutPoint]) {
+        self.unspend_coins(outpoints)
     }
 
     fn confirm_spend<'a>(&mut self, outpoints: &[(bitcoin::OutPoint, bitcoin::Txid, i32, u32)]) {

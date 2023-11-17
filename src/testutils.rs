@@ -82,8 +82,11 @@ impl BitcoinInterface for DummyBitcoind {
     fn spent_coins(
         &self,
         _: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)> {
-        Vec::new()
+    ) -> (
+        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
+        Vec<bitcoin::OutPoint>,
+    ) {
+        (Vec::new(), Vec::new())
     }
 
     fn common_ancestor(&self, _: &BlockChainTip) -> Option<BlockChainTip> {
@@ -275,6 +278,16 @@ impl DatabaseConnection for DummyDatabase {
             assert!(spent.spend_txid.is_none());
             assert!(spent.spend_block.is_none());
             spent.spend_txid = Some(*spend_txid);
+        }
+    }
+
+    fn unspend_coins<'a>(&mut self, outpoints: &[bitcoin::OutPoint]) {
+        for op in outpoints {
+            let mut db = self.db.write().unwrap();
+            let spent = &mut db.coins.get_mut(op).unwrap();
+            assert!(spent.spend_txid.is_some());
+            spent.spend_txid = None;
+            spent.spend_block = None;
         }
     }
 
