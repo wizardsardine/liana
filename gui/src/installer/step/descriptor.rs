@@ -719,7 +719,7 @@ impl EditXpubModal {
                             .name
                             .clone()
                     })
-                    .unwrap_or_else(String::new),
+                    .unwrap_or_default(),
             },
             form_xpub: form::Value {
                 valid: true,
@@ -731,7 +731,7 @@ impl EditXpubModal {
                             .key
                             .to_string()
                     })
-                    .unwrap_or_else(String::new),
+                    .unwrap_or_default(),
             },
             keys,
             path_index,
