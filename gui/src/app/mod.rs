@@ -90,7 +90,9 @@ impl App {
                 self.cache.blockheight,
             )
             .into(),
-            menu::Menu::Receive => ReceivePanel::default().into(),
+            menu::Menu::Receive => {
+                ReceivePanel::new(self.data_dir.clone(), self.wallet.clone()).into()
+            }
             menu::Menu::Transactions => TransactionsPanel::new().into(),
             menu::Menu::PSBTs => PsbtsPanel::new(self.wallet.clone(), &self.cache.spend_txs).into(),
             menu::Menu::CreateSpendTx => CreateSpendPanel::new(

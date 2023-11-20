@@ -107,3 +107,40 @@ pub fn hw_list_view_for_registration(
         .style(theme::Container::Card(theme::Card::Simple))
         .into()
 }
+
+pub fn hw_list_view_verify_address(
+    i: usize,
+    hw: &HardwareWallet,
+    chosen: bool,
+) -> Element<Message> {
+    let mut bttn = Button::new(match hw {
+        HardwareWallet::Supported {
+            kind,
+            version,
+            fingerprint,
+            alias,
+            ..
+        } => {
+            if chosen {
+                hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
+            } else {
+                hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
+            }
+        }
+        HardwareWallet::Unsupported { version, kind, .. } => {
+            hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
+        }
+        HardwareWallet::Locked {
+            kind, pairing_code, ..
+        } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
+    })
+    .style(theme::Button::Border)
+    .width(Length::Fill);
+    if !chosen && hw.is_supported() {
+        bttn = bttn.on_press(Message::SelectHardwareWallet(i));
+    }
+    Container::new(bttn)
+        .width(Length::Fill)
+        .style(theme::Container::Card(theme::Card::Simple))
+        .into()
+}

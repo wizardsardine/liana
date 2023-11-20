@@ -355,7 +355,13 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                     still.push(id);
                 } else {
                     let device = specter::Specter::<specter::SerialTransport>::new(port.clone());
-                    if device.is_connected().await.is_ok() {
+                    if tokio::time::timeout(
+                        std::time::Duration::from_millis(500),
+                        device.fingerprint(),
+                    )
+                    .await
+                    .is_ok()
+                    {
                         match HardwareWallet::new(id, Arc::new(device), Some(&state.keys_aliases))
                             .await
                         {
