@@ -397,11 +397,15 @@ def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
     bitcoind.rpc.sendrawtransaction(tx_hex)
 
     # We must now detect the coin as being spent by the second transaction.
-    wait_for(
-        lambda: get_coin(lianad, spent_coin["outpoint"])["spend_info"] is not None
-        and get_coin(lianad, spent_coin["outpoint"])["spend_info"]["txid"]
-        == txid_b.hex()
-    )
+    def is_spent_by(lianad, outpoint, txid):
+        coins = lianad.rpc.listcoins([], [outpoint])["coins"]
+        if len(coins) == 0:
+            return False
+        coin = coins[0]
+        if coin["spend_info"] is None:
+            return False
+        return coin["spend_info"]["txid"] == txid.hex()
+    wait_for(lambda: is_spent_by(lianad, spent_coin["outpoint"], txid_b))
 
 
 def sign_and_broadcast_psbt(lianad, psbt):
