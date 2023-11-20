@@ -49,7 +49,7 @@ pub trait Action {
     ) -> Command<Message> {
         Command::none()
     }
-    fn view(&self) -> Element<view::Message>;
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message>;
 }
 
 pub struct PsbtState {
@@ -176,9 +176,7 @@ impl PsbtState {
             self.warning.as_ref(),
         );
         if let Some(action) = &self.action {
-            modal::Modal::new(content, action.view())
-                .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
-                .into()
+            action.view(content)
         } else {
             content
         }
@@ -224,8 +222,13 @@ impl Action for SaveAction {
         }
         Command::none()
     }
-    fn view(&self) -> Element<view::Message> {
-        view::psbt::save_action(self.error.as_ref(), self.saved)
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        modal::Modal::new(
+            content,
+            view::psbt::save_action(self.error.as_ref(), self.saved),
+        )
+        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+        .into()
     }
 }
 
@@ -267,8 +270,13 @@ impl Action for BroadcastAction {
         }
         Command::none()
     }
-    fn view(&self) -> Element<view::Message> {
-        view::psbt::broadcast_action(self.error.as_ref(), self.broadcast)
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        modal::Modal::new(
+            content,
+            view::psbt::broadcast_action(self.error.as_ref(), self.broadcast),
+        )
+        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+        .into()
     }
 }
 
@@ -307,8 +315,13 @@ impl Action for DeleteAction {
         }
         Command::none()
     }
-    fn view(&self) -> Element<view::Message> {
-        view::psbt::delete_action(self.error.as_ref(), self.deleted)
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        modal::Modal::new(
+            content,
+            view::psbt::delete_action(self.error.as_ref(), self.deleted),
+        )
+        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+        .into()
     }
 }
 
@@ -440,19 +453,24 @@ impl Action for SignAction {
         };
         Command::none()
     }
-    fn view(&self) -> Element<view::Message> {
-        view::psbt::sign_action(
-            self.error.as_ref(),
-            &self.hws.list,
-            self.wallet.signer.as_ref().map(|s| s.fingerprint()),
-            self.wallet
-                .signer
-                .as_ref()
-                .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
-            self.processing,
-            self.chosen_hw,
-            &self.signed,
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        modal::Modal::new(
+            content,
+            view::psbt::sign_action(
+                self.error.as_ref(),
+                &self.hws.list,
+                self.wallet.signer.as_ref().map(|s| s.fingerprint()),
+                self.wallet
+                    .signer
+                    .as_ref()
+                    .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
+                self.processing,
+                self.chosen_hw,
+                &self.signed,
+            ),
         )
+        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+        .into()
     }
 }
 
@@ -530,17 +548,22 @@ impl UpdateAction {
 }
 
 impl Action for UpdateAction {
-    fn view(&self) -> Element<view::Message> {
-        if self.success {
-            view::psbt::update_spend_success_view()
-        } else {
-            view::psbt::update_spend_view(
-                self.psbt.clone(),
-                &self.updated,
-                self.error.as_ref(),
-                self.processing,
-            )
-        }
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        modal::Modal::new(
+            content,
+            if self.success {
+                view::psbt::update_spend_success_view()
+            } else {
+                view::psbt::update_spend_view(
+                    self.psbt.clone(),
+                    &self.updated,
+                    self.error.as_ref(),
+                    self.processing,
+                )
+            },
+        )
+        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+        .into()
     }
 
     fn update(
