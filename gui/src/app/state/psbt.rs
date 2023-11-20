@@ -10,6 +10,7 @@ use liana::{
     miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Network},
 };
 
+use liana_ui::component::toast;
 use liana_ui::{
     component::{form, modal},
     widget::Element,
@@ -132,12 +133,26 @@ impl PsbtState {
         match &message {
             Message::View(view::Message::Spend(msg)) => match msg {
                 view::SpendTxMessage::Cancel => {
+                    if let Some(PsbtAction::Sign(SignAction { display_modal, .. })) =
+                        &mut self.action
+                    {
+                        *display_modal = false;
+                        return Command::none();
+                    }
+
                     self.action = None;
                 }
                 view::SpendTxMessage::Delete => {
                     self.action = Some(PsbtAction::Delete(DeleteAction::default()));
                 }
                 view::SpendTxMessage::Sign => {
+                    if let Some(PsbtAction::Sign(SignAction { display_modal, .. })) =
+                        &mut self.action
+                    {
+                        *display_modal = true;
+                        return Command::none();
+                    }
+
                     let action = SignAction::new(
                         self.tx.signers(),
                         self.wallet.clone(),
@@ -365,12 +380,12 @@ impl Action for DeleteAction {
 
 pub struct SignAction {
     wallet: Arc<Wallet>,
-    chosen_hw: Option<usize>,
-    processing: bool,
     hws: HardwareWallets,
     error: Option<Error>,
+    signing: HashSet<Fingerprint>,
     signed: HashSet<Fingerprint>,
     is_saved: bool,
+    display_modal: bool,
 }
 
 impl SignAction {
@@ -382,13 +397,13 @@ impl SignAction {
         is_saved: bool,
     ) -> Self {
         Self {
-            chosen_hw: None,
-            processing: false,
+            signing: HashSet::new(),
             hws: HardwareWallets::new(datadir_path, network).with_wallet(wallet.clone()),
             wallet,
             error: None,
             signed,
             is_saved,
+            display_modal: true,
         }
     }
 }
@@ -416,61 +431,61 @@ impl Action for SignAction {
                     ..
                 }) = self.hws.list.get(i)
                 {
-                    self.chosen_hw = Some(i);
-                    self.processing = true;
+                    self.display_modal = false;
+                    self.signing.insert(*fingerprint);
                     let psbt = tx.psbt.clone();
+                    let fingerprint = *fingerprint;
                     return Command::perform(
-                        sign_psbt(self.wallet.clone(), device.clone(), *fingerprint, psbt),
-                        Message::Signed,
+                        sign_psbt(self.wallet.clone(), device.clone(), psbt),
+                        move |res| Message::Signed(fingerprint, res),
                     );
                 }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectHotSigner)) => {
-                self.processing = true;
                 return Command::perform(
                     sign_psbt_with_hot_signer(self.wallet.clone(), tx.psbt.clone()),
-                    Message::Signed,
+                    |(fg, res)| Message::Signed(fg, res),
                 );
             }
-            Message::Signed(res) => match res {
-                Err(e) => self.error = Some(e),
-                Ok((psbt, fingerprint)) => {
-                    self.error = None;
-                    self.signed.insert(fingerprint);
-                    let daemon = daemon.clone();
-                    tx.psbt = psbt.clone();
-                    if self.is_saved {
-                        return Command::perform(
-                            async move { daemon.update_spend_tx(&psbt).map_err(|e| e.into()) },
-                            Message::Updated,
-                        );
-                    // If the spend transaction was never saved before, then both the psbt and
-                    // labels attached to it must be updated.
-                    } else {
-                        let mut labels = HashMap::<LabelItem, Option<String>>::new();
-                        for (item, label) in tx.labels() {
-                            if !label.is_empty() {
-                                labels.insert(label_item_from_str(item), Some(label.clone()));
+            Message::Signed(fingerprint, res) => {
+                self.signing.remove(&fingerprint);
+                match res {
+                    Err(e) => self.error = Some(e),
+                    Ok(psbt) => {
+                        self.error = None;
+                        self.signed.insert(fingerprint);
+                        let daemon = daemon.clone();
+                        tx.psbt = psbt.clone();
+                        if self.is_saved {
+                            return Command::perform(
+                                async move { daemon.update_spend_tx(&psbt).map_err(|e| e.into()) },
+                                Message::Updated,
+                            );
+                        // If the spend transaction was never saved before, then both the psbt and
+                        // labels attached to it must be updated.
+                        } else {
+                            let mut labels = HashMap::<LabelItem, Option<String>>::new();
+                            for (item, label) in tx.labels() {
+                                if !label.is_empty() {
+                                    labels.insert(label_item_from_str(item), Some(label.clone()));
+                                }
                             }
+                            return Command::perform(
+                                async move {
+                                    daemon.update_spend_tx(&psbt)?;
+                                    daemon.update_labels(&labels).map_err(|e| e.into())
+                                },
+                                Message::Updated,
+                            );
                         }
-                        return Command::perform(
-                            async move {
-                                daemon.update_spend_tx(&psbt)?;
-                                daemon.update_labels(&labels).map_err(|e| e.into())
-                            },
-                            Message::Updated,
-                        );
                     }
                 }
-            },
+            }
             Message::Updated(res) => match res {
-                Ok(()) => {
-                    self.processing = false;
-                    match self.wallet.main_descriptor.partial_spend_info(&tx.psbt) {
-                        Ok(sigs) => tx.sigs = sigs,
-                        Err(e) => self.error = Some(Error::Unexpected(e.to_string())),
-                    }
-                }
+                Ok(()) => match self.wallet.main_descriptor.partial_spend_info(&tx.psbt) {
+                    Ok(sigs) => tx.sigs = sigs,
+                    Err(e) => self.error = Some(Error::Unexpected(e.to_string())),
+                },
                 Err(e) => self.error = Some(e),
             },
 
@@ -482,56 +497,62 @@ impl Action for SignAction {
                     self.error = Some(e.into());
                 }
             },
-            Message::View(view::Message::Reload) => {
-                self.chosen_hw = None;
-                self.error = None;
-                return self.load(daemon);
-            }
             _ => {}
         };
         Command::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        modal::Modal::new(
+        let content = toast::Manager::new(
             content,
-            view::psbt::sign_action(
-                self.error.as_ref(),
-                &self.hws.list,
-                self.wallet.signer.as_ref().map(|s| s.fingerprint()),
-                self.wallet
-                    .signer
-                    .as_ref()
-                    .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
-                self.processing,
-                self.chosen_hw,
-                &self.signed,
-            ),
+            view::psbt::sign_action_toasts(&self.hws.list, &self.signing),
         )
-        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
-        .into()
+        .into();
+        if self.display_modal {
+            modal::Modal::new(
+                content,
+                view::psbt::sign_action(
+                    self.error.as_ref(),
+                    &self.hws.list,
+                    self.wallet.signer.as_ref().map(|s| s.fingerprint()),
+                    self.wallet
+                        .signer
+                        .as_ref()
+                        .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
+                    &self.signed,
+                    &self.signing,
+                ),
+            )
+            .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+            .into()
+        } else {
+            content
+        }
     }
 }
 
 async fn sign_psbt_with_hot_signer(
     wallet: Arc<Wallet>,
     psbt: Psbt,
-) -> Result<(Psbt, Fingerprint), Error> {
+) -> (Fingerprint, Result<Psbt, Error>) {
     if let Some(signer) = &wallet.signer {
-        let psbt = signer.sign_psbt(psbt).map_err(|e| {
-            WalletError::HotSigner(format!("Hot signer failed to sign psbt: {}", e))
-        })?;
-        Ok((psbt, signer.fingerprint()))
+        let res = signer
+            .sign_psbt(psbt)
+            .map_err(|e| WalletError::HotSigner(format!("Hot signer failed to sign psbt: {}", e)))
+            .map_err(|e| e.into());
+        (signer.fingerprint(), res)
     } else {
-        Err(WalletError::HotSigner("Hot signer not loaded".to_string()).into())
+        (
+            Fingerprint::default(),
+            Err(WalletError::HotSigner("Hot signer not loaded".to_string()).into()),
+        )
     }
 }
 
 async fn sign_psbt(
     wallet: Arc<Wallet>,
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
-    fingerprint: Fingerprint,
     mut psbt: Psbt,
-) -> Result<(Psbt, Fingerprint), Error> {
+) -> Result<Psbt, Error> {
     // The BitBox02 is only going to produce a signature for a single key in the Script. In order
     // to make sure it doesn't sign for a public key from another spending path we remove the BIP32
     // derivation for the other paths.
@@ -560,7 +581,7 @@ async fn sign_psbt(
     } else {
         hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
     }
-    Ok((psbt, fingerprint))
+    Ok(psbt)
 }
 
 pub struct UpdateAction {
