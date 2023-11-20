@@ -649,7 +649,7 @@ impl Step for SaveSpend {
             spend.warning.as_ref(),
         );
         if let Some(action) = &spend.action {
-            action.view(content)
+            action.as_ref().view(content)
         } else {
             content
         }

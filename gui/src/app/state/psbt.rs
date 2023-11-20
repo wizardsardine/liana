@@ -52,6 +52,38 @@ pub trait Action {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message>;
 }
 
+pub enum PsbtAction {
+    Save(SaveAction),
+    Sign(SignAction),
+    Update(UpdateAction),
+    Broadcast(BroadcastAction),
+    Delete(DeleteAction),
+}
+
+impl<'a> AsRef<dyn Action + 'a> for PsbtAction {
+    fn as_ref(&self) -> &(dyn Action + 'a) {
+        match &self {
+            Self::Save(a) => a,
+            Self::Sign(a) => a,
+            Self::Update(a) => a,
+            Self::Broadcast(a) => a,
+            Self::Delete(a) => a,
+        }
+    }
+}
+
+impl<'a> AsMut<dyn Action + 'a> for PsbtAction {
+    fn as_mut(&mut self) -> &mut (dyn Action + 'a) {
+        match self {
+            Self::Save(a) => a,
+            Self::Sign(a) => a,
+            Self::Update(a) => a,
+            Self::Broadcast(a) => a,
+            Self::Delete(a) => a,
+        }
+    }
+}
+
 pub struct PsbtState {
     pub wallet: Arc<Wallet>,
     pub desc_policy: LianaPolicy,
@@ -59,7 +91,7 @@ pub struct PsbtState {
     pub saved: bool,
     pub warning: Option<Error>,
     pub labels_edited: LabelsEdited,
-    pub action: Option<Box<dyn Action>>,
+    pub action: Option<PsbtAction>,
 }
 
 impl PsbtState {
@@ -77,7 +109,7 @@ impl PsbtState {
 
     pub fn subscription(&self) -> Subscription<Message> {
         if let Some(action) = &self.action {
-            action.subscription()
+            action.as_ref().subscription()
         } else {
             Subscription::none()
         }
@@ -85,7 +117,7 @@ impl PsbtState {
 
     pub fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         if let Some(action) = &self.action {
-            action.load(daemon)
+            action.as_ref().load(daemon)
         } else {
             Command::none()
         }
@@ -103,7 +135,7 @@ impl PsbtState {
                     self.action = None;
                 }
                 view::SpendTxMessage::Delete => {
-                    self.action = Some(Box::<DeleteAction>::default());
+                    self.action = Some(PsbtAction::Delete(DeleteAction::default()));
                 }
                 view::SpendTxMessage::Sign => {
                     let action = SignAction::new(
@@ -114,24 +146,26 @@ impl PsbtState {
                         self.saved,
                     );
                     let cmd = action.load(daemon);
-                    self.action = Some(Box::new(action));
+                    self.action = Some(PsbtAction::Sign(action));
                     return cmd;
                 }
                 view::SpendTxMessage::EditPsbt => {
                     let action = UpdateAction::new(self.wallet.clone(), self.tx.psbt.to_string());
                     let cmd = action.load(daemon);
-                    self.action = Some(Box::new(action));
+                    self.action = Some(PsbtAction::Update(action));
                     return cmd;
                 }
                 view::SpendTxMessage::Broadcast => {
-                    self.action = Some(Box::<BroadcastAction>::default());
+                    self.action = Some(PsbtAction::Broadcast(BroadcastAction::default()));
                 }
                 view::SpendTxMessage::Save => {
-                    self.action = Some(Box::<SaveAction>::default());
+                    self.action = Some(PsbtAction::Save(SaveAction::default()));
                 }
                 _ => {
                     if let Some(action) = self.action.as_mut() {
-                        return action.update(daemon.clone(), message, &mut self.tx);
+                        return action
+                            .as_mut()
+                            .update(daemon.clone(), message, &mut self.tx);
                     }
                 }
             },
@@ -152,12 +186,16 @@ impl PsbtState {
             Message::Updated(Ok(_)) => {
                 self.saved = true;
                 if let Some(action) = self.action.as_mut() {
-                    return action.update(daemon.clone(), message, &mut self.tx);
+                    return action
+                        .as_mut()
+                        .update(daemon.clone(), message, &mut self.tx);
                 }
             }
             _ => {
                 if let Some(action) = self.action.as_mut() {
-                    return action.update(daemon.clone(), message, &mut self.tx);
+                    return action
+                        .as_mut()
+                        .update(daemon.clone(), message, &mut self.tx);
                 }
             }
         };
@@ -176,7 +214,7 @@ impl PsbtState {
             self.warning.as_ref(),
         );
         if let Some(action) = &self.action {
-            action.view(content)
+            action.as_ref().view(content)
         } else {
             content
         }
