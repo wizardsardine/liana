@@ -493,7 +493,7 @@ impl DefineBitcoind {
                 let builder = match selected_auth_type {
                     RpcAuthType::CookieFile => {
                         let cookie_path = rpc_auth_vals.cookie_path.value;
-                        let cookie = std::fs::read_to_string(&cookie_path).map_err(|e| {
+                        let cookie = std::fs::read_to_string(cookie_path).map_err(|e| {
                             Error::Bitcoind(format!("Failed to read cookie file: {}", e))
                         })?;
                         SimpleHttpTransport::builder().cookie_auth(cookie)

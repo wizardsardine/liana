@@ -95,7 +95,6 @@ impl Loader {
             .daemon_rpc_path
             .clone()
             .unwrap_or_else(|| socket_path(&datadir_path, network));
-        let network = network;
         (
             Loader {
                 network,
@@ -321,7 +320,6 @@ impl Loader {
                 let reader = BufReader::new(file);
                 let last_update_tip = reader
                     .lines()
-                    .into_iter()
                     .filter(|l| {
                         l.as_ref()
                             .map(|l| l.contains("UpdateTip") || l.contains("blockheaders"))
