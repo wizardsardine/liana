@@ -16,6 +16,7 @@ from test_framework.utils import (
     get_txid,
     spend_coins,
     sign_and_broadcast,
+    sign_and_broadcast_psbt,
 )
 
 
@@ -663,13 +664,6 @@ def test_start_rescan(lianad, bitcoind):
 def test_listtransactions(lianad, bitcoind):
     """Test listing of transactions by txid and timespan"""
 
-    def sign_and_broadcast(psbt):
-        txid = psbt.tx.txid().hex()
-        psbt = lianad.signer.sign_psbt(psbt)
-        lianad.rpc.updatespend(psbt.to_base64())
-        lianad.rpc.broadcastspend(txid)
-        return txid
-
     def wait_synced():
         wait_for(
             lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
@@ -715,7 +709,7 @@ def test_listtransactions(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, [outpoint], 6)
     psbt = PSBT.from_base64(res["psbt"])
-    txid = sign_and_broadcast(psbt)
+    txid = sign_and_broadcast_psbt(lianad, psbt)
     bitcoind.generate_block(1, wait_for_mempool=txid)
 
     # Mine 12 blocks to force the blocktime to increase
@@ -742,7 +736,7 @@ def test_listtransactions(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, [outpoint], 6)
     psbt = PSBT.from_base64(res["psbt"])
-    txid = sign_and_broadcast(psbt)
+    txid = sign_and_broadcast_psbt(lianad, psbt)
     bitcoind.generate_block(1, wait_for_mempool=txid)
 
     # Deposit a coin that will be spending (unconfirmed spend transaction)
@@ -758,7 +752,7 @@ def test_listtransactions(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, [outpoint], 6)
     psbt = PSBT.from_base64(res["psbt"])
-    txid = sign_and_broadcast(psbt)
+    txid = sign_and_broadcast_psbt(lianad, psbt)
 
     # At this point we have 12 spent and unspent coins, one of them is unconfirmed.
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 12)

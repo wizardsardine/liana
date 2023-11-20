@@ -8,6 +8,7 @@ from test_framework.utils import (
     RpcError,
     COIN,
     sign_and_broadcast,
+    sign_and_broadcast_psbt,
 )
 from test_framework.serializations import PSBT
 
@@ -407,14 +408,6 @@ def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
         return coin["spend_info"]["txid"] == txid.hex()
 
     wait_for(lambda: is_spent_by(lianad, spent_coin["outpoint"], txid_b))
-
-
-def sign_and_broadcast_psbt(lianad, psbt):
-    txid = psbt.tx.txid().hex()
-    psbt = lianad.signer.sign_psbt(psbt)
-    lianad.rpc.updatespend(psbt.to_base64())
-    lianad.rpc.broadcastspend(txid)
-    return txid
 
 
 def test_spend_replacement(lianad, bitcoind):

@@ -85,6 +85,15 @@ def sign_and_broadcast(lianad, bitcoind, psbt, recovery=False):
     return bitcoind.rpc.sendrawtransaction(tx)
 
 
+def sign_and_broadcast_psbt(lianad, psbt):
+    """Sign a PSBT, save it to the DB and broadcast it."""
+    txid = psbt.tx.txid().hex()
+    psbt = lianad.signer.sign_psbt(psbt)
+    lianad.rpc.updatespend(psbt.to_base64())
+    lianad.rpc.broadcastspend(txid)
+    return txid
+
+
 class RpcError(ValueError):
     def __init__(self, method: str, params: dict, error: str):
         super(ValueError, self).__init__(
