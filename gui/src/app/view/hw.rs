@@ -11,9 +11,8 @@ use async_hwi::DeviceKind;
 pub fn hw_list_view(
     i: usize,
     hw: &HardwareWallet,
-    chosen: bool,
-    processing: bool,
     signed: bool,
+    signing: bool,
 ) -> Element<Message> {
     let mut bttn = Button::new(match hw {
         HardwareWallet::Supported {
@@ -24,7 +23,7 @@ pub fn hw_list_view(
             registered,
             ..
         } => {
-            if chosen && processing {
+            if signing {
                 hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             } else if signed {
                 hw::sign_success_hardware_wallet(
@@ -61,7 +60,7 @@ pub fn hw_list_view(
     })
     .style(theme::Button::Border)
     .width(Length::Fill);
-    if !processing {
+    if !signing {
         if let HardwareWallet::Supported { registered, .. } = hw {
             if *registered != Some(false) {
                 bttn = bttn.on_press(Message::SelectHardwareWallet(i));

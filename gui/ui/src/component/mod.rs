@@ -9,6 +9,7 @@ pub mod hw;
 pub mod modal;
 pub mod notification;
 pub mod text;
+pub mod toast;
 pub mod tooltip;
 
 pub use tooltip::tooltip;
