@@ -269,44 +269,31 @@ impl BitcoinInterface for d::BitcoinD {
 
             // If a conflicting transaction was confirmed instead, replace the txid of the
             // spender for this coin with it and mark it as confirmed.
-            // If a conflicting transaction which doesn't spend this coin was mined or accepted in
-            // our local mempool, mark this spend as expired.
-            enum Conflict {
-                // A replacement spending transaction was confirmed.
-                Replaced((bitcoin::Txid, Block)),
-                // A transaction conflicting with the former spending transaction was confirmed or
-                // included in our local mempool.
-                Dropped,
-            }
             let conflict = res.conflicting_txs.iter().find_map(|txid| {
                 tx_getter.get_transaction(txid).and_then(|tx| {
-                    tx.block
-                        .map(|block| {
-                            // Being part of our watchonly wallet isn't enough, as it could be a
-                            // conflicting transaction which spends a different set of coins. Make sure
-                            // it does actually spend this coin.
-                            for txin in tx.tx.input {
-                                if &txin.previous_output == op {
-                                    return Conflict::Replaced((*txid, block));
-                                }
-                            }
-                            Conflict::Dropped
-                        })
-                        .or_else(|| {
-                            // If the coin is actually being spent, but by another transaction, it
-                            // will just be set at the next poll in `spending_coins()`.
-                            if self.is_in_mempool(txid) {
-                                Some(Conflict::Dropped)
+                    tx.block.and_then(|block| {
+                        // Being part of our watchonly wallet isn't enough, as it could be a
+                        // conflicting transaction which spends a different set of coins. Make sure
+                        // it does actually spend this coin.
+                        tx.tx.input.iter().find_map(|txin| {
+                            if &txin.previous_output == op {
+                                Some((*txid, block))
                             } else {
                                 None
                             }
                         })
+                    })
                 })
             });
-            match conflict {
-                Some(Conflict::Replaced((txid, block))) => spent.push((*op, txid, block)),
-                Some(Conflict::Dropped) => expired.push(*op),
-                None => {}
+            if let Some((txid, block)) = conflict {
+                spent.push((*op, txid, block));
+                continue;
+            }
+
+            // If the transaction was not confirmed, a conflicting transaction spending this coin
+            // too wasn't mined, but still isn't in our mempool anymore, mark the spend as expired.
+            if !self.is_in_mempool(txid) {
+                expired.push(*op);
             }
         }
 
