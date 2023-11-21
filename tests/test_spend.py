@@ -391,5 +391,7 @@ def test_sweep(lianad, bitcoind):
     sign_and_broadcast_psbt(lianad, psbt)
     wait_for(lambda: len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 1)
     wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 2)
-    balance = sum(c["amount"] for c in lianad.rpc.listcoins(["unconfirmed", "confirmed"])["coins"])
+    balance = sum(
+        c["amount"] for c in lianad.rpc.listcoins(["unconfirmed", "confirmed"])["coins"]
+    )
     assert balance == int((0.2 + 0.1 + 0.3) * COIN)

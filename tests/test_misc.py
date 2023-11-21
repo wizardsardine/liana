@@ -274,7 +274,9 @@ def test_migration(lianad_multisig, bitcoind):
     assert len(spend_txs) == 2 and all(s["updated_at"] is not None for s in spend_txs)
 
 
-@pytest.mark.skipif(not IS_BITCOIND_25, reason="Need 'generateblock' with 'submit=False'")
+@pytest.mark.skipif(
+    not IS_BITCOIND_25, reason="Need 'generateblock' with 'submit=False'"
+)
 def test_bitcoind_submit_block(bitcoind):
     block_count = bitcoind.rpc.getblockcount()
     block = bitcoind.rpc.generateblock(bitcoind.rpc.getnewaddress(), [], False)
@@ -294,7 +296,9 @@ def bitcoind_wait_new_block(bitcoind):
             continue
 
 
-@pytest.mark.skipif(not IS_BITCOIND_25, reason="Need 'generateblock' with 'submit=False'")
+@pytest.mark.skipif(
+    not IS_BITCOIND_25, reason="Need 'generateblock' with 'submit=False'"
+)
 def test_retry_on_workqueue_exceeded(lianad, bitcoind, executor):
     """Make sure we retry requests to bitcoind if it is temporarily overloaded."""
     # Start by reducing the work queue to a single slot. Note we need to stop lianad
@@ -363,5 +367,7 @@ def test_wo_wallet_copy_from_bitcoind_datadir(lianad, bitcoind):
     # Now restart lianad. It should detect it within the bitcoind datadir and copy it to its own.
     lianad.start()
     assert os.path.isdir(new_wo_path)
-    assert lianad.is_in_log("A data directory exists with no watchonly wallet. This is most likely due to.*")
+    assert lianad.is_in_log(
+        "A data directory exists with no watchonly wallet. This is most likely due to.*"
+    )
     assert lianad.is_in_log("Successfully copied the watchonly wallet file.")

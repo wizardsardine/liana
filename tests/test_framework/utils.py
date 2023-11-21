@@ -26,7 +26,7 @@ OLD_LIANAD_PATH = os.getenv("OLD_LIANAD_PATH", None)
 IS_BITCOIND_25 = bool(int(os.getenv("IS_BITCOIND_25", True)))
 
 
-COIN = 10 ** 8
+COIN = 10**8
 
 
 def wait_for(success, timeout=TIMEOUT, debug_fn=None):

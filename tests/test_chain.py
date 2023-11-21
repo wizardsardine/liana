@@ -405,6 +405,7 @@ def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
         if coin["spend_info"] is None:
             return False
         return coin["spend_info"]["txid"] == txid.hex()
+
     wait_for(lambda: is_spent_by(lianad, spent_coin["outpoint"], txid_b))
 
 
