@@ -195,7 +195,7 @@ def test_send_to_self(lianad, bitcoind):
     # Note they may ask for an impossible send-to-self. In this case we'll error cleanly.
     with pytest.raises(
         RpcError,
-        match="Not enough fund to create a 40500 sat/vb transaction with input value 0.12 BTC",
+        match="Insufficient funds. Missing \\d+ sats",
     ):
         lianad.rpc.createspend({}, outpoints, 40500)
 
