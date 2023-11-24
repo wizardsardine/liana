@@ -414,6 +414,134 @@ impl DaemonControl {
         feerate_vb: u64,
         change_address: Option<bitcoin::Address<bitcoin::address::NetworkUnchecked>>,
     ) -> Result<CreateSpendResult, CommandError> {
+        let is_self_send = destinations.is_empty();
+        // For self-send, the coins must be specified.
+        if is_self_send && coins_outpoints.is_empty() {
+            return Err(CommandError::NoOutpointForSelfSend);
+        }
+        if feerate_vb < 1 {
+            return Err(CommandError::InvalidFeerate(feerate_vb));
+        }
+        let mut db_conn = self.db.connection();
+
+        // Check the destination addresses are valid for the network and
+        // sanity check each output's value.
+        let mut destinations_checked = HashMap::with_capacity(destinations.len());
+        for (address, value_sat) in destinations {
+            let address = self.validate_address(address.clone())?;
+            let amount = bitcoin::Amount::from_sat(*value_sat);
+            check_output_value(amount)?;
+            destinations_checked.insert(address, amount);
+        }
+        // Check also the change address if one has been given.
+        let change_address = change_address
+            .map(|addr| self.validate_address(addr))
+            .transpose()?;
+        // The candidate coins will be either all optional or all mandatory.
+        // If no coins have been specified, then coins will be selected automatically for
+        // the spend from a set of optional candidates.
+        // Otherwise, only the specified coins will be used, all as mandatory candidates.
+        let candidate_coins: Vec<CandidateCoin> = if coins_outpoints.is_empty() {
+            // We only select confirmed coins for now. Including unconfirmed ones as well would
+            // introduce a whole bunch of additional complexity.
+            db_conn
+                .coins(&[CoinStatus::Confirmed], &[])
+                .into_values()
+                .map(|c| CandidateCoin {
+                    coin: c,
+                    must_select: false, // No coin is mandatory.
+                })
+                .collect()
+        } else {
+            // Query from DB and sanity check the provided coins to spend.
+            let coins = db_conn.coins(&[], coins_outpoints);
+            for op in coins_outpoints {
+                let coin = coins.get(op).ok_or(CommandError::UnknownOutpoint(*op))?;
+                if coin.is_spent() {
+                    return Err(CommandError::AlreadySpent(*op));
+                }
+                if coin.is_immature {
+                    return Err(CommandError::ImmatureCoinbase(*op));
+                }
+            }
+            coins
+                .into_values()
+                .map(|c| CandidateCoin {
+                    coin: c,
+                    must_select: true, // All coins must be selected.
+                })
+                .collect()
+        };
+
+        self.create_spend_internal(
+            &destinations_checked,
+            &candidate_coins,
+            feerate_vb,
+            0, // No min fee required.
+            change_address,
+        )
+    }
+
+    pub fn update_spend(&self, mut psbt: Psbt) -> Result<(), CommandError> {
+        let mut db_conn = self.db.connection();
+        let tx = &psbt.unsigned_tx;
+
+        // If the transaction already exists in DB, merge the signatures for each input on a best
+        // effort basis.
+        // We work on the newly provided PSBT, in case its content was updated.
+        let txid = tx.txid();
+        if let Some(db_psbt) = db_conn.spend_tx(&txid) {
+            let db_tx = db_psbt.unsigned_tx;
+            for i in 0..db_tx.input.len() {
+                if tx
+                    .input
+                    .get(i)
+                    .map(|tx_in| tx_in.previous_output == db_tx.input[i].previous_output)
+                    != Some(true)
+                {
+                    continue;
+                }
+                let psbtin = match psbt.inputs.get_mut(i) {
+                    Some(psbtin) => psbtin,
+                    None => continue,
+                };
+                let db_psbtin = match db_psbt.inputs.get(i) {
+                    Some(db_psbtin) => db_psbtin,
+                    None => continue,
+                };
+                psbtin
+                    .partial_sigs
+                    .extend(db_psbtin.partial_sigs.clone().into_iter());
+            }
+        } else {
+            // If the transaction doesn't exist in DB already, sanity check its inputs.
+            // FIXME: should we allow for external inputs?
+            let outpoints: Vec<bitcoin::OutPoint> =
+                tx.input.iter().map(|txin| txin.previous_output).collect();
+            let coins = db_conn.coins_by_outpoints(&outpoints);
+            if coins.len() != outpoints.len() {
+                for op in outpoints {
+                    if coins.get(&op).is_none() {
+                        return Err(CommandError::UnknownOutpoint(op));
+                    }
+                }
+            }
+        }
+
+        // Finally, insert (or update) the PSBT in database.
+        db_conn.store_spend(&psbt);
+
+        Ok(())
+    }
+
+    fn create_spend_internal(
+        &self,
+        destinations: &HashMap<bitcoin::Address, bitcoin::Amount>,
+        candidate_coins: &[CandidateCoin],
+        feerate_vb: u64,
+        min_fee: u64,
+        change_address: Option<bitcoin::Address>,
+    ) -> Result<CreateSpendResult, CommandError> {
         // This method is a bit convoluted, but it's the nature of creating a Bitcoin transaction
         // with a target feerate and outputs. In addition, we support different modes (coin control
         // vs automated coin selection, self-spend, sweep, etc..) which make the logic a bit more
@@ -426,14 +554,10 @@ impl DaemonControl {
         //    The change output is also (ab)used to implement a "sweep" functionality. We allow to
         //    set it to an external address to send all the inputs' value minus the fee and the
         //    other output's value to a specific, external, address.
-        // 3. Fetch the selected coins from database and add them as inputs to the transaction.
+        // 3. Add the selected coins as inputs to the transaction.
         // 4. Finalize the PSBT and sanity check it before returning it.
 
         let is_self_send = destinations.is_empty();
-        // For self-send, the coins must be specified.
-        if is_self_send && coins_outpoints.is_empty() {
-            return Err(CommandError::NoOutpointForSelfSend);
-        }
         if feerate_vb < 1 {
             return Err(CommandError::InvalidFeerate(feerate_vb));
         }
@@ -443,16 +567,13 @@ impl DaemonControl {
         let mut tx = bitcoin::Transaction {
             version: 2,
             lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO), // TODO: randomized anti fee sniping
-            input: Vec::with_capacity(coins_outpoints.len()), // Will be zero capacity for coin selection.
+            input: Vec::with_capacity(candidate_coins.iter().filter(|c| c.must_select).count()),
             output: Vec::with_capacity(destinations.len()),
         };
         // Add the destinations outputs to the transaction and PSBT. At the same time
         // sanity check each output's value.
         let mut psbt_outs = Vec::with_capacity(destinations.len());
-        for (address, value_sat) in destinations {
-            let address = self.validate_address(address.clone())?;
-
-            let amount = bitcoin::Amount::from_sat(*value_sat);
+        for (address, &amount) in destinations {
             check_output_value(amount)?;
 
             tx.output.push(bitcoin::TxOut {
@@ -462,7 +583,7 @@ impl DaemonControl {
             // If it's an address of ours, signal it as change to signing devices by adding the
             // BIP32 derivation path to the PSBT output.
             let bip32_derivation =
-                if let Some((index, is_change)) = db_conn.derivation_index_by_address(&address) {
+                if let Some((index, is_change)) = db_conn.derivation_index_by_address(address) {
                     let desc = if is_change {
                         self.config.main_descriptor.change_descriptor()
                     } else {
@@ -491,7 +612,6 @@ impl DaemonControl {
             pub index: bip32::ChildNumber,
         }
         let (change_addr, int_change_info) = if let Some(addr) = change_address {
-            let addr = self.validate_address(addr)?;
             (addr, None)
         } else {
             let index = db_conn.change_index();
@@ -509,41 +629,9 @@ impl DaemonControl {
             value: std::u64::MAX,
             script_pubkey: change_addr.script_pubkey(),
         };
-        // Now, either select the coins necessary or use the ones provided (verifying they do in
-        // fact exist and are still unspent) and determine whether there is any leftover to create a
-        // change output.
+        // Now select the coins necessary using the provided candidates and determine whether
+        // there is any leftover to create a change output.
         let (selected_coins, change_amount) = {
-            let candidate_coins: Vec<CandidateCoin> = if coins_outpoints.is_empty() {
-                // We only select confirmed coins for now. Including unconfirmed ones as well would
-                // introduce a whole bunch of additional complexity.
-                db_conn
-                    .coins(&[CoinStatus::Confirmed], &[])
-                    .into_values()
-                    .map(|c| CandidateCoin {
-                        coin: c,
-                        must_select: false, // No coin is mandatory.
-                    })
-                    .collect()
-            } else {
-                // Query from DB and sanity check the provided coins to spend.
-                let coins = db_conn.coins(&[], coins_outpoints);
-                for op in coins_outpoints {
-                    let coin = coins.get(op).ok_or(CommandError::UnknownOutpoint(*op))?;
-                    if coin.is_spent() {
-                        return Err(CommandError::AlreadySpent(*op));
-                    }
-                    if coin.is_immature {
-                        return Err(CommandError::ImmatureCoinbase(*op));
-                    }
-                }
-                coins
-                    .into_values()
-                    .map(|c| CandidateCoin {
-                        coin: c,
-                        must_select: true, // All coins must be selected.
-                    })
-                    .collect()
-            };
             // At this point the transaction still has no input and no change output, as expected
             // by the coins selection helper function.
             assert!(tx.input.is_empty());
@@ -564,13 +652,13 @@ impl DaemonControl {
                 .try_into()
                 .expect("Weight must fit in a u32");
             select_coins_for_spend(
-                &candidate_coins,
+                candidate_coins,
                 tx.clone(),
                 change_txo.clone(),
                 feerate_vb,
-                0, // We only constrain the feerate.
+                min_fee,
                 max_sat_wu,
-                is_self_send, // Must have change if self-send.
+                is_self_send,
             )
             .map_err(CommandError::CoinSelectionError)?
         };
@@ -673,58 +761,6 @@ impl DaemonControl {
         // TODO: maybe check for common standardness rules (max size, ..)?
 
         Ok(CreateSpendResult { psbt })
-    }
-
-    pub fn update_spend(&self, mut psbt: Psbt) -> Result<(), CommandError> {
-        let mut db_conn = self.db.connection();
-        let tx = &psbt.unsigned_tx;
-
-        // If the transaction already exists in DB, merge the signatures for each input on a best
-        // effort basis.
-        // We work on the newly provided PSBT, in case its content was updated.
-        let txid = tx.txid();
-        if let Some(db_psbt) = db_conn.spend_tx(&txid) {
-            let db_tx = db_psbt.unsigned_tx;
-            for i in 0..db_tx.input.len() {
-                if tx
-                    .input
-                    .get(i)
-                    .map(|tx_in| tx_in.previous_output == db_tx.input[i].previous_output)
-                    != Some(true)
-                {
-                    continue;
-                }
-                let psbtin = match psbt.inputs.get_mut(i) {
-                    Some(psbtin) => psbtin,
-                    None => continue,
-                };
-                let db_psbtin = match db_psbt.inputs.get(i) {
-                    Some(db_psbtin) => db_psbtin,
-                    None => continue,
-                };
-                psbtin
-                    .partial_sigs
-                    .extend(db_psbtin.partial_sigs.clone().into_iter());
-            }
-        } else {
-            // If the transaction doesn't exist in DB already, sanity check its inputs.
-            // FIXME: should we allow for external inputs?
-            let outpoints: Vec<bitcoin::OutPoint> =
-                tx.input.iter().map(|txin| txin.previous_output).collect();
-            let coins = db_conn.coins_by_outpoints(&outpoints);
-            if coins.len() != outpoints.len() {
-                for op in outpoints {
-                    if coins.get(&op).is_none() {
-                        return Err(CommandError::UnknownOutpoint(op));
-                    }
-                }
-            }
-        }
-
-        // Finally, insert (or update) the PSBT in database.
-        db_conn.store_spend(&psbt);
-
-        Ok(())
     }
 
     pub fn update_labels(&self, items: &HashMap<LabelItem, Option<String>>) {
