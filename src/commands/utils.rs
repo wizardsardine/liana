@@ -123,8 +123,8 @@ where
 ///
 /// `min_fee` is the minimum fee (in sats) that the selection must have.
 ///
-/// `max_sat_weight` is the maximum size difference (in vb) of
-/// an input in the transaction before and after satisfaction.
+/// `max_sat_weight` is the maximum weight difference of an input in the
+/// transaction before and after satisfaction.
 ///
 /// `must_have_change` indicates whether the transaction must have a change output.
 /// If `true`, the returned change amount will be positive.
