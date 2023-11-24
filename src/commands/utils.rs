@@ -72,6 +72,40 @@ where
     consensus::deserialize(&s).map_err(de::Error::custom)
 }
 
+/// Metric based on [`LowestFee`] that aims to minimize transaction fees
+/// with the additional option to only find solutions with a change output.
+///
+/// Using this metric with `must_have_change: false` is equivalent to using
+/// [`LowestFee`].
+pub struct LowestFeeChangeCondition<'c, C> {
+    /// The underlying [`LowestFee`] metric to use.
+    pub lowest_fee: LowestFee<'c, C>,
+    /// If `true`, only solutions with change will be found.
+    pub must_have_change: bool,
+}
+
+impl<'c, C> bdk_coin_select::BnbMetric for LowestFeeChangeCondition<'c, C>
+where
+    for<'a, 'b> C: Fn(&'b CoinSelector<'a>, Target) -> bdk_coin_select::Drain,
+{
+    fn score(&mut self, cs: &CoinSelector<'_>) -> Option<bdk_coin_select::float::Ordf32> {
+        let drain = (self.lowest_fee.change_policy)(cs, self.lowest_fee.target);
+        if drain.is_none() && self.must_have_change {
+            None
+        } else {
+            self.lowest_fee.score(cs)
+        }
+    }
+
+    fn bound(&mut self, cs: &CoinSelector<'_>) -> Option<bdk_coin_select::float::Ordf32> {
+        self.lowest_fee.bound(cs)
+    }
+
+    fn requires_ordering_by_descending_value_pwu(&self) -> bool {
+        self.lowest_fee.requires_ordering_by_descending_value_pwu()
+    }
+}
+
 /// Select coins for spend.
 ///
 /// Returns the selected coins and the change amount, which could be zero.
@@ -89,8 +123,11 @@ where
 ///
 /// `min_fee` is the minimum fee (in sats) that the selection must have.
 ///
-/// `max_sat_weight` is the maximum size difference (in vb) of
-/// an input in the transaction before and after satisfaction.
+/// `max_sat_weight` is the maximum weight difference of an input in the
+/// transaction before and after satisfaction.
+///
+/// `must_have_change` indicates whether the transaction must have a change output.
+/// If `true`, the returned change amount will be positive.
 pub fn select_coins_for_spend(
     candidate_coins: &[CandidateCoin],
     base_tx: bitcoin::Transaction,
@@ -98,6 +135,7 @@ pub fn select_coins_for_spend(
     feerate_vb: f32,
     min_fee: u64,
     max_sat_weight: u32,
+    must_have_change: bool,
 ) -> Result<(Vec<Coin>, bitcoin::Amount), InsufficientFunds> {
     let out_value_nochange = base_tx.output.iter().map(|o| o.value).sum();
 
@@ -157,23 +195,42 @@ pub fn select_coins_for_spend(
         feerate: FeeRate::from_sat_per_vb(feerate_vb),
         min_fee,
     };
-    if let Err(e) = selector.run_bnb(
-        LowestFee {
-            target,
-            long_term_feerate,
-            change_policy: &change_policy,
-        },
-        100_000,
-    ) {
+    let lowest_fee = LowestFee {
+        target,
+        long_term_feerate,
+        change_policy: &change_policy,
+    };
+    let lowest_fee_change_cond = LowestFeeChangeCondition {
+        lowest_fee,
+        must_have_change,
+    };
+    if let Err(e) = selector.run_bnb(lowest_fee_change_cond, 100_000) {
         warn!(
             "Coin selection error: '{}'. Selecting coins by descending value per weight unit...",
             e.to_string()
         );
         selector.sort_candidates_by_descending_value_pwu();
-        // If more coins still need to be selected to meet target, then `change_policy(&selector, target)`
-        // will give `Drain::none()`, i.e. no change, and this will simply select more coins until
-        // they cover the target.
-        selector.select_until_target_met(target, change_policy(&selector, target))?;
+        // Select more coins until target is met and change condition satisfied.
+        loop {
+            let drain = change_policy(&selector, target);
+            if selector.is_target_met(target, drain) && (drain.is_some() || !must_have_change) {
+                break;
+            }
+            if !selector.select_next() {
+                // If the solution must have change, we calculate how much is missing from the current
+                // selection in order for there to be a change output with the smallest possible value.
+                let drain = if must_have_change {
+                    bdk_coin_select::Drain {
+                        weights: drain_weights,
+                        value: DUST_OUTPUT_SATS,
+                    }
+                } else {
+                    drain
+                };
+                let missing = selector.excess(target, drain).unsigned_abs();
+                return Err(InsufficientFunds { missing });
+            }
+        }
     }
     // By now, selection is complete and we can check how much change to give according to our policy.
     let drain = change_policy(&selector, target);

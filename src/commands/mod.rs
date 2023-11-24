@@ -550,10 +550,13 @@ impl DaemonControl {
                 feerate_vb,
                 0, // We only constrain the feerate.
                 max_sat_wu,
+                is_self_send, // Must have change if self-send.
             )
             .map_err(CommandError::CoinSelectionError)?
         };
         // If necessary, add a change output.
+        // For a self-send, coin selection will only find solutions with change and will otherwise
+        // return an error. In any case, the PSBT sanity check will catch a transaction with no outputs.
         if change_amount.to_sat() > 0 {
             // Don't forget to update our next change index!
             let next_index = change_index
@@ -569,12 +572,6 @@ impl DaemonControl {
                 bip32_derivation: change_desc.bip32_derivations(),
                 ..PsbtOut::default()
             });
-        } else if is_self_send {
-            return Err(CommandError::InsufficientFunds(
-                selected_coins.iter().map(|c| c.amount).sum(),
-                None,
-                feerate_vb,
-            ));
         }
 
         // Iterate through selected coins and add necessary information to the PSBT inputs.
@@ -1492,14 +1489,10 @@ mod tests {
             spend_block: None,
         }]);
         let empty_dest = &HashMap::<bitcoin::Address<address::NetworkUnchecked>, u64>::new();
-        assert_eq!(
+        assert!(matches!(
             control.create_spend(empty_dest, &[confirmed_op_3], 5),
-            Err(CommandError::InsufficientFunds(
-                bitcoin::Amount::from_sat(5_250),
-                None,
-                5
-            ))
-        );
+            Err(CommandError::CoinSelectionError(..))
+        ));
         // If we use a lower fee, the self-send will succeed.
         let res = control
             .create_spend(empty_dest, &[confirmed_op_3], 1)
