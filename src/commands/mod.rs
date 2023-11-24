@@ -412,16 +412,20 @@ impl DaemonControl {
         destinations: &HashMap<bitcoin::Address<bitcoin::address::NetworkUnchecked>, u64>,
         coins_outpoints: &[bitcoin::OutPoint],
         feerate_vb: u64,
+        change_address: Option<bitcoin::Address<bitcoin::address::NetworkUnchecked>>,
     ) -> Result<CreateSpendResult, CommandError> {
         // This method is a bit convoluted, but it's the nature of creating a Bitcoin transaction
         // with a target feerate and outputs. In addition, we support different modes (coin control
-        // vs automated coin selection, self-spend, etc..) which make the logic a bit more
+        // vs automated coin selection, self-spend, sweep, etc..) which make the logic a bit more
         // intricate. Here is a brief overview of what we're doing here:
         // 1. Create a transaction with all the target outputs (if this is a self-send, none are
         //    added at this step the only output will be added as a change output).
         // 2. Automatically select the coins if necessary and determine whether a change output
         //    will be necessary for this transaction from the set of (automatically or manually)
         //    selected coins. The output for a self-send is added there.
+        //    The change output is also (ab)used to implement a "sweep" functionality. We allow to
+        //    set it to an external address to send all the inputs' value minus the fee and the
+        //    other output's value to a specific, external, address.
         // 3. Fetch the selected coins from database and add them as inputs to the transaction.
         // 4. Finalize the PSBT and sanity check it before returning it.
 
@@ -478,16 +482,32 @@ impl DaemonControl {
         // Now compute whether we'll need a change output while automatically selecting coins to be
         // used as input if necessary.
         // We need to get the size of a potential change output to select coins / determine whether
-        // we should include one, so get a change address and create a dummy txo for this purpose.
-        let change_index = db_conn.change_index();
-        let change_desc = self
-            .config
-            .main_descriptor
-            .change_descriptor()
-            .derive(change_index, &self.secp);
+        // we should include one, so get the change address and create a dummy txo for this purpose.
+        // The change address may be externally specified for the purpose of a "sweep": the user
+        // would set the value of some outputs (or none) and fill-in an address to be used for "all
+        // the rest". This is the same logic as for a change output, except it's external.
+        struct InternalChangeInfo {
+            pub desc: descriptors::DerivedSinglePathLianaDesc,
+            pub index: bip32::ChildNumber,
+        }
+        let (change_addr, int_change_info) = if let Some(addr) = change_address {
+            let addr = self.validate_address(addr)?;
+            (addr, None)
+        } else {
+            let index = db_conn.change_index();
+            let desc = self
+                .config
+                .main_descriptor
+                .change_descriptor()
+                .derive(index, &self.secp);
+            (
+                desc.address(self.config.bitcoin_config.network),
+                Some(InternalChangeInfo { desc, index }),
+            )
+        };
         let mut change_txo = bitcoin::TxOut {
             value: std::u64::MAX,
-            script_pubkey: change_desc.script_pubkey(),
+            script_pubkey: change_addr.script_pubkey(),
         };
         // Now, either select the coins necessary or use the ones provided (verifying they do in
         // fact exist and are still unspent) and determine whether there is any leftover to create a
@@ -558,18 +578,45 @@ impl DaemonControl {
         // For a self-send, coin selection will only find solutions with change and will otherwise
         // return an error. In any case, the PSBT sanity check will catch a transaction with no outputs.
         if change_amount.to_sat() > 0 {
-            // Don't forget to update our next change index!
-            let next_index = change_index
-                .increment()
-                .expect("Must not get into hardened territory");
-            db_conn.set_change_index(next_index, &self.secp);
             check_output_value(change_amount)?;
+
+            // If we generated a change address internally, set the BIP32 derivations in the PSBT
+            // output to tell the signers it's an internal address and make sure to update our next
+            // change index. Otherwise it's a sweep, so no need to set anything.
+            // If the change address was set by the caller, check whether it's one of ours. If it
+            // is, set the BIP32 derivations accordingly. In addition, if it's a change address for
+            // a later index than we currently have set as next change derivation index, update it.
+            let bip32_derivation = if let Some(InternalChangeInfo { desc, index }) = int_change_info
+            {
+                let next_index = index
+                    .increment()
+                    .expect("Must not get into hardened territory");
+                db_conn.set_change_index(next_index, &self.secp);
+                desc.bip32_derivations()
+            } else if let Some((index, is_change)) =
+                db_conn.derivation_index_by_address(&change_addr)
+            {
+                let desc = if is_change {
+                    if db_conn.change_index() < index {
+                        let next_index = index
+                            .increment()
+                            .expect("Must not get into hardened territory");
+                        db_conn.set_change_index(next_index, &self.secp);
+                    }
+                    self.config.main_descriptor.change_descriptor()
+                } else {
+                    self.config.main_descriptor.receive_descriptor()
+                };
+                desc.derive(index, &self.secp).bip32_derivations()
+            } else {
+                Default::default()
+            };
 
             // TODO: shuffle once we have Taproot
             change_txo.value = change_amount.to_sat();
             tx.output.push(change_txo);
             psbt_outs.push(PsbtOut {
-                bip32_derivation: change_desc.bip32_derivations(),
+                bip32_derivation,
                 ..PsbtOut::default()
             });
         }
@@ -1233,7 +1280,7 @@ mod tests {
         let dummy_value = 10_000;
         let mut destinations = <HashMap<bitcoin::Address<address::NetworkUnchecked>, u64>>::new();
         assert_eq!(
-            control.create_spend(&destinations, &[], 1),
+            control.create_spend(&destinations, &[], 1, None),
             Err(CommandError::NoOutpointForSelfSend)
         );
         destinations = [(dummy_addr.clone(), dummy_value)]
@@ -1242,18 +1289,18 @@ mod tests {
             .collect();
         // Insufficient funds for coin selection.
         assert!(matches!(
-            control.create_spend(&destinations, &[], 1),
+            control.create_spend(&destinations, &[], 1, None),
             Err(CommandError::CoinSelectionError(..))
         ));
         assert_eq!(
-            control.create_spend(&destinations, &[dummy_op], 0),
+            control.create_spend(&destinations, &[dummy_op], 0, None),
             Err(CommandError::InvalidFeerate(0))
         );
 
         // The coin doesn't exist. If we create a new unspent one at this outpoint with a much
         // higher value, we'll get a Spend transaction with a change output.
         assert_eq!(
-            control.create_spend(&destinations, &[dummy_op], 1),
+            control.create_spend(&destinations, &[dummy_op], 1, None),
             Err(CommandError::UnknownOutpoint(dummy_op))
         );
         let mut db_conn = control.db().lock().unwrap().connection();
@@ -1270,10 +1317,12 @@ mod tests {
         // If we try to use coin selection, the unconfirmed coin will not be used as a candidate
         // and so we get a coin selection error due to insufficient funds.
         assert!(matches!(
-            control.create_spend(&destinations, &[], 1),
+            control.create_spend(&destinations, &[], 1, None),
             Err(CommandError::CoinSelectionError(..))
         ));
-        let res = control.create_spend(&destinations, &[dummy_op], 1).unwrap();
+        let res = control
+            .create_spend(&destinations, &[dummy_op], 1, None)
+            .unwrap();
         assert!(res.psbt.inputs[0].non_witness_utxo.is_some());
         let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 1);
@@ -1288,29 +1337,31 @@ mod tests {
         // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 170 sats fees.
         // At 2sats/vb, it's twice that.
         assert_eq!(tx.output[1].value, 89_830);
-        let res = control.create_spend(&destinations, &[dummy_op], 2).unwrap();
+        let res = control
+            .create_spend(&destinations, &[dummy_op], 2, None)
+            .unwrap();
         let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.output[1].value, 89_660);
 
         // A feerate of 555 won't trigger the sanity checks (they were previously not taking the
         // satisfaction size into account and overestimating the feerate).
         control
-            .create_spend(&destinations, &[dummy_op], 555)
+            .create_spend(&destinations, &[dummy_op], 555, None)
             .unwrap();
 
         // If we ask for a too high feerate, or a too large/too small output, it'll fail.
         assert!(matches!(
-            control.create_spend(&destinations, &[dummy_op], 10_000),
+            control.create_spend(&destinations, &[dummy_op], 10_000, None),
             Err(CommandError::CoinSelectionError(..))
         ));
         *destinations.get_mut(&dummy_addr).unwrap() = 100_001;
         assert!(matches!(
-            control.create_spend(&destinations, &[dummy_op], 1),
+            control.create_spend(&destinations, &[dummy_op], 1, None),
             Err(CommandError::CoinSelectionError(..))
         ));
         *destinations.get_mut(&dummy_addr).unwrap() = 4_500;
         assert_eq!(
-            control.create_spend(&destinations, &[dummy_op], 1),
+            control.create_spend(&destinations, &[dummy_op], 1, None),
             Err(CommandError::InvalidOutputValue(bitcoin::Amount::from_sat(
                 4_500
             )))
@@ -1322,7 +1373,7 @@ mod tests {
         let invalid_destinations: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
             [(invalid_addr, dummy_value)].iter().cloned().collect();
         assert!(matches!(
-            control.create_spend(&invalid_destinations, &[dummy_op], 1),
+            control.create_spend(&invalid_destinations, &[dummy_op], 1, None),
             Err(CommandError::Address(
                 address::Error::NetworkValidation { .. }
             ))
@@ -1331,7 +1382,9 @@ mod tests {
         // If we ask for a large, but valid, output we won't get a change output. 95_000 because we
         // won't create an output lower than 5k sats.
         *destinations.get_mut(&dummy_addr).unwrap() = 95_000;
-        let res = control.create_spend(&destinations, &[dummy_op], 1).unwrap();
+        let res = control
+            .create_spend(&destinations, &[dummy_op], 1, None)
+            .unwrap();
         let tx = res.psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
@@ -1352,13 +1405,13 @@ mod tests {
             .unwrap(),
         )]);
         assert_eq!(
-            control.create_spend(&destinations, &[dummy_op], 1),
+            control.create_spend(&destinations, &[dummy_op], 1, None),
             Err(CommandError::AlreadySpent(dummy_op))
         );
         // If we try to use coin selection, the spent coin will not be used as a candidate
         // and so we get a coin selection error due to insufficient funds.
         assert!(matches!(
-            control.create_spend(&destinations, &[], 1),
+            control.create_spend(&destinations, &[], 1, None),
             Err(CommandError::CoinSelectionError(..))
         ));
 
@@ -1382,7 +1435,7 @@ mod tests {
         // based on a minimum feerate of `feerate_vb / 4.0` sats/wu, which can result in
         // the sats/vb feerate being lower than `feerate_vb`.
         assert_eq!(
-            control.create_spend(&destinations, &[dummy_op_dup], 1_003),
+            control.create_spend(&destinations, &[dummy_op_dup], 1_003, None),
             Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(
                 1_001
             )))
@@ -1408,14 +1461,14 @@ mod tests {
         }]);
         // Coin selection error due to insufficient funds.
         assert!(matches!(
-            control.create_spend(&destinations, &[], 1),
+            control.create_spend(&destinations, &[], 1, None),
             Err(CommandError::CoinSelectionError(..))
         ));
         // Set destination amount equal to value of confirmed coins.
         *destinations.get_mut(&dummy_addr).unwrap() = 80_000;
         // Coin selection error occurs due to insufficient funds to pay fee.
         assert!(matches!(
-            control.create_spend(&destinations, &[], 1),
+            control.create_spend(&destinations, &[], 1, None),
             Err(CommandError::CoinSelectionError(..))
         ));
         let confirmed_op_2 = bitcoin::OutPoint {
@@ -1437,7 +1490,7 @@ mod tests {
             spend_block: None,
         }]);
         // First, create a transaction using auto coin selection.
-        let res_auto = control.create_spend(&destinations, &[], 1).unwrap();
+        let res_auto = control.create_spend(&destinations, &[], 1, None).unwrap();
         let tx_auto = res_auto.psbt.unsigned_tx;
         let mut tx_prev_outpoints = tx_auto
             .input
@@ -1457,7 +1510,7 @@ mod tests {
 
         // Create a second transaction using manual coin selection.
         let res_manual = control
-            .create_spend(&destinations, &[confirmed_op_1, confirmed_op_2], 1)
+            .create_spend(&destinations, &[confirmed_op_1, confirmed_op_2], 1, None)
             .unwrap();
         let tx_manual = res_manual.psbt.unsigned_tx;
         // Check that manual and auto selection give same outputs (including change).
@@ -1490,12 +1543,12 @@ mod tests {
         }]);
         let empty_dest = &HashMap::<bitcoin::Address<address::NetworkUnchecked>, u64>::new();
         assert!(matches!(
-            control.create_spend(empty_dest, &[confirmed_op_3], 5),
+            control.create_spend(empty_dest, &[confirmed_op_3], 5, None),
             Err(CommandError::CoinSelectionError(..))
         ));
         // If we use a lower fee, the self-send will succeed.
         let res = control
-            .create_spend(empty_dest, &[confirmed_op_3], 1)
+            .create_spend(empty_dest, &[confirmed_op_3], 1, None)
             .unwrap();
         let tx = res.psbt.unsigned_tx;
         let tx_prev_outpoints = tx
@@ -1523,7 +1576,7 @@ mod tests {
             spend_block: None,
         }]);
         assert_eq!(
-            control.create_spend(&destinations, &[imma_op], 1_001),
+            control.create_spend(&destinations, &[imma_op], 1_001, None),
             Err(CommandError::ImmatureCoinbase(imma_op))
         );
 
@@ -1602,17 +1655,17 @@ mod tests {
                 .cloned()
                 .collect();
         let mut psbt_a = control
-            .create_spend(&destinations_a, &[dummy_op_a], 1)
+            .create_spend(&destinations_a, &[dummy_op_a], 1, None)
             .unwrap()
             .psbt;
         let txid_a = psbt_a.unsigned_tx.txid();
         let psbt_b = control
-            .create_spend(&destinations_b, &[dummy_op_b], 10)
+            .create_spend(&destinations_b, &[dummy_op_b], 10, None)
             .unwrap()
             .psbt;
         let txid_b = psbt_b.unsigned_tx.txid();
         let psbt_c = control
-            .create_spend(&destinations_c, &[dummy_op_a, dummy_op_b], 100)
+            .create_spend(&destinations_c, &[dummy_op_a, dummy_op_b], 100, None)
             .unwrap()
             .psbt;
         let txid_c = psbt_c.unsigned_tx.txid();

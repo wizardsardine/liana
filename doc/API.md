@@ -156,15 +156,23 @@ create a single change output. This may be useful to "refresh" coins whose timel
 may be close to expiry without having to bear the complexity of computing the correct amount for the
 change output.
 
+The optional `change_address` parameter allows the caller to specify what address to use for the
+leftover funds after all destinations have been set. This can be used to "sweep" the wallet: use all
+the unspent coins as input, set the other destination(s), if any, then set the `change_address` to
+the address of the wallet to sweep the funds to. Note however this output would only be created if
+there is enough remaining funds after sending to the specified destinations. This command WILL NOT
+ERROR if there isn't enough leftover funds to create the change/sweep output.
+
 This command will refuse to create any output worth less than 5k sats.
 
 #### Request
 
-| Field          | Type              | Description                                                       |
-| -------------- | ----------------- | ----------------------------------------------------------------- |
-| `destinations` | object            | Map from Bitcoin address to value.                                |
-| `outpoints`    | list of string    | List of the coins to be spent, as `txid:vout`.                    |
-| `feerate`      | integer           | Target feerate for the transaction, in satoshis per virtual byte. |
+| Field            | Type              | Description                                                       |
+| ---------------- | ----------------- | ----------------------------------------------------------------- |
+| `destinations`   | object            | Map from Bitcoin address to value.                                |
+| `outpoints`      | list of string    | List of the coins to be spent, as `txid:vout`.                    |
+| `feerate`        | integer           | Target feerate for the transaction, in satoshis per virtual byte. |
+| `change_address` | string            | Address to be used for leftover amount, if any.                   |
 
 #### Response
 

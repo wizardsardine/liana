@@ -55,6 +55,14 @@ def test_spend_change(lianad, bitcoind):
     bitcoind.generate_block(1, wait_for_mempool=spend_txid)
 
 
+def sign_and_broadcast_psbt(lianad, psbt):
+    txid = psbt.tx.txid().hex()
+    psbt = lianad.signer.sign_psbt(psbt)
+    lianad.rpc.updatespend(psbt.to_base64())
+    lianad.rpc.broadcastspend(txid)
+    return txid
+
+
 def test_coin_marked_spent(lianad, bitcoind):
     """Test a spent coin is marked as such under various conditions."""
     # Receive a coin in a single transaction
@@ -322,3 +330,66 @@ def test_coin_selection(lianad, bitcoind):
     assert auto_psbt.tx.vout[0].scriptPubKey == manual_psbt.tx.vout[0].scriptPubKey
     # Change amount is the same (change address will be different).
     assert auto_psbt.tx.vout[1].nValue == manual_psbt.tx.vout[1].nValue
+
+
+def test_sweep(lianad, bitcoind):
+    """
+    Test we can leverage the change_address parameter to partially or completely sweep
+    the wallet's coins.
+    """
+
+    # Get a bunch of coins. Don't even confirm them.
+    destinations = {
+        lianad.rpc.getnewaddress()["address"]: 0.8,
+        lianad.rpc.getnewaddress()["address"]: 0.12,
+        lianad.rpc.getnewaddress()["address"]: 1.87634,
+        lianad.rpc.getnewaddress()["address"]: 1.124,
+    }
+    bitcoind.rpc.sendmany("", destinations)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 4)
+
+    # Create a sweep transaction. This should send the whole balance to the
+    # sweep address.
+    all_coins = lianad.rpc.listcoins()["coins"]
+    balance = sum(c["amount"] for c in all_coins)
+    all_outpoints = [c["outpoint"] for c in all_coins]
+    destinations = {}
+    change_addr = bitcoind.rpc.getnewaddress()
+    res = lianad.rpc.createspend(destinations, all_outpoints, 1, change_addr)
+    psbt = PSBT.from_base64(res["psbt"])
+    assert len(psbt.tx.vout) == 1
+    assert psbt.tx.vout[0].nValue > balance - 500
+    sign_and_broadcast_psbt(lianad, psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None for c in lianad.rpc.listcoins()["coins"]
+        )
+    )
+
+    # Create a partial sweep and specify some destinations to be set before the
+    # sweep output. To make it even more confusing, set one such destination as
+    # an internal (but receive) address.
+    destinations = {
+        lianad.rpc.getnewaddress()["address"]: 0.5,
+        lianad.rpc.getnewaddress()["address"]: 0.2,
+        lianad.rpc.getnewaddress()["address"]: 0.1,
+    }
+    txid = bitcoind.rpc.sendmany("", destinations)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 3)
+    received_coins = lianad.rpc.listcoins(["confirmed"])["coins"]
+    spent_coin = next(c for c in received_coins if c["amount"] == 0.5 * COIN)
+    destinations = {
+        "bcrt1qmm5t0ch7vh2hryx9ctq3mswexcugqe4atkpkl2tetm8merqkthas3w7q30": int(
+            0.1 * COIN
+        ),
+        lianad.rpc.getnewaddress()["address"]: int(0.3 * COIN),
+    }
+    res = lianad.rpc.createspend(destinations, [spent_coin["outpoint"]], 1, change_addr)
+    psbt = PSBT.from_base64(res["psbt"])
+    assert len(psbt.tx.vout) == 3
+    sign_and_broadcast_psbt(lianad, psbt)
+    wait_for(lambda: len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 1)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 2)
+    balance = sum(c["amount"] for c in lianad.rpc.listcoins(["unconfirmed", "confirmed"])["coins"])
+    assert balance == int((0.2 + 0.1 + 0.3) * COIN)

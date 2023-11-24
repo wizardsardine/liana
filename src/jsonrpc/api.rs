@@ -46,8 +46,19 @@ fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
         .ok_or_else(|| Error::invalid_params("Missing 'feerate' parameter."))?
         .as_u64()
         .ok_or_else(|| Error::invalid_params("Invalid 'feerate' parameter."))?;
+    let change_address: Option<bitcoin::Address<bitcoin::address::NetworkUnchecked>> = params
+        .get(3, "change_address")
+        .map(|addr| {
+            let addr_str = addr.as_str().ok_or_else(|| {
+                Error::invalid_params("Invalid 'change_address' parameter: must be a string.")
+            })?;
+            bitcoin::Address::from_str(addr_str).map_err(|e| {
+                Error::invalid_params(format!("Invalid 'change_address' parameter: {}.", e))
+            })
+        })
+        .transpose()?;
 
-    let res = control.create_spend(&destinations, &outpoints, feerate)?;
+    let res = control.create_spend(&destinations, &outpoints, feerate, change_address)?;
     Ok(serde_json::json!(&res))
 }
 
