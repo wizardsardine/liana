@@ -225,13 +225,18 @@ pub fn spend_header<'a>(
                     Row::new()
                         .align_items(Alignment::Center)
                         .push(h3("Miner fee: ").style(color::GREY_3))
-                        .push(amount_with_size(&tx.fee_amount, H3_SIZE))
+                        .push_maybe(if tx.fee_amount.is_none() {
+                            Some(text("Missing information about transaction inputs"))
+                        } else {
+                            None
+                        })
+                        .push_maybe(tx.fee_amount.map(|fee| amount_with_size(&fee, H3_SIZE)))
                         .push(text(" ").size(H3_SIZE))
-                        .push(
-                            text(format!("(~{} sats/vbyte)", &tx.min_feerate_vb()))
+                        .push_maybe(tx.min_feerate_vb().map(|rate| {
+                            text(format!("(~{} sats/vbyte)", &rate))
                                 .size(H4_SIZE)
-                                .style(color::GREY_3),
-                        ),
+                                .style(color::GREY_3)
+                        })),
                 ),
         )
         .into()
@@ -521,7 +526,7 @@ pub fn path_view<'a>(
 }
 
 pub fn inputs_and_outputs_view<'a>(
-    coins: &'a [Coin],
+    coins: &'a HashMap<OutPoint, Coin>,
     tx: &'a Transaction,
     network: Network,
     change_indexes: Option<Vec<usize>>,
@@ -572,12 +577,17 @@ pub fn inputs_and_outputs_view<'a>(
                         .style(theme::Button::TransparentBorder)
                     },
                     move || {
-                        coins
+                        tx.input
                             .iter()
                             .fold(
                                 Column::new().spacing(10).padding(20),
-                                |col: Column<'a, Message>, coin| {
-                                    col.push(input_view(coin, labels, labels_editing))
+                                |col: Column<'a, Message>, input| {
+                                    col.push(input_view(
+                                        &input.previous_output,
+                                        coins.get(&input.previous_output),
+                                        labels,
+                                        labels_editing,
+                                    ))
                                 },
                             )
                             .into()
@@ -729,12 +739,12 @@ pub fn inputs_and_outputs_view<'a>(
 }
 
 fn input_view<'a>(
-    coin: &'a Coin,
+    outpoint: &'a OutPoint,
+    coin: Option<&'a Coin>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
-    let outpoint = coin.outpoint.to_string();
-    let addr = coin.address.to_string();
+    let outpoint = outpoint.to_string();
     Column::new()
         .width(Length::Fill)
         .push(
@@ -753,7 +763,7 @@ fn input_view<'a>(
                     })
                     .width(Length::Fill),
                 )
-                .push(amount(&coin.amount)),
+                .push_maybe(coin.map(|c| amount(&c.amount))),
         )
         .push(
             Column::new()
@@ -765,11 +775,12 @@ fn input_view<'a>(
                         .push(p2_regular(outpoint.clone()).style(color::GREY_3))
                         .push(
                             Button::new(icon::clipboard_icon().style(color::GREY_3))
-                                .on_press(Message::Clipboard(coin.outpoint.to_string()))
+                                .on_press(Message::Clipboard(outpoint.clone()))
                                 .style(theme::Button::TransparentBorder),
                         ),
                 )
-                .push(
+                .push_maybe(coin.map(|c| {
+                    let addr = c.address.to_string();
                     Row::new()
                         .align_items(Alignment::Center)
                         .width(Length::Fill)
@@ -782,23 +793,25 @@ fn input_view<'a>(
                                 .push(p2_regular(addr.clone()).style(color::GREY_3))
                                 .push(
                                     Button::new(icon::clipboard_icon().style(color::GREY_3))
-                                        .on_press(Message::Clipboard(addr.clone()))
+                                        .on_press(Message::Clipboard(addr))
                                         .style(theme::Button::TransparentBorder),
                                 ),
-                        ),
-                )
-                .push_maybe(labels.get(&addr).map(|label| {
-                    Row::new()
-                        .align_items(Alignment::Center)
-                        .width(Length::Fill)
-                        .push(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .width(Length::Fill)
-                                .spacing(5)
-                                .push(p1_bold("Address label:").style(color::GREY_3))
-                                .push(p2_regular(label).style(color::GREY_3)),
                         )
+                }))
+                .push_maybe(coin.and_then(|c| {
+                    labels.get(&c.address.to_string()).map(|label| {
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .width(Length::Fill)
+                            .push(
+                                Row::new()
+                                    .align_items(Alignment::Center)
+                                    .width(Length::Fill)
+                                    .spacing(5)
+                                    .push(p1_bold("Address label:").style(color::GREY_3))
+                                    .push(p2_regular(label).style(color::GREY_3)),
+                            )
+                    })
                 })),
         )
         .spacing(5)
