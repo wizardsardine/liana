@@ -99,9 +99,11 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                         })
                         .push(
                             Column::new()
-                                .push_maybe(
-                                    tx.labels.get(&tx.tx.txid().to_string()).map(p1_regular),
-                                )
+                                .push_maybe(if let Some(outpoint) = tx.is_single_payment() {
+                                    tx.labels.get(&outpoint.to_string()).map(p1_regular)
+                                } else {
+                                    tx.labels.get(&tx.tx.txid().to_string()).map(p1_regular)
+                                })
                                 .push_maybe(tx.time.map(|t| {
                                     Container::new(
                                         text(format!(
@@ -249,19 +251,33 @@ pub fn tx_view<'a>(
                     )
                     .spacing(5),
             ))
-            .push(super::psbt::inputs_and_outputs_view(
-                &tx.coins,
-                &tx.tx,
-                cache.network,
-                if tx.is_external() {
-                    None
-                } else {
-                    Some(tx.change_indexes.clone())
-                },
-                &tx.labels,
-                labels_editing,
-                tx.is_single_payment().is_some(),
-            ))
+            .push(
+                Column::new()
+                    .spacing(20)
+                    // We do not need to display inputs for external incoming transactions
+                    .push_maybe(if tx.is_external() {
+                        None
+                    } else {
+                        Some(super::psbt::inputs_view(
+                            &tx.coins,
+                            &tx.tx,
+                            &tx.labels,
+                            labels_editing,
+                        ))
+                    })
+                    .push(super::psbt::outputs_view(
+                        &tx.tx,
+                        cache.network,
+                        if tx.is_external() {
+                            None
+                        } else {
+                            Some(tx.change_indexes.clone())
+                        },
+                        &tx.labels,
+                        labels_editing,
+                        tx.is_single_payment().is_some(),
+                    )),
+            )
             .spacing(20),
     )
 }

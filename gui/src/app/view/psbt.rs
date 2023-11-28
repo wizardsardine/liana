@@ -74,15 +74,24 @@ pub fn psbt_view<'a>(
             )
             .push(spend_header(tx, labels_editing))
             .push(spend_overview_view(tx, desc_info, key_aliases))
-            .push(inputs_and_outputs_view(
-                &tx.coins,
-                &tx.psbt.unsigned_tx,
-                network,
-                Some(tx.change_indexes.clone()),
-                &tx.labels,
-                labels_editing,
-                tx.is_single_payment().is_some(),
-            ))
+            .push(
+                Column::new()
+                    .spacing(20)
+                    .push(inputs_view(
+                        &tx.coins,
+                        &tx.psbt.unsigned_tx,
+                        &tx.labels,
+                        labels_editing,
+                    ))
+                    .push(outputs_view(
+                        &tx.psbt.unsigned_tx,
+                        network,
+                        Some(tx.change_indexes.clone()),
+                        &tx.labels,
+                        labels_editing,
+                        tx.is_single_payment().is_some(),
+                    )),
+            )
             .push(if saved {
                 Row::new()
                     .push(
@@ -525,8 +534,71 @@ pub fn path_view<'a>(
     .into()
 }
 
-pub fn inputs_and_outputs_view<'a>(
+pub fn inputs_view<'a>(
     coins: &'a HashMap<OutPoint, Coin>,
+    tx: &'a Transaction,
+    labels: &'a HashMap<String, String>,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+) -> Element<'a, Message> {
+    Container::new(Collapse::new(
+        move || {
+            Button::new(
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push(
+                        h4_bold(format!(
+                            "{} coin{} spent",
+                            tx.input.len(),
+                            if tx.input.len() == 1 { "" } else { "s" }
+                        ))
+                        .width(Length::Fill),
+                    )
+                    .push(icon::collapse_icon()),
+            )
+            .padding(20)
+            .width(Length::Fill)
+            .style(theme::Button::TransparentBorder)
+        },
+        move || {
+            Button::new(
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push(
+                        h4_bold(format!(
+                            "{} coin{} spent",
+                            tx.input.len(),
+                            if tx.input.len() == 1 { "" } else { "s" }
+                        ))
+                        .width(Length::Fill),
+                    )
+                    .push(icon::collapsed_icon()),
+            )
+            .padding(20)
+            .width(Length::Fill)
+            .style(theme::Button::TransparentBorder)
+        },
+        move || {
+            tx.input
+                .iter()
+                .fold(
+                    Column::new().spacing(10).padding(20),
+                    |col: Column<'a, Message>, input| {
+                        col.push(input_view(
+                            &input.previous_output,
+                            coins.get(&input.previous_output),
+                            labels,
+                            labels_editing,
+                        ))
+                    },
+                )
+                .into()
+        },
+    ))
+    .style(theme::Container::Card(theme::Card::Simple))
+    .into()
+}
+
+pub fn outputs_view<'a>(
     tx: &'a Transaction,
     network: Network,
     change_indexes: Option<Vec<usize>>,
@@ -537,67 +609,6 @@ pub fn inputs_and_outputs_view<'a>(
     let change_indexes_copy = change_indexes.clone();
     Column::new()
         .spacing(20)
-        .push_maybe(if !coins.is_empty() {
-            Some(
-                Container::new(Collapse::new(
-                    move || {
-                        Button::new(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .push(
-                                    h4_bold(format!(
-                                        "{} coin{} spent",
-                                        coins.len(),
-                                        if coins.len() == 1 { "" } else { "s" }
-                                    ))
-                                    .width(Length::Fill),
-                                )
-                                .push(icon::collapse_icon()),
-                        )
-                        .padding(20)
-                        .width(Length::Fill)
-                        .style(theme::Button::TransparentBorder)
-                    },
-                    move || {
-                        Button::new(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .push(
-                                    h4_bold(format!(
-                                        "{} coin{} spent",
-                                        coins.len(),
-                                        if coins.len() == 1 { "" } else { "s" }
-                                    ))
-                                    .width(Length::Fill),
-                                )
-                                .push(icon::collapsed_icon()),
-                        )
-                        .padding(20)
-                        .width(Length::Fill)
-                        .style(theme::Button::TransparentBorder)
-                    },
-                    move || {
-                        tx.input
-                            .iter()
-                            .fold(
-                                Column::new().spacing(10).padding(20),
-                                |col: Column<'a, Message>, input| {
-                                    col.push(input_view(
-                                        &input.previous_output,
-                                        coins.get(&input.previous_output),
-                                        labels,
-                                        labels_editing,
-                                    ))
-                                },
-                            )
-                            .into()
-                    },
-                ))
-                .style(theme::Container::Card(theme::Card::Simple)),
-            )
-        } else {
-            None
-        })
         .push({
             let count = tx
                 .output
