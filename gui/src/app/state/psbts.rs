@@ -32,6 +32,18 @@ impl PsbtsPanel {
             import_tx: None,
         }
     }
+
+    pub fn new_preselected(wallet: Arc<Wallet>, spend_tx: SpendTx) -> Self {
+        let psbt_state = psbt::PsbtState::new(wallet.clone(), spend_tx.clone(), true);
+
+        Self {
+            wallet,
+            spend_txs: vec![spend_tx],
+            warning: None,
+            selected_tx: Some(psbt_state),
+            import_tx: None,
+        }
+    }
 }
 
 impl State for PsbtsPanel {

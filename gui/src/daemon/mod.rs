@@ -63,6 +63,12 @@ pub trait Daemon: Debug {
         destinations: &HashMap<Address<address::NetworkUnchecked>, u64>,
         feerate_vb: u64,
     ) -> Result<model::CreateSpendResult, DaemonError>;
+    fn rbf_psbt(
+        &self,
+        txid: &Txid,
+        is_cancel: bool,
+        feerate_vb: Option<u64>,
+    ) -> Result<model::CreateSpendResult, DaemonError>;
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError>;
     fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
     fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;

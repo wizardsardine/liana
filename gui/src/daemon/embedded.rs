@@ -96,6 +96,17 @@ impl Daemon for EmbeddedDaemon {
             })
     }
 
+    fn rbf_psbt(
+        &self,
+        txid: &Txid,
+        is_cancel: bool,
+        feerate_vb: Option<u64>,
+    ) -> Result<CreateSpendResult, DaemonError> {
+        self.control()?
+            .rbf_psbt(txid, is_cancel, feerate_vb)
+            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+    }
+
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
         self.control()?
             .update_spend(psbt.clone())

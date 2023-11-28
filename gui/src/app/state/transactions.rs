@@ -5,7 +5,11 @@ use std::{
 };
 
 use iced::Command;
-use liana_ui::widget::*;
+use liana::miniscript::bitcoin::Txid;
+use liana_ui::{
+    component::{form, modal::Modal},
+    widget::*,
+};
 
 use crate::app::{
     cache::Cache,
@@ -27,6 +31,7 @@ pub struct TransactionsPanel {
     labels_edited: LabelsEdited,
     selected_tx: Option<usize>,
     warning: Option<Error>,
+    create_rbf_modal: Option<CreateRbfModal>,
 }
 
 impl TransactionsPanel {
@@ -37,6 +42,7 @@ impl TransactionsPanel {
             pending_txs: Vec::new(),
             labels_edited: LabelsEdited::default(),
             warning: None,
+            create_rbf_modal: None,
         }
     }
 }
@@ -49,12 +55,21 @@ impl State for TransactionsPanel {
             } else {
                 &self.txs[i - self.pending_txs.len()]
             };
-            view::transactions::tx_view(
+            let content = view::transactions::tx_view(
                 cache,
                 tx,
                 self.labels_edited.cache(),
                 self.warning.as_ref(),
-            )
+            );
+            if let Some(modal) = &self.create_rbf_modal {
+                Modal::new(content, modal.view())
+                    .on_blur(Some(view::Message::CreateRbf(
+                        view::CreateRbfMessage::Cancel,
+                    )))
+                    .into()
+            } else {
+                content
+            }
         } else {
             view::transactions::transactions_view(
                 cache,
@@ -99,6 +114,24 @@ impl State for TransactionsPanel {
             }
             Message::View(view::Message::Select(i)) => {
                 self.selected_tx = Some(i);
+            }
+            Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Cancel)) => {
+                self.create_rbf_modal = None;
+            }
+            Message::View(view::Message::CreateRbf(view::CreateRbfMessage::New(is_cancel))) => {
+                if let Some(idx) = self.selected_tx {
+                    if let Some(tx) = self.pending_txs.get(idx) {
+                        if let Some(fee_amount) = tx.fee_amount {
+                            let prev_feerate_vb = fee_amount
+                                .to_sat()
+                                .checked_div(tx.tx.vsize().try_into().unwrap())
+                                .unwrap();
+                            let modal =
+                                CreateRbfModal::new(tx.tx.txid(), is_cancel, prev_feerate_vb);
+                            self.create_rbf_modal = Some(modal);
+                        }
+                    }
+                }
             }
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
@@ -154,7 +187,11 @@ impl State for TransactionsPanel {
                     );
                 }
             }
-            _ => {}
+            _ => {
+                if let Some(modal) = &mut self.create_rbf_modal {
+                    return modal.update(daemon, _cache, message);
+                }
+            }
         };
         Command::none()
     }
@@ -198,5 +235,95 @@ impl State for TransactionsPanel {
 impl From<TransactionsPanel> for Box<dyn State> {
     fn from(s: TransactionsPanel) -> Box<dyn State> {
         Box::new(s)
+    }
+}
+
+pub struct CreateRbfModal {
+    /// Transaction to replace.
+    txid: Txid,
+    /// Whether to cancel or bump fee.
+    is_cancel: bool,
+    /// Min feerate required for RBF.
+    min_feerate_vb: u64,
+    /// Feerate form value.
+    feerate_val: form::Value<String>,
+    /// Parsed feerate.
+    feerate_vb: Option<u64>,
+    warning: Option<Error>,
+    /// Replacement transaction ID.
+    replacement_txid: Option<Txid>,
+}
+
+impl CreateRbfModal {
+    fn new(txid: Txid, is_cancel: bool, prev_feerate_vb: u64) -> Self {
+        let min_feerate_vb = prev_feerate_vb.checked_add(1).unwrap();
+        Self {
+            txid,
+            is_cancel,
+            min_feerate_vb,
+            feerate_val: form::Value {
+                valid: true,
+                value: min_feerate_vb.to_string(),
+            },
+            // For cancel, we let `rbfpsbt` set the feerate.
+            feerate_vb: if is_cancel {
+                None
+            } else {
+                Some(min_feerate_vb)
+            },
+            warning: None,
+            replacement_txid: None,
+        }
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        message: Message,
+    ) -> Command<Message> {
+        match message {
+            Message::View(view::Message::CreateRbf(view::CreateRbfMessage::FeerateEdited(s))) => {
+                self.warning = None;
+                if let Ok(value) = s.parse::<u64>() {
+                    self.feerate_val.value = s;
+                    self.feerate_val.valid = value >= self.min_feerate_vb;
+                    if self.feerate_val.valid {
+                        self.feerate_vb = Some(value);
+                    }
+                } else {
+                    self.feerate_val.valid = false;
+                }
+                if !self.feerate_val.valid {
+                    self.feerate_vb = None;
+                }
+            }
+            Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Confirm)) => {
+                self.warning = None;
+
+                let psbt = match daemon.rbf_psbt(&self.txid, self.is_cancel, self.feerate_vb) {
+                    Ok(res) => res.psbt,
+                    Err(e) => {
+                        self.warning = Some(e.into());
+                        return Command::none();
+                    }
+                };
+                if let Err(e) = daemon.update_spend_tx(&psbt) {
+                    self.warning = Some(e.into());
+                    return Command::none();
+                }
+                self.replacement_txid = Some(psbt.unsigned_tx.txid());
+            }
+            _ => {}
+        }
+        Command::none()
+    }
+    fn view(&self) -> Element<view::Message> {
+        view::transactions::create_rbf_modal(
+            self.is_cancel,
+            &self.feerate_val,
+            self.replacement_txid,
+            self.warning.as_ref(),
+        )
     }
 }
