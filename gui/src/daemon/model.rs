@@ -234,7 +234,9 @@ impl Labelled for SpendTx {
         items.push(LabelItem::Txid(txid));
         for coin in self.coins.values() {
             items.push(LabelItem::Address(coin.address.clone()));
-            items.push(LabelItem::OutPoint(coin.outpoint));
+        }
+        for input in &self.psbt.unsigned_tx.input {
+            items.push(LabelItem::OutPoint(input.previous_output));
         }
         for (vout, output) in self.psbt.unsigned_tx.output.iter().enumerate() {
             items.push(LabelItem::OutPoint(OutPoint {
@@ -394,7 +396,9 @@ impl Labelled for HistoryTransaction {
         items.push(LabelItem::Txid(txid));
         for coin in self.coins.values() {
             items.push(LabelItem::Address(coin.address.clone()));
-            items.push(LabelItem::OutPoint(coin.outpoint));
+        }
+        for input in &self.tx.input {
+            items.push(LabelItem::OutPoint(input.previous_output));
         }
         for (vout, output) in self.tx.output.iter().enumerate() {
             items.push(LabelItem::OutPoint(OutPoint {
