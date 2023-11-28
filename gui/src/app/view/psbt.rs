@@ -74,15 +74,24 @@ pub fn psbt_view<'a>(
             )
             .push(spend_header(tx, labels_editing))
             .push(spend_overview_view(tx, desc_info, key_aliases))
-            .push(inputs_and_outputs_view(
-                &tx.coins,
-                &tx.psbt.unsigned_tx,
-                network,
-                Some(tx.change_indexes.clone()),
-                &tx.labels,
-                labels_editing,
-                tx.is_single_payment().is_some(),
-            ))
+            .push(
+                Column::new()
+                    .spacing(20)
+                    .push(inputs_view(
+                        &tx.coins,
+                        &tx.psbt.unsigned_tx,
+                        &tx.labels,
+                        labels_editing,
+                    ))
+                    .push(outputs_view(
+                        &tx.psbt.unsigned_tx,
+                        network,
+                        Some(tx.change_indexes.clone()),
+                        &tx.labels,
+                        labels_editing,
+                        tx.is_single_payment().is_some(),
+                    )),
+            )
             .push(if saved {
                 Row::new()
                     .push(
@@ -225,13 +234,18 @@ pub fn spend_header<'a>(
                     Row::new()
                         .align_items(Alignment::Center)
                         .push(h3("Miner fee: ").style(color::GREY_3))
-                        .push(amount_with_size(&tx.fee_amount, H3_SIZE))
+                        .push_maybe(if tx.fee_amount.is_none() {
+                            Some(text("Missing information about transaction inputs"))
+                        } else {
+                            None
+                        })
+                        .push_maybe(tx.fee_amount.map(|fee| amount_with_size(&fee, H3_SIZE)))
                         .push(text(" ").size(H3_SIZE))
-                        .push(
-                            text(format!("(~{} sats/vbyte)", &tx.min_feerate_vb()))
+                        .push_maybe(tx.min_feerate_vb().map(|rate| {
+                            text(format!("(~{} sats/vbyte)", &rate))
                                 .size(H4_SIZE)
-                                .style(color::GREY_3),
-                        ),
+                                .style(color::GREY_3)
+                        })),
                 ),
         )
         .into()
@@ -520,8 +534,71 @@ pub fn path_view<'a>(
     .into()
 }
 
-pub fn inputs_and_outputs_view<'a>(
-    coins: &'a [Coin],
+pub fn inputs_view<'a>(
+    coins: &'a HashMap<OutPoint, Coin>,
+    tx: &'a Transaction,
+    labels: &'a HashMap<String, String>,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+) -> Element<'a, Message> {
+    Container::new(Collapse::new(
+        move || {
+            Button::new(
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push(
+                        h4_bold(format!(
+                            "{} coin{} spent",
+                            tx.input.len(),
+                            if tx.input.len() == 1 { "" } else { "s" }
+                        ))
+                        .width(Length::Fill),
+                    )
+                    .push(icon::collapse_icon()),
+            )
+            .padding(20)
+            .width(Length::Fill)
+            .style(theme::Button::TransparentBorder)
+        },
+        move || {
+            Button::new(
+                Row::new()
+                    .align_items(Alignment::Center)
+                    .push(
+                        h4_bold(format!(
+                            "{} coin{} spent",
+                            tx.input.len(),
+                            if tx.input.len() == 1 { "" } else { "s" }
+                        ))
+                        .width(Length::Fill),
+                    )
+                    .push(icon::collapsed_icon()),
+            )
+            .padding(20)
+            .width(Length::Fill)
+            .style(theme::Button::TransparentBorder)
+        },
+        move || {
+            tx.input
+                .iter()
+                .fold(
+                    Column::new().spacing(10).padding(20),
+                    |col: Column<'a, Message>, input| {
+                        col.push(input_view(
+                            &input.previous_output,
+                            coins.get(&input.previous_output),
+                            labels,
+                            labels_editing,
+                        ))
+                    },
+                )
+                .into()
+        },
+    ))
+    .style(theme::Container::Card(theme::Card::Simple))
+    .into()
+}
+
+pub fn outputs_view<'a>(
     tx: &'a Transaction,
     network: Network,
     change_indexes: Option<Vec<usize>>,
@@ -532,62 +609,6 @@ pub fn inputs_and_outputs_view<'a>(
     let change_indexes_copy = change_indexes.clone();
     Column::new()
         .spacing(20)
-        .push_maybe(if !coins.is_empty() {
-            Some(
-                Container::new(Collapse::new(
-                    move || {
-                        Button::new(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .push(
-                                    h4_bold(format!(
-                                        "{} coin{} spent",
-                                        coins.len(),
-                                        if coins.len() == 1 { "" } else { "s" }
-                                    ))
-                                    .width(Length::Fill),
-                                )
-                                .push(icon::collapse_icon()),
-                        )
-                        .padding(20)
-                        .width(Length::Fill)
-                        .style(theme::Button::TransparentBorder)
-                    },
-                    move || {
-                        Button::new(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .push(
-                                    h4_bold(format!(
-                                        "{} coin{} spent",
-                                        coins.len(),
-                                        if coins.len() == 1 { "" } else { "s" }
-                                    ))
-                                    .width(Length::Fill),
-                                )
-                                .push(icon::collapsed_icon()),
-                        )
-                        .padding(20)
-                        .width(Length::Fill)
-                        .style(theme::Button::TransparentBorder)
-                    },
-                    move || {
-                        coins
-                            .iter()
-                            .fold(
-                                Column::new().spacing(10).padding(20),
-                                |col: Column<'a, Message>, coin| {
-                                    col.push(input_view(coin, labels, labels_editing))
-                                },
-                            )
-                            .into()
-                    },
-                ))
-                .style(theme::Container::Card(theme::Card::Simple)),
-            )
-        } else {
-            None
-        })
         .push({
             let count = tx
                 .output
@@ -729,12 +750,12 @@ pub fn inputs_and_outputs_view<'a>(
 }
 
 fn input_view<'a>(
-    coin: &'a Coin,
+    outpoint: &'a OutPoint,
+    coin: Option<&'a Coin>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
-    let outpoint = coin.outpoint.to_string();
-    let addr = coin.address.to_string();
+    let outpoint = outpoint.to_string();
     Column::new()
         .width(Length::Fill)
         .push(
@@ -753,7 +774,7 @@ fn input_view<'a>(
                     })
                     .width(Length::Fill),
                 )
-                .push(amount(&coin.amount)),
+                .push_maybe(coin.map(|c| amount(&c.amount))),
         )
         .push(
             Column::new()
@@ -765,11 +786,12 @@ fn input_view<'a>(
                         .push(p2_regular(outpoint.clone()).style(color::GREY_3))
                         .push(
                             Button::new(icon::clipboard_icon().style(color::GREY_3))
-                                .on_press(Message::Clipboard(coin.outpoint.to_string()))
+                                .on_press(Message::Clipboard(outpoint.clone()))
                                 .style(theme::Button::TransparentBorder),
                         ),
                 )
-                .push(
+                .push_maybe(coin.map(|c| {
+                    let addr = c.address.to_string();
                     Row::new()
                         .align_items(Alignment::Center)
                         .width(Length::Fill)
@@ -782,23 +804,25 @@ fn input_view<'a>(
                                 .push(p2_regular(addr.clone()).style(color::GREY_3))
                                 .push(
                                     Button::new(icon::clipboard_icon().style(color::GREY_3))
-                                        .on_press(Message::Clipboard(addr.clone()))
+                                        .on_press(Message::Clipboard(addr))
                                         .style(theme::Button::TransparentBorder),
                                 ),
-                        ),
-                )
-                .push_maybe(labels.get(&addr).map(|label| {
-                    Row::new()
-                        .align_items(Alignment::Center)
-                        .width(Length::Fill)
-                        .push(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .width(Length::Fill)
-                                .spacing(5)
-                                .push(p1_bold("Address label:").style(color::GREY_3))
-                                .push(p2_regular(label).style(color::GREY_3)),
                         )
+                }))
+                .push_maybe(coin.and_then(|c| {
+                    labels.get(&c.address.to_string()).map(|label| {
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .width(Length::Fill)
+                            .push(
+                                Row::new()
+                                    .align_items(Alignment::Center)
+                                    .width(Length::Fill)
+                                    .spacing(5)
+                                    .push(p1_bold("Address label:").style(color::GREY_3))
+                                    .push(p2_regular(label).style(color::GREY_3)),
+                            )
+                    })
                 })),
         )
         .spacing(5)

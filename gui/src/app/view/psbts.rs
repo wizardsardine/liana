@@ -152,7 +152,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                         } else {
                             Container::new(p1_regular("Self-transfer"))
                         })
-                        .push(amount_with_size(&tx.fee_amount, P2_SIZE))
+                        .push_maybe(tx.fee_amount.map(|fee| amount_with_size(&fee, P2_SIZE)))
                         .width(Length::Shrink),
                 )
                 .align_items(Alignment::Center)

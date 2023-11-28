@@ -49,15 +49,24 @@ pub fn spend_view<'a>(
             .push(Container::new(h3("Send")).width(Length::Fill))
             .push(psbt::spend_header(tx, labels_editing))
             .push(psbt::spend_overview_view(tx, desc_info, key_aliases))
-            .push(psbt::inputs_and_outputs_view(
-                &tx.coins,
-                &tx.psbt.unsigned_tx,
-                network,
-                Some(tx.change_indexes.clone()),
-                &tx.labels,
-                labels_editing,
-                tx.is_single_payment().is_some(),
-            ))
+            .push(
+                Column::new()
+                    .spacing(20)
+                    .push(psbt::inputs_view(
+                        &tx.coins,
+                        &tx.psbt.unsigned_tx,
+                        &tx.labels,
+                        labels_editing,
+                    ))
+                    .push(psbt::outputs_view(
+                        &tx.psbt.unsigned_tx,
+                        network,
+                        Some(tx.change_indexes.clone()),
+                        &tx.labels,
+                        labels_editing,
+                        tx.is_single_payment().is_some(),
+                    )),
+            )
             .push(if saved {
                 Row::new()
                     .push(
