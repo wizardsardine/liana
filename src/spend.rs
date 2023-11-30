@@ -94,7 +94,7 @@ pub fn check_output_value(value: bitcoin::Amount) -> Result<(), SpendCreationErr
 
 // Apply some sanity checks on a created transaction's PSBT.
 // TODO: add more sanity checks from revault_tx
-pub fn sanity_check_psbt(
+fn sanity_check_psbt(
     spent_desc: &descriptors::LianaDescriptor,
     psbt: &Psbt,
 ) -> Result<(), SpendCreationError> {
@@ -170,6 +170,8 @@ pub struct CandidateCoin {
     pub coin: Coin,
     /// Whether or not this coin must be selected by the coin selection algorithm.
     pub must_select: bool,
+    /// The nSequence field to set for an input spending this coin.
+    pub sequence: Option<bitcoin::Sequence>,
 }
 
 /// Metric based on [`LowestFee`] that aims to minimize transaction fees
@@ -236,7 +238,7 @@ pub fn select_coins_for_spend(
     min_fee: u64,
     max_sat_weight: u32,
     must_have_change: bool,
-) -> Result<(Vec<Coin>, bitcoin::Amount), InsufficientFunds> {
+) -> Result<(Vec<CandidateCoin>, bitcoin::Amount), InsufficientFunds> {
     let out_value_nochange = base_tx.output.iter().map(|o| o.value).sum();
 
     // Create the coin selector from the given candidates. NOTE: the coin selector keeps track
@@ -339,7 +341,7 @@ pub fn select_coins_for_spend(
         selector
             .selected_indices()
             .iter()
-            .map(|i| candidate_coins[*i].coin)
+            .map(|i| candidate_coins[*i])
             .collect(),
         change_amount,
     ))
@@ -543,10 +545,14 @@ pub fn create_spend(
 
     // Iterate through selected coins and add necessary information to the PSBT inputs.
     let mut psbt_ins = Vec::with_capacity(selected_coins.len());
-    for coin in &selected_coins {
+    for cand in &selected_coins {
+        let coin = &cand.coin;
+        let sequence = cand
+            .sequence
+            .unwrap_or(bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME);
         tx.input.push(bitcoin::TxIn {
             previous_output: coin.outpoint,
-            sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+            sequence,
             // TODO: once we move to Taproot, anti-fee-sniping using nSequence
             ..bitcoin::TxIn::default()
         });

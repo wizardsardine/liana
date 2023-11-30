@@ -9,8 +9,8 @@ use crate::{
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
     spend::{
-        check_output_value, create_spend, sanity_check_psbt, unsigned_tx_max_vbytes, AddrInfo,
-        CandidateCoin, CreateSpendRes, SpendCreationError, SpendOutputAddress, TxGetter,
+        check_output_value, create_spend, unsigned_tx_max_vbytes, AddrInfo, CandidateCoin,
+        CreateSpendRes, SpendCreationError, SpendOutputAddress, TxGetter,
     },
     DaemonControl, VERSION,
 };
@@ -23,17 +23,13 @@ use utils::{
 };
 
 use std::{
-    collections::{hash_map, BTreeMap, HashMap, HashSet},
+    collections::{hash_map, HashMap, HashSet},
     convert::TryInto,
     fmt, sync,
 };
 
 use miniscript::{
-    bitcoin::{
-        self, address, bip32,
-        locktime::absolute,
-        psbt::{Input as PsbtIn, Output as PsbtOut, PartiallySignedTransaction as Psbt},
-    },
+    bitcoin::{self, address, bip32, psbt::PartiallySignedTransaction as Psbt},
     psbt::PsbtExt,
 };
 use serde::{Deserialize, Serialize};
@@ -455,6 +451,7 @@ impl DaemonControl {
                 .map(|c| CandidateCoin {
                     coin: c,
                     must_select: false, // No coin is mandatory.
+                    sequence: None,     // No specific nSequence is required.
                 })
                 .collect()
         } else {
@@ -474,6 +471,7 @@ impl DaemonControl {
                 .map(|c| CandidateCoin {
                     coin: c,
                     must_select: true, // All coins must be selected.
+                    sequence: None,    // No specific nSequence is required.
                 })
                 .collect()
         };
@@ -773,6 +771,7 @@ impl DaemonControl {
             .map(|c| CandidateCoin {
                 coin: *c,
                 must_select: !is_cancel,
+                sequence: None, // No specific nSequence is required.
             })
             .collect();
         let confirmed_cands: Vec<CandidateCoin> = db_conn
@@ -785,6 +784,7 @@ impl DaemonControl {
                     Some(CandidateCoin {
                         coin: c,
                         must_select: false,
+                        sequence: None, // No specific nSequence is required.
                     })
                 } else {
                     None
@@ -949,27 +949,9 @@ impl DaemonControl {
         if feerate_vb < 1 {
             return Err(CommandError::InvalidFeerate(feerate_vb));
         }
-        let address = self.validate_address(address)?;
+        let mut tx_getter = BitcoindTxGetter::new(&self.bitcoin);
         let mut db_conn = self.db.connection();
-
-        // The transaction template. We'll fill-in the inputs afterward.
-        let mut psbt = Psbt {
-            unsigned_tx: bitcoin::Transaction {
-                version: 2,
-                lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO), // TODO: anti-fee sniping
-                input: Vec::new(),
-                output: vec![bitcoin::TxOut {
-                    script_pubkey: address.script_pubkey(),
-                    value: 0xFF_FF_FF_FF,
-                }],
-            },
-            version: 0,
-            xpub: BTreeMap::new(),
-            proprietary: BTreeMap::new(),
-            unknown: BTreeMap::new(),
-            inputs: Vec::new(),
-            outputs: vec![PsbtOut::default()],
-        };
+        let sweep_addr = self.spend_addr(&mut db_conn, self.validate_address(address)?);
 
         // Query the coins that we can spend through the specified recovery path (if no recovery
         // path specified, use the first available one) from the database.
@@ -977,72 +959,43 @@ impl DaemonControl {
         let timelock =
             timelock.unwrap_or_else(|| self.config.main_descriptor.first_timelock_value());
         let height_delta: i32 = timelock.try_into().expect("Must fit, it's a u16");
-        let sweepable_coins = db_conn
+        let sweepable_coins: Vec<_> = db_conn
             .coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
             .into_values()
-            .filter(|c| {
+            .filter_map(|c| {
                 // We are interested in coins available at the *next* block
-                c.block_info
+                if c.block_info
                     .map(|b| current_height + 1 >= b.height + height_delta)
                     .unwrap_or(false)
-            });
-
-        // Fill-in the transaction inputs and PSBT inputs information. Record the value
-        // that is fed to the transaction while doing so, to compute the fees afterward.
-        let mut in_value = bitcoin::Amount::from_sat(0);
-        let txin_sat_vb = self.config.main_descriptor.max_sat_vbytes();
-        let mut sat_vb = 1; // Start at 1 for the segwit marker size, rounded up.
-        let mut spent_txs = HashMap::new();
-        for coin in sweepable_coins {
-            in_value += coin.amount;
-            psbt.unsigned_tx.input.push(bitcoin::TxIn {
-                previous_output: coin.outpoint,
-                sequence: bitcoin::Sequence::from_height(timelock),
-                // TODO: once we move to Taproot, anti-fee-sniping using nSequence
-                ..bitcoin::TxIn::default()
-            });
-
-            // Fetch the transaction that created this coin if necessary
-            if let hash_map::Entry::Vacant(e) = spent_txs.entry(coin.outpoint) {
-                let tx = self
-                    .bitcoin
-                    .wallet_transaction(&coin.outpoint.txid)
-                    .ok_or(SpendCreationError::FetchingTransaction(coin.outpoint))?;
-                e.insert(tx.0);
-            }
-
-            let coin_desc = self.derived_desc(&coin);
-            sat_vb += txin_sat_vb;
-            let witness_script = Some(coin_desc.witness_script());
-            let witness_utxo = Some(bitcoin::TxOut {
-                value: coin.amount.to_sat(),
-                script_pubkey: coin_desc.script_pubkey(),
-            });
-            let non_witness_utxo = spent_txs.get(&coin.outpoint).cloned();
-            let bip32_derivation = coin_desc.bip32_derivations();
-            psbt.inputs.push(PsbtIn {
-                witness_script,
-                witness_utxo,
-                non_witness_utxo,
-                bip32_derivation,
-                ..PsbtIn::default()
-            });
-        }
-
-        // The sweepable_coins iterator may have been empty.
-        if psbt.unsigned_tx.input.is_empty() {
+                {
+                    Some(CandidateCoin {
+                        coin: c,
+                        must_select: true, // All coins must be selected.
+                        sequence: Some(bitcoin::Sequence::from_height(timelock)),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if sweepable_coins.is_empty() {
             return Err(CommandError::RecoveryNotAvailable);
         }
 
-        // Compute the value of the single output based on the requested feerate.
-        let tx_vbytes = (psbt.unsigned_tx.vsize() + sat_vb) as u64;
-        let absolute_fee = bitcoin::Amount::from_sat(tx_vbytes.checked_mul(feerate_vb).unwrap());
-        let output_value = in_value
-            .checked_sub(absolute_fee)
-            .ok_or(CommandError::InsufficientFunds(in_value, None, feerate_vb))?;
-        psbt.unsigned_tx.output[0].value = output_value.to_sat();
-
-        sanity_check_psbt(&self.config.main_descriptor, &psbt)?;
+        let sweep_addr_info = sweep_addr.info;
+        let CreateSpendRes { psbt, has_change } = create_spend(
+            &self.config.main_descriptor,
+            &self.secp,
+            &mut tx_getter,
+            &[], // No destination, only the change address.
+            &sweepable_coins,
+            feerate_vb,
+            0, // No min fee required.
+            sweep_addr,
+        )?;
+        if has_change {
+            self.maybe_increase_next_deriv_index(&mut db_conn, &sweep_addr_info);
+        }
 
         Ok(CreateRecoveryResult { psbt })
     }
@@ -1184,7 +1137,7 @@ mod tests {
         locktime::absolute,
         OutPoint, ScriptBuf, Sequence, Transaction, Txid, Witness,
     };
-    use std::str::FromStr;
+    use std::{collections::BTreeMap, str::FromStr};
 
     #[test]
     fn getinfo() {
