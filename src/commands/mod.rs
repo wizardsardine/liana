@@ -989,7 +989,7 @@ impl DaemonControl {
             timelock.unwrap_or_else(|| self.config.main_descriptor.first_timelock_value());
         let height_delta: i32 = timelock.try_into().expect("Must fit, it's a u16");
         let sweepable_coins: Vec<_> = db_conn
-            .coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+            .coins(&[CoinStatus::Confirmed], &[])
             .into_values()
             .filter_map(|c| {
                 // We are interested in coins available at the *next* block
