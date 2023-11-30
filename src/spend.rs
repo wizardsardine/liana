@@ -81,7 +81,7 @@ impl fmt::Display for SpendCreationError {
 impl std::error::Error for SpendCreationError {}
 
 // Sanity check the value of a transaction output.
-pub fn check_output_value(value: bitcoin::Amount) -> Result<(), SpendCreationError> {
+fn check_output_value(value: bitcoin::Amount) -> Result<(), SpendCreationError> {
     // NOTE: the network parameter isn't used upstream
     if value.to_sat() > bitcoin::blockdata::constants::MAX_MONEY
         || value.to_sat() < DUST_OUTPUT_SATS

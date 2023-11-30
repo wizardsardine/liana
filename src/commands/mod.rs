@@ -9,8 +9,8 @@ use crate::{
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
     spend::{
-        check_output_value, create_spend, AddrInfo, CandidateCoin, CreateSpendRes,
-        SpendCreationError, SpendOutputAddress, TxGetter,
+        create_spend, AddrInfo, CandidateCoin, CreateSpendRes, SpendCreationError,
+        SpendOutputAddress, TxGetter,
     },
     DaemonControl, VERSION,
 };
@@ -443,13 +443,11 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         let mut tx_getter = BitcoindTxGetter::new(&self.bitcoin);
 
-        // Check the destination addresses are valid for the network and
-        // sanity check each output's value.
+        // Prepare the destination addresses.
         let mut destinations_checked = Vec::with_capacity(destinations.len());
         for (address, value_sat) in destinations {
             let address = self.validate_address(address.clone())?;
             let amount = bitcoin::Amount::from_sat(*value_sat);
-            check_output_value(amount)?;
             let address = self.spend_addr(&mut db_conn, address);
             destinations_checked.push((address, amount));
         }
