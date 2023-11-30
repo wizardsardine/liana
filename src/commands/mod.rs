@@ -10,7 +10,7 @@ use crate::{
     descriptors,
     spend::{
         check_output_value, create_spend, sanity_check_psbt, unsigned_tx_max_vbytes, AddrInfo,
-        CandidateCoin, CreateSpendRes, SpendCreationError, SpendOutputAddress,
+        CandidateCoin, CreateSpendRes, SpendCreationError, SpendOutputAddress, TxGetter,
     },
     DaemonControl, VERSION,
 };
@@ -25,7 +25,7 @@ use utils::{
 use std::{
     collections::{hash_map, BTreeMap, HashMap, HashSet},
     convert::TryInto,
-    fmt,
+    fmt, sync,
 };
 
 use miniscript::{
@@ -151,6 +151,32 @@ impl fmt::Display for RbfErrorInfo {
             Self::TooLowFeerate(r) => write!(f, "Feerate too low: {}.", r),
             Self::NotSignaling => write!(f, "Replacement candidate does not signal for RBF."),
         }
+    }
+}
+
+/// A wallet transaction getter which fetches the transaction from our Bitcoin backend with a cache
+/// to avoid needless redundant calls. Note the cache holds an Option<> so we also avoid redundant
+/// calls when the txid isn't known by our Bitcoin backend.
+struct BitcoindTxGetter<'a> {
+    bitcoind: &'a sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+    cache: HashMap<bitcoin::Txid, Option<bitcoin::Transaction>>,
+}
+
+impl<'a> BitcoindTxGetter<'a> {
+    pub fn new(bitcoind: &'a sync::Arc<sync::Mutex<dyn BitcoinInterface>>) -> Self {
+        Self {
+            bitcoind,
+            cache: HashMap::new(),
+        }
+    }
+}
+
+impl<'a> TxGetter for BitcoindTxGetter<'a> {
+    fn get_tx(&mut self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
+        if let hash_map::Entry::Vacant(entry) = self.cache.entry(*txid) {
+            entry.insert(self.bitcoind.wallet_transaction(txid).map(|wtx| wtx.0));
+        }
+        self.cache.get(txid).cloned().flatten()
     }
 }
 
@@ -393,6 +419,7 @@ impl DaemonControl {
             return Err(CommandError::InvalidFeerate(feerate_vb));
         }
         let mut db_conn = self.db.connection();
+        let mut tx_getter = BitcoindTxGetter::new(&self.bitcoin);
 
         // Check the destination addresses are valid for the network and
         // sanity check each output's value.
@@ -458,7 +485,7 @@ impl DaemonControl {
         let CreateSpendRes { psbt, has_change } = create_spend(
             &self.config.main_descriptor,
             &self.secp,
-            &self.bitcoin,
+            &mut tx_getter,
             &destinations_checked,
             &candidate_coins,
             feerate_vb,
@@ -605,6 +632,7 @@ impl DaemonControl {
         feerate_vb: Option<u64>,
     ) -> Result<CreateSpendResult, CommandError> {
         let mut db_conn = self.db.connection();
+        let mut tx_getter = BitcoindTxGetter::new(&self.bitcoin);
 
         if is_cancel && feerate_vb.is_some() {
             return Err(CommandError::RbfError(RbfErrorInfo::SuperfluousFeerate));
@@ -782,7 +810,7 @@ impl DaemonControl {
             } = match create_spend(
                 &self.config.main_descriptor,
                 &self.secp,
-                &self.bitcoin,
+                &mut tx_getter,
                 &destinations,
                 &candidate_coins,
                 feerate_vb,

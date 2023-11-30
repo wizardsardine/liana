@@ -1,13 +1,6 @@
-use crate::{bitcoin::BitcoinInterface, database::Coin, descriptors};
+use crate::{database::Coin, descriptors};
 
-use std::{
-    collections::{
-        hash_map::{self, HashMap},
-        BTreeMap,
-    },
-    convert::TryInto,
-    fmt, sync,
-};
+use std::{collections::BTreeMap, convert::TryInto, fmt};
 
 pub use bdk_coin_select::InsufficientFunds;
 use bdk_coin_select::{
@@ -401,6 +394,12 @@ pub struct SpendOutputAddress {
     pub info: Option<AddrInfo>,
 }
 
+/// A trait for getting a wallet transaction by its txid.
+pub trait TxGetter {
+    /// Get a wallet transaction. Allows for a cache by making the access mutable.
+    fn get_tx(&mut self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction>;
+}
+
 pub struct CreateSpendRes {
     /// The created PSBT.
     pub psbt: Psbt,
@@ -411,7 +410,7 @@ pub struct CreateSpendRes {
 pub fn create_spend(
     main_descriptor: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-    bitcoin: &sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+    tx_getter: &mut impl TxGetter,
     destinations: &[(SpendOutputAddress, bitcoin::Amount)],
     candidate_coins: &[CandidateCoin],
     feerate_vb: u64,
@@ -544,16 +543,7 @@ pub fn create_spend(
 
     // Iterate through selected coins and add necessary information to the PSBT inputs.
     let mut psbt_ins = Vec::with_capacity(selected_coins.len());
-    let mut spent_txs = HashMap::with_capacity(selected_coins.len());
     for coin in &selected_coins {
-        // Fetch the transaction that created it if necessary
-        if let hash_map::Entry::Vacant(e) = spent_txs.entry(coin.outpoint) {
-            let tx = bitcoin
-                .wallet_transaction(&coin.outpoint.txid)
-                .ok_or(SpendCreationError::FetchingTransaction(coin.outpoint))?;
-            e.insert(tx.0);
-        }
-
         tx.input.push(bitcoin::TxIn {
             previous_output: coin.outpoint,
             sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
@@ -568,7 +558,7 @@ pub fn create_spend(
             value: coin.amount.to_sat(),
             script_pubkey: coin_desc.script_pubkey(),
         });
-        let non_witness_utxo = spent_txs.get(&coin.outpoint).cloned();
+        let non_witness_utxo = tx_getter.get_tx(&coin.outpoint.txid);
         let bip32_derivation = coin_desc.bip32_derivations();
         psbt_ins.push(PsbtIn {
             witness_script,
