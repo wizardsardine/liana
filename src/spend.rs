@@ -1,8 +1,4 @@
-use crate::{
-    bitcoin::BitcoinInterface,
-    database::{Coin, DatabaseConnection},
-    descriptors,
-};
+use crate::{bitcoin::BitcoinInterface, database::Coin, descriptors};
 
 use std::{
     collections::{
@@ -21,6 +17,7 @@ use bdk_coin_select::{
 use miniscript::bitcoin::{
     self,
     absolute::{Height, LockTime},
+    bip32,
     constants::WITNESS_SCALE_FACTOR,
     psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
     secp256k1,
@@ -392,6 +389,18 @@ pub fn unsigned_tx_max_vbytes(tx: &bitcoin::Transaction, max_sat_weight: u64) ->
         .unwrap()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AddrInfo {
+    pub index: bip32::ChildNumber,
+    pub is_change: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpendOutputAddress {
+    pub addr: bitcoin::Address,
+    pub info: Option<AddrInfo>,
+}
+
 pub struct CreateSpendRes {
     /// The created PSBT.
     pub psbt: Psbt,
@@ -400,15 +409,14 @@ pub struct CreateSpendRes {
 }
 
 pub fn create_spend(
-    db_conn: &mut Box<dyn DatabaseConnection>,
     main_descriptor: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     bitcoin: &sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
-    destinations: &HashMap<bitcoin::Address, bitcoin::Amount>,
+    destinations: &[(SpendOutputAddress, bitcoin::Amount)],
     candidate_coins: &[CandidateCoin],
     feerate_vb: u64,
     min_fee: u64,
-    change_addr: bitcoin::Address,
+    change_addr: SpendOutputAddress,
 ) -> Result<CreateSpendRes, SpendCreationError> {
     // This method is a bit convoluted, but it's the nature of creating a Bitcoin transaction
     // with a target feerate and outputs. In addition, we support different modes (coin control
@@ -440,26 +448,25 @@ pub fn create_spend(
     // Add the destinations outputs to the transaction and PSBT. At the same time
     // sanity check each output's value.
     let mut psbt_outs = Vec::with_capacity(destinations.len());
-    for (address, &amount) in destinations {
-        check_output_value(amount)?;
+    for (address, amount) in destinations {
+        check_output_value(*amount)?;
 
         tx.output.push(bitcoin::TxOut {
             value: amount.to_sat(),
-            script_pubkey: address.script_pubkey(),
+            script_pubkey: address.addr.script_pubkey(),
         });
         // If it's an address of ours, signal it as change to signing devices by adding the
         // BIP32 derivation path to the PSBT output.
-        let bip32_derivation =
-            if let Some((index, is_change)) = db_conn.derivation_index_by_address(address) {
-                let desc = if is_change {
-                    main_descriptor.change_descriptor()
-                } else {
-                    main_descriptor.receive_descriptor()
-                };
-                desc.derive(index, secp).bip32_derivations()
+        let bip32_derivation = if let Some(AddrInfo { index, is_change }) = address.info {
+            let desc = if is_change {
+                main_descriptor.change_descriptor()
             } else {
-                Default::default()
+                main_descriptor.receive_descriptor()
             };
+            desc.derive(index, secp).bip32_derivations()
+        } else {
+            Default::default()
+        };
         psbt_outs.push(PsbtOut {
             bip32_derivation,
             ..PsbtOut::default()
@@ -473,7 +480,7 @@ pub fn create_spend(
     // we should include one, so get the change address and create a dummy txo for this purpose.
     let mut change_txo = bitcoin::TxOut {
         value: std::u64::MAX,
-        script_pubkey: change_addr.script_pubkey(),
+        script_pubkey: change_addr.addr.script_pubkey(),
     };
     // Now select the coins necessary using the provided candidates and determine whether
     // there is any leftover to create a change output.
@@ -515,17 +522,16 @@ pub fn create_spend(
 
         // If the change address is ours, tell the signers by setting the BIP32 derivations in the
         // PSBT output.
-        let bip32_derivation =
-            if let Some((index, is_change)) = db_conn.derivation_index_by_address(&change_addr) {
-                let desc = if is_change {
-                    main_descriptor.change_descriptor()
-                } else {
-                    main_descriptor.receive_descriptor()
-                };
-                desc.derive(index, secp).bip32_derivations()
+        let bip32_derivation = if let Some(AddrInfo { index, is_change }) = change_addr.info {
+            let desc = if is_change {
+                main_descriptor.change_descriptor()
             } else {
-                Default::default()
+                main_descriptor.receive_descriptor()
             };
+            desc.derive(index, secp).bip32_derivations()
+        } else {
+            Default::default()
+        };
 
         // TODO: shuffle once we have Taproot
         change_txo.value = change_amount.to_sat();

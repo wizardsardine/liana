@@ -9,8 +9,8 @@ use crate::{
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
     spend::{
-        check_output_value, create_spend, sanity_check_psbt, unsigned_tx_max_vbytes, CandidateCoin,
-        CreateSpendRes, SpendCreationError,
+        check_output_value, create_spend, sanity_check_psbt, unsigned_tx_max_vbytes, AddrInfo,
+        CandidateCoin, CreateSpendRes, SpendCreationError, SpendOutputAddress,
     },
     DaemonControl, VERSION,
 };
@@ -176,20 +176,61 @@ impl DaemonControl {
             .map_err(CommandError::Address)
     }
 
+    // Get details about this address, if we know about it.
+    fn addr_info(
+        &self,
+        db_conn: &mut Box<dyn DatabaseConnection>,
+        addr: &bitcoin::Address,
+    ) -> Option<AddrInfo> {
+        db_conn
+            .derivation_index_by_address(addr)
+            .map(|(index, is_change)| AddrInfo { index, is_change })
+    }
+
+    // Create an address to be used in an output of a spend transaction.
+    fn spend_addr(
+        &self,
+        db_conn: &mut Box<dyn DatabaseConnection>,
+        addr: bitcoin::Address,
+    ) -> SpendOutputAddress {
+        SpendOutputAddress {
+            info: self.addr_info(db_conn, &addr),
+            addr,
+        }
+    }
+
+    // Get the change address for the next derivation index.
+    fn next_change_addr(&self, db_conn: &mut Box<dyn DatabaseConnection>) -> SpendOutputAddress {
+        let index = db_conn.change_index();
+        let desc = self
+            .config
+            .main_descriptor
+            .change_descriptor()
+            .derive(index, &self.secp);
+        let addr = desc.address(self.config.bitcoin_config.network);
+        SpendOutputAddress {
+            addr,
+            info: Some(AddrInfo {
+                index,
+                is_change: true,
+            }),
+        }
+    }
+
     // If we detect the given address as ours, and it has a higher derivation index than our next
     // derivation index, update our next derivation index to the one after the address'.
     fn maybe_increase_next_deriv_index(
         &self,
         db_conn: &mut Box<dyn DatabaseConnection>,
-        addr: &bitcoin::Address,
+        addr_info: &Option<AddrInfo>,
     ) {
-        if let Some((index, is_change)) = db_conn.derivation_index_by_address(addr) {
-            if is_change && db_conn.change_index() < index {
+        if let Some(AddrInfo { index, is_change }) = addr_info {
+            if *is_change && db_conn.change_index() < *index {
                 let next_index = index
                     .increment()
                     .expect("Must not get into hardened territory");
                 db_conn.set_change_index(next_index, &self.secp);
-            } else if !is_change && db_conn.receive_index() < index {
+            } else if !is_change && db_conn.receive_index() < *index {
                 let next_index = index
                     .increment()
                     .expect("Must not get into hardened territory");
@@ -355,29 +396,24 @@ impl DaemonControl {
 
         // Check the destination addresses are valid for the network and
         // sanity check each output's value.
-        let mut destinations_checked = HashMap::with_capacity(destinations.len());
+        let mut destinations_checked = Vec::with_capacity(destinations.len());
         for (address, value_sat) in destinations {
             let address = self.validate_address(address.clone())?;
             let amount = bitcoin::Amount::from_sat(*value_sat);
             check_output_value(amount)?;
-            destinations_checked.insert(address, amount);
+            let address = self.spend_addr(&mut db_conn, address);
+            destinations_checked.push((address, amount));
         }
 
         // The change address to be used if a change output needs to be created. It may be
         // specified by the caller (for instance for the purpose of a sweep, or to avoid us
         // creating a new change address on every call).
         let change_address = change_address
-            .map(|addr| self.validate_address(addr))
+            .map(|addr| {
+                Ok::<_, CommandError>(self.spend_addr(&mut db_conn, self.validate_address(addr)?))
+            })
             .transpose()?
-            .unwrap_or_else(|| {
-                let index = db_conn.change_index();
-                let desc = self
-                    .config
-                    .main_descriptor
-                    .change_descriptor()
-                    .derive(index, &self.secp);
-                desc.address(self.config.bitcoin_config.network)
-            });
+            .unwrap_or_else(|| self.next_change_addr(&mut db_conn));
 
         // The candidate coins will be either all optional or all mandatory.
         // If no coins have been specified, then coins will be selected automatically for
@@ -418,8 +454,8 @@ impl DaemonControl {
         // Create the PSBT. If there was no error in doing so make sure to update our next
         // derivation index in case the change address which we generated or was provided to us was
         // for a future derivation index.
+        let change_info = change_address.info;
         let CreateSpendRes { psbt, has_change } = create_spend(
-            &mut db_conn,
             &self.config.main_descriptor,
             &self.secp,
             &self.bitcoin,
@@ -427,10 +463,10 @@ impl DaemonControl {
             &candidate_coins,
             feerate_vb,
             0, // No min fee required.
-            change_address.clone(),
+            change_address,
         )?;
         if has_change {
-            self.maybe_increase_next_deriv_index(&mut db_conn, &change_address);
+            self.maybe_increase_next_deriv_index(&mut db_conn, &change_info);
         }
 
         Ok(CreateSpendResult { psbt })
@@ -681,28 +717,22 @@ impl DaemonControl {
                 .into_iter()
                 .filter_map(|(addr, amt, _)| {
                     if prev_change_address.as_ref() != Some(&addr) {
-                        Some((addr, amt))
+                        Some((self.spend_addr(&mut db_conn, addr), amt))
                     } else {
                         None
                     }
                 })
                 .collect()
         } else {
-            HashMap::new()
+            Vec::new()
         };
 
         // If there was no previous change address, we set the change address for the replacement
         // to our next change address. This way, we won't increment the change index with each attempt
         // at creating the replacement PSBT below.
-        let change_address = prev_change_address.unwrap_or_else(|| {
-            let index = db_conn.change_index();
-            let desc = self
-                .config
-                .main_descriptor
-                .change_descriptor()
-                .derive(index, &self.secp);
-            desc.address(self.config.bitcoin_config.network)
-        });
+        let change_address = prev_change_address
+            .map(|addr| self.spend_addr(&mut db_conn, addr))
+            .unwrap_or_else(|| self.next_change_addr(&mut db_conn));
         // If `!is_cancel`, we take the previous coins as mandatory candidates and add confirmed coins as optional.
         // Otherwise, we take the previous coins as optional candidates and let coin selection find the
         // best solution that includes at least one of these. If there are insufficient funds to create the replacement
@@ -750,7 +780,6 @@ impl DaemonControl {
                 psbt: rbf_psbt,
                 has_change,
             } = match create_spend(
-                &mut db_conn,
                 &self.config.main_descriptor,
                 &self.secp,
                 &self.bitcoin,
@@ -786,7 +815,7 @@ impl DaemonControl {
                 // In case of success, make sure to update our next derivation index if the change
                 // address used was from the future.
                 if has_change {
-                    self.maybe_increase_next_deriv_index(&mut db_conn, &change_address);
+                    self.maybe_increase_next_deriv_index(&mut db_conn, &change_address.info);
                 }
 
                 return Ok(CreateSpendResult { psbt: rbf_psbt });
