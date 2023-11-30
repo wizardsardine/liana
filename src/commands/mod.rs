@@ -479,8 +479,8 @@ impl DaemonControl {
         };
 
         // Create the PSBT. If there was no error in doing so make sure to update our next
-        // derivation index in case the change address which we generated or was provided to us was
-        // for a future derivation index.
+        // derivation index in case any address in the transaction outputs was ours and from the
+        // future.
         let change_info = change_address.info;
         let CreateSpendRes { psbt, has_change } = create_spend(
             &self.config.main_descriptor,
@@ -492,6 +492,9 @@ impl DaemonControl {
             0, // No min fee required.
             change_address,
         )?;
+        for (addr, _) in destinations_checked {
+            self.maybe_increase_next_deriv_index(&mut db_conn, &addr.info);
+        }
         if has_change {
             self.maybe_increase_next_deriv_index(&mut db_conn, &change_info);
         }
@@ -840,8 +843,11 @@ impl DaemonControl {
             if rbf_psbt.fee().expect("has already been sanity checked")
                 >= descendant_fees + bitcoin::Amount::from_sat(replacement_vsize)
             {
-                // In case of success, make sure to update our next derivation index if the change
-                // address used was from the future.
+                // In case of success, make sure to update our next derivation index if any address
+                // used in the transaction outputs was from the future.
+                for (addr, _) in destinations {
+                    self.maybe_increase_next_deriv_index(&mut db_conn, &addr.info);
+                }
                 if has_change {
                     self.maybe_increase_next_deriv_index(&mut db_conn, &change_address.info);
                 }
