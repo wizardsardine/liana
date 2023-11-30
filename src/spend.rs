@@ -179,7 +179,7 @@ pub struct CandidateCoin {
 ///
 /// Using this metric with `must_have_change: false` is equivalent to using
 /// [`LowestFee`].
-pub struct LowestFeeChangeCondition<'c, C> {
+struct LowestFeeChangeCondition<'c, C> {
     /// The underlying [`LowestFee`] metric to use.
     pub lowest_fee: LowestFee<'c, C>,
     /// If `true`, only solutions with change will be found.
@@ -230,7 +230,7 @@ where
 ///
 /// `must_have_change` indicates whether the transaction must have a change output.
 /// If `true`, the returned change amount will be positive.
-pub fn select_coins_for_spend(
+fn select_coins_for_spend(
     candidate_coins: &[CandidateCoin],
     base_tx: bitcoin::Transaction,
     change_txo: bitcoin::TxOut,
