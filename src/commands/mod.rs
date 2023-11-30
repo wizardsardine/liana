@@ -10,7 +10,7 @@ use crate::{
     descriptors,
     spend::{
         create_spend, AddrInfo, CandidateCoin, CreateSpendRes, SpendCreationError,
-        SpendOutputAddress, TxGetter,
+        SpendOutputAddress, SpendTxFees, TxGetter,
     },
     DaemonControl, VERSION,
 };
@@ -519,8 +519,7 @@ impl DaemonControl {
             &mut tx_getter,
             &destinations_checked,
             &candidate_coins,
-            feerate_vb,
-            0, // No min fee required.
+            SpendTxFees::Regular(feerate_vb),
             change_address,
         )?;
         for (addr, _) in destinations_checked {
@@ -845,8 +844,7 @@ impl DaemonControl {
                 &mut tx_getter,
                 &destinations,
                 &candidate_coins,
-                feerate_vb,
-                min_fee,
+                SpendTxFees::Rbf(feerate_vb, min_fee),
                 change_address.clone(),
             ) {
                 Ok(psbt) => psbt,
@@ -1018,8 +1016,7 @@ impl DaemonControl {
             &mut tx_getter,
             &[], // No destination, only the change address.
             &sweepable_coins,
-            feerate_vb,
-            0, // No min fee required.
+            SpendTxFees::Regular(feerate_vb),
             sweep_addr,
         )?;
         if has_change {

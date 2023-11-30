@@ -385,6 +385,17 @@ pub trait TxGetter {
     fn get_tx(&mut self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction>;
 }
 
+/// Specify the fee requirements for a transaction. In both cases set a target feerate in satoshi
+/// per virtual byte. For RBF also set a minimum fee in satoshis for this transaction. See
+/// https://github.com/bitcoin/bitcoin/blob/master/doc/policy/mempool-replacements.md for more
+/// information about how it should be set.
+pub enum SpendTxFees {
+    /// The target feerate in sats/vb for this transaction.
+    Regular(u64),
+    /// The (target feerate, minimum absolute fees) for this transactions. Both in sats.
+    Rbf(u64, u64),
+}
+
 pub struct CreateSpendRes {
     /// The created PSBT.
     pub psbt: Psbt,
@@ -411,9 +422,7 @@ pub struct CreateSpendRes {
 /// `destinations` is empty, they will all be included as inputs of the transaction. Otherwise, a
 /// coin selection algorithm will be run to spend the most efficient subset of them to meet the
 /// `destinations` requirements.
-/// * `feerate_vb`: the feerate to target for this transaction, in satoshi per virtual byte.
-/// * `min_fee`: the minimum absolute fee for this transaction. Can be set to 0 for anything but an
-/// RBF transaction.
+/// * `fees`: the target feerate (in sats/vb) and, if necessary, minimum absolute fee for this tx.
 /// * `change_addr`: the address to use for a change output if we need to create one. Can be set to
 /// an external address (if combined with an empty list of `destinations` it's useful to sweep some
 /// or all coins of a wallet to an external address).
@@ -423,8 +432,7 @@ pub fn create_spend(
     tx_getter: &mut impl TxGetter,
     destinations: &[(SpendOutputAddress, bitcoin::Amount)],
     candidate_coins: &[CandidateCoin],
-    feerate_vb: u64,
-    min_fee: u64,
+    fees: SpendTxFees,
     change_addr: SpendOutputAddress,
 ) -> Result<CreateSpendRes, SpendCreationError> {
     // This method does quite a few things. In addition, we support different modes (coin control
@@ -441,6 +449,10 @@ pub fn create_spend(
     // 3. Add the selected coins as inputs to the transaction.
     // 4. Finalize the PSBT and sanity check it before returning it.
 
+    let (feerate_vb, min_fee) = match fees {
+        SpendTxFees::Regular(feerate) => (feerate, 0),
+        SpendTxFees::Rbf(feerate, fee) => (feerate, fee),
+    };
     let is_self_send = destinations.is_empty();
     if feerate_vb < 1 {
         return Err(SpendCreationError::InvalidFeerate(feerate_vb));
