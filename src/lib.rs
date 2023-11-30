@@ -9,6 +9,7 @@ pub mod descriptors;
 mod jsonrpc;
 mod random;
 pub mod signer;
+mod spend;
 #[cfg(test)]
 mod testutils;
 

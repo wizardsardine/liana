@@ -7,15 +7,19 @@ mod utils;
 use crate::{
     bitcoin::BitcoinInterface,
     database::{Coin, DatabaseInterface},
-    descriptors, DaemonControl, VERSION,
+    descriptors,
+    spend::{
+        check_output_value, create_spend, sanity_check_psbt, unsigned_tx_max_vbytes, CandidateCoin,
+        SpendCreationError,
+    },
+    DaemonControl, VERSION,
 };
 
 pub use crate::database::{CoinStatus, LabelItem};
 
-use bdk_coin_select::InsufficientFunds;
 use utils::{
-    deser_addr_assume_checked, deser_amount_from_sats, deser_fromstr, deser_hex,
-    select_coins_for_spend, ser_amount, ser_hex, ser_to_string, unsigned_tx_max_vbytes,
+    deser_addr_assume_checked, deser_amount_from_sats, deser_fromstr, deser_hex, ser_amount,
+    ser_hex, ser_to_string,
 };
 
 use std::{
@@ -34,19 +38,6 @@ use miniscript::{
 };
 use serde::{Deserialize, Serialize};
 
-// We would never create a transaction with an output worth less than this.
-// That's 1$ at 20_000$ per BTC.
-const DUST_OUTPUT_SATS: u64 = 5_000;
-
-// Long-term feerate (sats/vb) used for coin selection considerations.
-const LONG_TERM_FEERATE_VB: f32 = 10.0;
-
-// Assume that paying more than 1BTC in fee is a bug.
-const MAX_FEE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
-
-// Assume that paying more than 1000sat/vb in feerate is a bug.
-const MAX_FEERATE: u64 = 1_000;
-
 // Timestamp in the header of the genesis block. Used for sanity checks.
 const MAINNET_GENESIS_TIME: u32 = 1231006505;
 
@@ -58,15 +49,12 @@ pub enum CommandError {
     AlreadySpent(bitcoin::OutPoint),
     ImmatureCoinbase(bitcoin::OutPoint),
     Address(bitcoin::address::Error),
-    InvalidOutputValue(bitcoin::Amount),
+    SpendCreation(SpendCreationError),
     InsufficientFunds(
         /* in value */ bitcoin::Amount,
         /* out value */ Option<bitcoin::Amount>,
         /* target feerate */ u64,
     ),
-    InsaneFees(InsaneFeeInfo),
-    FetchingTransaction(bitcoin::OutPoint),
-    SanityCheckFailure(Psbt),
     UnknownSpend(bitcoin::Txid),
     // FIXME: when upgrading Miniscript put the actual error there
     SpendFinalization(String),
@@ -78,57 +66,40 @@ pub enum CommandError {
     RecoveryNotAvailable,
     /// Overflowing or unhardened derivation index.
     InvalidDerivationIndex,
-    CoinSelectionError(InsufficientFunds),
     RbfError(RbfErrorInfo),
 }
 
 impl fmt::Display for CommandError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::NoOutpointForSelfSend => write!(f, "No provided outpoint for self-send. Need at least one."),
+            Self::NoOutpointForSelfSend => {
+                write!(f, "No provided outpoint for self-send. Need at least one.")
+            }
             Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {} sats/vb.", sats_vb),
             Self::AlreadySpent(op) => write!(f, "Coin at '{}' is already spent.", op),
-            Self::ImmatureCoinbase(op) => write!(f, "Coin at '{}' is from an immature coinbase transaction.", op),
-            Self::UnknownOutpoint(op) => write!(f, "Unknown outpoint '{}'.", op),
-            Self::Address(e) => write!(
+            Self::ImmatureCoinbase(op) => write!(
                 f,
-                "Address error: {}", e
+                "Coin at '{}' is from an immature coinbase transaction.",
+                op
             ),
-            Self::InvalidOutputValue(amount) => write!(f, "Invalid output value '{}'.", amount),
-            Self::InsufficientFunds(in_val, out_val, feerate) => if let Some(out_val) = out_val {
-                write!(
+            Self::UnknownOutpoint(op) => write!(f, "Unknown outpoint '{}'.", op),
+            Self::Address(e) => write!(f, "Address error: {}", e),
+            Self::SpendCreation(e) => write!(f, "Creating spend: {}", e),
+            Self::InsufficientFunds(in_val, out_val, feerate) => {
+                if let Some(out_val) = out_val {
+                    write!(
                     f,
                     "Cannot create a {} sat/vb transaction with input value {} and output value {}",
                     feerate, in_val, out_val
                 )
-            } else {
-                write!(
-                    f,
-                    "Not enough fund to create a {} sat/vb transaction with input value {}",
-                    feerate, in_val
-                )
-            },
-            Self::InsaneFees(info) => write!(
-                f,
-                "We assume transactions with a fee larger than {} sats or a feerate larger than {} sats/vb are a mistake. \
-                The created transaction {}.",
-                MAX_FEE,
-                MAX_FEERATE,
-                match info {
-                    InsaneFeeInfo::NegativeFee => "would have a negative fee".to_string(),
-                    InsaneFeeInfo::TooHighFee(f) => format!("{} sats in fees", f),
-                    InsaneFeeInfo::InvalidFeerate => "would have an invalid feerate".to_string(),
-                    InsaneFeeInfo::TooHighFeerate(r) => format!("has a feerate of {} sats/vb", r),
-                },
-            ),
-            Self::FetchingTransaction(op) => {
-                write!(f, "Could not fetch transaction for coin {}", op)
+                } else {
+                    write!(
+                        f,
+                        "Not enough fund to create a {} sat/vb transaction with input value {}",
+                        feerate, in_val
+                    )
+                }
             }
-            Self::SanityCheckFailure(psbt) => write!(
-                f,
-                "BUG! Please report this. Failed sanity checks for PSBT '{}'.",
-                psbt
-            ),
             Self::UnknownSpend(txid) => write!(f, "Unknown spend transaction '{}'.", txid),
             Self::SpendFinalization(e) => {
                 write!(f, "Failed to finalize the spend transaction PSBT: '{}'.", e)
@@ -143,34 +114,21 @@ impl fmt::Display for CommandError {
             Self::RecoveryNotAvailable => write!(
                 f,
                 "No coin currently spendable through this timelocked recovery path."
-           ),
-            Self::InvalidDerivationIndex => write!(f, "Unhardened or overflowing BIP32 derivation index."),
-            Self::CoinSelectionError(e) => write!(f, "Coin selection error: '{}'", e),
-            Self::RbfError(e) => write!(f, "RBF error: '{}'.", e)
+            ),
+            Self::InvalidDerivationIndex => {
+                write!(f, "Unhardened or overflowing BIP32 derivation index.")
+            }
+            Self::RbfError(e) => write!(f, "RBF error: '{}'.", e),
         }
     }
 }
 
 impl std::error::Error for CommandError {}
 
-// Sanity check the value of a transaction output.
-fn check_output_value(value: bitcoin::Amount) -> Result<(), CommandError> {
-    // NOTE: the network parameter isn't used upstream
-    if value.to_sat() > bitcoin::blockdata::constants::MAX_MONEY
-        || value.to_sat() < DUST_OUTPUT_SATS
-    {
-        Err(CommandError::InvalidOutputValue(value))
-    } else {
-        Ok(())
+impl From<SpendCreationError> for CommandError {
+    fn from(e: SpendCreationError) -> Self {
+        CommandError::SpendCreation(e)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InsaneFeeInfo {
-    NegativeFee,
-    InvalidFeerate,
-    TooHighFee(u64),
-    TooHighFeerate(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,82 +152,6 @@ impl fmt::Display for RbfErrorInfo {
             Self::NotSignaling => write!(f, "Replacement candidate does not signal for RBF."),
         }
     }
-}
-
-/// A candidate for coin selection when creating a transaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CandidateCoin {
-    /// The candidate coin.
-    coin: Coin,
-    /// Whether or not this coin must be selected by the coin selection algorithm.
-    must_select: bool,
-}
-
-// Apply some sanity checks on a created transaction's PSBT.
-// TODO: add more sanity checks from revault_tx
-fn sanity_check_psbt(
-    spent_desc: &descriptors::LianaDescriptor,
-    psbt: &Psbt,
-) -> Result<(), CommandError> {
-    let tx = &psbt.unsigned_tx;
-
-    // Must have as many in/out in the PSBT and Bitcoin tx.
-    if psbt.inputs.len() != tx.input.len()
-        || psbt.outputs.len() != tx.output.len()
-        || tx.output.is_empty()
-    {
-        return Err(CommandError::SanityCheckFailure(psbt.clone()));
-    }
-
-    // Compute the transaction input value, checking all PSBT inputs have the derivation
-    // index set for signing devices to recognize them as ours.
-    let mut value_in = 0;
-    for psbtin in psbt.inputs.iter() {
-        if psbtin.bip32_derivation.is_empty() {
-            return Err(CommandError::SanityCheckFailure(psbt.clone()));
-        }
-        value_in += psbtin
-            .witness_utxo
-            .as_ref()
-            .ok_or_else(|| CommandError::SanityCheckFailure(psbt.clone()))?
-            .value;
-    }
-
-    // Compute the output value and check the absolute fee isn't insane.
-    let value_out: u64 = tx.output.iter().map(|o| o.value).sum();
-    let abs_fee = value_in
-        .checked_sub(value_out)
-        .ok_or(CommandError::InsaneFees(InsaneFeeInfo::NegativeFee))?;
-    if abs_fee > MAX_FEE {
-        return Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFee(abs_fee)));
-    }
-
-    // Check the feerate isn't insane.
-    // Add weights together before converting to vbytes to avoid rounding up multiple times
-    // and increasing the result, which could lead to the feerate in sats/vb falling below 1.
-    let tx_wu = tx.weight().to_wu() + (spent_desc.max_sat_weight() * tx.input.len()) as u64;
-    let tx_vb = tx_wu
-        .checked_add(descriptors::WITNESS_FACTOR as u64 - 1)
-        .unwrap()
-        .checked_div(descriptors::WITNESS_FACTOR as u64)
-        .unwrap();
-    let feerate_sats_vb = abs_fee
-        .checked_div(tx_vb)
-        .ok_or(CommandError::InsaneFees(InsaneFeeInfo::InvalidFeerate))?;
-    if !(1..=MAX_FEERATE).contains(&feerate_sats_vb) {
-        return Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(
-            feerate_sats_vb,
-        )));
-    }
-
-    // Check for dust outputs
-    for txo in psbt.unsigned_tx.output.iter() {
-        if txo.value < txo.script_pubkey.dust_value().to_sat() {
-            return Err(CommandError::SanityCheckFailure(psbt.clone()));
-        }
-    }
-
-    Ok(())
 }
 
 impl DaemonControl {
@@ -362,7 +244,7 @@ impl DaemonControl {
         };
 
         // Derive all receive and change addresses for the queried range.
-        let addresses: Result<Vec<AddressInfo>, _> = (start_index_u32..end_index)
+        let addresses: Result<Vec<AddressInfo>, CommandError> = (start_index_u32..end_index)
             .map(|index| {
                 let child = bip32::ChildNumber::from_normal_idx(index)
                     .map_err(|_| CommandError::InvalidDerivationIndex)?;
@@ -498,13 +380,20 @@ impl DaemonControl {
                 .collect()
         };
 
-        self.create_spend_internal(
-            &destinations_checked,
-            &candidate_coins,
-            feerate_vb,
-            0, // No min fee required.
-            change_address,
-        )
+        Ok(CreateSpendResult {
+            psbt: create_spend(
+                &mut db_conn,
+                &self.config.main_descriptor,
+                &self.secp,
+                &self.bitcoin,
+                self.config.bitcoin_config.network,
+                &destinations_checked,
+                &candidate_coins,
+                feerate_vb,
+                0, // No min fee required.
+                change_address,
+            )?,
+        })
     }
 
     pub fn update_spend(&self, mut psbt: Psbt) -> Result<(), CommandError> {
@@ -557,235 +446,6 @@ impl DaemonControl {
         db_conn.store_spend(&psbt);
 
         Ok(())
-    }
-
-    fn create_spend_internal(
-        &self,
-        destinations: &HashMap<bitcoin::Address, bitcoin::Amount>,
-        candidate_coins: &[CandidateCoin],
-        feerate_vb: u64,
-        min_fee: u64,
-        change_address: Option<bitcoin::Address>,
-    ) -> Result<CreateSpendResult, CommandError> {
-        // This method is a bit convoluted, but it's the nature of creating a Bitcoin transaction
-        // with a target feerate and outputs. In addition, we support different modes (coin control
-        // vs automated coin selection, self-spend, sweep, etc..) which make the logic a bit more
-        // intricate. Here is a brief overview of what we're doing here:
-        // 1. Create a transaction with all the target outputs (if this is a self-send, none are
-        //    added at this step the only output will be added as a change output).
-        // 2. Automatically select the coins if necessary and determine whether a change output
-        //    will be necessary for this transaction from the set of (automatically or manually)
-        //    selected coins. The output for a self-send is added there.
-        //    The change output is also (ab)used to implement a "sweep" functionality. We allow to
-        //    set it to an external address to send all the inputs' value minus the fee and the
-        //    other output's value to a specific, external, address.
-        // 3. Add the selected coins as inputs to the transaction.
-        // 4. Finalize the PSBT and sanity check it before returning it.
-
-        let is_self_send = destinations.is_empty();
-        if feerate_vb < 1 {
-            return Err(CommandError::InvalidFeerate(feerate_vb));
-        }
-        let mut db_conn = self.db.connection();
-
-        // Create transaction with no inputs and no outputs.
-        let mut tx = bitcoin::Transaction {
-            version: 2,
-            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO), // TODO: randomized anti fee sniping
-            input: Vec::with_capacity(candidate_coins.iter().filter(|c| c.must_select).count()),
-            output: Vec::with_capacity(destinations.len()),
-        };
-        // Add the destinations outputs to the transaction and PSBT. At the same time
-        // sanity check each output's value.
-        let mut psbt_outs = Vec::with_capacity(destinations.len());
-        for (address, &amount) in destinations {
-            check_output_value(amount)?;
-
-            tx.output.push(bitcoin::TxOut {
-                value: amount.to_sat(),
-                script_pubkey: address.script_pubkey(),
-            });
-            // If it's an address of ours, signal it as change to signing devices by adding the
-            // BIP32 derivation path to the PSBT output.
-            let bip32_derivation =
-                if let Some((index, is_change)) = db_conn.derivation_index_by_address(address) {
-                    let desc = if is_change {
-                        self.config.main_descriptor.change_descriptor()
-                    } else {
-                        self.config.main_descriptor.receive_descriptor()
-                    };
-                    desc.derive(index, &self.secp).bip32_derivations()
-                } else {
-                    Default::default()
-                };
-            psbt_outs.push(PsbtOut {
-                bip32_derivation,
-                ..PsbtOut::default()
-            });
-        }
-        assert_eq!(tx.output.is_empty(), is_self_send);
-
-        // Now compute whether we'll need a change output while automatically selecting coins to be
-        // used as input if necessary.
-        // We need to get the size of a potential change output to select coins / determine whether
-        // we should include one, so get the change address and create a dummy txo for this purpose.
-        // The change address may be externally specified for the purpose of a "sweep": the user
-        // would set the value of some outputs (or none) and fill-in an address to be used for "all
-        // the rest". This is the same logic as for a change output, except it's external.
-        struct InternalChangeInfo {
-            pub desc: descriptors::DerivedSinglePathLianaDesc,
-            pub index: bip32::ChildNumber,
-        }
-        let (change_addr, int_change_info) = if let Some(addr) = change_address {
-            (addr, None)
-        } else {
-            let index = db_conn.change_index();
-            let desc = self
-                .config
-                .main_descriptor
-                .change_descriptor()
-                .derive(index, &self.secp);
-            (
-                desc.address(self.config.bitcoin_config.network),
-                Some(InternalChangeInfo { desc, index }),
-            )
-        };
-        let mut change_txo = bitcoin::TxOut {
-            value: std::u64::MAX,
-            script_pubkey: change_addr.script_pubkey(),
-        };
-        // Now select the coins necessary using the provided candidates and determine whether
-        // there is any leftover to create a change output.
-        let (selected_coins, change_amount) = {
-            // At this point the transaction still has no input and no change output, as expected
-            // by the coins selection helper function.
-            assert!(tx.input.is_empty());
-            assert_eq!(tx.output.len(), destinations.len());
-            // TODO: Introduce general conversion error type.
-            let feerate_vb: f32 = {
-                let fr: u16 = feerate_vb.try_into().map_err(|_| {
-                    CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(feerate_vb))
-                })?;
-                fr
-            }
-            .try_into()
-            .expect("u16 must fit in f32");
-            let max_sat_wu = self
-                .config
-                .main_descriptor
-                .max_sat_weight()
-                .try_into()
-                .expect("Weight must fit in a u32");
-            select_coins_for_spend(
-                candidate_coins,
-                tx.clone(),
-                change_txo.clone(),
-                feerate_vb,
-                min_fee,
-                max_sat_wu,
-                is_self_send,
-            )
-            .map_err(CommandError::CoinSelectionError)?
-        };
-        // If necessary, add a change output.
-        // For a self-send, coin selection will only find solutions with change and will otherwise
-        // return an error. In any case, the PSBT sanity check will catch a transaction with no outputs.
-        if change_amount.to_sat() > 0 {
-            check_output_value(change_amount)?;
-
-            // If we generated a change address internally, set the BIP32 derivations in the PSBT
-            // output to tell the signers it's an internal address and make sure to update our next
-            // change index. Otherwise it's a sweep, so no need to set anything.
-            // If the change address was set by the caller, check whether it's one of ours. If it
-            // is, set the BIP32 derivations accordingly. In addition, if it's a change address for
-            // a later index than we currently have set as next change derivation index, update it.
-            let bip32_derivation = if let Some(InternalChangeInfo { desc, index }) = int_change_info
-            {
-                let next_index = index
-                    .increment()
-                    .expect("Must not get into hardened territory");
-                db_conn.set_change_index(next_index, &self.secp);
-                desc.bip32_derivations()
-            } else if let Some((index, is_change)) =
-                db_conn.derivation_index_by_address(&change_addr)
-            {
-                let desc = if is_change {
-                    if db_conn.change_index() < index {
-                        let next_index = index
-                            .increment()
-                            .expect("Must not get into hardened territory");
-                        db_conn.set_change_index(next_index, &self.secp);
-                    }
-                    self.config.main_descriptor.change_descriptor()
-                } else {
-                    self.config.main_descriptor.receive_descriptor()
-                };
-                desc.derive(index, &self.secp).bip32_derivations()
-            } else {
-                Default::default()
-            };
-
-            // TODO: shuffle once we have Taproot
-            change_txo.value = change_amount.to_sat();
-            tx.output.push(change_txo);
-            psbt_outs.push(PsbtOut {
-                bip32_derivation,
-                ..PsbtOut::default()
-            });
-        }
-
-        // Iterate through selected coins and add necessary information to the PSBT inputs.
-        let mut psbt_ins = Vec::with_capacity(selected_coins.len());
-        let mut spent_txs = HashMap::with_capacity(selected_coins.len());
-        for coin in &selected_coins {
-            // Fetch the transaction that created it if necessary
-            if let hash_map::Entry::Vacant(e) = spent_txs.entry(coin.outpoint) {
-                let tx = self
-                    .bitcoin
-                    .wallet_transaction(&coin.outpoint.txid)
-                    .ok_or(CommandError::FetchingTransaction(coin.outpoint))?;
-                e.insert(tx.0);
-            }
-
-            tx.input.push(bitcoin::TxIn {
-                previous_output: coin.outpoint,
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                // TODO: once we move to Taproot, anti-fee-sniping using nSequence
-                ..bitcoin::TxIn::default()
-            });
-
-            // Populate the PSBT input with the information needed by signers.
-            let coin_desc = self.derived_desc(coin);
-            let witness_script = Some(coin_desc.witness_script());
-            let witness_utxo = Some(bitcoin::TxOut {
-                value: coin.amount.to_sat(),
-                script_pubkey: coin_desc.script_pubkey(),
-            });
-            let non_witness_utxo = spent_txs.get(&coin.outpoint).cloned();
-            let bip32_derivation = coin_desc.bip32_derivations();
-            psbt_ins.push(PsbtIn {
-                witness_script,
-                witness_utxo,
-                bip32_derivation,
-                non_witness_utxo,
-                ..PsbtIn::default()
-            });
-        }
-
-        // Finally, create the PSBT with all inputs and outputs, sanity check it and return it.
-        let psbt = Psbt {
-            unsigned_tx: tx,
-            version: 0,
-            xpub: BTreeMap::new(),
-            proprietary: BTreeMap::new(),
-            unknown: BTreeMap::new(),
-            inputs: psbt_ins,
-            outputs: psbt_outs,
-        };
-        sanity_check_psbt(&self.config.main_descriptor, &psbt)?;
-        // TODO: maybe check for common standardness rules (max size, ..)?
-
-        Ok(CreateSpendResult { psbt })
     }
 
     pub fn update_labels(&self, items: &HashMap<LabelItem, Option<String>>) {
@@ -1046,7 +706,12 @@ impl DaemonControl {
         let mut replacement_vsize = 0;
         for incremental_feerate in 0.. {
             let min_fee = descendant_fees.to_sat() + replacement_vsize * incremental_feerate;
-            let rbf_psbt = match self.create_spend_internal(
+            let rbf_psbt = match create_spend(
+                &mut db_conn,
+                &self.config.main_descriptor,
+                &self.secp,
+                &self.bitcoin,
+                self.config.bitcoin_config.network,
                 &destinations,
                 &candidate_coins,
                 feerate_vb,
@@ -1057,7 +722,7 @@ impl DaemonControl {
                 // If we get a coin selection error due to insufficient funds and we want to cancel the
                 // transaction, then set all previous coins as mandatory and add confirmed coins as
                 // optional, unless we have already done this.
-                Err(CommandError::CoinSelectionError(_))
+                Err(SpendCreationError::CoinSelection(_))
                     if is_cancel && candidate_coins.iter().all(|c| !c.must_select) =>
                 {
                     for cand in candidate_coins.iter_mut() {
@@ -1067,19 +732,16 @@ impl DaemonControl {
                     continue;
                 }
                 Err(e) => {
-                    return Err(e);
+                    return Err(e.into());
                 }
             };
-            replacement_vsize = unsigned_tx_max_vbytes(&rbf_psbt.psbt.unsigned_tx, max_sat_weight);
+            replacement_vsize = unsigned_tx_max_vbytes(&rbf_psbt.unsigned_tx, max_sat_weight);
 
             // Make sure it satisfies RBF rule 4.
-            if rbf_psbt
-                .psbt
-                .fee()
-                .expect("has already been sanity checked")
+            if rbf_psbt.fee().expect("has already been sanity checked")
                 >= descendant_fees + bitcoin::Amount::from_sat(replacement_vsize)
             {
-                return Ok(rbf_psbt);
+                return Ok(CreateSpendResult { psbt: rbf_psbt });
             }
         }
 
@@ -1234,7 +896,7 @@ impl DaemonControl {
                 let tx = self
                     .bitcoin
                     .wallet_transaction(&coin.outpoint.txid)
-                    .ok_or(CommandError::FetchingTransaction(coin.outpoint))?;
+                    .ok_or(SpendCreationError::FetchingTransaction(coin.outpoint))?;
                 e.insert(tx.0);
             }
 
@@ -1403,7 +1065,7 @@ pub struct CreateRecoveryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{bitcoin::Block, database::BlockInfo, testutils::*};
+    use crate::{bitcoin::Block, database::BlockInfo, spend::InsaneFeeInfo, testutils::*};
 
     use bitcoin::{
         bip32::{self, ChildNumber},
@@ -1596,7 +1258,9 @@ mod tests {
         // Insufficient funds for coin selection.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
-            Err(CommandError::CoinSelectionError(..))
+            Err(CommandError::SpendCreation(
+                SpendCreationError::CoinSelection(..)
+            ))
         ));
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 0, None),
@@ -1624,7 +1288,9 @@ mod tests {
         // and so we get a coin selection error due to insufficient funds.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
-            Err(CommandError::CoinSelectionError(..))
+            Err(CommandError::SpendCreation(
+                SpendCreationError::CoinSelection(..)
+            ))
         ));
         let res = control
             .create_spend(&destinations, &[dummy_op], 1, None)
@@ -1658,19 +1324,23 @@ mod tests {
         // If we ask for a too high feerate, or a too large/too small output, it'll fail.
         assert!(matches!(
             control.create_spend(&destinations, &[dummy_op], 10_000, None),
-            Err(CommandError::CoinSelectionError(..))
+            Err(CommandError::SpendCreation(
+                SpendCreationError::CoinSelection(..)
+            ))
         ));
         *destinations.get_mut(&dummy_addr).unwrap() = 100_001;
         assert!(matches!(
             control.create_spend(&destinations, &[dummy_op], 1, None),
-            Err(CommandError::CoinSelectionError(..))
+            Err(CommandError::SpendCreation(
+                SpendCreationError::CoinSelection(..)
+            ))
         ));
         *destinations.get_mut(&dummy_addr).unwrap() = 4_500;
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 1, None),
-            Err(CommandError::InvalidOutputValue(bitcoin::Amount::from_sat(
-                4_500
-            )))
+            Err(CommandError::SpendCreation(
+                SpendCreationError::InvalidOutputValue(bitcoin::Amount::from_sat(4_500))
+            ))
         );
 
         // If we ask to create an output for an address from another network, it will fail.
@@ -1718,7 +1388,9 @@ mod tests {
         // and so we get a coin selection error due to insufficient funds.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
-            Err(CommandError::CoinSelectionError(..))
+            Err(CommandError::SpendCreation(
+                SpendCreationError::CoinSelection(..)
+            ))
         ));
 
         // We'd bail out if they tried to create a transaction with a too high feerate.
@@ -1742,8 +1414,8 @@ mod tests {
         // the sats/vb feerate being lower than `feerate_vb`.
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op_dup], 1_003, None),
-            Err(CommandError::InsaneFees(InsaneFeeInfo::TooHighFeerate(
-                1_001
+            Err(CommandError::SpendCreation(SpendCreationError::InsaneFees(
+                InsaneFeeInfo::TooHighFeerate(1_001)
             )))
         );
 
@@ -1768,14 +1440,18 @@ mod tests {
         // Coin selection error due to insufficient funds.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
-            Err(CommandError::CoinSelectionError(..))
+            Err(CommandError::SpendCreation(
+                SpendCreationError::CoinSelection(..)
+            ))
         ));
         // Set destination amount equal to value of confirmed coins.
         *destinations.get_mut(&dummy_addr).unwrap() = 80_000;
         // Coin selection error occurs due to insufficient funds to pay fee.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
-            Err(CommandError::CoinSelectionError(..))
+            Err(CommandError::SpendCreation(
+                SpendCreationError::CoinSelection(..)
+            ))
         ));
         let confirmed_op_2 = bitcoin::OutPoint {
             txid: confirmed_op_1.txid,
@@ -1850,7 +1526,9 @@ mod tests {
         let empty_dest = &HashMap::<bitcoin::Address<address::NetworkUnchecked>, u64>::new();
         assert!(matches!(
             control.create_spend(empty_dest, &[confirmed_op_3], 5, None),
-            Err(CommandError::CoinSelectionError(..))
+            Err(CommandError::SpendCreation(
+                SpendCreationError::CoinSelection(..)
+            ))
         ));
         // If we use a lower fee, the self-send will succeed.
         let res = control

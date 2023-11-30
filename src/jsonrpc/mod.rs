@@ -157,9 +157,8 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::AlreadySpent(..)
             | commands::CommandError::ImmatureCoinbase(..)
             | commands::CommandError::Address(..)
-            | commands::CommandError::InvalidOutputValue(..)
+            | commands::CommandError::SpendCreation(..)
             | commands::CommandError::InsufficientFunds(..)
-            | commands::CommandError::InsaneFees(..)
             | commands::CommandError::UnknownSpend(..)
             | commands::CommandError::SpendFinalization(..)
             | commands::CommandError::InsaneRescanTimestamp(..)
@@ -169,10 +168,7 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::RecoveryNotAvailable => {
                 Error::new(ErrorCode::InvalidParams, e.to_string())
             }
-            commands::CommandError::FetchingTransaction(..)
-            | commands::CommandError::SanityCheckFailure(_)
-            | commands::CommandError::CoinSelectionError(..)
-            | commands::CommandError::RescanTrigger(..) => {
+            commands::CommandError::RescanTrigger(..) => {
                 Error::new(ErrorCode::InternalError, e.to_string())
             }
             commands::CommandError::TxBroadcast(_) => {
