@@ -421,17 +421,16 @@ pub fn create_spend(
     min_fee: u64,
     change_addr: SpendOutputAddress,
 ) -> Result<CreateSpendRes, SpendCreationError> {
-    // This method is a bit convoluted, but it's the nature of creating a Bitcoin transaction
-    // with a target feerate and outputs. In addition, we support different modes (coin control
+    // This method does quite a few things. In addition, we support different modes (coin control
     // vs automated coin selection, self-spend, sweep, etc..) which make the logic a bit more
     // intricate. Here is a brief overview of what we're doing here:
-    // 1. Create a transaction with all the target outputs (if this is a self-send, none are
-    //    added at this step the only output will be added as a change output).
-    // 2. Automatically select the coins if necessary and determine whether a change output
-    //    will be necessary for this transaction from the set of (automatically or manually)
-    //    selected coins. The output for a self-send is added there.
-    //    The change output is also (ab)used to implement a "sweep" functionality. We allow to
-    //    set it to an external address to send all the inputs' value minus the fee and the
+    // 1. Create a transaction with all the target outputs (if this is a self-send, none are added
+    //    at this step the only output will be added as a change output).
+    // 2. Automatically select the coins if necessary and determine whether a change output will be
+    //    necessary for this transaction from the set of (automatically or manually) selected
+    //    coins. The output for a self-send is added there.  The change output is also (ab)used to
+    //    implement a "sweep" functionality. We allow to set it to an external address to send all
+    //    the inputs' value minus the fee and the
     //    other output's value to a specific, external, address.
     // 3. Add the selected coins as inputs to the transaction.
     // 4. Finalize the PSBT and sanity check it before returning it.
