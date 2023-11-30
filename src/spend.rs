@@ -21,7 +21,6 @@ use bdk_coin_select::{
 use miniscript::bitcoin::{
     self,
     absolute::{Height, LockTime},
-    bip32,
     constants::WITNESS_SCALE_FACTOR,
     psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
     secp256k1,
@@ -393,18 +392,24 @@ pub fn unsigned_tx_max_vbytes(tx: &bitcoin::Transaction, max_sat_weight: u64) ->
         .unwrap()
 }
 
+pub struct CreateSpendRes {
+    /// The created PSBT.
+    pub psbt: Psbt,
+    /// Whether the created PSBT has a change output.
+    pub has_change: bool,
+}
+
 pub fn create_spend(
     db_conn: &mut Box<dyn DatabaseConnection>,
     main_descriptor: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     bitcoin: &sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
-    network: bitcoin::Network,
     destinations: &HashMap<bitcoin::Address, bitcoin::Amount>,
     candidate_coins: &[CandidateCoin],
     feerate_vb: u64,
     min_fee: u64,
-    change_address: Option<bitcoin::Address>,
-) -> Result<Psbt, SpendCreationError> {
+    change_addr: bitcoin::Address,
+) -> Result<CreateSpendRes, SpendCreationError> {
     // This method is a bit convoluted, but it's the nature of creating a Bitcoin transaction
     // with a target feerate and outputs. In addition, we support different modes (coin control
     // vs automated coin selection, self-spend, sweep, etc..) which make the logic a bit more
@@ -466,23 +471,6 @@ pub fn create_spend(
     // used as input if necessary.
     // We need to get the size of a potential change output to select coins / determine whether
     // we should include one, so get the change address and create a dummy txo for this purpose.
-    // The change address may be externally specified for the purpose of a "sweep": the user
-    // would set the value of some outputs (or none) and fill-in an address to be used for "all
-    // the rest". This is the same logic as for a change output, except it's external.
-    struct InternalChangeInfo {
-        pub desc: descriptors::DerivedSinglePathLianaDesc,
-        pub index: bip32::ChildNumber,
-    }
-    let (change_addr, int_change_info) = if let Some(addr) = change_address {
-        (addr, None)
-    } else {
-        let index = db_conn.change_index();
-        let desc = main_descriptor.change_descriptor().derive(index, secp);
-        (
-            desc.address(network),
-            Some(InternalChangeInfo { desc, index }),
-        )
-    };
     let mut change_txo = bitcoin::TxOut {
         value: std::u64::MAX,
         script_pubkey: change_addr.script_pubkey(),
@@ -521,37 +509,23 @@ pub fn create_spend(
     // If necessary, add a change output.
     // For a self-send, coin selection will only find solutions with change and will otherwise
     // return an error. In any case, the PSBT sanity check will catch a transaction with no outputs.
-    if change_amount.to_sat() > 0 {
+    let has_change = change_amount.to_sat() > 0;
+    if has_change {
         check_output_value(change_amount)?;
 
-        // If we generated a change address internally, set the BIP32 derivations in the PSBT
-        // output to tell the signers it's an internal address and make sure to update our next
-        // change index. Otherwise it's a sweep, so no need to set anything.
-        // If the change address was set by the caller, check whether it's one of ours. If it
-        // is, set the BIP32 derivations accordingly. In addition, if it's a change address for
-        // a later index than we currently have set as next change derivation index, update it.
-        let bip32_derivation = if let Some(InternalChangeInfo { desc, index }) = int_change_info {
-            let next_index = index
-                .increment()
-                .expect("Must not get into hardened territory");
-            db_conn.set_change_index(next_index, secp);
-            desc.bip32_derivations()
-        } else if let Some((index, is_change)) = db_conn.derivation_index_by_address(&change_addr) {
-            let desc = if is_change {
-                if db_conn.change_index() < index {
-                    let next_index = index
-                        .increment()
-                        .expect("Must not get into hardened territory");
-                    db_conn.set_change_index(next_index, secp);
-                }
-                main_descriptor.change_descriptor()
+        // If the change address is ours, tell the signers by setting the BIP32 derivations in the
+        // PSBT output.
+        let bip32_derivation =
+            if let Some((index, is_change)) = db_conn.derivation_index_by_address(&change_addr) {
+                let desc = if is_change {
+                    main_descriptor.change_descriptor()
+                } else {
+                    main_descriptor.receive_descriptor()
+                };
+                desc.derive(index, secp).bip32_derivations()
             } else {
-                main_descriptor.receive_descriptor()
+                Default::default()
             };
-            desc.derive(index, secp).bip32_derivations()
-        } else {
-            Default::default()
-        };
 
         // TODO: shuffle once we have Taproot
         change_txo.value = change_amount.to_sat();
@@ -612,5 +586,5 @@ pub fn create_spend(
     sanity_check_psbt(main_descriptor, &psbt)?;
     // TODO: maybe check for common standardness rules (max size, ..)?
 
-    Ok(psbt)
+    Ok(CreateSpendRes { psbt, has_change })
 }

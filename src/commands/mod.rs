@@ -6,11 +6,11 @@ mod utils;
 
 use crate::{
     bitcoin::BitcoinInterface,
-    database::{Coin, DatabaseInterface},
+    database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
     spend::{
         check_output_value, create_spend, sanity_check_psbt, unsigned_tx_max_vbytes, CandidateCoin,
-        SpendCreationError,
+        CreateSpendRes, SpendCreationError,
     },
     DaemonControl, VERSION,
 };
@@ -174,6 +174,28 @@ impl DaemonControl {
         // encoding.
         addr.require_network(self.config.bitcoin_config.network)
             .map_err(CommandError::Address)
+    }
+
+    // If we detect the given address as ours, and it has a higher derivation index than our next
+    // derivation index, update our next derivation index to the one after the address'.
+    fn maybe_increase_next_deriv_index(
+        &self,
+        db_conn: &mut Box<dyn DatabaseConnection>,
+        addr: &bitcoin::Address,
+    ) {
+        if let Some((index, is_change)) = db_conn.derivation_index_by_address(addr) {
+            if is_change && db_conn.change_index() < index {
+                let next_index = index
+                    .increment()
+                    .expect("Must not get into hardened territory");
+                db_conn.set_change_index(next_index, &self.secp);
+            } else if !is_change && db_conn.receive_index() < index {
+                let next_index = index
+                    .increment()
+                    .expect("Must not get into hardened territory");
+                db_conn.set_receive_index(next_index, &self.secp);
+            }
+        }
     }
 }
 
@@ -340,10 +362,23 @@ impl DaemonControl {
             check_output_value(amount)?;
             destinations_checked.insert(address, amount);
         }
-        // Check also the change address if one has been given.
+
+        // The change address to be used if a change output needs to be created. It may be
+        // specified by the caller (for instance for the purpose of a sweep, or to avoid us
+        // creating a new change address on every call).
         let change_address = change_address
             .map(|addr| self.validate_address(addr))
-            .transpose()?;
+            .transpose()?
+            .unwrap_or_else(|| {
+                let index = db_conn.change_index();
+                let desc = self
+                    .config
+                    .main_descriptor
+                    .change_descriptor()
+                    .derive(index, &self.secp);
+                desc.address(self.config.bitcoin_config.network)
+            });
+
         // The candidate coins will be either all optional or all mandatory.
         // If no coins have been specified, then coins will be selected automatically for
         // the spend from a set of optional candidates.
@@ -380,20 +415,25 @@ impl DaemonControl {
                 .collect()
         };
 
-        Ok(CreateSpendResult {
-            psbt: create_spend(
-                &mut db_conn,
-                &self.config.main_descriptor,
-                &self.secp,
-                &self.bitcoin,
-                self.config.bitcoin_config.network,
-                &destinations_checked,
-                &candidate_coins,
-                feerate_vb,
-                0, // No min fee required.
-                change_address,
-            )?,
-        })
+        // Create the PSBT. If there was no error in doing so make sure to update our next
+        // derivation index in case the change address which we generated or was provided to us was
+        // for a future derivation index.
+        let CreateSpendRes { psbt, has_change } = create_spend(
+            &mut db_conn,
+            &self.config.main_descriptor,
+            &self.secp,
+            &self.bitcoin,
+            &destinations_checked,
+            &candidate_coins,
+            feerate_vb,
+            0, // No min fee required.
+            change_address.clone(),
+        )?;
+        if has_change {
+            self.maybe_increase_next_deriv_index(&mut db_conn, &change_address);
+        }
+
+        Ok(CreateSpendResult { psbt })
     }
 
     pub fn update_spend(&self, mut psbt: Psbt) -> Result<(), CommandError> {
@@ -706,17 +746,19 @@ impl DaemonControl {
         let mut replacement_vsize = 0;
         for incremental_feerate in 0.. {
             let min_fee = descendant_fees.to_sat() + replacement_vsize * incremental_feerate;
-            let rbf_psbt = match create_spend(
+            let CreateSpendRes {
+                psbt: rbf_psbt,
+                has_change,
+            } = match create_spend(
                 &mut db_conn,
                 &self.config.main_descriptor,
                 &self.secp,
                 &self.bitcoin,
-                self.config.bitcoin_config.network,
                 &destinations,
                 &candidate_coins,
                 feerate_vb,
                 min_fee,
-                Some(change_address.clone()),
+                change_address.clone(),
             ) {
                 Ok(psbt) => psbt,
                 // If we get a coin selection error due to insufficient funds and we want to cancel the
@@ -741,6 +783,12 @@ impl DaemonControl {
             if rbf_psbt.fee().expect("has already been sanity checked")
                 >= descendant_fees + bitcoin::Amount::from_sat(replacement_vsize)
             {
+                // In case of success, make sure to update our next derivation index if the change
+                // address used was from the future.
+                if has_change {
+                    self.maybe_increase_next_deriv_index(&mut db_conn, &change_address);
+                }
+
                 return Ok(CreateSpendResult { psbt: rbf_psbt });
             }
         }
