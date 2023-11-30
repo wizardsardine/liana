@@ -138,9 +138,9 @@ fn sanity_check_psbt(
     // and increasing the result, which could lead to the feerate in sats/vb falling below 1.
     let tx_wu = tx.weight().to_wu() + (spent_desc.max_sat_weight() * tx.input.len()) as u64;
     let tx_vb = tx_wu
-        .checked_add(descriptors::WITNESS_FACTOR as u64 - 1)
+        .checked_add(WITNESS_SCALE_FACTOR as u64 - 1)
         .unwrap()
-        .checked_div(descriptors::WITNESS_FACTOR as u64)
+        .checked_div(WITNESS_SCALE_FACTOR as u64)
         .unwrap();
     let feerate_sats_vb = abs_fee
         .checked_div(tx_vb)
@@ -359,29 +359,6 @@ fn derived_desc(
         desc.receive_descriptor()
     };
     desc.derive(coin.derivation_index, secp)
-}
-
-/// An unsigned transaction's maximum possible size in vbytes after satisfaction.
-///
-/// This assumes all inputs are internal (or have the same `max_sat_weight` value).
-///
-/// `tx` is the unsigned transaction.
-///
-/// `max_sat_weight` is the maximum weight difference of an input in the
-/// transaction before and after satisfaction. Must be in weight units.
-pub fn unsigned_tx_max_vbytes(tx: &bitcoin::Transaction, max_sat_weight: u64) -> u64 {
-    let witness_factor: u64 = WITNESS_SCALE_FACTOR.try_into().unwrap();
-    let num_inputs: u64 = tx.input.len().try_into().unwrap();
-    let tx_wu: u64 = tx
-        .weight()
-        .to_wu()
-        .checked_add(max_sat_weight.checked_mul(num_inputs).unwrap())
-        .unwrap();
-    tx_wu
-        .checked_add(witness_factor.checked_sub(1).unwrap())
-        .unwrap()
-        .checked_div(witness_factor)
-        .unwrap()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

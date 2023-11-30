@@ -9,8 +9,8 @@ use crate::{
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
     spend::{
-        check_output_value, create_spend, unsigned_tx_max_vbytes, AddrInfo, CandidateCoin,
-        CreateSpendRes, SpendCreationError, SpendOutputAddress, TxGetter,
+        check_output_value, create_spend, AddrInfo, CandidateCoin, CreateSpendRes,
+        SpendCreationError, SpendOutputAddress, TxGetter,
     },
     DaemonControl, VERSION,
 };
@@ -29,7 +29,10 @@ use std::{
 };
 
 use miniscript::{
-    bitcoin::{self, address, bip32, psbt::PartiallySignedTransaction as Psbt},
+    bitcoin::{
+        self, address, bip32, constants::WITNESS_SCALE_FACTOR,
+        psbt::PartiallySignedTransaction as Psbt,
+    },
     psbt::PsbtExt,
 };
 use serde::{Deserialize, Serialize};
@@ -174,6 +177,29 @@ impl<'a> TxGetter for BitcoindTxGetter<'a> {
         }
         self.cache.get(txid).cloned().flatten()
     }
+}
+
+/// An unsigned transaction's maximum possible size in vbytes after satisfaction.
+///
+/// This assumes all inputs are internal (or have the same `max_sat_weight` value).
+///
+/// `tx` is the unsigned transaction.
+///
+/// `max_sat_weight` is the maximum weight difference of an input in the
+/// transaction before and after satisfaction. Must be in weight units.
+fn unsigned_tx_max_vbytes(tx: &bitcoin::Transaction, max_sat_weight: u64) -> u64 {
+    let witness_factor: u64 = WITNESS_SCALE_FACTOR.try_into().unwrap();
+    let num_inputs: u64 = tx.input.len().try_into().unwrap();
+    let tx_wu: u64 = tx
+        .weight()
+        .to_wu()
+        .checked_add(max_sat_weight.checked_mul(num_inputs).unwrap())
+        .unwrap();
+    tx_wu
+        .checked_add(witness_factor.checked_sub(1).unwrap())
+        .unwrap()
+        .checked_div(witness_factor)
+        .unwrap()
 }
 
 impl DaemonControl {
