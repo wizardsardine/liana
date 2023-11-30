@@ -386,6 +386,31 @@ pub struct CreateSpendRes {
     pub has_change: bool,
 }
 
+/// Create a PSBT for a transaction spending some, or all, of `candidate_coins` to `destinations`.
+/// Important information for signers will be populated. Will refuse to create outputs worth less
+/// than `DUST_OUTPUT_SATS`. Will refuse to create a transaction paying more than `MAX_FEE`
+/// satoshis in fees or whose feerate is larger than `MAX_FEERATE` sats/vb.
+///
+/// More about the parameters:
+/// * `main_descriptor`: the multipath Liana descriptor, used to derive the addresses of the
+/// candidate coins.
+/// * `secp`: necessary to derive data from the descriptor.
+/// * `tx_getter`: an interface to get the wallet transaction for the prevouts of the transaction.
+/// Wouldn't be necessary if we only spent Taproot coins.
+/// * `destinations`: a list of addresses and amounts, one per recipient i.e. per output in the
+/// transaction created. If empty all the `candidate_coins` get spent and a single change output
+/// is created to the provided `change_addr`. Can be used to sweep all, or some, coins from the
+/// wallet.
+/// * `candidate_coins`: a list of coins to consider including as input of the transaction. If
+/// `destinations` is empty, they will all be included as inputs of the transaction. Otherwise, a
+/// coin selection algorithm will be run to spend the most efficient subset of them to meet the
+/// `destinations` requirements.
+/// * `feerate_vb`: the feerate to target for this transaction, in satoshi per virtual byte.
+/// * `min_fee`: the minimum absolute fee for this transaction. Can be set to 0 for anything but an
+/// RBF transaction.
+/// * `change_addr`: the address to use for a change output if we need to create one. Can be set to
+/// an external address (if combined with an empty list of `destinations` it's useful to sweep some
+/// or all coins of a wallet to an external address).
 pub fn create_spend(
     main_descriptor: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
