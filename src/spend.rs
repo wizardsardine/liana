@@ -1,4 +1,4 @@
-use crate::{database::Coin, descriptors};
+use crate::descriptors;
 
 use std::{collections::BTreeMap, convert::TryInto, fmt};
 
@@ -166,8 +166,14 @@ fn sanity_check_psbt(
 /// A candidate for coin selection when creating a transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CandidateCoin {
-    /// The candidate coin.
-    pub coin: Coin,
+    /// Unique identifier of this coin.
+    pub outpoint: bitcoin::OutPoint,
+    /// The value of this coin.
+    pub amount: bitcoin::Amount,
+    /// The derivation index used to generate the scriptpubkey of this coin.
+    pub deriv_index: bip32::ChildNumber,
+    /// Whether this coin pays to a scriptpubkey derived from the internal keychain.
+    pub is_change: bool,
     /// Whether or not this coin must be selected by the coin selection algorithm.
     pub must_select: bool,
     /// The nSequence field to set for an input spending this coin.
@@ -254,7 +260,7 @@ fn select_coins_for_spend(
         .iter()
         .map(|cand| Candidate {
             input_count: 1,
-            value: cand.coin.amount.to_sat(),
+            value: cand.amount.to_sat(),
             weight: max_input_weight,
             is_segwit: true, // We only support receiving on Segwit scripts.
         })
@@ -351,14 +357,14 @@ fn select_coins_for_spend(
 fn derived_desc(
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     desc: &descriptors::LianaDescriptor,
-    coin: &Coin,
+    coin: &CandidateCoin,
 ) -> descriptors::DerivedSinglePathLianaDesc {
     let desc = if coin.is_change {
         desc.change_descriptor()
     } else {
         desc.receive_descriptor()
     };
-    desc.derive(coin.derivation_index, secp)
+    desc.derive(coin.deriv_index, secp)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -547,25 +553,24 @@ pub fn create_spend(
     // Iterate through selected coins and add necessary information to the PSBT inputs.
     let mut psbt_ins = Vec::with_capacity(selected_coins.len());
     for cand in &selected_coins {
-        let coin = &cand.coin;
         let sequence = cand
             .sequence
             .unwrap_or(bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME);
         tx.input.push(bitcoin::TxIn {
-            previous_output: coin.outpoint,
+            previous_output: cand.outpoint,
             sequence,
             // TODO: once we move to Taproot, anti-fee-sniping using nSequence
             ..bitcoin::TxIn::default()
         });
 
         // Populate the PSBT input with the information needed by signers.
-        let coin_desc = derived_desc(secp, main_descriptor, coin);
+        let coin_desc = derived_desc(secp, main_descriptor, cand);
         let witness_script = Some(coin_desc.witness_script());
         let witness_utxo = Some(bitcoin::TxOut {
-            value: coin.amount.to_sat(),
+            value: cand.amount.to_sat(),
             script_pubkey: coin_desc.script_pubkey(),
         });
-        let non_witness_utxo = tx_getter.get_tx(&coin.outpoint.txid);
+        let non_witness_utxo = tx_getter.get_tx(&cand.outpoint.txid);
         let bip32_derivation = coin_desc.bip32_derivations();
         psbt_ins.push(PsbtIn {
             witness_script,

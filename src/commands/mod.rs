@@ -202,6 +202,21 @@ fn unsigned_tx_max_vbytes(tx: &bitcoin::Transaction, max_sat_weight: u64) -> u64
         .unwrap()
 }
 
+fn coin_to_candidate(
+    coin: &Coin,
+    must_select: bool,
+    sequence: Option<bitcoin::Sequence>,
+) -> CandidateCoin {
+    CandidateCoin {
+        outpoint: coin.outpoint,
+        amount: coin.amount,
+        deriv_index: coin.derivation_index,
+        is_change: coin.is_change,
+        must_select,
+        sequence,
+    }
+}
+
 impl DaemonControl {
     // Get the derived descriptor for this coin
     fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedSinglePathLianaDesc {
@@ -472,10 +487,8 @@ impl DaemonControl {
             db_conn
                 .coins(&[CoinStatus::Confirmed], &[])
                 .into_values()
-                .map(|c| CandidateCoin {
-                    coin: c,
-                    must_select: false, // No coin is mandatory.
-                    sequence: None,     // No specific nSequence is required.
+                .map(|c| {
+                    coin_to_candidate(&c, /*must_select=*/ false, /*sequence=*/ None)
                 })
                 .collect()
         } else {
@@ -492,11 +505,7 @@ impl DaemonControl {
             }
             coins
                 .into_values()
-                .map(|c| CandidateCoin {
-                    coin: c,
-                    must_select: true, // All coins must be selected.
-                    sequence: None,    // No specific nSequence is required.
-                })
+                .map(|c| coin_to_candidate(&c, /*must_select=*/ true, /*sequence=*/ None))
                 .collect()
         };
 
@@ -792,10 +801,8 @@ impl DaemonControl {
         // transaction in this way, then we set candidates in the same way as for the `!is_cancel` case.
         let mut candidate_coins: Vec<CandidateCoin> = prev_coins
             .values()
-            .map(|c| CandidateCoin {
-                coin: *c,
-                must_select: !is_cancel,
-                sequence: None, // No specific nSequence is required.
+            .map(|c| {
+                coin_to_candidate(c, /*must_select=*/ !is_cancel, /*sequence=*/ None)
             })
             .collect();
         let confirmed_cands: Vec<CandidateCoin> = db_conn
@@ -805,11 +812,9 @@ impl DaemonControl {
                 // Make sure we don't have duplicate candidates in case any of the coins are not
                 // currently set as spending in the DB (and are therefore still confirmed).
                 if !prev_coins.contains_key(&c.outpoint) {
-                    Some(CandidateCoin {
-                        coin: c,
-                        must_select: false,
-                        sequence: None, // No specific nSequence is required.
-                    })
+                    Some(coin_to_candidate(
+                        &c, /*must_select=*/ false, /*sequence=*/ None,
+                    ))
                 } else {
                     None
                 }
@@ -992,11 +997,11 @@ impl DaemonControl {
                     .map(|b| current_height + 1 >= b.height + height_delta)
                     .unwrap_or(false)
                 {
-                    Some(CandidateCoin {
-                        coin: c,
-                        must_select: true, // All coins must be selected.
-                        sequence: Some(bitcoin::Sequence::from_height(timelock)),
-                    })
+                    Some(coin_to_candidate(
+                        &c,
+                        /*must_select=*/ true,
+                        /*sequence=*/ Some(bitcoin::Sequence::from_height(timelock)),
+                    ))
                 } else {
                     None
                 }
