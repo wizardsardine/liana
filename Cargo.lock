@@ -51,8 +51,9 @@ checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
 
 [[package]]
 name = "bdk_coin_select"
-version = "0.1.0"
-source = "git+https://github.com/evanlinjin/bdk?branch=new_bdk_coin_select#2a06d73ac7a5dca933b19b51078f5279691364ed"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0320167c3655e83f0415d52f39618902e449186ffc7dfb090f922f79675c316"
 
 [[package]]
 name = "bech32"
