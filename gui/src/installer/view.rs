@@ -1320,13 +1320,20 @@ pub fn edit_key_modal<'a>(
                         .push(
                             Row::new()
                                 .push(
-                                    form::Form::new_trimmed("Extended public key", form_xpub, |msg| {
-                                        Message::DefineDescriptor(
-                                            message::DefineDescriptor::KeyModal(
-                                                message::ImportKeyModal::XPubEdited(msg),
-                                            ),
-                                        )
-                                    })
+                                    form::Form::new_trimmed(
+                                        &format!(
+                                            "[aabbccdd/42'/0']{}pub6DAkq8LWw91WGgUGnkR5Sbzjev5JCsXaTVZQ9MwsPV4BkNFKygtJ8GHodfDVx1udR723nT7JASqGPpKvz7zQ25pUTW6zVEBdiWoaC4aUqik",
+                                            if network == bitcoin::Network::Bitcoin {
+                                                "x"
+                                             } else {
+                                                 "t"
+                                             }
+                                        ),
+                                         form_xpub, |msg| {
+                                             Message::DefineDescriptor(
+                                                 message::DefineDescriptor::KeyModal(
+                                                     message::ImportKeyModal::XPubEdited(msg),),)
+                                         })
                                     .warning(if network == bitcoin::Network::Bitcoin {
                                         "Please enter correct xpub with origin and without appended derivation path"
                                     } else {
