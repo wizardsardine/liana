@@ -87,6 +87,35 @@ pub fn unregistered_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
     .padding(10)
 }
 
+pub fn unimplemented_method_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
+    kind: K,
+    version: Option<V>,
+    fingerprint: F,
+    message: &'static str,
+) -> Container<'a, T> {
+    container(
+        tooltip::Tooltip::new(
+            container(
+                column(vec![
+                    text::p1_regular(format!("#{}", fingerprint)).into(),
+                    Row::new()
+                        .spacing(5)
+                        .push(text::caption(kind.to_string()))
+                        .push_maybe(version.map(|v| text::caption(v.to_string())))
+                        .into(),
+                ])
+                .width(Length::Fill),
+            )
+            .width(Length::Fill)
+            .padding(10),
+            message,
+            tooltip::Position::Bottom,
+        )
+        .style(theme::Container::Card(theme::Card::Simple)),
+    )
+    .width(Length::Fill)
+}
+
 pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
@@ -107,7 +136,7 @@ pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
             )
             .width(Length::Fill)
             .padding(10),
-            "The signing device is not part of the wallet setup",
+            "This signer does not have a key in this wallet.",
             tooltip::Position::Bottom,
         )
         .style(theme::Container::Card(theme::Card::Simple)),
