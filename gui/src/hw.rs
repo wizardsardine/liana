@@ -8,7 +8,7 @@ use std::{
 use crate::app::{settings, wallet::Wallet};
 use async_hwi::{
     bitbox::{api::runtime, BitBox02, PairingBitbox02},
-    ledger, specter, DeviceKind, Error as HWIError, Version, HWI,
+    coldcard, ledger, specter, DeviceKind, Error as HWIError, Version, HWI,
 };
 use liana::miniscript::bitcoin::{bip32::Fingerprint, hashes::hex::FromHex, Network};
 use serde::{Deserialize, Serialize};
@@ -484,7 +484,7 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                 still.push(id);
                 continue;
             }
-            if let Ok(device) = device_info.open_device(api) {
+            if let Ok(device) = device_info.open_device(&api) {
                 if let Ok(device) = PairingBitbox02::connect(
                     device,
                     Some(Box::new(settings::global::PersistedBitboxNoiseConfig::new(
@@ -502,8 +502,44 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                 }
             }
         }
+        if device_info.vendor_id() == coldcard::api::COINKITE_VID
+            && device_info.product_id() == coldcard::api::CKCC_PID
+        {
+            let id = format!(
+                "coldcard-{:?}-{}-{}",
+                device_info.path(),
+                device_info.vendor_id(),
+                device_info.product_id()
+            );
+            if state.connected_supported_hws.contains(&id) {
+                still.push(id);
+                continue;
+            }
+            if let Some(sn) = device_info.serial_number() {
+                if let Ok((cc, _)) =
+                    coldcard::api::Coldcard::open(AsRefWrap { inner: api }, sn, None)
+                {
+                    match HardwareWallet::new(
+                        id,
+                        if let Some(wallet) = &state.wallet {
+                            coldcard::Coldcard::from(cc)
+                                .with_wallet_name(wallet.name.clone())
+                                .into()
+                        } else {
+                            coldcard::Coldcard::from(cc).into()
+                        },
+                        Some(&state.keys_aliases),
+                    )
+                    .await
+                    {
+                        Err(e) => tracing::error!("Failed to connect to coldcard: {}", e),
+                        Ok(hw) => hws.push(hw),
+                    };
+                }
+            }
+        }
     }
-    for detected in ledger::Ledger::<ledger::TransportHID>::enumerate(api) {
+    for detected in ledger::Ledger::<ledger::TransportHID>::enumerate(&api) {
         let id = format!(
             "ledger-{:?}-{}-{}",
             detected.path(),
@@ -514,7 +550,7 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
             still.push(id);
             continue;
         }
-        match ledger::Ledger::<ledger::TransportHID>::connect(api, detected) {
+        match ledger::Ledger::<ledger::TransportHID>::connect(&api, detected) {
             Ok(mut device) => match device.get_master_fingerprint().await {
                 Ok(fingerprint) => {
                     let version = device.get_version().await.ok();
@@ -610,6 +646,16 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
         HardwareWalletMessage::List(ConnectedList { new: hws, still }),
         state,
     )
+}
+
+struct AsRefWrap<'a, T> {
+    inner: &'a T,
+}
+
+impl<'a, T> AsRef<T> for AsRefWrap<'a, T> {
+    fn as_ref(&self) -> &T {
+        self.inner
+    }
 }
 
 fn ledger_version_supported(version: Option<&Version>) -> bool {
