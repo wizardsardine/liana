@@ -14,6 +14,15 @@ use liana::miniscript::bitcoin::{bip32::Fingerprint, hashes::hex::FromHex, Netwo
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
+#[derive(Debug, Clone)]
+pub enum UnsupportedReason {
+    Version {
+        minimal_supported_version: &'static str,
+    },
+    Method(&'static str),
+    NotPartOfWallet(Fingerprint),
+}
+
 // Todo drop the Clone, to remove the Mutex on HardwareWallet::Locked
 #[derive(Debug, Clone)]
 pub enum HardwareWallet {
@@ -21,7 +30,7 @@ pub enum HardwareWallet {
         id: String,
         kind: DeviceKind,
         version: Option<Version>,
-        message: String,
+        reason: UnsupportedReason,
     },
     Locked {
         id: String,
@@ -225,21 +234,35 @@ impl HardwareWallets {
                                             BitBox02::from(paired_bb).with_network(network);
                                         let fingerprint = bitbox2.get_master_fingerprint().await?;
                                         let mut registered = false;
-                                        if let Some(wallet) = wallet {
+                                        if let Some(wallet) = &wallet {
                                             let desc = wallet.main_descriptor.to_string();
                                             bitbox2 = bitbox2.with_policy(&desc)?;
                                             registered =
                                                 bitbox2.is_policy_registered(&desc).await?;
                                         }
-                                        Ok(HardwareWallet::Supported {
-                                            id: id.clone(),
-                                            kind: DeviceKind::BitBox02,
-                                            fingerprint,
-                                            device: bitbox2.into(),
-                                            version: None,
-                                            registered: Some(registered),
-                                            alias: None,
-                                        })
+                                        if wallet
+                                            .map(|w| w.descriptor_keys().contains(&fingerprint))
+                                            == Some(true)
+                                        {
+                                            Ok(HardwareWallet::Supported {
+                                                id: id.clone(),
+                                                kind: DeviceKind::BitBox02,
+                                                fingerprint,
+                                                device: bitbox2.into(),
+                                                version: None,
+                                                registered: Some(registered),
+                                                alias: None,
+                                            })
+                                        } else {
+                                            Ok(HardwareWallet::Unsupported {
+                                                id: id.clone(),
+                                                kind: DeviceKind::BitBox02,
+                                                version: None,
+                                                reason: UnsupportedReason::NotPartOfWallet(
+                                                    fingerprint,
+                                                ),
+                                            })
+                                        }
                                     },
                                     |res| HardwareWalletMessage::Unlocked(id_cloned, res),
                                 ));
@@ -417,7 +440,9 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                                 id,
                                 kind: device.device_kind(),
                                 version,
-                                message: "Minimal supported app version is 2.1.0".to_string(),
+                                reason: UnsupportedReason::Version {
+                                    minimal_supported_version: "2.1.0",
+                                },
                             });
                         }
                     }
@@ -426,7 +451,9 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                             id,
                             kind: device.device_kind(),
                             version: None,
-                            message: "Minimal supported app version is 2.1.0".to_string(),
+                            reason: UnsupportedReason::Version {
+                                minimal_supported_version: "2.1.0",
+                            },
                         });
                     }
                 }
@@ -516,7 +543,9 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                             id,
                             kind: device.device_kind(),
                             version,
-                            message: "Minimal supported app version is 2.1.0".to_string(),
+                            reason: UnsupportedReason::Version {
+                                minimal_supported_version: "2.1.0",
+                            },
                         });
                     }
                 }
@@ -525,13 +554,38 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                         id,
                         kind: device.device_kind(),
                         version: None,
-                        message: "Minimal supported app version is 2.1.0".to_string(),
+                        reason: UnsupportedReason::Version {
+                            minimal_supported_version: "2.1.0",
+                        },
                     });
                 }
             },
             Err(HWIError::DeviceNotFound) => {}
             Err(e) => {
                 debug!("{}", e);
+            }
+        }
+    }
+
+    if let Some(wallet) = &state.wallet {
+        let wallet_keys = wallet.descriptor_keys();
+        for hw in &mut hws {
+            if let HardwareWallet::Supported {
+                fingerprint,
+                id,
+                kind,
+                version,
+                ..
+            } = &hw
+            {
+                if !wallet_keys.contains(fingerprint) {
+                    *hw = HardwareWallet::Unsupported {
+                        id: id.clone(),
+                        kind: *kind,
+                        version: version.clone(),
+                        reason: UnsupportedReason::NotPartOfWallet(*fingerprint),
+                    };
+                }
             }
         }
     }

@@ -2,7 +2,10 @@ use iced::Length;
 
 use liana_ui::{component::hw, theme, widget::*};
 
-use crate::{app::view::message::*, hw::HardwareWallet};
+use crate::{
+    app::view::message::*,
+    hw::{HardwareWallet, UnsupportedReason},
+};
 
 pub fn hw_list_view(
     i: usize,
@@ -40,9 +43,18 @@ pub fn hw_list_view(
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             }
         }
-        HardwareWallet::Unsupported { version, kind, .. } => {
-            hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
-        }
+        HardwareWallet::Unsupported {
+            version,
+            kind,
+            reason,
+            ..
+        } => match reason {
+            UnsupportedReason::NotPartOfWallet(fg) => {
+                hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
+            }
+
+            _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
+        },
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
@@ -90,9 +102,18 @@ pub fn hw_list_view_for_registration(
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             }
         }
-        HardwareWallet::Unsupported { version, kind, .. } => {
-            hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
-        }
+        HardwareWallet::Unsupported {
+            version,
+            kind,
+            reason,
+            ..
+        } => match reason {
+            UnsupportedReason::NotPartOfWallet(fg) => {
+                hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
+            }
+
+            _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
+        },
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
@@ -127,9 +148,18 @@ pub fn hw_list_view_verify_address(
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             }
         }
-        HardwareWallet::Unsupported { version, kind, .. } => {
-            hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
-        }
+        HardwareWallet::Unsupported {
+            version,
+            kind,
+            reason,
+            ..
+        } => match reason {
+            UnsupportedReason::NotPartOfWallet(fg) => {
+                hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
+            }
+
+            _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
+        },
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
