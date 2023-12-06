@@ -5,7 +5,7 @@ use bdk_coin_select::{
 use log::warn;
 use std::{convert::TryInto, str::FromStr};
 
-use miniscript::bitcoin::{self, consensus, hashes::hex::FromHex};
+use miniscript::bitcoin::{self, consensus, constants::WITNESS_SCALE_FACTOR, hashes::hex::FromHex};
 use serde::{de, Deserialize, Deserializer, Serializer};
 
 use crate::database::Coin;
@@ -243,4 +243,27 @@ pub fn select_coins_for_spend(
             .collect(),
         change_amount,
     ))
+}
+
+/// An unsigned transaction's maximum possible size in vbytes after satisfaction.
+///
+/// This assumes all inputs are internal (or have the same `max_sat_weight` value).
+///
+/// `tx` is the unsigned transaction.
+///
+/// `max_sat_weight` is the maximum weight difference of an input in the
+/// transaction before and after satisfaction. Must be in weight units.
+pub fn unsigned_tx_max_vbytes(tx: &bitcoin::Transaction, max_sat_weight: u64) -> u64 {
+    let witness_factor: u64 = WITNESS_SCALE_FACTOR.try_into().unwrap();
+    let num_inputs: u64 = tx.input.len().try_into().unwrap();
+    let tx_wu: u64 = tx
+        .weight()
+        .to_wu()
+        .checked_add(max_sat_weight.checked_mul(num_inputs).unwrap())
+        .unwrap();
+    tx_wu
+        .checked_add(witness_factor.checked_sub(1).unwrap())
+        .unwrap()
+        .checked_div(witness_factor)
+        .unwrap()
 }

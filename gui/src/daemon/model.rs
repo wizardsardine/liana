@@ -87,7 +87,12 @@ impl SpendTx {
                     } else {
                         status = SpendStatus::Broadcast
                     }
-                } else {
+                // The txid will be different if this PSBT is to replace another transaction
+                // that is currently spending the coin.
+                // The PSBT status should remain as Pending so that it can be signed and broadcast.
+                // Once the replacement transaction has been confirmed, the PSBT for the
+                // transaction currently spending this coin will be shown as Deprecated.
+                } else if info.height.is_some() {
                     status = SpendStatus::Deprecated
                 }
             }

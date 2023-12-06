@@ -17,6 +17,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`listspendtxs`](#listspendtxs)                             | List all stored Spend transactions                            |
 | [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                             |
 | [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it                |
+| [`rbfpsbt`](#rbfpsbt)                                       | Create a new RBF Spend transaction                            |
 | [`startrescan`](#startrescan)                               | Start rescanning the block chain from a given date            |
 | [`listconfirmed`](#listconfirmed)                           | List of confirmed transactions of incoming and outgoing funds |
 | [`listtransactions`](#listtransactions)                     | List of transactions with the given txids                     |
@@ -256,6 +257,43 @@ This command does not return anything for now.
 
 | Field          | Type      | Description                                          |
 | -------------- | --------- | ---------------------------------------------------- |
+
+### `rbfpsbt`
+
+Create PSBT to replace the given transaction, which must point to a PSBT in our database, using RBF.
+
+This command can be used to either:
+- "cancel" the transaction: the replacement will include at least one input from the previous transaction and will have only
+a single output (change).
+- bump the fee: the replacement will include all inputs from the previous transaction and all non-change outputs
+will be kept the same, with only the change amount being modified as required.
+
+In both cases, the replacement transaction may include additional confirmed coins as inputs if required
+in order to pay the higher fee (this applies also when replacing a self-send).
+
+If the transaction includes a change output to one of our own change addresses,
+this same address will be used for change in the replacement transaction, if required.
+
+If the transaction pays to more than one of our change addresses, then the one receiving the highest value
+will be used as a change address in the replacement and the others will be treated as non-change outputs
+(i.e. removed for cancel or otherwise kept the same).
+
+If `feerate` is not passed to the command, the target feerate of the replacement will be set to the minimum value
+allowed in order to replace this transaction using RBF (see https://github.com/bitcoin/bitcoin/blob/master/doc/policy/mempool-replacements.md#current-replace-by-fee-policy for further details about this and other conditions that must be satisfied when using RBF).
+
+#### Request
+
+| Field       | Type              | Description                                                     |
+| ----------- | ----------------- | --------------------------------------------------------------- |
+| `txid`      | string            | Hex encoded txid of the Spend transaction to be replaced.       |
+| `is_cancel` | bool              | Whether to "cancel" the transaction or simply bump the fee.     |
+| `feerate`   | integer(optional) | Target feerate for the RBF transaction (in sat/vb).             |
+
+#### Response
+
+| Field          | Type      | Description                                          |
+| -------------- | --------- | ---------------------------------------------------- |
+| `psbt`         | string    | PSBT of the spending transaction, encoded as base64. |
 
 ### `startrescan`
 

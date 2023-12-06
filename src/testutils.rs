@@ -1,5 +1,5 @@
 use crate::{
-    bitcoin::{BitcoinInterface, Block, BlockChainTip, SyncProgress, UTxO},
+    bitcoin::{BitcoinInterface, Block, BlockChainTip, MempoolEntry, SyncProgress, UTxO},
     config::{BitcoinConfig, Config},
     database::{BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem},
     descriptors, DaemonHandle,
@@ -118,6 +118,10 @@ impl BitcoinInterface for DummyBitcoind {
         txid: &bitcoin::Txid,
     ) -> Option<(bitcoin::Transaction, Option<Block>)> {
         self.txs.get(txid).cloned()
+    }
+
+    fn mempool_spenders(&self, _: &[bitcoin::OutPoint]) -> Vec<MempoolEntry> {
+        Vec::new()
     }
 }
 

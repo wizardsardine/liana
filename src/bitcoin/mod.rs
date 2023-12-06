@@ -9,7 +9,7 @@ use crate::{
     bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry},
     descriptors,
 };
-pub use d::SyncProgress;
+pub use d::{MempoolEntry, MempoolEntryFees, SyncProgress};
 
 use std::{fmt, sync};
 
@@ -113,6 +113,9 @@ pub trait BitcoinInterface: Send {
         &self,
         txid: &bitcoin::Txid,
     ) -> Option<(bitcoin::Transaction, Option<Block>)>;
+
+    /// Get the details of unconfirmed transactions spending these outpoints, if any.
+    fn mempool_spenders(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<MempoolEntry>;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -356,6 +359,13 @@ impl BitcoinInterface for d::BitcoinD {
     ) -> Option<(bitcoin::Transaction, Option<Block>)> {
         self.get_transaction(txid).map(|res| (res.tx, res.block))
     }
+
+    fn mempool_spenders(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<MempoolEntry> {
+        self.mempool_txs_spending_prevouts(outpoints)
+            .into_iter()
+            .filter_map(|txid| self.mempool_entry(&txid))
+            .collect()
+    }
 }
 
 // FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
@@ -441,6 +451,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         txid: &bitcoin::Txid,
     ) -> Option<(bitcoin::Transaction, Option<Block>)> {
         self.lock().unwrap().wallet_transaction(txid)
+    }
+
+    fn mempool_spenders(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<MempoolEntry> {
+        self.lock().unwrap().mempool_spenders(outpoints)
     }
 }
 

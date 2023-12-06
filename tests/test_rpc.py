@@ -16,6 +16,7 @@ from test_framework.utils import (
     get_txid,
     spend_coins,
     sign_and_broadcast,
+    sign_and_broadcast_psbt,
 )
 
 
@@ -663,13 +664,6 @@ def test_start_rescan(lianad, bitcoind):
 def test_listtransactions(lianad, bitcoind):
     """Test listing of transactions by txid and timespan"""
 
-    def sign_and_broadcast(psbt):
-        txid = psbt.tx.txid().hex()
-        psbt = lianad.signer.sign_psbt(psbt)
-        lianad.rpc.updatespend(psbt.to_base64())
-        lianad.rpc.broadcastspend(txid)
-        return txid
-
     def wait_synced():
         wait_for(
             lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
@@ -715,7 +709,7 @@ def test_listtransactions(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, [outpoint], 6)
     psbt = PSBT.from_base64(res["psbt"])
-    txid = sign_and_broadcast(psbt)
+    txid = sign_and_broadcast_psbt(lianad, psbt)
     bitcoind.generate_block(1, wait_for_mempool=txid)
 
     # Mine 12 blocks to force the blocktime to increase
@@ -742,7 +736,7 @@ def test_listtransactions(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, [outpoint], 6)
     psbt = PSBT.from_base64(res["psbt"])
-    txid = sign_and_broadcast(psbt)
+    txid = sign_and_broadcast_psbt(lianad, psbt)
     bitcoind.generate_block(1, wait_for_mempool=txid)
 
     # Deposit a coin that will be spending (unconfirmed spend transaction)
@@ -758,7 +752,7 @@ def test_listtransactions(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, [outpoint], 6)
     psbt = PSBT.from_base64(res["psbt"])
-    txid = sign_and_broadcast(psbt)
+    txid = sign_and_broadcast_psbt(lianad, psbt)
 
     # At this point we have 12 spent and unspent coins, one of them is unconfirmed.
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 12)
@@ -1003,3 +997,304 @@ def test_labels(lianad, bitcoind):
     assert addr not in res
     assert sec_addr not in res
     assert res[random_address] == "this address is random"
+
+
+def test_rbfpsbt_bump_fee(lianad, bitcoind):
+    """Test the use of RBF to bump the fee of a transaction."""
+
+    # Get three coins.
+    destinations = {
+        lianad.rpc.getnewaddress()["address"]: 0.003,
+        lianad.rpc.getnewaddress()["address"]: 0.004,
+        lianad.rpc.getnewaddress()["address"]: 0.005,
+    }
+    txid = bitcoind.rpc.sendmany("", destinations)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 3)
+    coins = lianad.rpc.listcoins(["confirmed"])["coins"]
+
+    # Create a spend that will later be replaced.
+    first_outpoints = [c["outpoint"] for c in coins[:2]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 650_000,
+    }
+    first_res = lianad.rpc.createspend(destinations, first_outpoints, 1)
+    first_psbt = PSBT.from_base64(first_res["psbt"])
+    # The transaction has a change output.
+    assert len(first_psbt.o) == len(first_psbt.tx.vout) == 2
+    first_txid = first_psbt.tx.txid().hex()
+    # We must provide a valid feerate.
+    for bad_feerate in [-1, "foo", 18_446_744_073_709_551_616]:
+        with pytest.raises(RpcError, match=f"Invalid 'feerate' parameter."):
+            lianad.rpc.rbfpsbt(first_txid, False, bad_feerate)
+    # We cannot RBF yet as first PSBT has not been saved.
+    with pytest.raises(RpcError, match=f"Unknown spend transaction '{first_txid}'."):
+        lianad.rpc.rbfpsbt(first_txid, False, 1)
+    # Now save the PSBT.
+    lianad.rpc.updatespend(first_res["psbt"])
+    # The RBF command succeeds even if transaction has not been signed.
+    lianad.rpc.rbfpsbt(first_txid, False, 2)
+    # The RBF command also succeeds if transaction has been signed but not broadcast.
+    first_psbt = lianad.signer.sign_psbt(first_psbt)
+    lianad.rpc.updatespend(first_psbt.to_base64())
+    lianad.rpc.rbfpsbt(first_txid, False, 2)
+    # Now broadcast the spend and wait for it to be detected.
+    lianad.rpc.broadcastspend(first_txid)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == first_txid
+            for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
+        )
+    )
+    # We can now use RBF, but the feerate must be higher than that of the first transaction.
+    with pytest.raises(RpcError, match=f"Feerate too low: 1."):
+        lianad.rpc.rbfpsbt(first_txid, False, 1)
+    # Using a higher feerate works.
+    lianad.rpc.rbfpsbt(first_txid, False, 2)
+    # Let's use an even higher feerate.
+    rbf_1_res = lianad.rpc.rbfpsbt(first_txid, False, 10)
+    rbf_1_psbt = PSBT.from_base64(rbf_1_res["psbt"])
+    # The inputs are the same in both (no new inputs needed in the replacement).
+    assert sorted(
+        psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in first_psbt.i
+    ) == sorted(psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in rbf_1_psbt.i)
+    # Check non-change output is the same in both.
+    assert first_psbt.tx.vout[0].nValue == rbf_1_psbt.tx.vout[0].nValue
+    assert first_psbt.tx.vout[0].scriptPubKey == rbf_1_psbt.tx.vout[0].scriptPubKey
+    # Change address is the same but change amount will be lower in the replacement to pay higher fee.
+    assert first_psbt.tx.vout[1].nValue > rbf_1_psbt.tx.vout[1].nValue
+    assert first_psbt.tx.vout[1].scriptPubKey == rbf_1_psbt.tx.vout[1].scriptPubKey
+    # Broadcast the replacement and wait for it to be detected.
+    rbf_1_txid = sign_and_broadcast_psbt(lianad, rbf_1_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == rbf_1_txid
+            for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
+        )
+    )
+    # If we try to RBF the first transaction again, it will use the first RBF's
+    # feerate of 10 sat/vb to set the min feerate, instead of 1 sat/vb of first
+    # transaction:
+    with pytest.raises(RpcError, match=f"Feerate too low: 10."):
+        lianad.rpc.rbfpsbt(first_txid, False, 10)
+    # Using 11 for feerate works.
+    lianad.rpc.rbfpsbt(first_txid, False, 11)
+    # Add a new transaction spending the change from the first RBF.
+    desc_1_destinations = {
+        bitcoind.rpc.getnewaddress(): 500_000,
+    }
+    desc_1_outpoints = [f"{rbf_1_txid}:1", coins[2]["outpoint"]]
+    wait_for(lambda: len(lianad.rpc.listcoins([], desc_1_outpoints)["coins"]) == 2)
+    desc_1_res = lianad.rpc.createspend(desc_1_destinations, desc_1_outpoints, 1)
+    desc_1_psbt = PSBT.from_base64(desc_1_res["psbt"])
+    assert len(desc_1_psbt.tx.vout) == 2
+    desc_1_txid = sign_and_broadcast_psbt(lianad, desc_1_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == desc_1_txid
+            for c in lianad.rpc.listcoins([], desc_1_outpoints)["coins"]
+        )
+    )
+    # Add a new transaction spending the change from the first descendant.
+    desc_2_destinations = {
+        bitcoind.rpc.getnewaddress(): 25_000,
+    }
+    desc_2_outpoints = [f"{desc_1_txid}:1"]
+    wait_for(lambda: len(lianad.rpc.listcoins([], desc_2_outpoints)["coins"]) == 1)
+    desc_2_res = lianad.rpc.createspend(desc_2_destinations, desc_2_outpoints, 1)
+    desc_2_psbt = PSBT.from_base64(desc_2_res["psbt"])
+    assert len(desc_2_psbt.tx.vout) == 2
+    desc_2_txid = sign_and_broadcast_psbt(lianad, desc_2_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == desc_2_txid
+            for c in lianad.rpc.listcoins([], desc_2_outpoints)["coins"]
+        )
+    )
+    # Now replace the first RBF, which will also remove its descendants.
+    rbf_2_res = lianad.rpc.rbfpsbt(rbf_1_txid, False, 11)
+    rbf_2_psbt = PSBT.from_base64(rbf_2_res["psbt"])
+    # The inputs are the same in both (no new inputs needed in the replacement).
+    assert sorted(
+        psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in rbf_1_psbt.i
+    ) == sorted(psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in rbf_2_psbt.i)
+    # Check non-change output is the same in both.
+    assert rbf_1_psbt.tx.vout[0].nValue == rbf_2_psbt.tx.vout[0].nValue
+    assert rbf_1_psbt.tx.vout[0].scriptPubKey == rbf_2_psbt.tx.vout[0].scriptPubKey
+    # Change address is the same but change amount will be lower in the replacement to pay higher fee.
+    assert rbf_1_psbt.tx.vout[1].nValue > rbf_2_psbt.tx.vout[1].nValue
+    assert rbf_1_psbt.tx.vout[1].scriptPubKey == rbf_2_psbt.tx.vout[1].scriptPubKey
+
+    # Broadcast the replacement and wait for it to be detected.
+    rbf_2_txid = sign_and_broadcast_psbt(lianad, rbf_2_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == rbf_2_txid
+            for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
+        )
+    )
+    # The unconfirmed coins used in the descendant transactions have been removed so that
+    # only one of the input coins remains, and its spend info has been wiped so that it is as before.
+    assert lianad.rpc.listcoins([], desc_1_outpoints + desc_2_outpoints)["coins"] == [
+        coins[2]
+    ]
+    # Now confirm the replacement transaction.
+    bitcoind.generate_block(1, wait_for_mempool=rbf_2_txid)
+    wait_for(
+        lambda: all(
+            c["spend_info"]["txid"] == rbf_2_txid
+            and c["spend_info"]["height"] is not None
+            for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
+        )
+    )
+
+
+def test_rbfpsbt_cancel(lianad, bitcoind):
+    """Test the use of RBF to cancel a transaction."""
+
+    # Get three coins.
+    destinations = {
+        lianad.rpc.getnewaddress()["address"]: 0.003,
+        lianad.rpc.getnewaddress()["address"]: 0.004,
+        lianad.rpc.getnewaddress()["address"]: 0.005,
+    }
+    txid = bitcoind.rpc.sendmany("", destinations)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 3)
+    coins = lianad.rpc.listcoins(["confirmed"])["coins"]
+
+    # Create a spend that will later be replaced.
+    first_outpoints = [c["outpoint"] for c in coins[:2]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 650_000,
+    }
+    first_res = lianad.rpc.createspend(destinations, first_outpoints, 1)
+    first_psbt = PSBT.from_base64(first_res["psbt"])
+    # The transaction has a change output.
+    assert len(first_psbt.o) == len(first_psbt.tx.vout) == 2
+    first_txid = first_psbt.tx.txid().hex()
+    # Broadcast the spend and wait for it to be detected.
+    first_txid = sign_and_broadcast_psbt(lianad, first_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == first_txid
+            for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
+        )
+    )
+    # We can use RBF and let the command choose the min possible feerate (1 larger than previous).
+    rbf_1_res = lianad.rpc.rbfpsbt(first_txid, True)
+    # But we can't set the feerate explicitly.
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "A feerate must not be provided if creating a cancel."
+        ),
+    ):
+        rbf_1_res = lianad.rpc.rbfpsbt(first_txid, True, 2)
+    rbf_1_psbt = PSBT.from_base64(rbf_1_res["psbt"])
+    # Replacement only has a single input.
+    assert len(rbf_1_psbt.i) == 1
+    # This input is one of the two from the previous transaction.
+    assert rbf_1_psbt.i[0].map[PSBT_IN_NON_WITNESS_UTXO] in [
+        psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in rbf_1_psbt.i
+    ]
+    # The replacement only has a change output.
+    assert len(rbf_1_psbt.tx.vout) == 1
+    # Change address is the same but change amount will be higher in the replacement as it is the only output.
+    assert first_psbt.tx.vout[1].nValue < rbf_1_psbt.tx.vout[0].nValue
+    assert first_psbt.tx.vout[1].scriptPubKey == rbf_1_psbt.tx.vout[0].scriptPubKey
+    # Broadcast the replacement and wait for it to be detected.
+    rbf_1_txid = sign_and_broadcast_psbt(lianad, rbf_1_psbt)
+    # The spend info of the coin used in the replacement will be updated.
+
+    rbf_1_outpoint = (
+        f"{rbf_1_psbt.tx.vin[0].prevout.hash:064x}:{rbf_1_psbt.tx.vin[0].prevout.n}"
+    )
+    assert rbf_1_outpoint in first_outpoints
+
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == rbf_1_txid
+            for c in lianad.rpc.listcoins([], [rbf_1_outpoint])["coins"]
+        )
+    )
+    # The other coin will have its spend info removed.
+    wait_for(
+        lambda: all(
+            c["spend_info"] is None
+            for c in lianad.rpc.listcoins(
+                [], [op for op in first_outpoints if op != rbf_1_outpoint]
+            )["coins"]
+        )
+    )
+    # Add a new transaction spending the only output (change) from the first RBF.
+    desc_1_destinations = {
+        bitcoind.rpc.getnewaddress(): 500_000,
+    }
+    desc_1_outpoints = [f"{rbf_1_txid}:0", coins[2]["outpoint"]]
+    wait_for(lambda: len(lianad.rpc.listcoins([], desc_1_outpoints)["coins"]) == 2)
+    desc_1_res = lianad.rpc.createspend(desc_1_destinations, desc_1_outpoints, 1)
+    desc_1_psbt = PSBT.from_base64(desc_1_res["psbt"])
+    assert len(desc_1_psbt.tx.vout) == 2
+    desc_1_txid = sign_and_broadcast_psbt(lianad, desc_1_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == desc_1_txid
+            for c in lianad.rpc.listcoins([], desc_1_outpoints)["coins"]
+        )
+    )
+    # Add a new transaction spending the change from the first descendant.
+    desc_2_destinations = {
+        bitcoind.rpc.getnewaddress(): 25_000,
+    }
+    desc_2_outpoints = [f"{desc_1_txid}:1"]
+    wait_for(lambda: len(lianad.rpc.listcoins([], desc_2_outpoints)["coins"]) == 1)
+    desc_2_res = lianad.rpc.createspend(desc_2_destinations, desc_2_outpoints, 1)
+    desc_2_psbt = PSBT.from_base64(desc_2_res["psbt"])
+    assert len(desc_2_psbt.tx.vout) == 2
+    desc_2_txid = sign_and_broadcast_psbt(lianad, desc_2_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == desc_2_txid
+            for c in lianad.rpc.listcoins([], desc_2_outpoints)["coins"]
+        )
+    )
+    # Now cancel the first RBF, which will also remove its descendants.
+    rbf_2_res = lianad.rpc.rbfpsbt(rbf_1_txid, True)
+    rbf_2_psbt = PSBT.from_base64(rbf_2_res["psbt"])
+    #
+    assert len(rbf_2_psbt.i) == 1
+    assert (
+        rbf_1_psbt.i[0].map[PSBT_IN_NON_WITNESS_UTXO]
+        == rbf_2_psbt.i[0].map[PSBT_IN_NON_WITNESS_UTXO]
+    )
+    # The inputs are the same in both (no new inputs needed in the replacement).
+
+    # Only a single output (change) in the replacement.
+    assert len(rbf_2_psbt.tx.vout) == 1
+    # Change address is the same but change amount will be lower in the replacement to pay higher fee.
+    assert rbf_1_psbt.tx.vout[0].nValue > rbf_2_psbt.tx.vout[0].nValue
+    assert rbf_1_psbt.tx.vout[0].scriptPubKey == rbf_2_psbt.tx.vout[0].scriptPubKey
+
+    # Broadcast the replacement and wait for it to be detected.
+    rbf_2_txid = sign_and_broadcast_psbt(lianad, rbf_2_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == rbf_2_txid
+            for c in lianad.rpc.listcoins([], [rbf_1_outpoint])["coins"]
+        )
+    )
+    # The unconfirmed coins used in the descendant transactions have been removed so that
+    # only one of the input coins remains, and its spend info has been wiped so that it is as before.
+    assert lianad.rpc.listcoins([], desc_1_outpoints + desc_2_outpoints)["coins"] == [
+        coins[2]
+    ]
+    # Now confirm the replacement transaction.
+    bitcoind.generate_block(1, wait_for_mempool=rbf_2_txid)
+    wait_for(
+        lambda: all(
+            c["spend_info"]["txid"] == rbf_2_txid
+            and c["spend_info"]["height"] is not None
+            for c in lianad.rpc.listcoins([], [rbf_1_outpoint])["coins"]
+        )
+    )

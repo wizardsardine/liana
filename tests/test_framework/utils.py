@@ -26,7 +26,7 @@ OLD_LIANAD_PATH = os.getenv("OLD_LIANAD_PATH", None)
 IS_BITCOIND_25 = bool(int(os.getenv("IS_BITCOIND_25", True)))
 
 
-COIN = 10 ** 8
+COIN = 10**8
 
 
 def wait_for(success, timeout=TIMEOUT, debug_fn=None):
@@ -83,6 +83,15 @@ def sign_and_broadcast(lianad, bitcoind, psbt, recovery=False):
     finalized_psbt = lianad.finalize_psbt(signed_psbt)
     tx = finalized_psbt.tx.serialize_with_witness().hex()
     return bitcoind.rpc.sendrawtransaction(tx)
+
+
+def sign_and_broadcast_psbt(lianad, psbt):
+    """Sign a PSBT, save it to the DB and broadcast it."""
+    txid = psbt.tx.txid().hex()
+    psbt = lianad.signer.sign_psbt(psbt)
+    lianad.rpc.updatespend(psbt.to_base64())
+    lianad.rpc.broadcastspend(txid)
+    return txid
 
 
 class RpcError(ValueError):
