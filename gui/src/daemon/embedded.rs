@@ -89,7 +89,7 @@ impl Daemon for EmbeddedDaemon {
         feerate_vb: u64,
     ) -> Result<CreateSpendResult, DaemonError> {
         self.control()?
-            .create_spend(destinations, coins_outpoints, feerate_vb)
+            .create_spend(destinations, coins_outpoints, feerate_vb, None)
             .map_err(|e| match e {
                 CommandError::CoinSelectionError(_) => DaemonError::CoinSelectionError,
                 e => DaemonError::Unexpected(e.to_string()),
