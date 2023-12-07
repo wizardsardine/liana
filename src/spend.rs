@@ -312,12 +312,15 @@ fn select_coins_for_spend(
         lowest_fee,
         must_have_change,
     };
-    // Scale down the number of rounds to perform if there is too many candidates.
+    // Scale down the number of rounds to perform if there is too many candidates. If the binary
+    // isn't optimized, scale it down further to avoid lags in hot loops.
     let bnb_rounds = match candidate_coins.len() {
         i if i >= 500 => 1_000,
         i if i >= 100 => 10_000,
         _ => 100_000,
     };
+    #[cfg(debug)]
+    let bnb_rounds = bnb_rounds / 1_000;
     if let Err(e) = selector.run_bnb(lowest_fee_change_cond, bnb_rounds) {
         log::warn!(
             "Coin selection error: '{}'. Selecting coins by descending value per weight unit...",
