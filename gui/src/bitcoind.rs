@@ -16,19 +16,19 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Current and previous managed bitcoind versions, in order of descending version.
-pub const VERSIONS: [&str; 2] = ["25.1", "25.0"];
+pub const VERSIONS: [&str; 3] = ["26.0", "25.1", "25.0"];
 
 /// Current managed bitcoind version for new installations.
 pub const VERSION: &str = VERSIONS[0];
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "1acfde0ec3128381b83e3e5f54d1c7907871d324549129592144dd12a821eff1";
+pub const SHA256SUM: &str = "6e9864d0f59d5b7e8769ee867dd4b1f91602584b5736796e37d292e5c34d885a";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "a978c407b497a727f0444156e397b50491ce862d1f906fef9b521415b3611c8b";
+pub const SHA256SUM: &str = "23e5ab226d9e01ffaadef5ffabe8868d0db23db952b90b0593652993680bb8ab";
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "da722a4573b46b9a66aa53992b1ef296ab1b2b75dbdaa3b4eff65cbed438637a";
+pub const SHA256SUM: &str = "8d0e909280012d91d08f0321c53a3ceea064682ca635098910b33e4e94c82ed1";
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 pub fn download_filename() -> String {
