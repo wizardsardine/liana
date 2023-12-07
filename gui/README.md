@@ -30,6 +30,8 @@ will be spawned that will guide you in the processing of configuring Liana.
 If the software is started and a reachable `lianad` is running, it will plug to it via `lianad`'s
 JSONRPC interface.
 
+The environment variable `LOG_LEVEL` with values `error`, `warn`, `info`, `debug`, `trace`, overrides the log settings from the config file.
+
 ### Troubleshooting
 
 - If you encounter layout issue on `X11`, try to start the GUI with `WINIT_X11_SCALE_FACTOR`
