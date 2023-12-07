@@ -120,7 +120,7 @@ impl State for PsbtsPanel {
     fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         let daemon = daemon.clone();
         Command::perform(
-            async move { daemon.list_spend_transactions().map_err(|e| e.into()) },
+            async move { daemon.list_spend_transactions(None).map_err(|e| e.into()) },
             Message::SpendTxs,
         )
     }

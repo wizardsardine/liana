@@ -87,11 +87,21 @@ pub trait Daemon: Debug {
     fn update_labels(&self, labels: &HashMap<LabelItem, Option<String>>)
         -> Result<(), DaemonError>;
 
-    fn list_spend_transactions(&self) -> Result<Vec<model::SpendTx>, DaemonError> {
+    // List spend transactions, optionally filtered to the specified `txids`.
+    // Set `txids` to `None` for no filter (passing an empty slice returns no transactions).
+    fn list_spend_transactions(
+        &self,
+        txids: Option<&[Txid]>,
+    ) -> Result<Vec<model::SpendTx>, DaemonError> {
         let info = self.get_info()?;
         let coins = self.list_coins()?.coins;
         let mut spend_txs = Vec::new();
         for tx in self.list_spend_txs()?.spend_txs {
+            if let Some(txids) = txids {
+                if !txids.contains(&tx.psbt.unsigned_tx.txid()) {
+                    continue;
+                }
+            }
             let coins = coins
                 .iter()
                 .filter(|coin| {
