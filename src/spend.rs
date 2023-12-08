@@ -296,8 +296,8 @@ fn select_coins_for_spend(
     let change_policy =
         change_policy::min_value_and_waste(drain_weights, DUST_OUTPUT_SATS, long_term_feerate);
 
-    // Finally, run the coin selection algorithm. We use a BnB with 100k iterations and if it
-    // couldn't find any solution we fall back to selecting coins by descending value.
+    // Finally, run the coin selection algorithm. We use an opportunistic BnB and if it couldn't
+    // find any solution we fall back to selecting coins by descending value.
     let target = Target {
         value: out_value_nochange,
         feerate: FeeRate::from_sat_per_vb(feerate_vb),
@@ -312,7 +312,16 @@ fn select_coins_for_spend(
         lowest_fee,
         must_have_change,
     };
-    if let Err(e) = selector.run_bnb(lowest_fee_change_cond, 100_000) {
+    // Scale down the number of rounds to perform if there is too many candidates. If the binary
+    // isn't optimized, scale it down further to avoid lags in hot loops.
+    let bnb_rounds = match candidate_coins.len() {
+        i if i >= 500 => 1_000,
+        i if i >= 100 => 10_000,
+        _ => 100_000,
+    };
+    #[cfg(debug)]
+    let bnb_rounds = bnb_rounds / 1_000;
+    if let Err(e) = selector.run_bnb(lowest_fee_change_cond, bnb_rounds) {
         log::warn!(
             "Coin selection error: '{}'. Selecting coins by descending value per weight unit...",
             e.to_string()
