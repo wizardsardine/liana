@@ -57,6 +57,8 @@ fn parse_args(args: Vec<String>) -> Result<Vec<Arg>, Box<dyn Error>> {
 pub struct GUI {
     state: State,
     logger: Logger,
+    // if set up, it overrides the level filter of the logger.
+    log_level: Option<LevelFilter>,
 }
 
 enum State {
@@ -87,7 +89,7 @@ async fn ctrl_c() -> Result<(), ()> {
 impl Application for GUI {
     type Executor = executor::Default;
     type Message = Message;
-    type Flags = Config;
+    type Flags = (Config, Option<LevelFilter>);
     type Theme = theme::Theme;
 
     fn title(&self) -> String {
@@ -97,8 +99,8 @@ impl Application for GUI {
         }
     }
 
-    fn new(config: Config) -> (GUI, Command<Self::Message>) {
-        let logger = Logger::setup(LevelFilter::INFO);
+    fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Command<Self::Message>) {
+        let logger = Logger::setup(log_level.unwrap_or(LevelFilter::INFO));
         match config {
             Config::Launcher(datadir_path) => {
                 let launcher = Launcher::new(datadir_path);
@@ -106,6 +108,7 @@ impl Application for GUI {
                     Self {
                         state: State::Launcher(Box::new(launcher)),
                         logger,
+                        log_level,
                     },
                     Command::perform(ctrl_c(), |_| Message::CtrlC),
                 )
@@ -123,12 +126,16 @@ impl Application for GUI {
                         );
                     }
                 }
-                logger.set_installer_mode(datadir_path.clone(), LevelFilter::INFO);
+                logger.set_installer_mode(
+                    datadir_path.clone(),
+                    log_level.unwrap_or(LevelFilter::INFO),
+                );
                 let (install, command) = Installer::new(datadir_path, network);
                 (
                     Self {
                         state: State::Installer(Box::new(install)),
                         logger,
+                        log_level,
                     },
                     Command::batch(vec![
                         command.map(|msg| Message::Install(Box::new(msg))),
@@ -140,13 +147,14 @@ impl Application for GUI {
                 logger.set_running_mode(
                     datadir_path.clone(),
                     network,
-                    cfg.log_level().unwrap_or(LevelFilter::INFO),
+                    log_level.unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                 );
                 let (loader, command) = Loader::new(datadir_path, cfg, network, None);
                 (
                     Self {
                         state: State::Loader(Box::new(loader)),
                         logger,
+                        log_level,
                     },
                     Command::batch(vec![
                         command.map(|msg| Message::Load(Box::new(msg))),
@@ -176,8 +184,10 @@ impl Application for GUI {
             }
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
                 launcher::Message::Install(datadir_path) => {
-                    self.logger
-                        .set_installer_mode(datadir_path.clone(), LevelFilter::INFO);
+                    self.logger.set_installer_mode(
+                        datadir_path.clone(),
+                        self.log_level.unwrap_or(LevelFilter::INFO),
+                    );
                     let (install, command) =
                         Installer::new(datadir_path, bitcoin::Network::Bitcoin);
                     self.state = State::Installer(Box::new(install));
@@ -187,7 +197,8 @@ impl Application for GUI {
                     self.logger.set_running_mode(
                         datadir_path.clone(),
                         network,
-                        cfg.log_level().unwrap_or(LevelFilter::INFO),
+                        self.log_level
+                            .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                     );
                     let (loader, command) = Loader::new(datadir_path, cfg, network, None);
                     self.state = State::Loader(Box::new(loader));
@@ -209,7 +220,8 @@ impl Application for GUI {
                     self.logger.set_running_mode(
                         datadir_path.clone(),
                         daemon_cfg.bitcoin_config.network,
-                        cfg.log_level().unwrap_or(LevelFilter::INFO),
+                        self.log_level
+                            .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                     );
                     self.logger.remove_install_log_file(datadir_path.clone());
                     let (loader, command) = Loader::new(
@@ -384,9 +396,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }?;
 
+    let log_level = if let Ok(l) = std::env::var("LOG_LEVEL") {
+        Some(LevelFilter::from_str(&l)?)
+    } else {
+        None
+    };
+
     setup_panic_hook();
 
-    let mut settings = Settings::with_flags(config);
+    let mut settings = Settings::with_flags((config, log_level));
     settings.id = Some("liana-gui".to_string());
     settings.window.icon = Some(image::liana_app_icon());
     settings.default_text_size = text::P1_SIZE.into();
