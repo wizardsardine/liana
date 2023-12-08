@@ -32,6 +32,18 @@ impl PsbtsPanel {
             import_tx: None,
         }
     }
+
+    pub fn new_preselected(wallet: Arc<Wallet>, spend_tx: SpendTx) -> Self {
+        let psbt_state = psbt::PsbtState::new(wallet.clone(), spend_tx.clone(), true);
+
+        Self {
+            wallet,
+            spend_txs: vec![spend_tx],
+            warning: None,
+            selected_tx: Some(psbt_state),
+            import_tx: None,
+        }
+    }
 }
 
 impl State for PsbtsPanel {
@@ -120,7 +132,7 @@ impl State for PsbtsPanel {
     fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         let daemon = daemon.clone();
         Command::perform(
-            async move { daemon.list_spend_transactions().map_err(|e| e.into()) },
+            async move { daemon.list_spend_transactions(None).map_err(|e| e.into()) },
             Message::SpendTxs,
         )
     }

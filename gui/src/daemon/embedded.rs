@@ -89,11 +89,22 @@ impl Daemon for EmbeddedDaemon {
         feerate_vb: u64,
     ) -> Result<CreateSpendResult, DaemonError> {
         self.control()?
-            .create_spend(destinations, coins_outpoints, feerate_vb)
+            .create_spend(destinations, coins_outpoints, feerate_vb, None)
             .map_err(|e| match e {
                 CommandError::CoinSelectionError(_) => DaemonError::CoinSelectionError,
                 e => DaemonError::Unexpected(e.to_string()),
             })
+    }
+
+    fn rbf_psbt(
+        &self,
+        txid: &Txid,
+        is_cancel: bool,
+        feerate_vb: Option<u64>,
+    ) -> Result<CreateSpendResult, DaemonError> {
+        self.control()?
+            .rbf_psbt(txid, is_cancel, feerate_vb)
+            .map_err(|e| DaemonError::Unexpected(e.to_string()))
     }
 
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {

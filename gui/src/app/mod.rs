@@ -95,6 +95,22 @@ impl App {
             }
             menu::Menu::Transactions => TransactionsPanel::new().into(),
             menu::Menu::PSBTs => PsbtsPanel::new(self.wallet.clone(), &self.cache.spend_txs).into(),
+            menu::Menu::PsbtPreSelected(txid) => {
+                // Get preselected spend from DB in case it's not yet in the cache.
+                // We only need this single spend as we will go straight to its view and not show the PSBTs list.
+                // In case of any error loading the spend or if it doesn't exist, fall back to using the cache
+                // and load PSBTs list in usual way.
+                match self
+                    .daemon
+                    .list_spend_transactions(Some(&[*txid]))
+                    .map(|txs| txs.first().cloned())
+                {
+                    Ok(Some(spend_tx)) => {
+                        PsbtsPanel::new_preselected(self.wallet.clone(), spend_tx).into()
+                    }
+                    _ => PsbtsPanel::new(self.wallet.clone(), &self.cache.spend_txs).into(),
+                }
+            }
             menu::Menu::CreateSpendTx => CreateSpendPanel::new(
                 self.wallet.clone(),
                 &self.cache.coins,

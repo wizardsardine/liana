@@ -1,4 +1,4 @@
-use liana::miniscript::bitcoin::OutPoint;
+use liana::miniscript::bitcoin::{OutPoint, Txid};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Menu {
     Home,
@@ -10,4 +10,5 @@ pub enum Menu {
     CreateSpendTx,
     Recovery,
     RefreshCoins(Vec<OutPoint>),
+    PsbtPreSelected(Txid),
 }

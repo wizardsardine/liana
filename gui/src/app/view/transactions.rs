@@ -1,11 +1,11 @@
 use chrono::NaiveDateTime;
 use std::collections::HashMap;
 
-use iced::{alignment, Alignment, Length};
+use iced::{alignment, widget::tooltip, Alignment, Length};
 
 use liana_ui::{
     color,
-    component::{amount::*, badge, card, form, text::*},
+    component::{amount::*, badge, button, card, form, text::*},
     icon, theme,
     util::Collection,
     widget::*,
@@ -16,9 +16,9 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{dashboard, label, message::Message},
+        view::{dashboard, label, message::CreateRbfMessage, message::Message, warning::warn},
     },
-    daemon::model::HistoryTransaction,
+    daemon::model::{HistoryTransaction, Txid},
 };
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
@@ -157,6 +157,70 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
     .into()
 }
 
+pub fn create_rbf_modal<'a>(
+    is_cancel: bool,
+    feerate: &form::Value<String>,
+    replacement_txid: Option<Txid>,
+    warning: Option<&'a Error>,
+) -> Element<'a, Message> {
+    let mut confirm_button = button::primary(None, "Confirm").width(Length::Fixed(200.0));
+    if feerate.valid || is_cancel {
+        confirm_button =
+            confirm_button.on_press(Message::CreateRbf(super::CreateRbfMessage::Confirm));
+    }
+    let help_text = if is_cancel {
+        "Replace the transaction with one paying a higher feerate that sends the coins back to us. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction."
+    } else {
+        "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
+    };
+    card::simple(
+        Column::new()
+            .spacing(10)
+            .push(Container::new(h4_bold("Transaction replacement")).width(Length::Fill))
+            .push(Row::new().push(text(help_text)))
+            .push_maybe(if !is_cancel {
+                Some(
+                    Row::new()
+                        .push(Container::new(p1_bold("Feerate")).padding(10))
+                        .spacing(10)
+                        .push(
+                            form::Form::new_trimmed("", feerate, move |msg| {
+                                Message::CreateRbf(CreateRbfMessage::FeerateEdited(msg))
+                            })
+                            .warning("Invalid feerate")
+                            .size(20)
+                            .padding(10),
+                        )
+                        .width(Length::Fill),
+                )
+            } else {
+                None
+            })
+            .push(warn(warning))
+            .push(Row::new().push(if replacement_txid.is_none() {
+                Row::new().push(confirm_button)
+            } else {
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(icon::circle_check_icon().style(color::GREEN))
+                    .push(
+                        text("Replacement PSBT created successfully and ready to be signed")
+                            .style(color::GREEN),
+                    )
+            }))
+            .push_maybe(replacement_txid.map(|id| {
+                Row::new().push(
+                    button::primary(None, "Go to replacement")
+                        .width(Length::Fixed(200.0))
+                        .on_press(Message::Menu(Menu::PsbtPreSelected(id))),
+                )
+            })),
+    )
+    .width(Length::Fixed(600.0))
+    .into()
+}
+
 pub fn tx_view<'a>(
     cache: &'a Cache,
     tx: &'a HistoryTransaction,
@@ -221,6 +285,30 @@ pub fn tx_view<'a>(
                         })),
                 ),
             )
+            // If unconfirmed, give option to use RBF.
+            // Check fee amount is some as otherwise we may be missing coins for this transaction.
+            .push_maybe(if tx.time.is_none() && tx.fee_amount.is_some() {
+                Some(
+                    Row::new()
+                        .push(
+                            button::primary(None, "Bump fee")
+                                .width(Length::Fixed(200.0))
+                                .on_press(Message::CreateRbf(super::CreateRbfMessage::New(false))),
+                        )
+                        .push(
+                            tooltip::Tooltip::new(
+                                button::primary(None, "Cancel transaction")
+                                .width(Length::Fixed(200.0))
+                                .on_press(Message::CreateRbf(super::CreateRbfMessage::New(true))),
+                                "Best effort attempt at double spending an unconfirmed outgoing transaction",
+                                tooltip::Position::Top,
+                            )
+                        )
+                        .spacing(10),
+                )
+            } else {
+                None
+            })
             .push(card::simple(
                 Column::new()
                     .push_maybe(tx.time.map(|t| {

@@ -17,6 +17,7 @@ pub enum Message {
     Next,
     Previous,
     SelectHardwareWallet(usize),
+    CreateRbf(CreateRbfMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +75,14 @@ pub enum SettingsMessage {
 pub enum SettingsEditMessage {
     Select,
     FieldEdited(&'static str, String),
+    Cancel,
+    Confirm,
+}
+
+#[derive(Debug, Clone)]
+pub enum CreateRbfMessage {
+    New(bool),
+    FeerateEdited(String),
     Cancel,
     Confirm,
 }

@@ -96,6 +96,22 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         )
     }
 
+    fn rbf_psbt(
+        &self,
+        txid: &Txid,
+        is_cancel: bool,
+        feerate_vb: Option<u64>,
+    ) -> Result<CreateSpendResult, DaemonError> {
+        self.call(
+            "rbfpsbt",
+            Some(vec![
+                json!(txid.to_string()),
+                json!(is_cancel.to_string()),
+                json!(feerate_vb),
+            ]),
+        )
+    }
+
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
         let spend_tx = base64::encode(psbt.serialize());
         let _res: serde_json::value::Value = self.call("updatespend", Some(vec![spend_tx]))?;

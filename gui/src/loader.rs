@@ -370,7 +370,7 @@ pub async fn load_application(
         Wallet::new(info.descriptors.main).load_settings(&gui_config, &datadir_path, network)?;
 
     let coins = daemon.list_coins().map(|res| res.coins)?;
-    let spend_txs = daemon.list_spend_transactions()?;
+    let spend_txs = daemon.list_spend_transactions(None)?;
 
     let cache = Cache {
         datadir_path,

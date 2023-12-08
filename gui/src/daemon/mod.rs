@@ -63,6 +63,12 @@ pub trait Daemon: Debug {
         destinations: &HashMap<Address<address::NetworkUnchecked>, u64>,
         feerate_vb: u64,
     ) -> Result<model::CreateSpendResult, DaemonError>;
+    fn rbf_psbt(
+        &self,
+        txid: &Txid,
+        is_cancel: bool,
+        feerate_vb: Option<u64>,
+    ) -> Result<model::CreateSpendResult, DaemonError>;
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError>;
     fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
     fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
@@ -87,11 +93,21 @@ pub trait Daemon: Debug {
     fn update_labels(&self, labels: &HashMap<LabelItem, Option<String>>)
         -> Result<(), DaemonError>;
 
-    fn list_spend_transactions(&self) -> Result<Vec<model::SpendTx>, DaemonError> {
+    // List spend transactions, optionally filtered to the specified `txids`.
+    // Set `txids` to `None` for no filter (passing an empty slice returns no transactions).
+    fn list_spend_transactions(
+        &self,
+        txids: Option<&[Txid]>,
+    ) -> Result<Vec<model::SpendTx>, DaemonError> {
         let info = self.get_info()?;
         let coins = self.list_coins()?.coins;
         let mut spend_txs = Vec::new();
         for tx in self.list_spend_txs()?.spend_txs {
+            if let Some(txids) = txids {
+                if !txids.contains(&tx.psbt.unsigned_tx.txid()) {
+                    continue;
+                }
+            }
             let coins = coins
                 .iter()
                 .filter(|coin| {
