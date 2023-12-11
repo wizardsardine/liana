@@ -417,6 +417,8 @@ impl DaemonControl {
                     spend_txid,
                     spend_block,
                     is_immature,
+                    is_change,
+                    derivation_index,
                     ..
                 } = coin;
                 let spend_info = spend_txid.map(|txid| LCSpendInfo {
@@ -430,10 +432,12 @@ impl DaemonControl {
                 ListCoinsEntry {
                     address,
                     amount,
+                    derivation_index,
                     outpoint,
                     block_height,
                     spend_info,
                     is_immature,
+                    is_change,
                 }
             })
             .collect();
@@ -1104,10 +1108,14 @@ pub struct ListCoinsEntry {
     )]
     pub address: bitcoin::Address,
     pub block_height: Option<i32>,
+    /// Derivation index used to create the coin deposit address.
+    pub derivation_index: bip32::ChildNumber,
     /// Information about the transaction spending this coin.
     pub spend_info: Option<LCSpendInfo>,
     /// Whether this coin was created by a coinbase transaction that is still immature.
     pub is_immature: bool,
+    /// Whether the coin deposit address was derived from the change descriptor.
+    pub is_change: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
