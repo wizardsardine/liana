@@ -216,6 +216,8 @@ mod tests {
                 spend_info: None,
                 is_immature: false,
                 address: dummy_address.clone(),
+                derivation_index: 0.into(),
+                is_change: false,
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 3 },
@@ -224,6 +226,8 @@ mod tests {
                 spend_info: None,
                 is_immature: false,
                 address: dummy_address.clone(),
+                derivation_index: 1.into(),
+                is_change: false,
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 0 },
@@ -232,6 +236,8 @@ mod tests {
                 spend_info: None,
                 is_immature: false,
                 address: dummy_address.clone(),
+                derivation_index: 2.into(),
+                is_change: false,
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 1 },
@@ -240,6 +246,8 @@ mod tests {
                 spend_info: None,
                 is_immature: false,
                 address: dummy_address,
+                derivation_index: 3.into(),
+                is_change: false,
             },
         ]);
 

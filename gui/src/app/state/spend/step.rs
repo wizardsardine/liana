@@ -6,7 +6,10 @@ use iced::{Command, Subscription};
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
-        self, address, psbt::Psbt, Address, Amount, Denomination, Network, OutPoint,
+        self, address, psbt::Psbt, secp256k1, Address, Amount, Denomination, Network, OutPoint,
+    },
+    spend::{
+        create_spend, CandidateCoin, SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
     },
 };
 
@@ -19,7 +22,7 @@ use crate::{
     app::{cache::Cache, error::Error, message::Message, state::psbt, view, wallet::Wallet},
     daemon::{
         model::{remaining_sequence, Coin, SpendTx},
-        Daemon, DaemonError,
+        Daemon,
     },
 };
 
@@ -73,7 +76,9 @@ pub struct DefineSpend {
     is_valid: bool,
     is_duplicate: bool,
 
+    network: Network,
     descriptor: LianaDescriptor,
+    curve: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     timelock: u16,
     coins: Vec<(Coin, bool)>,
     coins_labels: HashMap<String, String>,
@@ -85,7 +90,12 @@ pub struct DefineSpend {
 }
 
 impl DefineSpend {
-    pub fn new(descriptor: LianaDescriptor, coins: &[Coin], timelock: u16) -> Self {
+    pub fn new(
+        network: Network,
+        descriptor: LianaDescriptor,
+        coins: &[Coin],
+        timelock: u16,
+    ) -> Self {
         let balance_available = coins
             .iter()
             .filter_map(|coin| {
@@ -99,7 +109,7 @@ impl DefineSpend {
         let coins: Vec<(Coin, bool)> = coins
             .iter()
             .filter_map(|c| {
-                if c.spend_info.is_none() {
+                if c.spend_info.is_none() && !c.is_immature {
                     Some((c.clone(), false))
                 } else {
                     None
@@ -109,7 +119,9 @@ impl DefineSpend {
 
         Self {
             balance_available,
+            network,
             descriptor,
+            curve: secp256k1::Secp256k1::verification_only(),
             timelock,
             generated: None,
             coins,
@@ -175,110 +187,128 @@ impl DefineSpend {
             }
         }
     }
-    fn auto_select_coins(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) {
-        // Set non-input values in the same way as for user selection.
-        let mut outputs: HashMap<Address<address::NetworkUnchecked>, u64> = HashMap::new();
-        for recipient in &self.recipients {
-            outputs.insert(
-                Address::from_str(&recipient.address.value).expect("Checked before"),
-                recipient.amount().expect("Checked before"),
-            );
+    /// redraft calculates the amount left to select and auto selects coins
+    /// if the user did not select a coin manually
+    fn redraft(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) {
+        if !self.form_values_are_valid() || self.recipients.is_empty() {
+            return;
         }
-        let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
-        // Create a spend with empty inputs in order to use auto-selection.
-        match daemon.create_spend_tx(&[], &outputs, feerate_vb) {
-            Ok(spend) => {
-                self.warning = None;
-                let selected_coins: Vec<OutPoint> = spend
-                    .psbt
-                    .unsigned_tx
-                    .input
-                    .iter()
-                    .map(|c| c.previous_output)
-                    .collect();
-                // Mark coins as selected.
-                for (coin, selected) in &mut self.coins {
-                    *selected = selected_coins.contains(&coin.outpoint);
-                }
-                // As coin selection was successful, we can assume there is nothing left to select.
-                self.amount_left_to_select = Some(Amount::from_sat(0));
-            }
-            Err(e) => {
-                if let DaemonError::CoinSelectionError = e {
-                    // For coin selection error (insufficient funds), do not make any changes to
-                    // selected coins on screen and just show user how much is left to select.
-                    // User can then either:
-                    // - modify recipient amounts and/or feerate and let coin selection run again, or
-                    // - select coins manually.
-                    self.amount_left_to_select();
-                } else {
-                    self.warning = Some(e.into());
-                }
-            }
-        }
-    }
-    fn amount_left_to_select(&mut self) {
-        // We need the feerate in order to compute the required amount of BTC to
-        // select. Return early if we don't to not do unnecessary computation.
-        let feerate = match self.feerate.value.parse::<u64>() {
-            Ok(f) => f,
-            Err(_) => {
-                self.amount_left_to_select = None;
-                return;
-            }
-        };
 
-        // The coins to be included in this transaction.
-        let selected_coins: Vec<_> = self
-            .coins
+        let destinations: Vec<(SpendOutputAddress, Amount)> = self
+            .recipients
             .iter()
-            .filter_map(|(c, selected)| if *selected { Some(c) } else { None })
+            .map(|recipient| {
+                (
+                    SpendOutputAddress {
+                        addr: Address::from_str(&recipient.address.value)
+                            .expect("Checked before")
+                            .assume_checked(),
+                        info: None,
+                    },
+                    Amount::from_sat(recipient.amount().expect("Checked before")),
+                )
+            })
             .collect();
 
-        // A dummy representation of the transaction that will be computed, for
-        // the purpose of computing its size in order to anticipate the fees needed.
-        // NOTE: we make the conservative estimation a change output will always be
-        // needed.
-        let tx_template = bitcoin::Transaction {
-            version: 2,
-            lock_time: bitcoin::blockdata::locktime::absolute::LockTime::ZERO,
-            input: selected_coins
+        let coins: Vec<CandidateCoin> = if self.is_user_coin_selection {
+            self.coins
                 .iter()
-                .map(|_| bitcoin::TxIn::default())
-                .collect(),
-            output: self
-                .recipients
-                .iter()
-                .filter_map(|recipient| {
-                    if recipient.valid() {
-                        Some(bitcoin::TxOut {
-                            script_pubkey: Address::from_str(&recipient.address.value)
-                                .unwrap()
-                                .payload
-                                .script_pubkey(),
-                            value: recipient.amount().unwrap(),
+                .filter_map(|(c, selected)| {
+                    if *selected {
+                        Some(CandidateCoin {
+                            amount: c.amount,
+                            outpoint: c.outpoint,
+                            deriv_index: c.derivation_index,
+                            is_change: c.is_change,
+                            sequence: None,
+                            must_select: *selected,
                         })
                     } else {
                         None
                     }
                 })
-                .collect(),
+                .collect()
+        } else {
+            // For automated coin selection, only confirmed coins are considered
+            self.coins
+                .iter()
+                .filter_map(|(c, _)| {
+                    if c.block_height.is_some() {
+                        Some(CandidateCoin {
+                            amount: c.amount,
+                            outpoint: c.outpoint,
+                            deriv_index: c.derivation_index,
+                            is_change: c.is_change,
+                            sequence: None,
+                            must_select: false,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         };
-        // nValue size + scriptPubKey CompactSize + OP_0 + PUSH32 + <wit program>
-        const CHANGE_TXO_SIZE: usize = 8 + 1 + 1 + 1 + 32;
-        let satisfaction_vsize = self.descriptor.max_sat_weight() / 4;
-        let transaction_size =
-            tx_template.vsize() + satisfaction_vsize * tx_template.input.len() + CHANGE_TXO_SIZE;
 
-        // Now the calculation of the amount left to be selected by the user is a simple
-        // substraction between the value needed by the transaction to be created and the
-        // value that was selected already.
-        let selected_amount = selected_coins.iter().map(|c| c.amount.to_sat()).sum();
-        let output_sum: u64 = tx_template.output.iter().map(|o| o.value).sum();
-        let needed_amount: u64 = transaction_size as u64 * feerate + output_sum;
-        self.amount_left_to_select = Some(Amount::from_sat(
-            needed_amount.saturating_sub(selected_amount),
-        ));
+        let dummy_address = self
+            .descriptor
+            .change_descriptor()
+            .derive(0.into(), &self.curve)
+            .address(self.network);
+
+        let feerate_vb = self.feerate.value.parse::<u64>().expect("Checked before");
+        // Create a spend with empty inputs in order to use auto-selection.
+        match create_spend(
+            &self.descriptor,
+            &self.curve,
+            &mut DaemonTxGetter(&daemon),
+            &destinations,
+            &coins,
+            SpendTxFees::Regular(feerate_vb),
+            SpendOutputAddress {
+                addr: dummy_address,
+                info: None,
+            },
+        ) {
+            Ok(spend) => {
+                self.warning = None;
+                if !self.is_user_coin_selection {
+                    let selected_coins: Vec<OutPoint> = spend
+                        .psbt
+                        .unsigned_tx
+                        .input
+                        .iter()
+                        .map(|c| c.previous_output)
+                        .collect();
+                    // Mark coins as selected.
+                    for (coin, selected) in &mut self.coins {
+                        *selected = selected_coins.contains(&coin.outpoint);
+                    }
+                }
+                // As coin selection was successful, we can assume there is nothing left to select.
+                self.amount_left_to_select = Some(Amount::from_sat(0));
+            }
+            // For coin selection error (insufficient funds), do not make any changes to
+            // selected coins on screen and just show user how much is left to select.
+            // User can then either:
+            // - modify recipient amounts and/or feerate and let coin selection run again, or
+            // - select coins manually.
+            Err(SpendCreationError::CoinSelection(amount)) => {
+                self.amount_left_to_select = Some(Amount::from_sat(amount.missing));
+            }
+            Err(e) => {
+                self.warning = Some(e.into());
+            }
+        }
+    }
+}
+
+pub struct DaemonTxGetter<'a>(&'a Arc<dyn Daemon + Sync + Send>);
+impl<'a> TxGetter for DaemonTxGetter<'a> {
+    fn get_tx(&mut self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
+        self.0
+            .list_txs(&[*txid])
+            .ok()
+            .and_then(|mut txs| txs.transactions.pop().map(|tx| tx.tx))
     }
 }
 
@@ -317,14 +347,11 @@ impl Step for DefineSpend {
                         if let Ok(value) = s.parse::<u64>() {
                             self.feerate.value = s;
                             self.feerate.valid = value != 0;
-                            self.amount_left_to_select();
                         } else if s.is_empty() {
                             self.feerate.value = "".to_string();
                             self.feerate.valid = true;
-                            self.amount_left_to_select = None;
                         } else {
                             self.feerate.valid = false;
-                            self.amount_left_to_select = None;
                         }
                         self.warning = None;
                     }
@@ -368,7 +395,6 @@ impl Step for DefineSpend {
                             coin.1 = !coin.1;
                             // Once user edits selection, auto-selection can no longer be used.
                             self.is_user_coin_selection = true;
-                            self.amount_left_to_select();
                         }
                     }
                     _ => {}
@@ -378,12 +404,7 @@ impl Step for DefineSpend {
                 // - all form values have been added and validated
                 // - not a self-send
                 // - user has not yet selected coins manually
-                if self.form_values_are_valid()
-                    && !self.recipients.is_empty()
-                    && !self.is_user_coin_selection
-                {
-                    self.auto_select_coins(daemon);
-                }
+                self.redraft(daemon);
                 self.check_valid();
             }
             Message::Psbt(res) => match res {
