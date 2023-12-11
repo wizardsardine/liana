@@ -10,6 +10,7 @@ use liana::{
     },
     spend::{
         create_spend, CandidateCoin, SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
+        MAX_FEERATE,
     },
 };
 
@@ -346,7 +347,7 @@ impl Step for DefineSpend {
                     view::CreateSpendMessage::FeerateEdited(s) => {
                         if let Ok(value) = s.parse::<u64>() {
                             self.feerate.value = s;
-                            self.feerate.valid = value != 0;
+                            self.feerate.valid = value != 0 && value <= MAX_FEERATE;
                         } else if s.is_empty() {
                             self.feerate.value = "".to_string();
                             self.feerate.valid = true;
