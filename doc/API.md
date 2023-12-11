@@ -123,14 +123,16 @@ A coin may have one of the following four statuses:
 
 #### Response
 
-| Field          | Type          | Description                                                                                                        |
-| -------------- | ------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `address`      | string        | Address containing the script pubkey of the coin                                                                   |
-| `amount`       | int           | Value of the TxO in satoshis.                                                                                      |
-| `outpoint`     | string        | Transaction id and output index of this coin.                                                                      |
-| `block_height` | int or null   | Block height the transaction was confirmed at, or `null`.                                                          |
-| `spend_info`   | object        | Information about the transaction spending this coin. See [Spending transaction info](#spending_transaction_info). |
-| `is_immature`  | bool          | Whether this coin was created by a coinbase transaction that is still immature.                                    |
+| Field              | Type          | Description                                                                                                        |
+| ------------------ | ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `address`          | string        | Address containing the script pubkey of the coin                                                                   |
+| `amount`           | int           | Value of the TxO in satoshis.                                                                                      |
+| `derivation_index` | int           | Derivation index used to create the coin deposit address.                                                          |
+| `outpoint`         | string        | Transaction id and output index of this coin.                                                                      |
+| `block_height`     | int or null   | Block height the transaction was confirmed at, or `null`.                                                          |
+| `spend_info`       | object        | Information about the transaction spending this coin. See [Spending transaction info](#spending_transaction_info). |
+| `is_immature`      | bool          | Whether this coin was created by a coinbase transaction that is still immature.                                    |
+| `is_change`        | bool          | Whether the coin deposit address was derived from the change descriptor.                                           |
 
 
 ##### Spending transaction info

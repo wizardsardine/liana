@@ -82,13 +82,15 @@ def test_listcoins(lianad, bitcoind):
 
     # If we send a coin, we'll get a new entry. Note we monitor for unconfirmed
     # funds as well.
-    addr_a = lianad.rpc.getnewaddress()["address"]
-    txid_a = bitcoind.rpc.sendtoaddress(addr_a, 1)
+    addr_a = lianad.rpc.getnewaddress()
+    txid_a = bitcoind.rpc.sendtoaddress(addr_a["address"], 1)
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
     res = lianad.rpc.listcoins()["coins"]
     outpoint_a = res[0]["outpoint"]
     assert txid_a == outpoint_a[:64]
     assert res[0]["amount"] == 1 * COIN
+    assert res[0]["derivation_index"] == addr_a["derivation_index"]
+    assert res[0]["is_change"] == False
     assert res[0]["block_height"] is None
     assert res[0]["spend_info"] is None
 
