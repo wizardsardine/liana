@@ -176,7 +176,7 @@ pub fn create_spend_tx<'a>(
                                         Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
                                     },
                                 )
-                                .warning("Invalid feerate")
+                                .warning("Feerate must be an integer less than or equal to 1000 sats/vbyte")
                                 .size(20)
                                 .padding(10),
                             )

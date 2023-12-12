@@ -32,7 +32,7 @@ impl CreateSpendPanel {
             current: 0,
             steps: vec![
                 Box::new(
-                    step::DefineSpend::new(descriptor, coins, timelock)
+                    step::DefineSpend::new(network, descriptor, coins, timelock)
                         .with_coins_sorted(blockheight),
                 ),
                 Box::new(step::SaveSpend::new(wallet)),
@@ -54,7 +54,7 @@ impl CreateSpendPanel {
             current: 0,
             steps: vec![
                 Box::new(
-                    step::DefineSpend::new(descriptor, coins, timelock)
+                    step::DefineSpend::new(network, descriptor, coins, timelock)
                         .with_preselected_coins(preselected_coins)
                         .with_coins_sorted(blockheight)
                         .self_send(),

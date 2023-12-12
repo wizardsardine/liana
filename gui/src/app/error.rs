@@ -1,7 +1,7 @@
 use std::convert::From;
 use std::io::ErrorKind;
 
-use liana::{config::ConfigError, descriptors::LianaDescError};
+use liana::{config::ConfigError, descriptors::LianaDescError, spend::SpendCreationError};
 
 use crate::{
     app::{settings::SettingsError, wallet::WalletError},
@@ -16,6 +16,7 @@ pub enum Error {
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
     Desc(LianaDescError),
+    Spend(SpendCreationError),
 }
 
 impl std::fmt::Display for Error {
@@ -23,6 +24,7 @@ impl std::fmt::Display for Error {
         match self {
             Self::Config(e) => write!(f, "{}", e),
             Self::Wallet(e) => write!(f, "{}", e),
+            Self::Spend(e) => write!(f, "{}", e),
             Self::Daemon(e) => match e {
                 DaemonError::Unexpected(e) => write!(f, "{}", e),
                 DaemonError::NoAnswer => write!(f, "Daemon did not answer"),
@@ -82,5 +84,11 @@ impl From<DaemonError> for Error {
 impl From<async_hwi::Error> for Error {
     fn from(error: async_hwi::Error) -> Self {
         Error::HardwareWallet(error)
+    }
+}
+
+impl From<SpendCreationError> for Error {
+    fn from(error: SpendCreationError) -> Self {
+        Error::Spend(error)
     }
 }
