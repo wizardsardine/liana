@@ -1,5 +1,47 @@
 # Liana daemon and GUI release notes
 
+## 4.0
+
+This release introduces support for bumping the fees of a transaction, verifying a deposit address
+on your signing device, and more.
+
+### Features
+
+- The `outpoints` parameter of the `createspend` command is now optional. If not provided, we'll
+  select coins automatically.
+- A new `listaddresses` command was introduced.
+- A new `rbfpsbt` command was introduced.
+- The `createspend` command has a new, optional, `change_address` parameter. This makes it possible
+  to create a transaction which sweeps all funds from the wallet.
+
+#### GUI-specific
+
+- When creating a Spend transaction, coins to be spent are now pre-selected. The selection is
+  updated as you update the recipients and/or the feerate. The selection will stop being modified if
+  you change it manually.
+- It is now possible to verify deposit addresses on your signing device.
+- You can now bump the fees of an unconfirmed transaction. A "bump fee" button was introduced in the
+  transaction details (available from the list of transactions).
+- You can now "cancel" an unconfirmed transaction. A "cancel" button was introduced in the
+  transaction details (available from the list of transactions). NOTE: the cancel feature is not
+  guaranteed to work. It's simply leveraging RBF to double spend the outgoing transaction with a
+  transaction paying back to ourselves.
+- You can now delete a wallet for a specific network from the launcher.
+- When selecting a signing device, those which are not related to the wallet or which don't support
+  a specific method (such as displaying an address) are now greyed-out.
+- The managed Bitcoin Core version was bumped to 26.0.
+
+### Fixes
+
+- In case a transaction spending one of our coins was RBF'd, we could incorrectly assign an
+  incorrect spending transaction to this coin.
+
+#### GUI-specific
+
+- Setting a feerate larger than `2^64` when creating a Spend would previously crash the software.
+- When displaying a PSBT the software could crash if some of the inputs of the transaction
+  disappeared (were double-spent).
+
 ## 3.0
 
 This release introduces support for the BitBox02 signing device, as well as the possibility to label

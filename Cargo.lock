@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "liana"
-version = "2.0.0"
+version = "4.0.0"
 dependencies = [
  "backtrace",
  "bdk_coin_select",
