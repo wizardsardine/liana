@@ -5,7 +5,7 @@ use std::{
 };
 
 use iced::Command;
-use liana::miniscript::bitcoin::Txid;
+use liana::{miniscript::bitcoin::Txid, spend::MAX_FEERATE};
 use liana_ui::{
     component::{form, modal::Modal},
     widget::*,
@@ -287,7 +287,7 @@ impl CreateRbfModal {
                 self.warning = None;
                 if let Ok(value) = s.parse::<u64>() {
                     self.feerate_val.value = s;
-                    self.feerate_val.valid = value >= self.min_feerate_vb;
+                    self.feerate_val.valid = value >= self.min_feerate_vb && value <= MAX_FEERATE;
                     if self.feerate_val.valid {
                         self.feerate_vb = Some(value);
                     }

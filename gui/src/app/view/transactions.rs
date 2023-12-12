@@ -187,7 +187,9 @@ pub fn create_rbf_modal<'a>(
                             form::Form::new_trimmed("", feerate, move |msg| {
                                 Message::CreateRbf(CreateRbfMessage::FeerateEdited(msg))
                             })
-                            .warning("Invalid feerate")
+                            .warning(
+                                "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte",
+                            )
                             .size(20)
                             .padding(10),
                         )
