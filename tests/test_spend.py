@@ -1,6 +1,6 @@
 from fixtures import *
 from test_framework.serializations import PSBT, uint256_from_str
-from test_framework.utils import wait_for, COIN, RpcError
+from test_framework.utils import sign_and_broadcast_psbt, wait_for, COIN, RpcError
 
 
 def test_spend_change(lianad, bitcoind):
@@ -57,14 +57,6 @@ def test_spend_change(lianad, bitcoind):
     spend_txid = signed_psbt.tx.txid().hex()
     lianad.rpc.broadcastspend(spend_txid)
     bitcoind.generate_block(1, wait_for_mempool=spend_txid)
-
-
-def sign_and_broadcast_psbt(lianad, psbt):
-    txid = psbt.tx.txid().hex()
-    psbt = lianad.signer.sign_psbt(psbt)
-    lianad.rpc.updatespend(psbt.to_base64())
-    lianad.rpc.broadcastspend(txid)
-    return txid
 
 
 def test_coin_marked_spent(lianad, bitcoind):
