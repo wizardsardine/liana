@@ -2430,8 +2430,8 @@ dependencies = [
 
 [[package]]
 name = "liana"
-version = "2.0.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#3e0f82a71e031604fcf8bb0fd757ae95908e8ca6"
+version = "4.0.0"
+source = "git+https://github.com/wizardsardine/liana?branch=master#87d1c55d2e5b6edc5cc2033759a6a936435b67b6"
 dependencies = [
  "backtrace",
  "bdk_coin_select",
@@ -2451,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "liana_gui"
-version = "1.0.0"
+version = "4.0.0"
 dependencies = [
  "async-hwi",
  "backtrace",

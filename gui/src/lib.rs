@@ -13,7 +13,7 @@ pub mod utils;
 use liana::Version;
 
 pub const VERSION: Version = Version {
-    major: 1,
+    major: 4,
     minor: 0,
     patch: 0,
 };
