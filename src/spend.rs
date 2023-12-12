@@ -201,7 +201,27 @@ where
         if drain.is_none() && self.must_have_change {
             None
         } else {
-            self.lowest_fee.score(cs)
+            // This is a temporary partial fix for https://github.com/bitcoindevkit/coin-select/issues/6
+            // until it has been fixed upstream.
+            // TODO: Revert this change once upstream fix has been made.
+            // When calculating the score, the excess should be added to changeless solutions instead of
+            // those with change.
+            // Given a solution has been found, this fix adds or removes the excess to its incorrectly
+            // calculated score as required so that two changeless solutions can be differentiated
+            // if one has higher excess (and therefore pays a higher fee).
+            // Note that the `bound` function is also affected by this bug, which could mean some branches
+            // are not considered when running BnB, but at least this fix will mean the score for those
+            // solutions that are found is correct.
+            self.lowest_fee.score(cs).map(|score| {
+                // See https://github.com/bitcoindevkit/coin-select/blob/29b187f5509a01ba125a0354f6711e317bb5522a/src/metrics/lowest_fee.rs#L35-L45
+                assert!(cs.selected_value() >= self.lowest_fee.target.value);
+                let excess = (cs.selected_value() - self.lowest_fee.target.value) as f32;
+                bdk_coin_select::float::Ordf32(if drain.is_none() {
+                    score.0 + excess
+                } else {
+                    score.0 - excess
+                })
+            })
         }
     }
 

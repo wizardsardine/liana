@@ -1,5 +1,5 @@
 from fixtures import *
-from test_framework.serializations import PSBT
+from test_framework.serializations import PSBT, uint256_from_str
 from test_framework.utils import wait_for, COIN, RpcError
 
 
@@ -330,6 +330,23 @@ def test_coin_selection(lianad, bitcoind):
     assert auto_psbt.tx.vout[0].scriptPubKey == manual_psbt.tx.vout[0].scriptPubKey
     # Change amount is the same (change address will be different).
     assert auto_psbt.tx.vout[1].nValue == manual_psbt.tx.vout[1].nValue
+
+
+def test_coin_selection_changeless(lianad, bitcoind):
+    """We choose the changeless solution with lowest fee."""
+    # Get two coins with similar amounts.
+    txid_a = bitcoind.rpc.sendtoaddress(lianad.rpc.getnewaddress()["address"], 0.00031)
+    txid_b = bitcoind.rpc.sendtoaddress(lianad.rpc.getnewaddress()["address"], 0.00032)
+    bitcoind.generate_block(1, wait_for_mempool=[txid_a, txid_b])
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 2)
+    # Send an amount that can be paid by just one of our coins.
+    res = lianad.rpc.createspend({bitcoind.rpc.getnewaddress(): 30800}, [], 1)
+    psbt = PSBT.from_base64(res["psbt"])
+    # Only one input needed.
+    assert len(psbt.i) == 1
+    # Coin A is used as input.
+    txid_a = uint256_from_str(bytes.fromhex(txid_a)[::-1])
+    assert psbt.tx.vin[0].prevout.hash == txid_a
 
 
 def test_sweep(lianad, bitcoind):
