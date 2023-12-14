@@ -239,11 +239,27 @@ impl HardwareWallets {
                                             bitbox2 = bitbox2.with_policy(&desc)?;
                                             registered =
                                                 bitbox2.is_policy_registered(&desc).await?;
-                                        }
-                                        if wallet
-                                            .map(|w| w.descriptor_keys().contains(&fingerprint))
-                                            == Some(true)
-                                        {
+                                            if wallet.descriptor_keys().contains(&fingerprint) {
+                                                Ok(HardwareWallet::Supported {
+                                                    id: id.clone(),
+                                                    kind: DeviceKind::BitBox02,
+                                                    fingerprint,
+                                                    device: bitbox2.into(),
+                                                    version: None,
+                                                    registered: Some(registered),
+                                                    alias: None,
+                                                })
+                                            } else {
+                                                Ok(HardwareWallet::Unsupported {
+                                                    id: id.clone(),
+                                                    kind: DeviceKind::BitBox02,
+                                                    version: None,
+                                                    reason: UnsupportedReason::NotPartOfWallet(
+                                                        fingerprint,
+                                                    ),
+                                                })
+                                            }
+                                        } else {
                                             Ok(HardwareWallet::Supported {
                                                 id: id.clone(),
                                                 kind: DeviceKind::BitBox02,
@@ -252,15 +268,6 @@ impl HardwareWallets {
                                                 version: None,
                                                 registered: Some(registered),
                                                 alias: None,
-                                            })
-                                        } else {
-                                            Ok(HardwareWallet::Unsupported {
-                                                id: id.clone(),
-                                                kind: DeviceKind::BitBox02,
-                                                version: None,
-                                                reason: UnsupportedReason::NotPartOfWallet(
-                                                    fingerprint,
-                                                ),
                                             })
                                         }
                                     },
