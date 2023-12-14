@@ -11,7 +11,6 @@ use miniscript::bitcoin::{
     self,
     absolute::{Height, LockTime},
     bip32,
-    constants::WITNESS_SCALE_FACTOR,
     psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
     secp256k1,
 };
@@ -134,14 +133,7 @@ fn sanity_check_psbt(
     }
 
     // Check the feerate isn't insane.
-    // Add weights together before converting to vbytes to avoid rounding up multiple times
-    // and increasing the result, which could lead to the feerate in sats/vb falling below 1.
-    let tx_wu = tx.weight().to_wu() + (spent_desc.max_sat_weight() * tx.input.len()) as u64;
-    let tx_vb = tx_wu
-        .checked_add(WITNESS_SCALE_FACTOR as u64 - 1)
-        .unwrap()
-        .checked_div(WITNESS_SCALE_FACTOR as u64)
-        .unwrap();
+    let tx_vb = spent_desc.unsigned_tx_max_vbytes(tx);
     let feerate_sats_vb = abs_fee
         .checked_div(tx_vb)
         .ok_or(SpendCreationError::InsaneFees(
