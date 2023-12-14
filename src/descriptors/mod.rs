@@ -1,6 +1,7 @@
 use miniscript::{
     bitcoin::{
         self, bip32,
+        constants::WITNESS_SCALE_FACTOR,
         psbt::{Input as PsbtIn, Psbt},
         secp256k1,
     },
@@ -16,8 +17,6 @@ pub use keys::*;
 
 pub mod analysis;
 pub use analysis::*;
-
-pub const WITNESS_FACTOR: usize = 4;
 
 #[derive(Debug)]
 pub enum LianaDescError {
@@ -204,9 +203,9 @@ impl LianaDescriptor {
     /// size of the witness stack length varint.
     pub fn max_sat_vbytes(&self) -> usize {
         self.max_sat_weight()
-            .checked_add(WITNESS_FACTOR - 1)
+            .checked_add(WITNESS_SCALE_FACTOR - 1)
             .unwrap()
-            .checked_div(WITNESS_FACTOR)
+            .checked_div(WITNESS_SCALE_FACTOR)
             .unwrap()
     }
 
@@ -476,8 +475,8 @@ mod tests {
 
     // Convert a size in weight units to a size in virtual bytes, rounding up.
     fn wu_to_vb(vb: usize) -> usize {
-        (vb + WITNESS_FACTOR - 1)
-            .checked_div(WITNESS_FACTOR)
+        (vb + WITNESS_SCALE_FACTOR - 1)
+            .checked_div(WITNESS_SCALE_FACTOR)
             .expect("Non 0")
     }
 
