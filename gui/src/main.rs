@@ -149,8 +149,7 @@ impl Application for GUI {
                     network,
                     log_level.unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                 );
-                let (loader, command) =
-                    Loader::new(datadir_path, cfg, network, None, logger.receiver());
+                let (loader, command) = Loader::new(datadir_path, cfg, network, None);
                 (
                     Self {
                         state: State::Loader(Box::new(loader)),
@@ -201,8 +200,7 @@ impl Application for GUI {
                         self.log_level
                             .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                     );
-                    let (loader, command) =
-                        Loader::new(datadir_path, cfg, network, None, self.logger.receiver());
+                    let (loader, command) = Loader::new(datadir_path, cfg, network, None);
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
                 }
@@ -231,7 +229,6 @@ impl Application for GUI {
                         cfg,
                         daemon_cfg.bitcoin_config.network,
                         internal_bitcoind,
-                        self.logger.receiver(),
                     );
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))

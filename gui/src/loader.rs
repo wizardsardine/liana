@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::{Alignment, Command, Length, Subscription};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument::WithSubscriber, warn};
+use tracing_subscriber::{filter, prelude::*, Layer};
 
 use liana::{
     config::{Config, ConfigError},
@@ -31,6 +32,7 @@ use crate::{
         internal_bitcoind_debug_log_path, stop_bitcoind, Bitcoind, StartInternalBitcoindError,
     },
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
+    logger::LogStream,
 };
 
 const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. A full synchronisation typically take a few days, and is resource intensive. Once the initial synchronisation is done, the next ones will be much faster.";
@@ -46,8 +48,11 @@ pub struct Loader {
     pub daemon_started: bool,
     pub internal_bitcoind: Option<Bitcoind>,
     pub waiting_daemon_bitcoind: bool,
-    /// Receiver from Liana log stream channel.
-    pub log_receiver: crossbeam_channel::Receiver<String>,
+    /// Sender and receiver for Liana log stream.
+    pub log_channel: (
+        crossbeam_channel::Sender<String>,
+        crossbeam_channel::Receiver<String>,
+    ),
 
     step: Step,
 }
@@ -94,13 +99,13 @@ impl Loader {
         gui_config: GUIConfig,
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
-        log_receiver: crossbeam_channel::Receiver<String>,
     ) -> (Self, Command<Message>) {
         let path = gui_config
             .daemon_rpc_path
             .clone()
             .unwrap_or_else(|| socket_path(&datadir_path, network));
         let network = network;
+        let (sender, receiver) = crossbeam_channel::unbounded::<String>();
         (
             Loader {
                 network,
@@ -110,7 +115,7 @@ impl Loader {
                 daemon_started: false,
                 internal_bitcoind,
                 waiting_daemon_bitcoind: false,
-                log_receiver,
+                log_channel: (sender, receiver),
             },
             Command::perform(connect(path), Message::Loaded),
         )
@@ -142,13 +147,19 @@ impl Loader {
                         };
                         self.daemon_started = true;
                         self.waiting_daemon_bitcoind = true;
+                        let streamer_log = LogStream {
+                            sender: self.log_channel.0.clone(),
+                        }
+                        .with_filter(filter::LevelFilter::INFO);
+                        let streamer_layer = tracing_subscriber::registry().with(streamer_log);
                         return Command::perform(
                             start_bitcoind_and_daemon(
                                 daemon_config_path,
                                 self.datadir_path.clone(),
                                 self.gui_config.start_internal_bitcoind
                                     && self.internal_bitcoind.is_none(),
-                            ),
+                            )
+                            .with_subscriber(streamer_layer),
                             Message::Started,
                         );
                     } else {
@@ -273,7 +284,6 @@ impl Loader {
                     self.gui_config.clone(),
                     self.network,
                     self.internal_bitcoind.clone(),
-                    self.log_receiver.clone(),
                 );
                 *self = loader;
                 cmd
@@ -297,16 +307,14 @@ impl Loader {
 
     pub fn subscription(&self) -> Subscription<Message> {
         if let Step::StartingDaemon { .. } = self.step {
-            iced::subscription::unfold(1, self.log_receiver.clone(), move |recv| async {
+            iced::subscription::unfold(1, self.log_channel.1.clone(), move |recv| async {
                 let log_msg = match recv.recv() {
                     Ok(msg) => msg,
                     Err(e) => e.to_string(),
                 };
-
                 (Message::LogMessage(Some(log_msg)), recv)
             })
-        }
-        else if self.internal_bitcoind.is_some() {
+        } else if self.internal_bitcoind.is_some() {
             let log_path = internal_bitcoind_debug_log_path(&self.datadir_path, self.network);
             iced::subscription::unfold(0, log_path, move |log_path| async move {
                 // Reduce the io load.

@@ -10,8 +10,6 @@ use tracing_subscriber::{
     reload, Registry,
 };
 
-use crossbeam_channel::unbounded;
-
 const INSTALLER_LOG_FILE_NAME: &str = "installer.log";
 const GUI_LOG_FILE_NAME: &str = "liana-gui.log";
 
@@ -39,7 +37,6 @@ pub struct Logger {
         Registry,
     >,
     level_handle: reload::Handle<filter::LevelFilter, Registry>,
-    receiver: crossbeam_channel::Receiver<String>,
 }
 
 impl Logger {
@@ -51,8 +48,6 @@ impl Logger {
             .with_file(false);
         let (file_log, file_handle) = reload::Layer::new(file_log);
         let stdout_log = tracing_subscriber::fmt::layer().pretty().with_file(false);
-        let (sender, receiver) = unbounded::<String>();
-        let streamer_log = LogStream { sender }.with_filter(filter::LevelFilter::INFO);
         tracing_subscriber::registry()
             .with(
                 stdout_log
@@ -74,12 +69,10 @@ impl Logger {
                             && !metadata.target().starts_with("ledger_transport_hid")
                     })),
             )
-            .with(streamer_log)
             .init();
         Self {
             file_handle,
             level_handle,
-            receiver,
         }
     }
 
@@ -124,10 +117,6 @@ impl Logger {
             .modify(|layer| *layer.writer_mut() = BoxMakeWriter::new(Arc::new(file)))?;
         self.level_handle.modify(|filter| *filter = log_level)?;
         Ok(())
-    }
-
-    pub fn receiver(&self) -> crossbeam_channel::Receiver<String> {
-        self.receiver.clone()
     }
 }
 
