@@ -8,7 +8,7 @@ use miniscript::{
     descriptor, translate_hash_clone, ForEachKey, TranslatePk, Translator,
 };
 
-use std::{collections::BTreeMap, error, fmt, str};
+use std::{collections::BTreeMap, convert::TryInto, error, fmt, str};
 
 use serde::{Deserialize, Serialize};
 
@@ -353,6 +353,26 @@ impl LianaDescriptor {
             })
             .unwrap_or(&policy.primary_path);
         Ok(self.prune_bip32_derivs(psbt, path_info))
+    }
+
+    /// Maximum possible size in vbytes of an unsigned transaction, `tx`,
+    /// after satisfaction, assuming all inputs of `tx` are from this
+    /// descriptor.
+    pub fn unsigned_tx_max_vbytes(&self, tx: &bitcoin::Transaction) -> u64 {
+        let witness_factor: u64 = WITNESS_SCALE_FACTOR.try_into().unwrap();
+        let num_inputs: u64 = tx.input.len().try_into().unwrap();
+        let max_sat_weight: u64 = self.max_sat_weight().try_into().unwrap();
+        // Add weights together before converting to vbytes to avoid rounding up multiple times.
+        let tx_wu = tx
+            .weight()
+            .to_wu()
+            .checked_add(max_sat_weight.checked_mul(num_inputs).unwrap())
+            .unwrap();
+        tx_wu
+            .checked_add(witness_factor.checked_sub(1).unwrap())
+            .unwrap()
+            .checked_div(witness_factor)
+            .unwrap()
     }
 }
 
