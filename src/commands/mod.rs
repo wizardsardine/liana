@@ -29,10 +29,7 @@ use std::{
 };
 
 use miniscript::{
-    bitcoin::{
-        self, address, bip32, constants::WITNESS_SCALE_FACTOR,
-        psbt::PartiallySignedTransaction as Psbt,
-    },
+    bitcoin::{self, address, bip32, psbt::PartiallySignedTransaction as Psbt},
     psbt::PsbtExt,
 };
 use serde::{Deserialize, Serialize};
@@ -177,29 +174,6 @@ impl<'a> TxGetter for BitcoindTxGetter<'a> {
         }
         self.cache.get(txid).cloned().flatten()
     }
-}
-
-/// An unsigned transaction's maximum possible size in vbytes after satisfaction.
-///
-/// This assumes all inputs are internal (or have the same `max_sat_weight` value).
-///
-/// `tx` is the unsigned transaction.
-///
-/// `max_sat_weight` is the maximum weight difference of an input in the
-/// transaction before and after satisfaction. Must be in weight units.
-fn unsigned_tx_max_vbytes(tx: &bitcoin::Transaction, max_sat_weight: u64) -> u64 {
-    let witness_factor: u64 = WITNESS_SCALE_FACTOR.try_into().unwrap();
-    let num_inputs: u64 = tx.input.len().try_into().unwrap();
-    let tx_wu: u64 = tx
-        .weight()
-        .to_wu()
-        .checked_add(max_sat_weight.checked_mul(num_inputs).unwrap())
-        .unwrap();
-    tx_wu
-        .checked_add(witness_factor.checked_sub(1).unwrap())
-        .unwrap()
-        .checked_div(witness_factor)
-        .unwrap()
 }
 
 fn coin_to_candidate(
@@ -826,12 +800,6 @@ impl DaemonControl {
         if !is_cancel {
             candidate_coins.extend(&confirmed_cands);
         }
-        let max_sat_weight: u64 = self
-            .config
-            .main_descriptor
-            .max_sat_weight()
-            .try_into()
-            .expect("it must fit");
         // Try with increasing fee until fee paid by replacement transaction is high enough.
         // Replacement fee must be at least:
         // sum of fees paid by original transactions + incremental feerate * replacement size.
@@ -868,7 +836,10 @@ impl DaemonControl {
                     return Err(e.into());
                 }
             };
-            replacement_vsize = unsigned_tx_max_vbytes(&rbf_psbt.unsigned_tx, max_sat_weight);
+            replacement_vsize = self
+                .config
+                .main_descriptor
+                .unsigned_tx_max_vbytes(&rbf_psbt.unsigned_tx);
 
             // Make sure it satisfies RBF rule 4.
             if rbf_psbt.fee().expect("has already been sanity checked")
