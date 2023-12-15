@@ -1,13 +1,14 @@
 use miniscript::{
     bitcoin::{
         self, bip32,
+        constants::WITNESS_SCALE_FACTOR,
         psbt::{Input as PsbtIn, Psbt},
         secp256k1,
     },
     descriptor, translate_hash_clone, ForEachKey, TranslatePk, Translator,
 };
 
-use std::{collections::BTreeMap, error, fmt, str};
+use std::{collections::BTreeMap, convert::TryInto, error, fmt, str};
 
 use serde::{Deserialize, Serialize};
 
@@ -16,8 +17,6 @@ pub use keys::*;
 
 pub mod analysis;
 pub use analysis::*;
-
-pub const WITNESS_FACTOR: usize = 4;
 
 #[derive(Debug)]
 pub enum LianaDescError {
@@ -204,9 +203,9 @@ impl LianaDescriptor {
     /// size of the witness stack length varint.
     pub fn max_sat_vbytes(&self) -> usize {
         self.max_sat_weight()
-            .checked_add(WITNESS_FACTOR - 1)
+            .checked_add(WITNESS_SCALE_FACTOR - 1)
             .unwrap()
-            .checked_div(WITNESS_FACTOR)
+            .checked_div(WITNESS_SCALE_FACTOR)
             .unwrap()
     }
 
@@ -355,6 +354,26 @@ impl LianaDescriptor {
             .unwrap_or(&policy.primary_path);
         Ok(self.prune_bip32_derivs(psbt, path_info))
     }
+
+    /// Maximum possible size in vbytes of an unsigned transaction, `tx`,
+    /// after satisfaction, assuming all inputs of `tx` are from this
+    /// descriptor.
+    pub fn unsigned_tx_max_vbytes(&self, tx: &bitcoin::Transaction) -> u64 {
+        let witness_factor: u64 = WITNESS_SCALE_FACTOR.try_into().unwrap();
+        let num_inputs: u64 = tx.input.len().try_into().unwrap();
+        let max_sat_weight: u64 = self.max_sat_weight().try_into().unwrap();
+        // Add weights together before converting to vbytes to avoid rounding up multiple times.
+        let tx_wu = tx
+            .weight()
+            .to_wu()
+            .checked_add(max_sat_weight.checked_mul(num_inputs).unwrap())
+            .unwrap();
+        tx_wu
+            .checked_add(witness_factor.checked_sub(1).unwrap())
+            .unwrap()
+            .checked_div(witness_factor)
+            .unwrap()
+    }
 }
 
 impl SinglePathLianaDesc {
@@ -476,8 +495,8 @@ mod tests {
 
     // Convert a size in weight units to a size in virtual bytes, rounding up.
     fn wu_to_vb(vb: usize) -> usize {
-        (vb + WITNESS_FACTOR - 1)
-            .checked_div(WITNESS_FACTOR)
+        (vb + WITNESS_SCALE_FACTOR - 1)
+            .checked_div(WITNESS_SCALE_FACTOR)
             .expect("Non 0")
     }
 
