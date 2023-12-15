@@ -462,6 +462,7 @@ pub enum Button {
     Primary,
     Secondary,
     Destructive,
+    SecondaryDestructive,
     Transparent,
     TransparentBorder,
     Border,
@@ -483,14 +484,16 @@ impl button::StyleSheet for Theme {
                     border_color: color::GREY_7,
                     text_color: color::GREY_2,
                 },
-                Button::Secondary | Button::Border => button::Appearance {
-                    shadow_offset: iced::Vector::default(),
-                    background: iced::Color::TRANSPARENT.into(),
-                    border_radius: 25.0,
-                    border_width: 1.0,
-                    border_color: color::GREY_7,
-                    text_color: color::GREY_2,
-                },
+                Button::Secondary | Button::SecondaryDestructive | Button::Border => {
+                    button::Appearance {
+                        shadow_offset: iced::Vector::default(),
+                        background: iced::Color::TRANSPARENT.into(),
+                        border_radius: 25.0,
+                        border_width: 1.0,
+                        border_color: color::GREY_7,
+                        text_color: color::GREY_2,
+                    }
+                }
                 Button::Destructive => button::Appearance {
                     shadow_offset: iced::Vector::default(),
                     background: iced::Color::TRANSPARENT.into(),
@@ -560,7 +563,7 @@ impl button::StyleSheet for Theme {
                     border_color: iced::Color::TRANSPARENT,
                     text_color: color::LIGHT_BLACK,
                 },
-                Button::Destructive => button::Appearance {
+                Button::Destructive | Button::SecondaryDestructive => button::Appearance {
                     shadow_offset: iced::Vector::default(),
                     background: color::RED.into(),
                     border_radius: 25.0,

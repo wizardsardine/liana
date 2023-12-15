@@ -179,7 +179,9 @@ impl Launcher {
                                                                     *choice,
                                                                 ),
                                                             ))
-                                                            .style(theme::Button::Destructive),
+                                                            .style(
+                                                                theme::Button::SecondaryDestructive,
+                                                            ),
                                                         "Delete wallet",
                                                         tooltip::Position::Right,
                                                     ))
