@@ -35,6 +35,43 @@ pub fn serialize_duration<S: Serializer>(duration: &Duration, s: S) -> Result<S:
     s.serialize_u64(duration.as_secs())
 }
 
+fn deserialize_rpc_auth<'de, D>(deserializer: D) -> Result<BitcoindRpcAuth, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    pub struct BitcoindRpcAuthHelper {
+        cookie_path: Option<PathBuf>,
+        auth: Option<String>,
+    }
+    let BitcoindRpcAuthHelper { cookie_path, auth } =
+        BitcoindRpcAuthHelper::deserialize(deserializer)?;
+    let rpc_auth = match (cookie_path, auth) {
+        (Some(_), Some(_)) => {
+            return Err(de::Error::custom(
+                "must not set both `cookie_path` and `auth`",
+            ));
+        }
+        (Some(path), None) => BitcoindRpcAuth::CookieFile(path),
+        (None, Some(auth)) => auth
+            .split_once(':')
+            .ok_or(de::Error::custom("`auth` must be 'user:password'"))
+            .map(|(user, pass)| BitcoindRpcAuth::UserPass(user.to_string(), pass.to_string()))?,
+        (None, None) => {
+            return Err(de::Error::custom("must set either `cookie_path` or `auth`"));
+        }
+    };
+    Ok(rpc_auth)
+}
+
+fn serialize_userpass<S: Serializer>(
+    user: &String,
+    password: &String,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&format!("{}:{}", user, password))
+}
+
 fn default_loglevel() -> log::LevelFilter {
     log::LevelFilter::Info
 }
@@ -48,11 +85,23 @@ fn default_daemon() -> bool {
     false
 }
 
+/// RPC authentication options.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum BitcoindRpcAuth {
+    /// Path to bitcoind's cookie file.
+    #[serde(rename = "cookie_path")]
+    CookieFile(PathBuf),
+    /// "USER:PASSWORD" for authentication.
+    #[serde(rename = "auth", serialize_with = "serialize_userpass")]
+    UserPass(String, String),
+}
+
 /// Everything we need to know for talking to bitcoind serenely
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BitcoindConfig {
-    /// Path to bitcoind's cookie file, to authenticate the RPC connection
-    pub cookie_path: PathBuf,
+    /// Authentication credentials for bitcoind's RPC server.
+    #[serde(flatten, deserialize_with = "deserialize_rpc_auth")]
+    pub rpc_auth: BitcoindRpcAuth,
     /// The IP:port bitcoind's RPC is listening on
     pub addr: SocketAddr,
 }
@@ -217,7 +266,9 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{config_file_path, Config};
+    use std::path::PathBuf;
+
+    use super::{config_file_path, BitcoindConfig, BitcoindRpcAuth, Config};
 
     // Test the format of the configuration file
     #[test]
@@ -252,6 +303,26 @@ mod tests {
 
             [bitcoind_config]
             cookie_path = '/home/user/.bitcoin/.cookie'
+            addr = '127.0.0.1:8332'
+            "#.trim_start().replace("            ", "");
+        let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
+        let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
+        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
+        assert_eq!(toml_str, serialized);
+
+        // A valid, round-tripping, config with `auth` instead of `cookie_path`
+        let toml_str = r#"
+            data_dir = '/home/wizardsardine/custom/folder/'
+            daemon = false
+            log_level = 'TRACE'
+            main_descriptor = 'wsh(andor(pk([aabbccdd]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk([aabbccdd]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#dw4ulnrs'
+
+            [bitcoin_config]
+            network = 'bitcoin'
+            poll_interval_secs = 18
+
+            [bitcoind_config]
+            auth = 'my_user:my_password'
             addr = '127.0.0.1:8332'
             "#.trim_start().replace("            ", "");
         let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
@@ -296,6 +367,81 @@ mod tests {
         "#;
         let config_res: Result<Config, toml::de::Error> = toml::from_str(toml_str);
         config_res.expect_err("Deserializing an invalid toml_str");
+    }
+
+    // Test the format of the bitcoind_config section
+    #[test]
+    fn toml_bitcoind_config() {
+        // A valid config with cookie_path
+        let toml_str = r#"
+            cookie_path = '/home/user/.bitcoin/.cookie'
+            addr = '127.0.0.1:8332'
+            "#
+        .trim_start()
+        .replace("            ", "");
+        toml::from_str::<BitcoindConfig>(&toml_str).expect("Deserializing toml_str");
+        let parsed = toml::from_str::<BitcoindConfig>(&toml_str).expect("Deserializing toml_str");
+        let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
+        assert_eq!(toml_str, serialized);
+        assert_eq!(
+            parsed.rpc_auth,
+            BitcoindRpcAuth::CookieFile(PathBuf::from("/home/user/.bitcoin/.cookie"))
+        );
+
+        // A valid config with auth
+        let toml_str = r#"
+            auth = 'my_user:my_password'
+            addr = '127.0.0.1:8332'
+            "#
+        .trim_start()
+        .replace("            ", "");
+        toml::from_str::<BitcoindConfig>(&toml_str).expect("Deserializing toml_str");
+        let parsed = toml::from_str::<BitcoindConfig>(&toml_str).expect("Deserializing toml_str");
+        let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
+        assert_eq!(toml_str, serialized);
+        assert_eq!(
+            parsed.rpc_auth,
+            BitcoindRpcAuth::UserPass("my_user".to_string(), "my_password".to_string())
+        );
+
+        // Must not set both cookie_file and auth
+        let toml_str = r#"
+            cookie_path = '/home/user/.bitcoin/.cookie'
+            auth = 'my_user:my_password'
+            addr = '127.0.0.1:8332'
+            "#
+        .trim_start()
+        .replace("            ", "");
+        let config_err = toml::from_str::<BitcoindConfig>(&toml_str)
+            .expect_err("Deserializing an invalid toml_str");
+        assert!(config_err
+            .to_string()
+            .contains("must not set both `cookie_path` and `auth`"));
+
+        // Missing RPC credentials
+        let toml_str = r#"
+            addr = '127.0.0.1:8332'
+            "#
+        .trim_start()
+        .replace("            ", "");
+        let config_err = toml::from_str::<BitcoindConfig>(&toml_str)
+            .expect_err("Deserializing an invalid toml_str");
+        assert!(config_err
+            .to_string()
+            .contains("must set either `cookie_path` or `auth`"));
+
+        // Missing colon in auth
+        let toml_str = r#"
+            auth = 'my_usermy_password'
+            addr = '127.0.0.1:8332'
+            "#
+        .trim_start()
+        .replace("            ", "");
+        let config_err = toml::from_str::<BitcoindConfig>(&toml_str)
+            .expect_err("Deserializing an invalid toml_str");
+        assert!(config_err
+            .to_string()
+            .contains("`auth` must be 'user:password'"));
     }
 
     #[test]

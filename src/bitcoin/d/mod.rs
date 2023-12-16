@@ -228,34 +228,43 @@ impl BitcoinD {
         config: &config::BitcoindConfig,
         watchonly_wallet_path: String,
     ) -> Result<BitcoinD, BitcoindError> {
-        let cookie_string =
-            fs::read_to_string(&config.cookie_path).map_err(BitcoindError::CookieFile)?;
         let node_url = format!("http://{}", config.addr);
         let watchonly_url = format!("http://{}/wallet/{}", config.addr, watchonly_wallet_path);
 
+        let builder = match &config.rpc_auth {
+            config::BitcoindRpcAuth::CookieFile(cookie_path) => {
+                let cookie_string =
+                    fs::read_to_string(cookie_path).map_err(BitcoindError::CookieFile)?;
+                MinreqHttpTransport::builder().cookie_auth(cookie_string)
+            }
+            config::BitcoindRpcAuth::UserPass(user, pass) => {
+                MinreqHttpTransport::builder().basic_auth(user.clone(), Some(pass.clone()))
+            }
+        };
+
         // Create a dummy bitcoind with clients using a low timeout to sanity check the connection.
         let dummy_node_client = Client::with_transport(
-            MinreqHttpTransport::builder()
+            builder
+                .clone()
                 .url(&node_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(3))
-                .cookie_auth(cookie_string.clone())
                 .build(),
         );
         let sendonly_client = Client::with_transport(
-            MinreqHttpTransport::builder()
+            builder
+                .clone()
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(1))
-                .cookie_auth(cookie_string.clone())
                 .build(),
         );
         let dummy_wo_client = Client::with_transport(
-            MinreqHttpTransport::builder()
+            builder
+                .clone()
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(3))
-                .cookie_auth(cookie_string.clone())
                 .build(),
         );
         let dummy_bitcoind = BitcoinD {
@@ -271,27 +280,26 @@ impl BitcoinD {
 
         // Now the connection is checked, create the clients with an appropriate timeout.
         let node_client = Client::with_transport(
-            MinreqHttpTransport::builder()
+            builder
+                .clone()
                 .url(&node_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
-                .cookie_auth(cookie_string.clone())
                 .build(),
         );
         let sendonly_client = Client::with_transport(
-            MinreqHttpTransport::builder()
+            builder
+                .clone()
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(1))
-                .cookie_auth(cookie_string.clone())
                 .build(),
         );
         let watchonly_client = Client::with_transport(
-            MinreqHttpTransport::builder()
+            builder
                 .url(&watchonly_url)
                 .map_err(BitcoindError::from)?
                 .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
-                .cookie_auth(cookie_string)
                 .build(),
         );
         Ok(BitcoinD {

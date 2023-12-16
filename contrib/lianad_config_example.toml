@@ -31,8 +31,10 @@ poll_interval_secs = 30
 
 # This section is specific to the bitcoind implementation of the Bitcoin backend. This is the only
 # implementation available for now.
-# In order to be able to connect to bitcoind, it needs to know on what port it is listening as well
-# as where the authentication cookie is located.
+# In order to be able to connect to bitcoind, it needs to know on what port it is listening and
+# how to authenticate, either by specifying the cookie location with "cookie_path" or otherwise
+# passing a colon-separated user and password with "auth".
 [bitcoind_config]
 addr = "127.0.0.1:18332"
 cookie_path = "/home/wizardsardine/.bitcoin/testnet3/.cookie"
+# auth = "my_user:my_password"
