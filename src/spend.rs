@@ -344,7 +344,7 @@ fn select_coins_for_spend(
     #[cfg(debug)]
     let bnb_rounds = bnb_rounds / 1_000;
     if let Err(e) = selector.run_bnb(lowest_fee_change_cond, bnb_rounds) {
-        log::warn!(
+        log::debug!(
             "Coin selection error: '{}'. Selecting coins by descending value per weight unit...",
             e.to_string()
         );
