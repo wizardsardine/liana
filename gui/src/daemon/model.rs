@@ -38,9 +38,9 @@ pub struct SpendTx {
     pub change_indexes: Vec<usize>,
     pub spend_amount: Amount,
     pub fee_amount: Option<Amount>,
-    /// The maximum size difference (in virtual bytes) of
-    /// an input in this transaction before and after satisfaction.
-    pub max_sat_vbytes: usize,
+    /// Maximum possible size of the unsigned transaction after satisfaction
+    /// (assuming all inputs are for the same descriptor).
+    pub max_vbytes: u64,
     pub status: SpendStatus,
     pub sigs: PartialSpendInfo,
     pub updated_at: Option<u32>,
@@ -63,7 +63,7 @@ impl SpendTx {
         desc: &LianaDescriptor,
         network: Network,
     ) -> Self {
-        let max_sat_vbytes = desc.max_sat_vbytes();
+        let max_vbytes = desc.unsigned_tx_max_vbytes(&psbt.unsigned_tx);
         let mut change_indexes = Vec::new();
         let (change_amount, spend_amount) = psbt.unsigned_tx.output.iter().enumerate().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
@@ -167,7 +167,7 @@ impl SpendTx {
             change_indexes,
             spend_amount,
             fee_amount: inputs_amount.and_then(|a| a.checked_sub(spend_amount + change_amount)),
-            max_sat_vbytes,
+            max_vbytes,
             status,
             sigs,
             network,
@@ -203,10 +203,11 @@ impl SpendTx {
 
     /// Feerate obtained if all transaction inputs have the maximum satisfaction size.
     pub fn min_feerate_vb(&self) -> Option<u64> {
-        // This assumes all inputs are internal (have same max satisfaction size).
-        let max_tx_vbytes =
-            self.psbt.unsigned_tx.vsize() + (self.max_sat_vbytes * self.psbt.inputs.len());
-        self.fee_amount.map(|a| a.to_sat() / max_tx_vbytes as u64)
+        self.fee_amount.map(|a| {
+            a.to_sat()
+                .checked_div(self.max_vbytes)
+                .expect("a descriptor's satisfaction size is never 0")
+        })
     }
 
     pub fn is_send_to_self(&self) -> bool {
