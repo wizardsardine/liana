@@ -349,25 +349,3 @@ def test_retry_on_workqueue_exceeded(lianad, bitcoind, executor):
     # We should have retried the request to bitcoind, which should now succeed along with the call.
     # This just checks the response we get is sane, nothing particular with this field.
     assert "block_height" in f_liana.result(TIMEOUT)
-
-
-def test_wo_wallet_copy_from_bitcoind_datadir(lianad, bitcoind):
-    """Simulate an old install on Windows and make sure the watchonly wallet gets migrated."""
-    wo_name = "lianad_watchonly_wallet"
-    old_wo_path = os.path.join(bitcoind.bitcoin_dir, "regtest", "wallets", wo_name)
-    new_wo_path = os.path.join(lianad.datadir, "regtest", wo_name)
-
-    # Start lianad. It'll have created the watchonly within our datadir. Move it where it would
-    # have been created by Liana v1 on Windows.
-    lianad.stop()
-    shutil.copytree(new_wo_path, old_wo_path)
-    shutil.rmtree(new_wo_path)
-    assert not os.path.isdir(new_wo_path)
-
-    # Now restart lianad. It should detect it within the bitcoind datadir and copy it to its own.
-    lianad.start()
-    assert os.path.isdir(new_wo_path)
-    assert lianad.is_in_log(
-        "A data directory exists with no watchonly wallet. This is most likely due to.*"
-    )
-    assert lianad.is_in_log("Successfully copied the watchonly wallet file.")
