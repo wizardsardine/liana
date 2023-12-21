@@ -8,12 +8,13 @@ use chrono::prelude::*;
 use iced::Command;
 use tracing::info;
 
-use liana::config::{BitcoinConfig, BitcoindConfig, Config};
+use liana::config::{BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config};
 
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::settings::Setting, view, State},
+    bitcoind::{RpcAuthType, RpcAuthValues},
     daemon::Daemon,
 };
 
@@ -145,7 +146,8 @@ pub struct BitcoindSettings {
     bitcoin_config: BitcoinConfig,
     edit: bool,
     processing: bool,
-    cookie_path: form::Value<String>,
+    rpc_auth_vals: RpcAuthValues,
+    selected_auth_type: RpcAuthType,
     addr: form::Value<String>,
     daemon_is_external: bool,
     bitcoind_is_internal: bool,
@@ -164,7 +166,33 @@ impl BitcoindSettings {
         daemon_is_external: bool,
         bitcoind_is_internal: bool,
     ) -> BitcoindSettings {
-        let path = bitcoind_config.cookie_path.to_str().unwrap().to_string();
+        let (rpc_auth_vals, selected_auth_type) = match &bitcoind_config.rpc_auth {
+            BitcoindRpcAuth::CookieFile(path) => (
+                RpcAuthValues {
+                    cookie_path: form::Value {
+                        valid: true,
+                        value: path.to_str().unwrap().to_string(),
+                    },
+                    user: form::Value::default(),
+                    password: form::Value::default(),
+                },
+                RpcAuthType::CookieFile,
+            ),
+            BitcoindRpcAuth::UserPass(user, password) => (
+                RpcAuthValues {
+                    cookie_path: form::Value::default(),
+                    user: form::Value {
+                        valid: true,
+                        value: user.clone(),
+                    },
+                    password: form::Value {
+                        valid: true,
+                        value: password.clone(),
+                    },
+                },
+                RpcAuthType::UserPass,
+            ),
+        };
         let addr = bitcoind_config.addr.to_string();
         BitcoindSettings {
             daemon_is_external,
@@ -173,10 +201,8 @@ impl BitcoindSettings {
             bitcoin_config,
             edit: false,
             processing: false,
-            cookie_path: form::Value {
-                valid: true,
-                value: path,
-            },
+            rpc_auth_vals,
+            selected_auth_type,
             addr: form::Value {
                 valid: true,
                 value: addr,
@@ -214,21 +240,41 @@ impl Setting for BitcoindSettings {
                 if !self.processing {
                     match field {
                         "socket_address" => self.addr.value = value,
-                        "cookie_file_path" => self.cookie_path.value = value,
+                        "cookie_file_path" => self.rpc_auth_vals.cookie_path.value = value,
+                        "user" => self.rpc_auth_vals.user.value = value,
+                        "password" => self.rpc_auth_vals.password.value = value,
                         _ => {}
                     }
+                }
+            }
+            view::SettingsEditMessage::BitcoindRpcAuthTypeSelected(auth_type) => {
+                if !self.processing {
+                    self.selected_auth_type = auth_type;
                 }
             }
             view::SettingsEditMessage::Confirm => {
                 let new_addr = SocketAddr::from_str(&self.addr.value);
                 self.addr.valid = new_addr.is_ok();
-                let new_path = PathBuf::from_str(&self.cookie_path.value);
-                self.cookie_path.valid = new_path.is_ok();
+                let rpc_auth = match self.selected_auth_type {
+                    RpcAuthType::CookieFile => {
+                        let new_path = PathBuf::from_str(&self.rpc_auth_vals.cookie_path.value);
+                        if let Ok(path) = new_path {
+                            self.rpc_auth_vals.cookie_path.valid = true;
+                            Some(BitcoindRpcAuth::CookieFile(path))
+                        } else {
+                            None
+                        }
+                    }
+                    RpcAuthType::UserPass => Some(BitcoindRpcAuth::UserPass(
+                        self.rpc_auth_vals.user.value.clone(),
+                        self.rpc_auth_vals.password.value.clone(),
+                    )),
+                };
 
-                if self.addr.valid & self.cookie_path.valid {
+                if let (true, Some(rpc_auth)) = (self.addr.valid, rpc_auth) {
                     let mut daemon_config = daemon.config().cloned().unwrap();
                     daemon_config.bitcoind_config = Some(liana::config::BitcoindConfig {
-                        cookie_path: new_path.unwrap(),
+                        rpc_auth,
                         addr: new_addr.unwrap(),
                     });
                     self.processing = true;
@@ -247,7 +293,8 @@ impl Setting for BitcoindSettings {
                 self.bitcoin_config.network,
                 cache.blockheight,
                 &self.addr,
-                &self.cookie_path,
+                &self.rpc_auth_vals,
+                &self.selected_auth_type,
                 self.processing,
             )
         } else {
@@ -347,6 +394,7 @@ impl Setting for RescanSetting {
                     Message::StartRescan,
                 );
             }
+            _ => {}
         };
         Command::none()
     }

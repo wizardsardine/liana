@@ -554,7 +554,7 @@ impl Step for DefineBitcoind {
             }
             (Ok(path), Ok(addr)) => {
                 ctx.bitcoind_config = Some(BitcoindConfig {
-                    cookie_path: path,
+                    rpc_auth: liana::config::BitcoindRpcAuth::CookieFile(path),
                     addr,
                 });
                 true
@@ -803,7 +803,7 @@ impl Step for InternalBitcoindStep {
                     match Bitcoind::start(
                         &self.network,
                         BitcoindConfig {
-                            cookie_path,
+                            rpc_auth: liana::config::BitcoindRpcAuth::CookieFile(cookie_path),
                             addr: internal_bitcoind_address(rpc_port),
                         },
                         &self.liana_datadir,
