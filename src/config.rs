@@ -1,6 +1,6 @@
 use crate::descriptors::LianaDescriptor;
 
-use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
+use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
 use miniscript::bitcoin::Network;
 
@@ -86,7 +86,7 @@ fn default_daemon() -> bool {
 }
 
 /// RPC authentication options.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 pub enum BitcoindRpcAuth {
     /// Path to bitcoind's cookie file.
     #[serde(rename = "cookie_path")]
@@ -94,6 +94,15 @@ pub enum BitcoindRpcAuth {
     /// "USER:PASSWORD" for authentication.
     #[serde(rename = "auth", serialize_with = "serialize_userpass")]
     UserPass(String, String),
+}
+
+impl fmt::Debug for BitcoindRpcAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CookieFile(path) => path.fmt(f),
+            Self::UserPass(_, _) => write!(f, "REDACTED RPC CREDENTIALS"),
+        }
+    }
 }
 
 /// Everything we need to know for talking to bitcoind serenely
