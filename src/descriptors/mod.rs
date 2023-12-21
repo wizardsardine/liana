@@ -168,15 +168,9 @@ impl LianaDescriptor {
             .expect("We never create a Liana descriptor with an invalid Liana policy.")
     }
 
-    /// Get the value (in blocks) of the smallest relative timelock of the recovery paths.
-    pub fn first_timelock_value(&self) -> u16 {
-        *self
-            .policy()
-            .recovery_paths
-            .iter()
-            .next()
-            .expect("There is always at least one recovery path")
-            .0
+    /// Get an ordered list of timelocks of the recovery paths.
+    pub fn timelock_values(&self) -> Vec<u16> {
+        self.policy().recovery_paths.keys().copied().collect()
     }
 
     /// Get the maximum size difference of a transaction input spending a Script derived from this
@@ -762,13 +756,13 @@ mod tests {
         LianaDescriptor::from_str("wsh(or_i(pk([abcdef01]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),pk([abcdef01]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap_err();
 
         let desc = LianaDescriptor::from_str("wsh(andor(pk([abcdef01]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(1),pk([abcdef01]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
-        assert_eq!(desc.first_timelock_value(), 1);
+        assert_eq!(desc.timelock_values(), vec![1]);
 
         let desc = LianaDescriptor::from_str("wsh(andor(pk([abcdef01]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(42000),pk([abcdef01]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
-        assert_eq!(desc.first_timelock_value(), 42000);
+        assert_eq!(desc.timelock_values(), vec![42000]);
 
         let desc = LianaDescriptor::from_str("wsh(andor(pk([abcdef01]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(65535),pk([abcdef01]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))").unwrap();
-        assert_eq!(desc.first_timelock_value(), 0xffff);
+        assert_eq!(desc.timelock_values(), vec![0xffff]);
     }
 
     #[test]
