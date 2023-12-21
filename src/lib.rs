@@ -433,7 +433,7 @@ impl DaemonHandle {
 mod tests {
     use super::*;
     use crate::{
-        config::{BitcoinConfig, BitcoindConfig},
+        config::{BitcoinConfig, BitcoindConfig, BitcoindRpcAuth},
         descriptors::LianaDescriptor,
         testutils::*,
     };
@@ -659,7 +659,7 @@ mod tests {
         };
         let bitcoind_config = BitcoindConfig {
             addr,
-            cookie_path: cookie,
+            rpc_auth: BitcoindRpcAuth::CookieFile(cookie),
         };
 
         // Create a dummy config with this bitcoind
