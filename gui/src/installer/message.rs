@@ -5,7 +5,11 @@ use liana::miniscript::{
 use std::path::PathBuf;
 
 use super::Error;
-use crate::{bitcoind::Bitcoind, download::Progress, hw::HardwareWalletMessage};
+use crate::{
+    bitcoind::{Bitcoind, ConfigField, RpcAuthType},
+    download::Progress,
+    hw::HardwareWalletMessage,
+};
 use async_hwi::DeviceKind;
 
 #[derive(Debug, Clone)]
@@ -39,8 +43,8 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub enum DefineBitcoind {
-    CookiePathEdited(String),
-    AddressEdited(String),
+    ConfigFieldEdited(ConfigField, String),
+    RpcAuthTypeSelected(RpcAuthType),
     PingBitcoindResult(Result<(), Error>),
     PingBitcoind,
 }

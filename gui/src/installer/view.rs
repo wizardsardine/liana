@@ -1,5 +1,6 @@
 use iced::widget::{
-    checkbox, container, pick_list, scrollable, scrollable::Properties, slider, Space, TextInput,
+    checkbox, container, pick_list, radio, scrollable, scrollable::Properties, slider, Space,
+    TextInput,
 };
 use iced::{alignment, widget::progress_bar, Alignment, Length};
 
@@ -21,7 +22,7 @@ use liana_ui::{
 };
 
 use crate::{
-    bitcoind::StartInternalBitcoindError,
+    bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
     hw::HardwareWallet,
     installer::{
         message::{self, Message},
@@ -787,14 +788,18 @@ pub fn help_backup<'a>() -> Element<'a, Message> {
 pub fn define_bitcoin<'a>(
     progress: (usize, usize),
     address: &form::Value<String>,
-    cookie_path: &form::Value<String>,
+    rpc_auth_vals: &RpcAuthValues,
+    selected_auth_type: &RpcAuthType,
     is_running: Option<&Result<(), Error>>,
 ) -> Element<'a, Message> {
     let col_address = Column::new()
         .push(text("Address:").bold())
         .push(
             form::Form::new_trimmed("Address", address, |msg| {
-                Message::DefineBitcoind(message::DefineBitcoind::AddressEdited(msg))
+                Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
+                    ConfigField::Address,
+                    msg,
+                ))
             })
             .warning("Please enter correct address")
             .size(20)
@@ -802,16 +807,67 @@ pub fn define_bitcoin<'a>(
         )
         .spacing(10);
 
-    let col_cookie = Column::new()
-        .push(text("Cookie path:").bold())
+    let col_auth = Column::new()
         .push(
-            form::Form::new_trimmed("Cookie path", cookie_path, |msg| {
-                Message::DefineBitcoind(message::DefineBitcoind::CookiePathEdited(msg))
-            })
-            .warning("Please enter correct path")
-            .size(20)
-            .padding(10),
+            [RpcAuthType::CookieFile, RpcAuthType::UserPass]
+                .iter()
+                .fold(
+                    Row::new()
+                        .push(text("RPC authentication:").small().bold())
+                        .spacing(10),
+                    |row, auth_type| {
+                        row.push(radio(
+                            format!("{}", auth_type),
+                            *auth_type,
+                            Some(*selected_auth_type),
+                            |new_selection| {
+                                Message::DefineBitcoind(
+                                    message::DefineBitcoind::RpcAuthTypeSelected(new_selection),
+                                )
+                            },
+                        ))
+                        .spacing(30)
+                        .align_items(Alignment::Center)
+                    },
+                ),
         )
+        .push(match selected_auth_type {
+            RpcAuthType::CookieFile => Row::new().push(
+                form::Form::new_trimmed("Cookie path", &rpc_auth_vals.cookie_path, |msg| {
+                    Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
+                        ConfigField::CookieFilePath,
+                        msg,
+                    ))
+                })
+                .warning("Please enter correct path")
+                .size(20)
+                .padding(10),
+            ),
+            RpcAuthType::UserPass => Row::new()
+                .push(
+                    form::Form::new_trimmed("User", &rpc_auth_vals.user, |msg| {
+                        Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
+                            ConfigField::User,
+                            msg,
+                        ))
+                    })
+                    .warning("Please enter correct user")
+                    .size(20)
+                    .padding(10),
+                )
+                .push(
+                    form::Form::new_trimmed("Password", &rpc_auth_vals.password, |msg| {
+                        Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
+                            ConfigField::Password,
+                            msg,
+                        ))
+                    })
+                    .warning("Please enter correct password")
+                    .size(20)
+                    .padding(10),
+                )
+                .spacing(10),
+        })
         .spacing(10);
 
     layout(
@@ -819,7 +875,7 @@ pub fn define_bitcoin<'a>(
         "Set up connection to the Bitcoin full node",
         Column::new()
             .push(col_address)
-            .push(col_cookie)
+            .push(col_auth)
             .push_maybe(if is_running.is_some() {
                 is_running.map(|res| {
                     if res.is_ok() {
