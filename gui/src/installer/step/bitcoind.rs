@@ -9,7 +9,10 @@ use bitcoin_hashes::{sha256, Hash};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use flate2::read::GzDecoder;
 use iced::{Command, Subscription};
-use liana::{config::BitcoindConfig, miniscript::bitcoin::Network};
+use liana::{
+    config::{BitcoindConfig, BitcoindRpcAuth},
+    miniscript::bitcoin::Network,
+};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use tar::Archive;
 use tracing::info;
@@ -21,7 +24,7 @@ use liana_ui::{component::form, widget::*};
 use crate::{
     bitcoind::{
         self, bitcoind_network_dir, internal_bitcoind_datadir, internal_bitcoind_directory,
-        Bitcoind, StartInternalBitcoindError, VERSION,
+        Bitcoind, ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError, VERSION,
     },
     download,
     hw::HardwareWallets,
@@ -465,7 +468,8 @@ impl Step for SelectBitcoindTypeStep {
 }
 
 pub struct DefineBitcoind {
-    cookie_path: form::Value<String>,
+    rpc_auth_vals: RpcAuthValues,
+    selected_auth_type: RpcAuthType,
     address: form::Value<String>,
     is_running: Option<Result<(), Error>>,
 }
@@ -473,7 +477,8 @@ pub struct DefineBitcoind {
 impl DefineBitcoind {
     pub fn new() -> Self {
         Self {
-            cookie_path: form::Value::default(),
+            rpc_auth_vals: RpcAuthValues::default(),
+            selected_auth_type: RpcAuthType::CookieFile,
             address: form::Value::default(),
             is_running: None,
         }
@@ -481,16 +486,28 @@ impl DefineBitcoind {
 
     pub fn ping(&self) -> Command<Message> {
         let address = self.address.value.to_owned();
-        let cookie_path = self.cookie_path.value.to_owned();
+        let selected_auth_type = self.selected_auth_type;
+        let rpc_auth_vals = self.rpc_auth_vals.clone();
         Command::perform(
             async move {
-                let cookie = std::fs::read_to_string(&cookie_path)
-                    .map_err(|e| Error::Bitcoind(format!("Failed to read cookie file: {}", e)))?;
+                let builder = match selected_auth_type {
+                    RpcAuthType::CookieFile => {
+                        let cookie_path = rpc_auth_vals.cookie_path.value;
+                        let cookie = std::fs::read_to_string(&cookie_path).map_err(|e| {
+                            Error::Bitcoind(format!("Failed to read cookie file: {}", e))
+                        })?;
+                        SimpleHttpTransport::builder().cookie_auth(cookie)
+                    }
+                    RpcAuthType::UserPass => {
+                        let user = rpc_auth_vals.user.value;
+                        let password = rpc_auth_vals.password.value;
+                        SimpleHttpTransport::builder().auth(user, Some(password))
+                    }
+                };
                 let client = Client::with_transport(
-                    SimpleHttpTransport::builder()
+                    builder
                         .url(&address)?
                         .timeout(std::time::Duration::from_secs(3))
-                        .cookie_auth(cookie)
                         .build(),
                 );
                 client.send_request(client.build_request("echo", &[]))?;
@@ -503,8 +520,8 @@ impl DefineBitcoind {
 
 impl Step for DefineBitcoind {
     fn load_context(&mut self, ctx: &Context) {
-        if self.cookie_path.value.is_empty() {
-            self.cookie_path.value =
+        if self.rpc_auth_vals.cookie_path.value.is_empty() {
+            self.rpc_auth_vals.cookie_path.value =
                 bitcoind_default_cookie_path(&ctx.bitcoin_config.network).unwrap_or_default()
         }
         if self.address.value.is_empty() {
@@ -519,15 +536,31 @@ impl Step for DefineBitcoind {
                     return self.ping();
                 }
                 message::DefineBitcoind::PingBitcoindResult(res) => self.is_running = Some(res),
-                message::DefineBitcoind::AddressEdited(address) => {
+                message::DefineBitcoind::ConfigFieldEdited(field, value) => match field {
+                    ConfigField::Address => {
+                        self.is_running = None;
+                        self.address.value = value;
+                        self.address.valid = true;
+                    }
+                    ConfigField::CookieFilePath => {
+                        self.is_running = None;
+                        self.rpc_auth_vals.cookie_path.value = value;
+                        self.rpc_auth_vals.cookie_path.valid = true;
+                    }
+                    ConfigField::User => {
+                        self.is_running = None;
+                        self.rpc_auth_vals.user.value = value;
+                        self.rpc_auth_vals.user.valid = true;
+                    }
+                    ConfigField::Password => {
+                        self.is_running = None;
+                        self.rpc_auth_vals.password.value = value;
+                        self.rpc_auth_vals.password.valid = true;
+                    }
+                },
+                message::DefineBitcoind::RpcAuthTypeSelected(auth_type) => {
                     self.is_running = None;
-                    self.address.value = address;
-                    self.address.valid = true;
-                }
-                message::DefineBitcoind::CookiePathEdited(path) => {
-                    self.is_running = None;
-                    self.cookie_path.value = path;
-                    self.address.valid = true;
+                    self.selected_auth_type = auth_type;
                 }
             };
         };
@@ -535,28 +568,29 @@ impl Step for DefineBitcoind {
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
-        match (
-            PathBuf::from_str(&self.cookie_path.value),
-            std::net::SocketAddr::from_str(&self.address.value),
-        ) {
-            (Err(_), Ok(_)) => {
-                self.cookie_path.valid = false;
-                false
+        let addr = std::net::SocketAddr::from_str(&self.address.value);
+        let rpc_auth = match self.selected_auth_type {
+            RpcAuthType::CookieFile => {
+                if let Ok(path) = PathBuf::from_str(&self.rpc_auth_vals.cookie_path.value) {
+                    Some(BitcoindRpcAuth::CookieFile(path))
+                } else {
+                    self.rpc_auth_vals.cookie_path.valid = false;
+                    None
+                }
             }
-            (Ok(_), Err(_)) => {
+            RpcAuthType::UserPass => Some(BitcoindRpcAuth::UserPass(
+                self.rpc_auth_vals.user.value.clone(),
+                self.rpc_auth_vals.password.value.clone(),
+            )),
+        };
+        match (rpc_auth, addr) {
+            (None, Ok(_)) => false,
+            (_, Err(_)) => {
                 self.address.valid = false;
                 false
             }
-            (Err(_), Err(_)) => {
-                self.cookie_path.valid = false;
-                self.address.valid = false;
-                false
-            }
-            (Ok(path), Ok(addr)) => {
-                ctx.bitcoind_config = Some(BitcoindConfig {
-                    rpc_auth: liana::config::BitcoindRpcAuth::CookieFile(path),
-                    addr,
-                });
+            (Some(rpc_auth), Ok(addr)) => {
+                ctx.bitcoind_config = Some(BitcoindConfig { rpc_auth, addr });
                 true
             }
         }
@@ -566,7 +600,8 @@ impl Step for DefineBitcoind {
         view::define_bitcoin(
             progress,
             &self.address,
-            &self.cookie_path,
+            &self.rpc_auth_vals,
+            &self.selected_auth_type,
             self.is_running.as_ref(),
         )
     }
@@ -803,7 +838,7 @@ impl Step for InternalBitcoindStep {
                     match Bitcoind::start(
                         &self.network,
                         BitcoindConfig {
-                            rpc_auth: liana::config::BitcoindRpcAuth::CookieFile(cookie_path),
+                            rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
                             addr: internal_bitcoind_address(rpc_port),
                         },
                         &self.liana_datadir,

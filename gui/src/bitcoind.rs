@@ -299,3 +299,22 @@ pub struct RpcAuthValues {
     pub user: form::Value<String>,
     pub password: form::Value<String>,
 }
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ConfigField {
+    Address,
+    CookieFilePath,
+    User,
+    Password,
+}
+
+impl fmt::Display for ConfigField {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ConfigField::Address => write!(f, "Socket address"),
+            ConfigField::CookieFilePath => write!(f, "Cookie file path"),
+            ConfigField::User => write!(f, "User"),
+            ConfigField::Password => write!(f, "Password"),
+        }
+    }
+}
