@@ -61,6 +61,7 @@ pub enum BitcoindError {
     NetworkMismatch(String /*config*/, String /*bitcoind*/),
     StartRescan,
     RescanPastPruneHeight,
+    GenericError,
 }
 
 impl BitcoindError {

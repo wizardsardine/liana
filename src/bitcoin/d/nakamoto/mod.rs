@@ -3,14 +3,17 @@
 //! Author: Vincenzo Palazzo <vincenzopalazzodev@gmail.com>
 use std::net;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::thread::JoinHandle;
 
-// FIXME: use the bitcoin exported inside the type
-use nakamoto::common::bitcoin;
-
+use nakamoto::client::traits::Handle;
 use nakamoto::client;
+use nakamoto::common::bitcoin_hashes::hex::FromHex;
 use nakamoto::net::poll::{Waker, Reactor};
+use miniscript::bitcoin::hashes::Hash;
+use miniscript::bitcoin::{self, BlockHash};
 
+use crate::BitcoindError;
 use crate::bitcoin::BitcoinInterface;
 
 /// Nakamoto client
@@ -19,29 +22,53 @@ pub struct Nakamoto {
     handler: client::Handle<Waker>,
     /// Nakamoto main worked to avoid leave a pending project.
     worker: JoinHandle<Result<(), client::Error>>
+    network: client::Network,
 }
 
 impl Nakamoto {
     /// Create a new instance of nakamoto.
     pub fn new(network: &bitcoin::Network, connect: &[net::SocketAddr], data_dir: PathBuf) -> Result<Self, ()> {
-        let mut config = client::Config::new(network.clone().into());
+        let network = client::Network::from_str(&network.to_string()).map_err(|err| ())?;
+        let mut config = client::Config::new(network);
         config.root = data_dir;
         config.connect = connect.to_vec();
         config.user_agent = "Liana-Nakamoto-v1";
         let client = client::Client::<Reactor<net::TcpStream>>::new().unwrap();
         let handler = client.handle();
         let worker = std::thread::spawn(|| client.run(config));
-        Ok(Self{ handler, worker })
+        Ok(Self{ handler, worker, network })
+    }
+
+    /// Stop the nakamoto node
+    pub fn stop(&self) -> Result<(), BitcoindError> {
+        self.handler.shutdown();
+        self.worker.join().map_err(|err| BitcoindError::GenericError)?;
+        Ok(())
     }
 }
 
 impl BitcoinInterface for Nakamoto {
-    fn chain_tip(&self) -> crate::bitcoin::BlockChainTip {
+    fn mempool_spenders(&self, outpoints: &[miniscript::bitcoin::OutPoint]) -> Vec<super::MempoolEntry> {
         unimplemented!()
     }
 
+    fn chain_tip(&self) -> crate::bitcoin::BlockChainTip {
+        // FIXME: we should check the error and maybe return
+        // it to the caller.
+        let (height, header, _) = self.handler.get_tip().unwrap();
+        let block_hash = header.block_hash();
+        let hash = bitcoin::BlockHash::from_slice(&block_hash.as_hash().to_vec()).unwrap();
+        crate::bitcoin::BlockChainTip{ height: height as i32, hash }
+    }
+
     fn broadcast_tx(&self, tx: &miniscript::bitcoin::Transaction) -> Result<(), String> {
-        unimplemented!()
+        use miniscript::bitcoin::consensus::serialize;
+        use nakamoto::common::bitcoin::consensus::deserialize;
+
+        let tx = serialize(tx);
+        let tx: nakamoto::common::bitcoin::Transaction = deserialize(&tx).map_err(|err| format!("{err}"))?;
+        self.handler.submit_transaction(tx).map_err(|err| format!("{err}"))?;
+        Ok(())
     }
 
     fn common_ancestor(&self, tip: &crate::bitcoin::BlockChainTip) -> Option<crate::bitcoin::BlockChainTip> {
@@ -64,7 +91,12 @@ impl BitcoinInterface for Nakamoto {
     }
 
     fn genesis_block(&self) -> crate::bitcoin::BlockChainTip {
-        unimplemented!()
+        let height = 0;
+        let block = self.handler.get_block_by_height(height).unwrap();
+        let block = block.unwrap();
+        let block_hash = block.block_hash().as_hash().to_string();
+        let block_hash = miniscript::bitcoin::BlockHash::from_str(&block_hash).unwrap();
+        crate::bitcoin::BlockChainTip{ height: height as i32, hash: block_hash  }
     }
 
     fn received_coins(
@@ -76,7 +108,7 @@ impl BitcoinInterface for Nakamoto {
     }
 
     fn rescan_progress(&self) -> Option<f64> {
-        unimplemented!()
+        None
     }
 
     fn spending_coins(
@@ -86,33 +118,51 @@ impl BitcoinInterface for Nakamoto {
         unimplemented!()
     }
 
-    fn spent_coins(
-        &self,
-        outpoints: &[(miniscript::bitcoin::OutPoint, miniscript::bitcoin::Txid)],
-    ) -> Vec<(miniscript::bitcoin::OutPoint, miniscript::bitcoin::Txid, crate::bitcoin::Block)> {
-        unimplemented!()
-    }
-
     fn start_rescan(
         &self,
         desc: &crate::descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String> {
-        unimplemented!()
-    }
-
-    fn sync_progress(&self) -> f64 {
-        unimplemented!()
-    }
-
-    fn tip_time(&self) -> u32 {
-        unimplemented!()
+        // We do not care for the momenet, because we are tracking with nakamoto
+        // all the transactions submitted
+        Ok(())
     }
 
     fn wallet_transaction(
         &self,
         txid: &miniscript::bitcoin::Txid,
     ) -> Option<(miniscript::bitcoin::Transaction, Option<crate::bitcoin::Block>)> {
+        use nakamoto::common::bitcoin::consensus::serialize;
+        use miniscript::bitcoin::consensus::deserialize;
+
+        let txid = txid.to_string();
+        let txid = nakamoto::common::bitcoin::Txid::from_hex(&txid).unwrap();
+        let Ok(Some(tx)) = self.handler.get_submitted_transaction(&txid) else {
+            return None;
+        };
+        let tx = serialize(&tx);
+        let tx: miniscript::bitcoin::Transaction = deserialize(&tx).unwrap();
+        // FIXME: we do not know what is the block that it is confirmed, we should
+        // keep this in our db maybe?
+        Some((tx, None))
+    }
+
+    fn spent_coins(
+        &self,
+        outpoints: &[(miniscript::bitcoin::OutPoint, miniscript::bitcoin::Txid)],
+    ) -> (
+        Vec<(miniscript::bitcoin::OutPoint, miniscript::bitcoin::Txid, crate::bitcoin::Block)>,
+        Vec<miniscript::bitcoin::OutPoint>,
+    ) {
         unimplemented!()
+    }
+
+    fn sync_progress(&self) -> super::SyncProgress {
+        unimplemented!()
+    }
+
+    fn tip_time(&self) -> Option<u32> {
+        // This is a little bit hard to track at the moment
+        None
     }
 }
