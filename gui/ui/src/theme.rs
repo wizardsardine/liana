@@ -345,7 +345,7 @@ impl radio::StyleSheet for Theme {
             background: iced::Color::TRANSPARENT.into(),
             dot_color: color::GREEN,
             border_width: 1.0,
-            border_color: color::GREEN,
+            border_color: color::GREY_7,
             text_color: None,
         }
     }
@@ -354,6 +354,7 @@ impl radio::StyleSheet for Theme {
         let active = self.active(style, is_selected);
         radio::Appearance {
             dot_color: color::GREEN,
+            border_color: color::GREEN,
             background: iced::Color::TRANSPARENT.into(),
             ..active
         }
