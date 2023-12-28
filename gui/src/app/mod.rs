@@ -202,22 +202,19 @@ impl App {
         let daemon = EmbeddedDaemon::start(cfg)?;
         self.daemon = Arc::new(daemon);
 
-        let mut daemon_config_file = OpenOptions::new()
-            .write(true)
-            .open(daemon_config_path)
-            .map_err(|e| Error::Config(e.to_string()))?;
-
         let content =
             toml::to_string(&self.daemon.config()).map_err(|e| Error::Config(e.to_string()))?;
 
-        daemon_config_file
+        OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(daemon_config_path)
+            .map_err(|e| Error::Config(e.to_string()))?
             .write_all(content.as_bytes())
             .map_err(|e| {
                 warn!("failed to write to file: {:?}", e);
                 Error::Config(e.to_string())
-            })?;
-
-        Ok(())
+            })
     }
 
     pub fn load_wallet(&mut self) -> Result<Arc<Wallet>, Error> {
