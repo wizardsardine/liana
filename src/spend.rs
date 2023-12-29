@@ -170,6 +170,21 @@ pub struct CandidateCoin {
     pub sequence: Option<bitcoin::Sequence>,
 }
 
+/// A coin selection result.
+///
+/// A change output should only be added if `change_amount > 0`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CoinSelectionRes {
+    /// Selected candidates.
+    pub selected: Vec<CandidateCoin>,
+    /// Change amount that should be included according to the change policy used
+    /// for selection.
+    pub change_amount: bitcoin::Amount,
+    /// Maximum change amount possible with the selection irrespective of any change
+    /// policy.
+    pub max_change_amount: bitcoin::Amount,
+}
+
 /// Metric based on [`LowestFee`] that aims to minimize transaction fees
 /// with the additional option to only find solutions with a change output.
 ///
@@ -254,7 +269,7 @@ fn select_coins_for_spend(
     min_fee: u64,
     max_sat_weight: u32,
     must_have_change: bool,
-) -> Result<(Vec<CandidateCoin>, bitcoin::Amount), InsufficientFunds> {
+) -> Result<CoinSelectionRes, InsufficientFunds> {
     let out_value_nochange = base_tx.output.iter().map(|o| o.value.to_sat()).sum();
 
     // Create the coin selector from the given candidates. NOTE: the coin selector keeps track
@@ -374,14 +389,27 @@ fn select_coins_for_spend(
     // By now, selection is complete and we can check how much change to give according to our policy.
     let drain = change_policy(&selector, target);
     let change_amount = bitcoin::Amount::from_sat(drain.value);
-    Ok((
+    // Max available change is given by the excess when adding a change output with zero value.
+    let drain_novalue = bdk_coin_select::Drain {
+        weights: drain_weights,
+        value: 0,
+    };
+    let max_change_amount = bitcoin::Amount::from_sat(
         selector
+            .excess(target, drain_novalue)
+            .max(0) // negative excess would mean insufficient funds to pay for change output
+            .try_into()
+            .expect("value is non-negative"),
+    );
+    Ok(CoinSelectionRes {
+        selected: selector
             .selected_indices()
             .iter()
             .map(|i| candidate_coins[*i])
             .collect(),
         change_amount,
-    ))
+        max_change_amount,
+    })
 }
 
 // Get the derived descriptor for this coin
@@ -535,7 +563,11 @@ pub fn create_spend(
     };
     // Now select the coins necessary using the provided candidates and determine whether
     // there is any leftover to create a change output.
-    let (selected_coins, change_amount) = {
+    let CoinSelectionRes {
+        selected,
+        change_amount,
+        ..
+    } = {
         // At this point the transaction still has no input and no change output, as expected
         // by the coins selection helper function.
         assert!(tx.input.is_empty());
@@ -593,8 +625,8 @@ pub fn create_spend(
     }
 
     // Iterate through selected coins and add necessary information to the PSBT inputs.
-    let mut psbt_ins = Vec::with_capacity(selected_coins.len());
-    for cand in &selected_coins {
+    let mut psbt_ins = Vec::with_capacity(selected.len());
+    for cand in &selected {
         let sequence = cand
             .sequence
             .unwrap_or(bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME);
