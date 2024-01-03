@@ -72,7 +72,12 @@ impl State for BitcoindSettingsState {
                     self.warning = None;
                     if let Some(current) = self.current {
                         if let Some(setting) = self.settings.get_mut(current) {
-                            setting.edited(true)
+                            setting.edited(true);
+                            return Command::perform(async {}, |_| {
+                                Message::View(view::Message::Settings(
+                                    view::SettingsMessage::EditBitcoindSettings,
+                                ))
+                            });
                         }
                     }
                     self.current = None;
