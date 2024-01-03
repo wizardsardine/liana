@@ -3,11 +3,14 @@ use std::str::FromStr;
 
 use iced::{
     alignment,
-    widget::{scrollable, Space},
+    widget::{radio, scrollable, Space},
     Alignment, Length,
 };
 
-use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
+use liana::{
+    config::BitcoindRpcAuth,
+    miniscript::bitcoin::{bip32::Fingerprint, Network},
+};
 
 use super::{dashboard, message::*};
 
@@ -26,6 +29,7 @@ use crate::{
         menu::Menu,
         view::{hw, warning::warn},
     },
+    bitcoind::{RpcAuthType, RpcAuthValues},
     hw::HardwareWallet,
 };
 
@@ -208,7 +212,8 @@ pub fn bitcoind_edit<'a>(
     network: Network,
     blockheight: i32,
     addr: &form::Value<String>,
-    cookie_path: &form::Value<String>,
+    rpc_auth_vals: &RpcAuthValues,
+    selected_auth_type: &RpcAuthType,
     processing: bool,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
@@ -244,18 +249,60 @@ pub fn bitcoind_edit<'a>(
 
     col = col
         .push(
-            Column::new()
-                .push(text("Cookie file path:").bold().small())
+            [RpcAuthType::CookieFile, RpcAuthType::UserPass]
+                .iter()
+                .fold(
+                    Row::new()
+                        .push(text("RPC authentication:").small().bold())
+                        .spacing(10),
+                    |row, auth_type| {
+                        row.push(radio(
+                            format!("{}", auth_type),
+                            *auth_type,
+                            Some(*selected_auth_type),
+                            SettingsEditMessage::BitcoindRpcAuthTypeSelected,
+                        ))
+                        .spacing(30)
+                        .align_items(Alignment::Center)
+                    },
+                ),
+        )
+        .push(match selected_auth_type {
+            RpcAuthType::CookieFile => Column::new()
                 .push(
-                    form::Form::new_trimmed("Cookie file path", cookie_path, |value| {
-                        SettingsEditMessage::FieldEdited("cookie_file_path", value)
-                    })
+                    form::Form::new_trimmed(
+                        "Cookie file path",
+                        &rpc_auth_vals.cookie_path,
+                        |value| SettingsEditMessage::FieldEdited("cookie_file_path", value),
+                    )
                     .warning("Please enter a valid filesystem path")
                     .size(20)
                     .padding(5),
                 )
                 .spacing(5),
-        )
+            RpcAuthType::UserPass => Column::new()
+                .push(
+                    Row::new()
+                        .push(
+                            form::Form::new_trimmed("User", &rpc_auth_vals.user, |value| {
+                                SettingsEditMessage::FieldEdited("user", value)
+                            })
+                            .warning("Please enter a valid user")
+                            .size(20)
+                            .padding(5),
+                        )
+                        .push(
+                            form::Form::new_trimmed("Password", &rpc_auth_vals.password, |value| {
+                                SettingsEditMessage::FieldEdited("password", value)
+                            })
+                            .warning("Please enter a valid password")
+                            .size(20)
+                            .padding(5),
+                        )
+                        .spacing(10),
+                )
+                .spacing(5),
+        })
         .push(
             Column::new()
                 .push(text("Socket address:").bold().small())
@@ -345,13 +392,17 @@ pub fn bitcoind<'a>(
             .push(separation().width(Length::Fill));
     }
 
-    let rows = vec![
-        (
-            "Cookie file path:",
-            config.cookie_path.to_str().unwrap().to_string(),
-        ),
-        ("Socket address:", config.addr.to_string()),
-    ];
+    let mut rows = vec![];
+    match &config.rpc_auth {
+        BitcoindRpcAuth::CookieFile(path) => {
+            rows.push(("Cookie file path:", path.to_str().unwrap().to_string()));
+        }
+        BitcoindRpcAuth::UserPass(user, password) => {
+            rows.push(("User:", user.clone()));
+            rows.push(("Password:", password.clone()));
+        }
+    }
+    rows.push(("Socket address:", config.addr.to_string()));
 
     let mut col_fields = Column::new();
     for (k, v) in rows {

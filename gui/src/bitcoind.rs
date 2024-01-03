@@ -1,7 +1,9 @@
 use liana::{
-    config::BitcoindConfig,
+    config::{BitcoindConfig, BitcoindRpcAuth},
     miniscript::bitcoin::{self, Network},
 };
+use liana_ui::component::form;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -222,6 +224,7 @@ impl Bitcoind {
         // We've started bitcoind in the background, however it may fail to start for whatever
         // reason. And we need its JSONRPC interface to be available to continue. Thus wait for it
         // to have created the cookie file, regularly checking it did not fail to start.
+        let cookie_path = internal_bitcoind_cookie_path(&bitcoind_datadir, network);
         loop {
             match process.try_wait() {
                 Ok(None) => {}
@@ -229,11 +232,11 @@ impl Bitcoind {
                 Ok(Some(status)) => {
                     log::error!("Bitcoind exited with status '{}'", status);
                     return Err(StartInternalBitcoindError::CookieFileNotFound(
-                        config.cookie_path.to_string_lossy().into_owned(),
+                        cookie_path.to_string_lossy().into_owned(),
                     ));
                 }
             }
-            if config.cookie_path.exists() {
+            if cookie_path.exists() {
                 log::info!("Bitcoind seems to have successfully started.");
                 break;
             }
@@ -241,9 +244,10 @@ impl Bitcoind {
             thread::sleep(time::Duration::from_millis(500));
         }
 
-        config.cookie_path = config.cookie_path.canonicalize().map_err(|e| {
+        config.rpc_auth = BitcoindRpcAuth::CookieFile(cookie_path.canonicalize().map_err(|e| {
             StartInternalBitcoindError::CouldNotCanonicalizeCookiePath(e.to_string())
-        })?;
+        })?);
+
         liana::BitcoinD::new(&config, "internal_bitcoind_start".to_string())
             .map_err(|e| StartInternalBitcoindError::BitcoinDError(e.to_string()))?;
 
@@ -270,6 +274,47 @@ pub fn stop_bitcoind(config: &BitcoindConfig) -> bool {
         Err(e) => {
             warn!("Could not create interface to internal bitcoind: '{}'.", e);
             false
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum RpcAuthType {
+    CookieFile,
+    UserPass,
+}
+
+impl fmt::Display for RpcAuthType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RpcAuthType::CookieFile => write!(f, "Cookie file path"),
+            RpcAuthType::UserPass => write!(f, "User and password"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RpcAuthValues {
+    pub cookie_path: form::Value<String>,
+    pub user: form::Value<String>,
+    pub password: form::Value<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ConfigField {
+    Address,
+    CookieFilePath,
+    User,
+    Password,
+}
+
+impl fmt::Display for ConfigField {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ConfigField::Address => write!(f, "Socket address"),
+            ConfigField::CookieFilePath => write!(f, "Cookie file path"),
+            ConfigField::User => write!(f, "User"),
+            ConfigField::Password => write!(f, "Password"),
         }
     }
 }

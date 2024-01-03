@@ -1,4 +1,4 @@
-use crate::app::menu::Menu;
+use crate::{app::menu::Menu, bitcoind::RpcAuthType};
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 
 #[derive(Debug, Clone)]
@@ -75,6 +75,7 @@ pub enum SettingsMessage {
 pub enum SettingsEditMessage {
     Select,
     FieldEdited(&'static str, String),
+    BitcoindRpcAuthTypeSelected(RpcAuthType),
     Cancel,
     Confirm,
 }
