@@ -50,7 +50,7 @@ backtrace = "0.3"
 
 # Pinned to this version because they keep breaking their MSRV in point releases...
 # FIXME: this is unfortunate, we don't receive the updates (sometimes critical) from SQLite.
-rusqlite = { version = "0.27", features = ["bundled", "unlock_notify"] }
+rusqlite = { version = "0.30", features = ["bundled", "unlock_notify"] }
 
 # To talk to bitcoind
 jsonrpc = { version = "0.16", features = ["minreq_http"], default-features = false }
