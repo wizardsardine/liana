@@ -1473,6 +1473,7 @@ impl<'a> CachedTxGetter<'a> {
 #[derive(Debug, Clone)]
 pub struct MempoolEntry {
     pub vsize: u64,
+    pub ancestor_vsize: u64,
     pub fees: MempoolEntryFees,
 }
 
@@ -1482,19 +1483,28 @@ impl From<Json> for MempoolEntry {
             .get("vsize")
             .and_then(Json::as_u64)
             .expect("Must be present in bitcoind response");
+        let ancestor_vsize = json
+            .get("ancestorsize")
+            .and_then(Json::as_u64)
+            .expect("Must be present in bitcoind response");
         let fees = json
             .get("fees")
             .as_ref()
             .expect("Must be present in bitcoind response")
             .into();
 
-        MempoolEntry { vsize, fees }
+        MempoolEntry {
+            vsize,
+            ancestor_vsize,
+            fees,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct MempoolEntryFees {
     pub base: bitcoin::Amount,
+    pub ancestor: bitcoin::Amount,
     pub descendant: bitcoin::Amount,
 }
 
@@ -1506,11 +1516,20 @@ impl From<&&Json> for MempoolEntryFees {
             .and_then(Json::as_f64)
             .and_then(|a| bitcoin::Amount::from_btc(a).ok())
             .expect("Must be present and a valid amount");
+        let ancestor = json
+            .get("ancestor")
+            .and_then(Json::as_f64)
+            .and_then(|a| bitcoin::Amount::from_btc(a).ok())
+            .expect("Must be present and a valid amount");
         let descendant = json
             .get("descendant")
             .and_then(Json::as_f64)
             .and_then(|a| bitcoin::Amount::from_btc(a).ok())
             .expect("Must be present and a valid amount");
-        MempoolEntryFees { base, descendant }
+        MempoolEntryFees {
+            base,
+            ancestor,
+            descendant,
+        }
     }
 }
