@@ -20,7 +20,7 @@ use std::{
     sync,
 };
 
-use miniscript::bitcoin::{self, bip32, psbt::PartiallySignedTransaction as Psbt, secp256k1};
+use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1};
 
 pub trait DatabaseInterface: Send {
     fn connection(&self) -> Box<dyn DatabaseConnection>;

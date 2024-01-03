@@ -26,7 +26,7 @@ nonblocking_shutdown = []
 
 [dependencies]
 # For managing transactions (it re-exports the bitcoin crate)
-miniscript = { version = "10.0", features = ["serde", "compiler", "base64"] }
+miniscript = { version = "11.0", features = ["serde", "compiler", "base64"] }
 
 # Coin selection algorithms for spend transaction creation.
 bdk_coin_select = { version = "0.1.0" }
