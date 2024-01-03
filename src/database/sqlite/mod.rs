@@ -39,7 +39,7 @@ use miniscript::bitcoin::{
     self, bip32,
     consensus::encode,
     hashes::{sha256, Hash},
-    psbt::PartiallySignedTransaction as Psbt,
+    psbt::Psbt,
     secp256k1,
 };
 

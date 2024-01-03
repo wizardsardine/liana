@@ -786,10 +786,10 @@ mod tests {
         // NOTE: The specific value is asserted because this was tested against a regtest
         // transaction.
         let stack = vec![vec![0; 65], vec![0; 0], vec![0; 33], vec![0; 72]];
-        let witness_size = bitcoin::VarInt(stack.len() as u64).len()
+        let witness_size = bitcoin::VarInt(stack.len() as u64).size()
             + stack
                 .iter()
-                .map(|item| bitcoin::VarInt(item.len() as u64).len() + item.len())
+                .map(|item| bitcoin::VarInt(item.len() as u64).size() + item.len())
                 .sum::<usize>();
         assert_eq!(
             desc.spender_input_size(),

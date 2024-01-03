@@ -10,7 +10,7 @@ use std::{
     str::FromStr,
 };
 
-use miniscript::bitcoin::{self, psbt::PartiallySignedTransaction as Psbt};
+use miniscript::bitcoin::{self, psbt::Psbt};
 
 fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let destinations = params

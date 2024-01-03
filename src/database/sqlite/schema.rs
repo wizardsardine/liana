@@ -2,9 +2,7 @@ use crate::descriptors::LianaDescriptor;
 
 use std::{convert::TryFrom, str::FromStr};
 
-use miniscript::bitcoin::{
-    self, address, bip32, consensus::encode, psbt::PartiallySignedTransaction as Psbt,
-};
+use miniscript::bitcoin::{self, address, bip32, consensus::encode, psbt::Psbt};
 
 pub const SCHEMA: &str = "\
 CREATE TABLE version (
