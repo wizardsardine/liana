@@ -53,7 +53,7 @@ backtrace = "0.3"
 rusqlite = { version = "0.30", features = ["bundled", "unlock_notify"] }
 
 # To talk to bitcoind
-jsonrpc = { version = "0.16", features = ["minreq_http"], default-features = false }
+jsonrpc = { version = "0.17", features = ["minreq_http"], default-features = false }
 
 # Used for daemonization
 libc = { version = "0.2", optional = true }
