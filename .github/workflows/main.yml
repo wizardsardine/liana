@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         toolchain:
-          - 1.54
+          - 1.63
           - nightly
         os:
           - ubuntu-latest
