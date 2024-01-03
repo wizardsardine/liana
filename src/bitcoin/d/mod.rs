@@ -58,6 +58,7 @@ pub enum BitcoindError {
     InvalidVersion(u64),
     NetworkMismatch(String /*config*/, String /*bitcoind*/),
     StartRescan,
+    RescanPastPruneHeight,
 }
 
 impl BitcoindError {
@@ -143,6 +144,12 @@ impl std::fmt::Display for BitcoindError {
                 write!(
                     f,
                     "Error while triggering the rescan for the bitcoind watchonly wallet."
+                )
+            }
+            BitcoindError::RescanPastPruneHeight => {
+                write!(
+                    f,
+                    "Trying to rescan the block chain past the prune block height."
                 )
             }
         }
@@ -1040,6 +1047,28 @@ impl BitcoinD {
         true
     }
 
+    // Make sure the bitcoind has enough blocks to rescan up to this timestamp.
+    fn check_prune_height(&self, timestamp: u32) -> Result<(), BitcoindError> {
+        let chain_info = self.block_chain_info();
+        let first_block_height = if let Some(h) = chain_info.get("pruneheight") {
+            h
+        } else {
+            // The node isn't pruned
+            return Ok(());
+        };
+        let prune_height: i32 = first_block_height
+            .as_i64()
+            .expect("Height must be an integer")
+            .try_into()
+            .expect("Height must fit in a i32");
+        if let Some(tip) = self.tip_before_timestamp(timestamp) {
+            if tip.height >= prune_height {
+                return Ok(());
+            }
+        }
+        Err(BitcoindError::RescanPastPruneHeight)
+    }
+
     pub fn start_rescan(
         &self,
         desc: &LianaDescriptor,
@@ -1072,6 +1101,11 @@ impl BitcoinD {
                 })
             })
             .collect();
+
+        // Have we pruned the blocks necessary to rescan down to this timestamp?
+        // This check is necessary racy since bitcoind may prune these blocks in-between the check
+        // here and the import below.
+        self.check_prune_height(timestamp)?;
 
         // Since we don't wait for a response (which would make us block for the entire duration of
         // the rescan), we can't know for sure whether it was started successfully. So what we do
