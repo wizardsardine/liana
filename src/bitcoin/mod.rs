@@ -116,6 +116,11 @@ pub trait BitcoinInterface: Send {
 
     /// Get the details of unconfirmed transactions spending these outpoints, if any.
     fn mempool_spenders(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<MempoolEntry>;
+
+    /// Get mempool data for the given transaction.
+    ///
+    /// Returns `None` if the transaction is not in the mempool.
+    fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry>;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -366,6 +371,10 @@ impl BitcoinInterface for d::BitcoinD {
             .filter_map(|txid| self.mempool_entry(&txid))
             .collect()
     }
+
+    fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry> {
+        self.mempool_entry(txid)
+    }
 }
 
 // FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
@@ -455,6 +464,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn mempool_spenders(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<MempoolEntry> {
         self.lock().unwrap().mempool_spenders(outpoints)
+    }
+
+    fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry> {
+        self.lock().unwrap().mempool_entry(txid)
     }
 }
 
