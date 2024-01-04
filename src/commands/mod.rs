@@ -24,7 +24,6 @@ use utils::{
 
 use std::{
     collections::{hash_map, HashMap, HashSet},
-    convert::TryInto,
     fmt, sync,
 };
 
@@ -961,7 +960,7 @@ impl DaemonControl {
         let current_height = self.bitcoin.chain_tip().height;
         let timelock =
             timelock.unwrap_or_else(|| self.config.main_descriptor.first_timelock_value());
-        let height_delta: i32 = timelock.try_into().expect("Must fit, it's a u16");
+        let height_delta: i32 = timelock.into();
         let sweepable_coins: Vec<_> = db_conn
             .coins(&[CoinStatus::Confirmed], &[])
             .into_values()

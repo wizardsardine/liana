@@ -109,7 +109,7 @@ impl DescKeyChecker {
             // without origin entirely.
             if let Some(ref origin) = xpub.origin {
                 let der_paths = xpub.derivation_paths.paths();
-                let first_der_path = der_paths.get(0).expect("Cannot be empty");
+                let first_der_path = der_paths.first().expect("Cannot be empty");
                 // We also rule out xpubs with hardened derivation steps (non-normalized xpubs).
                 let valid = xpub.wildcard == descriptor::Wildcard::Unhardened
                     && der_paths.len() == 2

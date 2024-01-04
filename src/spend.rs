@@ -547,8 +547,7 @@ pub fn create_spend(
             })?;
             fr
         }
-        .try_into()
-        .expect("u16 must fit in f32");
+        .into();
         let max_sat_wu = main_descriptor
             .max_sat_weight()
             .try_into()
