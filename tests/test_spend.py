@@ -25,6 +25,8 @@ def test_spend_change(lianad, bitcoind):
     spend_psbt = PSBT.from_base64(res["psbt"])
     assert len(spend_psbt.o) == 3
     assert len(spend_psbt.tx.vout) == 3
+    # Since the transaction contains a change output there is no warning.
+    assert len(res["warnings"]) == 0
 
     # Sign and broadcast this first Spend transaction.
     signed_psbt = lianad.signer.sign_psbt(spend_psbt)
@@ -46,6 +48,8 @@ def test_spend_change(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, outpoints, 2)
     spend_psbt = PSBT.from_base64(res["psbt"])
+    assert len(spend_psbt.o) == 2
+    assert len(res["warnings"]) == 0
 
     # We can sign and broadcast it.
     signed_psbt = lianad.signer.sign_psbt(spend_psbt)
@@ -110,6 +114,8 @@ def test_coin_marked_spent(lianad, bitcoind):
     res = lianad.rpc.createspend(destinations, [outpoint], 6)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
+    assert len(psbt.o) == 2
+    assert len(res["warnings"]) == 0
 
     # Spend the second coin without a change output
     outpoint = next(
@@ -123,30 +129,43 @@ def test_coin_marked_spent(lianad, bitcoind):
     res = lianad.rpc.createspend(destinations, [outpoint], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
+    assert len(psbt.o) == 1
+    assert len(res["warnings"]) == 1
+    assert (
+        res["warnings"][0]
+        == "Change amount of 830 sats added to fee as it was too small to create a transaction output."
+    )
 
     # Spend the third coin to an address of ours, no change
-    outpoints = [
-        c["outpoint"]
-        for c in lianad.rpc.listcoins()["coins"]
-        if deposit_c in c["outpoint"]
-    ]
+    coins_c = [c for c in lianad.rpc.listcoins()["coins"] if deposit_c in c["outpoint"]]
     destinations = {
         lianad.rpc.getnewaddress()["address"]: int(0.03 * COIN) - 1_000,
     }
-    res = lianad.rpc.createspend(destinations, [outpoints[0]], 1)
+    outpoint_3 = [c["outpoint"] for c in coins_c if c["amount"] == 0.03 * COIN][0]
+    res = lianad.rpc.createspend(destinations, [outpoint_3], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
+    assert len(psbt.o) == 1
+    assert len(res["warnings"]) == 1
+    assert (
+        res["warnings"][0]
+        == "Change amount of 818 sats added to fee as it was too small to create a transaction output."
+    )
 
     # Spend the fourth coin to an address of ours, with change
+    outpoint_4 = [c["outpoint"] for c in coins_c if c["amount"] == 0.04 * COIN][0]
     destinations = {
         lianad.rpc.getnewaddress()["address"]: int(0.04 * COIN / 2),
     }
-    res = lianad.rpc.createspend(destinations, [outpoints[1]], 18)
+    res = lianad.rpc.createspend(destinations, [outpoint_4], 18)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
+    assert len(psbt.o) == 2
+    assert len(res["warnings"]) == 0
 
-    # Batch spend the fourth and fifth coins
-    outpoint = next(
+    # Batch spend the fifth and sixth coins
+    outpoint_5 = [c["outpoint"] for c in coins_c if c["amount"] == 0.05 * COIN][0]
+    outpoint_6 = next(
         c["outpoint"]
         for c in lianad.rpc.listcoins()["coins"]
         if deposit_d in c["outpoint"]
@@ -156,9 +175,11 @@ def test_coin_marked_spent(lianad, bitcoind):
         lianad.rpc.getnewaddress()["address"]: int(0.01 * COIN),
         bitcoind.rpc.getnewaddress(): int(0.01 * COIN),
     }
-    res = lianad.rpc.createspend(destinations, [outpoints[2], outpoint], 2)
+    res = lianad.rpc.createspend(destinations, [outpoint_5, outpoint_6], 2)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
+    assert len(psbt.o) == 4
+    assert len(res["warnings"]) == 0
 
     # All the spent coins must have been detected as such
     all_deposits = (deposit_a, deposit_b, deposit_c, deposit_d)
