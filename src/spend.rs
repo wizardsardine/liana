@@ -14,6 +14,7 @@ use miniscript::bitcoin::{
     psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
     secp256k1,
 };
+use serde::{Deserialize, Serialize};
 
 /// We would never create a transaction with an output worth less than this.
 /// That's 1$ at 20_000$ per BTC.
@@ -455,11 +456,31 @@ pub enum SpendTxFees {
     Rbf(u64, u64),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CreateSpendWarning {
+    ChangeAddedToFee(u64),
+}
+
+impl fmt::Display for CreateSpendWarning {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CreateSpendWarning::ChangeAddedToFee(amt) => write!(
+                f,
+                "Change amount of {} sat{} added to fee as it was too small to create a transaction output.",
+                amt,
+                if *amt > 1 {"s"} else {""},
+            ),
+        }
+    }
+}
+
 pub struct CreateSpendRes {
     /// The created PSBT.
     pub psbt: Psbt,
     /// Whether the created PSBT has a change output.
     pub has_change: bool,
+    /// Warnings relating to the PSBT.
+    pub warnings: Vec<CreateSpendWarning>,
 }
 
 /// Create a PSBT for a transaction spending some, or all, of `candidate_coins` to `destinations`.
@@ -508,6 +529,7 @@ pub fn create_spend(
     // 3. Add the selected coins as inputs to the transaction.
     // 4. Finalize the PSBT and sanity check it before returning it.
 
+    let mut warnings = Vec::new();
     let (feerate_vb, min_fee) = match fees {
         SpendTxFees::Regular(feerate) => (feerate, 0),
         SpendTxFees::Rbf(feerate, fee) => (feerate, fee),
@@ -566,7 +588,7 @@ pub fn create_spend(
     let CoinSelectionRes {
         selected,
         change_amount,
-        ..
+        max_change_amount,
     } = {
         // At this point the transaction still has no input and no change output, as expected
         // by the coins selection helper function.
@@ -622,6 +644,10 @@ pub fn create_spend(
             bip32_derivation,
             ..PsbtOut::default()
         });
+    } else if max_change_amount.to_sat() > 0 {
+        warnings.push(CreateSpendWarning::ChangeAddedToFee(
+            max_change_amount.to_sat(),
+        ));
     }
 
     // Iterate through selected coins and add necessary information to the PSBT inputs.
@@ -668,5 +694,9 @@ pub fn create_spend(
     sanity_check_psbt(main_descriptor, &psbt)?;
     // TODO: maybe check for common standardness rules (max size, ..)?
 
-    Ok(CreateSpendRes { psbt, has_change })
+    Ok(CreateSpendRes {
+        psbt,
+        has_change,
+        warnings,
+    })
 }

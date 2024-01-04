@@ -490,7 +490,9 @@ impl DaemonControl {
         // derivation index in case any address in the transaction outputs was ours and from the
         // future.
         let change_info = change_address.info;
-        let CreateSpendRes { psbt, has_change } = create_spend(
+        let CreateSpendRes {
+            psbt, has_change, ..
+        } = create_spend(
             &self.config.main_descriptor,
             &self.secp,
             &mut tx_getter,
@@ -810,6 +812,7 @@ impl DaemonControl {
             let CreateSpendRes {
                 psbt: rbf_psbt,
                 has_change,
+                ..
             } = match create_spend(
                 &self.config.main_descriptor,
                 &self.secp,
@@ -985,7 +988,9 @@ impl DaemonControl {
         }
 
         let sweep_addr_info = sweep_addr.info;
-        let CreateSpendRes { psbt, has_change } = create_spend(
+        let CreateSpendRes {
+            psbt, has_change, ..
+        } = create_spend(
             &self.config.main_descriptor,
             &self.secp,
             &mut tx_getter,
