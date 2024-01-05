@@ -208,13 +208,11 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
 }
 
 fn updates(
+    db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &impl BitcoinInterface,
-    db: &impl DatabaseInterface,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
-    let mut db_conn = db.connection();
-
     // Check if there was a new block before updating ourselves.
     let current_tip = db_conn.chain_tip().expect("Always set at first startup");
     let latest_tip = match new_tip(bit, &current_tip) {
@@ -225,18 +223,18 @@ fn updates(
             // between our former chain and the new one, then restart fresh.
             db_conn.rollback_tip(&new_tip);
             log::info!("Tip was rolled back to '{}'.", new_tip);
-            return updates(bit, db, descs, secp);
+            return updates(db_conn, bit, descs, secp);
         }
     };
 
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
     // we may have unconfirmed transactions.
-    let updated_coins = update_coins(bit, &mut db_conn, &current_tip, descs, secp);
+    let updated_coins = update_coins(bit, db_conn, &current_tip, descs, secp);
 
     // If the tip changed while we were polling our Bitcoin interface, start over.
     if bit.chain_tip() != latest_tip {
         log::info!("Chain tip changed while we were updating our state. Starting over.");
-        return updates(bit, db, descs, secp);
+        return updates(db_conn, bit, descs, secp);
     }
 
     // The chain tip did not change since we started our updates. Record them and the latest tip.
@@ -258,13 +256,12 @@ fn updates(
 
 // Check if there is any rescan of the backend ongoing or one that just finished.
 fn rescan_check(
+    db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &impl BitcoinInterface,
-    db: &impl DatabaseInterface,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
     log::debug!("Checking the state of an ongoing rescan if there is any");
-    let mut db_conn = db.connection();
 
     // Check if there is an ongoing rescan. If there isn't and we previously asked for a rescan of
     // the backend, we treat it as completed.
@@ -299,7 +296,7 @@ fn rescan_check(
             "Rolling back our internal tip to '{}' to update our internal state with past transactions.",
             rescan_tip
         );
-        updates(bit, db, descs, secp)
+        updates(db_conn, bit, descs, secp)
     } else {
         log::debug!("No ongoing rescan.");
     }
@@ -332,8 +329,9 @@ pub fn poll(
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     descs: &[descriptors::SinglePathLianaDesc],
 ) {
-    updates(bit, db, descs, secp);
-    rescan_check(bit, db, descs, secp);
+    let mut db_conn = db.connection();
+    updates(&mut db_conn, bit, descs, secp);
+    rescan_check(&mut db_conn, bit, descs, secp);
 }
 
 /// Main event loop. Repeatedly polls the Bitcoin interface until told to stop through the
