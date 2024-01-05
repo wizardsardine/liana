@@ -448,15 +448,6 @@ impl BitcoinD {
         &self,
         method: &str,
         params: Option<&serde_json::value::RawValue>,
-    ) -> Json {
-        self.make_request(&self.watchonly_client, method, params)
-            .expect("We must not fail to make a request for more than a minute")
-    }
-
-    fn make_faillible_wallet_request(
-        &self,
-        method: &str,
-        params: Option<&serde_json::value::RawValue>,
     ) -> Result<Json, BitcoindError> {
         self.make_request(&self.watchonly_client, method, params)
     }
@@ -556,7 +547,7 @@ impl BitcoinD {
     }
 
     // Import the receive and change descriptors from the multipath descriptor to bitcoind.
-    fn import_descriptor(&self, desc: &LianaDescriptor) -> Option<String> {
+    fn import_descriptor(&self, desc: &LianaDescriptor) -> Result<Option<String>, BitcoindError> {
         let descriptors = [desc.receive_descriptor(), desc.change_descriptor()]
             .iter()
             .map(|desc| {
@@ -568,7 +559,8 @@ impl BitcoinD {
             })
             .collect();
 
-        let res = self.make_wallet_request("importdescriptors", params!(Json::Array(descriptors)));
+        let res =
+            self.make_wallet_request("importdescriptors", params!(Json::Array(descriptors)))?;
         let all_succeeded = res
             .as_array()
             .map(|results| {
@@ -577,15 +569,16 @@ impl BitcoinD {
                     .all(|res| res.get("success").and_then(Json::as_bool).unwrap_or(false))
             })
             .unwrap_or(false);
-        if all_succeeded {
+        Ok(if all_succeeded {
             None
         } else {
             Some(res.to_string())
-        }
+        })
     }
 
-    fn list_descriptors(&self) -> Vec<ListDescEntry> {
-        self.make_wallet_request("listdescriptors", None)
+    fn list_descriptors(&self) -> Result<Vec<ListDescEntry>, BitcoindError> {
+        Ok(self
+            .make_wallet_request("listdescriptors", None)?
             .get("descriptors")
             .and_then(Json::as_array)
             .expect("Missing or invalid 'descriptors' field in 'listdescriptors' response")
@@ -618,7 +611,7 @@ impl BitcoinD {
                     timestamp,
                 }
             })
-            .collect()
+            .collect())
     }
 
     fn maybe_unload_watchonly_wallet(
@@ -654,7 +647,7 @@ impl BitcoinD {
                 BitcoindError::Wallet(self.watchonly_wallet_path.clone(), WalletError::Creating(e))
             })?;
         // TODO: make it return an error instead of an option.
-        if let Some(err) = self.import_descriptor(main_descriptor) {
+        if let Some(err) = self.import_descriptor(main_descriptor)? {
             return Err(BitcoindError::Wallet(
                 self.watchonly_wallet_path.clone(),
                 WalletError::ImportingDescriptor(err),
@@ -747,7 +740,7 @@ impl BitcoinD {
         let receive_desc = main_descriptor.receive_descriptor();
         let change_desc = main_descriptor.change_descriptor();
         let desc_list: Vec<String> = self
-            .list_descriptors()
+            .list_descriptors()?
             .into_iter()
             .map(|entry| entry.desc)
             .collect();
@@ -819,28 +812,29 @@ impl BitcoinD {
         )
     }
 
-    pub fn list_since_block(&self, block_hash: &bitcoin::BlockHash) -> LSBlockRes {
-        self.make_wallet_request(
-            "listsinceblock",
-            params!(
-                Json::String(block_hash.to_string()),
-                Json::Number(1.into()), // Default for min_confirmations for the returned
-                Json::Bool(true),       // Whether to include watchonly
-                Json::Bool(false), // Whether to include an array of txs that were removed in reorgs
-                Json::Bool(true)   // Whether to include UTxOs treated as change.
-            ),
-        )
-        .into()
+    pub fn list_since_block(
+        &self,
+        block_hash: &bitcoin::BlockHash,
+    ) -> Result<LSBlockRes, BitcoindError> {
+        Ok(self
+            .make_wallet_request(
+                "listsinceblock",
+                params!(
+                    Json::String(block_hash.to_string()),
+                    Json::Number(1.into()), // Default for min_confirmations for the returned
+                    Json::Bool(true),       // Whether to include watchonly
+                    Json::Bool(false), // Whether to include an array of txs that were removed in reorgs
+                    Json::Bool(true)   // Whether to include UTxOs treated as change.
+                ),
+            )?
+            .into())
     }
 
     pub fn get_transaction(&self, txid: &bitcoin::Txid) -> Option<GetTxRes> {
-        // TODO: Maybe assert we got a -5 error, and not any other kind of error?
-        self.make_faillible_wallet_request(
-            "gettransaction",
-            params!(Json::String(txid.to_string())),
-        )
-        .ok()
-        .map(|res| res.into())
+        // TODO: assert we got a -5 error, and not any other kind of error?
+        self.make_wallet_request("gettransaction", params!(Json::String(txid.to_string())))
+            .ok()
+            .map(|res| res.into())
     }
 
     /// Efficient check that a coin is spent.
@@ -873,7 +867,7 @@ impl BitcoinD {
         let req = self.make_wallet_request(
             "gettransaction",
             params!(Json::String(spent_outpoint.txid.to_string())),
-        );
+        )?;
         let list_since_height = match req.get("blockheight").and_then(Json::as_i64) {
             Some(h) => h as i32,
             None => self.chain_tip()?.height,
@@ -902,7 +896,7 @@ impl BitcoinD {
                 Json::Bool(false), // Whether to include an array of txs that were removed in reorgs
                 Json::Bool(true)   // Whether to include UTxOs treated as change.
             ),
-        );
+        )?;
         let transactions = lsb_res
             .get("transactions")
             .and_then(Json::as_array)
@@ -935,7 +929,7 @@ impl BitcoinD {
                     Json::Bool(true), // watchonly
                     Json::Bool(true)  // verbose
                 ),
-            );
+            )?;
             let vin = gettx_res
                 .get("decoded")
                 .and_then(|d| d.get("vin").and_then(Json::as_array))
@@ -1041,8 +1035,12 @@ impl BitcoinD {
 
     // For the given descriptor strings check if they are imported at this timestamp in the
     // watchonly wallet.
-    fn check_descs_timestamp(&self, descs: &[String], timestamp: u32) -> bool {
-        let current_descs = self.list_descriptors();
+    fn check_descs_timestamp(
+        &self,
+        descs: &[String],
+        timestamp: u32,
+    ) -> Result<bool, BitcoindError> {
+        let current_descs = self.list_descriptors()?;
 
         for desc in descs {
             let present = current_descs
@@ -1051,11 +1049,11 @@ impl BitcoinD {
                 .map(|entry| entry.timestamp == timestamp)
                 .unwrap_or(false);
             if !present {
-                return false;
+                return Ok(false);
             }
         }
 
-        true
+        Ok(true)
     }
 
     // Make sure the bitcoind has enough blocks to rescan up to this timestamp.
@@ -1091,7 +1089,7 @@ impl BitcoinD {
         // have a range inclusive of the existing ones. We always use 0 as the initial index so
         // this is just determining the maximum index to use.
         let max_range = self
-            .list_descriptors()
+            .list_descriptors()?
             .into_iter()
             // 1_000 is bitcoind's default and what we use at initial import.
             .fold(1_000, |range, entry| {
@@ -1139,7 +1137,7 @@ impl BitcoinD {
             }
 
             i += 1;
-            if self.check_descs_timestamp(&desc_str, timestamp) {
+            if self.check_descs_timestamp(&desc_str, timestamp)? {
                 return Ok(());
             } else if i >= NUM_RETRIES {
                 return Err(BitcoindError::StartRescan);
@@ -1151,13 +1149,14 @@ impl BitcoinD {
     }
 
     /// Get the progress of the ongoing rescan, if there is any.
-    pub fn rescan_progress(&self) -> Option<f64> {
-        self.make_wallet_request("getwalletinfo", None)
+    pub fn rescan_progress(&self) -> Result<Option<f64>, BitcoindError> {
+        Ok(self
+            .make_wallet_request("getwalletinfo", None)?
             .get("scanning")
             // If no rescan is ongoing, it will fail cause it would be 'false'
             .and_then(Json::as_object)
             .and_then(|map| map.get("progress"))
-            .and_then(Json::as_f64)
+            .and_then(Json::as_f64))
     }
 
     /// Get the height and hash of the last block with a timestamp below the given one.

@@ -148,7 +148,9 @@ impl BitcoinInterface for d::BitcoinD {
         tip: &BlockChainTip,
         descs: &[descriptors::SinglePathLianaDesc],
     ) -> Vec<UTxO> {
-        let lsb_res = self.list_since_block(&tip.hash);
+        let lsb_res = self
+            .list_since_block(&tip.hash)
+            .expect("We expect the connection to bitcoind to never fail.");
 
         lsb_res
             .received_coins
@@ -354,6 +356,7 @@ impl BitcoinInterface for d::BitcoinD {
 
     fn rescan_progress(&self) -> Option<f64> {
         self.rescan_progress()
+            .expect("We expect the connection to bitcoind to never fail.")
     }
 
     fn block_before_date(&self, timestamp: u32) -> Option<BlockChainTip> {
