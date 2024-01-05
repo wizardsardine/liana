@@ -272,6 +272,9 @@ impl DaemonControl {
         }
     }
 
+    // TODO: Likewise poller::Poller, this could go into its own jsonrpc::Server structure, with a
+    // new() which would do the setup and a run_forever() which would take a shutdown AtomicBool
+    // parameter.
     /// Start the JSONRPC server and listen for incoming commands until we die.
     #[cfg(feature = "daemon")]
     pub fn rpc_server(self) -> Result<(), io::Error> {
