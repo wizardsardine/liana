@@ -129,10 +129,12 @@ impl BitcoinInterface for d::BitcoinD {
 
     fn sync_progress(&self) -> SyncProgress {
         self.sync_progress()
+            .expect("We expect the connection to bitcoind to never fail.")
     }
 
     fn chain_tip(&self) -> BlockChainTip {
         self.chain_tip()
+            .expect("We expect the connection to bitcoind to never fail.")
     }
 
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
@@ -223,8 +225,14 @@ impl BitcoinInterface for d::BitcoinD {
         let mut spent = Vec::with_capacity(outpoints.len());
 
         for op in outpoints {
-            if self.is_spent(op) {
-                let spending_txid = if let Some(txid) = self.get_spender_txid(op) {
+            if self
+                .is_spent(op)
+                .expect("We expect the connection to bitcoind to never fail.")
+            {
+                let spending_txid = if let Some(txid) = self
+                    .get_spender_txid(op)
+                    .expect("We expect the connection to bitcoind to never fail.")
+                {
                     txid
                 } else {
                     // TODO: better handling of this edge case.
@@ -304,11 +312,15 @@ impl BitcoinInterface for d::BitcoinD {
     }
 
     fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
-        let mut stats = self.get_block_stats(tip.hash)?;
+        let mut stats = self
+            .get_block_stats(tip.hash)
+            .expect("We expect the connection to bitcoind to never fail.")?;
         let mut ancestor = *tip;
 
         while stats.confirmations == -1 {
-            stats = self.get_block_stats(stats.previous_blockhash?)?;
+            stats = self
+                .get_block_stats(stats.previous_blockhash?)
+                .expect("We expect the connection to bitcoind to never fail.")?;
             ancestor = BlockChainTip {
                 hash: stats.blockhash,
                 height: stats.height,
@@ -346,11 +358,18 @@ impl BitcoinInterface for d::BitcoinD {
 
     fn block_before_date(&self, timestamp: u32) -> Option<BlockChainTip> {
         self.tip_before_timestamp(timestamp)
+            .expect("We expect the connection to bitcoind to never fail.")
     }
 
     fn tip_time(&self) -> Option<u32> {
-        let tip = self.chain_tip();
-        Some(self.get_block_stats(tip.hash)?.time)
+        let tip = self
+            .chain_tip()
+            .expect("We expect the connection to bitcoind to never fail.");
+        Some(
+            self.get_block_stats(tip.hash)
+                .expect("We expect the connection to bitcoind to never fail.")?
+                .time,
+        )
     }
 
     fn wallet_transaction(
@@ -362,6 +381,7 @@ impl BitcoinInterface for d::BitcoinD {
 
     fn mempool_spenders(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<MempoolEntry> {
         self.mempool_txs_spending_prevouts(outpoints)
+            .expect("We expect the connection to bitcoind to never fail.")
             .into_iter()
             .filter_map(|txid| self.mempool_entry(&txid))
             .collect()

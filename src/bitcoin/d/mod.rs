@@ -436,21 +436,12 @@ impl BitcoinD {
         }
     }
 
-    fn make_fallible_node_request(
+    fn make_node_request(
         &self,
         method: &str,
         params: Option<&serde_json::value::RawValue>,
     ) -> Result<Json, BitcoindError> {
         self.make_request(&self.node_client, method, params)
-    }
-
-    fn make_node_request(
-        &self,
-        method: &str,
-        params: Option<&serde_json::value::RawValue>,
-    ) -> Json {
-        self.make_request(&self.node_client, method, params)
-            .expect("We must not fail to make a request for more than a minute")
     }
 
     fn make_wallet_request(
@@ -470,23 +461,26 @@ impl BitcoinD {
         self.make_request(&self.watchonly_client, method, params)
     }
 
-    fn get_bitcoind_version(&self) -> u64 {
-        self.make_node_request("getnetworkinfo", None)
+    fn get_bitcoind_version(&self) -> Result<u64, BitcoindError> {
+        Ok(self
+            .make_node_request("getnetworkinfo", None)?
             .get("version")
             .and_then(Json::as_u64)
-            .expect("Missing or invalid 'version' in 'getnetworkinfo' result?")
+            .expect("Missing or invalid 'version' in 'getnetworkinfo' result?"))
     }
 
-    fn get_network_bip70(&self) -> String {
-        self.make_node_request("getblockchaininfo", None)
+    fn get_network_bip70(&self) -> Result<String, BitcoindError> {
+        Ok(self
+            .make_node_request("getblockchaininfo", None)?
             .get("chain")
             .and_then(Json::as_str)
             .expect("Missing or invalid 'chain' in 'getblockchaininfo' result?")
-            .to_string()
+            .to_string())
     }
 
-    fn list_wallets(&self) -> Vec<String> {
-        self.make_node_request("listwallets", None)
+    fn list_wallets(&self) -> Result<Vec<String>, BitcoindError> {
+        Ok(self
+            .make_node_request("listwallets", None)?
             .as_array()
             .expect("API break, 'listwallets' didn't return an array.")
             .iter()
@@ -496,7 +490,7 @@ impl BitcoinD {
                     .expect("API break: 'listwallets' contains a non-string value")
                     .to_string()
             })
-            .collect()
+            .collect())
     }
 
     // Get a warning from the result of a wallet command. It was modified in v25 so it's a bit
@@ -528,16 +522,16 @@ impl BitcoinD {
         None
     }
 
-    fn unload_wallet(&self, wallet_path: String) -> Option<String> {
-        let res = self.make_node_request("unloadwallet", params!(Json::String(wallet_path),));
-        self.warning_from_res(&res)
+    fn unload_wallet(&self, wallet_path: String) -> Result<Option<String>, BitcoindError> {
+        let res = self.make_node_request("unloadwallet", params!(Json::String(wallet_path),))?;
+        Ok(self.warning_from_res(&res))
     }
 
     fn create_wallet(&self, wallet_path: String) -> Result<(), String> {
         // NOTE: we set load_on_startup to make sure the wallet will get updated before the
         // historical blocks are deleted in case the bitcoind is pruned.
         let res = self
-            .make_fallible_node_request(
+            .make_node_request(
                 "createwallet",
                 params!(
                     Json::String(wallet_path),
@@ -627,10 +621,13 @@ impl BitcoinD {
             .collect()
     }
 
-    fn maybe_unload_watchonly_wallet(&self, watchonly_wallet_path: String) {
-        while self.list_wallets().contains(&watchonly_wallet_path) {
+    fn maybe_unload_watchonly_wallet(
+        &self,
+        watchonly_wallet_path: String,
+    ) -> Result<(), BitcoindError> {
+        while self.list_wallets()?.contains(&watchonly_wallet_path) {
             log::info!("Found a leftover watchonly wallet loaded on bitcoind. Removing it.");
-            if let Some(e) = self.unload_wallet(watchonly_wallet_path.clone()) {
+            if let Some(e) = self.unload_wallet(watchonly_wallet_path.clone())? {
                 log::error!(
                     "Unloading wallet '{}': '{}'",
                     &self.watchonly_wallet_path,
@@ -638,6 +635,8 @@ impl BitcoinD {
                 );
             }
         }
+
+        Ok(())
     }
 
     /// Create the watchonly wallet on bitcoind, and import it the main descriptor.
@@ -647,7 +646,7 @@ impl BitcoinD {
     ) -> Result<(), BitcoindError> {
         // Remove any leftover. This can happen if we delete the watchonly wallet but don't restart
         // bitcoind.
-        self.maybe_unload_watchonly_wallet(self.watchonly_wallet_path.clone());
+        self.maybe_unload_watchonly_wallet(self.watchonly_wallet_path.clone())?;
 
         // Now create the wallet and import the main descriptor.
         self.create_wallet(self.watchonly_wallet_path.clone())
@@ -667,10 +666,10 @@ impl BitcoinD {
 
     /// Load the watchonly wallet on bitcoind, if it isn't already.
     pub fn maybe_load_watchonly_wallet(&self) -> Result<(), BitcoindError> {
-        if self.list_wallets().contains(&self.watchonly_wallet_path) {
+        if self.list_wallets()?.contains(&self.watchonly_wallet_path) {
             return Ok(());
         }
-        let res = self.make_fallible_node_request(
+        let res = self.make_node_request(
             "loadwallet",
             params!(Json::String(self.watchonly_wallet_path.clone()),),
         );
@@ -680,7 +679,7 @@ impl BitcoinD {
                     log::warn!("The watchonly wallet is already loading on bitcoind. Waiting for completion.");
                     loop {
                         thread::sleep(Duration::from_secs(3));
-                        if self.list_wallets().contains(&self.watchonly_wallet_path) {
+                        if self.list_wallets()?.contains(&self.watchonly_wallet_path) {
                             log::warn!("Watchonly wallet now loaded. Continuing.");
                             return Ok(());
                         }
@@ -701,13 +700,13 @@ impl BitcoinD {
         config_network: bitcoin::Network,
     ) -> Result<(), BitcoindError> {
         // Check the minimum supported bitcoind version
-        let version = self.get_bitcoind_version();
+        let version = self.get_bitcoind_version()?;
         if version < MIN_BITCOIND_VERSION {
             return Err(BitcoindError::InvalidVersion(version));
         }
 
         // Check bitcoind is running on the right network
-        let bitcoind_net = self.get_network_bip70();
+        let bitcoind_net = self.get_network_bip70()?;
         let bip70_net = match config_network {
             bitcoin::Network::Bitcoin => "main",
             bitcoin::Network::Testnet => "test",
@@ -732,7 +731,7 @@ impl BitcoinD {
     ) -> Result<(), BitcoindError> {
         // Check our watchonly wallet is loaded
         if self
-            .list_wallets()
+            .list_wallets()?
             .iter()
             .filter(|s| s == &&self.watchonly_wallet_path)
             .count()
@@ -764,13 +763,13 @@ impl BitcoinD {
         Ok(())
     }
 
-    fn block_chain_info(&self) -> Json {
+    fn block_chain_info(&self) -> Result<Json, BitcoindError> {
         self.make_node_request("getblockchaininfo", None)
     }
 
-    pub fn sync_progress(&self) -> SyncProgress {
+    pub fn sync_progress(&self) -> Result<SyncProgress, BitcoindError> {
         // TODO: don't harass lianad, be smarter like in revaultd.
-        let chain_info = self.block_chain_info();
+        let chain_info = self.block_chain_info()?;
         let percentage = chain_info
             .get("verificationprogress")
             .and_then(Json::as_f64)
@@ -783,16 +782,16 @@ impl BitcoinD {
             .get("blocks")
             .and_then(Json::as_u64)
             .expect("No valid 'blocks' in getblockchaininfo response?");
-        SyncProgress {
+        Ok(SyncProgress {
             percentage,
             headers,
             blocks,
-        }
+        })
     }
 
-    pub fn chain_tip(&self) -> BlockChainTip {
+    pub fn chain_tip(&self) -> Result<BlockChainTip, BitcoindError> {
         // We use getblockchaininfo to avoid a race between getblockcount and getblockhash
-        let chain_info = self.block_chain_info();
+        let chain_info = self.block_chain_info()?;
         let hash = bitcoin::BlockHash::from_str(
             chain_info
                 .get("bestblockhash")
@@ -807,12 +806,12 @@ impl BitcoinD {
             .try_into()
             .expect("Must fit by Bitcoin consensus");
 
-        BlockChainTip { hash, height }
+        Ok(BlockChainTip { hash, height })
     }
 
     pub fn get_block_hash(&self, height: i32) -> Option<bitcoin::BlockHash> {
         Some(
-            self.make_fallible_node_request("getblockhash", params!(Json::Number(height.into()),))
+            self.make_node_request("getblockhash", params!(Json::Number(height.into()),))
                 .ok()?
                 .as_str()
                 .and_then(|s| bitcoin::BlockHash::from_str(s).ok())
@@ -845,17 +844,18 @@ impl BitcoinD {
     }
 
     /// Efficient check that a coin is spent.
-    pub fn is_spent(&self, op: &bitcoin::OutPoint) -> bool {
+    pub fn is_spent(&self, op: &bitcoin::OutPoint) -> Result<bool, BitcoindError> {
         // The result of gettxout is empty if the outpoint is spent.
-        self.make_node_request(
-            "gettxout",
-            params!(
-                Json::String(op.txid.to_string()),
-                Json::Number(op.vout.into())
-            ),
-        )
-        .get("bestblock")
-        .is_none()
+        Ok(self
+            .make_node_request(
+                "gettxout",
+                params!(
+                    Json::String(op.txid.to_string()),
+                    Json::Number(op.vout.into())
+                ),
+            )?
+            .get("bestblock")
+            .is_none())
     }
 
     /// So, bitcoind has no API for getting the transaction spending a wallet UTXO. Instead we are
@@ -864,7 +864,10 @@ impl BitcoinD {
     /// So, what we do there is listing all outgoing transactions of the wallet since the last poll
     /// and iterating through each of those to check if it spends the transaction we are interested
     /// in (requiring an other RPC call for each!!).
-    pub fn get_spender_txid(&self, spent_outpoint: &bitcoin::OutPoint) -> Option<bitcoin::Txid> {
+    pub fn get_spender_txid(
+        &self,
+        spent_outpoint: &bitcoin::OutPoint,
+    ) -> Result<Option<bitcoin::Txid>, BitcoindError> {
         // Get the hash of the spent transaction's block parent. If the spent transaction is still
         // unconfirmed, just use the tip.
         let req = self.make_wallet_request(
@@ -873,9 +876,9 @@ impl BitcoinD {
         );
         let list_since_height = match req.get("blockheight").and_then(Json::as_i64) {
             Some(h) => h as i32,
-            None => self.chain_tip().height,
+            None => self.chain_tip()?.height,
         };
-        let block_hash = if let Ok(res) = self.make_fallible_node_request(
+        let block_hash = if let Ok(res) = self.make_node_request(
             "getblockhash",
             params!(Json::Number((list_since_height - 1).into())),
         ) {
@@ -884,7 +887,7 @@ impl BitcoinD {
                 .to_string()
         } else {
             // Possibly a race.
-            return None;
+            return Ok(None);
         };
 
         // Now we can get all transactions related to us since the spent transaction confirmed.
@@ -969,23 +972,26 @@ impl BitcoinD {
                         break;
                     }
 
-                    return Some(spending_txid);
+                    return Ok(Some(spending_txid));
                 }
             }
         }
 
-        None
+        Ok(None)
     }
 
-    pub fn get_block_stats(&self, blockhash: bitcoin::BlockHash) -> Option<BlockStats> {
-        let res = match self.make_fallible_node_request(
+    pub fn get_block_stats(
+        &self,
+        blockhash: bitcoin::BlockHash,
+    ) -> Result<Option<BlockStats>, BitcoindError> {
+        let res = match self.make_node_request(
             "getblockheader",
             params!(Json::String(blockhash.to_string()),),
         ) {
             Ok(res) => res,
             Err(e) => {
                 log::warn!("Error when fetching block header {}: {}", &blockhash, e);
-                return None;
+                return Ok(None);
             }
         };
         let confirmations = res
@@ -1015,18 +1021,18 @@ impl BitcoinD {
             .and_then(Json::as_u64)
             .expect("Invalid median timestamp in `getblockheader` response: not an u64")
             as u32;
-        Some(BlockStats {
+        Ok(Some(BlockStats {
             confirmations,
             previous_blockhash,
             height,
             blockhash,
             time,
             median_time_past,
-        })
+        }))
     }
 
     pub fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoindError> {
-        self.make_fallible_node_request(
+        self.make_node_request(
             "sendrawtransaction",
             params!(bitcoin::consensus::encode::serialize_hex(tx).into()),
         )?;
@@ -1054,7 +1060,7 @@ impl BitcoinD {
 
     // Make sure the bitcoind has enough blocks to rescan up to this timestamp.
     fn check_prune_height(&self, timestamp: u32) -> Result<(), BitcoindError> {
-        let chain_info = self.block_chain_info();
+        let chain_info = self.block_chain_info()?;
         let first_block_height = if let Some(h) = chain_info.get("pruneheight") {
             h
         } else {
@@ -1066,7 +1072,7 @@ impl BitcoinD {
             .expect("Height must be an integer")
             .try_into()
             .expect("Height must fit in a i32");
-        if let Some(tip) = self.tip_before_timestamp(timestamp) {
+        if let Some(tip) = self.tip_before_timestamp(timestamp)? {
             if tip.height >= prune_height {
                 return Ok(());
             }
@@ -1155,13 +1161,19 @@ impl BitcoinD {
     }
 
     /// Get the height and hash of the last block with a timestamp below the given one.
-    pub fn tip_before_timestamp(&self, timestamp: u32) -> Option<BlockChainTip> {
-        block_before_date(
+    pub fn tip_before_timestamp(
+        &self,
+        timestamp: u32,
+    ) -> Result<Option<BlockChainTip>, BitcoindError> {
+        Ok(block_before_date(
             timestamp,
-            self.chain_tip(),
+            self.chain_tip()?,
             |h| self.get_block_hash(h),
-            |h| self.get_block_stats(h),
-        )
+            |h| {
+                self.get_block_stats(h)
+                    .expect("We assume bitcoind connection never fails")
+            },
+        ))
     }
 
     /// Whether this transaction is in the mempool.
@@ -1172,9 +1184,7 @@ impl BitcoinD {
     /// Get mempool entry of the given transaction.
     /// Returns `None` if it is not in the mempool.
     pub fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry> {
-        match self
-            .make_fallible_node_request("getmempoolentry", params!(Json::String(txid.to_string())))
-        {
+        match self.make_node_request("getmempoolentry", params!(Json::String(txid.to_string()))) {
             Ok(json) => Some(MempoolEntry::from(json)),
             Err(BitcoindError::Server(jsonrpc::Error::Rpc(jsonrpc::error::RpcError {
                 code: -5,
@@ -1190,12 +1200,13 @@ impl BitcoinD {
     pub fn mempool_txs_spending_prevouts(
         &self,
         outpoints: &[bitcoin::OutPoint],
-    ) -> Vec<bitcoin::Txid> {
+    ) -> Result<Vec<bitcoin::Txid>, BitcoindError> {
         let prevouts: Json = outpoints
             .iter()
             .map(|op| serde_json::json!({"txid": op.txid.to_string(), "vout": op.vout}))
             .collect();
-        self.make_node_request("gettxspendingprevout", params!(prevouts))
+        Ok(self
+            .make_node_request("gettxspendingprevout", params!(prevouts))?
             .as_array()
             .expect("Always returns an array")
             .iter()
@@ -1206,12 +1217,12 @@ impl BitcoinD {
                         .expect("Must be a valid txid if present")
                 })
             })
-            .collect()
+            .collect())
     }
 
     /// Stop bitcoind.
-    pub fn stop(&self) {
-        self.make_node_request("stop", None);
+    pub fn stop(&self) -> Result<(), BitcoindError> {
+        self.make_node_request("stop", None).map(|_| ())
     }
 }
 
