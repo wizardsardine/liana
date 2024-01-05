@@ -480,13 +480,12 @@ impl DummyLiana {
 
     #[cfg(feature = "daemon")]
     pub fn rpc_server(self) -> Result<(), io::Error> {
-        self.handle.rpc_server()?;
+        self.handle.control.rpc_server()?;
         fs::remove_dir_all(&self.tmp_dir)?;
         Ok(())
     }
 
     pub fn shutdown(self) {
-        self.handle.shutdown();
-        fs::remove_dir_all(&self.tmp_dir).unwrap();
+        fs::remove_dir_all(self.tmp_dir).unwrap();
     }
 }

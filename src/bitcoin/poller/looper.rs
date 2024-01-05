@@ -4,11 +4,7 @@ use crate::{
     descriptors,
 };
 
-use std::{
-    collections::HashSet,
-    sync::{self, atomic},
-    thread, time,
-};
+use std::{collections::HashSet, sync, time};
 
 use miniscript::bitcoin::{self, secp256k1};
 
@@ -302,8 +298,8 @@ fn rescan_check(
     }
 }
 
-// If the database chain tip is NULL (first startup), initialize it.
-fn maybe_initialize_tip(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
+/// If the database chain tip is NULL (first startup), initialize it.
+pub fn maybe_initialize_tip(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
     let mut db_conn = db.connection();
 
     if db_conn.chain_tip().is_none() {
@@ -312,7 +308,7 @@ fn maybe_initialize_tip(bit: &impl BitcoinInterface, db: &impl DatabaseInterface
     }
 }
 
-fn sync_poll_interval() -> time::Duration {
+pub fn sync_poll_interval() -> time::Duration {
     // TODO: be smarter, like in revaultd, but more generic too.
     #[cfg(not(test))]
     {
@@ -332,61 +328,4 @@ pub fn poll(
     let mut db_conn = db.connection();
     updates(&mut db_conn, bit, descs, secp);
     rescan_check(&mut db_conn, bit, descs, secp);
-}
-
-/// Main event loop. Repeatedly polls the Bitcoin interface until told to stop through the
-/// `shutdown` atomic.
-pub fn looper(
-    bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
-    db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
-    shutdown: sync::Arc<atomic::AtomicBool>,
-    poll_interval: time::Duration,
-    desc: descriptors::LianaDescriptor,
-) {
-    let mut last_poll = None;
-    let mut synced = false;
-    let descs = [
-        desc.receive_descriptor().clone(),
-        desc.change_descriptor().clone(),
-    ];
-    let secp = secp256k1::Secp256k1::verification_only();
-
-    maybe_initialize_tip(&bit, &db);
-
-    while !shutdown.load(atomic::Ordering::Relaxed) || last_poll.is_none() {
-        let now = time::Instant::now();
-
-        if let Some(last_poll) = last_poll {
-            let time_since_poll = now.duration_since(last_poll);
-            let poll_interval = if synced {
-                poll_interval
-            } else {
-                // Until we are synced we poll less often to avoid harassing bitcoind and impeding
-                // the sync. As a function since it's mocked for the tests.
-                sync_poll_interval()
-            };
-            if time_since_poll < poll_interval {
-                thread::sleep(time::Duration::from_millis(500));
-                continue;
-            }
-        }
-        last_poll = Some(now);
-
-        // Don't poll until the Bitcoin backend is fully synced.
-        if !synced {
-            let progress = bit.sync_progress();
-            log::info!(
-                "Block chain synchronization progress: {:.2}% ({} blocks / {} headers)",
-                progress.rounded_up_progress() * 100.0,
-                progress.blocks,
-                progress.headers
-            );
-            synced = progress.is_complete();
-            if !synced {
-                continue;
-            }
-        }
-
-        poll(&bit, &db, &secp, &descs);
-    }
 }
