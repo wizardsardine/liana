@@ -123,6 +123,7 @@ impl BitcoinInterface for d::BitcoinD {
         let height = 0;
         let hash = self
             .get_block_hash(height)
+            .expect("We expect the connection to bitcoind to never fail.")
             .expect("Genesis block hash must always be there");
         BlockChainTip { hash, height }
     }
@@ -139,6 +140,7 @@ impl BitcoinInterface for d::BitcoinD {
 
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
         self.get_block_hash(tip.height)
+            .expect("We expect the connection to bitcoind to never fail.")
             .map(|bh| bh == tip.hash)
             .unwrap_or(false)
     }

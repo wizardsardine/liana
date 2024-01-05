@@ -802,14 +802,19 @@ impl BitcoinD {
         Ok(BlockChainTip { hash, height })
     }
 
-    pub fn get_block_hash(&self, height: i32) -> Option<bitcoin::BlockHash> {
-        Some(
-            self.make_node_request("getblockhash", params!(Json::Number(height.into()),))
-                .ok()?
-                .as_str()
-                .and_then(|s| bitcoin::BlockHash::from_str(s).ok())
-                .expect("bitcoind must send valid block hashes"),
-        )
+    pub fn get_block_hash(&self, height: i32) -> Result<Option<bitcoin::BlockHash>, BitcoindError> {
+        match self.make_node_request("getblockhash", params!(Json::Number(height.into()),)) {
+            Ok(json) => Ok(Some(
+                json.as_str()
+                    .and_then(|s| bitcoin::BlockHash::from_str(s).ok())
+                    .expect("Block hashes returned by bitcoind must be valid"),
+            )),
+            Err(BitcoindError::Server(jsonrpc::Error::Rpc(jsonrpc::error::RpcError {
+                code: -5,
+                ..
+            }))) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn list_since_block(
@@ -1167,7 +1172,10 @@ impl BitcoinD {
         Ok(block_before_date(
             timestamp,
             self.chain_tip()?,
-            |h| self.get_block_hash(h),
+            |h| {
+                self.get_block_hash(h)
+                    .expect("We assume bitcoind connection never fails")
+            },
             |h| {
                 self.get_block_stats(h)
                     .expect("We assume bitcoind connection never fails")
