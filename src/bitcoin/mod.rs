@@ -214,7 +214,10 @@ impl BitcoinInterface for d::BitcoinD {
             }
 
             // If the transaction was dropped from the mempool, discard the coin.
-            if !self.is_in_mempool(&op.txid) {
+            if !self
+                .is_in_mempool(&op.txid)
+                .expect("We expect the connection to bitcoind to never fail.")
+            {
                 expired.push(*op);
             }
         }
@@ -307,7 +310,10 @@ impl BitcoinInterface for d::BitcoinD {
 
             // If the transaction was not confirmed, a conflicting transaction spending this coin
             // too wasn't mined, but still isn't in our mempool anymore, mark the spend as expired.
-            if !self.is_in_mempool(txid) {
+            if !self
+                .is_in_mempool(txid)
+                .expect("We expect the connection to bitcoind to never fail.")
+            {
                 expired.push(*op);
             }
         }
@@ -388,7 +394,10 @@ impl BitcoinInterface for d::BitcoinD {
         self.mempool_txs_spending_prevouts(outpoints)
             .expect("We expect the connection to bitcoind to never fail.")
             .into_iter()
-            .filter_map(|txid| self.mempool_entry(&txid))
+            .filter_map(|txid| {
+                self.mempool_entry(&txid)
+                    .expect("We expect the connection to bitcoind to never fail.")
+            })
             .collect()
     }
 }

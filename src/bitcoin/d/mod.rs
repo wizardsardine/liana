@@ -966,7 +966,7 @@ impl BitcoinD {
                         .get("walletconflicts")
                         .and_then(Json::as_array)
                         .expect("A valid list of wallet conflicts must always be present.");
-                    if confs == 0 && !conflicts.is_empty() && !self.is_in_mempool(&spending_txid) {
+                    if confs == 0 && !conflicts.is_empty() && !self.is_in_mempool(&spending_txid)? {
                         log::debug!("Noticed '{}' as spending '{}', but is unconfirmed with conflicts and is not in mempool anymore. Discarding it.", &spending_txid, &spent_outpoint);
                         break;
                     }
@@ -1184,22 +1184,23 @@ impl BitcoinD {
     }
 
     /// Whether this transaction is in the mempool.
-    pub fn is_in_mempool(&self, txid: &bitcoin::Txid) -> bool {
-        self.mempool_entry(txid).is_some()
+    pub fn is_in_mempool(&self, txid: &bitcoin::Txid) -> Result<bool, BitcoindError> {
+        Ok(self.mempool_entry(txid)?.is_some())
     }
 
     /// Get mempool entry of the given transaction.
     /// Returns `None` if it is not in the mempool.
-    pub fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry> {
+    pub fn mempool_entry(
+        &self,
+        txid: &bitcoin::Txid,
+    ) -> Result<Option<MempoolEntry>, BitcoindError> {
         match self.make_node_request("getmempoolentry", params!(Json::String(txid.to_string()))) {
-            Ok(json) => Some(MempoolEntry::from(json)),
+            Ok(json) => Ok(Some(MempoolEntry::from(json))),
             Err(BitcoindError::Server(jsonrpc::Error::Rpc(jsonrpc::error::RpcError {
                 code: -5,
                 ..
-            }))) => None,
-            Err(e) => {
-                panic!("Unexpected error returned by bitcoind {}", e);
-            }
+            }))) => Ok(None),
+            Err(e) => Err(e),
         }
     }
 
