@@ -325,6 +325,17 @@ fn sync_poll_interval() -> time::Duration {
     time::Duration::from_secs(0)
 }
 
+/// Update our state from the Bitcoin backend.
+pub fn poll(
+    bit: &sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+    db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    descs: &[descriptors::SinglePathLianaDesc],
+) {
+    updates(bit, db, descs, secp);
+    rescan_check(bit, db, descs, secp);
+}
+
 /// Main event loop. Repeatedly polls the Bitcoin interface until told to stop through the
 /// `shutdown` atomic.
 pub fn looper(
@@ -378,7 +389,6 @@ pub fn looper(
             }
         }
 
-        updates(&bit, &db, &descs, &secp);
-        rescan_check(&bit, &db, &descs, &secp);
+        poll(&bit, &db, &secp, &descs);
     }
 }
