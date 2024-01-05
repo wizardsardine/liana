@@ -195,7 +195,10 @@ impl BitcoinInterface for d::BitcoinD {
         let mut tx_getter = CachedTxGetter::new(self);
 
         for op in outpoints {
-            let res = if let Some(res) = tx_getter.get_transaction(&op.txid) {
+            let res = if let Some(res) = tx_getter
+                .get_transaction(&op.txid)
+                .expect("We expect the connection to bitcoind to never fail.")
+            {
                 res
             } else {
                 log::error!("Transaction not in wallet for coin '{}'.", op);
@@ -272,7 +275,10 @@ impl BitcoinInterface for d::BitcoinD {
         let mut tx_getter = CachedTxGetter::new(self);
 
         for (op, txid) in outpoints {
-            let res = if let Some(res) = tx_getter.get_transaction(txid) {
+            let res = if let Some(res) = tx_getter
+                .get_transaction(txid)
+                .expect("We expect the connection to bitcoind to never fail.")
+            {
                 res
             } else {
                 log::error!("Could not get tx {} spending coin {}.", txid, op);
@@ -288,20 +294,23 @@ impl BitcoinInterface for d::BitcoinD {
             // If a conflicting transaction was confirmed instead, replace the txid of the
             // spender for this coin with it and mark it as confirmed.
             let conflict = res.conflicting_txs.iter().find_map(|txid| {
-                tx_getter.get_transaction(txid).and_then(|tx| {
-                    tx.block.and_then(|block| {
-                        // Being part of our watchonly wallet isn't enough, as it could be a
-                        // conflicting transaction which spends a different set of coins. Make sure
-                        // it does actually spend this coin.
-                        tx.tx.input.iter().find_map(|txin| {
-                            if &txin.previous_output == op {
-                                Some((*txid, block))
-                            } else {
-                                None
-                            }
+                tx_getter
+                    .get_transaction(txid)
+                    .expect("We expect the connection to bitcoind to never fail.")
+                    .and_then(|tx| {
+                        tx.block.and_then(|block| {
+                            // Being part of our watchonly wallet isn't enough, as it could be a
+                            // conflicting transaction which spends a different set of coins. Make sure
+                            // it does actually spend this coin.
+                            tx.tx.input.iter().find_map(|txin| {
+                                if &txin.previous_output == op {
+                                    Some((*txid, block))
+                                } else {
+                                    None
+                                }
+                            })
                         })
                     })
-                })
             });
             if let Some((txid, block)) = conflict {
                 spent.push((*op, txid, block));
@@ -387,7 +396,9 @@ impl BitcoinInterface for d::BitcoinD {
         &self,
         txid: &bitcoin::Txid,
     ) -> Option<(bitcoin::Transaction, Option<Block>)> {
-        self.get_transaction(txid).map(|res| (res.tx, res.block))
+        self.get_transaction(txid)
+            .expect("We expect the connection to bitcoind to never fail.")
+            .map(|res| (res.tx, res.block))
     }
 
     fn mempool_spenders(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<MempoolEntry> {

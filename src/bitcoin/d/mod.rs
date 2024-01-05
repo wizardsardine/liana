@@ -835,11 +835,15 @@ impl BitcoinD {
             .into())
     }
 
-    pub fn get_transaction(&self, txid: &bitcoin::Txid) -> Option<GetTxRes> {
-        // TODO: assert we got a -5 error, and not any other kind of error?
-        self.make_wallet_request("gettransaction", params!(Json::String(txid.to_string())))
-            .ok()
-            .map(|res| res.into())
+    pub fn get_transaction(&self, txid: &bitcoin::Txid) -> Result<Option<GetTxRes>, BitcoindError> {
+        match self.make_wallet_request("gettransaction", params!(Json::String(txid.to_string()))) {
+            Ok(json) => Ok(Some(json.into())),
+            Err(BitcoindError::Server(jsonrpc::Error::Rpc(jsonrpc::error::RpcError {
+                code: -5,
+                ..
+            }))) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// Efficient check that a coin is spent.
@@ -1476,16 +1480,18 @@ impl<'a> CachedTxGetter<'a> {
 
     /// Query a transaction. Tries to get it from the cache and falls back to calling
     /// `gettransaction` on bitcoind. If both fail, returns None.
-    pub fn get_transaction(&mut self, txid: &bitcoin::Txid) -> Option<GetTxRes> {
-        // TODO: work around the borrow checker to avoid having to clone.
-        if let Some(res) = self.cache.get(txid) {
+    pub fn get_transaction(
+        &mut self,
+        txid: &bitcoin::Txid,
+    ) -> Result<Option<GetTxRes>, BitcoindError> {
+        Ok(if let Some(res) = self.cache.get(txid) {
             Some(res.clone())
-        } else if let Some(res) = self.bitcoind.get_transaction(txid) {
+        } else if let Some(res) = self.bitcoind.get_transaction(txid)? {
             self.cache.insert(*txid, res);
             self.cache.get(txid).cloned()
         } else {
             None
-        }
+        })
     }
 }
 
