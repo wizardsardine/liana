@@ -386,11 +386,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     setup_panic_hook();
 
     let mut settings = Settings::with_flags((config, log_level));
-    settings.id = Some("liana-gui".to_string());
     settings.window.icon = Some(image::liana_app_icon());
     settings.default_text_size = text::P1_SIZE.into();
     settings.default_font = liana_ui::font::REGULAR;
     settings.exit_on_close_request = false;
+
+    settings.id = Some("Liana".to_string());
+
+    #[cfg(target_os = "linux")]
+    {
+        settings.window.platform_specific = iced::window::PlatformSpecific {
+            application_id: "Liana".to_string(),
+        };
+    }
 
     if let Err(e) = GUI::run(settings) {
         return Err(format!("Failed to launch UI: {}", e).into());
