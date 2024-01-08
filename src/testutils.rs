@@ -7,7 +7,7 @@ use crate::{
 
 use std::{
     collections::{HashMap, HashSet},
-    env, fs, io, path, process,
+    env, error, fs, io, path, process,
     str::FromStr,
     sync, thread, time,
 };
@@ -32,94 +32,111 @@ impl DummyBitcoind {
 }
 
 impl BitcoinInterface for DummyBitcoind {
-    fn genesis_block(&self) -> BlockChainTip {
+    fn genesis_block(&self) -> Result<BlockChainTip, Box<dyn error::Error>> {
         let hash = bitcoin::BlockHash::from_str(
             "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
         )
         .unwrap();
-        BlockChainTip { hash, height: 0 }
+        Ok(BlockChainTip { hash, height: 0 })
     }
 
-    fn sync_progress(&self) -> SyncProgress {
-        SyncProgress::new(1.0, 1_000, 1_000)
+    fn sync_progress(&self) -> Result<SyncProgress, Box<dyn error::Error>> {
+        Ok(SyncProgress::new(1.0, 1_000, 1_000))
     }
 
-    fn chain_tip(&self) -> BlockChainTip {
+    fn chain_tip(&self) -> Result<BlockChainTip, Box<dyn error::Error>> {
         let hash = bitcoin::BlockHash::from_str(
             "000000007bc154e0fa7ea32218a72fe2c1bb9f86cf8c9ebf9a715ed27fdb229a",
         )
         .unwrap();
         let height = 100;
-        BlockChainTip { hash, height }
+        Ok(BlockChainTip { hash, height })
     }
 
-    fn is_in_chain(&self, _: &BlockChainTip) -> bool {
+    fn is_in_chain(&self, _: &BlockChainTip) -> Result<bool, Box<dyn error::Error>> {
         // No reorg
-        true
+        Ok(true)
     }
 
     fn received_coins(
         &self,
         _: &BlockChainTip,
         _: &[descriptors::SinglePathLianaDesc],
-    ) -> Vec<UTxO> {
-        Vec::new()
+    ) -> Result<Vec<UTxO>, Box<dyn error::Error>> {
+        Ok(Vec::new())
     }
 
     fn confirmed_coins(
         &self,
         _: &[bitcoin::OutPoint],
-    ) -> (Vec<(bitcoin::OutPoint, i32, u32)>, Vec<bitcoin::OutPoint>) {
-        (Vec::new(), Vec::new())
+    ) -> Result<(Vec<(bitcoin::OutPoint, i32, u32)>, Vec<bitcoin::OutPoint>), Box<dyn error::Error>>
+    {
+        Ok((Vec::new(), Vec::new()))
     }
 
-    fn spending_coins(&self, _: &[bitcoin::OutPoint]) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
-        Vec::new()
+    fn spending_coins(
+        &self,
+        _: &[bitcoin::OutPoint],
+    ) -> Result<Vec<(bitcoin::OutPoint, bitcoin::Txid)>, Box<dyn error::Error>> {
+        Ok(Vec::new())
     }
 
     fn spent_coins(
         &self,
         _: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> (
-        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
-        Vec<bitcoin::OutPoint>,
-    ) {
-        (Vec::new(), Vec::new())
+    ) -> Result<
+        (
+            Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
+            Vec<bitcoin::OutPoint>,
+        ),
+        Box<dyn error::Error>,
+    > {
+        Ok((Vec::new(), Vec::new()))
     }
 
-    fn common_ancestor(&self, _: &BlockChainTip) -> Option<BlockChainTip> {
+    fn common_ancestor(
+        &self,
+        _: &BlockChainTip,
+    ) -> Result<Option<BlockChainTip>, Box<dyn error::Error>> {
         todo!()
     }
 
-    fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), String> {
+    fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), Box<dyn error::Error>> {
         todo!()
     }
 
-    fn start_rescan(&self, _: &descriptors::LianaDescriptor, _: u32) -> Result<(), String> {
+    fn start_rescan(
+        &self,
+        _: &descriptors::LianaDescriptor,
+        _: u32,
+    ) -> Result<(), Box<dyn error::Error>> {
         todo!()
     }
 
-    fn rescan_progress(&self) -> Option<f64> {
-        None
+    fn rescan_progress(&self) -> Result<Option<f64>, Box<dyn error::Error>> {
+        Ok(None)
     }
 
-    fn block_before_date(&self, _: u32) -> Option<BlockChainTip> {
+    fn block_before_date(&self, _: u32) -> Result<Option<BlockChainTip>, Box<dyn error::Error>> {
         todo!()
     }
 
-    fn tip_time(&self) -> Option<u32> {
+    fn tip_time(&self) -> Result<Option<u32>, Box<dyn error::Error>> {
         todo!()
     }
 
     fn wallet_transaction(
         &self,
         txid: &bitcoin::Txid,
-    ) -> Option<(bitcoin::Transaction, Option<Block>)> {
-        self.txs.get(txid).cloned()
+    ) -> Result<Option<(bitcoin::Transaction, Option<Block>)>, Box<dyn error::Error>> {
+        Ok(self.txs.get(txid).cloned())
     }
 
-    fn mempool_spenders(&self, _: &[bitcoin::OutPoint]) -> Vec<MempoolEntry> {
-        Vec::new()
+    fn mempool_spenders(
+        &self,
+        _: &[bitcoin::OutPoint],
+    ) -> Result<Vec<MempoolEntry>, Box<dyn error::Error>> {
+        Ok(Vec::new())
     }
 }
 

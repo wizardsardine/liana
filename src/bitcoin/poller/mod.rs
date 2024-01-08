@@ -3,6 +3,7 @@ mod looper;
 use crate::{bitcoin::BitcoinInterface, database::DatabaseInterface, descriptors};
 
 use std::{
+    error,
     sync::{self, atomic},
     thread, time,
 };
@@ -23,7 +24,7 @@ impl Poller {
         bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         desc: descriptors::LianaDescriptor,
-    ) -> Poller {
+    ) -> Result<Poller, Box<dyn error::Error>> {
         let secp = secp256k1::Secp256k1::verification_only();
         let descs = [
             desc.receive_descriptor().clone(),
@@ -31,18 +32,18 @@ impl Poller {
         ];
 
         // On first startup the tip may be NULL. Make sure it's set as the poller relies on it.
-        looper::maybe_initialize_tip(&bit, &db);
+        looper::maybe_initialize_tip(&bit, &db)?;
 
-        Poller {
+        Ok(Poller {
             bit,
             db,
             secp,
             descs,
-        }
+        })
     }
 
     /// Update our state from the Bitcoin backend.
-    pub fn poll_once(&self) {
+    pub fn poll_once(&self) -> Result<(), Box<dyn error::Error>> {
         looper::poll(&self.bit, &self.db, &self.secp, &self.descs)
     }
 
@@ -56,7 +57,7 @@ impl Poller {
         &self,
         poll_interval: time::Duration,
         shutdown: sync::Arc<atomic::AtomicBool>,
-    ) {
+    ) -> Result<(), Box<dyn error::Error>> {
         let mut last_poll = None;
         let mut synced = false;
 
@@ -81,7 +82,7 @@ impl Poller {
 
             // Don't poll until the Bitcoin backend is fully synced.
             if !synced {
-                let progress = self.bit.sync_progress();
+                let progress = self.bit.sync_progress()?;
                 log::info!(
                     "Block chain synchronization progress: {:.2}% ({} blocks / {} headers)",
                     progress.rounded_up_progress() * 100.0,
@@ -94,7 +95,9 @@ impl Poller {
                 }
             }
 
-            looper::poll(&self.bit, &self.db, &self.secp, &self.descs);
+            looper::poll(&self.bit, &self.db, &self.secp, &self.descs)?;
         }
+
+        Ok(())
     }
 }

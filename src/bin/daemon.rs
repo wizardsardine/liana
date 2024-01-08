@@ -85,7 +85,11 @@ fn main() {
         .name("Bitcoin Core poller".to_string())
         .spawn({
             let shutdown = poller_shutdown.clone();
-            move || bitcoin_poller.poll_forever(poll_interval, shutdown)
+            move || {
+                bitcoin_poller
+                    .poll_forever(poll_interval, shutdown)
+                    .expect("We assume the bitcoind connection never fails") // FIXME
+            }
         })
         .expect("Spawning the poller thread must never fail.");
     control

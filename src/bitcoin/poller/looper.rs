@@ -4,7 +4,7 @@ use crate::{
     descriptors,
 };
 
-use std::{collections::HashSet, sync, time};
+use std::{collections::HashSet, error, sync, time};
 
 use miniscript::bitcoin::{self, secp256k1};
 
@@ -30,14 +30,14 @@ fn update_coins(
     previous_tip: &BlockChainTip,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-) -> UpdatedCoins {
+) -> Result<UpdatedCoins, Box<dyn error::Error>> {
     let network = db_conn.network();
     let curr_coins = db_conn.coins(&[], &[]);
     log::debug!("Current coins: {:?}", curr_coins);
 
     // Start by fetching newly received coins.
     let mut received = Vec::new();
-    for utxo in bit.received_coins(previous_tip, descs) {
+    for utxo in bit.received_coins(previous_tip, descs)? {
         let UTxO {
             outpoint,
             amount,
@@ -102,7 +102,7 @@ fn update_coins(
             }
         })
         .collect();
-    let (confirmed, expired) = bit.confirmed_coins(&to_be_confirmed);
+    let (confirmed, expired) = bit.confirmed_coins(&to_be_confirmed)?;
     log::debug!("Newly confirmed coins: {:?}", confirmed);
     log::debug!("Expired coins: {:?}", expired);
 
@@ -126,7 +126,7 @@ fn update_coins(
             }
         })
         .collect();
-    let spending = bit.spending_coins(&to_be_spent);
+    let spending = bit.spending_coins(&to_be_spent)?;
     log::debug!("Newly spending coins: {:?}", spending);
 
     // Mark coins in a spending state whose Spend transaction was confirmed as such. Note we
@@ -139,21 +139,21 @@ fn update_coins(
         .map(|coin| (coin.outpoint, coin.spend_txid.expect("Coin is spending")))
         .chain(spending.iter().cloned())
         .collect();
-    let (spent, expired_spending) = bit.spent_coins(spending_coins.as_slice());
+    let (spent, expired_spending) = bit.spent_coins(spending_coins.as_slice())?;
     let spent = spent
         .into_iter()
         .map(|(oupoint, txid, block)| (oupoint, txid, block.height, block.time))
         .collect();
     log::debug!("Newly spent coins: {:?}", spent);
 
-    UpdatedCoins {
+    Ok(UpdatedCoins {
         received,
         confirmed,
         expired,
         spending,
         expired_spending,
         spent,
-    }
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -167,19 +167,22 @@ enum TipUpdate {
 }
 
 // Returns the new block chain tip, if it changed.
-fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdate {
-    let bitcoin_tip = bit.chain_tip();
+fn new_tip(
+    bit: &impl BitcoinInterface,
+    current_tip: &BlockChainTip,
+) -> Result<TipUpdate, Box<dyn error::Error>> {
+    let bitcoin_tip = bit.chain_tip()?;
 
     // If the tip didn't change, there is nothing to update.
     if current_tip == &bitcoin_tip {
-        return TipUpdate::Same;
+        return Ok(TipUpdate::Same);
     }
 
     if bitcoin_tip.height > current_tip.height {
         // Make sure we are on the same chain.
-        if bit.is_in_chain(current_tip) {
+        if bit.is_in_chain(current_tip)? {
             // All good, we just moved forward.
-            return TipUpdate::Progress(bitcoin_tip);
+            return Ok(TipUpdate::Progress(bitcoin_tip));
         }
     }
 
@@ -187,13 +190,13 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
     // block chain re-organisation. Find the common ancestor between our current chain and
     // the new chain and return that. The caller will take care of rewinding our state.
     log::info!("Block chain reorganization detected. Looking for common ancestor.");
-    if let Some(common_ancestor) = bit.common_ancestor(current_tip) {
+    if let Some(common_ancestor) = bit.common_ancestor(current_tip)? {
         log::info!(
             "Common ancestor found: '{}'. Starting rescan from there. Old tip was '{}'.",
             common_ancestor,
             current_tip
         );
-        TipUpdate::Reorged(common_ancestor)
+        Ok(TipUpdate::Reorged(common_ancestor))
     } else {
         log::error!(
             "Failed to get common ancestor for tip '{}'. Starting over.",
@@ -208,10 +211,10 @@ fn updates(
     bit: &impl BitcoinInterface,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-) {
+) -> Result<(), Box<dyn error::Error>> {
     // Check if there was a new block before updating ourselves.
     let current_tip = db_conn.chain_tip().expect("Always set at first startup");
-    let latest_tip = match new_tip(bit, &current_tip) {
+    let latest_tip = match new_tip(bit, &current_tip)? {
         TipUpdate::Same => current_tip,
         TipUpdate::Progress(new_tip) => new_tip,
         TipUpdate::Reorged(new_tip) => {
@@ -225,10 +228,10 @@ fn updates(
 
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
     // we may have unconfirmed transactions.
-    let updated_coins = update_coins(bit, db_conn, &current_tip, descs, secp);
+    let updated_coins = update_coins(bit, db_conn, &current_tip, descs, secp)?;
 
     // If the tip changed while we were polling our Bitcoin interface, start over.
-    if bit.chain_tip() != latest_tip {
+    if bit.chain_tip()? != latest_tip {
         log::info!("Chain tip changed while we were updating our state. Starting over.");
         return updates(db_conn, bit, descs, secp);
     }
@@ -248,6 +251,7 @@ fn updates(
     }
 
     log::debug!("Updates done.");
+    Ok(())
 }
 
 // Check if there is any rescan of the backend ongoing or one that just finished.
@@ -256,7 +260,7 @@ fn rescan_check(
     bit: &impl BitcoinInterface,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-) {
+) -> Result<(), Box<dyn error::Error>> {
     log::debug!("Checking the state of an ongoing rescan if there is any");
 
     // Check if there is an ongoing rescan. If there isn't and we previously asked for a rescan of
@@ -264,7 +268,7 @@ fn rescan_check(
     // Upon completion of the rescan from the given timestamp on the backend, we rollback our state
     // down to the height before this timestamp to rescan everything that happened since then.
     let rescan_timestamp = db_conn.rescan_timestamp();
-    if let Some(progress) = bit.rescan_progress() {
+    if let Some(progress) = bit.rescan_progress()? {
         log::info!("Rescan progress: {:.2}%.", progress * 100.0);
         if rescan_timestamp.is_none() {
             log::warn!("Backend is rescanning but we didn't ask for it.");
@@ -276,14 +280,14 @@ fn rescan_check(
         // no use for the bitcoind implementation of the backend, since bitcoind will always set
         // the timestamp of the descriptors in the wallet first (and therefore consider it as
         // rescanned from this height even if it aborts the rescan by being stopped).
-        let rescan_tip = match bit.block_before_date(timestamp) {
+        let rescan_tip = match bit.block_before_date(timestamp)? {
             Some(block) => block,
             None => {
                 log::error!(
                     "Could not retrieve block height for timestamp '{}'",
                     timestamp
                 );
-                return;
+                return Ok(());
             }
         };
         db_conn.rollback_tip(&rescan_tip);
@@ -292,20 +296,27 @@ fn rescan_check(
             "Rolling back our internal tip to '{}' to update our internal state with past transactions.",
             rescan_tip
         );
-        updates(db_conn, bit, descs, secp)
+        return updates(db_conn, bit, descs, secp);
     } else {
         log::debug!("No ongoing rescan.");
     }
+
+    Ok(())
 }
 
 /// If the database chain tip is NULL (first startup), initialize it.
-pub fn maybe_initialize_tip(bit: &impl BitcoinInterface, db: &impl DatabaseInterface) {
+pub fn maybe_initialize_tip(
+    bit: &impl BitcoinInterface,
+    db: &impl DatabaseInterface,
+) -> Result<(), Box<dyn error::Error>> {
     let mut db_conn = db.connection();
 
     if db_conn.chain_tip().is_none() {
         // TODO: be smarter. We can use the timestamp of the descriptor to get a newer block hash.
-        db_conn.update_tip(&bit.genesis_block());
+        db_conn.update_tip(&bit.genesis_block()?);
     }
+
+    Ok(())
 }
 
 pub fn sync_poll_interval() -> time::Duration {
@@ -324,8 +335,11 @@ pub fn poll(
     db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     descs: &[descriptors::SinglePathLianaDesc],
-) {
+) -> Result<(), Box<dyn error::Error>> {
     let mut db_conn = db.connection();
-    updates(&mut db_conn, bit, descs, secp);
-    rescan_check(&mut db_conn, bit, descs, secp);
+
+    updates(&mut db_conn, bit, descs, secp)?;
+    rescan_check(&mut db_conn, bit, descs, secp)?;
+
+    Ok(())
 }

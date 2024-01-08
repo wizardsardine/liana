@@ -92,6 +92,7 @@ pub enum StartupError {
     MissingBitcoindConfig,
     Database(SqliteDbError),
     Bitcoind(BitcoindError),
+    BitcoinInterface(Box<dyn error::Error>),
     #[cfg(unix)]
     Daemonization(&'static str),
     #[cfg(windows)]
@@ -116,6 +117,7 @@ impl fmt::Display for StartupError {
             ),
             Self::Database(e) => write!(f, "Error initializing database: '{}'.", e),
             Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
+            Self::BitcoinInterface(e) => write!(f, "Talking to our Bitcoin backend: {}", e),
             #[cfg(unix)]
             Self::Daemonization(e) => write!(f, "Error when daemonizing: '{}'.", e),
             #[cfg(windows)]
@@ -377,7 +379,8 @@ impl DaemonHandle {
 
         // Setup the Bitcoin poller. Caller is responsible for running it.
         let bitcoin_poller =
-            poller::Poller::new(bit.clone(), db.clone(), config.main_descriptor.clone());
+            poller::Poller::new(bit.clone(), db.clone(), config.main_descriptor.clone())
+                .map_err(StartupError::BitcoinInterface)?;
 
         // Finally, set up the API.
         let control = DaemonControl::new(config, bit, db, secp);
@@ -652,7 +655,9 @@ mod tests {
                 let poll_interval = config.bitcoin_config.poll_interval_secs;
                 let DaemonHandle { bitcoin_poller, .. } =
                     DaemonHandle::start_default(config).unwrap();
-                bitcoin_poller.poll_forever(poll_interval, shutdown)
+                bitcoin_poller
+                    .poll_forever(poll_interval, shutdown)
+                    .unwrap()
             }
         });
         complete_sanity_check(&server);
@@ -676,7 +681,9 @@ mod tests {
                 let poll_interval = config.bitcoin_config.poll_interval_secs;
                 let DaemonHandle { bitcoin_poller, .. } =
                     DaemonHandle::start_default(config).unwrap();
-                bitcoin_poller.poll_forever(poll_interval, shutdown)
+                bitcoin_poller
+                    .poll_forever(poll_interval, shutdown)
+                    .unwrap()
             }
         });
         complete_sanity_check(&server);

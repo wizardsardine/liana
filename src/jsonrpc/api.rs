@@ -222,7 +222,7 @@ fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json:
         .ok_or_else(|| Error::invalid_params("Invalid 'limit' parameter."))?;
 
     Ok(serde_json::json!(
-        &control.list_confirmed_transactions(start, end, limit)
+        &control.list_confirmed_transactions(start, end, limit)?
     ))
 }
 
@@ -237,7 +237,7 @@ fn list_transactions(control: &DaemonControl, params: Params) -> Result<serde_js
                 .collect()
         })
         .ok_or_else(|| Error::invalid_params("Invalid 'txids' parameter."))?;
-    Ok(serde_json::json!(&control.list_transactions(&txids)))
+    Ok(serde_json::json!(&control.list_transactions(&txids)?))
 }
 
 fn start_rescan(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
@@ -373,7 +373,7 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
             })?;
             rbf_psbt(control, params)?
         }
-        "getinfo" => serde_json::json!(&control.get_info()),
+        "getinfo" => serde_json::json!(&control.get_info()?),
         "getnewaddress" => serde_json::json!(&control.get_new_address()),
         "listcoins" => {
             let params = req.params;

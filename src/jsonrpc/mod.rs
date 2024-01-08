@@ -168,7 +168,8 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::RecoveryNotAvailable => {
                 Error::new(ErrorCode::InvalidParams, e.to_string())
             }
-            commands::CommandError::RescanTrigger(..) => {
+            commands::CommandError::RescanTrigger(..)
+            | commands::CommandError::BitcoinInterface(..) => {
                 Error::new(ErrorCode::InternalError, e.to_string())
             }
             commands::CommandError::TxBroadcast(_) => {
