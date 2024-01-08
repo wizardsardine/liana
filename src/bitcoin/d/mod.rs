@@ -13,7 +13,7 @@ use utils::{block_before_date, roundup_progress};
 use std::{
     cmp,
     collections::{HashMap, HashSet},
-    convert::TryInto,
+    convert::{TryFrom, TryInto},
     fs, io,
     str::FromStr,
     thread,
@@ -59,6 +59,10 @@ pub enum BitcoindError {
     NetworkMismatch(String /*config*/, String /*bitcoind*/),
     StartRescan,
     RescanPastPruneHeight,
+    MissingOrInvalidField {
+        command: &'static str,
+        field: &'static str,
+    },
 }
 
 impl BitcoindError {
@@ -152,6 +156,11 @@ impl std::fmt::Display for BitcoindError {
                     "Trying to rescan the block chain past the prune block height."
                 )
             }
+            BitcoindError::MissingOrInvalidField { command, field } => write!(
+                f,
+                "Missing or invalid field '{}' in result of RPC command '{}'.",
+                field, command
+            ),
         }
     }
 }
@@ -453,11 +462,13 @@ impl BitcoinD {
     }
 
     fn get_bitcoind_version(&self) -> Result<u64, BitcoindError> {
-        Ok(self
-            .make_node_request("getnetworkinfo", None)?
+        self.make_node_request("getnetworkinfo", None)?
             .get("version")
             .and_then(Json::as_u64)
-            .expect("Missing or invalid 'version' in 'getnetworkinfo' result?"))
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "getnetworkinfo",
+                field: "version",
+            })
     }
 
     fn get_network_bip70(&self) -> Result<String, BitcoindError> {
@@ -465,23 +476,31 @@ impl BitcoinD {
             .make_node_request("getblockchaininfo", None)?
             .get("chain")
             .and_then(Json::as_str)
-            .expect("Missing or invalid 'chain' in 'getblockchaininfo' result?")
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "getblockchaininfo",
+                field: "chain",
+            })?
             .to_string())
     }
 
     fn list_wallets(&self) -> Result<Vec<String>, BitcoindError> {
-        Ok(self
-            .make_node_request("listwallets", None)?
+        self.make_node_request("listwallets", None)?
             .as_array()
-            .expect("API break, 'listwallets' didn't return an array.")
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "listwallets",
+                field: "Didn't return an array",
+            })?
             .iter()
-            .map(|json_str| {
-                json_str
+            .map(|json_str| -> Result<_, BitcoindError> {
+                Ok(json_str
                     .as_str()
-                    .expect("API break: 'listwallets' contains a non-string value")
-                    .to_string()
+                    .ok_or(BitcoindError::MissingOrInvalidField {
+                        command: "listwallets",
+                        field: "Non-string value in array",
+                    })?
+                    .to_string())
             })
-            .collect())
+            .collect::<Result<_, _>>()
     }
 
     // Get a warning from the result of a wallet command. It was modified in v25 so it's a bit
@@ -577,41 +596,58 @@ impl BitcoinD {
     }
 
     fn list_descriptors(&self) -> Result<Vec<ListDescEntry>, BitcoindError> {
-        Ok(self
-            .make_wallet_request("listdescriptors", None)?
+        self.make_wallet_request("listdescriptors", None)?
             .get("descriptors")
             .and_then(Json::as_array)
-            .expect("Missing or invalid 'descriptors' field in 'listdescriptors' response")
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "listdescriptors",
+                field: "descriptors",
+            })?
             .iter()
-            .map(|elem| {
+            .map(|elem| -> Result<_, BitcoindError> {
                 let desc = elem
                     .get("desc")
                     .and_then(Json::as_str)
-                    .expect(
-                        "Missing or invalid 'desc' field in 'listdescriptors' response's entries",
-                    )
+                    .ok_or(BitcoindError::MissingOrInvalidField {
+                        command: "listdescriptors",
+                        field: "desc",
+                    })?
                     .to_string();
-                let range = elem.get("range").and_then(Json::as_array).map(|a| {
-                    a.iter()
-                        .map(|e| e.as_u64().expect("Invalid range index") as u32)
-                        .collect::<Vec<_>>()
-                        .try_into()
-                        .expect("Range is always an array of size 2")
-                });
+                let range = elem
+                    .get("range")
+                    .and_then(Json::as_array)
+                    .map(|a| -> Result<_, BitcoindError> {
+                        a.iter()
+                            .map(|e| -> Result<_, BitcoindError> {
+                                Ok(e.as_u64().ok_or(BitcoindError::MissingOrInvalidField {
+                                    command: "listdescriptors",
+                                    field: "range",
+                                })? as u32)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?
+                            .try_into()
+                            .map_err(|_| BitcoindError::MissingOrInvalidField {
+                                command: "listdescriptors",
+                                field: "range",
+                            })
+                    })
+                    .transpose()?;
                 let timestamp = elem
                     .get("timestamp")
                     .and_then(Json::as_u64)
-                    .expect("A valid timestamp is always present")
-                    .try_into()
-                    .expect("timestamp must fit");
+                    .and_then(|ts| ts.try_into().ok())
+                    .ok_or(BitcoindError::MissingOrInvalidField {
+                        command: "listdescriptors",
+                        field: "timestamp",
+                    })?;
 
-                ListDescEntry {
+                Ok(ListDescEntry {
                     desc,
                     range,
                     timestamp,
-                }
+                })
             })
-            .collect())
+            .collect::<Result<_, _>>()
     }
 
     fn maybe_unload_watchonly_wallet(
@@ -766,15 +802,22 @@ impl BitcoinD {
         let percentage = chain_info
             .get("verificationprogress")
             .and_then(Json::as_f64)
-            .expect("No valid 'verificationprogress' in getblockchaininfo response?");
-        let headers = chain_info
-            .get("headers")
-            .and_then(Json::as_u64)
-            .expect("No valid 'verificationprogress' in getblockchaininfo response?");
-        let blocks = chain_info
-            .get("blocks")
-            .and_then(Json::as_u64)
-            .expect("No valid 'blocks' in getblockchaininfo response?");
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "getblockchaininfo",
+                field: "verificationprogress",
+            })?;
+        let headers = chain_info.get("headers").and_then(Json::as_u64).ok_or(
+            BitcoindError::MissingOrInvalidField {
+                command: "getblockchaininfo",
+                field: "headers",
+            },
+        )?;
+        let blocks = chain_info.get("blocks").and_then(Json::as_u64).ok_or(
+            BitcoindError::MissingOrInvalidField {
+                command: "getblockchaininfo",
+                field: "blocks",
+            },
+        )?;
         Ok(SyncProgress {
             percentage,
             headers,
@@ -785,19 +828,22 @@ impl BitcoinD {
     pub fn chain_tip(&self) -> Result<BlockChainTip, BitcoindError> {
         // We use getblockchaininfo to avoid a race between getblockcount and getblockhash
         let chain_info = self.block_chain_info()?;
-        let hash = bitcoin::BlockHash::from_str(
-            chain_info
-                .get("bestblockhash")
-                .and_then(Json::as_str)
-                .expect("No valid 'bestblockhash' in 'getblockchaininfo' response?"),
-        )
-        .expect("Invalid blockhash from bitcoind?");
+        let hash = chain_info
+            .get("bestblockhash")
+            .and_then(Json::as_str)
+            .and_then(|s| bitcoin::BlockHash::from_str(s).ok())
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "getblockchaininfo",
+                field: "bestblockhash",
+            })?;
         let height: i32 = chain_info
             .get("blocks")
             .and_then(Json::as_i64)
-            .expect("No valid 'blocks' in 'getblockchaininfo' response?")
-            .try_into()
-            .expect("Must fit by Bitcoin consensus");
+            .and_then(|i| i.try_into().ok())
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "getblockchaininfo",
+                field: "blocks",
+            })?;
 
         Ok(BlockChainTip { hash, height })
     }
@@ -807,7 +853,10 @@ impl BitcoinD {
             Ok(json) => Ok(Some(
                 json.as_str()
                     .and_then(|s| bitcoin::BlockHash::from_str(s).ok())
-                    .expect("Block hashes returned by bitcoind must be valid"),
+                    .ok_or(BitcoindError::MissingOrInvalidField {
+                        command: "getblockhash",
+                        field: "",
+                    })?,
             )),
             Err(BitcoindError::Server(jsonrpc::Error::Rpc(jsonrpc::error::RpcError {
                 code: -5,
@@ -821,23 +870,22 @@ impl BitcoinD {
         &self,
         block_hash: &bitcoin::BlockHash,
     ) -> Result<LSBlockRes, BitcoindError> {
-        Ok(self
-            .make_wallet_request(
-                "listsinceblock",
-                params!(
-                    Json::String(block_hash.to_string()),
-                    Json::Number(1.into()), // Default for min_confirmations for the returned
-                    Json::Bool(true),       // Whether to include watchonly
-                    Json::Bool(false), // Whether to include an array of txs that were removed in reorgs
-                    Json::Bool(true)   // Whether to include UTxOs treated as change.
-                ),
-            )?
-            .into())
+        self.make_wallet_request(
+            "listsinceblock",
+            params!(
+                Json::String(block_hash.to_string()),
+                Json::Number(1.into()), // Default for min_confirmations for the returned
+                Json::Bool(true),       // Whether to include watchonly
+                Json::Bool(false), // Whether to include an array of txs that were removed in reorgs
+                Json::Bool(true)   // Whether to include UTxOs treated as change.
+            ),
+        )?
+        .try_into()
     }
 
     pub fn get_transaction(&self, txid: &bitcoin::Txid) -> Result<Option<GetTxRes>, BitcoindError> {
         match self.make_wallet_request("gettransaction", params!(Json::String(txid.to_string()))) {
-            Ok(json) => Ok(Some(json.into())),
+            Ok(json) => Ok(Some(json.try_into()?)),
             Err(BitcoindError::Server(jsonrpc::Error::Rpc(jsonrpc::error::RpcError {
                 code: -5,
                 ..
@@ -886,7 +934,10 @@ impl BitcoinD {
             params!(Json::Number((list_since_height - 1).into())),
         ) {
             res.as_str()
-                .expect("'getblockhash' result isn't a string")
+                .ok_or(BitcoindError::MissingOrInvalidField {
+                    command: "getblockhash",
+                    field: "",
+                })?
                 .to_string()
         } else {
             // Possibly a race.
@@ -906,10 +957,12 @@ impl BitcoinD {
                 Json::Bool(true)   // Whether to include UTxOs treated as change.
             ),
         )?;
-        let transactions = lsb_res
-            .get("transactions")
-            .and_then(Json::as_array)
-            .expect("tx array must be there");
+        let transactions = lsb_res.get("transactions").and_then(Json::as_array).ok_or(
+            BitcoindError::MissingOrInvalidField {
+                command: "listsinceblock",
+                field: "transactions",
+            },
+        )?;
 
         // Get the spent txid to ignore the entries about this transaction
         let spent_txid = spent_outpoint.txid.to_string();
@@ -921,10 +974,12 @@ impl BitcoinD {
                 continue;
             }
 
-            let spending_txid = transaction
-                .get("txid")
-                .and_then(Json::as_str)
-                .expect("A valid txid must be present");
+            let spending_txid = transaction.get("txid").and_then(Json::as_str).ok_or(
+                BitcoindError::MissingOrInvalidField {
+                    command: "listsinceblock",
+                    field: "txid",
+                },
+            )?;
             if visited_txs.contains(&spending_txid) || spent_txid == spending_txid {
                 continue;
             } else {
@@ -942,34 +997,52 @@ impl BitcoinD {
             let vin = gettx_res
                 .get("decoded")
                 .and_then(|d| d.get("vin").and_then(Json::as_array))
-                .expect("A valid vin array must be present");
+                .ok_or(BitcoindError::MissingOrInvalidField {
+                    command: "gettransaction",
+                    field: "decoded or vin",
+                })?;
 
             for input in vin {
                 let txid = input
                     .get("txid")
                     .and_then(Json::as_str)
                     .and_then(|t| bitcoin::Txid::from_str(t).ok())
-                    .expect("A valid txid must be present");
-                let vout = input
-                    .get("vout")
-                    .and_then(Json::as_u64)
-                    .expect("A valid vout must be present") as u32;
+                    .ok_or(BitcoindError::MissingOrInvalidField {
+                        command: "gettransaction",
+                        field: "txid",
+                    })?;
+                let vout = input.get("vout").and_then(Json::as_u64).ok_or(
+                    BitcoindError::MissingOrInvalidField {
+                        command: "gettransaction",
+                        field: "vout",
+                    },
+                )? as u32;
                 let input_outpoint = bitcoin::OutPoint { txid, vout };
 
                 if spent_outpoint == &input_outpoint {
-                    let spending_txid =
-                        bitcoin::Txid::from_str(spending_txid).expect("Must be a valid txid");
+                    let spending_txid = bitcoin::Txid::from_str(spending_txid).map_err(|_| {
+                        BitcoindError::MissingOrInvalidField {
+                            command: "listsinceblock",
+                            field: "txid",
+                        }
+                    })?;
 
                     // If the spending transaction is unconfirmed, there may more than one of them.
                     // Make sure to not return one that RBF'd.
                     let confs = gettx_res
                         .get("confirmations")
                         .and_then(Json::as_i64)
-                        .expect("A valid number of confirmations must always be present.");
+                        .ok_or(BitcoindError::MissingOrInvalidField {
+                            command: "gettransaction",
+                            field: "confirmations",
+                        })?;
                     let conflicts = gettx_res
                         .get("walletconflicts")
                         .and_then(Json::as_array)
-                        .expect("A valid list of wallet conflicts must always be present.");
+                        .ok_or(BitcoindError::MissingOrInvalidField {
+                            command: "gettransaction",
+                            field: "walletconflicts",
+                        })?;
                     if confs == 0 && !conflicts.is_empty() && !self.is_in_mempool(&spending_txid)? {
                         log::debug!("Noticed '{}' as spending '{}', but is unconfirmed with conflicts and is not in mempool anymore. Discarding it.", &spending_txid, &spent_outpoint);
                         break;
@@ -997,33 +1070,41 @@ impl BitcoinD {
                 return Ok(None);
             }
         };
-        let confirmations = res
-            .get("confirmations")
-            .and_then(Json::as_i64)
-            .expect("Invalid confirmations in `getblockheader` response: not an i64")
-            as i32;
+        let confirmations = res.get("confirmations").and_then(Json::as_i64).ok_or(
+            BitcoindError::MissingOrInvalidField {
+                command: "getblockheader",
+                field: "confirmations",
+            },
+        )? as i32;
         let previous_blockhash = res
             .get("previousblockhash")
             .and_then(Json::as_str)
             .map(|s| {
-                bitcoin::BlockHash::from_str(s)
-                    .expect("Invalid previousblockhash in `getblockheader` response")
-            });
-        let height = res
-            .get("height")
-            .and_then(Json::as_i64)
-            .expect("Invalid height in `getblockheader` response: not an i64")
-            as i32;
-        let time = res
-            .get("time")
-            .and_then(Json::as_u64)
-            .expect("Invalid timestamp in `getblockheader` response: not an u64")
-            as u32;
-        let median_time_past = res
-            .get("mediantime")
-            .and_then(Json::as_u64)
-            .expect("Invalid median timestamp in `getblockheader` response: not an u64")
-            as u32;
+                bitcoin::BlockHash::from_str(s).map_err(|_| BitcoindError::MissingOrInvalidField {
+                    command: "getblockheader",
+                    field: "previousblockhash",
+                })
+            })
+            .transpose()?;
+        let height = res.get("height").and_then(Json::as_i64).ok_or(
+            BitcoindError::MissingOrInvalidField {
+                command: "getblockheader",
+                field: "height",
+            },
+        )? as i32;
+        let time =
+            res.get("time")
+                .and_then(Json::as_u64)
+                .ok_or(BitcoindError::MissingOrInvalidField {
+                    command: "getblockheader",
+                    field: "time",
+                })? as u32;
+        let median_time_past = res.get("mediantime").and_then(Json::as_u64).ok_or(
+            BitcoindError::MissingOrInvalidField {
+                command: "getblockheader",
+                field: "mediantime",
+            },
+        )? as u32;
         Ok(Some(BlockStats {
             confirmations,
             previous_blockhash,
@@ -1177,10 +1258,12 @@ impl BitcoinD {
             timestamp,
             self.chain_tip()?,
             |h| {
+                // FIXME: make block_before_date() return a Result and get rid of this expect.
                 self.get_block_hash(h)
                     .expect("We assume bitcoind connection never fails")
             },
             |h| {
+                // FIXME: make block_before_date() return a Result and get rid of this expect.
                 self.get_block_stats(h)
                     .expect("We assume bitcoind connection never fails")
             },
@@ -1199,7 +1282,7 @@ impl BitcoinD {
         txid: &bitcoin::Txid,
     ) -> Result<Option<MempoolEntry>, BitcoindError> {
         match self.make_node_request("getmempoolentry", params!(Json::String(txid.to_string()))) {
-            Ok(json) => Ok(Some(MempoolEntry::from(json))),
+            Ok(json) => Ok(Some(MempoolEntry::try_from(json)?)),
             Err(BitcoindError::Server(jsonrpc::Error::Rpc(jsonrpc::error::RpcError {
                 code: -5,
                 ..
@@ -1217,19 +1300,24 @@ impl BitcoinD {
             .iter()
             .map(|op| serde_json::json!({"txid": op.txid.to_string(), "vout": op.vout}))
             .collect();
-        Ok(self
-            .make_node_request("gettxspendingprevout", params!(prevouts))?
+        self.make_node_request("gettxspendingprevout", params!(prevouts))?
             .as_array()
-            .expect("Always returns an array")
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "gettxspendingprevout",
+                field: "Not an array",
+            })?
             .iter()
             .filter_map(|e| {
-                e.get("spendingtxid").map(|e| {
+                e.get("spendingtxid").map(|e| -> Result<_, BitcoindError> {
                     e.as_str()
                         .and_then(|s| bitcoin::Txid::from_str(s).ok())
-                        .expect("Must be a valid txid if present")
+                        .ok_or(BitcoindError::MissingOrInvalidField {
+                            command: "gettxspendingprevout",
+                            field: "spendingtxid",
+                        })
                 })
             })
-            .collect())
+            .collect::<Result<_, _>>()
     }
 
     /// Stop bitcoind.
@@ -1294,17 +1382,25 @@ pub struct LSBlockEntry {
     pub is_immature: bool,
 }
 
-impl From<&Json> for LSBlockEntry {
-    fn from(json: &Json) -> LSBlockEntry {
+impl TryFrom<&Json> for LSBlockEntry {
+    type Error = BitcoindError;
+
+    fn try_from(json: &Json) -> Result<LSBlockEntry, Self::Error> {
         let txid = json
             .get("txid")
             .and_then(Json::as_str)
             .and_then(|s| bitcoin::Txid::from_str(s).ok())
-            .expect("bitcoind can't give a bad block hash");
-        let vout = json
-            .get("vout")
-            .and_then(Json::as_u64)
-            .expect("bitcoind can't give a bad vout") as u32;
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "listsinceblock",
+                field: "txid",
+            })?;
+        let vout =
+            json.get("vout")
+                .and_then(Json::as_u64)
+                .ok_or(BitcoindError::MissingOrInvalidField {
+                    command: "listsinceblock",
+                    field: "vout",
+                })? as u32;
         let outpoint = bitcoin::OutPoint { txid, vout };
 
         // Must be a received entry, hence not negative.
@@ -1312,7 +1408,10 @@ impl From<&Json> for LSBlockEntry {
             .get("amount")
             .and_then(Json::as_f64)
             .and_then(|a| bitcoin::Amount::from_btc(a).ok())
-            .expect("bitcoind won't give us a bad amount");
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "listsinceblock",
+                field: "amount",
+            })?;
         let block_height = json
             .get("blockheight")
             .and_then(Json::as_i64)
@@ -1322,7 +1421,10 @@ impl From<&Json> for LSBlockEntry {
             .get("address")
             .and_then(Json::as_str)
             .and_then(|s| bitcoin::Address::from_str(s).ok())
-            .expect("bitcoind can't give a bad address");
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "listsinceblock",
+                field: "address",
+            })?;
         let parent_descs = json
             .get("parent_descs")
             .and_then(Json::as_array)
@@ -1335,22 +1437,26 @@ impl From<&Json> for LSBlockEntry {
                     })
                     .collect::<Option<Vec<_>>>()
             })
-            .expect("bitcoind can't give invalid descriptors");
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "listsinceblock",
+                field: "parent_descs",
+            })?;
 
-        let is_immature = json
-            .get("category")
-            .and_then(Json::as_str)
-            .expect("must be present")
-            == "immature";
+        let is_immature = json.get("category").and_then(Json::as_str).ok_or(
+            BitcoindError::MissingOrInvalidField {
+                command: "listsinceblock",
+                field: "category",
+            },
+        )? == "immature";
 
-        LSBlockEntry {
+        Ok(LSBlockEntry {
             outpoint,
             amount,
             block_height,
             address,
             parent_descs,
             is_immature,
-        }
+        })
     }
 }
 
@@ -1359,12 +1465,17 @@ pub struct LSBlockRes {
     pub received_coins: Vec<LSBlockEntry>,
 }
 
-impl From<Json> for LSBlockRes {
-    fn from(json: Json) -> LSBlockRes {
+impl TryFrom<Json> for LSBlockRes {
+    type Error = BitcoindError;
+
+    fn try_from(json: Json) -> Result<LSBlockRes, Self::Error> {
         let received_coins = json
             .get("transactions")
             .and_then(Json::as_array)
-            .expect("Array must be present")
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "listsinceblock",
+                field: "transactions",
+            })?
             .iter()
             .filter_map(|j| {
                 // From 'listunspent' help:
@@ -1373,20 +1484,25 @@ impl From<Json> for LSBlockRes {
                 //   "generate"              Coinbase transactions received with more than 100 confirmations.
                 //   "immature"              Coinbase transactions received with 100 or fewer confirmations.
                 //   "orphan"                Orphaned coinbase transactions received.
-                let category = j
-                    .get("category")
-                    .and_then(Json::as_str)
-                    .expect("must be present");
+                let category = j.get("category").and_then(Json::as_str).ok_or(
+                    BitcoindError::MissingOrInvalidField {
+                        command: "listsinceblock",
+                        field: "category",
+                    },
+                );
+                let category = match category {
+                    Ok(c) => c,
+                    Err(e) => return Some(Err(e)),
+                };
                 if ["receive", "generate", "immature"].contains(&category) {
-                    let lsb_entry: LSBlockEntry = j.into();
-                    Some(lsb_entry)
+                    Some(j.try_into())
                 } else {
                     None
                 }
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
 
-        LSBlockRes { received_coins }
+        Ok(LSBlockRes { received_coins })
     }
 }
 
@@ -1399,11 +1515,14 @@ pub struct GetTxRes {
     pub confirmations: i32,
 }
 
-impl From<Json> for GetTxRes {
-    fn from(json: Json) -> GetTxRes {
-        let block_hash = json.get("blockhash").and_then(Json::as_str).map(|s| {
-            bitcoin::BlockHash::from_str(s).expect("Invalid blockhash in `gettransaction` response")
-        });
+impl TryFrom<Json> for GetTxRes {
+    type Error = BitcoindError;
+
+    fn try_from(json: Json) -> Result<GetTxRes, Self::Error> {
+        let block_hash = json
+            .get("blockhash")
+            .and_then(Json::as_str)
+            .and_then(|s| bitcoin::BlockHash::from_str(s).ok());
         let block_height = json
             .get("blockheight")
             .and_then(Json::as_i64)
@@ -1415,41 +1534,47 @@ impl From<Json> for GetTxRes {
         let conflicting_txs = json
             .get("walletconflicts")
             .and_then(Json::as_array)
-            .map(|array| {
+            .and_then(|array| {
                 array
                     .iter()
-                    .map(|v| {
-                        bitcoin::Txid::from_str(v.as_str().expect("wrong json format")).unwrap()
-                    })
-                    .collect()
-            });
+                    .map(|v| v.as_str().and_then(|s| bitcoin::Txid::from_str(s).ok()))
+                    .collect::<Option<_>>()
+            })
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "gettransaction",
+                field: "walletconflicts",
+            })?;
         let block = match (block_hash, block_height, block_time) {
             (Some(hash), Some(height), Some(time)) => Some(Block { hash, time, height }),
             _ => None,
         };
-        let hex = json
+        let tx = json
             .get("hex")
             .and_then(Json::as_str)
-            .expect("Must be present in bitcoind response");
-        let bytes = Vec::from_hex(hex).expect("bitcoind returned a wrong transaction format");
-        let tx: bitcoin::Transaction = bitcoin::consensus::encode::deserialize(&bytes)
-            .expect("bitcoind returned a wrong transaction format");
+            .and_then(|hex| Vec::from_hex(hex).ok())
+            .and_then(|bytes| bitcoin::consensus::encode::deserialize(&bytes).ok())
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "gettransaction",
+                field: "hex",
+            })?;
         let is_coinbase = json
             .get("generated")
             .and_then(Json::as_bool)
             .unwrap_or(false);
-        let confirmations = json
-            .get("confirmations")
-            .and_then(Json::as_i64)
-            .expect("Must be present in the response") as i32;
+        let confirmations = json.get("confirmations").and_then(Json::as_i64).ok_or(
+            BitcoindError::MissingOrInvalidField {
+                command: "gettransaction",
+                field: "confirmations",
+            },
+        )? as i32;
 
-        GetTxRes {
-            conflicting_txs: conflicting_txs.unwrap_or_default(),
+        Ok(GetTxRes {
+            conflicting_txs,
             block,
             tx,
             is_coinbase,
             confirmations,
-        }
+        })
     }
 }
 
@@ -1501,19 +1626,26 @@ pub struct MempoolEntry {
     pub fees: MempoolEntryFees,
 }
 
-impl From<Json> for MempoolEntry {
-    fn from(json: Json) -> MempoolEntry {
-        let vsize = json
-            .get("vsize")
-            .and_then(Json::as_u64)
-            .expect("Must be present in bitcoind response");
+impl TryFrom<Json> for MempoolEntry {
+    type Error = BitcoindError;
+
+    fn try_from(json: Json) -> Result<MempoolEntry, Self::Error> {
+        let vsize = json.get("vsize").and_then(Json::as_u64).ok_or(
+            BitcoindError::MissingOrInvalidField {
+                command: "getmempoolentry",
+                field: "vsize",
+            },
+        )?;
         let fees = json
             .get("fees")
             .as_ref()
-            .expect("Must be present in bitcoind response")
-            .into();
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "getmempoolentry",
+                field: "fees",
+            })?
+            .try_into()?;
 
-        MempoolEntry { vsize, fees }
+        Ok(MempoolEntry { vsize, fees })
     }
 }
 
@@ -1523,19 +1655,32 @@ pub struct MempoolEntryFees {
     pub descendant: bitcoin::Amount,
 }
 
-impl From<&&Json> for MempoolEntryFees {
-    fn from(json: &&Json) -> MempoolEntryFees {
-        let json = json.as_object().expect("fees must be an object");
+impl TryFrom<&&Json> for MempoolEntryFees {
+    type Error = BitcoindError;
+
+    fn try_from(json: &&Json) -> Result<MempoolEntryFees, Self::Error> {
+        let json = json
+            .as_object()
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "getmempoolentry",
+                field: "fees",
+            })?;
         let base = json
             .get("base")
             .and_then(Json::as_f64)
             .and_then(|a| bitcoin::Amount::from_btc(a).ok())
-            .expect("Must be present and a valid amount");
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "getmempoolentry",
+                field: "base",
+            })?;
         let descendant = json
             .get("descendant")
             .and_then(Json::as_f64)
             .and_then(|a| bitcoin::Amount::from_btc(a).ok())
-            .expect("Must be present and a valid amount");
-        MempoolEntryFees { base, descendant }
+            .ok_or(BitcoindError::MissingOrInvalidField {
+                command: "getmempoolentry",
+                field: "descendant",
+            })?;
+        Ok(MempoolEntryFees { base, descendant })
     }
 }
