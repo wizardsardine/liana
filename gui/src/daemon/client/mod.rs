@@ -102,14 +102,11 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         is_cancel: bool,
         feerate_vb: Option<u64>,
     ) -> Result<CreateSpendResult, DaemonError> {
-        self.call(
-            "rbfpsbt",
-            Some(vec![
-                json!(txid.to_string()),
-                json!(is_cancel.to_string()),
-                json!(feerate_vb),
-            ]),
-        )
+        let mut input = vec![json!(txid.to_string()), json!(is_cancel)];
+        if let Some(feerate_vb) = feerate_vb {
+            input.push(json!(feerate_vb));
+        }
+        self.call("rbfpsbt", Some(input))
     }
 
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
