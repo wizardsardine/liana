@@ -455,7 +455,7 @@ impl Action for SignAction {
                         self.error = None;
                         self.signed.insert(fingerprint);
                         let daemon = daemon.clone();
-                        tx.psbt = psbt.clone();
+                        merge_signatures(&mut tx.psbt, &psbt);
                         if self.is_saved {
                             return Command::perform(
                                 async move { daemon.update_spend_tx(&psbt).map_err(|e| e.into()) },
@@ -527,6 +527,22 @@ impl Action for SignAction {
         } else {
             content
         }
+    }
+}
+
+fn merge_signatures(psbt: &mut Psbt, signed_psbt: &Psbt) {
+    for i in 0..signed_psbt.inputs.len() {
+        let psbtin = match psbt.inputs.get_mut(i) {
+            Some(psbtin) => psbtin,
+            None => continue,
+        };
+        let signed_psbtin = match signed_psbt.inputs.get(i) {
+            Some(signed_psbtin) => signed_psbtin,
+            None => continue,
+        };
+        psbtin
+            .partial_sigs
+            .extend(&mut signed_psbtin.partial_sigs.iter());
     }
 }
 
