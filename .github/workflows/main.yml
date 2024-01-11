@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@v1
       - uses: actions-rs/toolchain@v1
         with:
-            toolchain: 1.65.0
+            toolchain: 1.75.0
             components: rustfmt, clippy
             override: true
       - name: rustfmt
@@ -68,7 +68,7 @@ jobs:
     strategy:
       matrix:
         toolchain:
-          - 1.65
+          - 1.65.0
           - nightly
         os:
           - ubuntu-latest
