@@ -18,7 +18,6 @@ async-hwi = { git = "https://github.com/wizardsardine/async-hwi", branch = "mast
 liana = { git = "https://github.com/wizardsardine/liana", branch = "master", default-features = false, features = ["nonblocking_shutdown"] }
 liana_ui = { path = "ui" }
 backtrace = "0.3"
-base64 = "0.13"
 hex = "0.4.3"
 
 iced = { version = "0.9", default-features= false, features = ["tokio", "glow", "svg", "qr_code", "image"] }

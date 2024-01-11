@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use iced::Subscription;
@@ -654,8 +655,7 @@ impl Action for UpdateAction {
                     Ok(()) => {
                         self.success = true;
                         self.error = None;
-                        let psbt = Psbt::deserialize(&base64::decode(&self.updated.value).unwrap())
-                            .expect("Already checked");
+                        let psbt = Psbt::from_str(&self.updated.value).expect("Already checked");
                         for (i, input) in tx.psbt.inputs.iter_mut().enumerate() {
                             if tx
                                 .psbt
@@ -688,10 +688,7 @@ impl Action for UpdateAction {
             }
             Message::View(view::Message::ImportSpend(view::ImportSpendMessage::PsbtEdited(s))) => {
                 self.updated.value = s;
-                if let Some(psbt) = base64::decode(&self.updated.value)
-                    .ok()
-                    .and_then(|bytes| Psbt::deserialize(&bytes).ok())
-                {
+                if let Ok(psbt) = Psbt::from_str(&self.updated.value) {
                     self.updated.valid = tx.psbt.unsigned_tx.txid() == psbt.unsigned_tx.txid();
                 }
             }
@@ -699,10 +696,7 @@ impl Action for UpdateAction {
                 if self.updated.valid {
                     self.processing = true;
                     self.error = None;
-                    let updated = Psbt::deserialize(
-                        &base64::decode(&self.updated.value).expect("Already checked"),
-                    )
-                    .unwrap();
+                    let updated = Psbt::from_str(&self.updated.value).expect("Already checked");
                     return Command::perform(
                         async move { daemon.update_spend_tx(&updated).map_err(|e| e.into()) },
                         Message::Updated,

@@ -282,9 +282,9 @@ checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
 
 [[package]]
 name = "base64"
-version = "0.21.0"
+version = "0.21.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4a4ddaa51a5bc52a6948f74c06d20aaaddb71924eab79b8c97a8c556e942d6a"
+checksum = "c79fed4cdb43e993fcdadc7e58a09fd0e3e649c4436fa11da71c9f1f3ee7feb9"
 
 [[package]]
 name = "base64-compat"
@@ -2642,7 +2642,6 @@ version = "4.0.0"
 dependencies = [
  "async-hwi",
  "backtrace",
- "base64 0.13.1",
  "bitcoin_hashes 0.12.0",
  "chrono",
  "dirs 3.0.2",
@@ -3932,7 +3931,7 @@ version = "0.11.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e9ad3fe7488d7e34558a2033d45a0c90b72d97b4f80705666fea71472e2e6a1"
 dependencies = [
- "base64 0.21.0",
+ "base64 0.21.6",
  "bytes",
  "encoding_rs",
  "futures-core",
@@ -4118,7 +4117,7 @@ version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d3987094b1d07b653b7dfdc3f70ce9a1da9c51ac18c1b06b662e4f9a0e9f4b2"
 dependencies = [
- "base64 0.21.0",
+ "base64 0.21.6",
 ]
 
 [[package]]
@@ -5056,7 +5055,7 @@ version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b6bb4e62619d9f68aa2d8a823fea2bff302340a1f2d45c264d5b0be170832e"
 dependencies = [
- "base64 0.21.0",
+ "base64 0.21.6",
  "data-url",
  "flate2",
  "imagesize",
