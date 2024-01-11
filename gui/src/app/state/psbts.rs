@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
 use iced::{Command, Subscription};
@@ -190,19 +191,13 @@ impl ImportPsbtModal {
             }
             Message::View(view::Message::ImportSpend(view::ImportSpendMessage::PsbtEdited(s))) => {
                 self.imported.value = s;
-                self.imported.valid = base64::decode(&self.imported.value)
-                    .ok()
-                    .and_then(|bytes| Psbt::deserialize(&bytes).ok())
-                    .is_some();
+                self.imported.valid = Psbt::from_str(&self.imported.value).ok().is_some();
             }
             Message::View(view::Message::ImportSpend(view::ImportSpendMessage::Confirm)) => {
                 if self.imported.valid {
                     self.processing = true;
                     self.error = None;
-                    let imported = Psbt::deserialize(
-                        &base64::decode(&self.imported.value).expect("Already checked"),
-                    )
-                    .unwrap();
+                    let imported = Psbt::from_str(&self.imported.value).expect("Already checked");
                     return Command::perform(
                         async move { daemon.update_spend_tx(&imported).map_err(|e| e.into()) },
                         Message::Updated,
