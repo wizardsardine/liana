@@ -9,7 +9,7 @@ use crate::{
     bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry},
     descriptors,
 };
-pub use d::{MempoolEntry, MempoolEntryFees, SyncProgress};
+pub use d::{MempoolEntry, SyncProgress};
 
 use std::{fmt, sync};
 

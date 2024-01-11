@@ -72,7 +72,7 @@ fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorPubli
 }
 
 struct DescKeyChecker {
-    keys_set: HashSet<(bip32::ExtendedPubKey, descriptor::DerivPaths)>,
+    keys_set: HashSet<(bip32::Xpub, descriptor::DerivPaths)>,
 }
 
 impl DescKeyChecker {
@@ -109,7 +109,7 @@ impl DescKeyChecker {
             // without origin entirely.
             if let Some(ref origin) = xpub.origin {
                 let der_paths = xpub.derivation_paths.paths();
-                let first_der_path = der_paths.get(0).expect("Cannot be empty");
+                let first_der_path = der_paths.first().expect("Cannot be empty");
                 // We also rule out xpubs with hardened derivation steps (non-normalized xpubs).
                 let valid = xpub.wildcard == descriptor::Wildcard::Unhardened
                     && der_paths.len() == 2
@@ -347,7 +347,9 @@ impl PathInfo {
             PathInfo::Single(key) => ConcretePolicy::Key(key),
             PathInfo::Multi(thresh, keys) => ConcretePolicy::Threshold(
                 thresh,
-                keys.into_iter().map(ConcretePolicy::Key).collect(),
+                keys.into_iter()
+                    .map(|key| ConcretePolicy::Key(key).into())
+                    .collect(),
             ),
         }
     }
@@ -531,9 +533,9 @@ impl LianaPolicy {
                 .fold(primary_keys, |tl_policy, (timelock, path_info)| {
                     let timelock = ConcretePolicy::Older(Sequence::from_height(timelock));
                     let keys = path_info.into_ms_policy();
-                    let recovery_branch = ConcretePolicy::And(vec![keys, timelock]);
+                    let recovery_branch = ConcretePolicy::And(vec![keys.into(), timelock.into()]);
                     // We assume the larger the timelock the less likely a branch would be used.
-                    ConcretePolicy::Or(vec![(99, tl_policy), (1, recovery_branch)])
+                    ConcretePolicy::Or(vec![(99, tl_policy.into()), (1, recovery_branch.into())])
                 });
 
         tl_policy

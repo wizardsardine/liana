@@ -39,7 +39,7 @@ use miniscript::bitcoin::{
     self, bip32,
     consensus::encode,
     hashes::{sha256, Hash},
-    psbt::PartiallySignedTransaction as Psbt,
+    psbt::Psbt,
     secp256k1,
 };
 
@@ -973,7 +973,7 @@ CREATE TABLE spend_transactions (
             };
             conn.new_unspent_coins(&[coin_a]);
             // We can query by status and/or outpoint.
-            assert!(vec![
+            assert!([
                 conn.coins(&[], &[]),
                 conn.coins(&[CoinStatus::Unconfirmed], &[]),
                 conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_a]),
@@ -1022,7 +1022,7 @@ CREATE TABLE spend_transactions (
             };
             conn.new_unspent_coins(&[coin_b]);
             // Both coins are unconfirmed.
-            assert!(vec![
+            assert!([
                 conn.coins(&[], &[]),
                 conn.coins(&[CoinStatus::Unconfirmed], &[]),
                 conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_a, outpoint_b]),
@@ -1034,7 +1034,7 @@ CREATE TABLE spend_transactions (
                 && c[0].outpoint == coin_a.outpoint
                 && c[1].outpoint == coin_b.outpoint));
             // We can filter for just the first coin.
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_a]),
                 conn.coins(&[], &[outpoint_a]),
                 conn.db_coins(&[outpoint_a])
@@ -1042,7 +1042,7 @@ CREATE TABLE spend_transactions (
             .iter()
             .all(|res| res.len() == 1 && res[0].outpoint == coin_a.outpoint));
             // Or we can filter for just the second coin.
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_b]),
                 conn.coins(&[], &[outpoint_b]),
                 conn.db_coins(&[outpoint_b])
@@ -1062,7 +1062,7 @@ CREATE TABLE spend_transactions (
                 .is_empty());
             // Now if we confirm one, it'll be marked as such.
             conn.confirm_coins(&[(coin_a.outpoint, 174500, 174500)]);
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Confirmed], &[]),
                 conn.coins(&[CoinStatus::Confirmed], &[outpoint_a]),
                 conn.coins(&[], &[outpoint_a]),
@@ -1071,7 +1071,7 @@ CREATE TABLE spend_transactions (
             .iter()
             .all(|res| res.len() == 1 && res[0].outpoint == coin_a.outpoint));
             // We can get both confirmed and unconfirmed.
-            assert!(vec![
+            assert!([
                 conn.coins(&[], &[]),
                 conn.coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[]),
                 conn.coins(
@@ -1091,7 +1091,7 @@ CREATE TABLE spend_transactions (
                 coin_a.outpoint,
                 bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
             )]);
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Spending], &[]),
                 conn.coins(&[CoinStatus::Spending], &[outpoint_a]),
                 conn.coins(&[], &[outpoint_a]),
@@ -1101,7 +1101,7 @@ CREATE TABLE spend_transactions (
             .iter()
             .all(|res| res.len() == 1 && res[0].outpoint == coin_a.outpoint));
             // The second coin is still unconfirmed.
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Unconfirmed], &[]),
                 conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_b]),
                 conn.coins(&[], &[outpoint_b]),
@@ -1118,7 +1118,7 @@ CREATE TABLE spend_transactions (
                 3_000_000,
             )]);
             // The coin no longer has spending status.
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Spending], &[]),
                 conn.coins(&[CoinStatus::Spending], &[outpoint_a]),
                 conn.list_spending_coins(),
@@ -1127,7 +1127,7 @@ CREATE TABLE spend_transactions (
             .all(|res| res.is_empty()));
 
             // Both coins are still in DB.
-            assert!(vec![
+            assert!([
                 conn.coins(&[], &[]),
                 conn.coins(&[CoinStatus::Unconfirmed, CoinStatus::Spent], &[]),
                 conn.coins(
@@ -1174,7 +1174,7 @@ CREATE TABLE spend_transactions (
             conn.new_unspent_coins(&[coin_c, coin_d]);
 
             // We can get all three unconfirmed coins with different status/outpoint filters.
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Unconfirmed], &[]),
                 conn.coins(
                     &[CoinStatus::Unconfirmed],
@@ -1190,7 +1190,7 @@ CREATE TABLE spend_transactions (
                 && coin[2].outpoint == coin_d.outpoint));
 
             // We can also get two of the three unconfirmed coins by filtering for their outpoints.
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_b, outpoint_c]),
                 conn.coins(&[], &[outpoint_b, outpoint_c]),
                 conn.db_coins(&[outpoint_b, outpoint_c]),
@@ -1206,7 +1206,7 @@ CREATE TABLE spend_transactions (
                 bitcoin::Txid::from_slice(&[1; 32][..]).unwrap(),
             )]);
             // The coin shows as spending.
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Spending], &[]),
                 conn.coins(&[CoinStatus::Spending], &[outpoint_b]),
                 conn.coins(&[], &[outpoint_b]),
@@ -1220,7 +1220,7 @@ CREATE TABLE spend_transactions (
             conn.confirm_coins(&[(coin_c.outpoint, 175500, 175500)]);
 
             // We now only have one unconfirmed coin.
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Unconfirmed], &[]),
                 conn.coins(
                     &[CoinStatus::Unconfirmed],
@@ -1233,7 +1233,7 @@ CREATE TABLE spend_transactions (
             .all(|c| c.len() == 1 && c[0].outpoint == coin_d.outpoint));
 
             // There is now one coin for each status.
-            assert!(vec![
+            assert!([
                 conn.coins(&[CoinStatus::Unconfirmed], &[]),
                 conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_d]),
                 conn.coins(&[CoinStatus::Confirmed], &[]),

@@ -23,7 +23,7 @@ pub const DUST_OUTPUT_SATS: u64 = 5_000;
 pub const LONG_TERM_FEERATE_VB: f32 = 10.0;
 
 /// Assume that paying more than 1BTC in fee is a bug.
-pub const MAX_FEE: u64 = bitcoin::blockdata::constants::COIN_VALUE;
+pub const MAX_FEE: bitcoin::Amount = bitcoin::Amount::ONE_BTC;
 
 /// Assume that paying more than 1000sat/vb in feerate is a bug.
 pub const MAX_FEERATE: u64 = 1_000;
@@ -53,7 +53,7 @@ impl fmt::Display for SpendCreationError {
             Self::InvalidOutputValue(amount) => write!(f, "Invalid output value '{}'.", amount),
             Self::InsaneFees(info) => write!(
                 f,
-                "We assume transactions with a fee larger than {} sats or a feerate larger than {} sats/vb are a mistake. \
+                "We assume transactions with a fee larger than {} or a feerate larger than {} sats/vb are a mistake. \
                 The created transaction {}.",
                 MAX_FEE,
                 MAX_FEERATE,
@@ -81,10 +81,7 @@ impl std::error::Error for SpendCreationError {}
 
 // Sanity check the value of a transaction output.
 fn check_output_value(value: bitcoin::Amount) -> Result<(), SpendCreationError> {
-    // NOTE: the network parameter isn't used upstream
-    if value.to_sat() > bitcoin::blockdata::constants::MAX_MONEY
-        || value.to_sat() < DUST_OUTPUT_SATS
-    {
+    if value > bitcoin::Amount::MAX_MONEY || value.to_sat() < DUST_OUTPUT_SATS {
         Err(SpendCreationError::InvalidOutputValue(value))
     } else {
         Ok(())
@@ -118,15 +115,16 @@ fn sanity_check_psbt(
             .witness_utxo
             .as_ref()
             .ok_or_else(|| SpendCreationError::SanityCheckFailure(psbt.clone()))?
-            .value;
+            .value
+            .to_sat();
     }
 
     // Compute the output value and check the absolute fee isn't insane.
-    let value_out: u64 = tx.output.iter().map(|o| o.value).sum();
+    let value_out: u64 = tx.output.iter().map(|o| o.value.to_sat()).sum();
     let abs_fee = value_in
         .checked_sub(value_out)
         .ok_or(SpendCreationError::InsaneFees(InsaneFeeInfo::NegativeFee))?;
-    if abs_fee > MAX_FEE {
+    if abs_fee > MAX_FEE.to_sat() {
         return Err(SpendCreationError::InsaneFees(InsaneFeeInfo::TooHighFee(
             abs_fee,
         )));
@@ -147,7 +145,7 @@ fn sanity_check_psbt(
 
     // Check for dust outputs
     for txo in psbt.unsigned_tx.output.iter() {
-        if txo.value < txo.script_pubkey.dust_value().to_sat() {
+        if txo.value < txo.script_pubkey.dust_value() {
             return Err(SpendCreationError::SanityCheckFailure(psbt.clone()));
         }
     }
@@ -257,16 +255,25 @@ fn select_coins_for_spend(
     max_sat_weight: u32,
     must_have_change: bool,
 ) -> Result<(Vec<CandidateCoin>, bitcoin::Amount), InsufficientFunds> {
-    let out_value_nochange = base_tx.output.iter().map(|o| o.value).sum();
+    let out_value_nochange = base_tx.output.iter().map(|o| o.value.to_sat()).sum();
 
     // Create the coin selector from the given candidates. NOTE: the coin selector keeps track
     // of the original ordering of candidates so we can select any mandatory candidates using their
     // original indices.
-    let base_weight: u32 = base_tx
+    let mut base_weight: u32 = base_tx
         .weight()
         .to_wu()
         .try_into()
         .expect("Transaction weight must fit in u32");
+    // Starting with version 0.31, rust-bitcoin now accounts for the segwit marker when serializing
+    // transactions with no input. But BDK's coin selector does add the segwit marker cost to the
+    // transaction size upon selecting the first segwit coin. To avoid accounting twice for it,
+    // drop it from the base weight (but only when it was added).
+    // NOTE: make sure to reconsider this when updating rust-bitcoin!! Behaviour may change again
+    // who knows.
+    if base_tx.input.is_empty() {
+        base_weight = base_weight.saturating_sub(2);
+    }
     let max_input_weight = TXIN_BASE_WEIGHT + max_sat_weight;
     let candidates: Vec<Candidate> = candidate_coins
         .iter()
@@ -293,12 +300,15 @@ fn select_coins_for_spend(
     let long_term_feerate = FeeRate::from_sat_per_vb(LONG_TERM_FEERATE_VB);
     let drain_weights = DrainWeights {
         output_weight: {
+            // We don't reuse the above base_weight.since 2 WU may have been substracted from it.
+            // See comment above for details.
+            let nochange_weight = base_tx.weight().to_wu();
             let mut tx_with_change = base_tx;
             tx_with_change.output.push(change_txo);
             tx_with_change
                 .weight()
                 .to_wu()
-                .checked_sub(base_weight.into())
+                .checked_sub(nochange_weight)
                 .expect("base_weight can't be larger")
                 .try_into()
                 .expect("tx size must always fit in u32")
@@ -481,7 +491,7 @@ pub fn create_spend(
 
     // Create transaction with no inputs and no outputs.
     let mut tx = bitcoin::Transaction {
-        version: 2,
+        version: bitcoin::transaction::Version::TWO,
         lock_time: LockTime::Blocks(Height::ZERO), // TODO: randomized anti fee sniping
         input: Vec::with_capacity(candidate_coins.iter().filter(|c| c.must_select).count()),
         output: Vec::with_capacity(destinations.len()),
@@ -493,7 +503,7 @@ pub fn create_spend(
         check_output_value(*amount)?;
 
         tx.output.push(bitcoin::TxOut {
-            value: amount.to_sat(),
+            value: *amount,
             script_pubkey: address.addr.script_pubkey(),
         });
         // If it's an address of ours, signal it as change to signing devices by adding the
@@ -520,7 +530,7 @@ pub fn create_spend(
     // We need to get the size of a potential change output to select coins / determine whether
     // we should include one, so get the change address and create a dummy txo for this purpose.
     let mut change_txo = bitcoin::TxOut {
-        value: std::u64::MAX,
+        value: bitcoin::Amount::MAX,
         script_pubkey: change_addr.addr.script_pubkey(),
     };
     // Now select the coins necessary using the provided candidates and determine whether
@@ -537,8 +547,7 @@ pub fn create_spend(
             })?;
             fr
         }
-        .try_into()
-        .expect("u16 must fit in f32");
+        .into();
         let max_sat_wu = main_descriptor
             .max_sat_weight()
             .try_into()
@@ -575,7 +584,7 @@ pub fn create_spend(
         };
 
         // TODO: shuffle once we have Taproot
-        change_txo.value = change_amount.to_sat();
+        change_txo.value = change_amount;
         tx.output.push(change_txo);
         psbt_outs.push(PsbtOut {
             bip32_derivation,
@@ -600,7 +609,7 @@ pub fn create_spend(
         let coin_desc = derived_desc(secp, main_descriptor, cand);
         let witness_script = Some(coin_desc.witness_script());
         let witness_utxo = Some(bitcoin::TxOut {
-            value: cand.amount.to_sat(),
+            value: cand.amount,
             script_pubkey: coin_desc.script_pubkey(),
         });
         let non_witness_utxo = tx_getter.get_tx(&cand.outpoint.txid);

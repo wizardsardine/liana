@@ -58,7 +58,7 @@ pub const MNEMONICS_FOLDER_NAME: &str = "mnemonics";
 /// A signer that keeps the key on the laptop. Based on BIP39.
 pub struct HotSigner {
     mnemonic: bip39::Mnemonic,
-    master_xpriv: bip32::ExtendedPrivKey,
+    master_xpriv: bip32::Xpriv,
 }
 
 // TODO: instead of copying them here we could have a util module with those helpers.
@@ -103,8 +103,8 @@ impl HotSigner {
         network: bitcoin::Network,
         mnemonic: bip39::Mnemonic,
     ) -> Result<Self, SignerError> {
-        let master_xpriv = bip32::ExtendedPrivKey::new_master(network, &mnemonic.to_seed(""))
-            .map_err(SignerError::Bip32)?;
+        let master_xpriv =
+            bip32::Xpriv::new_master(network, &mnemonic.to_seed("")).map_err(SignerError::Bip32)?;
         Ok(Self {
             mnemonic,
             master_xpriv,
@@ -212,7 +212,7 @@ impl HotSigner {
         &self,
         der_path: &bip32::DerivationPath,
         secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
-    ) -> bip32::ExtendedPrivKey {
+    ) -> bip32::Xpriv {
         self.master_xpriv
             .derive_priv(secp, der_path)
             .expect("Never fails")
@@ -223,9 +223,9 @@ impl HotSigner {
         &self,
         der_path: &bip32::DerivationPath,
         secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
-    ) -> bip32::ExtendedPubKey {
+    ) -> bip32::Xpub {
         let xpriv = self.xpriv_at(der_path, secp);
-        bip32::ExtendedPubKey::from_priv(secp, &xpriv)
+        bip32::Xpub::from_priv(secp, &xpriv)
     }
 
     /// Sign all inputs of the given PSBT.
@@ -254,9 +254,9 @@ impl HotSigner {
                 .value;
             let sig_type = sighash::EcdsaSighashType::All;
             let sighash = sighash_cache
-                .segwit_signature_hash(i, witscript, value, sig_type)
+                .p2wsh_signature_hash(i, witscript, value, sig_type)
                 .map_err(|_| SignerError::InsanePsbt)?;
-            let sighash = secp256k1::Message::from_slice(sighash.as_byte_array())
+            let sighash = secp256k1::Message::from_digest_slice(sighash.as_byte_array())
                 .expect("Sighash is always 32 bytes.");
 
             // Then provide a signature for all the keys they asked for.
@@ -297,7 +297,7 @@ mod tests {
     use super::*;
     use crate::{descriptors, testutils::*};
     use miniscript::{
-        bitcoin::{locktime::absolute, psbt::Input as PsbtIn},
+        bitcoin::{locktime::absolute, psbt::Input as PsbtIn, Amount},
         descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
     };
     use std::collections::{BTreeMap, HashSet};
@@ -429,7 +429,7 @@ mod tests {
         let spent_coin_desc = desc.receive_descriptor().derive(42.into(), &secp);
         let mut dummy_psbt = Psbt {
             unsigned_tx: bitcoin::Transaction {
-                version: 2,
+                version: bitcoin::transaction::Version::TWO,
                 lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
                 input: vec![bitcoin::TxIn {
                     sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
@@ -440,12 +440,12 @@ mod tests {
                     ..bitcoin::TxIn::default()
                 }],
                 output: vec![bitcoin::TxOut {
-                    value: 18_420,
+                    value: Amount::from_sat(18_420),
                     script_pubkey: bitcoin::Address::from_str(
                         "bc1qvklensptw5lk7d470ds60pcpsr0psdpgyvwepv",
                     )
                     .unwrap()
-                    .payload
+                    .payload()
                     .script_pubkey(),
                 }],
             },
@@ -457,7 +457,7 @@ mod tests {
                 witness_script: Some(spent_coin_desc.witness_script()),
                 bip32_derivation: spent_coin_desc.bip32_derivations(),
                 witness_utxo: Some(bitcoin::TxOut {
-                    value: 19_000,
+                    value: Amount::from_sat(19_000),
                     script_pubkey: spent_coin_desc.script_pubkey(),
                 }),
                 ..PsbtIn::default()
@@ -479,10 +479,7 @@ mod tests {
         // We can add another external output to the transaction, we can still sign without issue.
         // The output can be insane, we don't check it. It doesn't even need an accompanying PSBT
         // output.
-        dummy_psbt
-            .unsigned_tx
-            .output
-            .push(bitcoin::TxOut::default());
+        dummy_psbt.unsigned_tx.output.push(bitcoin::TxOut::NULL);
         let psbt = dummy_psbt.clone();
         assert!(psbt.inputs[0].partial_sigs.is_empty());
         let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
@@ -499,7 +496,7 @@ mod tests {
             witness_script: Some(other_spent_coin_desc.witness_script()),
             bip32_derivation: other_spent_coin_desc.bip32_derivations(),
             witness_utxo: Some(bitcoin::TxOut {
-                value: 19_000,
+                value: Amount::from_sat(19_000),
                 script_pubkey: other_spent_coin_desc.script_pubkey(),
             }),
             ..PsbtIn::default()

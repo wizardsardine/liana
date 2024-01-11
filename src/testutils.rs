@@ -13,9 +13,7 @@ use std::{
 };
 
 use miniscript::{
-    bitcoin::{
-        self, bip32, psbt::PartiallySignedTransaction as Psbt, secp256k1, Transaction, Txid,
-    },
+    bitcoin::{self, bip32, psbt::Psbt, secp256k1, Transaction, Txid},
     descriptor,
 };
 

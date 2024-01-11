@@ -66,7 +66,7 @@ query).
 
 ## Minimum Supported Rust Version
 
-`lianad` should always compile and pass tests using **Rust 1.54**. The rationale behind this is
+`lianad` should always compile and pass tests using **Rust 1.63**. The rationale behind this is
 support something reasonable, and preferably supported by all of:
 - [Guix](https://guix.gnu.org/)
 - Popular distributions' packages (especially Debian which is the most conservative)

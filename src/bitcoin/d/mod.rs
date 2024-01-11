@@ -220,11 +220,12 @@ pub struct BitcoinD {
 
 macro_rules! params {
     ($($param:expr),* $(,)?) => {
-        [
+        // FIXME: is there a way to avoid the allocation of an unnecessary Box?
+        Some(&*arg(Json::Array(vec![
             $(
-                arg($param),
+                $param,
             )*
-        ]
+        ])))
     };
 }
 
@@ -319,7 +320,7 @@ impl BitcoinD {
     }
 
     fn check_client(&self, client: &Client) -> Result<(), BitcoindError> {
-        if let Err(e) = self.make_request(client, "echo", &[]) {
+        if let Err(e) = self.make_request(client, "echo", None) {
             if e.is_warming_up() {
                 log::info!("bitcoind is warming up. Retrying connection sanity check in 1 second.");
                 thread::sleep(Duration::from_secs(1));
@@ -395,7 +396,7 @@ impl BitcoinD {
         &self,
         client: &Client,
         method: &str,
-        params: &[Box<serde_json::value::RawValue>],
+        params: Option<&serde_json::value::RawValue>,
         retry: bool,
     ) -> Result<Json, BitcoindError> {
         let req = client.build_request(method, params);
@@ -410,7 +411,7 @@ impl BitcoinD {
         &self,
         client: &Client,
         method: &str,
-        params: &[Box<serde_json::value::RawValue>],
+        params: Option<&serde_json::value::RawValue>,
     ) -> Result<Json, BitcoindError> {
         self.make_request_inner(client, method, params, true)
     }
@@ -420,7 +421,7 @@ impl BitcoinD {
     fn make_noreply_request(
         &self,
         method: &str,
-        params: &[Box<serde_json::value::RawValue>],
+        params: Option<&serde_json::value::RawValue>,
     ) -> Result<(), BitcoindError> {
         match self.make_request_inner(&self.sendonly_client, method, params, false) {
             Ok(_) => Ok(()),
@@ -438,12 +439,16 @@ impl BitcoinD {
     fn make_fallible_node_request(
         &self,
         method: &str,
-        params: &[Box<serde_json::value::RawValue>],
+        params: Option<&serde_json::value::RawValue>,
     ) -> Result<Json, BitcoindError> {
         self.make_request(&self.node_client, method, params)
     }
 
-    fn make_node_request(&self, method: &str, params: &[Box<serde_json::value::RawValue>]) -> Json {
+    fn make_node_request(
+        &self,
+        method: &str,
+        params: Option<&serde_json::value::RawValue>,
+    ) -> Json {
         self.make_request(&self.node_client, method, params)
             .expect("We must not fail to make a request for more than a minute")
     }
@@ -451,7 +456,7 @@ impl BitcoinD {
     fn make_wallet_request(
         &self,
         method: &str,
-        params: &[Box<serde_json::value::RawValue>],
+        params: Option<&serde_json::value::RawValue>,
     ) -> Json {
         self.make_request(&self.watchonly_client, method, params)
             .expect("We must not fail to make a request for more than a minute")
@@ -460,20 +465,20 @@ impl BitcoinD {
     fn make_faillible_wallet_request(
         &self,
         method: &str,
-        params: &[Box<serde_json::value::RawValue>],
+        params: Option<&serde_json::value::RawValue>,
     ) -> Result<Json, BitcoindError> {
         self.make_request(&self.watchonly_client, method, params)
     }
 
     fn get_bitcoind_version(&self) -> u64 {
-        self.make_node_request("getnetworkinfo", &[])
+        self.make_node_request("getnetworkinfo", None)
             .get("version")
             .and_then(Json::as_u64)
             .expect("Missing or invalid 'version' in 'getnetworkinfo' result?")
     }
 
     fn get_network_bip70(&self) -> String {
-        self.make_node_request("getblockchaininfo", &[])
+        self.make_node_request("getblockchaininfo", None)
             .get("chain")
             .and_then(Json::as_str)
             .expect("Missing or invalid 'chain' in 'getblockchaininfo' result?")
@@ -481,7 +486,7 @@ impl BitcoinD {
     }
 
     fn list_wallets(&self) -> Vec<String> {
-        self.make_node_request("listwallets", &[])
+        self.make_node_request("listwallets", None)
             .as_array()
             .expect("API break, 'listwallets' didn't return an array.")
             .iter()
@@ -524,7 +529,7 @@ impl BitcoinD {
     }
 
     fn unload_wallet(&self, wallet_path: String) -> Option<String> {
-        let res = self.make_node_request("unloadwallet", &params!(Json::String(wallet_path),));
+        let res = self.make_node_request("unloadwallet", params!(Json::String(wallet_path),));
         self.warning_from_res(&res)
     }
 
@@ -534,7 +539,7 @@ impl BitcoinD {
         let res = self
             .make_fallible_node_request(
                 "createwallet",
-                &params!(
+                params!(
                     Json::String(wallet_path),
                     Json::Bool(true),  // watchonly
                     Json::Bool(true),  // blank
@@ -569,7 +574,7 @@ impl BitcoinD {
             })
             .collect();
 
-        let res = self.make_wallet_request("importdescriptors", &params!(Json::Array(descriptors)));
+        let res = self.make_wallet_request("importdescriptors", params!(Json::Array(descriptors)));
         let all_succeeded = res
             .as_array()
             .map(|results| {
@@ -586,7 +591,7 @@ impl BitcoinD {
     }
 
     fn list_descriptors(&self) -> Vec<ListDescEntry> {
-        self.make_wallet_request("listdescriptors", &[])
+        self.make_wallet_request("listdescriptors", None)
             .get("descriptors")
             .and_then(Json::as_array)
             .expect("Missing or invalid 'descriptors' field in 'listdescriptors' response")
@@ -667,7 +672,7 @@ impl BitcoinD {
         }
         let res = self.make_fallible_node_request(
             "loadwallet",
-            &params!(Json::String(self.watchonly_wallet_path.clone()),),
+            params!(Json::String(self.watchonly_wallet_path.clone()),),
         );
         match res {
             Err(BitcoindError::Server(jsonrpc::Error::Rpc(ref e))) => {
@@ -760,7 +765,7 @@ impl BitcoinD {
     }
 
     fn block_chain_info(&self) -> Json {
-        self.make_node_request("getblockchaininfo", &[])
+        self.make_node_request("getblockchaininfo", None)
     }
 
     pub fn sync_progress(&self) -> SyncProgress {
@@ -807,7 +812,7 @@ impl BitcoinD {
 
     pub fn get_block_hash(&self, height: i32) -> Option<bitcoin::BlockHash> {
         Some(
-            self.make_fallible_node_request("getblockhash", &params!(Json::Number(height.into()),))
+            self.make_fallible_node_request("getblockhash", params!(Json::Number(height.into()),))
                 .ok()?
                 .as_str()
                 .and_then(|s| bitcoin::BlockHash::from_str(s).ok())
@@ -818,7 +823,7 @@ impl BitcoinD {
     pub fn list_since_block(&self, block_hash: &bitcoin::BlockHash) -> LSBlockRes {
         self.make_wallet_request(
             "listsinceblock",
-            &params!(
+            params!(
                 Json::String(block_hash.to_string()),
                 Json::Number(1.into()), // Default for min_confirmations for the returned
                 Json::Bool(true),       // Whether to include watchonly
@@ -833,7 +838,7 @@ impl BitcoinD {
         // TODO: Maybe assert we got a -5 error, and not any other kind of error?
         self.make_faillible_wallet_request(
             "gettransaction",
-            &params!(Json::String(txid.to_string())),
+            params!(Json::String(txid.to_string())),
         )
         .ok()
         .map(|res| res.into())
@@ -844,7 +849,7 @@ impl BitcoinD {
         // The result of gettxout is empty if the outpoint is spent.
         self.make_node_request(
             "gettxout",
-            &params!(
+            params!(
                 Json::String(op.txid.to_string()),
                 Json::Number(op.vout.into())
             ),
@@ -864,7 +869,7 @@ impl BitcoinD {
         // unconfirmed, just use the tip.
         let req = self.make_wallet_request(
             "gettransaction",
-            &params!(Json::String(spent_outpoint.txid.to_string())),
+            params!(Json::String(spent_outpoint.txid.to_string())),
         );
         let list_since_height = match req.get("blockheight").and_then(Json::as_i64) {
             Some(h) => h as i32,
@@ -872,7 +877,7 @@ impl BitcoinD {
         };
         let block_hash = if let Ok(res) = self.make_fallible_node_request(
             "getblockhash",
-            &params!(Json::Number((list_since_height - 1).into())),
+            params!(Json::Number((list_since_height - 1).into())),
         ) {
             res.as_str()
                 .expect("'getblockhash' result isn't a string")
@@ -887,7 +892,7 @@ impl BitcoinD {
         // TODO: merge this with the existing list_since_block method.
         let lsb_res = self.make_wallet_request(
             "listsinceblock",
-            &params!(
+            params!(
                 Json::String(block_hash),
                 Json::Number(1.into()), // Default for min_confirmations for the returned
                 Json::Bool(true),       // Whether to include watchonly
@@ -922,7 +927,7 @@ impl BitcoinD {
 
             let gettx_res = self.make_wallet_request(
                 "gettransaction",
-                &params!(
+                params!(
                     Json::String(spending_txid.to_string()),
                     Json::Bool(true), // watchonly
                     Json::Bool(true)  // verbose
@@ -975,7 +980,7 @@ impl BitcoinD {
     pub fn get_block_stats(&self, blockhash: bitcoin::BlockHash) -> Option<BlockStats> {
         let res = match self.make_fallible_node_request(
             "getblockheader",
-            &params!(Json::String(blockhash.to_string()),),
+            params!(Json::String(blockhash.to_string()),),
         ) {
             Ok(res) => res,
             Err(e) => {
@@ -1023,7 +1028,7 @@ impl BitcoinD {
     pub fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoindError> {
         self.make_fallible_node_request(
             "sendrawtransaction",
-            &params!(bitcoin::consensus::encode::serialize_hex(tx)),
+            params!(bitcoin::consensus::encode::serialize_hex(tx).into()),
         )?;
         Ok(())
     }
@@ -1118,10 +1123,9 @@ impl BitcoinD {
         const NUM_RETRIES: usize = 10;
         let mut i = 0;
         loop {
-            if let Err(e) = self.make_noreply_request(
-                "importdescriptors",
-                &params!(Json::Array(desc_json.clone())),
-            ) {
+            if let Err(e) = self
+                .make_noreply_request("importdescriptors", params!(Json::Array(desc_json.clone())))
+            {
                 log::error!(
                     "Error when calling 'importdescriptors' for rescanning: {}",
                     e
@@ -1142,7 +1146,7 @@ impl BitcoinD {
 
     /// Get the progress of the ongoing rescan, if there is any.
     pub fn rescan_progress(&self) -> Option<f64> {
-        self.make_wallet_request("getwalletinfo", &[])
+        self.make_wallet_request("getwalletinfo", None)
             .get("scanning")
             // If no rescan is ongoing, it will fail cause it would be 'false'
             .and_then(Json::as_object)
@@ -1169,7 +1173,7 @@ impl BitcoinD {
     /// Returns `None` if it is not in the mempool.
     pub fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry> {
         match self
-            .make_fallible_node_request("getmempoolentry", &params!(Json::String(txid.to_string())))
+            .make_fallible_node_request("getmempoolentry", params!(Json::String(txid.to_string())))
         {
             Ok(json) => Some(MempoolEntry::from(json)),
             Err(BitcoindError::Server(jsonrpc::Error::Rpc(jsonrpc::error::RpcError {
@@ -1191,7 +1195,7 @@ impl BitcoinD {
             .iter()
             .map(|op| serde_json::json!({"txid": op.txid.to_string(), "vout": op.vout}))
             .collect();
-        self.make_node_request("gettxspendingprevout", &params!(prevouts))
+        self.make_node_request("gettxspendingprevout", params!(prevouts))
             .as_array()
             .expect("Always returns an array")
             .iter()
@@ -1207,7 +1211,7 @@ impl BitcoinD {
 
     /// Stop bitcoind.
     pub fn stop(&self) {
-        self.make_node_request("stop", &[]);
+        self.make_node_request("stop", None);
     }
 }
 

@@ -24,12 +24,11 @@ use utils::{
 
 use std::{
     collections::{hash_map, HashMap, HashSet},
-    convert::TryInto,
     fmt, sync,
 };
 
 use miniscript::{
-    bitcoin::{self, address, bip32, psbt::PartiallySignedTransaction as Psbt},
+    bitcoin::{self, address, bip32, psbt::Psbt},
     psbt::PsbtExt,
 };
 use serde::{Deserialize, Serialize};
@@ -609,7 +608,8 @@ impl DaemonControl {
 
         // Then, broadcast it (or try to, we never know if we are not going to hit an
         // error at broadcast time).
-        let final_tx = spend_psbt.extract_tx();
+        // These checks are already performed at Spend creation time. TODO: a belt-and-suspenders is still worth it though.
+        let final_tx = spend_psbt.extract_tx_unchecked_fee_rate();
         self.bitcoin
             .broadcast_tx(&final_tx)
             .map_err(CommandError::TxBroadcast)
@@ -729,7 +729,7 @@ impl DaemonControl {
                 .expect("address already used in finalized transaction");
                 (
                     address.clone(),
-                    bitcoin::Amount::from_sat(txo.value),
+                    txo.value,
                     db_conn.derivation_index_by_address(&address),
                 )
             })
@@ -960,7 +960,7 @@ impl DaemonControl {
         let current_height = self.bitcoin.chain_tip().height;
         let timelock =
             timelock.unwrap_or_else(|| self.config.main_descriptor.first_timelock_value());
-        let height_delta: i32 = timelock.try_into().expect("Must fit, it's a u16");
+        let height_delta: i32 = timelock.into();
         let sweepable_coins: Vec<_> = db_conn
             .coins(&[CoinStatus::Confirmed], &[])
             .into_values()
@@ -1138,9 +1138,9 @@ mod tests {
 
     use bitcoin::{
         bip32::{self, ChildNumber},
-        blockdata::transaction::{TxIn, TxOut},
+        blockdata::transaction::{TxIn, TxOut, Version as TxVersion},
         locktime::absolute,
-        OutPoint, ScriptBuf, Sequence, Transaction, Txid, Witness,
+        Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, Witness,
     };
     use std::{collections::BTreeMap, str::FromStr};
 
@@ -1300,7 +1300,7 @@ mod tests {
             dummy_op.txid,
             (
                 bitcoin::Transaction {
-                    version: 2,
+                    version: TxVersion::TWO,
                     lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
                     input: vec![],
                     output: vec![],
@@ -1371,18 +1371,24 @@ mod tests {
         assert_eq!(tx.output.len(), 2);
         assert_eq!(
             tx.output[0].script_pubkey,
-            dummy_addr.payload.script_pubkey()
+            dummy_addr.payload().script_pubkey()
         );
-        assert_eq!(tx.output[0].value, dummy_value);
+        assert_eq!(tx.output[0].value.to_sat(), dummy_value);
+
+        // NOTE: if you are wondering about the usefulness of these tests asserting arbitrary fixed
+        // values, that's a belt-and-suspenders check to make sure size and fee calculations do not
+        // change unexpectedly. For instance this specific test caught how a change in
+        // rust-bitcoin's serialization of transactions with no input silently affected our fee
+        // calculation.
 
         // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 170 sats fees.
         // At 2sats/vb, it's twice that.
-        assert_eq!(tx.output[1].value, 89_830);
+        assert_eq!(tx.output[1].value.to_sat(), 89_830);
         let res = control
             .create_spend(&destinations, &[dummy_op], 2, None)
             .unwrap();
         let tx = res.psbt.unsigned_tx;
-        assert_eq!(tx.output[1].value, 89_660);
+        assert_eq!(tx.output[1].value.to_sat(), 89_660);
 
         // A feerate of 555 won't trigger the sanity checks (they were previously not taking the
         // satisfaction size into account and overestimating the feerate).
@@ -1414,7 +1420,7 @@ mod tests {
 
         // If we ask to create an output for an address from another network, it will fail.
         let invalid_addr =
-            bitcoin::Address::new(bitcoin::Network::Testnet, dummy_addr.payload.clone());
+            bitcoin::Address::new(bitcoin::Network::Testnet, dummy_addr.payload().clone());
         let invalid_destinations: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
             [(invalid_addr, dummy_value)].iter().cloned().collect();
         assert!(matches!(
@@ -1436,9 +1442,9 @@ mod tests {
         assert_eq!(tx.output.len(), 1);
         assert_eq!(
             tx.output[0].script_pubkey,
-            dummy_addr.payload.script_pubkey()
+            dummy_addr.payload().script_pubkey()
         );
-        assert_eq!(tx.output[0].value, 95_000);
+        assert_eq!(tx.output[0].value.to_sat(), 95_000);
 
         // Now if we mark the coin as spent, we won't create another Spend transaction containing
         // it.
@@ -1555,9 +1561,9 @@ mod tests {
         assert_eq!(tx_auto.output.len(), 2);
         assert_eq!(
             tx_auto.output[0].script_pubkey,
-            dummy_addr.payload.script_pubkey()
+            dummy_addr.payload().script_pubkey()
         );
-        assert_eq!(tx_auto.output[0].value, 80_000);
+        assert_eq!(tx_auto.output[0].value, Amount::from_sat(80_000));
 
         // Create a second transaction using manual coin selection.
         let res_manual = control
@@ -1648,7 +1654,7 @@ mod tests {
         .unwrap();
         let mut dummy_bitcoind = DummyBitcoind::new();
         let dummy_tx = bitcoin::Transaction {
-            version: 2,
+            version: TxVersion::TWO,
             lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
             input: vec![],
             output: vec![],
@@ -1770,7 +1776,7 @@ mod tests {
         let mut dummy_bitcoind = DummyBitcoind::new();
         // Transaction spends outpoint a.
         let dummy_tx_a = bitcoin::Transaction {
-            version: 2,
+            version: TxVersion::TWO,
             lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
             input: vec![bitcoin::TxIn {
                 previous_output: dummy_op_a,
@@ -1845,7 +1851,7 @@ mod tests {
         );
 
         let deposit1: Transaction = Transaction {
-            version: 1,
+            version: TxVersion::ONE,
             lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
@@ -1855,12 +1861,12 @@ mod tests {
             }],
             output: vec![TxOut {
                 script_pubkey: ScriptBuf::new(),
-                value: 100_000_000,
+                value: Amount::from_sat(100_000_000),
             }],
         };
 
         let deposit2: Transaction = Transaction {
-            version: 1,
+            version: TxVersion::ONE,
             lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
@@ -1870,12 +1876,12 @@ mod tests {
             }],
             output: vec![TxOut {
                 script_pubkey: ScriptBuf::new(),
-                value: 2000,
+                value: Amount::from_sat(2000),
             }],
         };
 
         let deposit3: Transaction = Transaction {
-            version: 1,
+            version: TxVersion::ONE,
             lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
@@ -1885,12 +1891,12 @@ mod tests {
             }],
             output: vec![TxOut {
                 script_pubkey: ScriptBuf::new(),
-                value: 3000,
+                value: Amount::from_sat(3000),
             }],
         };
 
         let spend_tx: Transaction = Transaction {
-            version: 1,
+            version: TxVersion::ONE,
             lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
@@ -1904,11 +1910,11 @@ mod tests {
             output: vec![
                 TxOut {
                     script_pubkey: ScriptBuf::new(),
-                    value: 4000,
+                    value: Amount::from_sat(4000),
                 },
                 TxOut {
                     script_pubkey: ScriptBuf::new(),
-                    value: 100_000_000 - 4000 - 1000,
+                    value: Amount::from_sat(100_000_000 - 4000 - 1000),
                 },
             ],
         };
@@ -2072,7 +2078,7 @@ mod tests {
         );
 
         let tx1: Transaction = Transaction {
-            version: 1,
+            version: TxVersion::ONE,
             lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
@@ -2082,12 +2088,12 @@ mod tests {
             }],
             output: vec![TxOut {
                 script_pubkey: ScriptBuf::new(),
-                value: 100_000_000,
+                value: Amount::from_sat(100_000_000),
             }],
         };
 
         let tx2: Transaction = Transaction {
-            version: 1,
+            version: TxVersion::ONE,
             lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
@@ -2097,12 +2103,12 @@ mod tests {
             }],
             output: vec![TxOut {
                 script_pubkey: ScriptBuf::new(),
-                value: 2000,
+                value: Amount::from_sat(2000),
             }],
         };
 
         let tx3: Transaction = Transaction {
-            version: 1,
+            version: TxVersion::ONE,
             lock_time: absolute::LockTime::Blocks(absolute::Height::from_consensus(1).unwrap()),
             input: vec![TxIn {
                 witness: Witness::new(),
@@ -2112,7 +2118,7 @@ mod tests {
             }],
             output: vec![TxOut {
                 script_pubkey: ScriptBuf::new(),
-                value: 3000,
+                value: Amount::from_sat(3000),
             }],
         };
 
