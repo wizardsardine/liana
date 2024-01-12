@@ -1,14 +1,10 @@
-use std::fmt;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use super::card;
-use super::text::h1;
 use super::theme::Theme;
-use crate::widget::*;
 
 use iced::{Alignment, Element, Length, Point, Rectangle, Size, Vector};
 use iced_native::widget::{Operation, Tree};
-use iced_native::{event, layout, mouse, overlay, renderer, window};
+use iced_native::{event, layout, mouse, overlay, renderer};
 use iced_native::{Clipboard, Event, Layout, Shell, Widget};
 
 pub trait Toast {

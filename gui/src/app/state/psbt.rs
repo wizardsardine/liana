@@ -504,7 +504,7 @@ impl Action for SignAction {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let content = toast::Manager::new(
             content,
-            view::psbt::sign_action_toasts(&self.hws.list, &self.signing),
+            view::psbt::sign_action_toasts(self.error.as_ref(), &self.hws.list, &self.signing),
         )
         .into();
         if self.display_modal {

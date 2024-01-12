@@ -93,6 +93,7 @@ pub enum Container {
     Badge(Badge),
     Pill(Pill),
     Custom(iced::Color),
+    Notification(Notification),
     QrCode,
 }
 
@@ -122,6 +123,7 @@ impl container::StyleSheet for Theme {
                 Container::Card(c) => c.appearance(self),
                 Container::Badge(c) => c.appearance(self),
                 Container::Pill(c) => c.appearance(self),
+                Container::Notification(c) => c.appearance(self),
                 Container::Custom(c) => container::Appearance {
                     background: (*c).into(),
                     ..container::Appearance::default()
@@ -154,6 +156,7 @@ impl container::StyleSheet for Theme {
                 Container::Card(c) => c.appearance(self),
                 Container::Badge(c) => c.appearance(self),
                 Container::Pill(c) => c.appearance(self),
+                Container::Notification(c) => c.appearance(self),
                 Container::Custom(c) => container::Appearance {
                     background: (*c).into(),
                     ..container::Appearance::default()
@@ -183,6 +186,52 @@ impl From<Badge> for Container {
 impl From<Pill> for Container {
     fn from(c: Pill) -> Container {
         Container::Pill(c)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+pub enum Notification {
+    #[default]
+    Pending,
+    Error,
+}
+
+impl Notification {
+    fn appearance(&self, theme: &Theme) -> iced::widget::container::Appearance {
+        match theme {
+            Theme::Light => match self {
+                Self::Pending => container::Appearance {
+                    background: color::GREEN.into(),
+                    text_color: color::LIGHT_BLACK.into(),
+                    border_width: 1.0,
+                    border_color: color::GREEN,
+                    border_radius: 25.0,
+                },
+                Self::Error => container::Appearance {
+                    background: color::ORANGE.into(),
+                    text_color: color::LIGHT_BLACK.into(),
+                    border_width: 1.0,
+                    border_color: color::ORANGE,
+                    border_radius: 25.0,
+                },
+            },
+            Theme::Dark => match self {
+                Self::Pending => container::Appearance {
+                    background: color::GREEN.into(),
+                    text_color: color::LIGHT_BLACK.into(),
+                    border_width: 1.0,
+                    border_color: color::GREEN,
+                    border_radius: 25.0,
+                },
+                Self::Error => container::Appearance {
+                    background: color::ORANGE.into(),
+                    text_color: color::LIGHT_BLACK.into(),
+                    border_width: 1.0,
+                    border_color: color::ORANGE,
+                    border_radius: 25.0,
+                },
+            },
+        }
     }
 }
 
@@ -260,7 +309,7 @@ impl Card {
                 },
                 Card::Warning => container::Appearance {
                     background: color::ORANGE.into(),
-                    text_color: color::WHITE.into(),
+                    text_color: color::LIGHT_BLACK.into(),
                     ..container::Appearance::default()
                 },
             },
@@ -574,7 +623,7 @@ impl button::StyleSheet for Theme {
                 },
                 Button::Transparent => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: color::GREY_7.into(),
+                    background: iced::Color::TRANSPARENT.into(),
                     border_radius: 25.0,
                     border_width: 0.0,
                     border_color: iced::Color::TRANSPARENT,
