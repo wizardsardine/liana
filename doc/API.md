@@ -179,9 +179,10 @@ This command will refuse to create any output worth less than 5k sats.
 
 #### Response
 
-| Field          | Type      | Description                                          |
-| -------------- | --------- | ---------------------------------------------------- |
-| `psbt`         | string    | PSBT of the spending transaction, encoded as base64. |
+| Field          | Type              | Description                                          |
+| -------------- | ----------------- | ---------------------------------------------------- |
+| `psbt`         | string            | PSBT of the spending transaction, encoded as base64. |
+| `warnings`     | list of string    | Warnings, if any, generated during spend creation.   |
 
 
 ### `updatespend`

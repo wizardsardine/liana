@@ -490,7 +490,11 @@ impl DaemonControl {
         // derivation index in case any address in the transaction outputs was ours and from the
         // future.
         let change_info = change_address.info;
-        let CreateSpendRes { psbt, has_change } = create_spend(
+        let CreateSpendRes {
+            psbt,
+            has_change,
+            warnings,
+        } = create_spend(
             &self.config.main_descriptor,
             &self.secp,
             &mut tx_getter,
@@ -506,7 +510,10 @@ impl DaemonControl {
             self.maybe_increase_next_deriv_index(&mut db_conn, &change_info);
         }
 
-        Ok(CreateSpendResult { psbt })
+        Ok(CreateSpendResult {
+            psbt,
+            warnings: warnings.iter().map(|w| w.to_string()).collect(),
+        })
     }
 
     pub fn update_spend(&self, mut psbt: Psbt) -> Result<(), CommandError> {
@@ -810,6 +817,7 @@ impl DaemonControl {
             let CreateSpendRes {
                 psbt: rbf_psbt,
                 has_change,
+                warnings,
             } = match create_spend(
                 &self.config.main_descriptor,
                 &self.secp,
@@ -854,7 +862,10 @@ impl DaemonControl {
                     self.maybe_increase_next_deriv_index(&mut db_conn, &change_address.info);
                 }
 
-                return Ok(CreateSpendResult { psbt: rbf_psbt });
+                return Ok(CreateSpendResult {
+                    psbt: rbf_psbt,
+                    warnings: warnings.iter().map(|w| w.to_string()).collect(),
+                });
             }
         }
 
@@ -985,7 +996,9 @@ impl DaemonControl {
         }
 
         let sweep_addr_info = sweep_addr.info;
-        let CreateSpendRes { psbt, has_change } = create_spend(
+        let CreateSpendRes {
+            psbt, has_change, ..
+        } = create_spend(
             &self.config.main_descriptor,
             &self.secp,
             &mut tx_getter,
@@ -1098,6 +1111,7 @@ pub struct ListCoinsResult {
 pub struct CreateSpendResult {
     #[serde(serialize_with = "ser_to_string", deserialize_with = "deser_fromstr")]
     pub psbt: Psbt,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1136,6 +1150,7 @@ mod tests {
     use super::*;
     use crate::{bitcoin::Block, database::BlockInfo, spend::InsaneFeeInfo, testutils::*};
 
+    use bdk_coin_select::InsufficientFunds;
     use bitcoin::{
         bip32::{self, ChildNumber},
         blockdata::transaction::{TxIn, TxOut, Version as TxVersion},
@@ -1369,6 +1384,8 @@ mod tests {
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
         assert_eq!(tx.output.len(), 2);
+        // It has change so no warnings expected.
+        assert!(res.warnings.is_empty());
         assert_eq!(
             tx.output[0].script_pubkey,
             dummy_addr.payload().script_pubkey()
@@ -1445,6 +1462,65 @@ mod tests {
             dummy_addr.payload().script_pubkey()
         );
         assert_eq!(tx.output[0].value.to_sat(), 95_000);
+        // change = 100_000 - 95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 = 4830
+        assert_eq!(res.warnings, vec!["Change amount of 4830 sats added to fee as it was too small to create a transaction output."]);
+
+        // Increase the target value by the change amount and the warning will disappear.
+        *destinations.get_mut(&dummy_addr).unwrap() = 95_000 + 4_830;
+        let res = control
+            .create_spend(&destinations, &[dummy_op], 1, None)
+            .unwrap();
+        let tx = res.psbt.unsigned_tx;
+        assert_eq!(tx.output.len(), 1);
+        assert!(res.warnings.is_empty());
+
+        // Now increase target also by the extra fee that was paying for change and we can still create the spend.
+        *destinations.get_mut(&dummy_addr).unwrap() =
+            95_000 + 4_830 + /* fee for change output */ 43;
+        let res = control
+            .create_spend(&destinations, &[dummy_op], 1, None)
+            .unwrap();
+        let tx = res.psbt.unsigned_tx;
+        assert_eq!(tx.output.len(), 1);
+        assert!(res.warnings.is_empty());
+
+        // Now increase the target by 1 more sat and we will have insufficient funds.
+        *destinations.get_mut(&dummy_addr).unwrap() =
+            95_000 + 4_830 + /* fee for change output */ 43 + 1;
+        assert_eq!(
+            control.create_spend(&destinations, &[dummy_op], 1, None),
+            Err(CommandError::SpendCreation(
+                SpendCreationError::CoinSelection(InsufficientFunds { missing: 1 })
+            ))
+        );
+
+        // Now decrease the target so that the lost change is just 1 sat.
+        *destinations.get_mut(&dummy_addr).unwrap() =
+            100_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 - 1;
+        let res = control
+            .create_spend(&destinations, &[dummy_op], 1, None)
+            .unwrap();
+        // Message uses "sat" instead of "sats" when value is 1.
+        assert_eq!(res.warnings, vec!["Change amount of 1 sat added to fee as it was too small to create a transaction output."]);
+
+        // Now decrease the target value so that we have enough for a change output.
+        *destinations.get_mut(&dummy_addr).unwrap() =
+            95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43;
+        let res = control
+            .create_spend(&destinations, &[dummy_op], 1, None)
+            .unwrap();
+        let tx = res.psbt.unsigned_tx;
+        assert_eq!(tx.output.len(), 2);
+        assert_eq!(tx.output[1].value.to_sat(), 5_000);
+        assert!(res.warnings.is_empty());
+
+        // Now increase the target by 1 and we'll get a warning again, this time for 1 less than the dust threshold.
+        *destinations.get_mut(&dummy_addr).unwrap() =
+            95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 + 1;
+        let res = control
+            .create_spend(&destinations, &[dummy_op], 1, None)
+            .unwrap();
+        assert_eq!(res.warnings, vec!["Change amount of 4999 sats added to fee as it was too small to create a transaction output."]);
 
         // Now if we mark the coin as spent, we won't create another Spend transaction containing
         // it.
