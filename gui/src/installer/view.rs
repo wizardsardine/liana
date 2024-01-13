@@ -1025,6 +1025,7 @@ pub fn start_internal_bitcoind<'a>(
     download_state: Option<&DownloadState>,
     install_state: Option<&InstallState>,
 ) -> Element<'a, Message> {
+    let version = crate::bitcoind::VERSION;
     let mut next_button = button::primary(None, "Next").width(Length::Fixed(200.0));
     if let Some(Ok(_)) = started {
         next_button = next_button.on_press(Message::Next);
@@ -1043,7 +1044,9 @@ pub fn start_internal_bitcoind<'a>(
                     DownloadState::Downloading { progress } => Row::new()
                         .spacing(10)
                         .align_items(Alignment::Center)
-                        .push(text(format!("Downloading... {progress:.2}%"))),
+                        .push(text(format!(
+                            "Downloading Bitcoin Core {version}... {progress:.2}%"
+                        ))),
                     DownloadState::Errored(e) => Row::new()
                         .spacing(10)
                         .align_items(Alignment::Center)
