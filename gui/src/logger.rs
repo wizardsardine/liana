@@ -1,10 +1,11 @@
 use liana::miniscript::bitcoin::Network;
 use std::path::PathBuf;
 use std::{fs::File, sync::Arc};
-use tracing::error;
+use tracing::{error, Event, Subscriber};
 use tracing_subscriber::{
     filter,
     fmt::{format, writer::BoxMakeWriter, Layer},
+    layer,
     prelude::*,
     reload, Registry,
 };
@@ -116,5 +117,36 @@ impl Logger {
             .modify(|layer| *layer.writer_mut() = BoxMakeWriter::new(Arc::new(file)))?;
         self.level_handle.modify(|filter| *filter = log_level)?;
         Ok(())
+    }
+}
+
+/// Used as a layer to send log messages to a channel.
+pub struct LogStream {
+    pub sender: crossbeam_channel::Sender<String>,
+}
+
+impl<S> layer::Layer<S> for LogStream
+where
+    S: Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: layer::Context<'_, S>) {
+        let mut visitor = LogStreamVisitor {
+            sender: &self.sender,
+        };
+        event.record(&mut visitor);
+    }
+}
+
+/// Used to record log messages by sending them to the channel.
+struct LogStreamVisitor<'a> {
+    sender: &'a crossbeam_channel::Sender<String>,
+}
+
+impl<'a> tracing::field::Visit for LogStreamVisitor<'a> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            let msg = format!("{:?}", value);
+            let _ = self.sender.send(msg);
+        }
     }
 }
