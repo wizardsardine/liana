@@ -10,7 +10,7 @@ use std::{
     str::FromStr,
 };
 
-use miniscript::bitcoin::{self, psbt::Psbt};
+use miniscript::bitcoin::{self, psbt::Psbt, Txid};
 
 fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let destinations = params
@@ -226,6 +226,32 @@ fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json:
     ))
 }
 
+fn list_spendtxs(
+    control: &DaemonControl,
+    params: Option<Params>,
+) -> Result<serde_json::Value, Error> {
+    let txids: Option<Vec<bitcoin::Txid>> = if let Some(p) = params {
+        let tx_ids = p.get(0, "txids");
+        if let Some(ids) = tx_ids {
+            let ids: Vec<Txid> = ids
+                .as_array()
+                .and_then(|arr| {
+                    arr.iter()
+                        .map(|entry| entry.as_str().and_then(|e| bitcoin::Txid::from_str(e).ok()))
+                        .collect()
+                })
+                .ok_or_else(|| Error::invalid_params("Invalid 'txids' parameter."))?;
+            Some(ids)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(serde_json::json!(&control.list_spend(txids)?))
+}
+
 fn list_transactions(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let txids: Vec<bitcoin::Txid> = params
         .get(0, "txids")
@@ -391,7 +417,7 @@ pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response,
             })?;
             list_confirmed(control, params)?
         }
-        "listspendtxs" => serde_json::json!(&control.list_spend()),
+        "listspendtxs" => list_spendtxs(control, req.params)?,
         "listtransactions" => {
             let params = req.params.ok_or_else(|| {
                 Error::invalid_params(

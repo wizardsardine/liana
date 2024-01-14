@@ -218,12 +218,14 @@ This command does not return anything for now.
 
 List stored Spend transactions.
 
+
+If `txids` is specified, only list transactions whose `txid` is in `txids`(empty list of `txids` is not allowed).
+
 #### Request
 
-This command does not take any parameter for now.
-
-| Field         | Type              | Description                                                 |
-| ------------- | ----------------- | ----------------------------------------------------------- |
+| Field         | Type                       | Description                          |
+| ------------- | -------------------------- | ------------------------------------ |
+| `txids`       | array of string (optional) | Ids of the transactions to retrieve  |
 
 #### Response
 

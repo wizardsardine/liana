@@ -62,6 +62,7 @@ pub enum CommandError {
     /// Overflowing or unhardened derivation index.
     InvalidDerivationIndex,
     RbfError(RbfErrorInfo),
+    EmptyFilterList,
 }
 
 impl fmt::Display for CommandError {
@@ -114,6 +115,7 @@ impl fmt::Display for CommandError {
                 write!(f, "Unhardened or overflowing BIP32 derivation index.")
             }
             Self::RbfError(e) => write!(f, "RBF error: '{}'.", e),
+            Self::EmptyFilterList => write!(f, "Filter list is empty, should supply None instead."),
         }
     }
 }
@@ -589,14 +591,32 @@ impl DaemonControl {
         }
     }
 
-    pub fn list_spend(&self) -> ListSpendResult {
+    pub fn list_spend(
+        &self,
+        txids: Option<Vec<bitcoin::Txid>>,
+    ) -> Result<ListSpendResult, CommandError> {
+        if let Some(ids) = &txids {
+            if ids.is_empty() {
+                return Err(CommandError::EmptyFilterList);
+            }
+        }
+
         let mut db_conn = self.db.connection();
-        let spend_txs = db_conn
-            .list_spend()
+        let spend_psbts = db_conn.list_spend();
+
+        let txids_set: Option<HashSet<_>> = txids.as_ref().map(|list| list.iter().collect());
+        let spend_txs = spend_psbts
             .into_iter()
-            .map(|(psbt, updated_at)| ListSpendEntry { psbt, updated_at })
+            .filter_map(|(psbt, updated_at)| {
+                if let Some(set) = &txids_set {
+                    if !set.contains(&psbt.unsigned_tx.txid()) {
+                        return None;
+                    }
+                }
+                Some(ListSpendEntry { psbt, updated_at })
+            })
             .collect();
-        ListSpendResult { spend_txs }
+        Ok(ListSpendResult { spend_txs })
     }
 
     pub fn delete_spend(&self, txid: &bitcoin::Txid) {
