@@ -46,6 +46,9 @@ pub trait DatabaseConnection {
     /// The network we are operating on.
     fn network(&mut self) -> bitcoin::Network;
 
+    /// The timestamp at wallet creation time
+    fn timestamp(&mut self) -> u32;
+
     /// Update our best chain seen.
     fn update_tip(&mut self, tip: &BlockChainTip);
 
@@ -159,6 +162,10 @@ impl DatabaseConnection for SqliteConn {
 
     fn network(&mut self) -> bitcoin::Network {
         self.db_tip().network
+    }
+
+    fn timestamp(&mut self) -> u32 {
+        self.db_wallet().timestamp
     }
 
     fn update_tip(&mut self, tip: &BlockChainTip) {
