@@ -334,7 +334,12 @@ impl Config {
                 Err(ConfigError::NotFound) => Ok(Config::Install(datadir_path, network)),
                 Err(e) => Err(format!("Failed to read configuration file: {}", e).into()),
             }
-        } else if !datadir_path.exists() {
+        } else if !datadir_path.exists()
+            || (!datadir_path.join("bitcoin").exists()
+                && !datadir_path.join("testnet").exists()
+                && !datadir_path.join("signet").exists()
+                && !datadir_path.join("regtest").exists())
+        {
             Ok(Config::Install(datadir_path, bitcoin::Network::Bitcoin))
         } else {
             Ok(Config::Launcher(datadir_path))
