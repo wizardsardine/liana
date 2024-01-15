@@ -941,9 +941,8 @@ pub fn sign_action<'a>(
     hws: &'a [HardwareWallet],
     signer: Option<Fingerprint>,
     signer_alias: Option<&'a String>,
-    processing: bool,
-    chosen_hw: Option<usize>,
     signed: &HashSet<Fingerprint>,
+    signing: &HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
@@ -963,10 +962,11 @@ pub fn sign_action<'a>(
                                 col.push(hw_list_view(
                                     i,
                                     hw,
-                                    Some(i) == chosen_hw,
-                                    processing,
                                     hw.fingerprint()
                                         .map(|f| signed.contains(&f))
+                                        .unwrap_or(false),
+                                    hw.fingerprint()
+                                        .map(|f| signing.contains(&f))
                                         .unwrap_or(false),
                                 ))
                             },
@@ -990,6 +990,55 @@ pub fn sign_action<'a>(
         ))
         .width(Length::Fixed(500.0))
         .into()
+}
+
+pub fn sign_action_toasts<'a>(
+    error: Option<&Error>,
+    hws: &'a [HardwareWallet],
+    signing: &HashSet<Fingerprint>,
+) -> Vec<Element<'a, Message>> {
+    let mut vec: Vec<Element<'a, Message>> = hws
+        .iter()
+        .filter_map(|hw| {
+            if let HardwareWallet::Supported {
+                kind,
+                fingerprint,
+                version,
+                alias,
+                ..
+            } = &hw
+            {
+                if signing.contains(fingerprint) {
+                    Some(
+                        liana_ui::component::notification::processing_hardware_wallet(
+                            kind,
+                            version.as_ref(),
+                            fingerprint,
+                            alias.as_ref(),
+                        )
+                        .max_width(400.0)
+                        .into(),
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+    if let Some(e) = error {
+        vec.push(
+            liana_ui::component::notification::processing_hardware_wallet_error(
+                "Device failed to sign".to_string(),
+                e.to_string(),
+            )
+            .max_width(400.0)
+            .into(),
+        )
+    }
+
+    vec
 }
 
 pub fn update_spend_view<'a>(

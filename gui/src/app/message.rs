@@ -31,7 +31,7 @@ pub enum Message {
     SpendTxs(Result<Vec<SpendTx>, Error>),
     Psbt(Result<Psbt, Error>),
     Recovery(Result<SpendTx, Error>),
-    Signed(Result<(Psbt, Fingerprint), Error>),
+    Signed(Fingerprint, Result<Psbt, Error>),
     WalletRegistered(Result<Fingerprint, Error>),
     Updated(Result<(), Error>),
     Saved(Result<(), Error>),
