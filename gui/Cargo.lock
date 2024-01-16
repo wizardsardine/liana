@@ -207,10 +207,9 @@ dependencies = [
 [[package]]
 name = "async-hwi"
 version = "0.0.13"
-source = "git+https://github.com/wizardsardine/async-hwi?branch=coldcard#b146735976c867e9c53b37b77ab48977d4913f36"
+source = "git+https://github.com/wizardsardine/async-hwi?branch=master#d49673778bf5e8f907686f71888db9cf92c85038"
 dependencies = [
  "async-trait",
- "base64 0.13.1",
  "bitbox-api",
  "bitcoin",
  "coldcard",
@@ -693,8 +692,7 @@ dependencies = [
 [[package]]
 name = "coldcard"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78618b6a41c7f3d1797f1a83d8ccedd7a94a8e0b47b54c06702e560148298254"
+source = "git+https://github.com/darosior/rust-coldcard.git?branch=2401_api_feature_msrv#d817bd970995e7994c8d468f460c31141c47f7c6"
 dependencies = [
  "aes-ctr",
  "base58",
