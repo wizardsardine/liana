@@ -484,7 +484,7 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                 still.push(id);
                 continue;
             }
-            if let Ok(device) = device_info.open_device(&api) {
+            if let Ok(device) = device_info.open_device(api) {
                 if let Ok(device) = PairingBitbox02::connect(
                     device,
                     Some(Box::new(settings::global::PersistedBitboxNoiseConfig::new(
@@ -539,7 +539,7 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
             }
         }
     }
-    for detected in ledger::Ledger::<ledger::TransportHID>::enumerate(&api) {
+    for detected in ledger::Ledger::<ledger::TransportHID>::enumerate(api) {
         let id = format!(
             "ledger-{:?}-{}-{}",
             detected.path(),
@@ -550,7 +550,7 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
             still.push(id);
             continue;
         }
-        match ledger::Ledger::<ledger::TransportHID>::connect(&api, detected) {
+        match ledger::Ledger::<ledger::TransportHID>::connect(api, detected) {
             Ok(mut device) => match device.get_master_fingerprint().await {
                 Ok(fingerprint) => {
                     let version = device.get_version().await.ok();
