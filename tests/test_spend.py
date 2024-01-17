@@ -221,12 +221,8 @@ def test_send_to_self(lianad, bitcoind):
     spend_psbt = PSBT.from_base64(res["psbt"])
     assert len(spend_psbt.o) == len(spend_psbt.tx.vout) == 1
 
-    # Note they may ask for an impossible send-to-self. In this case we'll error cleanly.
-    with pytest.raises(
-        RpcError,
-        match="Insufficient funds. Missing \\d+ sats",
-    ):
-        lianad.rpc.createspend({}, outpoints, 40500)
+    # Note they may ask for an impossible send-to-self. In this case we'll report missing amount.
+    assert "missing" in lianad.rpc.createspend({}, outpoints, 40500)
 
     # Sign and broadcast the send-to-self transaction created above.
     signed_psbt = lianad.signer.sign_psbt(spend_psbt)
@@ -256,11 +252,7 @@ def test_coin_selection(lianad, bitcoind):
     dest_100_000 = {bitcoind.rpc.getnewaddress(): 100_000}
     # Coin selection is not possible if we have no coins.
     assert len(lianad.rpc.listcoins()["coins"]) == 0
-    with pytest.raises(
-        RpcError,
-        match="Coin selection error: 'Insufficient funds. Missing \\d+ sats.'",
-    ):
-        lianad.rpc.createspend(dest_100_000, [], 2)
+    assert "missing" in lianad.rpc.createspend(dest_100_000, [], 2)
 
     # Receive a coin in an unconfirmed deposit transaction.
     recv_addr = lianad.rpc.getnewaddress()["address"]
@@ -269,22 +261,14 @@ def test_coin_selection(lianad, bitcoind):
     # There are still no confirmed coins to use as candidates for selection.
     assert len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 0
     assert len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 1
-    with pytest.raises(
-        RpcError,
-        match="Coin selection error: 'Insufficient funds. Missing \\d+ sats.'",
-    ):
-        lianad.rpc.createspend(dest_100_000, [], 2)
+    assert "missing" in lianad.rpc.createspend(dest_100_000, [], 2)
 
     # Confirm coin.
     bitcoind.generate_block(1, wait_for_mempool=deposit)
     wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
 
     # Insufficient funds for coin selection.
-    with pytest.raises(
-        RpcError,
-        match="Coin selection error: 'Insufficient funds. Missing \\d+ sats.'",
-    ):
-        lianad.rpc.createspend(dest_100_000, [], 2)
+    assert "missing" in lianad.rpc.createspend(dest_100_000, [], 2)
 
     # Reduce spend amount.
     dest_30_000 = {bitcoind.rpc.getnewaddress(): 30_000}
@@ -308,22 +292,14 @@ def test_coin_selection(lianad, bitcoind):
     assert len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 1
     assert len(lianad.rpc.listcoins(["spending"])["coins"]) == 1
     # Check we cannot use coins as candidates if they are spending/spent or unconfirmed.
-    with pytest.raises(
-        RpcError,
-        match="Coin selection error: 'Insufficient funds. Missing \\d+ sats.'",
-    ):
-        lianad.rpc.createspend(dest_30_000, [], 2)
+    assert "missing" in lianad.rpc.createspend(dest_30_000, [], 2)
 
     # Now confirm the Spend.
     bitcoind.generate_block(1, wait_for_mempool=spend_txid)
     wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
     # But its value is not enough for this Spend.
     dest_60_000 = {bitcoind.rpc.getnewaddress(): 60_000}
-    with pytest.raises(
-        RpcError,
-        match="Coin selection error: 'Insufficient funds. Missing \\d+ sats.'",
-    ):
-        lianad.rpc.createspend(dest_60_000, [], 2)
+    assert "missing" in lianad.rpc.createspend(dest_60_000, [], 2)
 
     # Get another coin to check coin selection with more than one candidate.
     recv_addr = lianad.rpc.getnewaddress()["address"]

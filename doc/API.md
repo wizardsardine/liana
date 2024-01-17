@@ -179,11 +179,18 @@ This command will refuse to create any output worth less than 5k sats.
 
 #### Response
 
+If the spend is created successfully, the following response will be received:
+
 | Field          | Type              | Description                                          |
 | -------------- | ----------------- | ---------------------------------------------------- |
 | `psbt`         | string            | PSBT of the spending transaction, encoded as base64. |
 | `warnings`     | list of string    | Warnings, if any, generated during spend creation.   |
 
+If there are insufficient funds to create the required spend, then the following response will be received:
+
+| Field          | Type              | Description                                          |
+| -------------- | ----------------- | ---------------------------------------------------- |
+| `missing`      | integer           | Additional sats required to create the spend.        |
 
 ### `updatespend`
 
@@ -294,9 +301,7 @@ allowed in order to replace this transaction using RBF (see https://github.com/b
 
 #### Response
 
-| Field          | Type      | Description                                          |
-| -------------- | --------- | ---------------------------------------------------- |
-| `psbt`         | string    | PSBT of the spending transaction, encoded as base64. |
+The response is the same as for [`createspend`](#createspend).
 
 ### `startrescan`
 

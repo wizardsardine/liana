@@ -1151,6 +1151,49 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     )
 
 
+def test_rbfpsbt_insufficient_funds(lianad, bitcoind):
+    """Trying to increase the fee too much returns the missing funds amount."""
+    # Get a coin.
+    deposit_txid_1 = bitcoind.rpc.sendtoaddress(
+        lianad.rpc.getnewaddress()["address"], 30_000 / COIN
+    )
+    bitcoind.generate_block(1, wait_for_mempool=deposit_txid_1)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
+
+    # Create a spend that we will then attempt to replace.
+    destinations_1 = {
+        bitcoind.rpc.getnewaddress(): 29_800,
+    }
+    spend_res_1 = lianad.rpc.createspend(destinations_1, [], 1)
+    spend_psbt_1 = PSBT.from_base64(spend_res_1["psbt"])
+    spend_txid_1 = sign_and_broadcast_psbt(lianad, spend_psbt_1)
+
+    # We don't have sufficient funds to bump the fee.
+    assert "missing" in lianad.rpc.rbfpsbt(spend_txid_1, False, 2)
+    # We can still cancel it as the coin has enough value to create a single
+    # output at a higher feerate.
+    assert "psbt" in lianad.rpc.rbfpsbt(spend_txid_1, True)
+
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 0)
+    # Get another coin.
+    deposit_txid_2 = bitcoind.rpc.sendtoaddress(
+        lianad.rpc.getnewaddress()["address"], 5_200 / COIN
+    )
+    bitcoind.generate_block(1, wait_for_mempool=deposit_txid_2)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
+
+    # Create a spend that we will then attempt to cancel.
+    destinations_2 = {
+        bitcoind.rpc.getnewaddress(): 5_000,
+    }
+    spend_res_2 = lianad.rpc.createspend(destinations_2, [], 1)
+    spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
+    spend_txid_2 = sign_and_broadcast_psbt(lianad, spend_psbt_2)
+
+    # We don't have enough to create a transaction with feerate 2 sat/vb.
+    assert "missing" in lianad.rpc.rbfpsbt(spend_txid_2, True)
+
+
 def test_rbfpsbt_cancel(lianad, bitcoind):
     """Test the use of RBF to cancel a transaction."""
 
