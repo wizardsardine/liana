@@ -2,7 +2,9 @@ use std::{
     env,
     io::{self, Write},
     path::PathBuf,
-    process, thread, time,
+    process,
+    sync::{atomic, Arc},
+    thread, time,
 };
 
 use liana::{config::Config, DaemonHandle};
@@ -70,13 +72,33 @@ fn main() {
         process::exit(1);
     });
 
-    let daemon = DaemonHandle::start_default(config).unwrap_or_else(|e| {
+    let poll_interval = config.bitcoin_config.poll_interval_secs;
+    let DaemonHandle {
+        control,
+        bitcoin_poller,
+    } = DaemonHandle::start_default(config).unwrap_or_else(|e| {
         log::error!("Error starting Liana daemon: {}", e);
         process::exit(1);
     });
-    daemon
+    let poller_shutdown = Arc::from(atomic::AtomicBool::from(false));
+    let poller_thread = thread::Builder::new()
+        .name("Bitcoin Core poller".to_string())
+        .spawn({
+            let shutdown = poller_shutdown.clone();
+            move || {
+                bitcoin_poller
+                    .poll_forever(poll_interval, shutdown)
+                    .expect("We assume the bitcoind connection never fails") // FIXME
+            }
+        })
+        .expect("Spawning the poller thread must never fail.");
+    control
         .rpc_server()
         .expect("JSONRPC server must terminate cleanly");
+    poller_shutdown.store(true, atomic::Ordering::Relaxed);
+    poller_thread
+        .join()
+        .expect("Bitcoin Core poller must terminate cleanly");
 
     // We are always logging to stdout, should it be then piped to the log file (if self) or
     // not. So just make sure that all messages were actually written.

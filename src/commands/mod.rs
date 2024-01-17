@@ -62,6 +62,9 @@ pub enum CommandError {
     /// Overflowing or unhardened derivation index.
     InvalidDerivationIndex,
     RbfError(RbfErrorInfo),
+    // TODO: is anything nicer than a string possible while keeping Clone and Eq?
+    /// An error when speaking to our Bitcoin backend.
+    BitcoinInterface(String),
 }
 
 impl fmt::Display for CommandError {
@@ -114,6 +117,7 @@ impl fmt::Display for CommandError {
                 write!(f, "Unhardened or overflowing BIP32 derivation index.")
             }
             Self::RbfError(e) => write!(f, "RBF error: '{}'.", e),
+            Self::BitcoinInterface(e) => write!(f, "Bitcoin backend error: {}", e),
         }
     }
 }
@@ -169,7 +173,14 @@ impl<'a> BitcoindTxGetter<'a> {
 impl<'a> TxGetter for BitcoindTxGetter<'a> {
     fn get_tx(&mut self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
         if let hash_map::Entry::Vacant(entry) = self.cache.entry(*txid) {
-            entry.insert(self.bitcoind.wallet_transaction(txid).map(|wtx| wtx.0));
+            match self.bitcoind.wallet_transaction(txid) {
+                Ok(wtx) => {
+                    entry.insert(wtx.map(|wtx| wtx.0));
+                }
+                Err(e) => {
+                    log::error!("Getting tx {} from bitcoind: {}", txid, e);
+                }
+            }
         }
         self.cache.get(txid).cloned().flatten()
     }
@@ -278,23 +289,29 @@ impl DaemonControl {
 
 impl DaemonControl {
     /// Get information about the current state of the daemon
-    pub fn get_info(&self) -> GetInfoResult {
+    pub fn get_info(&self) -> Result<GetInfoResult, CommandError> {
         let mut db_conn = self.db.connection();
 
         let block_height = db_conn.chain_tip().map(|tip| tip.height).unwrap_or(0);
         let rescan_progress = db_conn
             .rescan_timestamp()
-            .map(|_| self.bitcoin.rescan_progress().unwrap_or(1.0));
-        GetInfoResult {
+            .map(|_| self.bitcoin.rescan_progress().map(|p| p.unwrap_or(1.0)))
+            .transpose()
+            .map_err(|e| CommandError::BitcoinInterface(e.to_string()))?;
+        Ok(GetInfoResult {
             version: VERSION.to_string(),
             network: self.config.bitcoin_config.network,
             block_height,
-            sync: self.bitcoin.sync_progress().rounded_up_progress(),
+            sync: self
+                .bitcoin
+                .sync_progress()
+                .map_err(|e| CommandError::BitcoinInterface(e.to_string()))?
+                .rounded_up_progress(),
             descriptors: GetInfoDescriptors {
                 main: self.config.main_descriptor.clone(),
             },
             rescan_progress,
-        }
+        })
     }
 
     /// Get a new deposit address. This will always generate a new deposit address, regardless of
@@ -619,7 +636,7 @@ impl DaemonControl {
         let final_tx = spend_psbt.extract_tx_unchecked_fee_rate();
         self.bitcoin
             .broadcast_tx(&final_tx)
-            .map_err(CommandError::TxBroadcast)
+            .map_err(|e| CommandError::TxBroadcast(e.to_string()))
     }
 
     /// Create PSBT to replace the given transaction using RBF.
@@ -693,6 +710,7 @@ impl DaemonControl {
         let (min_feerate_vb, descendant_fees) = self
             .bitcoin
             .mempool_spenders(&prev_outpoints)
+            .map_err(|e| CommandError::BitcoinInterface(e.to_string()))?
             .into_iter()
             .fold(
                 (1, bitcoin::Amount::from_sat(0)),
@@ -881,12 +899,19 @@ impl DaemonControl {
         let future_timestamp = self
             .bitcoin
             .tip_time()
+            .map_err(|e| CommandError::BitcoinInterface(e.to_string()))?
             .map(|t| timestamp >= t)
             .unwrap_or(false);
         if timestamp < MAINNET_GENESIS_TIME || future_timestamp {
             return Err(CommandError::InsaneRescanTimestamp(timestamp));
         }
-        if db_conn.rescan_timestamp().is_some() || self.bitcoin.rescan_progress().is_some() {
+        if db_conn.rescan_timestamp().is_some()
+            || self
+                .bitcoin
+                .rescan_progress()
+                .map_err(|e| CommandError::BitcoinInterface(e.to_string()))?
+                .is_some()
+        {
             return Err(CommandError::AlreadyRescanning);
         }
 
@@ -895,7 +920,7 @@ impl DaemonControl {
         // rescan of the wallet just after we checked above and did now.
         self.bitcoin
             .start_rescan(&self.config.main_descriptor, timestamp)
-            .map_err(CommandError::RescanTrigger)?;
+            .map_err(|e| CommandError::RescanTrigger(e.to_string()))?;
         db_conn.set_rescan(timestamp);
 
         Ok(())
@@ -907,7 +932,7 @@ impl DaemonControl {
         start: u32,
         end: u32,
         limit: u64,
-    ) -> ListTransactionsResult {
+    ) -> Result<ListTransactionsResult, CommandError> {
         let mut db_conn = self.db.connection();
         let txids = db_conn.list_txids(start, end, limit);
         let transactions = txids
@@ -915,35 +940,46 @@ impl DaemonControl {
             .filter_map(|txid| {
                 // TODO: batch those calls to the Bitcoin backend
                 // so it can in turn optimize its queries.
-                self.bitcoin
-                    .wallet_transaction(txid)
-                    .map(|(tx, block)| TransactionInfo {
-                        tx,
-                        height: block.map(|b| b.height),
-                        time: block.map(|b| b.time),
-                    })
+                Some(
+                    self.bitcoin
+                        .wallet_transaction(txid)
+                        .transpose()?
+                        .map(|(tx, block)| TransactionInfo {
+                            tx,
+                            height: block.map(|b| b.height),
+                            time: block.map(|b| b.time),
+                        }),
+                )
             })
-            .collect();
-        ListTransactionsResult { transactions }
+            .collect::<Result<_, _>>()
+            .map_err(|e| CommandError::BitcoinInterface(e.to_string()))?;
+        Ok(ListTransactionsResult { transactions })
     }
 
     /// list_transactions retrieves the transactions with the given txids.
-    pub fn list_transactions(&self, txids: &[bitcoin::Txid]) -> ListTransactionsResult {
+    pub fn list_transactions(
+        &self,
+        txids: &[bitcoin::Txid],
+    ) -> Result<ListTransactionsResult, CommandError> {
         let transactions = txids
             .iter()
             .filter_map(|txid| {
                 // TODO: batch those calls to the Bitcoin backend
                 // so it can in turn optimize its queries.
-                self.bitcoin
-                    .wallet_transaction(txid)
-                    .map(|(tx, block)| TransactionInfo {
-                        tx,
-                        height: block.map(|b| b.height),
-                        time: block.map(|b| b.time),
-                    })
+                Some(
+                    self.bitcoin
+                        .wallet_transaction(txid)
+                        .transpose()?
+                        .map(|(tx, block)| TransactionInfo {
+                            tx,
+                            height: block.map(|b| b.height),
+                            time: block.map(|b| b.time),
+                        }),
+                )
             })
-            .collect();
-        ListTransactionsResult { transactions }
+            .collect::<Result<_, _>>()
+            .map_err(|e| CommandError::BitcoinInterface(e.to_string()))?;
+        Ok(ListTransactionsResult { transactions })
     }
 
     /// Create a transaction that sweeps all coins for which a timelocked recovery path is
@@ -968,7 +1004,11 @@ impl DaemonControl {
 
         // Query the coins that we can spend through the specified recovery path (if no recovery
         // path specified, use the first available one) from the database.
-        let current_height = self.bitcoin.chain_tip().height;
+        let current_height = self
+            .bitcoin
+            .chain_tip()
+            .map_err(|e| CommandError::BitcoinInterface(e.to_string()))?
+            .height;
         let timelock =
             timelock.unwrap_or_else(|| self.config.main_descriptor.first_timelock_value());
         let height_delta: i32 = timelock.into();
@@ -1163,7 +1203,7 @@ mod tests {
     fn getinfo() {
         let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
         // We can query getinfo
-        ms.handle.control.get_info();
+        ms.handle.control.get_info().unwrap();
         ms.shutdown();
     }
 
@@ -2114,7 +2154,10 @@ mod tests {
 
         let control = &ms.handle.control;
 
-        let transactions = control.list_confirmed_transactions(0, 4, 10).transactions;
+        let transactions = control
+            .list_confirmed_transactions(0, 4, 10)
+            .unwrap()
+            .transactions;
         assert_eq!(transactions.len(), 4);
 
         assert_eq!(transactions[0].time, Some(4));
@@ -2129,14 +2172,20 @@ mod tests {
         assert_eq!(transactions[3].time, Some(1));
         assert_eq!(transactions[3].tx, deposit1);
 
-        let transactions = control.list_confirmed_transactions(2, 3, 10).transactions;
+        let transactions = control
+            .list_confirmed_transactions(2, 3, 10)
+            .unwrap()
+            .transactions;
         assert_eq!(transactions.len(), 2);
 
         assert_eq!(transactions[0].time, Some(3));
         assert_eq!(transactions[1].time, Some(2));
         assert_eq!(transactions[1].tx, deposit2);
 
-        let transactions = control.list_confirmed_transactions(2, 3, 1).transactions;
+        let transactions = control
+            .list_confirmed_transactions(2, 3, 1)
+            .unwrap()
+            .transactions;
         assert_eq!(transactions.len(), 1);
 
         assert_eq!(transactions[0].time, Some(3));
@@ -2246,12 +2295,16 @@ mod tests {
 
         let control = &ms.handle.control;
 
-        let transactions = control.list_transactions(&[tx1.txid()]).transactions;
+        let transactions = control
+            .list_transactions(&[tx1.txid()])
+            .unwrap()
+            .transactions;
         assert_eq!(transactions.len(), 1);
         assert_eq!(transactions[0].tx, tx1);
 
         let transactions = control
             .list_transactions(&[tx1.txid(), tx2.txid(), tx3.txid()])
+            .unwrap()
             .transactions;
         assert_eq!(transactions.len(), 3);
 
