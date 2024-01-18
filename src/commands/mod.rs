@@ -487,11 +487,21 @@ impl DaemonControl {
                 }
             }
             coins
-                .into_values()
-                .map(|c| {
+                .into_iter()
+                .map(|(op, c)| {
+                    let ancestor_info = if c.block_info.is_none() {
+                        // We include any non-change coins here as they have been selected by the caller.
+                        // If the unconfirmed coin's transaction is no longer in the mempool, keep the
+                        // coin as a candidate but without any ancestor info (same as confirmed candidate).
+                        self.bitcoin.mempool_entry(&op.txid).map(AncestorInfo::from)
+                    } else {
+                        None
+                    };
                     coin_to_candidate(
-                        &c, /*must_select=*/ true, /*sequence=*/ None,
-                        /*ancestor_info=*/ None,
+                        &c,
+                        /*must_select=*/ true,
+                        /*sequence=*/ None,
+                        ancestor_info,
                     )
                 })
                 .collect()
@@ -805,6 +815,10 @@ impl DaemonControl {
         let mut candidate_coins: Vec<CandidateCoin> = prev_coins
             .values()
             .map(|c| {
+                // In case any previous coins are unconfirmed, we don't include their ancestor info
+                // in the candidate as the replacement fee and feerate will be higher and any
+                // additional fee to pay for ancestors should already have been taken into account
+                // when including these coins in the previous transaction.
                 coin_to_candidate(
                     c, /*must_select=*/ !is_cancel, /*sequence=*/ None,
                     /*ancestor_info=*/ None,
