@@ -543,6 +543,7 @@ pub enum SpendTxFees {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CreateSpendWarning {
     ChangeAddedToFee(u64),
+    AddtionalFeeForAncestors(u64),
 }
 
 impl fmt::Display for CreateSpendWarning {
@@ -551,6 +552,12 @@ impl fmt::Display for CreateSpendWarning {
             CreateSpendWarning::ChangeAddedToFee(amt) => write!(
                 f,
                 "Change amount of {} sat{} added to fee as it was too small to create a transaction output.",
+                amt,
+                if *amt > 1 {"s"} else {""},
+            ),
+            CreateSpendWarning::AddtionalFeeForAncestors(amt) => write!(
+                f,
+                "An additional fee of {} sat{} has been added to pay for ancestors at the target feerate.",
                 amt,
                 if *amt > 1 {"s"} else {""},
             ),
@@ -673,7 +680,7 @@ pub fn create_spend(
         selected,
         change_amount,
         max_change_amount,
-        ..
+        fee_for_ancestors,
     } = {
         // At this point the transaction still has no input and no change output, as expected
         // by the coins selection helper function.
@@ -732,6 +739,12 @@ pub fn create_spend(
     } else if max_change_amount.to_sat() > 0 {
         warnings.push(CreateSpendWarning::ChangeAddedToFee(
             max_change_amount.to_sat(),
+        ));
+    }
+
+    if fee_for_ancestors.to_sat() > 0 {
+        warnings.push(CreateSpendWarning::AddtionalFeeForAncestors(
+            fee_for_ancestors.to_sat(),
         ));
     }
 

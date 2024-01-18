@@ -171,7 +171,16 @@ def test_coin_marked_spent(lianad, bitcoind):
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
     assert len(psbt.o) == 4
-    assert len(res["warnings"]) == 0
+    assert bitcoind.rpc.getmempoolentry(deposit_d)["ancestorsize"] == 165
+    assert bitcoind.rpc.getmempoolentry(deposit_d)["fees"]["ancestor"] * COIN == 165
+    # ancestor vsize at feerate 2 sat/vb = ancestor_fee / 2 = 165 / 2 = 82
+    # extra_weight <= (extra vsize * witness factor) = (165 - 82) * 4 = 332
+    # additional fee at 2 sat/vb (0.5 sat/wu) = 332 * 0.5 = 166
+    assert len(res["warnings"]) == 1
+    assert (
+        res["warnings"][0]
+        == "An additional fee of 166 sats has been added to pay for ancestors at the target feerate."
+    )
 
     # All the spent coins must have been detected as such
     all_deposits = (deposit_a, deposit_b, deposit_c, deposit_d)
@@ -263,6 +272,7 @@ def test_coin_selection(lianad, bitcoind):
     # Coin selection now succeeds.
     spend_res_1 = lianad.rpc.createspend({dest_addr_1: 100_000}, [], 2)
     assert "psbt" in spend_res_1
+    assert len(spend_res_1["warnings"]) == 0
     # Increase spend amount and we have insufficient funds again even though we
     # now have confirmed coins.
     assert "missing" in lianad.rpc.createspend({dest_addr_1: 200_000}, [], 2)
@@ -280,17 +290,61 @@ def test_coin_selection(lianad, bitcoind):
     assert lianad.rpc.listcoins(["unconfirmed"])["coins"][0]["is_change"] is True
     assert len(lianad.rpc.listcoins(["spending"])["coins"]) == 1
     # We can use unconfirmed change as candidate.
+    # Depending on the feerate, we'll get a warning about paying extra for the ancestor.
     dest_addr_2 = bitcoind.rpc.getnewaddress()
-    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], 2)
+    # If feerate is higher than ancestor, we'll need to pay extra.
+
+    # Try 10 sat/vb:
+    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], 10)
     assert "psbt" in spend_res_2
     spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
     # The spend is using the unconfirmed change.
     assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
         bytes.fromhex(spend_txid_1)[::-1]
     )
+    assert bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"] == 161
+    assert bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN == 339
+    # ancestor vsize at feerate 10 sat/vb = ancestor_fee / 10 = 339 / 10 = 33
+    # extra_weight <= (extra vsize * witness factor) = (161 - 33) * 4 = 512
+    # additional fee at 10 sat/vb (2.5 sat/wu) = 512 * 2.5 = 1280
+    assert len(spend_res_2["warnings"]) == 1
+    assert (
+        spend_res_2["warnings"][0]
+        == "An additional fee of 1280 sats has been added to pay for ancestors at the target feerate."
+    )
+
+    # Try 3 sat/vb:
+    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], 3)
+    assert "psbt" in spend_res_2
+    spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
+    # The spend is using the unconfirmed change.
+    assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
+        bytes.fromhex(spend_txid_1)[::-1]
+    )
+    assert bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"] == 161
+    assert bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN == 339
+    # ancestor vsize at feerate 3 sat/vb = ancestor_fee / 3 = 339 / 3 = 113
+    # extra_weight <= (extra vsize * witness factor) = (161 - 113) * 4 = 192
+    # additional fee at 3 sat/vb (0.75 sat/wu) = 192 * 0.75 = 144
+    assert len(spend_res_2["warnings"]) == 1
+    assert (
+        spend_res_2["warnings"][0]
+        == "An additional fee of 144 sats has been added to pay for ancestors at the target feerate."
+    )
+
+    # 2 sat/vb is same feerate as ancestor and we have no warnings:
+    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], 2)
+    assert "psbt" in spend_res_2
+    assert len(spend_res_2["warnings"]) == 0
+    spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
+    # The spend is using the unconfirmed change.
+    assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
+        bytes.fromhex(spend_txid_1)[::-1]
+    )
+
     # Get another coin to check coin selection with more than one candidate.
     recv_addr_2 = lianad.rpc.getnewaddress()["address"]
-    deposit_2 = bitcoind.rpc.sendtoaddress(recv_addr_2, 0.0002)  # 20_000 sats
+    deposit_2 = bitcoind.rpc.sendtoaddress(recv_addr_2, 30_000 / COIN)
     wait_for(lambda: len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 2)
     assert (
         len(
@@ -302,33 +356,77 @@ def test_coin_selection(lianad, bitcoind):
         )
         == 1
     )
-    # As only one unconfirmed coin is change, we have insufficient funds.
     dest_addr_3 = bitcoind.rpc.getnewaddress()
-    assert "missing" in lianad.rpc.createspend({dest_addr_3: 30_000}, [], 2)
-    # Now confirm both coins.
-    bitcoind.generate_block(1, wait_for_mempool=deposit_2)
-    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 2)
-    spend_res_3 = lianad.rpc.createspend({dest_addr_3: 30_000}, [], 2)
+    # As only one unconfirmed coin is change, we have insufficient funds.
+    assert "missing" in lianad.rpc.createspend({dest_addr_3: 20_000}, [], 10)
+
+    # If we include both unconfirmed coins manually, it will succeed.
+    # We'll need to pay extra for each unconfirmed coin's ancestors.
+    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins(["unconfirmed"])["coins"]]
+
+    spend_res_3 = lianad.rpc.createspend({dest_addr_3: 20_000}, outpoints, 10)
     assert "psbt" in spend_res_3
+    assert bitcoind.rpc.getmempoolentry(deposit_2)["ancestorsize"] == 165
+    assert bitcoind.rpc.getmempoolentry(deposit_2)["fees"]["ancestor"] * COIN == 165
+    # From above, extra fee for unconfirmed change at 10 sat/vb = 1280.
+    # For unconfirmed non-change:
+    # ancestor vsize at feerate 10 sat/vb = ancestor_fee / 10 = 165 / 10 = 16
+    # extra_weight <= (extra vsize * witness factor) = (165 - 16) * 4 = 596
+    # additional fee at 10 sat/vb (2.5 sat/wu) = 596 * 2.5 = 1490
+    # Sum of extra ancestor fees = 1280 + 1490 = 2770.
+    assert len(spend_res_3["warnings"]) == 1
+    assert (
+        spend_res_3["warnings"][0]
+        == "An additional fee of 2770 sats has been added to pay for ancestors at the target feerate."
+    )
+    spend_psbt_3 = PSBT.from_base64(spend_res_3["psbt"])
+    spend_txid_3 = sign_and_broadcast_psbt(lianad, spend_psbt_3)
+    mempool_txid_3 = bitcoind.rpc.getmempoolentry(spend_txid_3)
+    # The effective feerate of new transaction plus ancestor matches the target.
+    # Note that in the mempool entry, "ancestor" includes spend_txid_3 itself.
+    assert (
+        mempool_txid_3["fees"]["ancestor"] * COIN // mempool_txid_3["ancestorsize"]
+        == 10
+    )
+    # The spend_txid_3 transaction itself has a higher feerate.
+    assert (mempool_txid_3["fees"]["base"] * COIN) // mempool_txid_3["vsize"] > 10
+    # If we subtract the extra that pays for the ancestor, the feerate is at the target value.
+    assert ((mempool_txid_3["fees"]["base"] * COIN) - 2770) // mempool_txid_3[
+        "vsize"
+    ] == 10
+
+    # Now confirm the spend.
+    bitcoind.generate_block(1, wait_for_mempool=spend_txid_3)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
+
+    # Now create the same spend with auto and manual selection:
+    dest_addr_4 = bitcoind.rpc.getnewaddress()
+    spend_res_4 = lianad.rpc.createspend({dest_addr_4: 15_000}, [], 2)
+    assert "psbt" in spend_res_4
+    assert len(spend_res_4["warnings"]) == 0
 
     # The transaction contains a change output.
-    spend_psbt_3 = PSBT.from_base64(spend_res_3["psbt"])
-    assert len(spend_psbt_3.i) == 2
-    assert len(spend_psbt_3.o) == 2
-    assert len(spend_psbt_3.tx.vout) == 2
+    spend_psbt_4 = PSBT.from_base64(spend_res_4["psbt"])
+    assert len(spend_psbt_4.i) == 1
+    assert len(spend_psbt_4.o) == 2
+    assert len(spend_psbt_4.tx.vout) == 2
 
     # Now create a transaction with manual coin selection using the same outpoints.
     outpoints = [
-        f"{txin.prevout.hash:064x}:{txin.prevout.n}" for txin in spend_psbt_3.tx.vin
+        f"{txin.prevout.hash:064x}:{txin.prevout.n}" for txin in spend_psbt_4.tx.vin
     ]
-    res_manual = lianad.rpc.createspend({dest_addr_3: 30_000}, outpoints, 2)
+    assert len(outpoints) > 0
+    res_manual = lianad.rpc.createspend({dest_addr_4: 15_000}, outpoints, 2)
+    assert len(res_manual["warnings"]) == 0
     psbt_manual = PSBT.from_base64(res_manual["psbt"])
 
     # Recipient details are the same for both.
-    assert spend_psbt_3.tx.vout[0].nValue == psbt_manual.tx.vout[0].nValue
-    assert spend_psbt_3.tx.vout[0].scriptPubKey == psbt_manual.tx.vout[0].scriptPubKey
-    # Change amount is the same (change address will be different).
-    assert spend_psbt_3.tx.vout[1].nValue == psbt_manual.tx.vout[1].nValue
+    assert spend_psbt_4.tx.vout[0].nValue == psbt_manual.tx.vout[0].nValue
+    assert spend_psbt_4.tx.vout[0].scriptPubKey == psbt_manual.tx.vout[0].scriptPubKey
+    # Change details are also the same
+    # (change address is same as neither transaction has been broadcast)
+    assert spend_psbt_4.tx.vout[1].nValue == psbt_manual.tx.vout[1].nValue
+    assert spend_psbt_4.tx.vout[1].scriptPubKey == psbt_manual.tx.vout[1].scriptPubKey
 
 
 def test_coin_selection_changeless(lianad, bitcoind):
