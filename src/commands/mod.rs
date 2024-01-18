@@ -462,15 +462,32 @@ impl DaemonControl {
         // the spend from a set of optional candidates.
         // Otherwise, only the specified coins will be used, all as mandatory candidates.
         let candidate_coins: Vec<CandidateCoin> = if coins_outpoints.is_empty() {
-            // We only select confirmed coins for now. Including unconfirmed ones as well would
-            // introduce a whole bunch of additional complexity.
+            // From our unconfirmed coins, we only include those that are change outputs
+            // since unconfirmed external deposits are more at risk of being dropped
+            // unexpectedly from the mempool as they are beyond the user's control.
             db_conn
-                .coins(&[CoinStatus::Confirmed], &[])
-                .into_values()
-                .map(|c| {
+                .coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+                .into_iter()
+                .filter_map(|(op, c)| {
+                    if c.block_info.is_some() {
+                        Some((c, None)) // confirmed coins have no ancestor info
+                    } else if c.is_change {
+                        // In case the mempool_entry is None, the coin will be included without
+                        // any ancestor info.
+                        Some((
+                            c,
+                            self.bitcoin.mempool_entry(&op.txid).map(AncestorInfo::from),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .map(|(c, ancestor_info)| {
                     coin_to_candidate(
-                        &c, /*must_select=*/ false, /*sequence=*/ None,
-                        /*ancestor_info=*/ None,
+                        &c,
+                        /*must_select=*/ false,
+                        /*sequence=*/ None,
+                        ancestor_info,
                     )
                 })
                 .collect()
@@ -1413,8 +1430,8 @@ mod tests {
             spend_txid: None,
             spend_block: None,
         }]);
-        // If we try to use coin selection, the unconfirmed coin will not be used as a candidate
-        // and so we get a coin selection error due to insufficient funds.
+        // If we try to use coin selection, the unconfirmed non-change coin will not be used
+        // as a candidate and so we get a coin selection error due to insufficient funds.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
             Ok(CreateSpendResult::InsufficientFunds { .. }),
@@ -1645,7 +1662,7 @@ mod tests {
             )))
         );
 
-        // Add a confirmed unspent coin to be used for coin selection.
+        // Add an unconfirmed change coin to be used for coin selection.
         let confirmed_op_1 = bitcoin::OutPoint {
             txid: dummy_op.txid,
             vout: dummy_op.vout + 100,
@@ -1653,13 +1670,10 @@ mod tests {
         db_conn.new_unspent_coins(&[Coin {
             outpoint: confirmed_op_1,
             is_immature: false,
-            block_info: Some(BlockInfo {
-                height: 174500,
-                time: 174500,
-            }),
+            block_info: None,
             amount: bitcoin::Amount::from_sat(80_000),
             derivation_index: bip32::ChildNumber::from(42),
-            is_change: false,
+            is_change: true,
             spend_txid: None,
             spend_block: None,
         }]);

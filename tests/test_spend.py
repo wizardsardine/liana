@@ -241,84 +241,94 @@ def test_send_to_self(lianad, bitcoind):
 def test_coin_selection(lianad, bitcoind):
     """We can create a spend using coin selection."""
     # Send to an (external) address.
-    dest_100_000 = {bitcoind.rpc.getnewaddress(): 100_000}
+    dest_addr_1 = bitcoind.rpc.getnewaddress()
     # Coin selection is not possible if we have no coins.
     assert len(lianad.rpc.listcoins()["coins"]) == 0
-    assert "missing" in lianad.rpc.createspend(dest_100_000, [], 2)
+    assert "missing" in lianad.rpc.createspend({dest_addr_1: 100_000}, [], 2)
 
     # Receive a coin in an unconfirmed deposit transaction.
-    recv_addr = lianad.rpc.getnewaddress()["address"]
-    deposit = bitcoind.rpc.sendtoaddress(recv_addr, 0.0008)  # 80_000 sats
+    recv_addr_1 = lianad.rpc.getnewaddress()["address"]
+    deposit_1 = bitcoind.rpc.sendtoaddress(recv_addr_1, 0.0012)  # 120_000 sats
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
-    # There are still no confirmed coins to use as candidates for selection.
+    # There are still no confirmed coins or unconfirmed change
+    # to use as candidates for selection.
     assert len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 0
     assert len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 1
-    assert "missing" in lianad.rpc.createspend(dest_100_000, [], 2)
+    assert lianad.rpc.listcoins(["unconfirmed"])["coins"][0]["is_change"] is False
+    assert "missing" in lianad.rpc.createspend({dest_addr_1: 100_000}, [], 2)
 
     # Confirm coin.
-    bitcoind.generate_block(1, wait_for_mempool=deposit)
+    bitcoind.generate_block(1, wait_for_mempool=deposit_1)
     wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
+    # Coin selection now succeeds.
+    spend_res_1 = lianad.rpc.createspend({dest_addr_1: 100_000}, [], 2)
+    assert "psbt" in spend_res_1
+    # Increase spend amount and we have insufficient funds again even though we
+    # now have confirmed coins.
+    assert "missing" in lianad.rpc.createspend({dest_addr_1: 200_000}, [], 2)
 
-    # Insufficient funds for coin selection.
-    assert "missing" in lianad.rpc.createspend(dest_100_000, [], 2)
-
-    # Reduce spend amount.
-    dest_30_000 = {bitcoind.rpc.getnewaddress(): 30_000}
-    res = lianad.rpc.createspend(dest_30_000, [], 2)
-    assert "psbt" in res
-
-    # The transaction must contain a change output.
-    spend_psbt = PSBT.from_base64(res["psbt"])
-    assert len(spend_psbt.o) == 2
-    assert len(spend_psbt.tx.vout) == 2
+    # The transaction contains a change output.
+    spend_psbt_1 = PSBT.from_base64(spend_res_1["psbt"])
+    assert len(spend_psbt_1.o) == 2
+    assert len(spend_psbt_1.tx.vout) == 2
 
     # Sign and broadcast this Spend transaction.
-    signed_psbt = lianad.signer.sign_psbt(spend_psbt)
-    lianad.rpc.updatespend(signed_psbt.to_base64())
-    spend_txid = signed_psbt.tx.txid().hex()
-    lianad.rpc.broadcastspend(spend_txid)
-
+    spend_txid_1 = sign_and_broadcast_psbt(lianad, spend_psbt_1)
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 2)
-    coins = lianad.rpc.listcoins()["coins"]
     # Check that change output is unconfirmed.
     assert len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 1
+    assert lianad.rpc.listcoins(["unconfirmed"])["coins"][0]["is_change"] is True
     assert len(lianad.rpc.listcoins(["spending"])["coins"]) == 1
-    # Check we cannot use coins as candidates if they are spending/spent or unconfirmed.
-    assert "missing" in lianad.rpc.createspend(dest_30_000, [], 2)
-
-    # Now confirm the Spend.
-    bitcoind.generate_block(1, wait_for_mempool=spend_txid)
-    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
-    # But its value is not enough for this Spend.
-    dest_60_000 = {bitcoind.rpc.getnewaddress(): 60_000}
-    assert "missing" in lianad.rpc.createspend(dest_60_000, [], 2)
-
+    # We can use unconfirmed change as candidate.
+    dest_addr_2 = bitcoind.rpc.getnewaddress()
+    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], 2)
+    assert "psbt" in spend_res_2
+    spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
+    # The spend is using the unconfirmed change.
+    assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
+        bytes.fromhex(spend_txid_1)[::-1]
+    )
     # Get another coin to check coin selection with more than one candidate.
-    recv_addr = lianad.rpc.getnewaddress()["address"]
-    deposit = bitcoind.rpc.sendtoaddress(recv_addr, 0.0002)  # 20_000 sats
-    bitcoind.generate_block(1, wait_for_mempool=deposit)
+    recv_addr_2 = lianad.rpc.getnewaddress()["address"]
+    deposit_2 = bitcoind.rpc.sendtoaddress(recv_addr_2, 0.0002)  # 20_000 sats
+    wait_for(lambda: len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 2)
+    assert (
+        len(
+            [
+                c
+                for c in lianad.rpc.listcoins(["unconfirmed"])["coins"]
+                if c["is_change"]
+            ]
+        )
+        == 1
+    )
+    # As only one unconfirmed coin is change, we have insufficient funds.
+    dest_addr_3 = bitcoind.rpc.getnewaddress()
+    assert "missing" in lianad.rpc.createspend({dest_addr_3: 30_000}, [], 2)
+    # Now confirm both coins.
+    bitcoind.generate_block(1, wait_for_mempool=deposit_2)
     wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 2)
+    spend_res_3 = lianad.rpc.createspend({dest_addr_3: 30_000}, [], 2)
+    assert "psbt" in spend_res_3
 
-    res = lianad.rpc.createspend(dest_60_000, [], 2)
-    assert "psbt" in res
-
-    # The transaction must contain a change output.
-    auto_psbt = PSBT.from_base64(res["psbt"])
-    assert len(auto_psbt.o) == 2
-    assert len(auto_psbt.tx.vout) == 2
+    # The transaction contains a change output.
+    spend_psbt_3 = PSBT.from_base64(spend_res_3["psbt"])
+    assert len(spend_psbt_3.i) == 2
+    assert len(spend_psbt_3.o) == 2
+    assert len(spend_psbt_3.tx.vout) == 2
 
     # Now create a transaction with manual coin selection using the same outpoints.
     outpoints = [
-        f"{txin.prevout.hash:064x}:{txin.prevout.n}" for txin in auto_psbt.tx.vin
+        f"{txin.prevout.hash:064x}:{txin.prevout.n}" for txin in spend_psbt_3.tx.vin
     ]
-    res_manual = lianad.rpc.createspend(dest_60_000, outpoints, 2)
-    manual_psbt = PSBT.from_base64(res_manual["psbt"])
+    res_manual = lianad.rpc.createspend({dest_addr_3: 30_000}, outpoints, 2)
+    psbt_manual = PSBT.from_base64(res_manual["psbt"])
 
     # Recipient details are the same for both.
-    assert auto_psbt.tx.vout[0].nValue == manual_psbt.tx.vout[0].nValue
-    assert auto_psbt.tx.vout[0].scriptPubKey == manual_psbt.tx.vout[0].scriptPubKey
+    assert spend_psbt_3.tx.vout[0].nValue == psbt_manual.tx.vout[0].nValue
+    assert spend_psbt_3.tx.vout[0].scriptPubKey == psbt_manual.tx.vout[0].scriptPubKey
     # Change amount is the same (change address will be different).
-    assert auto_psbt.tx.vout[1].nValue == manual_psbt.tx.vout[1].nValue
+    assert spend_psbt_3.tx.vout[1].nValue == psbt_manual.tx.vout[1].nValue
 
 
 def test_coin_selection_changeless(lianad, bitcoind):
