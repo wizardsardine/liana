@@ -1,4 +1,4 @@
-use crate::descriptors;
+use crate::{bitcoin::MempoolEntry, descriptors};
 
 use std::{collections::BTreeMap, convert::TryInto, fmt};
 
@@ -11,6 +11,7 @@ use miniscript::bitcoin::{
     self,
     absolute::{Height, LockTime},
     bip32,
+    constants::WITNESS_SCALE_FACTOR,
     psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
     secp256k1,
 };
@@ -154,6 +155,29 @@ fn sanity_check_psbt(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AncestorInfo {
+    pub vsize: u32,
+    pub fee: u32,
+}
+
+impl From<MempoolEntry> for AncestorInfo {
+    fn from(entry: MempoolEntry) -> Self {
+        Self {
+            vsize: entry
+                .ancestor_vsize
+                .try_into()
+                .expect("vsize must fit in a u32"),
+            fee: entry
+                .fees
+                .ancestor
+                .to_sat()
+                .try_into()
+                .expect("fee in sats should fit in a u32"),
+        }
+    }
+}
+
 /// A candidate for coin selection when creating a transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CandidateCoin {
@@ -169,6 +193,8 @@ pub struct CandidateCoin {
     pub must_select: bool,
     /// The nSequence field to set for an input spending this coin.
     pub sequence: Option<bitcoin::Sequence>,
+    /// Information about in-mempool ancestors of the coin.
+    pub ancestor_info: Option<AncestorInfo>,
 }
 
 /// A coin selection result.
@@ -291,12 +317,43 @@ fn select_coins_for_spend(
         base_weight = base_weight.saturating_sub(2);
     }
     let max_input_weight = TXIN_BASE_WEIGHT + max_sat_weight;
+    // Get feerate as u32 for calculation relating to ancestor below.
+    // We expect `feerate_vb` to be a positive integer, but take ceil()
+    // just in case to be sure we pay enough for ancestors.
+    let feerate_vb_u32 = feerate_vb.ceil() as u32;
+    let witness_factor: u32 = WITNESS_SCALE_FACTOR
+        .try_into()
+        .expect("scale factor must fit in u32");
     let candidates: Vec<Candidate> = candidate_coins
         .iter()
         .map(|cand| Candidate {
             input_count: 1,
             value: cand.amount.to_sat(),
-            weight: max_input_weight,
+            weight: {
+                let extra = cand
+                    .ancestor_info
+                    .map(|info| {
+                        // The implied ancestor vsize if the fee had been paid at our target feerate.
+                        let ancestor_vsize_at_feerate: u32 = info
+                            .fee
+                            .checked_div(feerate_vb_u32)
+                            .expect("feerate is greater than zero");
+                        // If the actual ancestor vsize is bigger than the implied vsize, we will need to
+                        // pay the difference in order for the combined feerate to be at the target value.
+                        // We multiply the vsize by 4 to get the ancestor weight, which is an upper bound
+                        // on its true weight (vsize*4 - 3 <= weight <= vsize*4), to ensure we pay enough.
+                        // Note that if candidates share ancestors, we may add this difference more than
+                        // once in the resulting transaction.
+                        info.vsize
+                            .saturating_sub(ancestor_vsize_at_feerate)
+                            .checked_mul(witness_factor)
+                            .expect("weight difference must fit in u32")
+                    })
+                    .unwrap_or(0);
+                max_input_weight
+                    .checked_add(extra)
+                    .expect("effective weight must fit in u32")
+            },
             is_segwit: true, // We only support receiving on Segwit scripts.
         })
         .collect();

@@ -9,7 +9,7 @@ use crate::{
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
     spend::{
-        create_spend, AddrInfo, CandidateCoin, CreateSpendRes, SpendCreationError,
+        create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes, SpendCreationError,
         SpendOutputAddress, SpendTxFees, TxGetter,
     },
     DaemonControl, VERSION,
@@ -179,6 +179,7 @@ fn coin_to_candidate(
     coin: &Coin,
     must_select: bool,
     sequence: Option<bitcoin::Sequence>,
+    ancestor_info: Option<AncestorInfo>,
 ) -> CandidateCoin {
     CandidateCoin {
         outpoint: coin.outpoint,
@@ -187,6 +188,7 @@ fn coin_to_candidate(
         is_change: coin.is_change,
         must_select,
         sequence,
+        ancestor_info,
     }
 }
 
@@ -466,7 +468,10 @@ impl DaemonControl {
                 .coins(&[CoinStatus::Confirmed], &[])
                 .into_values()
                 .map(|c| {
-                    coin_to_candidate(&c, /*must_select=*/ false, /*sequence=*/ None)
+                    coin_to_candidate(
+                        &c, /*must_select=*/ false, /*sequence=*/ None,
+                        /*ancestor_info=*/ None,
+                    )
                 })
                 .collect()
         } else {
@@ -483,7 +488,12 @@ impl DaemonControl {
             }
             coins
                 .into_values()
-                .map(|c| coin_to_candidate(&c, /*must_select=*/ true, /*sequence=*/ None))
+                .map(|c| {
+                    coin_to_candidate(
+                        &c, /*must_select=*/ true, /*sequence=*/ None,
+                        /*ancestor_info=*/ None,
+                    )
+                })
                 .collect()
         };
 
@@ -795,7 +805,10 @@ impl DaemonControl {
         let mut candidate_coins: Vec<CandidateCoin> = prev_coins
             .values()
             .map(|c| {
-                coin_to_candidate(c, /*must_select=*/ !is_cancel, /*sequence=*/ None)
+                coin_to_candidate(
+                    c, /*must_select=*/ !is_cancel, /*sequence=*/ None,
+                    /*ancestor_info=*/ None,
+                )
             })
             .collect();
         let confirmed_cands: Vec<CandidateCoin> = db_conn
@@ -807,6 +820,7 @@ impl DaemonControl {
                 if !prev_coins.contains_key(&c.outpoint) {
                     Some(coin_to_candidate(
                         &c, /*must_select=*/ false, /*sequence=*/ None,
+                        /*ancestor_info=*/ None,
                     ))
                 } else {
                     None
@@ -996,6 +1010,7 @@ impl DaemonControl {
                         &c,
                         /*must_select=*/ true,
                         /*sequence=*/ Some(bitcoin::Sequence::from_height(timelock)),
+                        /*ancestor_info=*/ None,
                     ))
                 } else {
                     None
