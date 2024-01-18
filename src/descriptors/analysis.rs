@@ -1,7 +1,11 @@
 use miniscript::{
-    bitcoin::{bip32, Sequence},
+    bitcoin::{
+        self, bip32,
+        hashes::{sha256, Hash},
+        secp256k1, Sequence,
+    },
     descriptor,
-    policy::{compiler, Concrete as ConcretePolicy, Liftable, Semantic as SemanticPolicy},
+    policy::{Concrete as ConcretePolicy, Liftable, Semantic as SemanticPolicy},
     ScriptContext,
 };
 
@@ -9,6 +13,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     convert::TryFrom,
     error, fmt,
+    str::FromStr,
 };
 
 #[derive(Debug)]
@@ -22,10 +27,10 @@ pub enum LianaPolicyError {
     InvalidMultiThresh(usize),
     InvalidMultiKeys(usize),
     IncompatibleDesc,
+    PolicyAnalysis(miniscript::Error),
     /// The spending policy is not a valid Miniscript policy: it may for instance be malleable, or
     /// overflow some limit.
-    InvalidPolicy(compiler::CompilerError),
-    PolicyAnalysis(miniscript::Error),
+    InvalidPolicy(miniscript::Error),
 }
 
 impl std::fmt::Display for LianaPolicyError {
@@ -357,6 +362,91 @@ impl PathInfo {
     }
 }
 
+// See
+// https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#constructing-and-spending-taproot-outputs:
+// > One example of such a point is H =
+// > lift_x(0x50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0) which is constructed
+// > by taking the hash of the standard uncompressed encoding of the secp256k1 base point G as X
+// > coordinate.
+fn bip341_nums() -> secp256k1::PublicKey {
+    secp256k1::PublicKey::from_str(
+        "0250929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0",
+    )
+    .expect("Valid pubkey: NUMS from BIP341")
+}
+
+// Given a descpubkey, extract its xpub assuming it is a multixpub. Returns None otherwise.
+fn get_multi_xkey(desc_key: &descriptor::DescriptorPublicKey) -> Option<&bip32::Xpub> {
+    if let descriptor::DescriptorPublicKey::MultiXPub(descriptor::DescriptorMultiXKey {
+        xkey,
+        ..
+    }) = desc_key
+    {
+        Some(xkey)
+    } else {
+        None
+    }
+}
+
+// Construct an unspendable xpub to be used as internal key in a Taproot descriptor, in a way which
+// could eventually be standardized into wallet policies for a signer to display to the user
+// "UNSPENDABLE" upon registration (instead of a meaningless key).
+// See https://delvingbitcoin.org/t/unspendable-keys-in-descriptors/304/21.
+//
+// Returns `None` if:
+// - The given descriptor does not contain a Taptree with at least a key in each leaf.
+// - The keys contained in the descriptor aren't all MultiXPub's.
+fn unspendable_internal_xpub(
+    desc: &descriptor::Tr<descriptor::DescriptorPublicKey>,
+) -> Option<bip32::Xpub> {
+    let tap_tree = desc.tap_tree().as_ref()?;
+
+    // Fetch the network to use for the unspendable key from the first key in the descriptor.
+    let first_key = tap_tree.iter().flat_map(|(_, ms)| ms.iter_pk()).next()?;
+    let network = get_multi_xkey(&first_key)?.network;
+
+    // Compute the chaincode to use for the xpub. This is the sha256() of the concatenation of all
+    // the xpubs' pubkey part in the Taptree.
+    let concat =
+        tap_tree
+            .iter()
+            .flat_map(|(_, ms)| ms.iter_pk())
+            .try_fold(Vec::new(), |mut acc, pk| {
+                let xkey = get_multi_xkey(&pk)?;
+                acc.extend_from_slice(&xkey.public_key.serialize());
+                Some(acc)
+            })?;
+    let chain_code = bip32::ChainCode::from(sha256::Hash::hash(&concat).as_ref());
+
+    // Construct the unspendable key. The pubkey part is always BIP341's NUMS.
+    let public_key = bip341_nums();
+    Some(bip32::Xpub {
+        public_key,
+        chain_code,
+        depth: 0,
+        parent_fingerprint: [0; 4].into(),
+        child_number: 0.into(),
+        network,
+    })
+}
+
+fn unspendable_internal_key(
+    desc: &descriptor::Tr<descriptor::DescriptorPublicKey>,
+) -> Option<descriptor::DescriptorPublicKey> {
+    Some(descriptor::DescriptorPublicKey::MultiXPub(
+        descriptor::DescriptorMultiXKey {
+            origin: None,
+            xkey: unspendable_internal_xpub(desc)?,
+            derivation_paths: descriptor::DerivPaths::new(vec![
+                [0.into()][..].into(),
+                [1.into()][..].into(),
+            ])
+            .expect("Non empty vec"),
+            wildcard: descriptor::Wildcard::Unhardened,
+        },
+    ))
+}
+
 /// A Liana spending policy is one composed of at least two spending paths:
 ///     - A directly available path with any number of keys checks; or
 ///     - One or more recovery paths with any number of keys checks, behind increasing relative
@@ -370,13 +460,15 @@ impl PathInfo {
 pub struct LianaPolicy {
     pub(super) primary_path: PathInfo,
     pub(super) recovery_paths: BTreeMap<u16, PathInfo>,
+    is_taproot: bool,
 }
 
 impl LianaPolicy {
     /// Create a new Liana policy from a given configuration.
-    pub fn new(
+    fn _new(
         primary_path: PathInfo,
         recovery_paths: BTreeMap<u16, PathInfo>,
+        is_taproot: bool,
     ) -> Result<LianaPolicy, LianaPolicyError> {
         if recovery_paths.is_empty() {
             return Err(LianaPolicyError::MissingRecoveryPath);
@@ -430,9 +522,26 @@ impl LianaPolicy {
         let policy = LianaPolicy {
             primary_path,
             recovery_paths,
+            is_taproot,
         };
-        policy.clone().into_miniscript()?;
+        policy.clone().into_multipath_descriptor_fallible()?;
         Ok(policy)
+    }
+
+    /// Create a new Liana policy for use under a Taproot context.
+    pub fn new(
+        primary_path: PathInfo,
+        recovery_paths: BTreeMap<u16, PathInfo>,
+    ) -> Result<LianaPolicy, LianaPolicyError> {
+        Self::_new(primary_path, recovery_paths, /* is_taproot = */ true)
+    }
+
+    /// Create a new Liana policy for use under a P2WSH context.
+    pub fn new_legacy(
+        primary_path: PathInfo,
+        recovery_paths: BTreeMap<u16, PathInfo>,
+    ) -> Result<LianaPolicy, LianaPolicyError> {
+        Self::_new(primary_path, recovery_paths, /* is_taproot = */ false)
     }
 
     /// Create a Liana policy from a descriptor. This will check the descriptor is correctly formed
@@ -440,22 +549,46 @@ impl LianaPolicy {
     pub fn from_multipath_descriptor(
         desc: &descriptor::Descriptor<descriptor::DescriptorPublicKey>,
     ) -> Result<LianaPolicy, LianaPolicyError> {
-        // For now we only allow P2WSH descriptors.
-        let wsh_desc = match &desc {
-            descriptor::Descriptor::Wsh(desc) => desc,
-            _ => return Err(LianaPolicyError::IncompatibleDesc),
-        };
-
         // Lift a semantic policy out of this Miniscript and normalize it to make sure we compare
         // apples to apples below.
-        let ms = match wsh_desc.as_inner() {
-            descriptor::WshInner::Ms(ms) => ms,
+        let policy = match desc {
+            descriptor::Descriptor::Wsh(wsh_desc) => {
+                let ms = match wsh_desc.as_inner() {
+                    descriptor::WshInner::Ms(ms) => ms,
+                    _ => return Err(LianaPolicyError::IncompatibleDesc),
+                };
+                ms.lift().map_err(LianaPolicyError::PolicyAnalysis)?
+            }
+            descriptor::Descriptor::Tr(desc) => {
+                // For Taproot, make sure to not take the internal key into account in the semantic
+                // policy if it's unspendable.
+                if let Some(tree) = desc.tap_tree() {
+                    let tree_policy = tree.lift().map_err(LianaPolicyError::PolicyAnalysis)?;
+                    let unspend_int_xpub = unspendable_internal_xpub(desc)
+                        .ok_or(LianaPolicyError::IncompatibleDesc)?;
+                    let desc_int_xpub = get_multi_xkey(desc.internal_key())
+                        .ok_or(LianaPolicyError::IncompatibleDesc)?;
+                    if *desc_int_xpub == unspend_int_xpub {
+                        tree_policy
+                    } else {
+                        SemanticPolicy::Threshold(
+                            1,
+                            vec![
+                                SemanticPolicy::Key(desc.internal_key().clone()),
+                                tree_policy,
+                            ],
+                        )
+                    }
+                } else {
+                    // A Liana descriptor must contain a timelocked path.
+                    return Err(LianaPolicyError::IncompatibleDesc);
+                }
+            }
+            // We only allow P2WSH and Taproot descriptors.
             _ => return Err(LianaPolicyError::IncompatibleDesc),
-        };
-        let policy = ms
-            .lift()
-            .map_err(LianaPolicyError::PolicyAnalysis)?
-            .normalized();
+        }
+        .normalized();
+        let is_taproot = matches!(desc, descriptor::Descriptor::Tr(..));
 
         // The policy must always be "1 of N spending paths" with at least an always-available
         // primary path with at least one key, and at least one timelocked recovery path with at
@@ -499,7 +632,7 @@ impl LianaPolicy {
         // Use the constructor for sanity checking the keys and the Miniscript policy. Note this
         // makes sure the recovery paths mapping isn't empty, too.
         let prim_path = primary_path.ok_or(LianaPolicyError::IncompatibleDesc)?;
-        LianaPolicy::new(prim_path, recovery_paths)
+        LianaPolicy::_new(prim_path, recovery_paths, is_taproot)
     }
 
     pub fn primary_path(&self) -> &PathInfo {
@@ -513,15 +646,11 @@ impl LianaPolicy {
         &self.recovery_paths
     }
 
-    fn into_miniscript(
-        self,
-    ) -> Result<
-        miniscript::Miniscript<descriptor::DescriptorPublicKey, miniscript::Segwitv0>,
-        LianaPolicyError,
-    > {
+    fn into_policy(self) -> miniscript::policy::Concrete<descriptor::DescriptorPublicKey> {
         let LianaPolicy {
             primary_path,
             recovery_paths,
+            ..
         } = self;
 
         // Start with the primary spending path. We'll then or() all the recovery paths to it.
@@ -529,20 +658,76 @@ impl LianaPolicy {
 
         // Incrementally create the top-level policy using all recovery paths.
         assert!(!recovery_paths.is_empty());
-        let tl_policy =
-            recovery_paths
-                .into_iter()
-                .fold(primary_keys, |tl_policy, (timelock, path_info)| {
-                    let timelock = ConcretePolicy::Older(Sequence::from_height(timelock));
-                    let keys = path_info.into_ms_policy();
-                    let recovery_branch = ConcretePolicy::And(vec![keys.into(), timelock.into()]);
-                    // We assume the larger the timelock the less likely a branch would be used.
-                    ConcretePolicy::Or(vec![(99, tl_policy.into()), (1, recovery_branch.into())])
-                });
+        recovery_paths
+            .into_iter()
+            .fold(primary_keys, |tl_policy, (timelock, path_info)| {
+                let timelock = ConcretePolicy::Older(Sequence::from_height(timelock));
+                let keys = path_info.into_ms_policy();
+                let recovery_branch = ConcretePolicy::And(vec![keys.into(), timelock.into()]);
+                // We assume the larger the timelock the less likely a branch would be used.
+                ConcretePolicy::Or(vec![(99, tl_policy.into()), (1, recovery_branch.into())])
+            })
+    }
 
-        tl_policy
-            .compile::<miniscript::Segwitv0>()
-            .map_err(LianaPolicyError::InvalidPolicy)
+    fn into_multipath_descriptor_fallible(
+        self,
+    ) -> Result<descriptor::Descriptor<descriptor::DescriptorPublicKey>, LianaPolicyError> {
+        if self.is_taproot {
+            // If compiling to a Taproot descriptor and we can't have an internal key, we want to
+            // compute a deterministic unspendable key to use as internal key. We compute it from
+            // the xpubs in the Taptree as per
+            // https://delvingbitcoin.org/t/unspendable-keys-in-descriptors/304/21. However, there
+            // is clearly an inter-dependency here: we need an internal key to get the Taptree, and
+            // vice-versa. So we use a dummy internal key. If it ends up as the internal key in the
+            // compiled descriptor, we replace it with a deterministically computed unspendable
+            // internal key.
+            let dummy_internal_key =
+                descriptor::DescriptorPublicKey::XPub(descriptor::DescriptorXKey::<bip32::Xpub> {
+                    origin: None,
+                    xkey: bip32::Xpub {
+                        public_key: bip341_nums(),
+                        chain_code: [0; 32].into(),
+                        depth: 0,
+                        parent_fingerprint: [0; 4].into(),
+                        child_number: 0.into(),
+                        network: bitcoin::Network::Regtest,
+                    },
+                    derivation_path: vec![].into(),
+                    wildcard: descriptor::Wildcard::None,
+                });
+            let policy = self.into_policy();
+            let desc = policy
+                .clone()
+                .compile_tr(Some(dummy_internal_key.clone()))
+                .map_err(LianaPolicyError::InvalidPolicy)?;
+            let inner_desc = if let descriptor::Descriptor::Tr(ref d) = desc {
+                d
+            } else {
+                unreachable!("compile_tr() always gives a tr() descriptor.");
+            };
+            if inner_desc.internal_key() == &dummy_internal_key {
+                // Unfortunately to replace the dummy internal key with the correct one we need to
+                // perform the computation again.
+                let actual_internal_key = unspendable_internal_key(inner_desc)
+                    .expect("Desc has a Taptree and only multixpubs.");
+                policy
+                    .compile_tr(Some(actual_internal_key))
+                    .map_err(LianaPolicyError::InvalidPolicy)
+            } else {
+                // A key from the policy could be used as internal key. No need for a deterministic
+                // internal key.
+                Ok(desc)
+            }
+        } else {
+            let ms = self
+                .into_policy()
+                .compile::<miniscript::Segwitv0>()
+                .map_err(|e| LianaPolicyError::InvalidPolicy(e.into()))?;
+            miniscript::Segwitv0::check_local_validity(&ms).expect("Miniscript must be sane");
+            Ok(descriptor::Descriptor::Wsh(
+                descriptor::Wsh::new(ms).expect("Must pass sanity checks"),
+            ))
+        }
     }
 
     /// Create a descriptor from this spending policy with multipath key expressions. Note this
@@ -552,11 +737,8 @@ impl LianaPolicy {
     pub fn into_multipath_descriptor(
         self,
     ) -> descriptor::Descriptor<descriptor::DescriptorPublicKey> {
-        let ms = self
-            .into_miniscript()
-            .expect("This is always checked when creating a LianaPolicy.");
-        miniscript::Segwitv0::check_local_validity(&ms).expect("Miniscript must be sane");
-        descriptor::Descriptor::Wsh(descriptor::Wsh::new(ms).expect("Must pass sanity checks"))
+        self.into_multipath_descriptor_fallible()
+            .expect("This is always checked when creating a LianaPolicy.")
     }
 }
 

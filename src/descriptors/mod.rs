@@ -5,13 +5,16 @@ use miniscript::{
         psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
         secp256k1,
     },
-    descriptor, translate_hash_clone, ForEachKey, TranslatePk, Translator,
+    descriptor,
+    psbt::{PsbtInputExt, PsbtOutputExt},
+    translate_hash_clone, ForEachKey, TranslatePk, Translator,
 };
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     convert::TryInto,
-    error, fmt, str,
+    error, fmt,
+    str::{self, FromStr},
 };
 
 use serde::{Deserialize, Serialize};
@@ -225,6 +228,8 @@ impl LianaDescriptor {
             .0
     }
 
+    // TODO: on Taproot we should use this for recovery but keyspend size if there is a spendable
+    // internal key.
     /// Get the maximum size difference of a transaction input spending a Script derived from this
     /// descriptor before and after satisfaction. The returned value is in weight units.
     /// Callers are expected to account for the Segwit marker (2 WU). This takes into account the
@@ -271,11 +276,38 @@ impl LianaDescriptor {
         psbt_in: &PsbtIn,
         txin: &bitcoin::TxIn,
     ) -> PartialSpendInfo {
-        // Get the identifier of all the keys that signed this transaction.
-        let pubkeys_signed = psbt_in
-            .partial_sigs
-            .iter()
-            .filter_map(|(pk, _)| psbt_in.bip32_derivation.get(&pk.inner));
+        let is_taproot = matches!(self.multi_desc, descriptor::Descriptor::Tr(..));
+        // Get the origin ECDSA or Schnorr signatures, depending on the descriptor type.
+        let pubkeys_signed = (!is_taproot)
+            .then(|| {
+                // ECDSA sigs.
+                psbt_in
+                    .partial_sigs
+                    .iter()
+                    .filter_map(|(pk, _)| psbt_in.bip32_derivation.get(&pk.inner))
+            })
+            .into_iter()
+            .flatten()
+            .chain(
+                is_taproot
+                    .then(|| {
+                        // Tapscript Schnorr sigs.
+                        psbt_in
+                            .tap_script_sigs
+                            .iter()
+                            .filter_map(|((pk, _), _)| {
+                                psbt_in.tap_key_origins.get(pk).map(|or| &or.1)
+                            })
+                            // Tapkey Schnorr sig.
+                            .chain(psbt_in.tap_key_sig.and_then(|_| {
+                                psbt_in
+                                    .tap_internal_key
+                                    .and_then(|pk| psbt_in.tap_key_origins.get(&pk).map(|or| &or.1))
+                            }))
+                    })
+                    .into_iter()
+                    .flatten(),
+            );
 
         // Determine the structure of the descriptor. Then compute the spend info for the primary
         // and recovery paths. Only provide the spend info for the recovery path if it is available
@@ -405,9 +437,14 @@ impl LianaDescriptor {
         // Go through all the PSBT inputs and drop the BIP32 derivations for keys that are not from
         // this spending path.
         for psbt_in in psbt.inputs.iter_mut() {
+            // Perform it for both legacy and Taproot origins, as if one is set the other should be
+            // empty so it's a noop.
             psbt_in
                 .bip32_derivation
                 .retain(|_, (fg, der_path)| key_is_for_path(&path_origins, fg, der_path));
+            psbt_in
+                .tap_key_origins
+                .retain(|_, (_, (fg, der_path))| key_is_for_path(&path_origins, fg, der_path));
         }
 
         psbt
@@ -517,6 +554,11 @@ impl SinglePathLianaDesc {
     }
 }
 
+pub enum DescKeysOrigins {
+    Wsh(BTreeMap<secp256k1::PublicKey, (bip32::Fingerprint, bip32::DerivationPath)>),
+    Tr(BTreeMap<secp256k1::PublicKey, (bip32::Fingerprint, bip32::DerivationPath)>),
+}
+
 /// Map of a raw public key to the xpub used to derive it and its derivation path
 pub type Bip32Deriv = BTreeMap<secp256k1::PublicKey, (bip32::Fingerprint, bip32::DerivationPath)>;
 
@@ -531,10 +573,12 @@ impl DerivedSinglePathLianaDesc {
         self.0.script_pubkey()
     }
 
+    // NB: panics if called for a Taproot descriptor.
     fn witness_script(&self) -> bitcoin::ScriptBuf {
         self.0.explicit_script().expect("Not a Taproot descriptor")
     }
 
+    // NB: panics if called for a Taproot descriptor.
     fn bip32_derivations(&self) -> Bip32Deriv {
         let ms = match self.0 {
             descriptor::Descriptor::Wsh(ref wsh) => match wsh.as_inner() {
@@ -543,7 +587,7 @@ impl DerivedSinglePathLianaDesc {
                     unreachable!("None of our descriptors is a sorted multi")
                 }
             },
-            _ => unreachable!("All our descriptors are always P2WSH"),
+            _ => unreachable!("Must never be called for a Taproot descriptor."),
         };
 
         // For DerivedPublicKey, Pk::Hash == Self.
@@ -552,16 +596,45 @@ impl DerivedSinglePathLianaDesc {
             .collect()
     }
 
+    // FIXME: update_with_descriptor() needs a Descriptor<DefiniteKey>. This is a temporary hack to
+    // avoid having to duplicate the cumbersome logic here. Could use translate_pk() instead in the
+    // future.
+    fn definite_desc(&self) -> descriptor::Descriptor<descriptor::DefiniteDescriptorKey> {
+        descriptor::Descriptor::<_>::from_str(&self.0.to_string()).expect("Must roundtrip")
+    }
+
     /// Update the PSBT input information with data from this derived descriptor.
     pub fn update_psbt_in(&self, psbtin: &mut PsbtIn) {
-        psbtin.bip32_derivation = self.bip32_derivations();
-        psbtin.witness_script = Some(self.witness_script());
+        match self.0 {
+            descriptor::Descriptor::Wsh(_) => {
+                psbtin.bip32_derivation = self.bip32_derivations();
+                psbtin.witness_script = Some(self.witness_script());
+            }
+            descriptor::Descriptor::Tr(_) => {
+                let desc = self.definite_desc();
+                if let Err(e) = psbtin.update_with_descriptor_unchecked(&desc) {
+                    log::error!("BUG! Please report this! Error when adding key origins for desc: {}. Descriptor: {}.", e, desc);
+                }
+            }
+            _ => unreachable!("Only ever a wsh() or a tr() descriptor."),
+        }
     }
 
     /// Update the info of a PSBT output for a change output with data from this derived
     /// descriptor.
     pub fn update_change_psbt_out(&self, psbtout: &mut PsbtOut) {
-        psbtout.bip32_derivation = self.bip32_derivations();
+        match self.0 {
+            descriptor::Descriptor::Wsh(_) => {
+                psbtout.bip32_derivation = self.bip32_derivations();
+            }
+            descriptor::Descriptor::Tr(_) => {
+                let desc = self.definite_desc();
+                if let Err(e) = psbtout.update_with_descriptor_unchecked(&desc) {
+                    log::error!("BUG! Please report this! Error when adding key origins for desc: {}. Descriptor: {}.", e, desc);
+                }
+            }
+            _ => unreachable!("Only ever a wsh() or a tr() descriptor."),
+        }
     }
 }
 
@@ -569,9 +642,7 @@ impl DerivedSinglePathLianaDesc {
 mod tests {
     use super::*;
 
-    use bitcoin::Sequence;
-
-    use std::str::FromStr;
+    use bitcoin::{hashes::Hash, Sequence};
 
     use crate::signer::HotSigner;
 
@@ -596,15 +667,24 @@ mod tests {
 
     #[test]
     fn descriptor_creation() {
+        // Simple 1 primary key, 1 recovery key.
         let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*").unwrap());
         let timelock = 52560;
-        let policy = LianaPolicy::new(
+        let policy = LianaPolicy::new_legacy(
             owner_key.clone(),
             [(timelock, heir_key.clone())].iter().cloned().collect(),
         )
         .unwrap();
         assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(pk([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#g7vk9r5l");
+
+        // Same under Taproot.
+        let policy = LianaPolicy::new(
+            owner_key.clone(),
+            [(timelock, heir_key.clone())].iter().cloned().collect(),
+        )
+        .unwrap();
+        assert_eq!(LianaDescriptor::new(policy).to_string(), "tr([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,and_v(v:pk([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560)))#0mt7e93c");
 
         // A 3-of-3 multisig decaying into a 2-of-3 multisig after 6 months. Trying to mimic a
         // real situation, we use keys from 3 different origins (in practice, 3 different devices
@@ -627,12 +707,20 @@ mod tests {
                 descriptor::DescriptorPublicKey::from_str("[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*").unwrap(),
             ],
         );
+        let policy = LianaPolicy::new_legacy(
+            primary_keys.clone(),
+            [(26352, recovery_keys.clone())].iter().cloned().collect(),
+        )
+        .unwrap();
+        assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*)),older(26352))))#prj7nktq");
+
+        // Same under Taproot.
         let policy = LianaPolicy::new(
             primary_keys,
             [(26352, recovery_keys)].iter().cloned().collect(),
         )
         .unwrap();
-        assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*)),older(26352))))#prj7nktq");
+        assert_eq!(LianaDescriptor::new(policy.clone()).to_string(), "tr(xpub661MyMwAqRbcFERisZuMzFcfg3Ur3dKB17kb8iEG89ZJYMHTWqKQGRdLjTXC6Byr8kjKo6JabFfRCm3ETM4woq7DxUXuUxxRFHfog4Peh41/<0;1>/*,{and_v(v:multi_a(2,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*),older(26352)),multi_a(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*)})#tugn7xtx");
 
         // Another derivation step before the wildcard is taken into account.
         // desc_b is the very same descriptor as desc_a, except the very first xpub's derivation
@@ -665,26 +753,34 @@ mod tests {
                 descriptor::DescriptorPublicKey::from_str("[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<2;3>/*").unwrap(),
             ],
         );
+        let policy = LianaPolicy::new_legacy(
+            primary_keys.clone(),
+            [(26352, recovery_keys.clone())].iter().cloned().collect(),
+        )
+        .unwrap();
+        assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<2;3>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<2;3>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<2;3>/*)),older(26352))))#d2h994td");
+
+        // Same under Taproot.
         let policy = LianaPolicy::new(
             primary_keys,
             [(26352, recovery_keys)].iter().cloned().collect(),
         )
         .unwrap();
-        assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<2;3>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<2;3>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<2;3>/*)),older(26352))))#d2h994td");
+        assert_eq!(LianaDescriptor::new(policy.clone()).to_string(), "tr(xpub661MyMwAqRbcFERisZuMzFcfg3Ur3dKB17kb8iEG89ZJYMHTWqKQGRdLjTXC6Byr8kjKo6JabFfRCm3ETM4woq7DxUXuUxxRFHfog4Peh41/<0;1>/*,{and_v(v:multi_a(2,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<2;3>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<2;3>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<2;3>/*),older(26352)),multi_a(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*)})#ayju5dfr");
 
         // We prevent footguns with timelocks by requiring a u16. Note how the following wouldn't
         // compile:
-        //LianaPolicy::new(owner_key.clone(), heir_key.clone(), 0x00_01_0f_00).unwrap_err();
-        //LianaPolicy::new(owner_key.clone(), heir_key.clone(), (1 << 31) + 1).unwrap_err();
-        //LianaPolicy::new(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
+        //LianaPolicy::new_legacy(owner_key.clone(), heir_key.clone(), 0x00_01_0f_00).unwrap_err();
+        //LianaPolicy::new_legacy(owner_key.clone(), heir_key.clone(), (1 << 31) + 1).unwrap_err();
+        //LianaPolicy::new_legacy(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
 
         // You can't use a null timelock in Miniscript.
-        LianaPolicy::new(owner_key, [(0, heir_key)].iter().cloned().collect()).unwrap_err();
+        LianaPolicy::new_legacy(owner_key, [(0, heir_key)].iter().cloned().collect()).unwrap_err();
 
         let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*").unwrap());
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*").unwrap());
         let timelock = 57600;
-        let policy = LianaPolicy::new(
+        let policy = LianaPolicy::new_legacy(
             owner_key.clone(),
             [(timelock, heir_key)].iter().cloned().collect(),
         )
@@ -695,13 +791,13 @@ mod tests {
         // without both the change and receive derivation paths, or with more than 2 different
         // derivation paths.
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/<0;1>/354").unwrap());
-        LianaPolicy::new(
+        LianaPolicy::new_legacy(
             owner_key.clone(),
             [(timelock, heir_key)].iter().cloned().collect(),
         )
         .unwrap_err();
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/<0;1>/*'").unwrap());
-        LianaPolicy::new(
+        LianaPolicy::new_legacy(
             owner_key.clone(),
             [(timelock, heir_key)].iter().cloned().collect(),
         )
@@ -712,19 +808,20 @@ mod tests {
             )
             .unwrap(),
         );
-        LianaPolicy::new(
+        LianaPolicy::new_legacy(
             owner_key.clone(),
             [(timelock, heir_key)].iter().cloned().collect(),
         )
         .unwrap_err();
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/0/*'").unwrap());
-        LianaPolicy::new(
+        LianaPolicy::new_legacy(
             owner_key.clone(),
             [(timelock, heir_key)].iter().cloned().collect(),
         )
         .unwrap_err();
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/<0;1;2>/*'").unwrap());
-        LianaPolicy::new(owner_key, [(timelock, heir_key)].iter().cloned().collect()).unwrap_err();
+        LianaPolicy::new_legacy(owner_key, [(timelock, heir_key)].iter().cloned().collect())
+            .unwrap_err();
 
         // And it's checked even in a multisig. For instance:
         let primary_keys = PathInfo::Multi(
@@ -741,6 +838,13 @@ mod tests {
                 descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*").unwrap(),
             ],
         );
+        LianaPolicy::new_legacy(
+            primary_keys.clone(),
+            [(26352, recovery_keys.clone())].iter().cloned().collect(),
+        )
+        .unwrap_err();
+
+        // It's also checked under Taproot context.
         LianaPolicy::new(
             primary_keys,
             [(26352, recovery_keys)].iter().cloned().collect(),
@@ -750,13 +854,16 @@ mod tests {
         // You can't pass duplicate keys, even if they are encoded differently.
         let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        LianaPolicy::new(owner_key, [(timelock, heir_key)].iter().cloned().collect()).unwrap_err();
+        LianaPolicy::new_legacy(owner_key, [(timelock, heir_key)].iter().cloned().collect())
+            .unwrap_err();
         let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[00aabb44]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        LianaPolicy::new(owner_key, [(timelock, heir_key)].iter().cloned().collect()).unwrap_err();
+        LianaPolicy::new_legacy(owner_key, [(timelock, heir_key)].iter().cloned().collect())
+            .unwrap_err();
         let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[00aabb44]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[11223344/2/98]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
-        LianaPolicy::new(owner_key, [(timelock, heir_key)].iter().cloned().collect()).unwrap_err();
+        LianaPolicy::new_legacy(owner_key, [(timelock, heir_key)].iter().cloned().collect())
+            .unwrap_err();
 
         // You can't pass duplicate keys, even across multisigs.
         let primary_keys = PathInfo::Multi(
@@ -775,6 +882,14 @@ mod tests {
                 descriptor::DescriptorPublicKey::from_str("[abcdef02]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*").unwrap(),
             ],
         );
+        let err = LianaPolicy::new_legacy(
+            primary_keys.clone(),
+            [(26352, recovery_keys.clone())].iter().cloned().collect(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LianaPolicyError::DuplicateKey(_)));
+
+        // It's also checked under Taproot.
         let err = LianaPolicy::new(
             primary_keys,
             [(26352, recovery_keys)].iter().cloned().collect(),
@@ -791,6 +906,14 @@ mod tests {
             ]
         );
         let recovery_keys = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef02]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*").unwrap());
+        let err = LianaPolicy::new_legacy(
+            primary_keys.clone(),
+            [(26352, recovery_keys.clone())].iter().cloned().collect(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LianaPolicyError::DuplicateOriginSamePath(_)));
+
+        // It's also checked under Taproot.
         let err = LianaPolicy::new(
             primary_keys,
             [(26352, recovery_keys)].iter().cloned().collect(),
@@ -807,6 +930,14 @@ mod tests {
             ]
         );
         let primary_keys = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef02]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*").unwrap());
+        let err = LianaPolicy::new_legacy(
+            primary_keys.clone(),
+            [(26352, recovery_keys.clone())].iter().cloned().collect(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LianaPolicyError::DuplicateOriginSamePath(_)));
+
+        // It's also checked under Taproot.
         let err = LianaPolicy::new(
             primary_keys,
             [(26352, recovery_keys)].iter().cloned().collect(),
@@ -823,6 +954,13 @@ mod tests {
             ]
         );
         let recovery_keys = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*").unwrap());
+        LianaPolicy::new_legacy(
+            primary_keys.clone(),
+            [(26352, recovery_keys.clone())].iter().cloned().collect(),
+        )
+        .unwrap();
+
+        // It's also possible under Taproot.
         LianaPolicy::new(
             primary_keys,
             [(26352, recovery_keys)].iter().cloned().collect(),
@@ -833,16 +971,37 @@ mod tests {
         let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*").unwrap());
         let timelock = 52560;
+        LianaPolicy::new_legacy(
+            owner_key.clone(),
+            [(timelock, heir_key.clone())].iter().cloned().collect(),
+        )
+        .unwrap_err();
         LianaPolicy::new(owner_key, [(timelock, heir_key)].iter().cloned().collect()).unwrap_err();
 
         // One of the xpub isn't normalized.
         let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[aabbccdd]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/42'/<0;1>/*").unwrap());
         let timelock = 52560;
+        LianaPolicy::new_legacy(
+            owner_key.clone(),
+            [(timelock, heir_key.clone())].iter().cloned().collect(),
+        )
+        .unwrap_err();
         LianaPolicy::new(owner_key, [(timelock, heir_key)].iter().cloned().collect()).unwrap_err();
 
         // A 1-of-N multisig as primary path.
         LianaDescriptor::from_str("wsh(or_d(multi(1,[573fb35b/48'/1'/0'/2']tpubDFKp9T7WAYDcENSjoifkrpq1gMDF47KGJcJrpxzX23Qor8wuGbrEVs9utNq1MDS8E2WXJSBk1qoPQLpwyokW7DiUNPwFuxQkL7owNkLAb9W/<0;1>/*,[573fb35c/48'/1'/1'/2']tpubDFGezyzuHJPhdP3jHGW7v7Hwes4Hihqv5W2yyCmRY9VZJCRchETvxrMC8uECeJZdxQ14V4iD4DecoArkUSDwj8ogYE9WEv4MNZr12thNHCs/<0;1>/*),and_v(v:multi(2,[573fb35b/48'/1'/2'/2']tpubDDwxQauiaU964vPzt5Vd7jnDHEUtp2Vc34PaWpEXg5TQ3bRccxnc1MKKh88Hi7xiMeZo9Tm6fBcq4UGXqnDtGUniJLjqAD8SjQ8Eci3aSR7/<0;1>/*,[573fb35c/48'/1'/3'/2']tpubDE37XAVB5CQ1x85md3BQ5uHCoMwT5fgT8X13zzCUQ3x5o2jskYxKjj7Qcxt1Jpj4QB8tqspn2dooPCekRuQDYrDHov7J1ueUNu2wcvgRDxr/<0;1>/*),older(1000))))#fccaqlhh").unwrap();
+    }
+
+    #[test]
+    fn descriptor_unspendable_internal_key() {
+        // We correctly detect a deterministically derived unspendable internal key.
+        LianaDescriptor::from_str("tr(tpubD6NzVbkrYhZ4YdBUPkUhDYj6Sd1QK8vgiCf5RwHnAnSNK5ozemAZzPTYZbgQq4diod7oxFJJYGa8FNRHzRo7URkixzQTuudh38xRRdSc4Hu/<0;1>/*,{and_v(v:multi_a(1,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*,[da2ee873/48'/1'/0'/2']tpubDEbXY6RbN9mxAvQW797WxReGGkrdyRfdYcehVVaQQcQ3kyfhxSMcnU9qGpUVRHXXALvBtc99jcuxx5tkzcLaJbAukSNpP9h2ti4XFRosv1g/<2;3>/*),older(2)),multi_a(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[da2ee873/48'/1'/0'/2']tpubDEbXY6RbN9mxAvQW797WxReGGkrdyRfdYcehVVaQQcQ3kyfhxSMcnU9qGpUVRHXXALvBtc99jcuxx5tkzcLaJbAukSNpP9h2ti4XFRosv1g/<0;1>/*)})").unwrap();
+        // Even if it has an origin.
+        LianaDescriptor::from_str("tr([00000000/1/2/3]tpubD6NzVbkrYhZ4YdBUPkUhDYj6Sd1QK8vgiCf5RwHnAnSNK5ozemAZzPTYZbgQq4diod7oxFJJYGa8FNRHzRo7URkixzQTuudh38xRRdSc4Hu/<0;1>/*,{and_v(v:multi_a(1,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*,[da2ee873/48'/1'/0'/2']tpubDEbXY6RbN9mxAvQW797WxReGGkrdyRfdYcehVVaQQcQ3kyfhxSMcnU9qGpUVRHXXALvBtc99jcuxx5tkzcLaJbAukSNpP9h2ti4XFRosv1g/<2;3>/*),older(2)),multi_a(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[da2ee873/48'/1'/0'/2']tpubDEbXY6RbN9mxAvQW797WxReGGkrdyRfdYcehVVaQQcQ3kyfhxSMcnU9qGpUVRHXXALvBtc99jcuxx5tkzcLaJbAukSNpP9h2ti4XFRosv1g/<0;1>/*)})").unwrap();
+        // We'll correctly detect a non-deterministically derived unspendable internal key and
+        // refuse to parse the descriptor (because it makes it have 2 primary spending paths).
+        LianaDescriptor::from_str("tr(tpubDCaEmvN8YCgyfjNfX6j7r71h1Gx5pqVDAjT145hd46R4DhN8cuHUC39bqRXd43xnroUNKTUqFi9RGCLtxAxxwB6ysVhAh5k26q7AkNUxF7b/<0;1>/*,{and_v(v:multi_a(1,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*,[da2ee873/48'/1'/0'/2']tpubDEbXY6RbN9mxAvQW797WxReGGkrdyRfdYcehVVaQQcQ3kyfhxSMcnU9qGpUVRHXXALvBtc99jcuxx5tkzcLaJbAukSNpP9h2ti4XFRosv1g/<2;3>/*),older(2)),multi_a(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[da2ee873/48'/1'/0'/2']tpubDEbXY6RbN9mxAvQW797WxReGGkrdyRfdYcehVVaQQcQ3kyfhxSMcnU9qGpUVRHXXALvBtc99jcuxx5tkzcLaJbAukSNpP9h2ti4XFRosv1g/<0;1>/*)})").unwrap_err();
     }
 
     #[test]
@@ -913,75 +1072,92 @@ mod tests {
         let mut twenty_nine_keys = twenty_eight_keys.clone();
         twenty_nine_keys.push(random_desc_key(&secp));
 
+        // Test various scenarii which should pass or fail on both Taproot and P2WSH.
+        macro_rules! test_liana_desc_keys {
+            ($constructor:expr) => {
+                $constructor(
+                    prim_path.clone(),
+                    [(1, PathInfo::Multi(2, vec![random_desc_key(&secp)]))]
+                        .iter()
+                        .cloned()
+                        .collect(),
+                )
+                .unwrap_err();
+                $constructor(
+                    prim_path.clone(),
+                    [(
+                        1,
+                        PathInfo::Multi(1, vec![random_desc_key(&secp), random_desc_key(&secp)]),
+                    )]
+                    .iter()
+                    .cloned()
+                    .collect(),
+                )
+                .unwrap();
+                $constructor(
+                    prim_path.clone(),
+                    [(
+                        1,
+                        PathInfo::Multi(0, vec![random_desc_key(&secp), random_desc_key(&secp)]),
+                    )]
+                    .iter()
+                    .cloned()
+                    .collect(),
+                )
+                .unwrap_err();
+                $constructor(
+                    prim_path.clone(),
+                    [(
+                        1,
+                        PathInfo::Multi(2, vec![random_desc_key(&secp), random_desc_key(&secp)]),
+                    )]
+                    .iter()
+                    .cloned()
+                    .collect(),
+                )
+                .unwrap();
+                $constructor(
+                    prim_path.clone(),
+                    [(
+                        1,
+                        PathInfo::Multi(3, vec![random_desc_key(&secp), random_desc_key(&secp)]),
+                    )]
+                    .iter()
+                    .cloned()
+                    .collect(),
+                )
+                .unwrap_err();
+                $constructor(
+                    prim_path.clone(),
+                    [(1, PathInfo::Multi(3, twenty_eight_keys.clone()))]
+                        .iter()
+                        .cloned()
+                        .collect(),
+                )
+                .unwrap();
+                $constructor(
+                    prim_path.clone(),
+                    [(1, PathInfo::Multi(20, twenty_eight_keys.clone()))]
+                        .iter()
+                        .cloned()
+                        .collect(),
+                )
+                .unwrap();
+            };
+        }
+        test_liana_desc_keys!(LianaPolicy::new_legacy);
+        test_liana_desc_keys!(LianaPolicy::new);
+
+        // A 20-of-28 should pass on Taproot but fail on P2WSH.
         LianaPolicy::new(
             prim_path.clone(),
-            [(1, PathInfo::Multi(2, vec![random_desc_key(&secp)]))]
+            [(1, PathInfo::Multi(20, twenty_nine_keys.clone()))]
                 .iter()
                 .cloned()
                 .collect(),
         )
-        .unwrap_err();
-        LianaPolicy::new(
-            prim_path.clone(),
-            [(
-                1,
-                PathInfo::Multi(1, vec![random_desc_key(&secp), random_desc_key(&secp)]),
-            )]
-            .iter()
-            .cloned()
-            .collect(),
-        )
         .unwrap();
-        LianaPolicy::new(
-            prim_path.clone(),
-            [(
-                1,
-                PathInfo::Multi(0, vec![random_desc_key(&secp), random_desc_key(&secp)]),
-            )]
-            .iter()
-            .cloned()
-            .collect(),
-        )
-        .unwrap_err();
-        LianaPolicy::new(
-            prim_path.clone(),
-            [(
-                1,
-                PathInfo::Multi(2, vec![random_desc_key(&secp), random_desc_key(&secp)]),
-            )]
-            .iter()
-            .cloned()
-            .collect(),
-        )
-        .unwrap();
-        LianaPolicy::new(
-            prim_path.clone(),
-            [(
-                1,
-                PathInfo::Multi(3, vec![random_desc_key(&secp), random_desc_key(&secp)]),
-            )]
-            .iter()
-            .cloned()
-            .collect(),
-        )
-        .unwrap_err();
-        LianaPolicy::new(
-            prim_path.clone(),
-            [(1, PathInfo::Multi(3, twenty_eight_keys.clone()))]
-                .iter()
-                .cloned()
-                .collect(),
-        )
-        .unwrap();
-        LianaPolicy::new(
-            prim_path.clone(),
-            [(1, PathInfo::Multi(20, twenty_eight_keys))]
-                .iter()
-                .cloned()
-                .collect(),
-        )
-        .unwrap();
-        LianaPolicy::new(
+        LianaPolicy::new_legacy(
             prim_path,
             [(1, PathInfo::Multi(20, twenty_nine_keys))]
                 .iter()
@@ -996,16 +1172,26 @@ mod tests {
         assert_eq!(desc.to_string(), desc_str);
     }
 
+    // Make sure the string representation of our descriptors roundtrip. The Taproot ones were
+    // generated manually with our code because of the potential need to compute the internal key
+    // deterministically.
     #[test]
     fn roundtrip_descriptor() {
         // A descriptor with single keys in both primary and recovery paths
         roundtrip("wsh(or_d(pk([aabbccdd]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh([aabbccdd]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#7437yjrs");
+        roundtrip("tr([8344c025]xpub661MyMwAqRbcG2SYC6YSRsUGvcSxXEZm1kjiQRTEaAqart1PQk1N1hVTTEsGfaBx6xQ5gDYXXtbourodE6ZE5qZTnaMgmehNs8GGEEY9YK6/<0;1>/*,and_v(v:pk([158fd0ef]xpub661MyMwAqRbcF2KsCnvJ4mqWXXrwd3799wCyQrLk2iNDC6CfK8UcfnABdeTpXyoJnBhRTybmtBLDAuTuHye1eQMq43BSLtR2miA6t9KqmWU/<0;1>/*),older(4242)))#zy3kddhj");
         // One with a multisig in both paths
         roundtrip("wsh(or_d(multi(3,[aabbccdd]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0011/10/4893]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[aabb0022]xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*),and_v(v:multi(2,[aabbccdd]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*,[aabb0011]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*,[aabb0022/10/4893]xpub6AyxexvxizZJffF153evmfqHcE9MV88fCNCAtP3jQjXJHwrAKri71Tq9jWUkPxj9pja4u6AkCPHY7atgxzSEa2HtDwJfrRWKK4fsfQg4o77/<0;1>/*),older(26352))))#csjdk94l");
+        roundtrip("tr(xpub661MyMwAqRbcGg7oXkMMptXXJAGxQtVM7LZeqXNNdxPiWyEmuJdoyFD3NhRpL1YTo313XRWZmiUXTkcEK9EFQHrbie6NBNAvL2CZXp941Li/<0;1>/*,{and_v(v:multi_a(2,[6b882e01]xpub661MyMwAqRbcGRU9psMcDAPd2L2ShzwoenySSSjWpkd7u8Wv7PCPtH5fi6WYYbQAqSG4U3NbuYASCRMkWVYm7yb97iTY4MUKKZ3N8XwCERJ/<0;1>/*,[66b98303]xpub661MyMwAqRbcGicAwMZ5pHCWrB4DEMBGUtvkV2KMMLypR8dbr7g2uV9vzE9w3oDKRqtTV6HYTqHHvusxNwJUXAvRH6BFhKUPTgGMiLPnSmK/<0;1>/*,[9c04a03b]xpub661MyMwAqRbcFCBt8Gjs71UqoMe8V4PSHECuCowg1TR7EkGWLLbu2WanQtcWutzwahrTcicsuL25Q7r6EyfbEKF2jSoekmnw9soZfoiLZXu/<0;1>/*),older(42421)),multi_a(3,[30188cc2]xpub661MyMwAqRbcGeoYQgqUapNKDLBiNE7fcGs6ibKi39GjuiRmV1JgXcfAwHjt7PLLofmz4PPL66NTwAxaTwGtL8YB67RhRspAzbKgneqpenb/<0;1>/*,[aea08adc]xpub661MyMwAqRbcGVL3W5qKT8pjZ3BXcDEJghDj67rKLQYwmTaJLud8RWyYwZQ9LdzkcNtCSCHVypZdUUxd4z2k5hCfb6qprGgwAKqpmaKJTnS/<0;1>/*,[85e33ca4]xpub661MyMwAqRbcFHP9bmnRofzha8c4DHADC7ToPz3kYdov5DDDtgdBEQ3kVcwdjjqAGC8eJZ65CLF2cA9XHhUsJJqKxbE9asj8RUNmGjCJErX/<0;1>/*)})#zm4kj6yd");
         // A single key as primary path, a multisig as recovery
         roundtrip("wsh(or_d(pk([aabbccdd]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:multi(2,[aabbccdd]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*,[aabb0011]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*,[aabb0022/10/4893]xpub6AyxexvxizZJffF153evmfqHcE9MV88fCNCAtP3jQjXJHwrAKri71Tq9jWUkPxj9pja4u6AkCPHY7atgxzSEa2HtDwJfrRWKK4fsfQg4o77/<0;1>/*),older(26352))))#sc9gw0z0");
+        roundtrip("tr([46f4cf22]xpub661MyMwAqRbcG22nAyuZc7MUXR559qKKkHVdi7TKy3Q8m91FKN9heKhP7jWj6SJdyAA9zfQgjQUNWkqjPGJdcH6uFD8mEWJnTps5emjoi9L/<0;1>/*,and_v(v:multi_a(2,[f9eb379c]xpub661MyMwAqRbcF2FpaYbnrN7K6uPhiwg5u1LiqmsMSTnphuhQzpPv9RGdERxDd7pnnrEC8hxttAPi4wbSVsKeJYiHYymfpuxSD7TALTXqjq6/<0;1>/*,[1fc462f2]xpub661MyMwAqRbcEtYavp2XsS9QfH93wyVQnkWenWxWuWdaxDtjBqfzFfWPY83z3da5oYv2XmwgTT97GhGwX9HUGDEP4FERzzgmwaGNAz1emZr/<0;1>/*,[ebcef2a0]xpub661MyMwAqRbcH3JihNDbpEqpmT9xjY5YWd9VwVWQqoWWrggurHs7wsvTXM7ggK5X3wwATxiijwJPe73y9beirtorQebMuL4hR7dbU7akrk7/<0;1>/*),older(124)))#rgrm8l4v");
         // The other way around
         roundtrip("wsh(or_d(multi(3,[aabbccdd]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0011/10/4893]xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*,[aabb0022]xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*),and_v(v:pk([aabbccdd]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*),older(26352))))#kjajav3j");
+        roundtrip("tr(xpub661MyMwAqRbcFWPZkATtyZ3cZboVifGEpVoDNLRotSvymYNbb652s75MJs7x6Dsh1K4WidtHAvWiyWu6ufbvP3RG9ozXYhZA83rAniyTAcQ/<0;1>/*,{and_v(v:pk([5c1f5207]xpub661MyMwAqRbcGjhDHfE45ivpxoBGywTdSJa5vWgB5L5BjUjfdvfwQr618o6hjLSCdLruGwu8WFLbgQa7179EC3HEiEUAceLSHArRgsUPRFe/<0;1>/*),older(42)),multi_a(2,[f25498f5]xpub661MyMwAqRbcEZKeQW5gkVY61KyFdmR2ntRmHdnoyWPE5PrgcpAFhotgSftuQVkw1DXoeE7wGQpXkaijczBFNVSFYs4UN2ZsN8tiBR2cffw/<0;1>/*,[0adab7f3]xpub661MyMwAqRbcGrUYLnLEAqJEjmy9NejNXvjneoochu285TgBszNaS5usEnosxKXQxPS5ppWp923EXmi4JgYJWZa4cwEzTX6n6aacG1bN99j/<0;1>/*,[78428935]xpub661MyMwAqRbcGqCdcSemPFvTbhm5swDzRYxP9azdQGPwgcAYumXhFuQUdNFLxaf61uRB7UdpxsYoP3hMW3sqQF7ErWQm5RznBbbVMm6z6wc/<0;1>/*)})#s235c44f");
+        // More than 2 spending paths.
+        roundtrip("wsh(or_i(and_v(v:thresh(1,pkh([19e064b0]xpub661MyMwAqRbcGRgGoZDVccAfLzLuvxkXevrGCq66XGV9mmRLfJ1aiAZNtVUTfxFMoSmPNJLmEywZn8yQXBzVHVENMRbj3VpVvdzCteCkgq6/<0;1>/*),a:pkh([00454cc2]xpub661MyMwAqRbcExaDFtcC1pVGounzi9bmVb4nBxVr3reFEsFpCTn5VVwuDiUFeJkJtppEC7Gzk3cW8htEB9Q3DcXV28SAHioi2oJZv6oTobF/<0;1>/*)),older(1678)),or_i(and_v(v:thresh(2,pkh([0143d6e6]xpub661MyMwAqRbcFuLKDCSKk2r3KKN7FWXZnx9s7V1xScv7N1qs7xXPxjrarBaPkuzV9ji7Hquwf4G6G12pXFmaeqwXWhKzwSp1j8JgLHTKUDn/<0;1>/*),a:pkh([cd1f0cf2]xpub661MyMwAqRbcGcFwqwdNkHojx6ffeQEXPfopamNscuf4CXaLrKVMkCTpffiFNJ3okep7bgNVx13N1rryW3nQNiPAsrkr5zL9T3vo2ww4fC8/<0;1>/*),a:pkh([d76af68c]xpub661MyMwAqRbcGVFCMA5yqLiF9xj6G9QoqFDQdqmnyCZDTFTfpfUgzevrohjSrMTjoBYyB5YvKjtEqqX9U6yjgDCYRT8e7DeYqLnu6DbFAgj/<0;1>/*)),older(43)),or_d(multi(2,[5b016400]xpub661MyMwAqRbcGZFpjHB8mvxGnDGDdEBetsFu25nC69SrGAJKJVctsFwNNY5VwPMVx7aXL6m1LKAeA5qAE3Wheh5cAKBdxqSFrRBd3Vf7eTX/<0;1>/*,[6b0a6b3f]xpub661MyMwAqRbcGzZBMBU1evaZmfwmEVkzU8oRhu4y7DSaaHHoQeHDbM47JNqeEbJRGGhMNd1Hp9oP2NdYbRHxxcd7YfABiNfULyVW9vDg5cx/<0;1>/*,[1c4eb5d3]xpub661MyMwAqRbcGFr2mWaBr1rX3xfnv75FbzP1hPW7LEzYMzDZV5wPVgcrYEZWxwu8ALUTRJ5ioutE3mz5dTQBWKEkvxCytV3QeNdm4cDHr6p/<0;1>/*),and_v(v:pkh([5c055660]xpub661MyMwAqRbcEqgeH5cqyxRwY4UG21ey1MBJkNBX2xSTmGS9dCRmGQezqHE9mXUXzs9HqFzNEN2KkNw5o8xpqAXw2XxsVhGVm1LbRaEnxyT/<0;1>/*),older(42))))))#hd246u4a");
+        roundtrip("tr(xpub661MyMwAqRbcGqmqNapgQ9kqrLcDeZLHPktzsBcZXTtNx7aEay8NKQPizKcpu2fUejNbZzhZQaZLeDWL3nt8zg9QbFLBUTRQu4qqcSzeEmF/<0;1>/*,{{and_v(v:multi_a(1,[b4e32970]xpub661MyMwAqRbcEbs6ohRoUqTckEfLeT3vB2EsuWuckrEuDSKqdFXV6so8xJb4kvA4ZxT6hCydyFKsKwJrDm2LgSfTCphVqZgQbLzF49KwaXc/<0;1>/*,[c318e87f]xpub661MyMwAqRbcG2qnrFJ2MhKFSHehbVkK38gFfG7zXwasN51dKrL4kffj1HRd2zFhAZeQsjYKS8YaiN4sC4gVPHR28qXdQf7pf7nbYoefg6T/<0;1>/*),older(1678)),{and_v(v:pk([6c0d38a3]xpub661MyMwAqRbcF87hAvenL8GHW7qxhtn8Y9zHVkQbuTsd6RVtWkhBY5gh6m4Rua9ENmYDx7jTb8kbiyVB9iaLAbyRudxPFVTFoGPp6rTqoZn/<0;1>/*),older(42)),and_v(v:multi_a(2,[2e1370a6]xpub661MyMwAqRbcGRzCgSNLW7VFUFdwvC1dFXmKgWbZwQERj2QfNQuy5diCQSHNXuQYSS9FwXykLeWKtnZ5yRJ4ZHZzYqWf13FUY4PbDpBhipr/<0;1>/*,[fae2633e]xpub661MyMwAqRbcG9qKwZ7F363Mx3Ai3H2aMXAWTjvYCZrH4wqDEDLnsVghWFrwTKwpDGGzsSDCL7vPTiaiY7DhhdV2bY6RdPNGd7bF9om1MFz/<0;1>/*,[2ae87e33]xpub661MyMwAqRbcGw8ZvGfdLEjhCk4YC9hZrrUceKipiH32ANDMQccYFqq91kH8RpcwGiPnCbUWFo1S6ZGY2GxbVdJFsMYXqzpL1byJ1D3G2Mh/<0;1>/*),older(43))}},multi_a(2,[40f48611]xpub661MyMwAqRbcGUkDb45NBcMYwaaSE3fhsMNwvdf2psYhrqhFmRJY9n8irJuEB3juhK5LQPBiiqdr2gixMmC7Nmtg3Mwu4C5wbeagaAzbb9W/<0;1>/*,[a2bdfbe5]xpub661MyMwAqRbcH228eUBaJvc7Va1y7cGyEH9DZ5vPneKgZDX8eMsSd8PHS3uRYCFySyHPy3VfGfS8vKb5FzcS2MbNorNVv2c3Hn7AvVJJZ73/<0;1>/*,[028ece7a]xpub661MyMwAqRbcG9W1pZzs7rvWVtHeW1anzABj8iQRBbnz8yLf7vgUmYkVsydLf1hLffibgfzUjTBcrNCDKaBNnuqLtsp1xyiLSZJyLDtEjkF/<0;1>/*)})#xgzxdvrv");
     }
 
     fn psbt_from_str(psbt_str: &str) -> Psbt {
@@ -1013,7 +1199,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_spend_info() {
+    fn partial_spend_info_p2wsh() {
         let secp = secp256k1::Secp256k1::signing_only();
 
         // A simple descriptor with 1 keys as primary path and 1 recovery key.
@@ -1204,7 +1390,7 @@ mod tests {
         let first_reco_path = PathInfo::Multi(3, (0..5).map(|_| random_desc_key(&secp)).collect());
         let sec_reco_path = PathInfo::Multi(2, (0..5).map(|_| random_desc_key(&secp)).collect());
         let third_reco_path = PathInfo::Multi(1, (0..5).map(|_| random_desc_key(&secp)).collect());
-        let liana_policy = LianaPolicy::new(
+        let liana_policy = LianaPolicy::new_legacy(
             prim_path.clone(),
             [
                 (26784, first_reco_path.clone()),
@@ -1344,8 +1530,320 @@ mod tests {
         }
     }
 
+    // The same as above but adapted for Taproot.
+    #[test]
+    fn partial_spend_info_taproot() {
+        let secp = secp256k1::Secp256k1::signing_only();
+        let dummy_xonly_pubkeys = [
+            bitcoin::XOnlyPublicKey::from_str(
+                "85899827df71b16f2f0eed47cb920e3963f5204e171f5ef7ea4eeec3d5ecc607",
+            )
+            .unwrap(),
+            bitcoin::XOnlyPublicKey::from_str(
+                "0b71b3b1b1f2deebedebd54723428efb1d8d00b3c38a138977ef28f4fea848c9",
+            )
+            .unwrap(),
+        ];
+        let dummy_sig = bitcoin::taproot::Signature::from_slice(&[0; 64]).unwrap();
+        let dummy_leafhash = bitcoin::TapLeafHash::from_slice(&[0; 32]).unwrap();
+        let dummy_psbt = psbt_from_str("cHNidP8BAHECAAAAAUSHuliRtuCX1S6JxRuDRqDCKkWfKmWL5sV9ukZ/wzvfAAAAAAD9////AogTAAAAAAAAFgAUIxe7UY6LJ6y5mFBoWTOoVispDmdwFwAAAAAAABYAFKqO83TK+t/KdpAt21z2HGC7/Z2FAAAAAAABASsQJwAAAAAAACIAIIIySQjGCTeyx/rKUQx8qobjhJeNCiVCliBJPdyRX6XKAQVBIQI2cqWpc9UAW2gZt2WkKjvi8KoMCui00pRlL6wG32uKDKxzZHapFNYASzIYkEdH9bJz6nnqUG3uBB8kiK1asmgAAAA=");
+
+        // A simple descriptor with 1 keys as primary path and 1 recovery key.
+        let desc = LianaDescriptor::from_str("tr([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*,and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10)))").unwrap();
+        let desc_info = desc.policy();
+        let prim_key_fg = bip32::Fingerprint::from_str("f5acc2fd").unwrap();
+        let prim_key_origin = (prim_key_fg, [0.into(), 0.into()][..].into());
+        let recov_key_origin: (_, bip32::DerivationPath) = (
+            bip32::Fingerprint::from_str("8a64f2a9").unwrap(),
+            [0.into(), 4242.into()][..].into(),
+        );
+
+        // A PSBT with a single input and output, no signature. nSequence is not set to use the
+        // recovery path.
+        let mut unsigned_single_psbt: Psbt = dummy_psbt.clone();
+        let info = desc.partial_spend_info(&unsigned_single_psbt).unwrap();
+        assert_eq!(info.primary_path.threshold, 1);
+        assert_eq!(info.primary_path.sigs_count, 0);
+        assert!(info.primary_path.signed_pubkeys.is_empty());
+        assert!(info.recovery_paths.is_empty());
+
+        // If we set the sequence too low we still won't have the recovery path info.
+        unsigned_single_psbt.unsigned_tx.input[0].sequence =
+            Sequence::from_height(desc_info.recovery_paths.keys().next().unwrap() - 1);
+        let info = desc.partial_spend_info(&unsigned_single_psbt).unwrap();
+        assert!(info.recovery_paths.is_empty());
+
+        // Now if we set the sequence at the right value we'll have it.
+        let timelock = *desc_info.recovery_paths.keys().next().unwrap();
+        unsigned_single_psbt.unsigned_tx.input[0].sequence = Sequence::from_height(timelock);
+        let info = desc.partial_spend_info(&unsigned_single_psbt).unwrap();
+        assert!(info.recovery_paths.contains_key(&timelock));
+
+        // Even if it's a bit too high (as long as it's still a block height and activated)
+        unsigned_single_psbt.unsigned_tx.input[0].sequence = Sequence::from_height(timelock + 42);
+        let info = desc.partial_spend_info(&unsigned_single_psbt).unwrap();
+        let recov_info = info.recovery_paths.get(&timelock).unwrap();
+        assert_eq!(recov_info.threshold, 1);
+        assert_eq!(recov_info.sigs_count, 0);
+        assert!(recov_info.signed_pubkeys.is_empty());
+
+        // The same PSBT but with an (invalid) signature for the primary key.
+        let mut signed_single_psbt = dummy_psbt.clone();
+        signed_single_psbt.inputs[0].tap_internal_key = Some(dummy_xonly_pubkeys[0]);
+        signed_single_psbt.inputs[0].tap_key_sig = Some(dummy_sig);
+        signed_single_psbt.inputs[0].tap_key_origins = [(
+            dummy_xonly_pubkeys[0],
+            (vec![dummy_leafhash], prim_key_origin.clone()),
+        )]
+        .iter()
+        .cloned()
+        .collect();
+        let info = desc.partial_spend_info(&signed_single_psbt).unwrap();
+        assert_eq!(info.primary_path.threshold, 1);
+        assert_eq!(info.primary_path.sigs_count, 1);
+        assert!(
+            info.primary_path.signed_pubkeys.len() == 1
+                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
+        );
+        assert!(info.recovery_paths.is_empty());
+
+        // Now enable the recovery path and add a signature for the recovery key.
+        let mut signed_recov_psbt = dummy_psbt.clone();
+        signed_recov_psbt.unsigned_tx.input[0].sequence = Sequence::from_height(timelock);
+        let recov_key = dummy_xonly_pubkeys[1];
+        signed_recov_psbt.inputs[0]
+            .tap_script_sigs
+            .insert((recov_key, dummy_leafhash), dummy_sig);
+        signed_recov_psbt.inputs[0].tap_key_origins =
+            [(recov_key, (vec![dummy_leafhash], recov_key_origin.clone()))]
+                .iter()
+                .cloned()
+                .collect();
+        let info = desc.partial_spend_info(&signed_recov_psbt).unwrap();
+        assert_eq!(info.primary_path.threshold, 1);
+        assert_eq!(info.primary_path.sigs_count, 0);
+        assert!(info.primary_path.signed_pubkeys.is_empty());
+        let recov_info = info.recovery_paths.get(&timelock).unwrap();
+        assert_eq!(recov_info.threshold, 1);
+        assert_eq!(recov_info.sigs_count, 1);
+        assert!(
+            recov_info.signed_pubkeys.len() == 1
+                && recov_info.signed_pubkeys.contains_key(&recov_key_origin.0)
+        );
+
+        // A PSBT with multiple inputs, all signed for the primary path but with an ECDSA
+        // signature. We must not account for those signatures since this is a Taproot descriptor.
+        let psbt: Psbt = psbt_from_str("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");
+        let info = desc.partial_spend_info(&psbt).unwrap();
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.partial_sigs.len() == 1));
+        assert_eq!(info.primary_path.threshold, 1);
+        assert_eq!(info.primary_path.sigs_count, 0);
+        assert!(info.primary_path.signed_pubkeys.is_empty());
+        assert!(info.recovery_paths.is_empty());
+
+        // If we analyze a descriptor with a multisig we'll get the right threshold.
+        let desc = LianaDescriptor::new(
+            LianaPolicy::new(
+                PathInfo::Multi(
+                    2,
+                    vec![
+                        descriptor::DescriptorPublicKey::from_str("[f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*").unwrap(),
+                        random_desc_key(&secp),
+                        random_desc_key(&secp),
+                    ],
+                ),
+                [(
+                    42,
+                    PathInfo::Multi(
+                        1,
+                        (0..3).map(|_| random_desc_key(&secp)).collect()
+                    ),
+                )]
+                .iter()
+                .cloned()
+                .collect(),
+            )
+            .unwrap(),
+        );
+        let prim_key = dummy_xonly_pubkeys[0];
+        let mut psbt = dummy_psbt.clone();
+        psbt.inputs[0]
+            .tap_script_sigs
+            .insert((prim_key, dummy_leafhash), dummy_sig);
+        psbt.inputs[0].tap_key_origins =
+            [(prim_key, (vec![dummy_leafhash], prim_key_origin.clone()))]
+                .iter()
+                .cloned()
+                .collect();
+        let info = desc.partial_spend_info(&psbt).unwrap();
+        assert_eq!(info.primary_path.threshold, 2);
+        assert_eq!(info.primary_path.sigs_count, 1);
+        assert!(
+            info.primary_path.signed_pubkeys.len() == 1
+                && info.primary_path.signed_pubkeys.contains_key(&prim_key_fg)
+        );
+        assert!(info.recovery_paths.is_empty());
+
+        // A not very well thought-out decaying multisig.
+        let prim_path = PathInfo::Multi(3, vec![
+                        descriptor::DescriptorPublicKey::from_str("[f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*").unwrap(),
+                        random_desc_key(&secp),
+                        random_desc_key(&secp),
+                    ]);
+        let first_reco_path = PathInfo::Multi(3, (0..5).map(|_| random_desc_key(&secp)).collect());
+        let sec_reco_path = PathInfo::Multi(2, (0..5).map(|_| random_desc_key(&secp)).collect());
+        let third_reco_path = PathInfo::Multi(1, (0..5).map(|_| random_desc_key(&secp)).collect());
+        let liana_policy = LianaPolicy::new(
+            prim_path.clone(),
+            [
+                (26784, first_reco_path.clone()),
+                (53568, sec_reco_path.clone()),
+                (62496, third_reco_path.clone()),
+            ]
+            .iter()
+            .cloned()
+            .collect(),
+        )
+        .unwrap();
+        let desc = LianaDescriptor::new(liana_policy.clone());
+        let policy = desc.policy();
+        assert_eq!(policy, liana_policy);
+        let mut psbt = dummy_psbt.clone();
+        let empty_partial_info = desc.partial_spend_info(&psbt).unwrap();
+        assert_eq!(empty_partial_info.primary_path.threshold, 3);
+        assert_eq!(empty_partial_info.primary_path.sigs_count, 0);
+        assert_eq!(
+            empty_partial_info.primary_path.sigs_count,
+            empty_partial_info.primary_path.signed_pubkeys.len()
+        );
+        assert!(empty_partial_info.recovery_paths.is_empty());
+
+        // Now set a signature for the primary path. All recovery paths still empty, a signature is
+        // present for the primary path.
+        let prim_key = dummy_xonly_pubkeys[0];
+        psbt.inputs[0]
+            .tap_script_sigs
+            .insert((prim_key, dummy_leafhash), dummy_sig);
+        psbt.inputs[0].tap_key_origins =
+            [(prim_key, (vec![dummy_leafhash], prim_key_origin.clone()))]
+                .iter()
+                .cloned()
+                .collect();
+        let partial_info = desc.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial_info.primary_path.threshold, 3);
+        assert_eq!(partial_info.primary_path.sigs_count, 1);
+        assert_eq!(
+            partial_info.primary_path.sigs_count,
+            partial_info.primary_path.signed_pubkeys.len()
+        );
+        assert!(partial_info.recovery_paths.is_empty());
+
+        // Now enable the first recovery path and make the signature be for this path.
+        let fingerprint = first_reco_path
+            .thresh_origins()
+            .1
+            .into_iter()
+            .next()
+            .unwrap()
+            .0;
+        psbt.inputs[0]
+            .tap_key_origins
+            .get_mut(&prim_key)
+            .unwrap()
+            .1
+             .0 = fingerprint;
+        let partial_info = desc.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial_info.primary_path.threshold, 3);
+        assert_eq!(partial_info.primary_path.sigs_count, 0);
+        assert_eq!(
+            partial_info.primary_path.sigs_count,
+            partial_info.primary_path.signed_pubkeys.len()
+        );
+        assert!(partial_info.recovery_paths.is_empty());
+        psbt.unsigned_tx.input[0].sequence = bitcoin::Sequence::from_height(26784);
+        let partial_info = desc.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial_info.recovery_paths.len(), 1);
+        assert_eq!(partial_info.recovery_paths[&26784].threshold, 3);
+        assert_eq!(partial_info.recovery_paths[&26784].sigs_count, 1);
+        assert_eq!(
+            partial_info.recovery_paths[&26784].signed_pubkeys.len(),
+            partial_info.recovery_paths[&26784].sigs_count
+        );
+
+        // Now enable the second recovery path and make the signature be for this path.
+        let fingerprint = sec_reco_path
+            .thresh_origins()
+            .1
+            .into_iter()
+            .next()
+            .unwrap()
+            .0;
+        psbt.inputs[0]
+            .tap_key_origins
+            .get_mut(&prim_key)
+            .unwrap()
+            .1
+             .0 = fingerprint;
+        psbt.unsigned_tx.input[0].sequence = bitcoin::Sequence::from_height(53568);
+        let partial_info = desc.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial_info.primary_path.threshold, 3);
+        assert_eq!(partial_info.primary_path.sigs_count, 0);
+        assert_eq!(
+            partial_info.primary_path.sigs_count,
+            partial_info.primary_path.signed_pubkeys.len()
+        );
+        assert_eq!(partial_info.recovery_paths.len(), 2);
+        assert_eq!(partial_info.recovery_paths[&26784].threshold, 3);
+        assert_eq!(partial_info.recovery_paths[&26784].sigs_count, 0);
+        assert_eq!(partial_info.recovery_paths[&53568].threshold, 2);
+        assert_eq!(partial_info.recovery_paths[&53568].sigs_count, 1);
+        for rec_path in partial_info.recovery_paths.values() {
+            assert_eq!(rec_path.sigs_count, rec_path.signed_pubkeys.len());
+        }
+
+        // Finally do the same for the third recovery path.
+        let fingerprint = third_reco_path
+            .thresh_origins()
+            .1
+            .into_iter()
+            .next()
+            .unwrap()
+            .0;
+        psbt.inputs[0]
+            .tap_key_origins
+            .get_mut(&prim_key)
+            .unwrap()
+            .1
+             .0 = fingerprint;
+        psbt.unsigned_tx.input[0].sequence = bitcoin::Sequence::from_height(53568);
+        psbt.unsigned_tx.input[0].sequence = bitcoin::Sequence::from_height(62496);
+        let partial_info = desc.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial_info.primary_path.threshold, 3);
+        assert_eq!(partial_info.primary_path.sigs_count, 0);
+        assert_eq!(
+            partial_info.primary_path.sigs_count,
+            partial_info.primary_path.signed_pubkeys.len()
+        );
+        assert_eq!(partial_info.recovery_paths.len(), 3);
+        assert_eq!(partial_info.recovery_paths[&26784].threshold, 3);
+        assert_eq!(partial_info.recovery_paths[&26784].sigs_count, 0);
+        assert_eq!(partial_info.recovery_paths[&53568].threshold, 2);
+        assert_eq!(partial_info.recovery_paths[&53568].sigs_count, 0);
+        assert_eq!(partial_info.recovery_paths[&62496].threshold, 1);
+        assert_eq!(partial_info.recovery_paths[&62496].sigs_count, 1);
+        for rec_path in partial_info.recovery_paths.values() {
+            assert_eq!(rec_path.sigs_count, rec_path.signed_pubkeys.len());
+        }
+    }
+
     #[test]
     fn bip32_derivs_pruning() {
+        let secp = secp256k1::Secp256k1::signing_only();
+        let dummy_leafhash = bitcoin::TapLeafHash::from_slice(&[0; 32]).unwrap();
+
         // A signet descriptor created using Liana v2.
         let desc = LianaDescriptor::from_str("wsh(or_i(and_v(v:thresh(3,pkh([636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<4;5>/*),a:pkh([172ba1bc/48'/1'/0'/2']tpubDEgTZEAraUrKmnbyKJuXYGFPzNCm82bjMqd2GRy2HKviJ1moLtEZrHoUeG2o6uyWLEGx4yBWpctAmxcBx1b5nrrrBo5LjskRxRMDmwkuKxq/<4;5>/*),a:pkh([903115ef/48'/1'/0'/2']tpubDF2Hqd3HXUn5bDMVa2gssqmdTjQsLm9Vc8CSSJFk4YwQg8PChCZiWopAeQ6ZCEWt21n1W8ApEGxEvtB8uPnWW6EG3fwPAFnFM8US4QmgKvp/<4;5>/*)),older(6)),or_d(multi(3,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*,[172ba1bc/48'/1'/0'/2']tpubDEgTZEAraUrKmnbyKJuXYGFPzNCm82bjMqd2GRy2HKviJ1moLtEZrHoUeG2o6uyWLEGx4yBWpctAmxcBx1b5nrrrBo5LjskRxRMDmwkuKxq/<0;1>/*,[903115ef/48'/1'/0'/2']tpubDF2Hqd3HXUn5bDMVa2gssqmdTjQsLm9Vc8CSSJFk4YwQg8PChCZiWopAeQ6ZCEWt21n1W8ApEGxEvtB8uPnWW6EG3fwPAFnFM8US4QmgKvp/<0;1>/*),and_v(v:thresh(2,pkh([636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<2;3>/*),a:pkh([172ba1bc/48'/1'/0'/2']tpubDEgTZEAraUrKmnbyKJuXYGFPzNCm82bjMqd2GRy2HKviJ1moLtEZrHoUeG2o6uyWLEGx4yBWpctAmxcBx1b5nrrrBo5LjskRxRMDmwkuKxq/<2;3>/*),a:pkh([903115ef/48'/1'/0'/2']tpubDF2Hqd3HXUn5bDMVa2gssqmdTjQsLm9Vc8CSSJFk4YwQg8PChCZiWopAeQ6ZCEWt21n1W8ApEGxEvtB8uPnWW6EG3fwPAFnFM8US4QmgKvp/<2;3>/*)),older(3)))))#jxya9h7u").unwrap();
         // A spend PSBT created using Liana v2.
@@ -1373,6 +1871,70 @@ mod tests {
         let psbt = desc.prune_bip32_derivs_last_avail(psbt).unwrap();
         assert_eq!(psbt.inputs[0].bip32_derivation.len(), 3);
         assert_eq!(psbt, pruned_psbt);
+
+        // Now do the same but with a Taproot descriptor.
+        let (prim_key, rec_key) = (random_desc_key(&secp), random_desc_key(&secp));
+        let prim_origin =
+            if let descriptor::DescriptorPublicKey::MultiXPub(descriptor::DescriptorMultiXKey {
+                ref origin,
+                ..
+            }) = prim_key
+            {
+                (origin.as_ref().unwrap().0, [0.into(), 1.into()][..].into())
+            } else {
+                unreachable!();
+            };
+        let rec_origin =
+            if let descriptor::DescriptorPublicKey::MultiXPub(descriptor::DescriptorMultiXKey {
+                xkey,
+                ..
+            }) = rec_key
+            {
+                (xkey.fingerprint(), [0.into(), 1.into()][..].into())
+            } else {
+                unreachable!();
+            };
+        let tap_desc = LianaDescriptor::new(
+            LianaPolicy::new(
+                PathInfo::Single(prim_key),
+                [(14, PathInfo::Single(rec_key))].iter().cloned().collect(),
+            )
+            .unwrap(),
+        );
+        let prim_path_info = tap_desc.policy().primary_path;
+        let rec_path_info = &tap_desc.policy().recovery_paths[&14];
+        let mut tap_psbt = psbt;
+        let dummy_xonly_pubkey = bitcoin::XOnlyPublicKey::from_str(
+            "85899827df71b16f2f0eed47cb920e3963f5204e171f5ef7ea4eeec3d5ecc607",
+        )
+        .unwrap();
+
+        // Set the origins for the primary key. Pruning all but the primary origins should conserve
+        // it. Pruning all but the recovery should drop it.
+        tap_psbt.inputs[0].bip32_derivation.clear();
+        tap_psbt.inputs[0].tap_key_origins =
+            [(dummy_xonly_pubkey, (vec![dummy_leafhash], prim_origin))]
+                .iter()
+                .cloned()
+                .collect();
+        assert_eq!(tap_psbt.inputs[0].tap_key_origins.len(), 1);
+        let tap_psbt = tap_desc.prune_bip32_derivs(tap_psbt, &prim_path_info);
+        assert_eq!(tap_psbt.inputs[0].tap_key_origins.len(), 1);
+        let mut tap_psbt = tap_desc.prune_bip32_derivs(tap_psbt, rec_path_info);
+        assert!(tap_psbt.inputs[0].tap_key_origins.is_empty());
+
+        // Do the opposite.
+        tap_psbt.inputs[0].bip32_derivation.clear();
+        tap_psbt.inputs[0].tap_key_origins =
+            [(dummy_xonly_pubkey, (vec![dummy_leafhash], rec_origin))]
+                .iter()
+                .cloned()
+                .collect();
+        assert_eq!(tap_psbt.inputs[0].tap_key_origins.len(), 1);
+        let tap_psbt = tap_desc.prune_bip32_derivs(tap_psbt, rec_path_info);
+        assert_eq!(tap_psbt.inputs[0].tap_key_origins.len(), 1);
+        let tap_psbt = tap_desc.prune_bip32_derivs(tap_psbt, &prim_path_info);
+        assert!(tap_psbt.inputs[0].tap_key_origins.is_empty());
     }
 
     #[test]

@@ -419,9 +419,11 @@ mod tests {
             wildcard: Wildcard::Unhardened,
         });
         let recov_keys = descriptors::PathInfo::Single(recov_key);
-        let policy =
-            descriptors::LianaPolicy::new(prim_keys, [(46, recov_keys)].iter().cloned().collect())
-                .unwrap();
+        let policy = descriptors::LianaPolicy::new_legacy(
+            prim_keys,
+            [(46, recov_keys)].iter().cloned().collect(),
+        )
+        .unwrap();
         let desc = descriptors::LianaDescriptor::new(policy);
 
         // Create a dummy PSBT spending a coin from this descriptor with a single input and single
