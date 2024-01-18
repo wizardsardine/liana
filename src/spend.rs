@@ -1,6 +1,10 @@
 use crate::{bitcoin::MempoolEntry, descriptors};
 
-use std::{collections::BTreeMap, convert::TryInto, fmt};
+use std::{
+    collections::{BTreeMap, HashMap},
+    convert::TryInto,
+    fmt,
+};
 
 pub use bdk_coin_select::InsufficientFunds;
 use bdk_coin_select::{
@@ -210,6 +214,8 @@ pub struct CoinSelectionRes {
     /// Maximum change amount possible with the selection irrespective of any change
     /// policy.
     pub max_change_amount: bitcoin::Amount,
+    /// Fee added to pay for ancestors at the target feerate.
+    pub fee_for_ancestors: bitcoin::Amount,
 }
 
 /// Metric based on [`LowestFee`] that aims to minimize transaction fees
@@ -324,6 +330,8 @@ fn select_coins_for_spend(
     let witness_factor: u32 = WITNESS_SCALE_FACTOR
         .try_into()
         .expect("scale factor must fit in u32");
+    // This will be used to store any extra weight added to candidates.
+    let mut added_weights = HashMap::<bitcoin::OutPoint, u32>::with_capacity(candidate_coins.len());
     let candidates: Vec<Candidate> = candidate_coins
         .iter()
         .map(|cand| Candidate {
@@ -350,6 +358,9 @@ fn select_coins_for_spend(
                             .expect("weight difference must fit in u32")
                     })
                     .unwrap_or(0);
+                // Store the extra weight for this candidate for use later on.
+                // At the same time, make sure there are no duplicate outpoints.
+                assert!(added_weights.insert(cand.outpoint, extra).is_none());
                 max_input_weight
                     .checked_add(extra)
                     .expect("effective weight must fit in u32")
@@ -393,9 +404,10 @@ fn select_coins_for_spend(
 
     // Finally, run the coin selection algorithm. We use an opportunistic BnB and if it couldn't
     // find any solution we fall back to selecting coins by descending value.
+    let feerate = FeeRate::from_sat_per_vb(feerate_vb);
     let target = Target {
         value: out_value_nochange,
-        feerate: FeeRate::from_sat_per_vb(feerate_vb),
+        feerate,
         min_fee,
     };
     let lowest_fee = LowestFee {
@@ -459,14 +471,29 @@ fn select_coins_for_spend(
             .try_into()
             .expect("value is non-negative"),
     );
+    let mut total_added_weight: u32 = 0;
+    let selected = selector
+        .selected_indices()
+        .iter()
+        .map(|i| candidate_coins[*i])
+        .inspect(|cand| {
+            total_added_weight = total_added_weight
+                .checked_add(
+                    *added_weights
+                        .get(&cand.outpoint)
+                        .expect("contains added weight for all candidates"),
+                )
+                .expect("should fit in u32")
+        })
+        .collect();
+    // Calculate added fee based on the feerate in sats/wu, which is the feerate used for coin selection.
+    let fee_for_ancestors =
+        bitcoin::Amount::from_sat(((total_added_weight as f32) * feerate.spwu()).ceil() as u64);
     Ok(CoinSelectionRes {
-        selected: selector
-            .selected_indices()
-            .iter()
-            .map(|i| candidate_coins[*i])
-            .collect(),
+        selected,
         change_amount,
         max_change_amount,
+        fee_for_ancestors,
     })
 }
 
@@ -646,6 +673,7 @@ pub fn create_spend(
         selected,
         change_amount,
         max_change_amount,
+        ..
     } = {
         // At this point the transaction still has no input and no change output, as expected
         // by the coins selection helper function.
