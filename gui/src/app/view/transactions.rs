@@ -169,9 +169,14 @@ pub fn create_rbf_modal<'a>(
             confirm_button.on_press(Message::CreateRbf(super::CreateRbfMessage::Confirm));
     }
     let help_text = if is_cancel {
-        "Replace the transaction with one paying a higher feerate that sends the coins back to us. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction."
+        "Replace the transaction with one paying a higher feerate \
+        that sends the coins back to us. There is no guarantee the \
+        original transaction won't get mined first. New inputs may \
+        be used for the replacement transaction."
     } else {
-        "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
+        "Replace the transaction with one paying a higher feerate \
+        to incentivize faster confirmation. New inputs may be used \
+        for the replacement transaction."
     };
     card::simple(
         Column::new()
@@ -188,7 +193,8 @@ pub fn create_rbf_modal<'a>(
                                 Message::CreateRbf(CreateRbfMessage::FeerateEdited(msg))
                             })
                             .warning(
-                                "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte",
+                                "Feerate must be greater than previous value and \
+                                less than or equal to 1000 sats/vbyte",
                             )
                             .size(20)
                             .padding(10),
