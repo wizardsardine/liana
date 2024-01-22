@@ -110,7 +110,7 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
     }
 
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
-        let spend_tx = base64::encode(psbt.serialize());
+        let spend_tx = psbt.to_string();
         let _res: serde_json::value::Value = self.call("updatespend", Some(vec![spend_tx]))?;
         Ok(())
     }

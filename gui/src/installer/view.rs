@@ -1621,14 +1621,14 @@ pub fn key_list_view<'a>(
 ) -> Element<'a, Message> {
     let bttn = Button::new(if chosen {
         hw::selected_hardware_wallet(
-            kind.map(|k| k.to_string()).unwrap_or_else(String::new),
+            kind.map(|k| k.to_string()).unwrap_or_default(),
             None::<String>,
             fingerprint,
             Some(name),
         )
     } else {
         hw::supported_hardware_wallet(
-            kind.map(|k| k.to_string()).unwrap_or_else(String::new),
+            kind.map(|k| k.to_string()).unwrap_or_default(),
             None::<String>,
             fingerprint,
             Some(name),
