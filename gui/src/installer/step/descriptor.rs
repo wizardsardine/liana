@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use iced::Command;
-use liana::miniscript::bitcoin::bip32::ExtendedPubKey;
+use liana::miniscript::bitcoin::bip32::Xpub;
 use liana::{
     descriptors::{LianaDescriptor, LianaPolicy, PathInfo},
     miniscript::{
@@ -565,9 +565,9 @@ impl Step for DefineDescriptor {
 }
 
 fn new_multixkey_from_xpub(
-    xpub: DescriptorXKey<ExtendedPubKey>,
+    xpub: DescriptorXKey<Xpub>,
     derivation_index: usize,
-) -> DescriptorMultiXKey<ExtendedPubKey> {
+) -> DescriptorMultiXKey<Xpub> {
     DescriptorMultiXKey {
         origin: xpub.origin,
         xkey: xpub.xkey,

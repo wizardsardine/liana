@@ -2,7 +2,7 @@ pub use liana::signer::SignerError;
 
 use liana::{
     miniscript::bitcoin::{
-        bip32::{DerivationPath, ExtendedPubKey, Fingerprint},
+        bip32::{DerivationPath, Fingerprint, Xpub},
         psbt::Psbt,
         secp256k1, Network,
     },
@@ -48,7 +48,7 @@ impl Signer {
         self.fingerprint
     }
 
-    pub fn get_extended_pubkey(&self, path: &DerivationPath) -> ExtendedPubKey {
+    pub fn get_extended_pubkey(&self, path: &DerivationPath) -> Xpub {
         self.key.xpub_at(path, &self.curve)
     }
 

@@ -70,9 +70,9 @@ impl SpendTx {
             |(change, spend), (i, output)| {
                 if !psbt.outputs[i].bip32_derivation.is_empty() {
                     change_indexes.push(i);
-                    (change + Amount::from_sat(output.value), spend)
+                    (change + output.value, spend)
                 } else {
-                    (change, spend + Amount::from_sat(output.value))
+                    (change, spend + output.value)
                 }
             },
         );
@@ -103,7 +103,7 @@ impl SpendTx {
             let mut inputs_amount = Amount::from_sat(0);
             for (i, input) in psbt.inputs.iter().enumerate() {
                 if let Some(utxo) = &input.witness_utxo {
-                    inputs_amount += Amount::from_sat(utxo.value);
+                    inputs_amount += utxo.value;
                 // we try to have it from the coin
                 } else if let Some(coin) = psbt
                     .unsigned_tx
@@ -285,9 +285,9 @@ impl HistoryTransaction {
             (Amount::from_sat(0), Amount::from_sat(0)),
             |(change, spend), (i, output)| {
                 if change_indexes.contains(&i) {
-                    (change + Amount::from_sat(output.value), spend)
+                    (change + output.value, spend)
                 } else {
-                    (change, spend + Amount::from_sat(output.value))
+                    (change, spend + output.value)
                 }
             },
         );
