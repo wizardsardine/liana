@@ -174,13 +174,13 @@ fn event_list_view(i: usize, event: &HistoryTransaction) -> Column<'_, Message> 
                     col.push(event::confirmed_incoming_event(
                         label,
                         NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
-                        &Amount::from_sat(output.value),
+                        &output.value,
                         Message::SelectSub(i, output_index),
                     ))
                 } else {
                     col.push(event::unconfirmed_incoming_event(
                         label,
-                        &Amount::from_sat(output.value),
+                        &output.value,
                         Message::SelectSub(i, output_index),
                     ))
                 }
@@ -190,13 +190,13 @@ fn event_list_view(i: usize, event: &HistoryTransaction) -> Column<'_, Message> 
                 col.push(event::confirmed_outgoing_event(
                     label,
                     NaiveDateTime::from_timestamp_opt(t as i64, 0).unwrap(),
-                    &Amount::from_sat(output.value),
+                    &output.value,
                     Message::SelectSub(i, output_index),
                 ))
             } else {
                 col.push(event::unconfirmed_outgoing_event(
                     label,
-                    &Amount::from_sat(output.value),
+                    &output.value,
                     Message::SelectSub(i, output_index),
                 ))
             }
@@ -251,7 +251,7 @@ pub fn payment_view<'a>(
                 label::label_editable(vec![outpoint.clone()], tx.labels.get(&outpoint), H3_SIZE)
             })
             .push(Container::new(amount_with_size(
-                &Amount::from_sat(tx.tx.output[output_index].value),
+                &tx.tx.output[output_index].value,
                 H3_SIZE,
             )))
             .push(Space::with_height(H3_SIZE))

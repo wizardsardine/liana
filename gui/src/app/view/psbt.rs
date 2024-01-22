@@ -8,8 +8,8 @@ use iced::{
 use liana::{
     descriptors::{LianaPolicy, PathInfo, PathSpendInfo},
     miniscript::bitcoin::{
-        bip32::Fingerprint, blockdata::transaction::TxOut, Address, Amount, Network, OutPoint,
-        Transaction, Txid,
+        bip32::Fingerprint, blockdata::transaction::TxOut, Address, Network, OutPoint, Transaction,
+        Txid,
     },
 };
 
@@ -868,7 +868,7 @@ fn payment_view<'a>(
                     })
                     .width(Length::Fill),
                 )
-                .push(amount(&Amount::from_sat(output.value))),
+                .push(amount(&output.value)),
         )
         .push_maybe(addr.map(|addr| {
             Column::new()
@@ -932,7 +932,7 @@ fn change_view(output: &TxOut, network: Network) -> Element<Message> {
                         ),
                 ),
         )
-        .push(amount(&Amount::from_sat(output.value)))
+        .push(amount(&output.value))
         .into()
 }
 

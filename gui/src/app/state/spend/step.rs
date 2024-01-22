@@ -440,9 +440,9 @@ impl Step for DefineSpend {
                         !recipient.label.value.is_empty()
                             && Address::from_str(&recipient.address.value)
                                 .unwrap()
-                                .payload
+                                .payload()
                                 .matches_script_pubkey(&output.script_pubkey)
-                            && output.value == recipient.amount().unwrap()
+                            && output.value.to_sat() == recipient.amount().unwrap()
                     })
                     .map(|recipient| recipient.label.value.to_string())
                 {
@@ -517,7 +517,7 @@ impl Recipient {
         }
 
         if let Ok(address) = Address::from_str(&self.address.value) {
-            if amount <= address.payload.script_pubkey().dust_value() {
+            if amount <= address.payload().script_pubkey().dust_value() {
                 return Err(Error::Unexpected(
                     "Amount must be superior to script dust value".to_string(),
                 ));
