@@ -224,8 +224,9 @@ dependencies = [
 
 [[package]]
 name = "async-hwi"
-version = "0.0.13"
-source = "git+https://github.com/wizardsardine/async-hwi?branch=master#beea72ddc4f8db8d64bea2cf5c4a4d327148222f"
+version = "0.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38b9ba5d4bd59fea79a70a375da2fe077b2b17ce26ace805d6939275719ad66e"
 dependencies = [
  "async-trait",
  "bitbox-api",
@@ -365,8 +366,9 @@ checksum = "dc827186963e592360843fb5ba4b973e145841266c1357f7180c43526f2e5b61"
 
 [[package]]
 name = "bitbox-api"
-version = "0.2.2"
-source = "git+https://github.com/edouardparis/bitbox-api-rs.git?branch=bitcoin-0.31#4591054a26eb3b9a12a9bc22d600b5cd6a81561d"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1c0e1d593628bd289304902364f69c24686734d1825c54e03d89e003aa87b4f"
 dependencies = [
  "async-trait",
  "base32",
