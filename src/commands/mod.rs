@@ -495,7 +495,7 @@ impl DaemonControl {
             psbt,
             has_change,
             warnings,
-        } = create_spend(
+        } = match create_spend(
             &self.config.main_descriptor,
             &self.secp,
             &mut tx_getter,
@@ -503,7 +503,15 @@ impl DaemonControl {
             &candidate_coins,
             SpendTxFees::Regular(feerate_vb),
             change_address,
-        )?;
+        ) {
+            Ok(res) => res,
+            Err(SpendCreationError::CoinSelection(e)) => {
+                return Ok(CreateSpendResult::InsufficientFunds { missing: e.missing });
+            }
+            Err(e) => {
+                return Err(e.into());
+            }
+        };
         for (addr, _) in destinations_checked {
             self.maybe_increase_next_deriv_index(&mut db_conn, &addr.info);
         }
@@ -511,7 +519,7 @@ impl DaemonControl {
             self.maybe_increase_next_deriv_index(&mut db_conn, &change_info);
         }
 
-        Ok(CreateSpendResult {
+        Ok(CreateSpendResult::Success {
             psbt,
             warnings: warnings.iter().map(|w| w.to_string()).collect(),
         })
@@ -829,17 +837,19 @@ impl DaemonControl {
                 change_address.clone(),
             ) {
                 Ok(psbt) => psbt,
-                // If we get a coin selection error due to insufficient funds and we want to cancel the
-                // transaction, then set all previous coins as mandatory and add confirmed coins as
-                // optional, unless we have already done this.
-                Err(SpendCreationError::CoinSelection(_))
-                    if is_cancel && candidate_coins.iter().all(|c| !c.must_select) =>
-                {
-                    for cand in candidate_coins.iter_mut() {
-                        cand.must_select = true;
+                Err(SpendCreationError::CoinSelection(e)) => {
+                    // If we get a coin selection error due to insufficient funds and we want to cancel the
+                    // transaction, then set all previous coins as mandatory and add confirmed coins as
+                    // optional, unless we have already done this.
+                    if is_cancel && candidate_coins.iter().all(|c| !c.must_select) {
+                        for cand in candidate_coins.iter_mut() {
+                            cand.must_select = true;
+                        }
+                        candidate_coins.extend(&confirmed_cands);
+                        continue;
+                    } else {
+                        return Ok(CreateSpendResult::InsufficientFunds { missing: e.missing });
                     }
-                    candidate_coins.extend(&confirmed_cands);
-                    continue;
                 }
                 Err(e) => {
                     return Err(e.into());
@@ -863,7 +873,7 @@ impl DaemonControl {
                     self.maybe_increase_next_deriv_index(&mut db_conn, &change_address.info);
                 }
 
-                return Ok(CreateSpendResult {
+                return Ok(CreateSpendResult::Success {
                     psbt: rbf_psbt,
                     warnings: warnings.iter().map(|w| w.to_string()).collect(),
                 });
@@ -1111,10 +1121,16 @@ pub struct ListCoinsResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct CreateSpendResult {
-    #[serde(serialize_with = "ser_to_string", deserialize_with = "deser_fromstr")]
-    pub psbt: Psbt,
-    pub warnings: Vec<String>,
+#[serde(untagged)]
+pub enum CreateSpendResult {
+    Success {
+        #[serde(serialize_with = "ser_to_string", deserialize_with = "deser_fromstr")]
+        psbt: Psbt,
+        warnings: Vec<String>,
+    },
+    InsufficientFunds {
+        missing: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1153,7 +1169,6 @@ mod tests {
     use super::*;
     use crate::{bitcoin::Block, database::BlockInfo, spend::InsaneFeeInfo, testutils::*};
 
-    use bdk_coin_select::InsufficientFunds;
     use bitcoin::{
         bip32::{self, ChildNumber},
         blockdata::transaction::{TxIn, TxOut, Version as TxVersion},
@@ -1345,9 +1360,7 @@ mod tests {
         // Insufficient funds for coin selection.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
-            Err(CommandError::SpendCreation(
-                SpendCreationError::CoinSelection(..)
-            ))
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
         ));
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 0, None),
@@ -1375,20 +1388,23 @@ mod tests {
         // and so we get a coin selection error due to insufficient funds.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
-            Err(CommandError::SpendCreation(
-                SpendCreationError::CoinSelection(..)
-            ))
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
         ));
-        let res = control
+        let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
-            .unwrap();
-        assert!(res.psbt.inputs[0].non_witness_utxo.is_some());
-        let tx = res.psbt.unsigned_tx;
+            .unwrap()
+        {
+            (psbt, warnings)
+        } else {
+            panic!("expect successful spend creation")
+        };
+        assert!(psbt.inputs[0].non_witness_utxo.is_some());
+        let tx = psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
         assert_eq!(tx.output.len(), 2);
         // It has change so no warnings expected.
-        assert!(res.warnings.is_empty());
+        assert!(warnings.is_empty());
         assert_eq!(
             tx.output[0].script_pubkey,
             dummy_addr.payload().script_pubkey()
@@ -1404,10 +1420,15 @@ mod tests {
         // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 170 sats fees.
         // At 2sats/vb, it's twice that.
         assert_eq!(tx.output[1].value.to_sat(), 89_830);
-        let res = control
+        let psbt = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(&destinations, &[dummy_op], 2, None)
-            .unwrap();
-        let tx = res.psbt.unsigned_tx;
+            .unwrap()
+        {
+            psbt
+        } else {
+            panic!("expect successful spend creation")
+        };
+        let tx = psbt.unsigned_tx;
         assert_eq!(tx.output[1].value.to_sat(), 89_660);
 
         // A feerate of 555 won't trigger the sanity checks (they were previously not taking the
@@ -1419,16 +1440,12 @@ mod tests {
         // If we ask for a too high feerate, or a too large/too small output, it'll fail.
         assert!(matches!(
             control.create_spend(&destinations, &[dummy_op], 10_000, None),
-            Err(CommandError::SpendCreation(
-                SpendCreationError::CoinSelection(..)
-            ))
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
         ));
         *destinations.get_mut(&dummy_addr).unwrap() = 100_001;
         assert!(matches!(
             control.create_spend(&destinations, &[dummy_op], 1, None),
-            Err(CommandError::SpendCreation(
-                SpendCreationError::CoinSelection(..)
-            ))
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
         ));
         *destinations.get_mut(&dummy_addr).unwrap() = 4_500;
         assert_eq!(
@@ -1453,10 +1470,15 @@ mod tests {
         // If we ask for a large, but valid, output we won't get a change output. 95_000 because we
         // won't create an output lower than 5k sats.
         *destinations.get_mut(&dummy_addr).unwrap() = 95_000;
-        let res = control
+        let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
-            .unwrap();
-        let tx = res.psbt.unsigned_tx;
+            .unwrap()
+        {
+            (psbt, warnings)
+        } else {
+            panic!("expect successful spend creation")
+        };
+        let tx = psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
         assert_eq!(tx.output.len(), 1);
@@ -1466,64 +1488,87 @@ mod tests {
         );
         assert_eq!(tx.output[0].value.to_sat(), 95_000);
         // change = 100_000 - 95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 = 4830
-        assert_eq!(res.warnings, vec!["Change amount of 4830 sats added to fee as it was too small to create a transaction output."]);
+        assert_eq!(warnings, vec!["Change amount of 4830 sats added to fee as it was too small to create a transaction output."]);
 
         // Increase the target value by the change amount and the warning will disappear.
         *destinations.get_mut(&dummy_addr).unwrap() = 95_000 + 4_830;
-        let res = control
+        let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
-            .unwrap();
-        let tx = res.psbt.unsigned_tx;
+            .unwrap()
+        {
+            (psbt, warnings)
+        } else {
+            panic!("expect successful spend creation")
+        };
+        let tx = psbt.unsigned_tx;
         assert_eq!(tx.output.len(), 1);
-        assert!(res.warnings.is_empty());
+        assert!(warnings.is_empty());
 
         // Now increase target also by the extra fee that was paying for change and we can still create the spend.
         *destinations.get_mut(&dummy_addr).unwrap() =
             95_000 + 4_830 + /* fee for change output */ 43;
-        let res = control
+        let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
-            .unwrap();
-        let tx = res.psbt.unsigned_tx;
+            .unwrap()
+        {
+            (psbt, warnings)
+        } else {
+            panic!("expect successful spend creation")
+        };
+        let tx = psbt.unsigned_tx;
         assert_eq!(tx.output.len(), 1);
-        assert!(res.warnings.is_empty());
+        assert!(warnings.is_empty());
 
         // Now increase the target by 1 more sat and we will have insufficient funds.
         *destinations.get_mut(&dummy_addr).unwrap() =
             95_000 + 4_830 + /* fee for change output */ 43 + 1;
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 1, None),
-            Err(CommandError::SpendCreation(
-                SpendCreationError::CoinSelection(InsufficientFunds { missing: 1 })
-            ))
+            Ok(CreateSpendResult::InsufficientFunds { missing: 1 }),
         );
 
         // Now decrease the target so that the lost change is just 1 sat.
         *destinations.get_mut(&dummy_addr).unwrap() =
             100_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 - 1;
-        let res = control
+        let warnings = if let CreateSpendResult::Success { warnings, .. } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
-            .unwrap();
+            .unwrap()
+        {
+            warnings
+        } else {
+            panic!("expect successful spend creation")
+        };
         // Message uses "sat" instead of "sats" when value is 1.
-        assert_eq!(res.warnings, vec!["Change amount of 1 sat added to fee as it was too small to create a transaction output."]);
+        assert_eq!(warnings, vec!["Change amount of 1 sat added to fee as it was too small to create a transaction output."]);
 
         // Now decrease the target value so that we have enough for a change output.
         *destinations.get_mut(&dummy_addr).unwrap() =
             95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43;
-        let res = control
+        let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
-            .unwrap();
-        let tx = res.psbt.unsigned_tx;
+            .unwrap()
+        {
+            (psbt, warnings)
+        } else {
+            panic!("expect successful spend creation")
+        };
+        let tx = psbt.unsigned_tx;
         assert_eq!(tx.output.len(), 2);
         assert_eq!(tx.output[1].value.to_sat(), 5_000);
-        assert!(res.warnings.is_empty());
+        assert!(warnings.is_empty());
 
         // Now increase the target by 1 and we'll get a warning again, this time for 1 less than the dust threshold.
         *destinations.get_mut(&dummy_addr).unwrap() =
             95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 + 1;
-        let res = control
+        let warnings = if let CreateSpendResult::Success { warnings, .. } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
-            .unwrap();
-        assert_eq!(res.warnings, vec!["Change amount of 4999 sats added to fee as it was too small to create a transaction output."]);
+            .unwrap()
+        {
+            warnings
+        } else {
+            panic!("expect successful spend creation")
+        };
+        assert_eq!(warnings, vec!["Change amount of 4999 sats added to fee as it was too small to create a transaction output."]);
 
         // Now if we mark the coin as spent, we won't create another Spend transaction containing
         // it.
@@ -1542,9 +1587,7 @@ mod tests {
         // and so we get a coin selection error due to insufficient funds.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
-            Err(CommandError::SpendCreation(
-                SpendCreationError::CoinSelection(..)
-            ))
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
         ));
 
         // We'd bail out if they tried to create a transaction with a too high feerate.
@@ -1594,18 +1637,14 @@ mod tests {
         // Coin selection error due to insufficient funds.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
-            Err(CommandError::SpendCreation(
-                SpendCreationError::CoinSelection(..)
-            ))
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
         ));
         // Set destination amount equal to value of confirmed coins.
         *destinations.get_mut(&dummy_addr).unwrap() = 80_000;
         // Coin selection error occurs due to insufficient funds to pay fee.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
-            Err(CommandError::SpendCreation(
-                SpendCreationError::CoinSelection(..)
-            ))
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
         ));
         let confirmed_op_2 = bitcoin::OutPoint {
             txid: confirmed_op_1.txid,
@@ -1626,8 +1665,14 @@ mod tests {
             spend_block: None,
         }]);
         // First, create a transaction using auto coin selection.
-        let res_auto = control.create_spend(&destinations, &[], 1, None).unwrap();
-        let tx_auto = res_auto.psbt.unsigned_tx;
+        let psbt = if let CreateSpendResult::Success { psbt, .. } =
+            control.create_spend(&destinations, &[], 1, None).unwrap()
+        {
+            psbt
+        } else {
+            panic!("expect successful spend creation")
+        };
+        let tx_auto = psbt.unsigned_tx;
         let mut tx_prev_outpoints = tx_auto
             .input
             .iter()
@@ -1645,10 +1690,15 @@ mod tests {
         assert_eq!(tx_auto.output[0].value, Amount::from_sat(80_000));
 
         // Create a second transaction using manual coin selection.
-        let res_manual = control
+        let psbt = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(&destinations, &[confirmed_op_1, confirmed_op_2], 1, None)
-            .unwrap();
-        let tx_manual = res_manual.psbt.unsigned_tx;
+            .unwrap()
+        {
+            psbt
+        } else {
+            panic!("expect successful spend creation")
+        };
+        let tx_manual = psbt.unsigned_tx;
         // Check that manual and auto selection give same outputs (including change).
         assert_eq!(tx_auto.output, tx_manual.output);
         // Check inputs are also the same. Need to sort as order is not guaranteed by `create_spend`.
@@ -1680,15 +1730,18 @@ mod tests {
         let empty_dest = &HashMap::<bitcoin::Address<address::NetworkUnchecked>, u64>::new();
         assert!(matches!(
             control.create_spend(empty_dest, &[confirmed_op_3], 5, None),
-            Err(CommandError::SpendCreation(
-                SpendCreationError::CoinSelection(..)
-            ))
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
         ));
         // If we use a lower fee, the self-send will succeed.
-        let res = control
+        let psbt = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(empty_dest, &[confirmed_op_3], 1, None)
-            .unwrap();
-        let tx = res.psbt.unsigned_tx;
+            .unwrap()
+        {
+            psbt
+        } else {
+            panic!("expect successful spend creation")
+        };
+        let tx = psbt.unsigned_tx;
         let tx_prev_outpoints = tx
             .input
             .iter()
@@ -1792,20 +1845,32 @@ mod tests {
                 .iter()
                 .cloned()
                 .collect();
-        let mut psbt_a = control
+        let mut psbt_a = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(&destinations_a, &[dummy_op_a], 1, None)
             .unwrap()
-            .psbt;
+        {
+            psbt
+        } else {
+            panic!("expect successful spend creation")
+        };
         let txid_a = psbt_a.unsigned_tx.txid();
-        let psbt_b = control
+        let psbt_b = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(&destinations_b, &[dummy_op_b], 10, None)
             .unwrap()
-            .psbt;
+        {
+            psbt
+        } else {
+            panic!("expect successful spend creation")
+        };
         let txid_b = psbt_b.unsigned_tx.txid();
-        let psbt_c = control
+        let psbt_c = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(&destinations_c, &[dummy_op_a, dummy_op_b], 100, None)
             .unwrap()
-            .psbt;
+        {
+            psbt
+        } else {
+            panic!("expect successful spend creation")
+        };
         let txid_c = psbt_c.unsigned_tx.txid();
 
         // We can store and query them all
