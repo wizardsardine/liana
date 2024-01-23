@@ -472,6 +472,9 @@ pub struct DefineBitcoind {
     selected_auth_type: RpcAuthType,
     address: form::Value<String>,
     is_running: Option<Result<(), Error>>,
+
+    // Internal cache to detect network change.
+    network: Option<Network>,
 }
 
 impl DefineBitcoind {
@@ -481,6 +484,7 @@ impl DefineBitcoind {
             selected_auth_type: RpcAuthType::CookieFile,
             address: form::Value::default(),
             is_running: None,
+            network: None,
         }
     }
 
@@ -520,13 +524,21 @@ impl DefineBitcoind {
 
 impl Step for DefineBitcoind {
     fn load_context(&mut self, ctx: &Context) {
-        if self.rpc_auth_vals.cookie_path.value.is_empty() {
+        if self.rpc_auth_vals.cookie_path.value.is_empty()
+            // if network changed then the values must be reset to default.
+            || self.network != Some(ctx.bitcoin_config.network)
+        {
             self.rpc_auth_vals.cookie_path.value =
                 bitcoind_default_cookie_path(&ctx.bitcoin_config.network).unwrap_or_default()
         }
-        if self.address.value.is_empty() {
+        if self.address.value.is_empty()
+            // if network changed then the values must be reset to default.
+            || self.network != Some(ctx.bitcoin_config.network)
+        {
             self.address.value = bitcoind_default_address(&ctx.bitcoin_config.network);
         }
+
+        self.network = Some(ctx.bitcoin_config.network);
     }
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         if let Message::DefineBitcoind(msg) = message {
