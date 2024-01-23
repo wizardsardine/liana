@@ -5,11 +5,13 @@ use crate::{
     descriptors, DaemonHandle,
 };
 
+use std::convert::TryInto;
 use std::{
     collections::{HashMap, HashSet},
     env, fs, io, path, process,
     str::FromStr,
     sync, thread, time,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use miniscript::{
@@ -129,6 +131,7 @@ struct DummyDbState {
     curr_tip: Option<BlockChainTip>,
     coins: HashMap<bitcoin::OutPoint, Coin>,
     spend_txs: HashMap<bitcoin::Txid, (Psbt, Option<u32>)>,
+    timestamp: u32,
 }
 
 pub struct DummyDatabase {
@@ -145,6 +148,13 @@ impl DatabaseInterface for DummyDatabase {
 
 impl DummyDatabase {
     pub fn new() -> DummyDatabase {
+        let now: u32 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .try_into()
+            .unwrap();
+
         DummyDatabase {
             db: sync::Arc::new(sync::RwLock::new(DummyDbState {
                 deposit_index: 0.into(),
@@ -152,6 +162,7 @@ impl DummyDatabase {
                 curr_tip: None,
                 coins: HashMap::new(),
                 spend_txs: HashMap::new(),
+                timestamp: now,
             })),
         }
     }
@@ -170,6 +181,10 @@ impl DatabaseConnection for DummyDatabase {
 
     fn chain_tip(&mut self) -> Option<BlockChainTip> {
         self.db.read().unwrap().curr_tip
+    }
+
+    fn timestamp(&mut self) -> u32 {
+        self.db.read().unwrap().timestamp
     }
 
     fn update_tip(&mut self, tip: &BlockChainTip) {

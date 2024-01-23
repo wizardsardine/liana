@@ -294,6 +294,7 @@ impl DaemonControl {
                 main: self.config.main_descriptor.clone(),
             },
             rescan_progress,
+            timestamp: db_conn.timestamp(),
         }
     }
 
@@ -1030,6 +1031,8 @@ pub struct GetInfoResult {
     pub descriptors: GetInfoDescriptors,
     /// The progress as a percentage (between 0 and 1) of an ongoing rescan if there is any
     pub rescan_progress: Option<f64>,
+    /// Timestamp at wallet creation date
+    pub timestamp: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

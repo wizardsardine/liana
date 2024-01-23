@@ -53,14 +53,15 @@ This command does not take any parameter for now.
 
 #### Response
 
-| Field                | Type    | Description                                                                                        |
-| -------------------- | ------- | -------------------------------------------------------------------------------------------------- |
+| Field                | Type          | Description                                                                                  |
+| -------------------- | ------------- | -------------------------------------------------------------------------------------------- |
 | `version`            | string        | Version following the [SimVer](http://www.simver.org/) format                                |
 | `network`            | string        | Answer can be `mainnet`, `testnet`, `regtest`                                                |
 | `block_height`       | integer       | The block height we are synced at.                                                           |
 | `sync`               | float         | The synchronization progress as percentage (`0 < sync < 1`)                                  |
 | `descriptors`        | object        | Object with the name of the descriptor as key and the descriptor string as value             |
 | `rescan_progress`    | float or null | Progress of an ongoing rescan as a percentage (between 0 and 1) if there is any              |
+| `timestamp`          | integer       | Unix timestamp of wallet creation date                                                       |
 
 ### `getnewaddress`
 
