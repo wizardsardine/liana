@@ -364,6 +364,7 @@ pub fn import_descriptor<'a>(
     network: bitcoin::Network,
     network_valid: bool,
     imported_descriptor: &form::Value<String>,
+    wrong_network: bool,
     error: Option<&String>,
 ) -> Element<'a, Message> {
     let row_network = Row::new()
@@ -392,7 +393,11 @@ pub fn import_descriptor<'a>(
             form::Form::new_trimmed("Descriptor", imported_descriptor, |msg| {
                 Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(msg))
             })
-            .warning("Incompatible descriptor.")
+            .warning(if wrong_network {
+                "The descriptor is for another network"
+            } else {
+                "Failed to read the descriptor"
+            })
             .size(20)
             .padding(10),
         )

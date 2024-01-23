@@ -1241,6 +1241,7 @@ pub struct ImportDescriptor {
     change_network: bool,
     data_dir: Option<PathBuf>,
     imported_descriptor: form::Value<String>,
+    wrong_network: bool,
     error: Option<String>,
 }
 
@@ -1252,21 +1253,35 @@ impl ImportDescriptor {
             network_valid: true,
             data_dir: None,
             imported_descriptor: form::Value::default(),
+            wrong_network: false,
             error: None,
         }
     }
 
-    fn check_descriptor(&mut self) {
+    fn check_descriptor(&mut self, network: Network) -> Option<LianaDescriptor> {
         if !self.imported_descriptor.value.is_empty() {
             if let Ok(desc) = LianaDescriptor::from_str(&self.imported_descriptor.value) {
-                if self.network == Network::Bitcoin {
-                    self.imported_descriptor.valid = desc.all_xpubs_net_is(self.network);
+                if network == Network::Bitcoin {
+                    self.imported_descriptor.valid = desc.all_xpubs_net_is(network);
                 } else {
                     self.imported_descriptor.valid = desc.all_xpubs_net_is(Network::Testnet);
                 }
+                if self.imported_descriptor.valid {
+                    self.wrong_network = false;
+                    Some(desc)
+                } else {
+                    self.wrong_network = true;
+                    None
+                }
             } else {
                 self.imported_descriptor.valid = false;
+                self.wrong_network = false;
+                None
             }
+        } else {
+            self.wrong_network = false;
+            self.imported_descriptor.valid = true;
+            None
         }
     }
 }
@@ -1281,11 +1296,11 @@ impl Step for ImportDescriptor {
                 let mut network_datadir = self.data_dir.clone().unwrap();
                 network_datadir.push(self.network.to_string());
                 self.network_valid = !network_datadir.exists();
-                self.check_descriptor();
+                self.check_descriptor(self.network);
             }
             Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) => {
                 self.imported_descriptor.value = desc;
-                self.check_descriptor();
+                self.check_descriptor(self.network);
             }
             _ => {}
         };
@@ -1293,6 +1308,9 @@ impl Step for ImportDescriptor {
     }
 
     fn load_context(&mut self, ctx: &Context) {
+        if ctx.bitcoin_config.network != self.network {
+            self.check_descriptor(ctx.bitcoin_config.network);
+        }
         self.network = ctx.bitcoin_config.network;
         self.data_dir = Some(ctx.data_dir.clone());
         let mut network_datadir = ctx.data_dir.clone();
@@ -1305,23 +1323,9 @@ impl Step for ImportDescriptor {
         // Set to true in order to force the registration process to be shown to user.
         ctx.hw_is_used = true;
         // descriptor forms for import or creation cannot be both empty or filled.
-        if !self.imported_descriptor.value.is_empty() {
-            if let Ok(desc) = LianaDescriptor::from_str(&self.imported_descriptor.value) {
-                if self.network == Network::Bitcoin {
-                    self.imported_descriptor.valid = desc.all_xpubs_net_is(self.network);
-                } else {
-                    self.imported_descriptor.valid = desc.all_xpubs_net_is(Network::Testnet);
-                }
-                if self.imported_descriptor.valid {
-                    ctx.descriptor = Some(desc);
-                    true
-                } else {
-                    false
-                }
-            } else {
-                self.imported_descriptor.valid = false;
-                false
-            }
+        if let Some(desc) = self.check_descriptor(self.network) {
+            ctx.descriptor = Some(desc);
+            true
         } else {
             false
         }
@@ -1334,6 +1338,7 @@ impl Step for ImportDescriptor {
             self.network,
             self.network_valid,
             &self.imported_descriptor,
+            self.wrong_network,
             self.error.as_ref(),
         )
     }
