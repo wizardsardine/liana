@@ -689,7 +689,10 @@ impl Step for InternalBitcoindStep {
                 self.exe_download = Some(Download::new(0));
             };
         }
-        self.network = ctx.bitcoin_config.network;
+        if self.network != ctx.bitcoin_config.network {
+            self.internal_bitcoind_config = None;
+            self.network = ctx.bitcoin_config.network;
+        }
         if let Some(Ok(_)) = self.started {
             // This case can arise if a user switches from internal bitcoind to external and back to internal.
             if ctx.bitcoind_config.is_none() {
