@@ -116,6 +116,25 @@ impl PartialEq<descriptor::Descriptor<descriptor::DescriptorPublicKey>> for Sing
     }
 }
 
+/// The index of a change output in a transaction's outputs list, differentiating between a change
+/// output which uses a change address and one which uses a deposit address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChangeOutput {
+    ChangeAddress { index: usize },
+    DepositAddress { index: usize },
+}
+
+impl ChangeOutput {
+    /// Get the index of the change output in the transaction's list of outputs regardless of its
+    /// type.
+    pub fn index(&self) -> usize {
+        match self {
+            Self::ChangeAddress { index } => *index,
+            Self::DepositAddress { index } => *index,
+        }
+    }
+}
+
 impl LianaDescriptor {
     pub fn new(spending_policy: LianaPolicy) -> LianaDescriptor {
         // Get the descriptor from the chosen spending policy.
@@ -297,6 +316,57 @@ impl LianaDescriptor {
         }
 
         Ok(spend_info)
+    }
+
+    /// List the indexes of the change outputs in this PSBT. It relies on the PSBT to be
+    /// well-formed: sane BIP32 derivations must be set for every change output, the inner
+    /// transaction must have the same number of outputs as the PSBT.
+    /// Will detect change outputs paying to either the change keychain or the deposit one.
+    pub fn change_indexes(
+        &self,
+        psbt: &Psbt,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
+    ) -> Vec<ChangeOutput> {
+        let mut indexes = Vec::new();
+
+        // We iterate through all the BIP32 derivations of each output, but note we only ever set
+        // the BIP32 derivations for PSBT outputs which pay to ourselves.
+        for (index, psbt_out) in psbt.outputs.iter().enumerate() {
+            // We can only ever detect change on well-formed PSBTs. On such PSBTs, all keys in the
+            // BIP32 derivations belong to us. And they all use the same last derivation index,
+            // since that's where the wildcard is in the descriptor. So just pick the first one and
+            // infer the derivation index to use to derive the spks below from it.
+            let der_index = if let Some(i) = psbt_out
+                .bip32_derivation
+                .values()
+                .next()
+                .and_then(|(_, der_path)| der_path.into_iter().last())
+            {
+                i
+            } else {
+                continue;
+            };
+
+            // If any of the change and deposit addresses at this derivation index match, count it
+            // as a change output.
+            if let Some(txo) = psbt.unsigned_tx.output.get(index) {
+                let change_desc = self.change_desc.derive(*der_index, secp);
+                if change_desc.script_pubkey() == txo.script_pubkey {
+                    indexes.push(ChangeOutput::ChangeAddress { index });
+                    continue;
+                }
+                let receive_desc = self.receive_desc.derive(*der_index, secp);
+                if receive_desc.script_pubkey() == txo.script_pubkey {
+                    indexes.push(ChangeOutput::DepositAddress { index });
+                }
+            } else {
+                log::error!(
+                    "Provided a PSBT with non-matching tx outputs count and PSBT outputs count."
+                );
+            }
+        }
+
+        indexes
     }
 
     /// Prune the BIP32 derivations in all the PSBT inputs for all the spending paths but the given
@@ -539,6 +609,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(LianaDescriptor::new(policy).to_string(), "wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*)),older(26352))))#prj7nktq");
+
+        // Another derivation step before the wildcard is taken into account.
+        // desc_b is the very same descriptor as desc_a, except the very first xpub's derivation
+        // path is `/<0;1>/*` instead of `/0/<0;1>/*`.
+        let secp = secp256k1::Secp256k1::verification_only();
+        let desc_a = LianaDescriptor::from_str("wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*)),older(26352))))").unwrap();
+        let desc_b = LianaDescriptor::from_str("wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*)),older(26352))))").unwrap();
+        let a = desc_a.receive_descriptor().derive(0.into(), &secp);
+        let b = desc_b.receive_descriptor().derive(0.into(), &secp);
+        assert_ne!(a, b);
+        assert_ne!(a.script_pubkey(), b.script_pubkey());
 
         // The same pseudo-realistic situation as above, but instead of using another derivation
         // depth to derive from the same xpub, we reuse the multipath step.
@@ -1266,6 +1347,62 @@ mod tests {
         let psbt = desc.prune_bip32_derivs_last_avail(psbt).unwrap();
         assert_eq!(psbt.inputs[0].bip32_derivation.len(), 3);
         assert_eq!(psbt, pruned_psbt);
+    }
+
+    #[test]
+    fn change_detection() {
+        let secp = secp256k1::Secp256k1::verification_only();
+
+        // Reuse a desc from above desciptor_creation unit test and a psbt from unrelated above
+        // bip32_derivs_pruning unit test.
+        let desc = LianaDescriptor::from_str("wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*)),older(26352))))").unwrap();
+        let mut psbt = Psbt::from_str("cHNidP8BAFICAAAAAc+3IQFejOVro5Hlwy18au5Jr5mJX+tNMGk0ZE1hydIbAQAAAAD9////ARhzAQAAAAAAFgAUqJZUU7Fqu+bIvxjNw+TAtTwP9HQAAAAAAAEAzQIAAAAAAQEIoAeUdfZj04Ds8EspEK222TJdDNy1WZb/Mg1PJbQekwAAAAAA/f///wKQCQQAAAAAACJRIPJojBgnDc9oUS5lDNx/YJznYR2NPQue7h/d+o5Z+2FQoIYBAAAAAAAiACDZrCBvscZpg+S+IaoZBJjyKDdrNS3oXPaF17DNaB+4mAFAe9yuRS3Vn8A5NUglhwiX7vN0wpQ0Q43ClWtJRnC2HJ66h5HYJ/p8xHgHOhRDUWRzcXLLGl+brc5dW+k0OvIZEyuLAgABASughgEAAAAAACIAINmsIG+xxmmD5L4hqhkEmPIoN2s1Lehc9oXXsM1oH7iYAQX9GQFjdqkU2zK+b9oTL/KfnOSYtq3wmtf4qP6IrGt2qRTSNOD0U7fuHdAnKchIf8GmUO904YisbJNrdqkUE5TQk5mdyYtviaGAsIiOgc4y6wGIrGyTU4hWsmdTIQOirPI1KXBtP2Tg2FQxSo4BjFBTf+dCKtZwDQt056slgCEDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkhA2nPUthIMe1SeFegiZEKZF69yJerP1RFVlyu66C5lOVVU65zZHapFEUmCTccyLJXczvUfPUOCXr7CN0uiKxrdqkUeJmVqUt1Q4aFREOUWKX9U/SuZZ2IrGyTa3apFBDmKn40ceTWVbwxRI21c2qji1tOiKxsk1KIU7JoaCIGAjCZLg7xtlG43xEvns0TRd5gHpPrZWzAaYjo3lheMw/hHJAxFe8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgI0Y2/HRNvXA3niUE3RvrzQcCDiJ4F6vVog0uIanRUWHhwXK6G8MAAAgAEAAIAAAACAAgAAgAIAAAAIAAAAIgYCQKZf/IBUWv4F4mGVTv5PlqCceXFtlhfOgW0kIAPI74scFyuhvDAAAIABAACAAAAAgAIAAIAEAAAACAAAACIGAkDfArY5kwHyHvKllcCMhQLErtDmT/A13vABH8PBQ6yIHGNq3z8wAACAAQAAgAAAAIACAACABAAAAAgAAAAiBgLp9dq4ku0u9UKpIRasIb5QEPgPkDcxdcSXYBfW7mUcqByQMRXvMAAAgAEAAIAAAACAAgAAgAQAAAAIAAAAIgYDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkcFyuhvDAAAIABAACAAAAAgAIAAIAAAAAACAAAACIGA0SIq7IkQJYb7brFx54mPzwUl/DzCGja0pdwFFckfm6WHGNq3z8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgNpz1LYSDHtUnhXoImRCmRevciXqz9URVZcruuguZTlVRyQMRXvMAAAgAEAAIAAAACAAgAAgAAAAAAIAAAAIgYDoqzyNSlwbT9k4NhUMUqOAYxQU3/nQirWcA0LdOerJYAcY2rfPzAAAIABAACAAAAAgAIAAIAAAAAACAAAAAAA").unwrap();
+
+        // The PSBT has unrelated outputs. Those aren't detected as change.
+        assert!(!psbt.outputs.is_empty());
+        assert_eq!(desc.change_indexes(&psbt, &secp).len(), 0);
+
+        // Add a change output, it's correctly detected as such.
+        let der_desc = desc.change_descriptor().derive(999.into(), &secp);
+        let txo = bitcoin::TxOut {
+            script_pubkey: der_desc.script_pubkey(),
+            value: bitcoin::Amount::MAX_MONEY,
+        };
+        let psbt_out = bitcoin::psbt::Output {
+            bip32_derivation: der_desc.bip32_derivations(),
+            ..Default::default()
+        };
+        psbt.unsigned_tx.output.push(txo);
+        psbt.outputs.push(psbt_out);
+        let indexes = desc.change_indexes(&psbt, &secp);
+        assert_eq!(indexes.len(), 1);
+        assert!(matches!(
+            indexes[0],
+            ChangeOutput::ChangeAddress { index: 1 }
+        ));
+
+        // Add another change output, but to a deposit address. Both change outputs are detected.
+        let der_desc = desc.receive_descriptor().derive(424242.into(), &secp);
+        let txo = bitcoin::TxOut {
+            script_pubkey: der_desc.script_pubkey(),
+            value: bitcoin::Amount::MAX_MONEY,
+        };
+        let psbt_out = bitcoin::psbt::Output {
+            bip32_derivation: der_desc.bip32_derivations(),
+            ..Default::default()
+        };
+        psbt.unsigned_tx.output.push(txo);
+        psbt.outputs.push(psbt_out);
+        let indexes = desc.change_indexes(&psbt, &secp);
+        assert_eq!(indexes.len(), 2);
+        assert!(matches!(
+            indexes[0],
+            ChangeOutput::ChangeAddress { index: 1 }
+        ));
+        assert!(matches!(
+            indexes[1],
+            ChangeOutput::DepositAddress { index: 2 }
+        ));
     }
 
     // TODO: test error conditions of deserialization.
