@@ -19,7 +19,7 @@ use liana_ui::{component::form, widget::Element};
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::psbt, view, wallet::Wallet},
     daemon::{
-        model::{remaining_sequence, Coin, SpendTx},
+        model::{remaining_sequence, Coin, CreateSpendResult, SpendTx},
         Daemon,
     },
 };
@@ -382,8 +382,16 @@ impl Step for DefineSpend {
                             async move {
                                 daemon
                                     .create_spend_tx(&inputs, &outputs, feerate_vb)
-                                    .map(|res| res.psbt)
                                     .map_err(|e| e.into())
+                                    .and_then(|res| match res {
+                                        CreateSpendResult::Success { psbt, .. } => Ok(psbt),
+                                        CreateSpendResult::InsufficientFunds { missing } => {
+                                            Err(SpendCreationError::CoinSelection(
+                                                liana::spend::InsufficientFunds { missing },
+                                            )
+                                            .into())
+                                        }
+                                    })
                             },
                             Message::Psbt,
                         );
@@ -576,6 +584,7 @@ impl Recipient {
 pub struct SaveSpend {
     wallet: Arc<Wallet>,
     spend: Option<psbt::PsbtState>,
+    curve: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 }
 
 impl SaveSpend {
@@ -583,6 +592,7 @@ impl SaveSpend {
         Self {
             wallet,
             spend: None,
+            curve: secp256k1::Secp256k1::verification_only(),
         }
     }
 }
@@ -595,6 +605,7 @@ impl Step for SaveSpend {
             psbt,
             draft.inputs.clone(),
             &self.wallet.main_descriptor,
+            &self.curve,
             draft.network,
         );
         tx.labels = draft.labels.clone();

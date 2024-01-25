@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::iter::FromIterator;
 
+use liana::commands::CreateRecoveryResult;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -154,7 +155,7 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError> {
-        let res: CreateSpendResult = self.call(
+        let res: CreateRecoveryResult = self.call(
             "createrecovery",
             Some(vec![json!(address), json!(feerate_vb), json!(sequence)]),
         )?;
