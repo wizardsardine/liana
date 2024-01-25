@@ -427,6 +427,12 @@ mod tests {
         // Create a dummy PSBT spending a coin from this descriptor with a single input and single
         // (external) output. We'll be modifying it as we go.
         let spent_coin_desc = desc.receive_descriptor().derive(42.into(), &secp);
+        let mut psbt_in = PsbtIn::default();
+        spent_coin_desc.update_psbt_in(&mut psbt_in);
+        psbt_in.witness_utxo = Some(bitcoin::TxOut {
+            value: Amount::from_sat(19_000),
+            script_pubkey: spent_coin_desc.script_pubkey(),
+        });
         let mut dummy_psbt = Psbt {
             unsigned_tx: bitcoin::Transaction {
                 version: bitcoin::transaction::Version::TWO,
@@ -453,15 +459,7 @@ mod tests {
             xpub: BTreeMap::new(),
             proprietary: BTreeMap::new(),
             unknown: BTreeMap::new(),
-            inputs: vec![PsbtIn {
-                witness_script: Some(spent_coin_desc.witness_script()),
-                bip32_derivation: spent_coin_desc.bip32_derivations(),
-                witness_utxo: Some(bitcoin::TxOut {
-                    value: Amount::from_sat(19_000),
-                    script_pubkey: spent_coin_desc.script_pubkey(),
-                }),
-                ..PsbtIn::default()
-            }],
+            inputs: vec![psbt_in],
             outputs: Vec::new(),
         };
 
@@ -492,15 +490,13 @@ mod tests {
         // We can add another input to the PSBT. If we don't attach also another transaction input
         // it will fail.
         let other_spent_coin_desc = desc.receive_descriptor().derive(84.into(), &secp);
-        dummy_psbt.inputs.push(PsbtIn {
-            witness_script: Some(other_spent_coin_desc.witness_script()),
-            bip32_derivation: other_spent_coin_desc.bip32_derivations(),
-            witness_utxo: Some(bitcoin::TxOut {
-                value: Amount::from_sat(19_000),
-                script_pubkey: other_spent_coin_desc.script_pubkey(),
-            }),
-            ..PsbtIn::default()
+        let mut psbt_in = PsbtIn::default();
+        other_spent_coin_desc.update_psbt_in(&mut psbt_in);
+        psbt_in.witness_utxo = Some(bitcoin::TxOut {
+            value: Amount::from_sat(19_000),
+            script_pubkey: other_spent_coin_desc.script_pubkey(),
         });
+        dummy_psbt.inputs.push(psbt_in);
         let psbt = dummy_psbt.clone();
         assert!(prim_signer_a
             .sign_psbt(psbt, &secp)

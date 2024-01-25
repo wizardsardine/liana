@@ -2,7 +2,7 @@ use miniscript::{
     bitcoin::{
         self, bip32,
         constants::WITNESS_SCALE_FACTOR,
-        psbt::{Input as PsbtIn, Psbt},
+        psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
         secp256k1,
     },
     descriptor, translate_hash_clone, ForEachKey, TranslatePk, Translator,
@@ -519,11 +519,11 @@ impl DerivedSinglePathLianaDesc {
         self.0.script_pubkey()
     }
 
-    pub fn witness_script(&self) -> bitcoin::ScriptBuf {
+    fn witness_script(&self) -> bitcoin::ScriptBuf {
         self.0.explicit_script().expect("Not a Taproot descriptor")
     }
 
-    pub fn bip32_derivations(&self) -> Bip32Deriv {
+    fn bip32_derivations(&self) -> Bip32Deriv {
         let ms = match self.0 {
             descriptor::Descriptor::Wsh(ref wsh) => match wsh.as_inner() {
                 descriptor::WshInner::Ms(ms) => ms,
@@ -538,6 +538,18 @@ impl DerivedSinglePathLianaDesc {
         ms.iter_pk()
             .map(|k| (k.key.inner, (k.origin.0, k.origin.1)))
             .collect()
+    }
+
+    /// Update the PSBT input information with data from this derived descriptor.
+    pub fn update_psbt_in(&self, psbtin: &mut PsbtIn) {
+        psbtin.bip32_derivation = self.bip32_derivations();
+        psbtin.witness_script = Some(self.witness_script());
+    }
+
+    /// Update the info of a PSBT output for a change output with data from this derived
+    /// descriptor.
+    pub fn update_change_psbt_out(&self, psbtout: &mut PsbtOut) {
+        psbtout.bip32_derivation = self.bip32_derivations();
     }
 }
 
@@ -833,8 +845,10 @@ mod tests {
 
         // Sanity check we can call the methods on the derived desc
         der_desc.script_pubkey();
-        der_desc.witness_script();
-        assert!(!der_desc.bip32_derivations().is_empty());
+        let mut psbt_in = PsbtIn::default();
+        der_desc.update_psbt_in(&mut psbt_in);
+        assert!(psbt_in.witness_script.is_some());
+        assert!(!psbt_in.bip32_derivation.is_empty());
     }
 
     #[test]
