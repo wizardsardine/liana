@@ -10,7 +10,7 @@ use std::iter::FromIterator;
 use liana::{
     commands::LabelItem,
     config::Config,
-    miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
+    miniscript::bitcoin::{address, psbt::Psbt, secp256k1, Address, OutPoint, Txid},
     StartupError,
 };
 
@@ -102,6 +102,7 @@ pub trait Daemon: Debug {
         let info = self.get_info()?;
         let coins = self.list_coins()?.coins;
         let mut spend_txs = Vec::new();
+        let curve = secp256k1::Secp256k1::verification_only();
         for tx in self.list_spend_txs()?.spend_txs {
             if let Some(txids) = txids {
                 if !txids.contains(&tx.psbt.unsigned_tx.txid()) {
@@ -125,6 +126,7 @@ pub trait Daemon: Debug {
                 tx.psbt,
                 coins,
                 &info.descriptors.main,
+                &curve,
                 info.network,
             ));
         }

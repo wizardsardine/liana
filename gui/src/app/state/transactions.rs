@@ -5,7 +5,10 @@ use std::{
 };
 
 use iced::Command;
-use liana::{miniscript::bitcoin::Txid, spend::MAX_FEERATE};
+use liana::{
+    miniscript::bitcoin::Txid,
+    spend::{SpendCreationError, MAX_FEERATE},
+};
 use liana_ui::{
     component::{form, modal::Modal},
     widget::*,
@@ -20,7 +23,7 @@ use crate::app::{
 };
 
 use crate::daemon::{
-    model::{HistoryTransaction, Labelled},
+    model::{CreateSpendResult, HistoryTransaction, Labelled},
     Daemon,
 };
 
@@ -302,7 +305,18 @@ impl CreateRbfModal {
                 self.warning = None;
 
                 let psbt = match daemon.rbf_psbt(&self.txid, self.is_cancel, self.feerate_vb) {
-                    Ok(res) => res.psbt,
+                    Ok(res) => match res {
+                        CreateSpendResult::Success { psbt, .. } => psbt,
+                        CreateSpendResult::InsufficientFunds { missing } => {
+                            self.warning = Some(
+                                SpendCreationError::CoinSelection(
+                                    liana::spend::InsufficientFunds { missing },
+                                )
+                                .into(),
+                            );
+                            return Command::none();
+                        }
+                    },
                     Err(e) => {
                         self.warning = Some(e.into());
                         return Command::none();

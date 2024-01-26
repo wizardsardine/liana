@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use iced::Command;
 
-use liana::miniscript::bitcoin::bip32::{DerivationPath, Fingerprint};
+use liana::miniscript::bitcoin::{
+    bip32::{DerivationPath, Fingerprint},
+    secp256k1,
+};
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
@@ -162,7 +165,14 @@ impl State for RecoveryPanel {
                                         .any(|input| input.previous_output == coin.outpoint)
                                 })
                                 .collect();
-                            Ok(SpendTx::new(None, psbt, coins, &desc, network))
+                            Ok(SpendTx::new(
+                                None,
+                                psbt,
+                                coins,
+                                &desc,
+                                &secp256k1::Secp256k1::verification_only(),
+                                network,
+                            ))
                         },
                         Message::Recovery,
                     );

@@ -11,7 +11,7 @@ pub use liana::{
     miniscript::bitcoin::{
         bip32::{DerivationPath, Fingerprint},
         psbt::Psbt,
-        Address, Amount, Network, OutPoint, Transaction, Txid,
+        secp256k1, Address, Amount, Network, OutPoint, Transaction, Txid,
     },
 };
 
@@ -61,15 +61,19 @@ impl SpendTx {
         psbt: Psbt,
         coins: Vec<Coin>,
         desc: &LianaDescriptor,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
         network: Network,
     ) -> Self {
         let max_vbytes = desc.unsigned_tx_max_vbytes(&psbt.unsigned_tx);
-        let mut change_indexes = Vec::new();
+        let change_indexes: Vec<usize> = desc
+            .change_indexes(&psbt, secp)
+            .into_iter()
+            .map(|c| c.index())
+            .collect();
         let (change_amount, spend_amount) = psbt.unsigned_tx.output.iter().enumerate().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
             |(change, spend), (i, output)| {
-                if !psbt.outputs[i].bip32_derivation.is_empty() {
-                    change_indexes.push(i);
+                if change_indexes.contains(&i) {
                     (change + output.value, spend)
                 } else {
                     (change, spend + output.value)
