@@ -29,7 +29,7 @@ pub struct TransactionDraft {
     network: Network,
     inputs: Vec<Coin>,
     recipients: Vec<Recipient>,
-    generated: Option<Psbt>,
+    generated: Option<(Psbt, Vec<String>)>,
     batch_label: Option<String>,
     labels: HashMap<String, String>,
 }
@@ -80,7 +80,7 @@ pub struct DefineSpend {
     batch_label: form::Value<String>,
     amount_left_to_select: Option<Amount>,
     feerate: form::Value<String>,
-    generated: Option<Psbt>,
+    generated: Option<(Psbt, Vec<String>)>,
     warning: Option<Error>,
 }
 
@@ -351,7 +351,9 @@ impl Step for DefineSpend {
                                     .create_spend_tx(&inputs, &outputs, feerate_vb, None)
                                     .map_err(|e| e.into())
                                     .and_then(|res| match res {
-                                        CreateSpendResult::Success { psbt, .. } => Ok(psbt),
+                                        CreateSpendResult::Success { psbt, warnings } => {
+                                            Ok((psbt, warnings))
+                                        }
                                         CreateSpendResult::InsufficientFunds { missing } => {
                                             Err(SpendCreationError::CoinSelection(
                                                 liana::spend::InsufficientFunds { missing },
@@ -405,7 +407,7 @@ impl Step for DefineSpend {
             .filter_map(|(coin, selected)| if *selected { Some(coin) } else { None })
             .cloned()
             .collect();
-        if let Some(psbt) = &self.generated {
+        if let Some((psbt, _)) = &self.generated {
             draft.labels = self.coins_labels.clone();
             for (i, output) in psbt.unsigned_tx.output.iter().enumerate() {
                 if let Some(label) = self
@@ -550,7 +552,7 @@ impl Recipient {
 
 pub struct SaveSpend {
     wallet: Arc<Wallet>,
-    spend: Option<psbt::PsbtState>,
+    spend: Option<(psbt::PsbtState, Vec<String>)>,
     curve: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 }
 
@@ -566,7 +568,7 @@ impl SaveSpend {
 
 impl Step for SaveSpend {
     fn load(&mut self, draft: &TransactionDraft) {
-        let psbt = draft.generated.clone().unwrap();
+        let (psbt, warnings) = draft.generated.clone().unwrap();
         let mut tx = SpendTx::new(
             None,
             psbt,
@@ -590,12 +592,15 @@ impl Step for SaveSpend {
             }
         }
 
-        self.spend = Some(psbt::PsbtState::new(self.wallet.clone(), tx, false));
+        self.spend = Some((
+            psbt::PsbtState::new(self.wallet.clone(), tx, false),
+            warnings,
+        ));
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        if let Some(spend) = &self.spend {
-            spend.subscription()
+        if let Some((psbt_state, _)) = &self.spend {
+            psbt_state.subscription()
         } else {
             Subscription::none()
         }
@@ -607,26 +612,27 @@ impl Step for SaveSpend {
         cache: &Cache,
         message: Message,
     ) -> Command<Message> {
-        if let Some(spend) = &mut self.spend {
-            spend.update(daemon, cache, message)
+        if let Some((psbt_state, _)) = &mut self.spend {
+            psbt_state.update(daemon, cache, message)
         } else {
             Command::none()
         }
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let spend = self.spend.as_ref().unwrap();
+        let (psbt_state, warnings) = self.spend.as_ref().unwrap();
         let content = view::spend::spend_view(
             cache,
-            &spend.tx,
-            spend.saved,
-            &spend.desc_policy,
-            &spend.wallet.keys_aliases,
-            spend.labels_edited.cache(),
+            &psbt_state.tx,
+            warnings,
+            psbt_state.saved,
+            &psbt_state.desc_policy,
+            &psbt_state.wallet.keys_aliases,
+            psbt_state.labels_edited.cache(),
             cache.network,
-            spend.warning.as_ref(),
+            psbt_state.warning.as_ref(),
         );
-        if let Some(action) = &spend.action {
+        if let Some(action) = &psbt_state.action {
             action.as_ref().view(content)
         } else {
             content
