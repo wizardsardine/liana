@@ -51,6 +51,40 @@ in our case:
 ``` 
 [f25bdff6/48'/0'/0']xpub6E3wdqR3xPHvUKBWwUik5cpy9pMdrdEYVHBxKx7nbT2ZTnzizbNAWe9uuPX4A4nUsamM2Tn9F6ccK5Fmrt6ResBSRWDnb9J8bpi1WKcD158
 ```
+## bitcoin core
+Bitcoin core not yet have a simple command to export descriptor (see [#22341](https://github.com/bitcoin/bitcoin/pull/22341) 
+and [#29130](https://github.com/bitcoin/bitcoin/pull/29130)) so you have to use `listdescriptors` command that will 
+give you output descriptors that contains xpubs:
+
+here we using `grep` command to keep only output containing descriptors and `rpcwallet=main` where 'main' is 
+the wallet name (you can lists your wallets using `bitcoin-cli listwallets` command):
+``` 
+bitcoin-cli --rpcwallet=main listdescriptors | grep '"desc":'    
+```
+
+output should looks like this:
+``` 
+      "desc": "pkh([b6128dcb/44'/0'/0']xpub6CLAT4xwEBFHRfPqsBojCP2xCbv8kn3VoD7CG59D3Gt5a7Ba3yKsYjpusaWEmDqafb8Gg7ebv5Lg4vvrhMTiKcwJyH6kUk4J2GWARHHkvSo/0/*)#cd54nta7",
+      "desc": "pkh([b6128dcb/44'/0'/0']xpub6CLAT4xwEBFHRfPqsBojCP2xCbv8kn3VoD7CG59D3Gt5a7Ba3yKsYjpusaWEmDqafb8Gg7ebv5Lg4vvrhMTiKcwJyH6kUk4J2GWARHHkvSo/1/*)#fe35w7dx",
+      "desc": "sh(wpkh([b6128dcb/49'/0'/0']xpub6C75FRg1ZLnZ8uEfqWf9wyrZmaKPTqimaCnjMjQA3iKE8gLHC9HKttCcY5zHhAPc5uh8JE6JnJyVCQnVJyWvuVsPBhCFovKxUrYYkgGYik6/0/*))#70zrx66e",
+      "desc": "sh(wpkh([b6128dcb/49'/0'/0']xpub6C75FRg1ZLnZ8uEfqWf9wyrZmaKPTqimaCnjMjQA3iKE8gLHC9HKttCcY5zHhAPc5uh8JE6JnJyVCQnVJyWvuVsPBhCFovKxUrYYkgGYik6/1/*))#twv4790x",
+      "desc": "tr([b6128dcb/86'/0'/0']xpub6CV5jTV3fvR3h5Abv3FZabKUUm7S33cWg86dgUZ132aGZ9wGFCw6s65ACKcWXSjVt12oaWHLu6pFGp28HJtHteCkWxSyHhbjvfbyR7XooUn/0/*)#25anguum",
+      "desc": "tr([b6128dcb/86'/0'/0']xpub6CV5jTV3fvR3h5Abv3FZabKUUm7S33cWg86dgUZ132aGZ9wGFCw6s65ACKcWXSjVt12oaWHLu6pFGp28HJtHteCkWxSyHhbjvfbyR7XooUn/1/*)#mqcj4fvr",
+      "desc": "wpkh([b6128dcb/84'/0'/0']xpub6Bno9fbj6kSaQsrGzbSBLwuBPSQD8FErJHDAHuDarKQbPh5brv6pMHv68xbm9kxCNruPNYQ35QWiBgCEzoP3RbnRFrE2LgZAd9zDUTFTY6y/0/*)#03d4qhze",
+      "desc": "wpkh([b6128dcb/84'/0'/0']xpub6Bno9fbj6kSaQsrGzbSBLwuBPSQD8FErJHDAHuDarKQbPh5brv6pMHv68xbm9kxCNruPNYQ35QWiBgCEzoP3RbnRFrE2LgZAd9zDUTFTY6y/1/*)#79g5azjp",
+```
+
+here you can use first taproot (`tr(...)`) or segwit (`wpkh(...)`) descriptor and extract the xpub, for instance if you
+take first taproot descriptor:
+
+`tr([b6128dcb/86'/0'/0']xpub6CV5jTV3fvR3h5Abv3FZabKUUm7S33cWg86dgUZ132aGZ9wGFCw6s65ACKcWXSjVt12oaWHLu6pFGp28HJtHteCkWxSyHhbjvfbyR7XooUn/0/*)#25anguum` 
+
+the xpub you can load in `Liana` will be :
+
+`[b6128dcb/86'/0'/0']xpub6CV5jTV3fvR3h5Abv3FZabKUUm7S33cWg86dgUZ132aGZ9wGFCw6s65ACKcWXSjVt12oaWHLu6pFGp28HJtHteCkWxSyHhbjvfbyR7XooUn`.
+
+
+
 ## Sparrow
 
 ![Sparrow.png](assets%2FXPUB%2FSparrow.png)
