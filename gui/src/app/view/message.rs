@@ -63,12 +63,13 @@ pub enum SpendTxMessage {
 #[derive(Debug, Clone)]
 pub enum SettingsMessage {
     EditBitcoindSettings,
+    BitcoindSettings(SettingsEditMessage),
+    RescanSettings(SettingsEditMessage),
     EditWalletSettings,
     AboutSection,
     RegisterWallet,
     FingerprintAliasEdited(Fingerprint, String),
     Save,
-    Edit(usize, SettingsEditMessage),
 }
 
 #[derive(Debug, Clone)]

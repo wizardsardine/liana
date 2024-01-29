@@ -475,6 +475,7 @@ pub fn rescan<'a>(
     processing: bool,
     can_edit: bool,
     invalid_date: bool,
+    past_possible_height: bool,
 ) -> Element<'a, SettingsEditMessage> {
     card::simple(Container::new(
         Column::new()
@@ -534,7 +535,15 @@ pub fn rescan<'a>(
                         )
                         .push_maybe(if invalid_date {
                             Some(
-                                p1_regular("Provided date is either invalid or anterior to the genesis block's timestamp.")
+                                p1_regular("Provided date is invalid")
+                                    .style(color::RED),
+                            )
+                        } else {
+                            None
+                        })
+                        .push_maybe(if past_possible_height {
+                            Some(
+                                p1_regular("Provided date earlier than the genesis block's timestamp or the node prune height")
                                     .style(color::RED),
                             )
                         } else {

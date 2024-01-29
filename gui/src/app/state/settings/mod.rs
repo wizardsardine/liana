@@ -17,17 +17,6 @@ use crate::{
     daemon::Daemon,
 };
 
-trait Setting: std::fmt::Debug {
-    fn edited(&mut self, success: bool);
-    fn update(
-        &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        cache: &Cache,
-        message: view::SettingsEditMessage,
-    ) -> Command<Message>;
-    fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage>;
-}
-
 pub struct SettingsState {
     data_dir: PathBuf,
     wallet: Arc<Wallet>,
