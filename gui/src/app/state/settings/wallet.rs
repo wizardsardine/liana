@@ -29,10 +29,11 @@ pub struct WalletSettingsState {
     modal: Option<RegisterWalletModal>,
     processing: bool,
     updated: bool,
+    creation_date: u32,
 }
 
 impl WalletSettingsState {
-    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>) -> Self {
+    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>, creation_date: u32) -> Self {
         WalletSettingsState {
             data_dir,
             descriptor: wallet.main_descriptor.to_string(),
@@ -42,6 +43,7 @@ impl WalletSettingsState {
             modal: None,
             processing: false,
             updated: false,
+            creation_date,
         }
     }
 
@@ -81,6 +83,7 @@ impl State for WalletSettingsState {
             &self.keys_aliases,
             self.processing,
             self.updated,
+            self.creation_date,
         );
         if let Some(m) = &self.modal {
             modal::Modal::new(content, m.view())

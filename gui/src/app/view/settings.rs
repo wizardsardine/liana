@@ -538,6 +538,7 @@ pub fn wallet_settings<'a>(
     keys_aliases: &[(Fingerprint, form::Value<String>)],
     processing: bool,
     updated: bool,
+    creation_date: u32,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::Settings,
@@ -561,6 +562,7 @@ pub fn wallet_settings<'a>(
                             .on_press(Message::Settings(SettingsMessage::AboutSection)),
                     ),
             )
+            .push_maybe(creation_date_message(creation_date))
             .push(card::simple(
                 Column::new()
                     .push(text("Wallet descriptor:").bold())
@@ -686,4 +688,16 @@ pub fn register_wallet_modal<'a>(
         ))
         .width(Length::Fixed(500.0))
         .into()
+}
+
+pub fn creation_date_message(creation_date: u32) -> Option<Row<'static, Message>> {
+    if let Some(datetime) = chrono::NaiveDateTime::from_timestamp_opt(creation_date as i64, 0) {
+        return Some(
+            Row::new()
+                .push(text("Wallet creation date:").bold())
+                .spacing(10)
+                .push(text(datetime.format("%m/%d/%Y").to_string())),
+        );
+    }
+    None
 }

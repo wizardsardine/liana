@@ -78,7 +78,12 @@ impl State for SettingsState {
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditWalletSettings)) => {
                 self.setting = Some(
-                    WalletSettingsState::new(self.data_dir.clone(), self.wallet.clone()).into(),
+                    WalletSettingsState::new(
+                        self.data_dir.clone(),
+                        self.wallet.clone(),
+                        daemon.get_info().unwrap().timestamp,
+                    )
+                    .into(),
                 );
                 self.setting
                     .as_mut()
