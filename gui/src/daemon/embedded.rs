@@ -87,9 +87,10 @@ impl Daemon for EmbeddedDaemon {
         coins_outpoints: &[OutPoint],
         destinations: &HashMap<Address<address::NetworkUnchecked>, u64>,
         feerate_vb: u64,
+        change_address: Option<Address<address::NetworkUnchecked>>,
     ) -> Result<CreateSpendResult, DaemonError> {
         self.control()?
-            .create_spend(destinations, coins_outpoints, feerate_vb, None)
+            .create_spend(destinations, coins_outpoints, feerate_vb, change_address)
             .map_err(|e| DaemonError::Unexpected(e.to_string()))
     }
 

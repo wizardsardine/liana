@@ -86,15 +86,17 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         coins_outpoints: &[OutPoint],
         destinations: &HashMap<Address<address::NetworkUnchecked>, u64>,
         feerate_vb: u64,
+        change_address: Option<Address<address::NetworkUnchecked>>,
     ) -> Result<CreateSpendResult, DaemonError> {
-        self.call(
-            "createspend",
-            Some(vec![
-                json!(destinations),
-                json!(coins_outpoints),
-                json!(feerate_vb),
-            ]),
-        )
+        let mut input = vec![
+            json!(destinations),
+            json!(coins_outpoints),
+            json!(feerate_vb),
+        ];
+        if let Some(change_address) = change_address {
+            input.push(json!(change_address));
+        }
+        self.call("createspend", Some(input))
     }
 
     fn rbf_psbt(

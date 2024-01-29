@@ -381,7 +381,7 @@ impl Step for DefineSpend {
                         return Command::perform(
                             async move {
                                 daemon
-                                    .create_spend_tx(&inputs, &outputs, feerate_vb)
+                                    .create_spend_tx(&inputs, &outputs, feerate_vb, None)
                                     .map_err(|e| e.into())
                                     .and_then(|res| match res {
                                         CreateSpendResult::Success { psbt, .. } => Ok(psbt),
