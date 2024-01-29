@@ -35,16 +35,18 @@ pub struct Wallet {
     pub keys_aliases: HashMap<Fingerprint, String>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Signer>,
+    pub timestamp: u32,
 }
 
 impl Wallet {
-    pub fn new(main_descriptor: LianaDescriptor) -> Self {
+    pub fn new(main_descriptor: LianaDescriptor, timestamp: u32) -> Self {
         Self {
             name: wallet_name(&main_descriptor),
             main_descriptor,
             keys_aliases: HashMap::new(),
             hardware_wallets: Vec::new(),
             signer: None,
+            timestamp,
         }
     }
 
