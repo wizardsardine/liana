@@ -65,11 +65,7 @@ impl State for TransactionsPanel {
                 self.warning.as_ref(),
             );
             if let Some(modal) = &self.create_rbf_modal {
-                Modal::new(content, modal.view())
-                    .on_blur(Some(view::Message::CreateRbf(
-                        view::CreateRbfMessage::Cancel,
-                    )))
-                    .into()
+                modal.view(content)
             } else {
                 content
             }
@@ -252,9 +248,11 @@ pub struct CreateRbfModal {
     feerate_val: form::Value<String>,
     /// Parsed feerate.
     feerate_vb: Option<u64>,
-    warning: Option<Error>,
     /// Replacement transaction ID.
     replacement_txid: Option<Txid>,
+
+    processing: bool,
+    warning: Option<Error>,
 }
 
 impl CreateRbfModal {
@@ -274,8 +272,9 @@ impl CreateRbfModal {
             } else {
                 Some(min_feerate_vb)
             },
-            warning: None,
             replacement_txid: None,
+            warning: None,
+            processing: false,
         }
     }
 
@@ -301,43 +300,64 @@ impl CreateRbfModal {
                     self.feerate_vb = None;
                 }
             }
+            Message::RbfPsbt(res) => {
+                self.processing = false;
+                match res {
+                    Ok(txid) => {
+                        self.replacement_txid = Some(txid);
+                    }
+                    Err(e) => self.warning = Some(e),
+                }
+            }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Confirm)) => {
                 self.warning = None;
-
-                let psbt = match daemon.rbf_psbt(&self.txid, self.is_cancel, self.feerate_vb) {
-                    Ok(res) => match res {
-                        CreateSpendResult::Success { psbt, .. } => psbt,
-                        CreateSpendResult::InsufficientFunds { missing } => {
-                            self.warning = Some(
-                                SpendCreationError::CoinSelection(
-                                    liana::spend::InsufficientFunds { missing },
-                                )
-                                .into(),
-                            );
-                            return Command::none();
-                        }
-                    },
-                    Err(e) => {
-                        self.warning = Some(e.into());
-                        return Command::none();
-                    }
-                };
-                if let Err(e) = daemon.update_spend_tx(&psbt) {
-                    self.warning = Some(e.into());
-                    return Command::none();
-                }
-                self.replacement_txid = Some(psbt.unsigned_tx.txid());
+                self.processing = true;
+                return Command::perform(
+                    rbf(daemon, self.txid, self.is_cancel, self.feerate_vb),
+                    Message::RbfPsbt,
+                );
             }
             _ => {}
         }
         Command::none()
     }
-    fn view(&self) -> Element<view::Message> {
-        view::transactions::create_rbf_modal(
-            self.is_cancel,
-            &self.feerate_val,
-            self.replacement_txid,
-            self.warning.as_ref(),
-        )
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<view::Message> {
+        let modal = Modal::new(
+            content,
+            view::transactions::create_rbf_modal(
+                self.is_cancel,
+                &self.feerate_val,
+                self.replacement_txid,
+                self.warning.as_ref(),
+            ),
+        );
+        if self.processing {
+            modal
+        } else {
+            modal.on_blur(Some(view::Message::CreateRbf(
+                view::CreateRbfMessage::Cancel,
+            )))
+        }
+        .into()
     }
+}
+
+async fn rbf(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    txid: Txid,
+    is_cancel: bool,
+    feerate_vb: Option<u64>,
+) -> Result<Txid, Error> {
+    let res = daemon.rbf_psbt(&txid, is_cancel, feerate_vb)?;
+    let psbt = match res {
+        CreateSpendResult::Success { psbt, .. } => psbt,
+        CreateSpendResult::InsufficientFunds { missing } => {
+            return Err(
+                SpendCreationError::CoinSelection(liana::spend::InsufficientFunds { missing })
+                    .into(),
+            );
+        }
+    };
+    daemon.update_spend_tx(&psbt)?;
+    Ok(psbt.unsigned_tx.txid())
 }

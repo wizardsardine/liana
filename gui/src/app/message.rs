@@ -6,7 +6,7 @@ use liana::{
     miniscript::bitcoin::{
         bip32::{ChildNumber, Fingerprint},
         psbt::Psbt,
-        Address,
+        Address, Txid,
     },
 };
 
@@ -30,6 +30,7 @@ pub enum Message {
     Labels(Result<HashMap<String, String>, Error>),
     SpendTxs(Result<Vec<SpendTx>, Error>),
     Psbt(Result<Psbt, Error>),
+    RbfPsbt(Result<Txid, Error>),
     Recovery(Result<SpendTx, Error>),
     Signed(Fingerprint, Result<Psbt, Error>),
     WalletRegistered(Result<Fingerprint, Error>),
