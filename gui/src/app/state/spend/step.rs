@@ -6,12 +6,9 @@ use iced::{Command, Subscription};
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
-        self, address, psbt::Psbt, secp256k1, Address, Amount, Denomination, Network, OutPoint,
+        address, psbt::Psbt, secp256k1, Address, Amount, Denomination, Network, OutPoint,
     },
-    spend::{
-        create_spend, CandidateCoin, SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
-        MAX_FEERATE,
-    },
+    spend::{SpendCreationError, MAX_FEERATE},
 };
 
 use liana_ui::{component::form, widget::Element};
@@ -192,86 +189,60 @@ impl DefineSpend {
             return;
         }
 
-        let destinations: Vec<(SpendOutputAddress, Amount)> = self
+        let destinations: HashMap<Address<address::NetworkUnchecked>, u64> = self
             .recipients
             .iter()
             .map(|recipient| {
                 (
-                    SpendOutputAddress {
-                        addr: Address::from_str(&recipient.address.value)
-                            .expect("Checked before")
-                            .assume_checked(),
-                        info: None,
-                    },
-                    Amount::from_sat(recipient.amount().expect("Checked before")),
+                    Address::from_str(&recipient.address.value).expect("Checked before"),
+                    recipient.amount().expect("Checked before"),
                 )
             })
             .collect();
 
-        let coins: Vec<CandidateCoin> = if self.is_user_coin_selection {
-            self.coins
+        let outpoints = if self.is_user_coin_selection {
+            let outpoints: Vec<_> = self
+                .coins
                 .iter()
-                .filter_map(|(c, selected)| {
-                    if *selected {
-                        Some(CandidateCoin {
-                            amount: c.amount,
-                            outpoint: c.outpoint,
-                            deriv_index: c.derivation_index,
-                            is_change: c.is_change,
-                            sequence: None,
-                            must_select: *selected,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+                .filter_map(
+                    |(c, selected)| {
+                        if *selected {
+                            Some(c.outpoint)
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .collect();
+            if outpoints.is_empty() {
+                // If the user has deselected all coins, simply set the amount left to select as the
+                // total destination value. Note this doesn't take account of the fee, but passing
+                // an empty list to `create_spend_tx` would use auto-selection and so we settle for
+                // this approximation.
+                self.amount_left_to_select = Some(Amount::from_sat(destinations.values().sum()));
+                return;
+            }
+            outpoints
         } else {
-            // For automated coin selection, only confirmed coins are considered
-            self.coins
-                .iter()
-                .filter_map(|(c, _)| {
-                    if c.block_height.is_some() {
-                        Some(CandidateCoin {
-                            amount: c.amount,
-                            outpoint: c.outpoint,
-                            deriv_index: c.derivation_index,
-                            is_change: c.is_change,
-                            sequence: None,
-                            must_select: false,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+            Vec::new() // pass empty list for auto-selection
         };
 
+        // Use a fixed change address so that we don't increment the change index.
         let dummy_address = self
             .descriptor
             .change_descriptor()
             .derive(0.into(), &self.curve)
-            .address(self.network);
+            .address(self.network)
+            .as_unchecked()
+            .clone();
 
         let feerate_vb = self.feerate.value.parse::<u64>().expect("Checked before");
-        // Create a spend with empty inputs in order to use auto-selection.
-        match create_spend(
-            &self.descriptor,
-            &self.curve,
-            &mut DaemonTxGetter(&daemon),
-            &destinations,
-            &coins,
-            SpendTxFees::Regular(feerate_vb),
-            SpendOutputAddress {
-                addr: dummy_address,
-                info: None,
-            },
-        ) {
-            Ok(spend) => {
+
+        match daemon.create_spend_tx(&outpoints, &destinations, feerate_vb, Some(dummy_address)) {
+            Ok(CreateSpendResult::Success { psbt, .. }) => {
                 self.warning = None;
                 if !self.is_user_coin_selection {
-                    let selected_coins: Vec<OutPoint> = spend
-                        .psbt
+                    let selected_coins: Vec<OutPoint> = psbt
                         .unsigned_tx
                         .input
                         .iter()
@@ -290,23 +261,13 @@ impl DefineSpend {
             // User can then either:
             // - modify recipient amounts and/or feerate and let coin selection run again, or
             // - select coins manually.
-            Err(SpendCreationError::CoinSelection(amount)) => {
-                self.amount_left_to_select = Some(Amount::from_sat(amount.missing));
+            Ok(CreateSpendResult::InsufficientFunds { missing }) => {
+                self.amount_left_to_select = Some(Amount::from_sat(missing));
             }
             Err(e) => {
                 self.warning = Some(e.into());
             }
         }
-    }
-}
-
-pub struct DaemonTxGetter<'a>(&'a Arc<dyn Daemon + Sync + Send>);
-impl<'a> TxGetter for DaemonTxGetter<'a> {
-    fn get_tx(&mut self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
-        self.0
-            .list_txs(&[*txid])
-            .ok()
-            .and_then(|mut txs| txs.transactions.pop().map(|tx| tx.tx))
     }
 }
 
@@ -381,7 +342,7 @@ impl Step for DefineSpend {
                         return Command::perform(
                             async move {
                                 daemon
-                                    .create_spend_tx(&inputs, &outputs, feerate_vb)
+                                    .create_spend_tx(&inputs, &outputs, feerate_vb, None)
                                     .map_err(|e| e.into())
                                     .and_then(|res| match res {
                                         CreateSpendResult::Success { psbt, .. } => Ok(psbt),

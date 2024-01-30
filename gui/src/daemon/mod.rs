@@ -62,6 +62,7 @@ pub trait Daemon: Debug {
         coins_outpoints: &[OutPoint],
         destinations: &HashMap<Address<address::NetworkUnchecked>, u64>,
         feerate_vb: u64,
+        change_address: Option<Address<address::NetworkUnchecked>>,
     ) -> Result<model::CreateSpendResult, DaemonError>;
     fn rbf_psbt(
         &self,
