@@ -1,4 +1,4 @@
-use std::convert::From;
+use std::convert::{From, TryInto};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -8,7 +8,10 @@ use chrono::prelude::*;
 use iced::Command;
 use tracing::info;
 
-use liana::config::{BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config};
+use liana::{
+    config::{BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config},
+    miniscript::bitcoin::Network,
+};
 
 use liana_ui::{component::form, widget::Element};
 
@@ -40,7 +43,7 @@ impl BitcoindSettingsState {
             node_settings: config.map(|config| {
                 BitcoindSettings::new(
                     config.bitcoin_config.clone(),
-                    config.bitcoind_config.clone().unwrap(),
+                    config.bitcoind_config.unwrap(),
                     daemon_is_external,
                     bitcoind_is_internal,
                 )
@@ -315,6 +318,7 @@ pub struct RescanSetting {
     month: form::Value<String>,
     day: form::Value<String>,
     invalid_date: bool,
+    future_date: bool,
     past_possible_height: bool,
 }
 
@@ -340,12 +344,14 @@ impl RescanSetting {
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
+        cache: &Cache,
         message: view::SettingsEditMessage,
     ) -> Command<Message> {
         match message {
             view::SettingsEditMessage::FieldEdited(field, value) => {
                 self.invalid_date = false;
+                self.future_date = false;
+                self.past_possible_height = false;
                 if !self.processing && (value.is_empty() || u32::from_str(&value).is_ok()) {
                     match field {
                         "rescan_year" => self.year.value = value,
@@ -356,27 +362,66 @@ impl RescanSetting {
                 }
             }
             view::SettingsEditMessage::Confirm => {
-                let date_time = if let Some(date) = NaiveDate::from_ymd_opt(
+                let t = if let Some(date) = NaiveDate::from_ymd_opt(
                     i32::from_str(&self.year.value).unwrap_or(1),
                     u32::from_str(&self.month.value).unwrap_or(1),
                     u32::from_str(&self.day.value).unwrap_or(1),
-                ) {
-                    if date < NaiveDate::from_str("2009-01-03").unwrap() {
-                        self.past_possible_height = true;
-                        return Command::none();
-                    } else {
-                        self.past_possible_height = false;
-                        date
+                )
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .map(|d| d.timestamp())
+                {
+                    match cache.network {
+                        Network::Bitcoin => {
+                            if date < MAINNET_GENESIS_BLOCK_TIMESTAMP {
+                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, MAINNET_GENESIS_BLOCK_TIMESTAMP);
+
+                                MAINNET_GENESIS_BLOCK_TIMESTAMP
+                            } else {
+                                date
+                            }
+                        }
+                        Network::Testnet => {
+                            if date < TESTNET3_GENESIS_BLOCK_TIMESTAMP {
+                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, TESTNET3_GENESIS_BLOCK_TIMESTAMP);
+                                TESTNET3_GENESIS_BLOCK_TIMESTAMP
+                            } else {
+                                date
+                            }
+                        }
+                        Network::Signet => {
+                            if date < SIGNET_GENESIS_BLOCK_TIMESTAMP {
+                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, SIGNET_GENESIS_BLOCK_TIMESTAMP);
+                                SIGNET_GENESIS_BLOCK_TIMESTAMP
+                            } else {
+                                date
+                            }
+                        }
+                        // We expect regtest user to not use genesis block timestamp inferior to
+                        // the mainnet one.
+                        // Network is a non exhaustive enum, that is why the _.
+                        _ => {
+                            if date < MAINNET_GENESIS_BLOCK_TIMESTAMP {
+                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, MAINNET_GENESIS_BLOCK_TIMESTAMP);
+                                MAINNET_GENESIS_BLOCK_TIMESTAMP
+                            } else {
+                                date
+                            }
+                        }
                     }
                 } else {
                     self.invalid_date = true;
                     return Command::none();
                 };
-                let t = date_time.and_hms_opt(0, 0, 0).unwrap().timestamp() as u32;
+                if t > Utc::now().timestamp() {
+                    self.future_date = true;
+                    return Command::none();
+                }
                 self.processing = true;
                 info!("Asking deamon to rescan with timestamp: {}", t);
                 return Command::perform(
-                    async move { daemon.start_rescan(t).map_err(|e| e.into()) },
+                    async move {
+                        daemon.start_rescan(t.try_into().expect("t cannot be inferior to 0 otherwise genesis block timestam is chosen")).map_err(|e| e.into())
+                    },
                     Message::StartRescan,
                 );
             }
@@ -396,6 +441,12 @@ impl RescanSetting {
             can_edit,
             self.invalid_date,
             self.past_possible_height,
+            self.future_date,
         )
     }
 }
+
+/// Use bitcoin-cli getblock $(bitcoin-cli getblockhash 0) | jq .time
+const MAINNET_GENESIS_BLOCK_TIMESTAMP: i64 = 1231006505;
+const TESTNET3_GENESIS_BLOCK_TIMESTAMP: i64 = 1296688602;
+const SIGNET_GENESIS_BLOCK_TIMESTAMP: i64 = 1598918400;
