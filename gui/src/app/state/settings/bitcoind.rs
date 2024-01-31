@@ -1,4 +1,4 @@
-use std::convert::From;
+use std::convert::{From, TryInto};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -8,12 +8,15 @@ use chrono::prelude::*;
 use iced::Command;
 use tracing::info;
 
-use liana::config::{BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config};
+use liana::{
+    config::{BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config},
+    miniscript::bitcoin::Network,
+};
 
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
-    app::{cache::Cache, error::Error, message::Message, state::settings::Setting, view, State},
+    app::{cache::Cache, error::Error, message::Message, view, State},
     bitcoind::{RpcAuthType, RpcAuthValues},
     daemon::Daemon,
 };
@@ -23,8 +26,8 @@ pub struct BitcoindSettingsState {
     warning: Option<Error>,
     config_updated: bool,
 
-    settings: Vec<Box<dyn Setting>>,
-    current: Option<usize>,
+    node_settings: Option<BitcoindSettings>,
+    rescan_settings: RescanSetting,
 }
 
 impl BitcoindSettingsState {
@@ -34,27 +37,18 @@ impl BitcoindSettingsState {
         daemon_is_external: bool,
         bitcoind_is_internal: bool,
     ) -> Self {
-        let settings = if let Some(config) = &config {
-            vec![
-                BitcoindSettings::new(
-                    config.bitcoin_config.clone(),
-                    config.bitcoind_config.clone().unwrap(),
-                    daemon_is_external,
-                    bitcoind_is_internal,
-                )
-                .into(),
-                RescanSetting::new(cache.rescan_progress).into(),
-            ]
-        } else {
-            vec![RescanSetting::new(cache.rescan_progress).into()]
-        };
-
         BitcoindSettingsState {
             warning: None,
             config_updated: false,
-            settings,
-            // If a scan is running, the current setting edited is the Rescan panel.
-            current: cache.rescan_progress.map(|_| 1),
+            node_settings: config.map(|config| {
+                BitcoindSettings::new(
+                    config.bitcoin_config.clone(),
+                    config.bitcoind_config.unwrap(),
+                    daemon_is_external,
+                    bitcoind_is_internal,
+                )
+            }),
+            rescan_settings: RescanSetting::new(cache.rescan_progress),
         }
     }
 }
@@ -71,25 +65,20 @@ impl State for BitcoindSettingsState {
                 Ok(()) => {
                     self.config_updated = true;
                     self.warning = None;
-                    if let Some(current) = self.current {
-                        if let Some(setting) = self.settings.get_mut(current) {
-                            setting.edited(true);
-                            return Command::perform(async {}, |_| {
-                                Message::View(view::Message::Settings(
-                                    view::SettingsMessage::EditBitcoindSettings,
-                                ))
-                            });
-                        }
+                    if let Some(settings) = &mut self.node_settings {
+                        settings.edited(true);
+                        return Command::perform(async {}, |_| {
+                            Message::View(view::Message::Settings(
+                                view::SettingsMessage::EditBitcoindSettings,
+                            ))
+                        });
                     }
-                    self.current = None;
                 }
                 Err(e) => {
                     self.config_updated = false;
                     self.warning = Some(e);
-                    if let Some(current) = self.current {
-                        if let Some(setting) = self.settings.get_mut(current) {
-                            setting.edited(false);
-                        }
+                    if let Some(settings) = &mut self.node_settings {
+                        settings.edited(false);
                     }
                 }
             },
@@ -97,19 +86,23 @@ impl State for BitcoindSettingsState {
                 Err(e) => self.warning = Some(e),
                 Ok(info) => {
                     if info.rescan_progress == Some(1.0) {
-                        self.settings[1].edited(true);
+                        self.rescan_settings.edited(true);
                     }
                 }
             },
-            Message::View(view::Message::Settings(view::SettingsMessage::Edit(i, msg))) => {
-                if let Some(setting) = self.settings.get_mut(i) {
-                    match msg {
-                        view::SettingsEditMessage::Select => self.current = Some(i),
-                        view::SettingsEditMessage::Cancel => self.current = None,
-                        _ => {}
-                    };
-                    return setting.update(daemon, cache, msg);
+            Message::StartRescan(Err(_)) => {
+                self.rescan_settings.past_possible_height = true;
+                self.rescan_settings.processing = false;
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::BitcoindSettings(
+                msg,
+            ))) => {
+                if let Some(settings) = &mut self.node_settings {
+                    return settings.update(daemon, cache, msg);
                 }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::RescanSettings(msg))) => {
+                return self.rescan_settings.update(daemon, cache, msg);
             }
             _ => {}
         };
@@ -117,19 +110,33 @@ impl State for BitcoindSettingsState {
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let can_edit = self.current.is_none();
+        let can_edit_bitcoind_settings = !self.rescan_settings.processing;
+        let can_do_rescan = !self.rescan_settings.processing
+            && self.node_settings.as_ref().map(|settings| settings.edit) != Some(true);
         view::settings::bitcoind_settings(
             cache,
             self.warning.as_ref(),
-            self.settings
-                .iter()
-                .enumerate()
-                .map(|(i, setting)| {
-                    setting.view(cache, can_edit).map(move |msg| {
-                        view::Message::Settings(view::SettingsMessage::Edit(i, msg))
-                    })
-                })
-                .collect(),
+            if let Some(settings) = &self.node_settings {
+                vec![
+                    settings
+                        .view(cache, can_edit_bitcoind_settings)
+                        .map(move |msg| {
+                            view::Message::Settings(view::SettingsMessage::BitcoindSettings(msg))
+                        }),
+                    self.rescan_settings
+                        .view(cache, can_do_rescan)
+                        .map(move |msg| {
+                            view::Message::Settings(view::SettingsMessage::RescanSettings(msg))
+                        }),
+                ]
+            } else {
+                vec![self
+                    .rescan_settings
+                    .view(cache, can_do_rescan)
+                    .map(move |msg| {
+                        view::Message::Settings(view::SettingsMessage::RescanSettings(msg))
+                    })]
+            },
         )
     }
 }
@@ -151,12 +158,6 @@ pub struct BitcoindSettings {
     addr: form::Value<String>,
     daemon_is_external: bool,
     bitcoind_is_internal: bool,
-}
-
-impl From<BitcoindSettings> for Box<dyn Setting> {
-    fn from(s: BitcoindSettings) -> Box<dyn Setting> {
-        Box::new(s)
-    }
 }
 
 impl BitcoindSettings {
@@ -211,7 +212,7 @@ impl BitcoindSettings {
     }
 }
 
-impl Setting for BitcoindSettings {
+impl BitcoindSettings {
     fn edited(&mut self, success: bool) {
         self.processing = false;
         if success {
@@ -311,31 +312,30 @@ impl Setting for BitcoindSettings {
 
 #[derive(Debug, Default)]
 pub struct RescanSetting {
-    edit: bool,
     processing: bool,
     success: bool,
     year: form::Value<String>,
     month: form::Value<String>,
     day: form::Value<String>,
     invalid_date: bool,
-}
-
-impl From<RescanSetting> for Box<dyn Setting> {
-    fn from(s: RescanSetting) -> Box<dyn Setting> {
-        Box::new(s)
-    }
+    future_date: bool,
+    past_possible_height: bool,
 }
 
 impl RescanSetting {
     pub fn new(rescan_progress: Option<f64>) -> Self {
         Self {
-            processing: rescan_progress.is_some(),
+            processing: if let Some(progress) = rescan_progress {
+                progress < 1.0
+            } else {
+                false
+            },
             ..Default::default()
         }
     }
 }
 
-impl Setting for RescanSetting {
+impl RescanSetting {
     fn edited(&mut self, success: bool) {
         self.processing = false;
         self.success = success;
@@ -344,22 +344,14 @@ impl Setting for RescanSetting {
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
+        cache: &Cache,
         message: view::SettingsEditMessage,
     ) -> Command<Message> {
         match message {
-            view::SettingsEditMessage::Select => {
-                if !self.processing {
-                    self.edit = true;
-                }
-            }
-            view::SettingsEditMessage::Cancel => {
-                if !self.processing {
-                    self.edit = false;
-                }
-            }
             view::SettingsEditMessage::FieldEdited(field, value) => {
                 self.invalid_date = false;
+                self.future_date = false;
+                self.past_possible_height = false;
                 if !self.processing && (value.is_empty() || u32::from_str(&value).is_ok()) {
                     match field {
                         "rescan_year" => self.year.value = value,
@@ -370,27 +362,66 @@ impl Setting for RescanSetting {
                 }
             }
             view::SettingsEditMessage::Confirm => {
-                let date_time = if let Some(date) = NaiveDate::from_ymd_opt(
+                let t = if let Some(date) = NaiveDate::from_ymd_opt(
                     i32::from_str(&self.year.value).unwrap_or(1),
                     u32::from_str(&self.month.value).unwrap_or(1),
                     u32::from_str(&self.day.value).unwrap_or(1),
-                ) {
-                    if date < NaiveDate::from_str("2009-01-03").unwrap() {
-                        self.invalid_date = true;
-                        return Command::none();
-                    } else {
-                        self.invalid_date = false;
-                        date
+                )
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .map(|d| d.timestamp())
+                {
+                    match cache.network {
+                        Network::Bitcoin => {
+                            if date < MAINNET_GENESIS_BLOCK_TIMESTAMP {
+                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, MAINNET_GENESIS_BLOCK_TIMESTAMP);
+
+                                MAINNET_GENESIS_BLOCK_TIMESTAMP
+                            } else {
+                                date
+                            }
+                        }
+                        Network::Testnet => {
+                            if date < TESTNET3_GENESIS_BLOCK_TIMESTAMP {
+                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, TESTNET3_GENESIS_BLOCK_TIMESTAMP);
+                                TESTNET3_GENESIS_BLOCK_TIMESTAMP
+                            } else {
+                                date
+                            }
+                        }
+                        Network::Signet => {
+                            if date < SIGNET_GENESIS_BLOCK_TIMESTAMP {
+                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, SIGNET_GENESIS_BLOCK_TIMESTAMP);
+                                SIGNET_GENESIS_BLOCK_TIMESTAMP
+                            } else {
+                                date
+                            }
+                        }
+                        // We expect regtest user to not use genesis block timestamp inferior to
+                        // the mainnet one.
+                        // Network is a non exhaustive enum, that is why the _.
+                        _ => {
+                            if date < MAINNET_GENESIS_BLOCK_TIMESTAMP {
+                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, MAINNET_GENESIS_BLOCK_TIMESTAMP);
+                                MAINNET_GENESIS_BLOCK_TIMESTAMP
+                            } else {
+                                date
+                            }
+                        }
                     }
                 } else {
                     self.invalid_date = true;
                     return Command::none();
                 };
-                let t = date_time.and_hms_opt(0, 0, 0).unwrap().timestamp() as u32;
+                if t > Utc::now().timestamp() {
+                    self.future_date = true;
+                    return Command::none();
+                }
                 self.processing = true;
                 info!("Asking deamon to rescan with timestamp: {}", t);
                 return Command::perform(
-                    async move { daemon.start_rescan(t).map_err(|e| e.into()) },
+                    async move {
+                        daemon.start_rescan(t.try_into().expect("t cannot be inferior to 0 otherwise genesis block timestam is chosen")).map_err(|e| e.into())
+                    },
                     Message::StartRescan,
                 );
             }
@@ -409,6 +440,13 @@ impl Setting for RescanSetting {
             self.processing,
             can_edit,
             self.invalid_date,
+            self.past_possible_height,
+            self.future_date,
         )
     }
 }
+
+/// Use bitcoin-cli getblock $(bitcoin-cli getblockhash 0) | jq .time
+const MAINNET_GENESIS_BLOCK_TIMESTAMP: i64 = 1231006505;
+const TESTNET3_GENESIS_BLOCK_TIMESTAMP: i64 = 1296688602;
+const SIGNET_GENESIS_BLOCK_TIMESTAMP: i64 = 1598918400;
