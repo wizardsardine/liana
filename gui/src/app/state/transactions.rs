@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     convert::TryInto,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -6,7 +7,7 @@ use std::{
 
 use iced::Command;
 use liana::{
-    miniscript::bitcoin::Txid,
+    miniscript::bitcoin::{OutPoint, Txid},
     spend::{SpendCreationError, MAX_FEERATE},
 };
 use liana_ui::{
@@ -14,16 +15,19 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::app::{
-    cache::Cache,
-    error::Error,
-    message::Message,
-    state::{label::LabelsEdited, State},
-    view,
+use crate::{
+    app::{
+        cache::Cache,
+        error::Error,
+        message::Message,
+        state::{label::LabelsEdited, State},
+        view,
+    },
+    daemon::model,
 };
 
 use crate::daemon::{
-    model::{CreateSpendResult, HistoryTransaction, Labelled},
+    model::{CreateSpendResult, HistoryTransaction, LabelItem, Labelled},
     Daemon,
 };
 
@@ -65,11 +69,7 @@ impl State for TransactionsPanel {
                 self.warning.as_ref(),
             );
             if let Some(modal) = &self.create_rbf_modal {
-                Modal::new(content, modal.view())
-                    .on_blur(Some(view::Message::CreateRbf(
-                        view::CreateRbfMessage::Cancel,
-                    )))
-                    .into()
+                modal.view(content)
             } else {
                 content
             }
@@ -129,8 +129,7 @@ impl State for TransactionsPanel {
                                 .to_sat()
                                 .checked_div(tx.tx.vsize().try_into().unwrap())
                                 .unwrap();
-                            let modal =
-                                CreateRbfModal::new(tx.tx.txid(), is_cancel, prev_feerate_vb);
+                            let modal = CreateRbfModal::new(tx.clone(), is_cancel, prev_feerate_vb);
                             self.create_rbf_modal = Some(modal);
                         }
                     }
@@ -243,7 +242,7 @@ impl From<TransactionsPanel> for Box<dyn State> {
 
 pub struct CreateRbfModal {
     /// Transaction to replace.
-    txid: Txid,
+    tx: model::HistoryTransaction,
     /// Whether to cancel or bump fee.
     is_cancel: bool,
     /// Min feerate required for RBF.
@@ -252,16 +251,18 @@ pub struct CreateRbfModal {
     feerate_val: form::Value<String>,
     /// Parsed feerate.
     feerate_vb: Option<u64>,
-    warning: Option<Error>,
     /// Replacement transaction ID.
     replacement_txid: Option<Txid>,
+
+    processing: bool,
+    warning: Option<Error>,
 }
 
 impl CreateRbfModal {
-    fn new(txid: Txid, is_cancel: bool, prev_feerate_vb: u64) -> Self {
+    fn new(tx: model::HistoryTransaction, is_cancel: bool, prev_feerate_vb: u64) -> Self {
         let min_feerate_vb = prev_feerate_vb.checked_add(1).unwrap();
         Self {
-            txid,
+            tx,
             is_cancel,
             min_feerate_vb,
             feerate_val: form::Value {
@@ -274,8 +275,9 @@ impl CreateRbfModal {
             } else {
                 Some(min_feerate_vb)
             },
-            warning: None,
             replacement_txid: None,
+            warning: None,
+            processing: false,
         }
     }
 
@@ -301,43 +303,98 @@ impl CreateRbfModal {
                     self.feerate_vb = None;
                 }
             }
+            Message::RbfPsbt(res) => {
+                self.processing = false;
+                match res {
+                    Ok(txid) => {
+                        self.replacement_txid = Some(txid);
+                    }
+                    Err(e) => self.warning = Some(e),
+                }
+            }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Confirm)) => {
                 self.warning = None;
-
-                let psbt = match daemon.rbf_psbt(&self.txid, self.is_cancel, self.feerate_vb) {
-                    Ok(res) => match res {
-                        CreateSpendResult::Success { psbt, .. } => psbt,
-                        CreateSpendResult::InsufficientFunds { missing } => {
-                            self.warning = Some(
-                                SpendCreationError::CoinSelection(
-                                    liana::spend::InsufficientFunds { missing },
-                                )
-                                .into(),
-                            );
-                            return Command::none();
-                        }
-                    },
-                    Err(e) => {
-                        self.warning = Some(e.into());
-                        return Command::none();
-                    }
-                };
-                if let Err(e) = daemon.update_spend_tx(&psbt) {
-                    self.warning = Some(e.into());
-                    return Command::none();
-                }
-                self.replacement_txid = Some(psbt.unsigned_tx.txid());
+                self.processing = true;
+                return Command::perform(
+                    rbf(daemon, self.tx.clone(), self.is_cancel, self.feerate_vb),
+                    Message::RbfPsbt,
+                );
             }
             _ => {}
         }
         Command::none()
     }
-    fn view(&self) -> Element<view::Message> {
-        view::transactions::create_rbf_modal(
-            self.is_cancel,
-            &self.feerate_val,
-            self.replacement_txid,
-            self.warning.as_ref(),
-        )
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<view::Message> {
+        let modal = Modal::new(
+            content,
+            view::transactions::create_rbf_modal(
+                self.is_cancel,
+                &self.feerate_val,
+                self.replacement_txid,
+                self.warning.as_ref(),
+            ),
+        );
+        if self.processing {
+            modal
+        } else {
+            modal.on_blur(Some(view::Message::CreateRbf(
+                view::CreateRbfMessage::Cancel,
+            )))
+        }
+        .into()
     }
+}
+
+async fn rbf(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    previous_tx: model::HistoryTransaction,
+    is_cancel: bool,
+    feerate_vb: Option<u64>,
+) -> Result<Txid, Error> {
+    let previous_txid = previous_tx.tx.txid();
+    let psbt = match daemon.rbf_psbt(&previous_txid, is_cancel, feerate_vb)? {
+        CreateSpendResult::Success { psbt, .. } => psbt,
+        CreateSpendResult::InsufficientFunds { missing } => {
+            return Err(
+                SpendCreationError::CoinSelection(liana::spend::InsufficientFunds { missing })
+                    .into(),
+            );
+        }
+    };
+
+    if !is_cancel {
+        let mut labels = HashMap::<LabelItem, Option<String>>::new();
+        let new_txid = psbt.unsigned_tx.txid();
+        for item in previous_tx.labelled() {
+            if let Some(label) = previous_tx.labels.get(&item.to_string()) {
+                match item {
+                    LabelItem::Txid(_) => {
+                        labels.insert(new_txid.into(), Some(label.to_string()));
+                    }
+                    LabelItem::OutPoint(o) => {
+                        if let Some(previous_output) = previous_tx.tx.output.get(o.vout as usize) {
+                            for (vout, output) in psbt.unsigned_tx.output.iter().enumerate() {
+                                if output.script_pubkey == previous_output.script_pubkey {
+                                    labels.insert(
+                                        LabelItem::OutPoint(OutPoint {
+                                            txid: new_txid,
+                                            vout: vout as u32,
+                                        }),
+                                        Some(label.to_string()),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    // Address label is already in database
+                    LabelItem::Address(_) => {}
+                }
+            }
+        }
+
+        daemon.update_labels(&labels)?;
+    }
+
+    daemon.update_spend_tx(&psbt)?;
+    Ok(psbt.unsigned_tx.txid())
 }
