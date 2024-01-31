@@ -43,4 +43,5 @@ pub enum Message {
     PendingTransactions(Result<Vec<HistoryTransaction>, Error>),
     LabelsUpdated(Result<HashMap<String, Option<String>>, Error>),
     BroadcastModal(Result<HashSet<Txid>, Error>),
+    RbfModal(HistoryTransaction, bool, u64, Result<HashSet<Txid>, Error>),
 }

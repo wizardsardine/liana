@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     convert::TryInto,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -112,6 +112,16 @@ impl State for TransactionsPanel {
                     }
                 }
             },
+            Message::RbfModal(tx, is_cancel, prev_feerate_vb, res) => match res {
+                Ok(descendant_txids) => {
+                    let modal =
+                        CreateRbfModal::new(tx, is_cancel, prev_feerate_vb, descendant_txids);
+                    self.create_rbf_modal = Some(modal);
+                }
+                Err(e) => {
+                    self.warning = e.into();
+                }
+            },
             Message::View(view::Message::Close) => {
                 self.selected_tx = None;
             }
@@ -129,8 +139,30 @@ impl State for TransactionsPanel {
                                 .to_sat()
                                 .checked_div(tx.tx.vsize().try_into().unwrap())
                                 .unwrap();
-                            let modal = CreateRbfModal::new(tx.clone(), is_cancel, prev_feerate_vb);
-                            self.create_rbf_modal = Some(modal);
+                            let tx = tx.clone();
+                            let txid = tx.tx.txid();
+                            return Command::perform(
+                                async move {
+                                    daemon
+                                        // TODO: filter for spending coins when this is possible:
+                                        // https://github.com/wizardsardine/liana/issues/677
+                                        .list_coins()
+                                        .map(|res| {
+                                            res.coins
+                                                .iter()
+                                                .filter_map(|c| {
+                                                    if c.outpoint.txid == txid {
+                                                        c.spend_info.map(|info| info.txid)
+                                                    } else {
+                                                        None
+                                                    }
+                                                })
+                                                .collect()
+                                        })
+                                        .map_err(|e| e.into())
+                                },
+                                move |res| Message::RbfModal(tx, is_cancel, prev_feerate_vb, res),
+                            );
                         }
                     }
                 }
@@ -247,6 +279,9 @@ pub struct CreateRbfModal {
     is_cancel: bool,
     /// Min feerate required for RBF.
     min_feerate_vb: u64,
+    /// IDs of any transactions from this wallet that are direct descendants of
+    /// the transaction to be replaced.
+    descendant_txids: HashSet<Txid>,
     /// Feerate form value.
     feerate_val: form::Value<String>,
     /// Parsed feerate.
@@ -259,12 +294,18 @@ pub struct CreateRbfModal {
 }
 
 impl CreateRbfModal {
-    fn new(tx: model::HistoryTransaction, is_cancel: bool, prev_feerate_vb: u64) -> Self {
+    fn new(
+        tx: model::HistoryTransaction,
+        is_cancel: bool,
+        prev_feerate_vb: u64,
+        descendant_txids: HashSet<Txid>,
+    ) -> Self {
         let min_feerate_vb = prev_feerate_vb.checked_add(1).unwrap();
         Self {
             tx,
             is_cancel,
             min_feerate_vb,
+            descendant_txids,
             feerate_val: form::Value {
                 valid: true,
                 value: min_feerate_vb.to_string(),
@@ -329,6 +370,7 @@ impl CreateRbfModal {
             content,
             view::transactions::create_rbf_modal(
                 self.is_cancel,
+                &self.descendant_txids,
                 &self.feerate_val,
                 self.replacement_txid,
                 self.warning.as_ref(),
