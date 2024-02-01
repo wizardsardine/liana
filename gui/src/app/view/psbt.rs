@@ -140,7 +140,15 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
     }
 }
 
-pub fn broadcast_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Message> {
+/// Return the modal view to broadcast a transaction.
+///
+/// `conflicting_txids` contains the IDs of any directly conflicting transactions
+/// of the transaction to be broadcast.
+pub fn broadcast_action<'a>(
+    conflicting_txids: &HashSet<Txid>,
+    warning: Option<&Error>,
+    saved: bool,
+) -> Element<'a, Message> {
     if saved {
         card::simple(text("Transaction is broadcast"))
             .width(Length::Fixed(400.0))
@@ -151,7 +159,59 @@ pub fn broadcast_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a,
             Column::new()
                 .spacing(10)
                 .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text("Broadcast the transaction"))
+                .push(Container::new(h4_bold("Broadcast the transaction")).width(Length::Fill))
+                .push_maybe(if conflicting_txids.is_empty() {
+                    None
+                } else {
+                    Some(
+                        conflicting_txids.iter().fold(
+                            Column::new()
+                                .spacing(5)
+                                .push(Row::new().spacing(10).push(icon::warning_icon()).push(text(
+                                    if conflicting_txids.len() > 1 {
+                                        "WARNING: Broadcasting this transaction \
+                                        will invalidate some pending payments."
+                                    } else {
+                                        "WARNING: Broadcasting this transaction \
+                                        will invalidate a pending payment."
+                                    },
+                                )))
+                                .push(Row::new().padding([0, 30]).push(text(
+                                    if conflicting_txids.len() > 1 {
+                                        "The following transactions are \
+                                        spending one or more inputs \
+                                        from the transaction to be \
+                                        broadcast and will be \
+                                        dropped, along with any other \
+                                        transactions that depend on them:"
+                                    } else {
+                                        "The following transaction is \
+                                        spending one or more inputs \
+                                        from the transaction to be \
+                                        broadcast and will be \
+                                        dropped, along with any other \
+                                        transactions that depend on it:"
+                                    },
+                                ))),
+                            |col, txid| {
+                                col.push(
+                                    Row::new()
+                                        .padding([0, 30])
+                                        .spacing(5)
+                                        .align_items(Alignment::Center)
+                                        .push(text(txid.to_string()))
+                                        .push(
+                                            Button::new(
+                                                icon::clipboard_icon().style(color::GREY_3),
+                                            )
+                                            .on_press(Message::Clipboard(txid.to_string()))
+                                            .style(theme::Button::TransparentBorder),
+                                        ),
+                                )
+                            },
+                        ),
+                    )
+                })
                 .push(
                     Row::new().push(Column::new().width(Length::Fill)).push(
                         button::primary(None, "Broadcast")
@@ -159,7 +219,11 @@ pub fn broadcast_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a,
                     ),
                 ),
         )
-        .width(Length::Fixed(400.0))
+        .width(Length::Fixed(if conflicting_txids.is_empty() {
+            400.0
+        } else {
+            800.0
+        }))
         .into()
     }
 }

@@ -8,7 +8,7 @@ use iced::Subscription;
 use iced::Command;
 use liana::{
     descriptors::LianaPolicy,
-    miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Network},
+    miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Network, Txid},
 };
 
 use liana_ui::component::toast;
@@ -167,7 +167,29 @@ impl PsbtState {
                 return cmd;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
-                self.action = Some(PsbtAction::Broadcast(BroadcastAction::default()));
+                let outpoints: HashSet<_> = self.tx.coins.keys().cloned().collect();
+                return Command::perform(
+                    async move {
+                        daemon
+                            // TODO: filter for the outpoints in `tx.coins` when this is possible:
+                            // https://github.com/wizardsardine/liana/issues/677
+                            .list_coins()
+                            .map(|res| {
+                                res.coins
+                                    .iter()
+                                    .filter_map(|c| {
+                                        if outpoints.contains(&c.outpoint) {
+                                            c.spend_info.map(|info| info.txid)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect()
+                            })
+                            .map_err(|e| e.into())
+                    },
+                    Message::BroadcastModal,
+                );
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Save)) => {
                 self.action = Some(PsbtAction::Save(SaveAction::default()));
@@ -194,6 +216,17 @@ impl PsbtState {
                         .update(daemon.clone(), message, &mut self.tx);
                 }
             }
+            Message::BroadcastModal(res) => match res {
+                Ok(conflicting_txids) => {
+                    self.action = Some(PsbtAction::Broadcast(BroadcastAction {
+                        conflicting_txids,
+                        ..Default::default()
+                    }));
+                }
+                Err(e) => {
+                    self.warning = Some(e);
+                }
+            },
             _ => {
                 if let Some(action) = self.action.as_mut() {
                     return action
@@ -277,6 +310,8 @@ impl Action for SaveAction {
 pub struct BroadcastAction {
     broadcast: bool,
     error: Option<Error>,
+    /// IDs of any directly conflicting transactions.
+    conflicting_txids: HashSet<Txid>,
 }
 
 impl Action for BroadcastAction {
@@ -314,7 +349,11 @@ impl Action for BroadcastAction {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
-            view::psbt::broadcast_action(self.error.as_ref(), self.broadcast),
+            view::psbt::broadcast_action(
+                &self.conflicting_txids,
+                self.error.as_ref(),
+                self.broadcast,
+            ),
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()

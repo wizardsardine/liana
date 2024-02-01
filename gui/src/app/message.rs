@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use liana::{
@@ -42,4 +42,5 @@ pub enum Message {
     HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
     PendingTransactions(Result<Vec<HistoryTransaction>, Error>),
     LabelsUpdated(Result<HashMap<String, Option<String>>, Error>),
+    BroadcastModal(Result<HashSet<Txid>, Error>),
 }
