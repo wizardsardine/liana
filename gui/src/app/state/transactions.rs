@@ -112,10 +112,9 @@ impl State for TransactionsPanel {
                     }
                 }
             },
-            Message::RbfModal(tx, is_cancel, prev_feerate_vb, res) => match res {
+            Message::RbfModal(tx, is_cancel, res) => match res {
                 Ok(descendant_txids) => {
-                    let modal =
-                        CreateRbfModal::new(tx, is_cancel, prev_feerate_vb, descendant_txids);
+                    let modal = CreateRbfModal::new(tx, is_cancel, descendant_txids);
                     self.create_rbf_modal = Some(modal);
                 }
                 Err(e) => {
@@ -134,11 +133,7 @@ impl State for TransactionsPanel {
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::New(is_cancel))) => {
                 if let Some(idx) = self.selected_tx {
                     if let Some(tx) = self.pending_txs.get(idx) {
-                        if let Some(fee_amount) = tx.fee_amount {
-                            let prev_feerate_vb = fee_amount
-                                .to_sat()
-                                .checked_div(tx.tx.vsize().try_into().unwrap())
-                                .unwrap();
+                        if tx.fee_amount.is_some() {
                             let tx = tx.clone();
                             let txid = tx.tx.txid();
                             return Command::perform(
@@ -161,7 +156,7 @@ impl State for TransactionsPanel {
                                         })
                                         .map_err(|e| e.into())
                                 },
-                                move |res| Message::RbfModal(tx, is_cancel, prev_feerate_vb, res),
+                                move |res| Message::RbfModal(tx, is_cancel, res),
                             );
                         }
                     }
@@ -297,9 +292,14 @@ impl CreateRbfModal {
     fn new(
         tx: model::HistoryTransaction,
         is_cancel: bool,
-        prev_feerate_vb: u64,
         descendant_txids: HashSet<Txid>,
     ) -> Self {
+        let prev_feerate_vb = tx
+            .fee_amount
+            .expect("rbf should only be used on a transaction with fee amount set")
+            .to_sat()
+            .checked_div(tx.tx.vsize().try_into().expect("vsize must fit in u64"))
+            .expect("transaction vsize must be positive");
         let min_feerate_vb = prev_feerate_vb.checked_add(1).unwrap();
         Self {
             tx,
