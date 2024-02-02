@@ -124,7 +124,11 @@ impl State for ReceivePanel {
                 match res {
                     Ok((address, derivation_index)) => {
                         self.warning = None;
-                        self.qr_code = Some(qr_code::State::new(address.to_qr_uri()).unwrap());
+                        self.qr_code = qr_code::State::new(format!(
+                            "bitcoin:{}?index={}",
+                            address, derivation_index
+                        ))
+                        .ok();
                         self.addresses.list.push(address);
                         self.addresses.derivation_indexes.push(derivation_index);
                     }
