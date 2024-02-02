@@ -413,7 +413,7 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
             Column::new()
                 .width(Length::Fill)
                 .spacing(5)
-                .push(text(format!("Progress {:.2}%", 100.0 * *progress)))
+                .push(text(format!("Progress {:.4}%", 100.0 * *progress)))
                 .push(ProgressBar::new(0.0..=1.0, *progress as f32).width(Length::Fill))
                 .push(text(if *progress > 0.98 {
                     SYNCING_PROGRESS_3
