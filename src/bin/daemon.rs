@@ -5,13 +5,19 @@ use std::{
     process, thread, time,
 };
 
-use liana::{config::Config, DaemonHandle};
+use liana::{config::Config, DaemonHandle, VERSION};
 
-fn print_help_exit() {
+fn print_help_exit(code: i32) {
+    eprintln!("lianad version {}", VERSION);
     eprintln!("A TOML configuration file is required to run lianad. By default lianad looks for a 'config.toml' file in its data directory. A different one may be provided like so: '--conf <config file path>'.");
     eprintln!("A documented sample is available at 'contrib/lianad_config_example.toml' in the source tree (https://github.com/wizardsardine/liana/blob/v1.0/contrib/lianad_config_example.toml).");
     eprintln!("The default data directory path is a 'liana/' folder in the XDG standard configuration directory for all OSes but Linux ones, where it's '~/.liana/'.");
-    process::exit(1);
+    process::exit(code);
+}
+
+fn print_version() {
+    eprintln!("{}", VERSION);
+    process::exit(0);
 }
 
 fn parse_args(args: Vec<String>) -> Option<PathBuf> {
@@ -19,13 +25,17 @@ fn parse_args(args: Vec<String>) -> Option<PathBuf> {
         return None;
     }
 
-    if args[1] != "--conf" {
+    if args[1] == "--help" || args[1] == "-h" {
+        print_help_exit(0)
+    } else if args[1] == "--version" || args[1] == "-v" {
+        print_version()
+    } else if args[1] != "--conf" {
         eprintln!("Only a single command line argument is supported: --conf. All other configuration parameters must be specified in the configuration file.");
-        print_help_exit();
+        print_help_exit(1);
     }
 
     if args.len() != 3 {
-        print_help_exit();
+        print_help_exit(1);
     }
 
     Some(PathBuf::from(args[2].to_owned()))
@@ -62,7 +72,7 @@ fn main() {
 
     let config = Config::from_file(conf_file).unwrap_or_else(|e| {
         eprintln!("Error parsing config: {}", e);
-        print_help_exit();
+        print_help_exit(1);
         unreachable!();
     });
     setup_logger(config.log_level).unwrap_or_else(|e| {
