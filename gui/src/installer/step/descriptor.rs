@@ -1515,7 +1515,10 @@ impl Step for BackupDescriptor {
         Command::none()
     }
     fn load_context(&mut self, ctx: &Context) {
-        self.descriptor = ctx.descriptor.clone();
+        if self.descriptor != ctx.descriptor {
+            self.descriptor = ctx.descriptor.clone();
+            self.done = false;
+        }
     }
     fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         let desc = self.descriptor.as_ref().unwrap();
