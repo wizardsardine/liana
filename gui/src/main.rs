@@ -1,6 +1,6 @@
 #![windows_subsystem = "windows"]
 
-use std::{error::Error, io::Write, path::PathBuf, str::FromStr};
+use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
 
 use iced::{executor, Application, Command, Settings, Subscription};
 use tracing::{error, info};
@@ -21,6 +21,7 @@ use liana_gui::{
     launcher::{self, Launcher},
     loader::{self, Loader},
     logger::Logger,
+    VERSION,
 };
 
 #[derive(Debug, PartialEq)]
@@ -32,6 +33,12 @@ enum Arg {
 
 fn parse_args(args: Vec<String>) -> Result<Vec<Arg>, Box<dyn Error>> {
     let mut res = Vec::new();
+
+    if args.len() > 1 && (args[1] == "--version" || args[1] == "-v") {
+        eprintln!("{}", VERSION);
+        process::exit(1);
+    }
+
     for (i, arg) in args.iter().enumerate() {
         if arg == "--conf" {
             if let Some(a) = args.get(i + 1) {
