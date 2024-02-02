@@ -1,5 +1,5 @@
 use chrono::NaiveDateTime;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use iced::{alignment, widget::tooltip, Alignment, Length};
 
@@ -157,8 +157,13 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
     .into()
 }
 
+/// Return the modal view for a new RBF transaction.
+///
+/// `descendant_txids` contains the IDs of any transactions from this wallet that are
+/// direct descendants of the transaction to be replaced.
 pub fn create_rbf_modal<'a>(
     is_cancel: bool,
+    descendant_txids: &HashSet<Txid>,
     feerate: &form::Value<String>,
     replacement_txid: Option<Txid>,
     warning: Option<&'a Error>,
@@ -169,15 +174,70 @@ pub fn create_rbf_modal<'a>(
             confirm_button.on_press(Message::CreateRbf(super::CreateRbfMessage::Confirm));
     }
     let help_text = if is_cancel {
-        "Replace the transaction with one paying a higher feerate that sends the coins back to us. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction."
+        "Replace the transaction with one paying a higher feerate \
+        that sends the coins back to your wallet. There is no guarantee \
+        the original transaction won't get mined first. New inputs may \
+        be used for the replacement transaction."
     } else {
-        "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
+        "Replace the transaction with one paying a higher feerate \
+        to incentivize faster confirmation. New inputs may be used \
+        for the replacement transaction."
     };
     card::simple(
         Column::new()
             .spacing(10)
             .push(Container::new(h4_bold("Transaction replacement")).width(Length::Fill))
             .push(Row::new().push(text(help_text)))
+            .push_maybe(if descendant_txids.is_empty() {
+                None
+            } else {
+                Some(
+                    descendant_txids.iter().fold(
+                        Column::new()
+                            .spacing(5)
+                            .push(Row::new().spacing(10).push(icon::warning_icon()).push(text(
+                                if descendant_txids.len() > 1 {
+                                    "WARNING: Replacing this transaction \
+                                    will invalidate some later payments."
+                                } else {
+                                    "WARNING: Replacing this transaction \
+                                    will invalidate a later payment."
+                                },
+                            )))
+                            .push(Row::new().padding([0, 30]).push(text(
+                                if descendant_txids.len() > 1 {
+                                    "The following transactions are \
+                                    spending one or more outputs \
+                                    from the transaction to be replaced \
+                                    and will be dropped when the replacement \
+                                    is broadcast, along with any other \
+                                    transactions that depend on them:"
+                                } else {
+                                    "The following transaction is \
+                                    spending one or more outputs \
+                                    from the transaction to be replaced \
+                                    and will be dropped when the replacement \
+                                    is broadcast, along with any other \
+                                    transactions that depend on it:"
+                                },
+                            ))),
+                        |col, txid| {
+                            col.push(
+                                Row::new()
+                                    .padding([0, 30])
+                                    .spacing(5)
+                                    .align_items(Alignment::Center)
+                                    .push(text(txid.to_string()))
+                                    .push(
+                                        Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                            .on_press(Message::Clipboard(txid.to_string()))
+                                            .style(theme::Button::TransparentBorder),
+                                    ),
+                            )
+                        },
+                    ),
+                )
+            })
             .push_maybe(if !is_cancel {
                 Some(
                     Row::new()
@@ -188,7 +248,8 @@ pub fn create_rbf_modal<'a>(
                                 Message::CreateRbf(CreateRbfMessage::FeerateEdited(msg))
                             })
                             .warning(
-                                "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte",
+                                "Feerate must be greater than previous value and \
+                                less than or equal to 1000 sats/vbyte",
                             )
                             .size(20)
                             .padding(10),
@@ -219,7 +280,7 @@ pub fn create_rbf_modal<'a>(
                 )
             })),
     )
-    .width(Length::Fixed(600.0))
+    .width(Length::Fixed(800.0))
     .into()
 }
 
