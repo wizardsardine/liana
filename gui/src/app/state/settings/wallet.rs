@@ -264,7 +264,11 @@ impl RegisterWalletModal {
                         self.registered.insert(fingerprint);
                         return Command::perform(async {}, |_| Message::LoadWallet);
                     }
-                    Err(e) => self.warning = Some(e),
+                    Err(e) => {
+                        if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
+                            self.warning = Some(e)
+                        }
+                    }
                 }
                 Command::none()
             }

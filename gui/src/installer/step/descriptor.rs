@@ -1437,7 +1437,11 @@ impl Step for RegisterDescriptor {
                             self.hmacs.push((fingerprint, *hw_h.kind(), hmac));
                         }
                     }
-                    Err(e) => self.error = Some(e),
+                    Err(e) => {
+                        if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
+                            self.error = Some(e)
+                        }
+                    }
                 }
             }
             Message::Reload => {
