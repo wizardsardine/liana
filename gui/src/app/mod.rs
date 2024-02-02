@@ -35,14 +35,89 @@ use crate::{
     daemon::{embedded::EmbeddedDaemon, Daemon},
 };
 
+use self::state::SettingsState;
+
+struct Panels {
+    current: Menu,
+    home: Home,
+    coins: CoinsPanel,
+    transactions: TransactionsPanel,
+    psbts: PsbtsPanel,
+    recovery: RecoveryPanel,
+    receive: ReceivePanel,
+    create_spend: CreateSpendPanel,
+    settings: SettingsState,
+}
+
+impl Panels {
+    fn new(
+        cache: &Cache,
+        wallet: Arc<Wallet>,
+        data_dir: PathBuf,
+        internal_bitcoind: Option<&Bitcoind>,
+    ) -> Panels {
+        Self {
+            current: Menu::Home,
+            home: Home::new(wallet.clone(), &cache.coins),
+            coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
+            transactions: TransactionsPanel::new(),
+            psbts: PsbtsPanel::new(wallet.clone(), &cache.spend_txs),
+            recovery: RecoveryPanel::new(wallet.clone(), &cache.coins, cache.blockheight),
+            receive: ReceivePanel::new(data_dir.clone(), wallet.clone()),
+            create_spend: CreateSpendPanel::new(
+                wallet.clone(),
+                &cache.coins,
+                cache.blockheight as u32,
+                cache.network,
+            ),
+            settings: state::SettingsState::new(
+                data_dir.clone(),
+                wallet.clone(),
+                internal_bitcoind.is_some(),
+            ),
+        }
+    }
+
+    fn current(&self) -> &dyn State {
+        match self.current {
+            Menu::Home => &self.home,
+            Menu::Receive => &self.receive,
+            Menu::PSBTs => &self.psbts,
+            Menu::Transactions => &self.transactions,
+            Menu::Settings => &self.settings,
+            Menu::Coins => &self.coins,
+            Menu::CreateSpendTx => &self.create_spend,
+            Menu::Recovery => &self.recovery,
+            Menu::RefreshCoins(_) => &self.create_spend,
+            Menu::PsbtPreSelected(_) => &self.psbts,
+        }
+    }
+
+    fn current_mut(&mut self) -> &mut dyn State {
+        match self.current {
+            Menu::Home => &mut self.home,
+            Menu::Receive => &mut self.receive,
+            Menu::PSBTs => &mut self.psbts,
+            Menu::Transactions => &mut self.transactions,
+            Menu::Settings => &mut self.settings,
+            Menu::Coins => &mut self.coins,
+            Menu::CreateSpendTx => &mut self.create_spend,
+            Menu::Recovery => &mut self.recovery,
+            Menu::RefreshCoins(_) => &mut self.create_spend,
+            Menu::PsbtPreSelected(_) => &mut self.psbts,
+        }
+    }
+}
+
 pub struct App {
     data_dir: PathBuf,
-    state: Box<dyn State>,
     cache: Cache,
     config: Config,
     wallet: Arc<Wallet>,
     daemon: Arc<dyn Daemon + Sync + Send>,
     internal_bitcoind: Option<Bitcoind>,
+
+    panels: Panels,
 }
 
 impl App {
@@ -54,12 +129,17 @@ impl App {
         data_dir: PathBuf,
         internal_bitcoind: Option<Bitcoind>,
     ) -> (App, Command<Message>) {
-        let state: Box<dyn State> = Home::new(wallet.clone(), &cache.coins).into();
-        let cmd = state.load(daemon.clone());
+        let panels = Panels::new(
+            &cache,
+            wallet.clone(),
+            data_dir.clone(),
+            internal_bitcoind.as_ref(),
+        );
+        let cmd = panels.home.load(daemon.clone());
         (
             Self {
+                panels,
                 data_dir,
-                state,
                 cache,
                 config,
                 daemon,
@@ -70,37 +150,14 @@ impl App {
         )
     }
 
-    fn load_state(&mut self, menu: &Menu) -> Command<Message> {
-        self.state = match menu {
-            menu::Menu::Settings => state::SettingsState::new(
-                self.data_dir.clone(),
-                self.wallet.clone(),
-                self.internal_bitcoind.is_some(),
-            )
-            .into(),
-            menu::Menu::Home => Home::new(self.wallet.clone(), &self.cache.coins).into(),
-            menu::Menu::Coins => CoinsPanel::new(
-                &self.cache.coins,
-                self.wallet.main_descriptor.first_timelock_value(),
-            )
-            .into(),
-            menu::Menu::Recovery => RecoveryPanel::new(
-                self.wallet.clone(),
-                &self.cache.coins,
-                self.cache.blockheight,
-            )
-            .into(),
-            menu::Menu::Receive => {
-                ReceivePanel::new(self.data_dir.clone(), self.wallet.clone()).into()
-            }
-            menu::Menu::Transactions => TransactionsPanel::new().into(),
-            menu::Menu::PSBTs => PsbtsPanel::new(self.wallet.clone(), &self.cache.spend_txs).into(),
+    fn set_current_panel(&mut self, menu: Menu) -> Command<Message> {
+        match &menu {
             menu::Menu::PsbtPreSelected(txid) => {
                 // Get preselected spend from DB in case it's not yet in the cache.
                 // We only need this single spend as we will go straight to its view and not show the PSBTs list.
                 // In case of any error loading the spend or if it doesn't exist, fall back to using the cache
                 // and load PSBTs list in usual way.
-                match self
+                self.panels.psbts = match self
                     .daemon
                     .list_spend_transactions(Some(&[*txid]))
                     .map(|txs| txs.first().cloned())
@@ -109,31 +166,37 @@ impl App {
                         PsbtsPanel::new_preselected(self.wallet.clone(), spend_tx).into()
                     }
                     _ => PsbtsPanel::new(self.wallet.clone(), &self.cache.spend_txs).into(),
-                }
+                };
             }
-            menu::Menu::CreateSpendTx => CreateSpendPanel::new(
-                self.wallet.clone(),
-                &self.cache.coins,
-                self.cache.blockheight as u32,
-                self.cache.network,
-            )
-            .into(),
-            menu::Menu::RefreshCoins(preselected) => CreateSpendPanel::new_self_send(
-                self.wallet.clone(),
-                &self.cache.coins,
-                self.cache.blockheight as u32,
-                preselected,
-                self.cache.network,
-            )
-            .into(),
+            menu::Menu::CreateSpendTx => {
+                self.panels.create_spend = CreateSpendPanel::new(
+                    self.wallet.clone(),
+                    &self.cache.coins,
+                    self.cache.blockheight as u32,
+                    self.cache.network,
+                )
+                .into();
+            }
+            menu::Menu::RefreshCoins(preselected) => {
+                self.panels.create_spend = CreateSpendPanel::new_self_send(
+                    self.wallet.clone(),
+                    &self.cache.coins,
+                    self.cache.blockheight as u32,
+                    preselected,
+                    self.cache.network,
+                )
+                .into();
+            }
+            _ => {}
         };
-        self.state.load(self.daemon.clone())
+        self.panels.current = menu;
+        self.panels.current().load(self.daemon.clone())
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
             time::every(Duration::from_secs(5)).map(|_| Message::Tick),
-            self.state.subscription(),
+            self.panels.current().subscription(),
         ])
     }
 
@@ -187,9 +250,12 @@ impl App {
                 let res = self.load_wallet();
                 self.update(Message::WalletLoaded(res))
             }
-            Message::View(view::Message::Menu(menu)) => self.load_state(&menu),
+            Message::View(view::Message::Menu(menu)) => self.set_current_panel(menu),
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
-            _ => self.state.update(self.daemon.clone(), &self.cache, message),
+            _ => self
+                .panels
+                .current_mut()
+                .update(self.daemon.clone(), &self.cache, message),
         }
     }
 
@@ -230,6 +296,6 @@ impl App {
     }
 
     pub fn view(&self) -> Element<Message> {
-        self.state.view(&self.cache).map(Message::View)
+        self.panels.current().view(&self.cache).map(Message::View)
     }
 }
