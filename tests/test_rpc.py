@@ -22,7 +22,7 @@ from test_framework.utils import (
 
 def test_getinfo(lianad):
     res = lianad.rpc.getinfo()
-    assert 'timestamp' in res.keys()
+    assert "timestamp" in res.keys()
     assert res["version"] == "4.0.0-dev"
     assert res["network"] == "regtest"
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == 101)
@@ -599,10 +599,15 @@ def test_start_rescan(lianad, bitcoind):
     with pytest.raises(RpcError, match="Insane timestamp.*"):
         lianad.rpc.startrescan(future_timestamp)
     assert lianad.rpc.getinfo()["rescan_progress"] is None
-    prebitcoin_timestamp = 1231006505 - 1
+    block_hash = bitcoind.rpc.getblockhash(0)
+    genesis_timestamp = bitcoind.rpc.getblock(block_hash)["time"]
+    prebitcoin_timestamp = genesis_timestamp - 1
     with pytest.raises(RpcError, match="Insane timestamp."):
         lianad.rpc.startrescan(prebitcoin_timestamp)
     assert lianad.rpc.getinfo()["rescan_progress"] is None
+    # we can rescan from genesis block
+    lianad.rpc.startrescan(genesis_timestamp)
+    wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
 
     # First, get some coins
     for _ in range(10):
@@ -1232,9 +1237,7 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
     # But we can't set the feerate explicitly.
     with pytest.raises(
         RpcError,
-        match=re.escape(
-            "A feerate must not be provided if creating a cancel."
-        ),
+        match=re.escape("A feerate must not be provided if creating a cancel."),
     ):
         rbf_1_res = lianad.rpc.rbfpsbt(first_txid, True, 2)
     rbf_1_psbt = PSBT.from_base64(rbf_1_res["psbt"])

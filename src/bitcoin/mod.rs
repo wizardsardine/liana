@@ -40,6 +40,8 @@ impl fmt::Display for BlockChainTip {
 
 /// Our Bitcoin backend.
 pub trait BitcoinInterface: Send {
+    fn genesis_block_timestamp(&self) -> u32;
+
     fn genesis_block(&self) -> BlockChainTip;
 
     /// Get the progress of the block chain synchronization.
@@ -119,6 +121,15 @@ pub trait BitcoinInterface: Send {
 }
 
 impl BitcoinInterface for d::BitcoinD {
+    fn genesis_block_timestamp(&self) -> u32 {
+        self.get_block_stats(
+            self.get_block_hash(0)
+                .expect("Genesis block hash must always be there"),
+        )
+        .expect("Genesis block must always be there")
+        .time
+    }
+
     fn genesis_block(&self) -> BlockChainTip {
         let height = 0;
         let hash = self
@@ -370,6 +381,10 @@ impl BitcoinInterface for d::BitcoinD {
 
 // FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
 impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>> {
+    fn genesis_block_timestamp(&self) -> u32 {
+        self.lock().unwrap().genesis_block_timestamp()
+    }
+
     fn genesis_block(&self) -> BlockChainTip {
         self.lock().unwrap().genesis_block()
     }
