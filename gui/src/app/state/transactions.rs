@@ -152,7 +152,7 @@ impl State for TransactionsPanel {
                                 daemon
                                     // TODO: filter for spending coins when this is possible:
                                     // https://github.com/wizardsardine/liana/issues/677
-                                    .list_coins()
+                                    .list_coins(&[], &[])
                                     .map(|res| {
                                         res.coins
                                             .iter()
@@ -271,7 +271,7 @@ impl State for TransactionsPanel {
             Command::perform(
                 async move {
                     daemon2
-                        .list_coins()
+                        .list_coins(&[], &[])
                         .map(|res| res.coins)
                         .map_err(|e| e.into())
                 },

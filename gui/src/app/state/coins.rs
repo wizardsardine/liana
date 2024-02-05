@@ -162,7 +162,7 @@ impl State for CoinsPanel {
             Command::perform(
                 async move {
                     daemon1
-                        .list_coins()
+                        .list_coins(&[], &[])
                         .map(|res| res.coins)
                         .map_err(|e| e.into())
                 },
@@ -171,7 +171,7 @@ impl State for CoinsPanel {
             Command::perform(
                 async move {
                     let coins = daemon2
-                        .list_coins()
+                        .list_coins(&[], &[])
                         .map(|res| res.coins)
                         .map_err(Error::from)?;
                     let mut targets = HashSet::<LabelItem>::new();

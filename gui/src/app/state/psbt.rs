@@ -173,7 +173,7 @@ impl PsbtState {
                         daemon
                             // TODO: filter for the outpoints in `tx.coins` when this is possible:
                             // https://github.com/wizardsardine/liana/issues/677
-                            .list_coins()
+                            .list_coins(&[], &[])
                             .map(|res| {
                                 res.coins
                                     .iter()

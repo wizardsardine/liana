@@ -295,7 +295,7 @@ impl State for Home {
             Command::perform(
                 async move {
                     daemon2
-                        .list_coins()
+                        .list_coins(&[], &[])
                         .map(|res| res.coins)
                         .map_err(|e| e.into())
                 },

@@ -8,7 +8,7 @@ use std::io::ErrorKind;
 use std::iter::FromIterator;
 
 use liana::{
-    commands::LabelItem,
+    commands::{CoinStatus, LabelItem},
     config::Config,
     miniscript::bitcoin::{address, psbt::Psbt, secp256k1, Address, OutPoint, Txid},
     StartupError,
@@ -56,7 +56,11 @@ pub trait Daemon: Debug {
     fn stop(&self) -> Result<(), DaemonError>;
     fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;
     fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;
-    fn list_coins(&self) -> Result<model::ListCoinsResult, DaemonError>;
+    fn list_coins(
+        &self,
+        statuses: &[CoinStatus],
+        outpoints: &[OutPoint],
+    ) -> Result<model::ListCoinsResult, DaemonError>;
     fn list_spend_txs(&self) -> Result<model::ListSpendResult, DaemonError>;
     fn create_spend_tx(
         &self,
@@ -102,7 +106,7 @@ pub trait Daemon: Debug {
         txids: Option<&[Txid]>,
     ) -> Result<Vec<model::SpendTx>, DaemonError> {
         let info = self.get_info()?;
-        let coins = self.list_coins()?.coins;
+        let coins = self.list_coins(&[], &[])?.coins;
         let mut spend_txs = Vec::new();
         let curve = secp256k1::Secp256k1::verification_only();
         for tx in self.list_spend_txs()?.spend_txs {
@@ -152,7 +156,7 @@ pub trait Daemon: Debug {
         limit: u64,
     ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
         let info = self.get_info()?;
-        let coins = self.list_coins()?.coins;
+        let coins = self.list_coins(&[], &[])?.coins;
         let txs = self.list_confirmed_txs(start, end, limit)?.transactions;
         let mut txs = txs
             .into_iter()
@@ -190,7 +194,7 @@ pub trait Daemon: Debug {
         txids: &[Txid],
     ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
         let info = self.get_info()?;
-        let coins = self.list_coins()?.coins;
+        let coins = self.list_coins(&[], &[])?.coins;
         let txs = self.list_txs(txids)?.transactions;
         let mut txs = txs
             .into_iter()
@@ -225,7 +229,7 @@ pub trait Daemon: Debug {
 
     fn list_pending_txs(&self) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
         let info = self.get_info()?;
-        let coins = self.list_coins()?.coins;
+        let coins = self.list_coins(&[], &[])?.coins;
         let mut txids: Vec<Txid> = Vec::new();
         for coin in &coins {
             if coin.block_height.is_none() && !txids.contains(&coin.outpoint.txid) {

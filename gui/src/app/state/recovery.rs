@@ -155,7 +155,7 @@ impl State for RecoveryPanel {
                     return Command::perform(
                         async move {
                             let psbt = daemon.create_recovery(address, feerate_vb, sequence)?;
-                            let coins = daemon.list_coins().map(|res| res.coins)?;
+                            let coins = daemon.list_coins(&[], &[]).map(|res| res.coins)?;
                             let coins = coins
                                 .into_iter()
                                 .filter(|coin| {
@@ -207,7 +207,7 @@ impl State for RecoveryPanel {
         Command::perform(
             async move {
                 daemon
-                    .list_coins()
+                    .list_coins(&[], &[])
                     .map(|res| res.coins)
                     .map_err(|e| e.into())
             },

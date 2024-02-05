@@ -240,7 +240,7 @@ impl App {
 
                         let info = daemon.get_info()?;
                         // todo: filter coins to only have current coins.
-                        let coins = daemon.list_coins()?;
+                        let coins = daemon.list_coins(&[], &[])?;
                         Ok(Cache {
                             datadir_path,
                             coins: coins.coins,
