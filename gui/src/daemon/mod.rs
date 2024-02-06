@@ -225,7 +225,11 @@ pub trait Daemon: Debug {
 
     fn list_pending_txs(&self) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
         let info = self.get_info()?;
-        let coins = self.list_coins(&[], &[])?.coins;
+        // We want coins that are inputs to and/or outputs of a pending tx,
+        // which can only be unconfirmed and spending coins.
+        let coins = self
+            .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Spending], &[])?
+            .coins;
         let mut txids: Vec<Txid> = Vec::new();
         for coin in &coins {
             if coin.block_height.is_none() && !txids.contains(&coin.outpoint.txid) {
@@ -233,7 +237,7 @@ pub trait Daemon: Debug {
             }
 
             if let Some(spend) = coin.spend_info {
-                if spend.height.is_none() && !txids.contains(&spend.txid) {
+                if !txids.contains(&spend.txid) {
                     txids.push(spend.txid);
                 }
             }
