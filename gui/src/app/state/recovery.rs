@@ -4,9 +4,12 @@ use std::sync::Arc;
 
 use iced::Command;
 
-use liana::miniscript::bitcoin::{
-    bip32::{DerivationPath, Fingerprint},
-    secp256k1,
+use liana::{
+    commands::CoinStatus,
+    miniscript::bitcoin::{
+        bip32::{DerivationPath, Fingerprint},
+        secp256k1,
+    },
 };
 use liana_ui::{component::form, widget::Element};
 
@@ -204,7 +207,7 @@ impl State for RecoveryPanel {
         Command::perform(
             async move {
                 daemon
-                    .list_coins(&[], &[])
+                    .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
                     .map(|res| res.coins)
                     .map_err(|e| e.into())
             },
