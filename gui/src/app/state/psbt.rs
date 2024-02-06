@@ -7,6 +7,7 @@ use iced::Subscription;
 
 use iced::Command;
 use liana::{
+    commands::CoinStatus,
     descriptors::LianaPolicy,
     miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Network, Txid},
 };
@@ -167,23 +168,15 @@ impl PsbtState {
                 return cmd;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
-                let outpoints: HashSet<_> = self.tx.coins.keys().cloned().collect();
+                let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
                 return Command::perform(
                     async move {
                         daemon
-                            // TODO: filter for the outpoints in `tx.coins` when this is possible:
-                            // https://github.com/wizardsardine/liana/issues/677
-                            .list_coins(&[], &[])
+                            .list_coins(&[CoinStatus::Spending], &outpoints)
                             .map(|res| {
                                 res.coins
                                     .iter()
-                                    .filter_map(|c| {
-                                        if outpoints.contains(&c.outpoint) {
-                                            c.spend_info.map(|info| info.txid)
-                                        } else {
-                                            None
-                                        }
-                                    })
+                                    .filter_map(|c| c.spend_info.map(|info| info.txid))
                                     .collect()
                             })
                             .map_err(|e| e.into())
