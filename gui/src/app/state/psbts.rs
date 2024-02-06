@@ -79,6 +79,16 @@ impl State for PsbtsPanel {
         message: Message,
     ) -> Command<Message> {
         match message {
+            Message::View(view::Message::Reload) => {
+                if self.selected_tx.is_some() {
+                    self.selected_tx = None;
+                    return self.load(daemon);
+                }
+                if self.import_tx.is_some() {
+                    self.import_tx = None;
+                    return self.load(daemon);
+                }
+            }
             Message::SpendTxs(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(txs) => {

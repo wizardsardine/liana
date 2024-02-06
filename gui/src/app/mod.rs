@@ -168,15 +168,6 @@ impl App {
                     _ => PsbtsPanel::new(self.wallet.clone(), &self.cache.spend_txs).into(),
                 };
             }
-            menu::Menu::CreateSpendTx => {
-                self.panels.create_spend = CreateSpendPanel::new(
-                    self.wallet.clone(),
-                    &self.cache.coins,
-                    self.cache.blockheight as u32,
-                    self.cache.network,
-                )
-                .into();
-            }
             menu::Menu::RefreshCoins(preselected) => {
                 self.panels.create_spend = CreateSpendPanel::new_self_send(
                     self.wallet.clone(),

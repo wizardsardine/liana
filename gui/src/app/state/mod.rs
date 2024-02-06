@@ -210,6 +210,10 @@ impl State for Home {
                     }
                 };
             }
+            Message::View(view::Message::Reload) => {
+                self.selected_event = None;
+                return self.load(daemon);
+            }
             Message::View(view::Message::Close) => {
                 self.selected_event = None;
             }

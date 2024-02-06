@@ -121,6 +121,10 @@ impl State for TransactionsPanel {
                     self.warning = e.into();
                 }
             },
+            Message::View(view::Message::Reload) => {
+                self.selected_tx = None;
+                return self.load(daemon);
+            }
             Message::View(view::Message::Close) => {
                 self.selected_tx = None;
             }
