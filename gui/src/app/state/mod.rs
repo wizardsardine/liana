@@ -13,7 +13,10 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::{Command, Subscription};
-use liana::miniscript::bitcoin::{Amount, OutPoint};
+use liana::{
+    commands::CoinStatus,
+    miniscript::bitcoin::{Amount, OutPoint},
+};
 use liana_ui::widget::*;
 
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet};
@@ -295,7 +298,7 @@ impl State for Home {
             Command::perform(
                 async move {
                     daemon2
-                        .list_coins(&[], &[])
+                        .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
                         .map(|res| res.coins)
                         .map_err(|e| e.into())
                 },
