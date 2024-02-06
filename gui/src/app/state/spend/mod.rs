@@ -5,7 +5,10 @@ use std::sync::Arc;
 
 use iced::Command;
 
-use liana::miniscript::bitcoin::{Network, OutPoint};
+use liana::{
+    commands::CoinStatus,
+    miniscript::bitcoin::{Network, OutPoint},
+};
 use liana_ui::widget::Element;
 
 use super::{redirect, State};
@@ -123,7 +126,7 @@ impl State for CreateSpendPanel {
             Command::perform(
                 async move {
                     daemon1
-                        .list_coins(&[], &[])
+                        .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
                         .map(|res| res.coins)
                         .map_err(|e| e.into())
                 },
@@ -132,7 +135,7 @@ impl State for CreateSpendPanel {
             Command::perform(
                 async move {
                     let coins = daemon
-                        .list_coins(&[], &[])
+                        .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
                         .map(|res| res.coins)
                         .map_err(Error::from)?;
                     let mut targets = HashSet::<LabelItem>::new();
