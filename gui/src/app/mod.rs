@@ -71,7 +71,7 @@ impl Panels {
                 cache.network,
             ),
             settings: state::SettingsState::new(
-                data_dir.clone(),
+                data_dir,
                 wallet.clone(),
                 internal_bitcoind.is_some(),
             ),
@@ -163,9 +163,9 @@ impl App {
                     .map(|txs| txs.first().cloned())
                 {
                     Ok(Some(spend_tx)) => {
-                        PsbtsPanel::new_preselected(self.wallet.clone(), spend_tx).into()
+                        PsbtsPanel::new_preselected(self.wallet.clone(), spend_tx)
                     }
-                    _ => PsbtsPanel::new(self.wallet.clone(), &self.cache.spend_txs).into(),
+                    _ => PsbtsPanel::new(self.wallet.clone(), &self.cache.spend_txs),
                 };
             }
             menu::Menu::RefreshCoins(preselected) => {
@@ -175,8 +175,7 @@ impl App {
                     self.cache.blockheight as u32,
                     preselected,
                     self.cache.network,
-                )
-                .into();
+                );
             }
             _ => {}
         };
