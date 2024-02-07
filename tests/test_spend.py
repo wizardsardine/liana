@@ -423,10 +423,9 @@ def test_coin_selection(lianad, bitcoind):
     # Recipient details are the same for both.
     assert spend_psbt_4.tx.vout[0].nValue == psbt_manual.tx.vout[0].nValue
     assert spend_psbt_4.tx.vout[0].scriptPubKey == psbt_manual.tx.vout[0].scriptPubKey
-    # Change details are also the same
-    # (change address is same as neither transaction has been broadcast)
+    # Change amount is the same (change address will be different).
     assert spend_psbt_4.tx.vout[1].nValue == psbt_manual.tx.vout[1].nValue
-    assert spend_psbt_4.tx.vout[1].scriptPubKey == psbt_manual.tx.vout[1].scriptPubKey
+    assert spend_psbt_4.tx.vout[1].scriptPubKey != psbt_manual.tx.vout[1].scriptPubKey
 
 
 def test_coin_selection_changeless(lianad, bitcoind):

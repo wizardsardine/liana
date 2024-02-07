@@ -262,7 +262,7 @@ impl DaemonControl {
         addr_info: &Option<AddrInfo>,
     ) {
         if let Some(AddrInfo { index, is_change }) = addr_info {
-            if *is_change && db_conn.change_index() < *index {
+            if *is_change && db_conn.change_index() <= *index {
                 let next_index = index
                     .increment()
                     .expect("Must not get into hardened territory");
@@ -1760,9 +1760,46 @@ mod tests {
             panic!("expect successful spend creation")
         };
         let tx_manual = psbt.unsigned_tx;
-        // Check that manual and auto selection give same outputs (including change).
-        assert_eq!(tx_auto.output, tx_manual.output);
+        // Check that manual and auto selection give same outputs (except change address).
+        assert_ne!(tx_auto.output, tx_manual.output);
+        assert_eq!(tx_auto.output.len(), tx_manual.output.len());
+        assert_eq!(tx_auto.output[0], tx_manual.output[0]);
+        assert_eq!(tx_auto.output[1].value, tx_manual.output[1].value);
+        assert_ne!(
+            tx_auto.output[1].script_pubkey,
+            tx_manual.output[1].script_pubkey
+        );
         // Check inputs are also the same. Need to sort as order is not guaranteed by `create_spend`.
+        let mut auto_input = tx_auto.clone().input;
+        let mut manual_input = tx_manual.input;
+        auto_input.sort();
+        manual_input.sort();
+        assert_eq!(auto_input, manual_input);
+
+        // Now do the same again, but this time specifying the change address to be the same
+        // as for the auto spend.
+        let change_address = bitcoin::Address::from_script(
+            tx_auto.output[1].script_pubkey.as_script(),
+            bitcoin::Network::Bitcoin,
+        )
+        .unwrap();
+        let psbt = if let CreateSpendResult::Success { psbt, .. } = control
+            .create_spend(
+                &destinations,
+                &[confirmed_op_1, confirmed_op_2],
+                1,
+                Some(change_address.as_unchecked().clone()),
+            )
+            .unwrap()
+        {
+            psbt
+        } else {
+            panic!("expect successful spend creation")
+        };
+        let tx_manual = psbt.unsigned_tx;
+        // Now the outputs of each transaction are the same.
+        assert_eq!(tx_auto.output, tx_manual.output);
+        // Check again that inputs are still the same.
         let mut auto_input = tx_auto.input;
         let mut manual_input = tx_manual.input;
         auto_input.sort();
