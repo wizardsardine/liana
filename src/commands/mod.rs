@@ -267,7 +267,7 @@ impl DaemonControl {
                     .increment()
                     .expect("Must not get into hardened territory");
                 db_conn.set_change_index(next_index, &self.secp);
-            } else if !is_change && db_conn.receive_index() < *index {
+            } else if !is_change && db_conn.receive_index() <= *index {
                 let next_index = index
                     .increment()
                     .expect("Must not get into hardened territory");

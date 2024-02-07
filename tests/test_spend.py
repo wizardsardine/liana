@@ -246,6 +246,20 @@ def test_send_to_self(lianad, bitcoind):
     )
     wait_for(lambda: len(list(unspent_coins())) == 1)
 
+    # We've used 3 receive addresses and so the DB receive index must be 3.
+    assert len(lianad.rpc.listaddresses()["addresses"]) == 3
+    # Create a new spend to the receive address with index 3.
+    recv_addr = lianad.rpc.listaddresses(3, 1)["addresses"][0]["receive"]
+    res = lianad.rpc.createspend({recv_addr: 11_955_000}, [], 1)
+    assert "psbt" in res
+    # Max(receive_index, change_index) is now 4:
+    assert len(lianad.rpc.listaddresses()["addresses"]) == 4
+    # But the spend has no change:
+    psbt = PSBT.from_base64(res["psbt"])
+    assert len(psbt.o) == 1
+    # As the spend has no change, only the receive index was incremented.
+    # Therefore, the DB receive index is now 4.
+
 
 def test_coin_selection(lianad, bitcoind):
     """We can create a spend using coin selection."""
