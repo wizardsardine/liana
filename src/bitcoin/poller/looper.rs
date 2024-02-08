@@ -245,8 +245,8 @@ fn updates(
     db_conn.new_unspent_coins(&updated_coins.received);
     db_conn.remove_coins(&updated_coins.expired);
     db_conn.confirm_coins(&updated_coins.confirmed);
-    db_conn.spend_coins(&updated_coins.spending);
     db_conn.unspend_coins(&updated_coins.expired_spending);
+    db_conn.spend_coins(&updated_coins.spending);
     db_conn.confirm_spend(&updated_coins.spent);
     if latest_tip != current_tip {
         db_conn.update_tip(&latest_tip);
