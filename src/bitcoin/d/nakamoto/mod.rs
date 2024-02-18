@@ -11,24 +11,26 @@ use nakamoto::client;
 use nakamoto::common::bitcoin_hashes::hex::FromHex;
 use nakamoto::net::poll::{Waker, Reactor};
 use miniscript::bitcoin::hashes::Hash;
-use miniscript::bitcoin::{self, BlockHash};
+use miniscript::bitcoin;
 
 use crate::BitcoindError;
 use crate::bitcoin::BitcoinInterface;
+
+use super::SyncProgress;
 
 /// Nakamoto client
 pub struct Nakamoto {
     /// Nakamoto handler used interact with the client.
     handler: client::Handle<Waker>,
     /// Nakamoto main worked to avoid leave a pending project.
-    worker: JoinHandle<Result<(), client::Error>>
-    network: client::Network,
+    _worker: JoinHandle<Result<(), client::Error>>,
+    _network: client::Network,
 }
 
 impl Nakamoto {
     /// Create a new instance of nakamoto.
     pub fn new(network: &bitcoin::Network, connect: &[net::SocketAddr], data_dir: PathBuf) -> Result<Self, ()> {
-        let network = client::Network::from_str(&network.to_string()).map_err(|err| ())?;
+        let network = client::Network::from_str(&network.to_string()).map_err(|_| ())?;
         let mut config = client::Config::new(network);
         config.root = data_dir;
         config.connect = connect.to_vec();
@@ -36,13 +38,14 @@ impl Nakamoto {
         let client = client::Client::<Reactor<net::TcpStream>>::new().unwrap();
         let handler = client.handle();
         let worker = std::thread::spawn(|| client.run(config));
-        Ok(Self{ handler, worker, network })
+        Ok(Self{ handler, _worker: worker, _network: network })
     }
 
     /// Stop the nakamoto node
-    pub fn stop(&self) -> Result<(), BitcoindError> {
-        self.handler.shutdown();
-        self.worker.join().map_err(|err| BitcoindError::GenericError)?;
+    #[allow(dead_code)]
+    pub fn stop(self) -> Result<(), BitcoindError> {
+        self.handler.shutdown().map_err(|_| BitcoindError::GenericError)?;
+        let _ = self._worker.join().map_err(|_| BitcoindError::GenericError)?;
         Ok(())
     }
 }
@@ -72,15 +75,15 @@ impl BitcoinInterface for Nakamoto {
     }
 
     fn common_ancestor(&self, tip: &crate::bitcoin::BlockChainTip) -> Option<crate::bitcoin::BlockChainTip> {
-        todo!()
+        None
     }
 
     fn is_in_chain(&self, tip: &crate::bitcoin::BlockChainTip) -> bool {
-        unimplemented!()
+        true
     }
 
     fn block_before_date(&self, timestamp: u32) -> Option<crate::bitcoin::BlockChainTip> {
-        unimplemented!()
+        None
     }
 
     fn confirmed_coins(
@@ -123,7 +126,7 @@ impl BitcoinInterface for Nakamoto {
         desc: &crate::descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String> {
-        // We do not care for the momenet, because we are tracking with nakamoto
+        // We do not care for the moment, because we are tracking with nakamoto
         // all the transactions submitted
         Ok(())
     }
@@ -158,7 +161,8 @@ impl BitcoinInterface for Nakamoto {
     }
 
     fn sync_progress(&self) -> super::SyncProgress {
-        unimplemented!()
+        // FIXME: call tip and try to simulate the bitcoin intergace
+        SyncProgress::new(100.0, 0, 0)
     }
 
     fn tip_time(&self) -> Option<u32> {

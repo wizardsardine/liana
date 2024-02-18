@@ -70,6 +70,12 @@ checksum = "c0320167c3655e83f0415d52f39618902e449186ffc7dfb090f922f79675c316"
 
 [[package]]
 name = "bech32"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d86b93f97252c47b41663388e6d155714a9d0c398b99f1005cbc5f978b29f445"
+
+[[package]]
+name = "bech32"
 version = "0.10.0-beta"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98f7eed2b2781a6f0b5c903471d48e15f56fb4e1165df8a9a2337fd1a59d45ea"
@@ -87,17 +93,28 @@ dependencies = [
 
 [[package]]
 name = "bitcoin"
+version = "0.29.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0694ea59225b0c5f3cb405ff3f670e4828358ed26aec49dc352f730f0cb1a8a3"
+dependencies = [
+ "bech32 0.9.1",
+ "bitcoin_hashes 0.11.0",
+ "secp256k1 0.24.3",
+]
+
+[[package]]
+name = "bitcoin"
 version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5973a027b341b462105675962214dfe3c938ad9afd395d84b28602608bdcec7b"
 dependencies = [
  "base64 0.21.5",
- "bech32",
+ "bech32 0.10.0-beta",
  "bitcoin-internals",
  "bitcoin_hashes 0.13.0",
  "hex-conservative",
  "hex_lit",
- "secp256k1 0.27.0",
+ "secp256k1 0.28.0",
  "serde",
 ]
 
@@ -171,22 +188,18 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.8"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a33c2bf77f2df06183c3aa30d1e96c0695a313d4f9c453cc3762a6db39f99200"
+checksum = "176dc175b78f56c0f321911d9c8eb2b77a78a4860b9c19db83835fea1a46649b"
 dependencies = [
- "cfg-if",
  "crossbeam-utils",
 ]
 
 [[package]]
 name = "crossbeam-utils"
-version = "0.8.16"
+version = "0.8.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a22b2d63d4d1dc0b7f1b6b2747dd0088008a9be28b6ddf0b1e7d335e3037294"
-dependencies = [
- "cfg-if",
-]
+checksum = "248e3bacc7dc6baa3b21e405ee045c3047101a49145e7e9eca583ab4c2ca5345"
 
 [[package]]
 name = "dirs"
@@ -393,7 +406,7 @@ checksum = "6e3afa8ee462bb9ed735b544476a9e4ece0f10be76864ff9b80a6a525b837232"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -402,8 +415,8 @@ version = "11.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86a23dd3ad145a980e231185d114399f25a0a307d2cd918010ddda6334323df9"
 dependencies = [
- "bech32",
- "bitcoin",
+ "bech32 0.10.0-beta",
+ "bitcoin 0.31.0",
  "bitcoin-internals",
  "serde",
 ]
@@ -431,7 +444,7 @@ dependencies = [
 [[package]]
 name = "nakamoto"
 version = "0.4.0"
-source = "git+https://github.com/cloudhead/nakamoto.git#9ea71ed71655e41b8b1ec7db02b4b8dea6f9f1ea"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git?branch=macros/master#83a746621c08a6ac1177f086e337697f9a8f57dd"
 dependencies = [
  "nakamoto-chain",
  "nakamoto-client",
@@ -444,7 +457,7 @@ dependencies = [
 [[package]]
 name = "nakamoto-chain"
 version = "0.4.0"
-source = "git+https://github.com/cloudhead/nakamoto.git#9ea71ed71655e41b8b1ec7db02b4b8dea6f9f1ea"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git?branch=macros/master#83a746621c08a6ac1177f086e337697f9a8f57dd"
 dependencies = [
  "log",
  "nakamoto-common",
@@ -454,7 +467,7 @@ dependencies = [
 [[package]]
 name = "nakamoto-client"
 version = "0.4.0"
-source = "git+https://github.com/cloudhead/nakamoto.git#9ea71ed71655e41b8b1ec7db02b4b8dea6f9f1ea"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git?branch=macros/master#83a746621c08a6ac1177f086e337697f9a8f57dd"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
@@ -470,7 +483,7 @@ dependencies = [
 [[package]]
 name = "nakamoto-common"
 version = "0.4.0"
-source = "git+https://github.com/cloudhead/nakamoto.git#9ea71ed71655e41b8b1ec7db02b4b8dea6f9f1ea"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git?branch=macros/master#83a746621c08a6ac1177f086e337697f9a8f57dd"
 dependencies = [
  "bitcoin 0.29.2",
  "bitcoin_hashes 0.11.0",
@@ -485,7 +498,7 @@ dependencies = [
 [[package]]
 name = "nakamoto-net"
 version = "0.4.0"
-source = "git+https://github.com/cloudhead/nakamoto.git#9ea71ed71655e41b8b1ec7db02b4b8dea6f9f1ea"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git?branch=macros/master#83a746621c08a6ac1177f086e337697f9a8f57dd"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
@@ -496,7 +509,7 @@ dependencies = [
 [[package]]
 name = "nakamoto-net-poll"
 version = "0.4.0"
-source = "git+https://github.com/cloudhead/nakamoto.git#9ea71ed71655e41b8b1ec7db02b4b8dea6f9f1ea"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git?branch=macros/master#83a746621c08a6ac1177f086e337697f9a8f57dd"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -509,7 +522,7 @@ dependencies = [
 [[package]]
 name = "nakamoto-p2p"
 version = "0.4.0"
-source = "git+https://github.com/cloudhead/nakamoto.git#9ea71ed71655e41b8b1ec7db02b4b8dea6f9f1ea"
+source = "git+https://github.com/vincenzopalazzo/nakamoto.git?branch=macros/master#83a746621c08a6ac1177f086e337697f9a8f57dd"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
@@ -646,9 +659,6 @@ checksum = "f98d2aa92eebf49b69786be48e4477826b256916e84a57ff2a4f21923b48eb4c"
 
 [[package]]
 name = "secp256k1"
-<<<<<<< HEAD
-version = "0.28.0"
-=======
 version = "0.24.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b1629c9c557ef9b293568b338dddfc8208c98a18c59d722a9d53f859d9c9b62"
@@ -659,21 +669,17 @@ dependencies = [
 
 [[package]]
 name = "secp256k1"
-version = "0.27.0"
->>>>>>> 271acd1 (backend: wip including nakamoto)
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2acea373acb8c21ecb5a23741452acd2593ed44ee3d343e72baaa143bc89d0d5"
 dependencies = [
  "bitcoin_hashes 0.12.0",
- "secp256k1-sys 0.8.1",
+ "secp256k1-sys 0.9.1",
  "serde",
 ]
 
 [[package]]
 name = "secp256k1-sys"
-<<<<<<< HEAD
-version = "0.9.1"
-=======
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83080e2c2fc1006e625be82e5d1eb6a43b7fd9578b617fcc55814daf286bba4b"
@@ -683,8 +689,7 @@ dependencies = [
 
 [[package]]
 name = "secp256k1-sys"
-version = "0.8.1"
->>>>>>> 271acd1 (backend: wip including nakamoto)
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4dd97a086ec737e30053fd5c46f097465d25bb81dd3608825f65298c4c98be83"
 dependencies = [
@@ -708,7 +713,7 @@ checksum = "a3385e45322e8f9931410f01b3031ec534c3947d0e94c18049af4d9f9907d4e0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.46",
 ]
 
 [[package]]
@@ -730,12 +735,23 @@ checksum = "4dccd0940a2dcdf68d092b8cbab7dc0ad8fa938bf95787e1b916b0e3d0e8e970"
 
 [[package]]
 name = "socket2"
-version = "0.4.9"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64a4a911eed85daf18834cfaa86a79b7d266ff93ff5ba14005426219480ed662"
+checksum = "9f7916fc008ca5542385b89a3d3ce689953c143e9304a9bf8beec1de48994c0d"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "syn"
+version = "1.0.109"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -766,7 +782,7 @@ checksum = "fa0faa943b50f3db30a20aa7e265dbc66076993efed8463e8de414e5d06d3471"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.46",
 ]
 
 [[package]]
@@ -931,5 +947,5 @@ checksum = "9ce1b18ccd8e73a9321186f97e46f9f04b778851177567b1975109d26a08d2a6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.46",
 ]

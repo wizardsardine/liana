@@ -14,6 +14,7 @@ pub mod spend;
 mod testutils;
 
 pub use bip39;
+use bitcoin::d::nakamoto::Nakamoto;
 pub use miniscript;
 
 pub use crate::bitcoin::d::{BitcoinD, BitcoindError, WalletError};
@@ -371,6 +372,11 @@ impl DaemonHandle {
     /// and SQLite).
     pub fn start_default(config: Config) -> Result<DaemonHandle, StartupError> {
         DaemonHandle::start(config, Option::<BitcoinD>::None, Option::<SqliteDb>::None)
+    }
+
+    pub fn start_nakamoto(config: Config) -> Result<DaemonHandle, StartupError> {
+        let nakamoto = Nakamoto::new(&config.bitcoin_config.network, &[], config.data_dir().unwrap()).unwrap();
+        DaemonHandle::start(config, Some(nakamoto), Option::<SqliteDb>::None)
     }
 
     /// Start the JSONRPC server and listen for incoming commands until we die.

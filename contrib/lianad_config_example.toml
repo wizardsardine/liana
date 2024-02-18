@@ -20,7 +20,7 @@ log_level = "debug"
 #
 # YOUR DESCRIPTOR IS UNIQUE AND MUST BE BACKED UP, WITHOUT IT YOU WONT BE ABLE TO RECOVER YOUR FUNDS.
 #
-main_descriptor = "wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/<0;1>/*),and_v(v:pkh(tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/<0;1>/*),older(2))))#uact7s3g"
+#main_descriptor = "wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/<0;1>/*),and_v(v:pkh(tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/<0;1>/*),older(2))))#uact7s3g"
 
 # This section is the configuration related to the Bitcoin backend.
 # On what network shall it operate?
@@ -35,6 +35,6 @@ poll_interval_secs = 30
 # how to authenticate, either by specifying the cookie location with "cookie_path" or otherwise
 # passing a colon-separated user and password with "auth".
 [bitcoind_config]
-addr = "127.0.0.1:18332"
-cookie_path = "/home/wizardsardine/.bitcoin/testnet3/.cookie"
-# auth = "my_user:my_password"
+addr = "192.168.178.30:18332"
+#cookie_path = "/home/wizardsardine/.bitcoin/testnet3/.cookie"
+auth = "vincent:vincent-home-pi"

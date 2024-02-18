@@ -70,7 +70,7 @@ fn main() {
         process::exit(1);
     });
 
-    let daemon = DaemonHandle::start_default(config).unwrap_or_else(|e| {
+    let daemon = DaemonHandle::start_nakamoto(config).unwrap_or_else(|e| {
         log::error!("Error starting Liana daemon: {}", e);
         process::exit(1);
     });
