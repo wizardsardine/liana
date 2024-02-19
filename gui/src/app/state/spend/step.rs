@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{cmp::Ordering, collections::HashMap, str::FromStr, sync::Arc};
 
 use iced::{Command, Subscription};
 use liana::{
@@ -65,6 +63,9 @@ pub trait Step {
 pub struct DefineSpend {
     balance_available: Amount,
     recipients: Vec<Recipient>,
+    /// If set, this is the index of a recipient that should
+    /// receive the max amount.
+    send_max_to_recipient: Option<usize>,
     /// Will be `true` if coins for spend were manually selected by user.
     /// Otherwise, will be `false` (including for self-send).
     is_user_coin_selection: bool,
@@ -123,6 +124,7 @@ impl DefineSpend {
             coins_labels: HashMap::new(),
             batch_label: form::Value::default(),
             recipients: vec![Recipient::default()],
+            send_max_to_recipient: None,
             is_user_coin_selection: false, // Start with auto-selection until user edits selection.
             is_valid: false,
             is_duplicate: false,
@@ -162,12 +164,16 @@ impl DefineSpend {
         self
     }
 
-    fn form_values_are_valid(&self) -> bool {
+    // If `is_redraft`, the validation of recipients will take into account
+    // whether any should receive the max amount. Otherwise, all recipients
+    // will be fully validated.
+    fn form_values_are_valid(&self, is_redraft: bool) -> bool {
         self.feerate.valid
             && !self.feerate.value.is_empty()
             && (self.batch_label.valid || self.recipients.len() < 2)
             // Recipients will be empty for self-send.
-            && self.recipients.iter().all(|r| r.valid())
+            && self.recipients.iter().enumerate().all(|(i, r)|
+            r.valid() || (is_redraft && self.send_max_to_recipient == Some(i) && r.address_valid()))
     }
 
     fn exists_duplicate(&self) -> bool {
@@ -185,13 +191,16 @@ impl DefineSpend {
 
     fn check_valid(&mut self) {
         self.is_valid =
-            self.form_values_are_valid() && self.coins.iter().any(|(_, selected)| *selected);
+            self.form_values_are_valid(false) && self.coins.iter().any(|(_, selected)| *selected);
         self.is_duplicate = self.exists_duplicate();
     }
     /// redraft calculates the amount left to select and auto selects coins
     /// if the user did not select a coin manually
     fn redraft(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) {
-        if !self.form_values_are_valid() || self.exists_duplicate() || self.recipients.is_empty() {
+        if !self.form_values_are_valid(true)
+            || self.exists_duplicate()
+            || self.recipients.is_empty()
+        {
             // The current form details are not valid to draft a spend, so remove any previously
             // calculated amount as it will no longer be valid and could be misleading, e.g. if
             // the user removes the amount from one of the recipients.
@@ -199,19 +208,50 @@ impl DefineSpend {
             // as soon as the form is valid or the user has selected these specific coins and
             // so we should not touch them.
             self.amount_left_to_select = None;
+            // Remove any max amount from a recipient as it could be misleading.
+            if let Some(i) = self.send_max_to_recipient {
+                self.recipients
+                    .get_mut(i)
+                    .expect("max has been requested for this recipient so it must exist")
+                    .update(
+                        self.network,
+                        view::CreateSpendMessage::RecipientEdited(i, "amount", "".to_string()),
+                    );
+            }
             return;
         }
 
         let destinations: HashMap<Address<address::NetworkUnchecked>, u64> = self
             .recipients
             .iter()
-            .map(|recipient| {
-                (
-                    Address::from_str(&recipient.address.value).expect("Checked before"),
-                    recipient.amount().expect("Checked before"),
-                )
+            .enumerate()
+            .filter_map(|(i, recipient)| {
+                // A recipient that receives the max should be treated as change for coin selection.
+                // Note that we only give a change output if its value is above the dust
+                // threshold, but a user can only send payments above the same dust threshold,
+                // so using change output to determine the max amount for a recipient will
+                // not prevent a value that could otherwise be entered manually by the user.
+                if self.send_max_to_recipient == Some(i) {
+                    None
+                } else {
+                    Some((
+                        Address::from_str(&recipient.address.value).expect("Checked before"),
+                        recipient.amount().expect("Checked before"),
+                    ))
+                }
             })
             .collect();
+
+        let recipient_with_max = if let Some(i) = self.send_max_to_recipient {
+            Some((
+                i,
+                self.recipients
+                    .get_mut(i)
+                    .expect("max has been requested for this recipient so it must exist"),
+            ))
+        } else {
+            None
+        };
 
         let outpoints = if self.is_user_coin_selection {
             let outpoints: Vec<_> = self
@@ -228,30 +268,53 @@ impl DefineSpend {
                 )
                 .collect();
             if outpoints.is_empty() {
-                // If the user has deselected all coins, simply set the amount left to select as the
-                // total destination value. Note this doesn't take account of the fee, but passing
-                // an empty list to `create_spend_tx` would use auto-selection and so we settle for
-                // this approximation.
+                // If the user has deselected all coins, set any recipient's max amount to 0.
+                if let Some((i, recipient)) = recipient_with_max {
+                    recipient.update(
+                        self.network,
+                        view::CreateSpendMessage::RecipientEdited(i, "amount", "0".to_string()),
+                    );
+                }
+                // Simply set the amount left to select as the total destination value. Note this
+                // doesn't take account of the fee, but passing an empty list to `create_spend_tx`
+                // would use auto-selection and so we settle for this approximation.
                 self.amount_left_to_select = Some(Amount::from_sat(destinations.values().sum()));
                 return;
             }
             outpoints
+        } else if self.send_max_to_recipient.is_some() {
+            // If user has not selected coins, send the max available from all coins.
+            self.coins.iter().map(|(c, _)| c.outpoint).collect()
         } else {
             Vec::new() // pass empty list for auto-selection
         };
 
-        // Use a fixed change address so that we don't increment the change index.
-        let dummy_address = self
-            .descriptor
-            .change_descriptor()
-            .derive(0.into(), &self.curve)
-            .address(self.network)
-            .as_unchecked()
-            .clone();
+        // If sending the max to a recipient, use that recipient's address as the
+        // change address.
+        // Otherwise, use a fixed change address from the user's own wallet so that
+        // we don't increment the change index.
+        let change_address = if let Some((_, recipient)) = &recipient_with_max {
+            Address::from_str(&recipient.address.value)
+                .expect("Checked before")
+                .as_unchecked()
+                .clone()
+        } else {
+            self.descriptor
+                .change_descriptor()
+                .derive(0.into(), &self.curve)
+                .address(self.network)
+                .as_unchecked()
+                .clone()
+        };
 
         let feerate_vb = self.feerate.value.parse::<u64>().expect("Checked before");
 
-        match daemon.create_spend_tx(&outpoints, &destinations, feerate_vb, Some(dummy_address)) {
+        match daemon.create_spend_tx(
+            &outpoints,
+            &destinations,
+            feerate_vb,
+            Some(change_address.clone()),
+        ) {
             Ok(CreateSpendResult::Success { psbt, .. }) => {
                 self.warning = None;
                 if !self.is_user_coin_selection {
@@ -268,6 +331,25 @@ impl DefineSpend {
                 }
                 // As coin selection was successful, we can assume there is nothing left to select.
                 self.amount_left_to_select = Some(Amount::from_sat(0));
+                if let Some((i, recipient)) = recipient_with_max {
+                    // If there's no change output, any excess must be below the dust threshold
+                    // and so the max available for this recipient is 0.
+                    let amount = psbt
+                        .unsigned_tx
+                        .output
+                        .iter()
+                        .find(|o| {
+                            o.script_pubkey
+                                == change_address.clone().assume_checked().script_pubkey()
+                        })
+                        .map(|change_output| change_output.value.to_btc())
+                        .unwrap_or(0.0)
+                        .to_string();
+                    recipient.update(
+                        self.network,
+                        view::CreateSpendMessage::RecipientEdited(i, "amount", amount),
+                    );
+                }
             }
             // For coin selection error (insufficient funds), do not make any changes to
             // selected coins on screen and just show user how much is left to select.
@@ -276,6 +358,25 @@ impl DefineSpend {
             // - select coins manually.
             Ok(CreateSpendResult::InsufficientFunds { missing }) => {
                 self.amount_left_to_select = Some(Amount::from_sat(missing));
+                if let Some((i, recipient)) = recipient_with_max {
+                    let amount = Amount::from_sat(if destinations.is_empty() {
+                        // If there are no other recipients, then the missing value will
+                        // be the amount left to select in order to create an output at the dust
+                        // threshold. Therefore, set this recipient's amount to this value so
+                        // that the information shown is consistent.
+                        // Otherwise, there are already insufficient funds for the other
+                        // recipients and so the max available for this recipient is 0.
+                        DUST_OUTPUT_SATS
+                    } else {
+                        0
+                    })
+                    .to_btc()
+                    .to_string();
+                    recipient.update(
+                        self.network,
+                        view::CreateSpendMessage::RecipientEdited(i, "amount", amount),
+                    );
+                }
             }
             Err(e) => {
                 self.warning = Some(e.into());
@@ -306,6 +407,20 @@ impl Step for DefineSpend {
                         if self.recipients.len() < 2 {
                             self.batch_label.valid = true;
                             self.batch_label.value = "".to_string();
+                        }
+                        if let Some(j) = self.send_max_to_recipient {
+                            match j.cmp(&i) {
+                                Ordering::Equal => {
+                                    self.send_max_to_recipient = None;
+                                }
+                                Ordering::Greater => {
+                                    self.send_max_to_recipient = Some(
+                                        j.checked_sub(1)
+                                            .expect("j must be greater than 0 in this case"),
+                                    );
+                                }
+                                _ => {}
+                            }
                         }
                     }
                     view::CreateSpendMessage::RecipientEdited(i, _, _) => {
@@ -375,6 +490,17 @@ impl Step for DefineSpend {
                             coin.1 = !coin.1;
                             // Once user edits selection, auto-selection can no longer be used.
                             self.is_user_coin_selection = true;
+                        }
+                    }
+                    view::CreateSpendMessage::SendMaxToRecipient(i) => {
+                        if self.recipients.get(i).is_some() {
+                            if self.send_max_to_recipient == Some(i) {
+                                // If already set to this recipient, then unset it.
+                                self.send_max_to_recipient = None;
+                            } else {
+                                // Either it's set to some other recipient or not at all.
+                                self.send_max_to_recipient = Some(i);
+                            };
                         }
                     }
                     _ => {}
@@ -453,7 +579,11 @@ impl Step for DefineSpend {
             self.recipients
                 .iter()
                 .enumerate()
-                .map(|(i, recipient)| recipient.view(i).map(view::Message::CreateSpend))
+                .map(|(i, recipient)| {
+                    recipient
+                        .view(i, self.send_max_to_recipient == Some(i))
+                        .map(view::Message::CreateSpend)
+                })
                 .collect(),
             Amount::from_sat(
                 self.recipients
@@ -509,9 +639,12 @@ impl Recipient {
         Ok(amount.to_sat())
     }
 
+    fn address_valid(&self) -> bool {
+        !self.address.value.is_empty() && self.address.valid
+    }
+
     fn valid(&self) -> bool {
-        !self.address.value.is_empty()
-            && self.address.valid
+        self.address_valid()
             && !self.amount.value.is_empty()
             && self.amount.valid
             && self.label.valid
@@ -550,8 +683,8 @@ impl Recipient {
         };
     }
 
-    fn view(&self, i: usize) -> Element<view::CreateSpendMessage> {
-        view::spend::recipient_view(i, &self.address, &self.amount, &self.label)
+    fn view(&self, i: usize, is_max_selected: bool) -> Element<view::CreateSpendMessage> {
+        view::spend::recipient_view(i, &self.address, &self.amount, &self.label, is_max_selected)
     }
 }
 

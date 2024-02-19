@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use iced::{
     alignment,
-    widget::{checkbox, scrollable, Space},
+    widget::{checkbox, scrollable, tooltip, Space},
     Alignment, Length,
 };
 
@@ -215,10 +215,30 @@ pub fn create_spend_tx<'a>(
                                         ))
                                         .push(p2_regular("selected").style(color::GREY_3))
                                 } else if let Some(amount_left) = amount_left {
-                                    Row::new()
-                                        .spacing(5)
-                                        .push(amount_with_size(amount_left, P2_SIZE))
-                                        .push(p2_regular("left to select").style(color::GREY_3))
+                                    if amount_left.to_sat() == 0 && !is_valid {
+                                        // If amount left is set, the current configuration must be redraftable.
+                                        // If it's not valid, either no coins are selected or there's a recipient
+                                        // with max selected and invalid amount.
+                                        if coins.iter().all(|(_, selected)| !selected) {
+                                            // This can happen if we have a single recipient
+                                            // and it has the max selected.
+                                            Row::new().push(
+                                                text("Select at least one coin.")
+                                                    .style(color::GREY_3),
+                                            )
+                                        } else {
+                                            // There must be a recipient with max selected and value 0.
+                                            Row::new().push(
+                                                text("Check max amount for recipient.")
+                                                    .style(color::GREY_3),
+                                            )
+                                        }
+                                    } else {
+                                        Row::new()
+                                            .spacing(5)
+                                            .push(amount_with_size(amount_left, P2_SIZE))
+                                            .push(p2_regular("left to select").style(color::GREY_3))
+                                    }
                                 } else {
                                     Row::new().push(
                                         text(if feerate.value.is_empty() || !feerate.valid {
@@ -286,6 +306,7 @@ pub fn recipient_view<'a>(
     address: &form::Value<String>,
     amount: &form::Value<String>,
     label: &form::Value<String>,
+    is_max_selected: bool,
 ) -> Element<'a, CreateSpendMessage> {
     Container::new(
         Column::new()
@@ -338,7 +359,7 @@ pub fn recipient_view<'a>(
             )
             .push(
                 Row::new()
-                    .align_items(Alignment::Start)
+                    .align_items(Alignment::Center)
                     .spacing(10)
                     .push(
                         Container::new(p1_bold("Amount"))
@@ -346,16 +367,36 @@ pub fn recipient_view<'a>(
                             .align_x(alignment::Horizontal::Right)
                             .width(Length::Fixed(110.0)),
                     )
-                    .push(
-                        form::Form::new_trimmed("0.001 (in BTC)", amount, move |msg| {
+                    .push_maybe(if is_max_selected {
+                        Some(
+                            Container::new(
+                                text(amount.value.clone()).size(20).style(color::GREY_2),
+                            )
+                            .padding(10)
+                            .width(Length::Fill),
+                        )
+                    } else {
+                        None
+                    })
+                    .push_maybe(if !is_max_selected {
+                        Some(form::Form::new_trimmed("0.001 (in BTC)", amount, move |msg| {
                             CreateSpendMessage::RecipientEdited(index, "amount", msg)
                         })
                         .warning(
                             "Invalid amount. (Note amounts lower than 0.00005 BTC are invalid.)",
                         )
                         .size(20)
-                        .padding(10),
-                    )
+                        .padding(10))
+                    } else {
+                        None
+                    })
+                    .push(tooltip::Tooltip::new(
+                        checkbox("MAX", is_max_selected, move |_| {
+                            CreateSpendMessage::SendMaxToRecipient(index)
+                        }),
+                        "Total amount remaining after paying fee and any other recipients",
+                        tooltip::Position::Left,
+                    ))
                     .width(Length::Fill),
             ),
     )

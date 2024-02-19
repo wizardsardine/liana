@@ -37,6 +37,7 @@ pub enum CreateSpendMessage {
     FeerateEdited(String),
     SelectPath(usize),
     Generate,
+    SendMaxToRecipient(usize),
 }
 
 #[derive(Debug, Clone)]
