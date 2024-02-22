@@ -18,7 +18,7 @@ use miniscript::bitcoin::{
     bip32::{self, Error as Bip32Error},
     ecdsa,
     hashes::Hash,
-    psbt::Psbt,
+    psbt::{Input as PsbtIn, Psbt},
     secp256k1, sighash,
 };
 
@@ -228,6 +228,56 @@ impl HotSigner {
         bip32::Xpub::from_priv(secp, &xpriv)
     }
 
+    // Provide an ECDSA signature for this transaction input from the PSBT input information.
+    fn sign_p2wsh(
+        &self,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
+        sighash_cache: &mut sighash::SighashCache<&bitcoin::Transaction>,
+        master_fingerprint: bip32::Fingerprint,
+        psbt_in: &mut PsbtIn,
+        input_index: usize,
+    ) -> Result<(), SignerError> {
+        // First of all compute the sighash for this input. We assume P2WSH spend: the sighash
+        // script code is always the witness script.
+        let witscript = psbt_in
+            .witness_script
+            .as_ref()
+            .ok_or(SignerError::IncompletePsbt)?;
+        let value = psbt_in
+            .witness_utxo
+            .as_ref()
+            .ok_or(SignerError::IncompletePsbt)?
+            .value;
+        let sig_type = sighash::EcdsaSighashType::All;
+        let sighash = sighash_cache
+            .p2wsh_signature_hash(input_index, witscript, value, sig_type)
+            .map_err(|_| SignerError::InsanePsbt)?;
+        let sighash = secp256k1::Message::from_digest_slice(sighash.as_byte_array())
+            .expect("Sighash is always 32 bytes.");
+
+        // Then provide a signature for all the keys they asked for.
+        for (curr_pubkey, (fingerprint, der_path)) in psbt_in.bip32_derivation.iter() {
+            if *fingerprint != master_fingerprint {
+                continue;
+            }
+            let privkey = self.xpriv_at(der_path, secp).to_priv();
+            let pubkey = privkey.public_key(secp);
+            if pubkey.inner != *curr_pubkey {
+                return Err(SignerError::InsanePsbt);
+            }
+            let sig = secp.sign_ecdsa_low_r(&sighash, &privkey.inner);
+            psbt_in.partial_sigs.insert(
+                pubkey,
+                ecdsa::Signature {
+                    sig,
+                    hash_ty: sig_type,
+                },
+            );
+        }
+
+        Ok(())
+    }
+
     /// Sign all inputs of the given PSBT.
     ///
     /// **This does not perform any check. It will blindly sign anything that's passed.**
@@ -241,44 +291,13 @@ impl HotSigner {
 
         // Sign each input in the PSBT.
         for i in 0..psbt.inputs.len() {
-            // First of all compute the sighash for this input. We assume P2WSH spend: the sighash
-            // script code is always the witness script.
-            let witscript = psbt.inputs[i]
-                .witness_script
-                .as_ref()
-                .ok_or(SignerError::IncompletePsbt)?;
-            let value = psbt.inputs[i]
-                .witness_utxo
-                .as_ref()
-                .ok_or(SignerError::IncompletePsbt)?
-                .value;
-            let sig_type = sighash::EcdsaSighashType::All;
-            let sighash = sighash_cache
-                .p2wsh_signature_hash(i, witscript, value, sig_type)
-                .map_err(|_| SignerError::InsanePsbt)?;
-            let sighash = secp256k1::Message::from_digest_slice(sighash.as_byte_array())
-                .expect("Sighash is always 32 bytes.");
-
-            // Then provide a signature for all the keys they asked for.
-            let input = &mut psbt.inputs[i]; // for borrowck reasons
-            for (curr_pubkey, (fingerprint, der_path)) in input.bip32_derivation.iter() {
-                if *fingerprint != master_fingerprint {
-                    continue;
-                }
-                let privkey = self.xpriv_at(der_path, secp).to_priv();
-                let pubkey = privkey.public_key(secp);
-                if pubkey.inner != *curr_pubkey {
-                    return Err(SignerError::InsanePsbt);
-                }
-                let sig = secp.sign_ecdsa_low_r(&sighash, &privkey.inner);
-                input.partial_sigs.insert(
-                    pubkey,
-                    ecdsa::Signature {
-                        sig,
-                        hash_ty: sig_type,
-                    },
-                );
-            }
+            self.sign_p2wsh(
+                secp,
+                &mut sighash_cache,
+                master_fingerprint,
+                &mut psbt.inputs[i],
+                i,
+            )?;
         }
 
         Ok(psbt)
