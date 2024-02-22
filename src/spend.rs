@@ -763,7 +763,9 @@ pub fn create_spend(
             value: cand.amount,
             script_pubkey: coin_desc.script_pubkey(),
         });
-        psbt_in.non_witness_utxo = tx_getter.get_tx(&cand.outpoint.txid);
+        if !main_descriptor.is_taproot() {
+            psbt_in.non_witness_utxo = tx_getter.get_tx(&cand.outpoint.txid);
+        }
         psbt_ins.push(psbt_in);
     }
 
