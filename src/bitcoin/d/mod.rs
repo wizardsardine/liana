@@ -45,6 +45,9 @@ const BITCOIND_RETRY_LIMIT: usize = 60;
 // The minimum bitcoind version that can be used with lianad.
 const MIN_BITCOIND_VERSION: u64 = 240000;
 
+// The minimum bitcoind version that can be used with lianad and a Taproot descriptor.
+const MIN_TAPROOT_BITCOIND_VERSION: u64 = 260000;
+
 /// An error in the bitcoind interface.
 #[derive(Debug)]
 pub enum BitcoindError {
@@ -129,8 +132,8 @@ impl std::fmt::Display for BitcoindError {
             BitcoindError::InvalidVersion(v) => {
                 write!(
                     f,
-                    "Invalid bitcoind version '{}', minimum supported is '{}'.",
-                    v, MIN_BITCOIND_VERSION
+                    "Invalid bitcoind version '{}', minimum supported is '{}' and minimum supported if using Taproot is '{}'.",
+                    v, MIN_BITCOIND_VERSION, MIN_TAPROOT_BITCOIND_VERSION
                 )
             }
             BitcoindError::NetworkMismatch(conf_net, bitcoind_net) => {
@@ -699,10 +702,14 @@ impl BitcoinD {
     pub fn node_sanity_checks(
         &self,
         config_network: bitcoin::Network,
+        is_taproot: bool,
     ) -> Result<(), BitcoindError> {
         // Check the minimum supported bitcoind version
         let version = self.get_bitcoind_version();
         if version < MIN_BITCOIND_VERSION {
+            return Err(BitcoindError::InvalidVersion(version));
+        }
+        if is_taproot && version < MIN_TAPROOT_BITCOIND_VERSION {
             return Err(BitcoindError::InvalidVersion(version));
         }
 

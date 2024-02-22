@@ -267,6 +267,11 @@ impl LianaDescriptor {
         32 + 4 + 4 + 1 + self.max_sat_vbytes()
     }
 
+    /// Whether this is a Taproot descriptor.
+    pub fn is_taproot(&self) -> bool {
+        matches!(self.multi_desc, descriptor::Descriptor::Tr(..))
+    }
+
     /// Get some information about a PSBT input spending Liana coins.
     /// This analysis assumes that:
     /// - The PSBT input actually spend a Liana coin for this descriptor. Otherwise the analysis will be off.
@@ -276,7 +281,7 @@ impl LianaDescriptor {
         psbt_in: &PsbtIn,
         txin: &bitcoin::TxIn,
     ) -> PartialSpendInfo {
-        let is_taproot = matches!(self.multi_desc, descriptor::Descriptor::Tr(..));
+        let is_taproot = self.is_taproot();
         // Get the origin ECDSA or Schnorr signatures, depending on the descriptor type.
         let pubkeys_signed = (!is_taproot)
             .then(|| {
