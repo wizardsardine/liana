@@ -253,7 +253,7 @@ pub fn create_spend_tx<'a>(
                             .width(Length::Fixed(100.0)),
                     )
                     .push(
-                        if is_valid
+                        if is_valid && !duplicate
                             && (is_self_send
                                 || (total_amount < *balance_available
                                     && Some(&Amount::from_sat(0)) == amount_left))
