@@ -10,7 +10,7 @@ use liana::{
 };
 
 pub struct Signer {
-    curve: secp256k1::Secp256k1<secp256k1::SignOnly>,
+    curve: secp256k1::Secp256k1<secp256k1::All>,
     key: HotSigner,
     pub fingerprint: Fingerprint,
 }
@@ -23,7 +23,7 @@ impl std::fmt::Debug for Signer {
 
 impl Signer {
     pub fn new(key: HotSigner) -> Self {
-        let curve = secp256k1::Secp256k1::signing_only();
+        let curve = secp256k1::Secp256k1::new();
         let fingerprint = key.fingerprint(&curve);
         Self {
             key,

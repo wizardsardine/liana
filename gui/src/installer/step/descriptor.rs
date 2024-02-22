@@ -24,8 +24,9 @@ use liana_ui::{
     widget::Element,
 };
 
-use async_hwi::DeviceKind;
+use async_hwi::{DeviceKind, Version};
 
+use crate::hw;
 use crate::{
     app::{settings::KeySetting, wallet::wallet_name},
     hw::{HardwareWallet, HardwareWallets},
@@ -72,6 +73,7 @@ impl RecoveryPath {
         &self,
         aliases: &HashMap<Fingerprint, String>,
         duplicate_name: &HashSet<Fingerprint>,
+        incompatible_with_tapminiscript: &HashSet<Fingerprint>,
     ) -> Element<message::DefinePath> {
         view::recovery_path_view(
             self.sequence,
@@ -85,6 +87,7 @@ impl RecoveryPath {
                         view::defined_descriptor_key(
                             aliases.get(key).unwrap().to_string(),
                             duplicate_name.contains(key),
+                            incompatible_with_tapminiscript.contains(key),
                         )
                     } else {
                         view::undefined_descriptor_key()
@@ -99,6 +102,7 @@ impl RecoveryPath {
 struct Setup {
     keys: Vec<Key>,
     duplicate_name: HashSet<Fingerprint>,
+    incompatible_with_tapminiscript: HashSet<Fingerprint>,
     spending_keys: Vec<Option<Fingerprint>>,
     spending_threshold: usize,
     recovery_paths: Vec<RecoveryPath>,
@@ -109,6 +113,7 @@ impl Setup {
         Self {
             keys: Vec::new(),
             duplicate_name: HashSet::new(),
+            incompatible_with_tapminiscript: HashSet::new(),
             spending_keys: vec![None],
             spending_threshold: 1,
             recovery_paths: vec![RecoveryPath::new()],
@@ -120,6 +125,7 @@ impl Setup {
             && !self.spending_keys.iter().any(|k| k.is_none())
             && !self.recovery_paths.iter().any(|path| !path.valid())
             && self.duplicate_name.is_empty()
+            && self.incompatible_with_tapminiscript.is_empty()
     }
 
     // Mark as duplicate every defined key that have the same name but not the same fingerprint.
@@ -150,6 +156,33 @@ impl Setup {
         }
     }
 
+    fn check_for_tapminiscript_support(&mut self, must_support_taproot: bool) {
+        self.incompatible_with_tapminiscript = HashSet::new();
+        if must_support_taproot {
+            for key in &self.keys {
+                // check if key is used by a path
+                if !self
+                    .spending_keys
+                    .iter()
+                    .chain(self.recovery_paths.iter().flat_map(|path| &path.keys))
+                    .any(|k| *k == Some(key.fingerprint))
+                {
+                    continue;
+                }
+
+                // device_kind is none only for HotSigner which is compatible.
+                if let Some(device_kind) = key.device_kind.as_ref() {
+                    if !hw::is_compatible_with_tapminiscript(
+                        device_kind,
+                        key.device_version.as_ref(),
+                    ) {
+                        self.incompatible_with_tapminiscript.insert(key.fingerprint);
+                    }
+                }
+            }
+        }
+    }
+
     fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
         let mut map = HashMap::new();
         for key in &self.keys {
@@ -162,6 +195,7 @@ impl Setup {
 pub struct DefineDescriptor {
     network: Network,
     network_valid: bool,
+    use_taproot: bool,
     data_dir: Option<PathBuf>,
     setup: HashMap<Network, Setup>,
 
@@ -175,6 +209,7 @@ impl DefineDescriptor {
     pub fn new(signer: Arc<Mutex<Signer>>) -> Self {
         Self {
             network: Network::Bitcoin,
+            use_taproot: false,
             setup: HashMap::from([(Network::Bitcoin, Setup::new())]),
             data_dir: None,
             network_valid: true,
@@ -204,6 +239,14 @@ impl DefineDescriptor {
             network_datadir.push(self.network.to_string());
             self.network_valid = !network_datadir.exists();
         }
+        self.check_setup()
+    }
+
+    fn check_setup(&mut self) {
+        self.setup_mut().check_for_duplicate();
+        let use_taproot = self.use_taproot;
+        self.setup_mut()
+            .check_for_tapminiscript_support(use_taproot);
     }
 }
 
@@ -221,6 +264,10 @@ impl Step for DefineDescriptor {
                 hws.set_network(network);
                 self.set_network(network)
             }
+            Message::CreateTaprootDescriptor(use_taproot) => {
+                self.use_taproot = use_taproot;
+                self.check_setup();
+            }
             Message::DefineDescriptor(message::DefineDescriptor::AddRecoveryPath) => {
                 self.setup_mut().recovery_paths.push(RecoveryPath::new());
             }
@@ -236,7 +283,7 @@ impl Step for DefineDescriptor {
                     message::DefineKey::Clipboard(key) => {
                         return Command::perform(async move { key }, Message::Clibpboard);
                     }
-                    message::DefineKey::Edited(name, imported_key, kind) => {
+                    message::DefineKey::Edited(name, imported_key, kind, version) => {
                         let fingerprint = imported_key.master_fingerprint();
                         hws.set_alias(fingerprint, name.clone());
                         if let Some(key) = self
@@ -252,17 +299,20 @@ impl Step for DefineDescriptor {
                                 name,
                                 key: imported_key,
                                 device_kind: kind,
+                                device_version: version,
                             });
                         }
 
                         self.setup_mut().spending_keys[i] = Some(fingerprint);
 
                         self.modal = None;
-                        self.setup_mut().check_for_duplicate();
+                        self.check_setup();
                     }
                     message::DefineKey::Edit => {
+                        let use_taproot = self.use_taproot;
                         let setup = self.setup_mut();
                         let modal = EditXpubModal::new(
+                            use_taproot,
                             HashSet::from_iter(setup.spending_keys.iter().filter_map(|key| {
                                 if key.is_some() && key != &setup.spending_keys[i] {
                                     *key
@@ -293,7 +343,7 @@ impl Step for DefineDescriptor {
                         {
                             self.setup_mut().spending_threshold -= 1;
                         }
-                        self.setup_mut().check_for_duplicate();
+                        self.check_setup();
                     }
                 },
                 _ => {}
@@ -327,7 +377,7 @@ impl Step for DefineDescriptor {
                     message::DefineKey::Clipboard(key) => {
                         return Command::perform(async move { key }, Message::Clibpboard);
                     }
-                    message::DefineKey::Edited(name, imported_key, kind) => {
+                    message::DefineKey::Edited(name, imported_key, kind, version) => {
                         let fingerprint = imported_key.master_fingerprint();
                         hws.set_alias(fingerprint, name.clone());
                         if let Some(key) = self
@@ -343,17 +393,20 @@ impl Step for DefineDescriptor {
                                 name,
                                 key: imported_key,
                                 device_kind: kind,
+                                device_version: version,
                             });
                         }
 
                         self.setup_mut().recovery_paths[i].keys[j] = Some(fingerprint);
 
                         self.modal = None;
-                        self.setup_mut().check_for_duplicate();
+                        self.check_setup();
                     }
                     message::DefineKey::Edit => {
+                        let use_taproot = self.use_taproot;
                         let setup = self.setup_mut();
                         let modal = EditXpubModal::new(
+                            use_taproot,
                             HashSet::from_iter(setup.recovery_paths[i].keys.iter().filter_map(
                                 |key| {
                                     if key.is_some() && key != &setup.recovery_paths[i].keys[j] {
@@ -390,7 +443,7 @@ impl Step for DefineDescriptor {
                         {
                             self.setup_mut().recovery_paths.remove(i);
                         }
-                        self.setup_mut().check_for_duplicate();
+                        self.check_setup();
                     }
                 },
             },
@@ -490,7 +543,11 @@ impl Step for DefineDescriptor {
             PathInfo::Multi(self.setup[&self.network].spending_threshold, spending_keys)
         };
 
-        let policy = match LianaPolicy::new(spending_keys, recovery_paths) {
+        let policy = match if self.use_taproot {
+            LianaPolicy::new(spending_keys, recovery_paths)
+        } else {
+            LianaPolicy::new_legacy(spending_keys, recovery_paths)
+        } {
             Ok(policy) => policy,
             Err(e) => {
                 self.error = Some(e.to_string());
@@ -513,6 +570,7 @@ impl Step for DefineDescriptor {
             progress,
             self.network,
             self.network_valid,
+            self.use_taproot,
             self.setup[&self.network]
                 .spending_keys
                 .iter()
@@ -522,6 +580,9 @@ impl Step for DefineDescriptor {
                         view::defined_descriptor_key(
                             aliases.get(key).unwrap().to_string(),
                             self.setup[&self.network].duplicate_name.contains(key),
+                            self.setup[&self.network]
+                                .incompatible_with_tapminiscript
+                                .contains(key),
                         )
                     } else {
                         view::undefined_descriptor_key()
@@ -539,12 +600,14 @@ impl Step for DefineDescriptor {
                 .iter()
                 .enumerate()
                 .map(|(i, path)| {
-                    path.view(&aliases, &self.setup[&self.network].duplicate_name)
-                        .map(move |msg| {
-                            Message::DefineDescriptor(message::DefineDescriptor::RecoveryPath(
-                                i, msg,
-                            ))
-                        })
+                    path.view(
+                        &aliases,
+                        &self.setup[&self.network].duplicate_name,
+                        &self.setup[&self.network].incompatible_with_tapminiscript,
+                    )
+                    .map(move |msg| {
+                        Message::DefineDescriptor(message::DefineDescriptor::RecoveryPath(i, msg))
+                    })
                 })
                 .collect(),
             self.valid(),
@@ -583,6 +646,7 @@ fn new_multixkey_from_xpub(
 #[derive(Clone)]
 pub struct Key {
     pub device_kind: Option<DeviceKind>,
+    pub device_version: Option<Version>,
     pub name: String,
     pub fingerprint: Fingerprint,
     pub key: DescriptorPublicKey,
@@ -675,6 +739,7 @@ impl DescriptorEditModal for EditSequenceModal {
 }
 
 pub struct EditXpubModal {
+    device_must_support_tapminiscript: bool,
     /// None if path is primary path
     path_index: Option<usize>,
     key_index: usize,
@@ -692,12 +757,13 @@ pub struct EditXpubModal {
     keys: Vec<Key>,
     hot_signer: Arc<Mutex<Signer>>,
     hot_signer_fingerprint: Fingerprint,
-    chosen_signer: Option<(Fingerprint, Option<DeviceKind>)>,
+    chosen_signer: Option<(Fingerprint, Option<DeviceKind>, Option<Version>)>,
 }
 
 impl EditXpubModal {
     #[allow(clippy::too_many_arguments)]
     fn new(
+        device_must_support_tapminiscript: bool,
         other_path_keys: HashSet<Fingerprint>,
         key: Option<Fingerprint>,
         path_index: Option<usize>,
@@ -708,6 +774,7 @@ impl EditXpubModal {
     ) -> Self {
         let hot_signer_fingerprint = hot_signer.lock().unwrap().fingerprint();
         Self {
+            device_must_support_tapminiscript,
             other_path_keys,
             form_name: form::Value {
                 valid: true,
@@ -740,7 +807,7 @@ impl EditXpubModal {
             error: None,
             network,
             edit_name: false,
-            chosen_signer: key.map(|k| (k, None)),
+            chosen_signer: key.map(|k| (k, None, None)),
             hot_signer_fingerprint,
             hot_signer,
             duplicate_master_fg: false,
@@ -767,10 +834,11 @@ impl DescriptorEditModal for EditXpubModal {
                     device,
                     fingerprint,
                     kind,
+                    version,
                     ..
                 }) = hws.list.get(i)
                 {
-                    self.chosen_signer = Some((*fingerprint, Some(*kind)));
+                    self.chosen_signer = Some((*fingerprint, Some(*kind), version.clone()));
                     self.processing = true;
                     return Command::perform(
                         get_extended_pubkey(device.clone(), *fingerprint, self.network),
@@ -787,7 +855,7 @@ impl DescriptorEditModal for EditXpubModal {
             }
             Message::UseHotSigner => {
                 let fingerprint = self.hot_signer.lock().unwrap().fingerprint();
-                self.chosen_signer = Some((fingerprint, None));
+                self.chosen_signer = Some((fingerprint, None, None));
                 self.form_xpub.valid = true;
                 if let Some(alias) = self
                     .keys
@@ -882,7 +950,12 @@ impl DescriptorEditModal for EditXpubModal {
                     if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
                         let key_index = self.key_index;
                         let name = self.form_name.value.clone();
-                        let device_kind = self.chosen_signer.and_then(|(_, kind)| kind);
+                        let (device_kind, device_version) =
+                            if let Some((_, kind, version)) = &self.chosen_signer {
+                                (*kind, version.clone())
+                            } else {
+                                (None, None)
+                            };
                         if self.other_path_keys.contains(&key.master_fingerprint()) {
                             self.duplicate_master_fg = true;
                         } else if let Some(path_index) = self.path_index {
@@ -893,7 +966,12 @@ impl DescriptorEditModal for EditXpubModal {
                                         path_index,
                                         message::DefinePath::Key(
                                             key_index,
-                                            message::DefineKey::Edited(name, key, device_kind),
+                                            message::DefineKey::Edited(
+                                                name,
+                                                key,
+                                                device_kind,
+                                                device_version,
+                                            ),
                                         ),
                                     )
                                 },
@@ -906,7 +984,12 @@ impl DescriptorEditModal for EditXpubModal {
                                     message::DefineDescriptor::PrimaryPath(
                                         message::DefinePath::Key(
                                             key_index,
-                                            message::DefineKey::Edited(name, key, device_kind),
+                                            message::DefineKey::Edited(
+                                                name,
+                                                key,
+                                                device_kind,
+                                                device_version,
+                                            ),
                                         ),
                                     )
                                 },
@@ -917,7 +1000,8 @@ impl DescriptorEditModal for EditXpubModal {
                 }
                 message::ImportKeyModal::SelectKey(i) => {
                     if let Some(key) = self.keys.get(i) {
-                        self.chosen_signer = Some((key.fingerprint, key.device_kind));
+                        self.chosen_signer =
+                            Some((key.fingerprint, key.device_kind, key.device_version.clone()));
                         self.form_xpub.value = key.key.to_string();
                         self.form_xpub.valid = true;
                         self.form_name.value = key.name.clone();
@@ -930,7 +1014,7 @@ impl DescriptorEditModal for EditXpubModal {
         Command::none()
     }
     fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
-        let chosen_signer = self.chosen_signer.map(|s| s.0);
+        let chosen_signer = self.chosen_signer.as_ref().map(|s| s.0);
         view::edit_key_modal(
             self.network,
             hws.list
@@ -953,6 +1037,7 @@ impl DescriptorEditModal for EditXpubModal {
                                 && hw.fingerprint() == chosen_signer
                                 && self.form_xpub.valid
                                 && !self.form_xpub.value.is_empty(),
+                            self.device_must_support_tapminiscript,
                         ))
                     }
                 })
@@ -969,13 +1054,15 @@ impl DescriptorEditModal for EditXpubModal {
                             &key.name,
                             &key.fingerprint,
                             key.device_kind.as_ref(),
+                            key.device_version.as_ref(),
                             Some(key.fingerprint) == chosen_signer,
+                            self.device_must_support_tapminiscript,
                         ))
                     }
                 })
                 .collect(),
             self.error.as_ref(),
-            self.chosen_signer.map(|s| s.0),
+            self.chosen_signer.as_ref().map(|s| s.0),
             &self.hot_signer_fingerprint,
             self.keys.iter().find_map(|k| {
                 if k.fingerprint == self.hot_signer_fingerprint {

@@ -51,11 +51,12 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     .padding(10)
 }
 
-pub fn unregistered_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
+pub fn warning_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>>>,
+    warning: &'static str,
 ) -> Container<'a, T> {
     container(
         row(vec![
@@ -75,7 +76,7 @@ pub fn unregistered_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
             .into(),
             column(vec![tooltip::Tooltip::new(
                 icon::warning_icon(),
-                "The wallet descriptor is not registered on the device.\n You can register it in the settings.",
+                warning,
                 tooltip::Position::Bottom,
             )
             .style(theme::Container::Card(theme::Card::Simple))

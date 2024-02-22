@@ -10,7 +10,7 @@ use crate::{
     download::Progress,
     hw::HardwareWalletMessage,
 };
-use async_hwi::DeviceKind;
+use async_hwi::{DeviceKind, Version};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -30,6 +30,7 @@ pub enum Message {
     UseHotSigner,
     Installed(Result<PathBuf, Error>),
     Network(Network),
+    CreateTaprootDescriptor(bool),
     SelectBitcoindType(SelectBitcoindTypeMsg),
     InternalBitcoind(InternalBitcoindMsg),
     DefineBitcoind(DefineBitcoind),
@@ -85,12 +86,18 @@ pub enum DefinePath {
     EditSequence,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum DefineKey {
     Delete,
     Edit,
     Clipboard(String),
-    Edited(String, DescriptorPublicKey, Option<DeviceKind>),
+    Edited(
+        String,
+        DescriptorPublicKey,
+        Option<DeviceKind>,
+        Option<Version>,
+    ),
 }
 
 #[derive(Debug, Clone)]

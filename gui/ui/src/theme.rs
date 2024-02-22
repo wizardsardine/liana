@@ -441,6 +441,7 @@ pub enum PickList {
     #[default]
     Simple,
     Invalid,
+    Secondary,
 }
 impl pick_list::StyleSheet for Theme {
     type Style = PickList;
@@ -464,6 +465,15 @@ impl pick_list::StyleSheet for Theme {
                 border_color: color::RED,
                 border_radius: 25.0,
                 text_color: color::RED,
+            },
+            PickList::Secondary => pick_list::Appearance {
+                placeholder_color: color::GREY_3,
+                handle_color: color::GREY_3,
+                background: color::TRANSPARENT.into(),
+                border_width: 1.0,
+                border_color: color::GREY_3,
+                border_radius: 25.0,
+                text_color: color::GREY_3,
             },
         }
     }
