@@ -170,22 +170,28 @@ impl DefineSpend {
             && self.recipients.iter().all(|r| r.valid())
     }
 
+    fn exists_duplicate(&self) -> bool {
+        for (i, recipient) in self.recipients.iter().enumerate() {
+            if !recipient.address.value.is_empty()
+                && self.recipients[..i]
+                    .iter()
+                    .any(|r| r.address.value == recipient.address.value)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     fn check_valid(&mut self) {
         self.is_valid =
             self.form_values_are_valid() && self.coins.iter().any(|(_, selected)| *selected);
-        self.is_duplicate = false;
-        for (i, recipient) in self.recipients.iter().enumerate() {
-            if !self.is_duplicate && !recipient.address.value.is_empty() {
-                self.is_duplicate = self.recipients[..i]
-                    .iter()
-                    .any(|r| r.address.value == recipient.address.value);
-            }
-        }
+        self.is_duplicate = self.exists_duplicate();
     }
     /// redraft calculates the amount left to select and auto selects coins
     /// if the user did not select a coin manually
     fn redraft(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) {
-        if !self.form_values_are_valid() || self.recipients.is_empty() {
+        if !self.form_values_are_valid() || self.exists_duplicate() || self.recipients.is_empty() {
             return;
         }
 
