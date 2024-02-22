@@ -14,7 +14,7 @@ where
 {
     let string = String::deserialize(deserializer)?;
     T::from_str(&string)
-        .map_err(|e| de::Error::custom(format!("Error parsing descriptor '{}': '{}'", string, e)))
+        .map_err(|e| de::Error::custom(format!("Error parsing '{}': {}", string, e)))
 }
 
 pub fn serialize_to_string<T: std::fmt::Display, S: Serializer>(
