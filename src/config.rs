@@ -319,6 +319,26 @@ mod tests {
         #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
         assert_eq!(toml_str, serialized);
 
+        // A valid, round-tripping, config for a Taproot descriptor.
+        let toml_str = r#"
+            data_dir = '/home/wizardsardine/custom/folder/'
+            daemon = false
+            log_level = 'TRACE'
+            main_descriptor = 'tr([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,and_v(v:pk([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560)))#0mt7e93c'
+
+            [bitcoin_config]
+            network = 'bitcoin'
+            poll_interval_secs = 18
+
+            [bitcoind_config]
+            cookie_path = '/home/user/.bitcoin/.cookie'
+            addr = '127.0.0.1:8332'
+            "#.trim_start().replace("            ", "");
+        let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
+        let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
+        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
+        assert_eq!(toml_str, serialized);
+
         // A valid, round-tripping, config with `auth` instead of `cookie_path`
         let toml_str = r#"
             data_dir = '/home/wizardsardine/custom/folder/'
