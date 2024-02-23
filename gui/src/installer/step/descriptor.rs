@@ -1755,6 +1755,7 @@ mod tests {
                 "My Specter key".to_string(),
                 DescriptorPublicKey::from_str("[4df3f0e3/84'/0'/0']tpubDDRs9DnRUiJc4hq92PSJKhfzQBgHJUrDo7T2i48smsDfLsQcm3Vh7JhuGqJv8zozVkNFin8YPgpmn2NWNmpRaE3GW2pSxbmAzYf2juy7LeW").unwrap(),
                 Some(DeviceKind::Specter),
+                None,
             ),
         );
 
