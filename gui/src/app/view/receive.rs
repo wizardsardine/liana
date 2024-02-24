@@ -37,7 +37,6 @@ use super::message::Message;
 
 pub fn receive<'a>(
     addresses: &'a [bitcoin::Address],
-    qr: Option<&'a qr_code::State>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
@@ -111,22 +110,23 @@ pub fn receive<'a>(
                                             .align_items(Alignment::Center),
                                     )
                                     .push(
-                                        button::primary(None, "Verify on hardware device")
-                                            .on_press(Message::Select(i)),
+                                        Row::new()
+                                            .push(
+                                                button::primary(None, "Verify on hardware device")
+                                                    .on_press(Message::Select(i)),
+                                            )
+                                            .push(Space::with_width(Length::Fill))
+                                            .push(
+                                                button::primary(None, "Show QR Code")
+                                                    .on_press(Message::ShowQrCode(i)),
+                                            ),
                                     )
                                     .spacing(10),
                             )
                             .padding(20),
                         )
                     },
-                ))
-                .push(if let Some(qr) = qr {
-                    Container::new(QRCode::new(qr).cell_size(5))
-                        .padding(10)
-                        .style(theme::Container::QrCode)
-                } else {
-                    Container::new(Space::with_width(Length::Fill)).width(Length::Fixed(200.0))
-                }),
+                )),
         )
         .spacing(20)
         .into()
@@ -212,5 +212,17 @@ pub fn verify_address_modal<'a>(
         ))
         .width(Length::Fill)
         .max_width(750)
+        .into()
+}
+
+pub fn qr_modal(qr: &qr_code::State) -> Element<Message> {
+    Column::new()
+        .push(
+            Container::new(QRCode::new(qr).cell_size(8))
+                .padding(10)
+                .style(theme::Container::QrCode),
+        )
+        .width(Length::Fill)
+        .max_width(400)
         .into()
 }

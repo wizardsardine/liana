@@ -27,6 +27,12 @@ use crate::daemon::{
     Daemon,
 };
 
+pub enum Modal {
+    VerifyAddress(VerifyAddressModal),
+    ShowQrCode(ShowQrCodeModal),
+    None,
+}
+
 #[derive(Debug, Default)]
 pub struct Addresses {
     list: Vec<Address>,
@@ -51,8 +57,7 @@ pub struct ReceivePanel {
     wallet: Arc<Wallet>,
     addresses: Addresses,
     labels_edited: LabelsEdited,
-    qr_code: Option<qr_code::State>,
-    modal: Option<VerifyAddressModal>,
+    modal: Modal,
     warning: Option<Error>,
 }
 
@@ -63,8 +68,7 @@ impl ReceivePanel {
             wallet,
             addresses: Addresses::default(),
             labels_edited: LabelsEdited::default(),
-            qr_code: None,
-            modal: None,
+            modal: Modal::None,
             warning: None,
         }
     }
@@ -78,22 +82,24 @@ impl State for ReceivePanel {
             self.warning.as_ref(),
             view::receive::receive(
                 &self.addresses.list,
-                self.qr_code.as_ref(),
                 &self.addresses.labels,
                 self.labels_edited.cache(),
             ),
         );
-        if let Some(m) = &self.modal {
-            modal::Modal::new(content, m.view())
+
+        match &self.modal {
+            Modal::VerifyAddress(m) => modal::Modal::new(content, m.view())
                 .on_blur(Some(view::Message::Close))
-                .into()
-        } else {
-            content
+                .into(),
+            Modal::ShowQrCode(m) => modal::Modal::new(content, m.view())
+                .on_blur(Some(view::Message::Close))
+                .into(),
+            Modal::None => content,
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        if let Some(modal) = &self.modal {
+        if let Modal::VerifyAddress(modal) = &self.modal {
             modal.subscription()
         } else {
             Subscription::none()
@@ -124,11 +130,6 @@ impl State for ReceivePanel {
                 match res {
                     Ok((address, derivation_index)) => {
                         self.warning = None;
-                        self.qr_code = qr_code::State::new(format!(
-                            "bitcoin:{}?index={}",
-                            address, derivation_index
-                        ))
-                        .ok();
                         self.addresses.list.push(address);
                         self.addresses.derivation_indexes.push(derivation_index);
                     }
@@ -137,11 +138,11 @@ impl State for ReceivePanel {
                 Command::none()
             }
             Message::View(view::Message::Close) => {
-                self.modal = None;
+                self.modal = Modal::None;
                 Command::none()
             }
             Message::View(view::Message::Select(i)) => {
-                self.modal = Some(VerifyAddressModal::new(
+                self.modal = Modal::VerifyAddress(VerifyAddressModal::new(
                     self.data_dir.clone(),
                     self.wallet.clone(),
                     cache.network,
@@ -154,12 +155,20 @@ impl State for ReceivePanel {
                 ));
                 Command::none()
             }
+            Message::View(view::Message::ShowQrCode(i)) => {
+                let address = self.addresses.list.get(i).expect("Must be present").clone();
+                let qr_code = qr_code::State::new(format!("bitcoin:{}?index={}", address, i)).ok();
+                self.modal = Modal::ShowQrCode(ShowQrCodeModal::new(qr_code.unwrap()));
+                Command::none()
+            }
             Message::View(view::Message::Next) => self.load(daemon),
-            _ => self
-                .modal
-                .as_mut()
-                .map(|m| m.update(daemon, cache, message))
-                .unwrap_or_else(Command::none),
+            _ => {
+                if let Modal::VerifyAddress(ref mut m) = self.modal {
+                    m.update(daemon, cache, message)
+                } else {
+                    Command::none()
+                }
+            }
         }
     }
 
@@ -265,6 +274,20 @@ impl VerifyAddressModal {
             }
             _ => Command::none(),
         }
+    }
+}
+
+pub struct ShowQrCodeModal {
+    qr_code: qr_code::State,
+}
+
+impl ShowQrCodeModal {
+    pub fn new(qr: qr_code::State) -> Self {
+        Self { qr_code: qr }
+    }
+
+    fn view(&self) -> Element<view::Message> {
+        view::receive::qr_modal(&self.qr_code)
     }
 }
 
