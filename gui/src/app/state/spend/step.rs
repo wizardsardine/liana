@@ -521,7 +521,9 @@ impl Recipient {
                 }
             }
             view::CreateSpendMessage::RecipientEdited(_, "amount", amount) => {
-                self.amount.value = amount;
+                if let Some(a) = amount_checked(amount) {
+                    self.amount.value = a;
+                }
                 if !self.amount.value.is_empty() {
                     self.amount.valid = self.amount().is_ok();
                 } else {
@@ -625,5 +627,18 @@ impl Step for SaveSpend {
         } else {
             content
         }
+    }
+}
+
+fn amount_checked(input: String) -> Option<String> {
+    match input.split_once('.') {
+        Some((_, decimals)) => {
+            if decimals.len() > 8 {
+                None
+            } else {
+                Some(input.to_string())
+            }
+        }
+        None => Some(input.to_string()),
     }
 }
