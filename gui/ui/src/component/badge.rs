@@ -1,5 +1,6 @@
 use iced::{widget::tooltip, Length};
 
+use crate::util::Collection;
 use crate::{component::text, icon, image, theme, widget::*};
 
 pub struct Badge {
@@ -75,66 +76,88 @@ pub fn coin<T>() -> Container<'static, T> {
 }
 
 pub fn recovery<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(
-        tooltip::Tooltip::new(
-            Container::new(text::p2_regular("  Recovery  "))
-                .padding(10)
-                .style(theme::Container::Pill(theme::Pill::Simple)),
-            "This transaction is using a recovery path",
-            tooltip::Position::Top,
-        )
-        .style(theme::Container::Card(theme::Card::Simple)),
+    badge_pill(
+        "  Recovery  ",
+        "This transaction is using a recovery path",
+        None,
     )
 }
 
 pub fn unconfirmed<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(
-        tooltip::Tooltip::new(
-            Container::new(text::p2_regular("  Unconfirmed  "))
-                .padding(10)
-                .style(theme::Container::Pill(theme::Pill::Simple)),
-            "Do not treat this as a payment until it is confirmed",
-            tooltip::Position::Top,
-        )
-        .style(theme::Container::Card(theme::Card::Simple)),
+    badge_pill(
+        "  Unconfirmed  ",
+        "Do not treat this as a payment until it is confirmed",
+        None,
+    )
+}
+
+pub fn unconfirmed_sized<'a, T: 'a>(width: f32) -> Container<'a, T> {
+    badge_pill(
+        "  Unconfirmed  ",
+        "Do not treat this as a payment until it is confirmed",
+        Some(width),
     )
 }
 
 pub fn batch<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(
-        tooltip::Tooltip::new(
-            Container::new(text::p2_regular("  Batch  "))
-                .padding(10)
-                .style(theme::Container::Pill(theme::Pill::Simple)),
-            "This transaction contains multiple payments",
-            tooltip::Position::Top,
-        )
-        .style(theme::Container::Card(theme::Card::Simple)),
+    badge_pill(
+        "  Batch  ",
+        "This transaction contains multiple payments",
+        None,
     )
 }
 
 pub fn deprecated<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(
-        tooltip::Tooltip::new(
-            Container::new(text::p2_regular("  Deprecated  "))
-                .padding(10)
-                .style(theme::Container::Pill(theme::Pill::Simple)),
-            "This transaction cannot be included in the blockchain anymore.",
-            tooltip::Position::Top,
-        )
-        .style(theme::Container::Card(theme::Card::Simple)),
+    badge_pill(
+        "  Deprecated  ",
+        "This transaction cannot be included in the blockchain anymore.",
+        None,
+    )
+}
+
+pub fn deprecated_sized<'a, T: 'a>(width: f32) -> Container<'a, T> {
+    badge_pill(
+        "  Deprecated  ",
+        "This transaction cannot be included in the blockchain anymore.",
+        Some(width),
     )
 }
 
 pub fn spent<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(
-        tooltip::Tooltip::new(
-            Container::new(text::p2_regular("  Spent  "))
-                .padding(10)
-                .style(theme::Container::Pill(theme::Pill::Simple)),
-            "The transaction was included in the blockchain.",
-            tooltip::Position::Top,
-        )
-        .style(theme::Container::Card(theme::Card::Simple)),
+    badge_pill(
+        "  Spent  ",
+        "The transaction was included in the blockchain.",
+        None,
     )
+}
+
+pub fn spent_sized<'a, T: 'a>(width: f32) -> Container<'a, T> {
+    badge_pill(
+        "  Spent  ",
+        "The transaction was included in the blockchain.",
+        Some(width),
+    )
+}
+
+pub fn badge_pill<'a, T: 'a>(
+    label: &'a str,
+    tooltip: &'a str,
+    width: Option<f32>,
+) -> Container<'a, T> {
+    Container::new({
+        let mut pill: Container<'a, T> = Container::new(
+            Row::new()
+                .push_maybe(width.map(|_| iced::widget::Space::with_width(Length::Fill)))
+                .push(text::p2_regular(label))
+                .push_maybe(width.map(|_| iced::widget::Space::with_width(Length::Fill))),
+        )
+        .padding(10)
+        .style(theme::Container::Pill(theme::Pill::Simple));
+        if let Some(w) = width {
+            pill = pill.width(Length::Fixed(w));
+        }
+
+        tooltip::Tooltip::new(pill, tooltip, tooltip::Position::Top)
+            .style(theme::Container::Card(theme::Card::Simple))
+    })
 }

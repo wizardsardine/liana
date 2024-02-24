@@ -133,16 +133,16 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                         .align_items(Alignment::Center)
                         .width(Length::Fill),
                 )
-                .push_maybe(match tx.status {
-                    SpendStatus::Deprecated => Some(badge::deprecated()),
-                    SpendStatus::Broadcast => Some(badge::unconfirmed()),
-                    SpendStatus::Spent => Some(badge::spent()),
-                    _ => None,
-                })
                 .push_maybe(if tx.is_batch() {
                     Some(badge::batch())
                 } else {
                     None
+                })
+                .push_maybe(match tx.status {
+                    SpendStatus::Deprecated => Some(badge::deprecated_sized(120.0)),
+                    SpendStatus::Broadcast => Some(badge::unconfirmed_sized(120.0)),
+                    SpendStatus::Spent => Some(badge::spent_sized(120.0)),
+                    _ => None,
                 })
                 .push(
                     Column::new()
@@ -153,7 +153,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                             Container::new(p1_regular("Self-transfer"))
                         })
                         .push_maybe(tx.fee_amount.map(|fee| amount_with_size(&fee, P2_SIZE)))
-                        .width(Length::Shrink),
+                        .width(Length::Fixed(140.0)),
                 )
                 .align_items(Alignment::Center)
                 .spacing(20),
