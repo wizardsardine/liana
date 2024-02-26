@@ -32,7 +32,7 @@ use state::{
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
     bitcoind::Bitcoind,
-    daemon::{embedded::EmbeddedDaemon, model::Coin, Daemon},
+    daemon::{embedded::EmbeddedDaemon, Daemon},
 };
 
 use self::state::SettingsState;
@@ -52,22 +52,21 @@ struct Panels {
 impl Panels {
     fn new(
         cache: &Cache,
-        coins: &[Coin],
         wallet: Arc<Wallet>,
         data_dir: PathBuf,
         internal_bitcoind: Option<&Bitcoind>,
     ) -> Panels {
         Self {
             current: Menu::Home,
-            home: Home::new(wallet.clone(), coins),
-            coins: CoinsPanel::new(coins, wallet.main_descriptor.first_timelock_value()),
+            home: Home::new(wallet.clone(), &cache.coins),
+            coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(),
             psbts: PsbtsPanel::new(wallet.clone()),
-            recovery: RecoveryPanel::new(wallet.clone(), &coins, cache.blockheight),
+            recovery: RecoveryPanel::new(wallet.clone(), &cache.coins, cache.blockheight),
             receive: ReceivePanel::new(data_dir.clone(), wallet.clone()),
             create_spend: CreateSpendPanel::new(
                 wallet.clone(),
-                &coins,
+                &cache.coins,
                 cache.blockheight as u32,
                 cache.network,
             ),
@@ -132,7 +131,6 @@ impl App {
     ) -> (App, Command<Message>) {
         let mut panels = Panels::new(
             &cache,
-            &cache.coins,
             wallet.clone(),
             data_dir.clone(),
             internal_bitcoind.as_ref(),
@@ -196,7 +194,7 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
-            time::every(Duration::from_secs(5)).map(|_| Message::Tick),
+            time::every(Duration::from_secs(10)).map(|_| Message::Tick),
             self.panels.current().subscription(),
         ])
     }
@@ -213,29 +211,32 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
-        // Update cache when values are passing by.
-        // State will handle the error case.
-        match &message {
-            Message::Coins(Ok(coins)) => {
-                self.cache.coins = coins.clone();
-            }
-            Message::Info(Ok(info)) => {
-                self.cache.blockheight = info.block_height;
-                self.cache.rescan_progress = info.rescan_progress;
-            }
-            Message::StartRescan(Ok(())) => {
-                self.cache.rescan_progress = Some(0.0);
-            }
-            _ => {}
-        };
-
         match message {
             Message::Tick => {
                 let daemon = self.daemon.clone();
+                let datadir_path = self.cache.datadir_path.clone();
                 Command::perform(
-                    async move { daemon.get_info().map_err(|e| e.into()) },
-                    Message::Info,
+                    async move {
+                        let info = daemon.get_info()?;
+                        // todo: filter coins to only have current coins.
+                        let coins = daemon.list_coins()?;
+                        Ok(Cache {
+                            datadir_path,
+                            coins: coins.coins,
+                            network: info.network,
+                            blockheight: info.block_height,
+                            rescan_progress: info.rescan_progress,
+                        })
+                    },
+                    Message::UpdateCache,
                 )
+            }
+            Message::UpdateCache(res) => {
+                match res {
+                    Ok(cache) => self.cache = cache,
+                    Err(e) => tracing::error!("Failed to update cache: {}", e),
+                }
+                Command::none()
             }
             Message::LoadDaemonConfig(cfg) => {
                 let path = self.config.daemon_config_path.clone().expect(
