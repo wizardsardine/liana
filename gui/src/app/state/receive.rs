@@ -180,7 +180,7 @@ impl State for ReceivePanel {
         }
     }
 
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         // Fill at least with one address, user will then use the generate button.
         if self.addresses.is_empty() {
             let daemon = daemon.clone();

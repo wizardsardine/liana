@@ -180,7 +180,7 @@ impl State for WalletSettingsState {
         }
     }
 
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         Command::perform(
             async move { daemon.get_info().map_err(|e| e.into()) },
             Message::Info,

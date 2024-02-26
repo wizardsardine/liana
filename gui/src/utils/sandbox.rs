@@ -38,7 +38,7 @@ impl<S: State + Send + 'static> Sandbox<S> {
     }
 
     pub async fn load(mut self, daemon: Arc<dyn Daemon + Sync + Send>, cache: &Cache) -> Self {
-        let cmd = self.state.load(daemon.clone());
+        let cmd = self.state.reload(daemon.clone());
         for action in cmd.actions() {
             if let Action::Future(f) = action {
                 let msg = f.await;

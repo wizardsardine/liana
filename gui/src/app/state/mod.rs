@@ -44,7 +44,7 @@ pub trait State {
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
     }
-    fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(&mut self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         Command::none()
     }
 }
@@ -211,8 +211,7 @@ impl State for Home {
                 };
             }
             Message::View(view::Message::Reload) => {
-                self.selected_event = None;
-                return self.load(daemon);
+                return self.reload(daemon);
             }
             Message::View(view::Message::Close) => {
                 self.selected_event = None;
@@ -263,7 +262,8 @@ impl State for Home {
         Command::none()
     }
 
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+        self.selected_event = None;
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
         let daemon3 = daemon.clone();

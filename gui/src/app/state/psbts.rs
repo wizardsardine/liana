@@ -79,15 +79,8 @@ impl State for PsbtsPanel {
         message: Message,
     ) -> Command<Message> {
         match message {
-            Message::View(view::Message::Reload) => {
-                if self.selected_tx.is_some() {
-                    self.selected_tx = None;
-                    return self.load(daemon);
-                }
-                if self.import_tx.is_some() {
-                    self.import_tx = None;
-                    return self.load(daemon);
-                }
+            Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
+                return self.reload(daemon);
             }
             Message::SpendTxs(res) => match res {
                 Err(e) => self.warning = Some(e),
@@ -99,16 +92,6 @@ impl State for PsbtsPanel {
             Message::View(view::Message::ImportSpend(view::ImportSpendMessage::Import)) => {
                 if self.import_tx.is_none() {
                     self.import_tx = Some(ImportPsbtModal::new());
-                }
-            }
-            Message::View(view::Message::Close) => {
-                if self.selected_tx.is_some() {
-                    self.selected_tx = None;
-                    return self.load(daemon);
-                }
-                if self.import_tx.is_some() {
-                    self.import_tx = None;
-                    return self.load(daemon);
                 }
             }
             Message::View(view::Message::Select(i)) => {
@@ -140,7 +123,9 @@ impl State for PsbtsPanel {
         }
     }
 
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+        self.selected_tx = None;
+        self.import_tx = None;
         let daemon = daemon.clone();
         Command::perform(
             async move { daemon.list_spend_transactions(None).map_err(|e| e.into()) },

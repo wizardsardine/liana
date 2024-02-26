@@ -129,13 +129,13 @@ impl App {
         data_dir: PathBuf,
         internal_bitcoind: Option<Bitcoind>,
     ) -> (App, Command<Message>) {
-        let panels = Panels::new(
+        let mut panels = Panels::new(
             &cache,
             wallet.clone(),
             data_dir.clone(),
             internal_bitcoind.as_ref(),
         );
-        let cmd = panels.home.load(daemon.clone());
+        let cmd = panels.home.reload(daemon.clone());
         (
             Self {
                 panels,
@@ -180,7 +180,7 @@ impl App {
             _ => {}
         };
         self.panels.current = menu;
-        self.panels.current().load(self.daemon.clone())
+        self.panels.current_mut().reload(self.daemon.clone())
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
