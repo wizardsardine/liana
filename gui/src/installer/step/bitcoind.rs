@@ -614,6 +614,7 @@ impl Step for InternalBitcoindStep {
                                     rpc_port,
                                     p2p_port,
                                     prune: PRUNE_DEFAULT,
+                                    rpc_auth: None,
                                 }
                             }
                             (Ok(_), Err(e)) | (Err(e), Ok(_)) => {

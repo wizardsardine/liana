@@ -1,6 +1,9 @@
+use base64::Engine;
+use bitcoin_hashes::{sha256, Hash, HashEngine, Hmac, HmacEngine};
 use liana::{
     config::{BitcoindConfig, BitcoindRpcAuth},
     miniscript::bitcoin::{self, Network},
+    random::{random_bytes, RandomnessError},
 };
 use liana_ui::component::form;
 use std::collections::BTreeMap;
@@ -121,12 +124,89 @@ pub fn bitcoind_network_dir(network: &Network) -> Option<String> {
     Some(dir.to_string())
 }
 
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum RpcAuthParseError {
+    MissingColon,
+    MissingDollarSign,
+}
+
+impl std::fmt::Display for RpcAuthParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::MissingColon => write!(
+                f,
+                "RPC auth string should contain colon between user and salt."
+            ),
+            Self::MissingDollarSign => write!(
+                f,
+                "RPC auth string should contain dollar sign between salt and password HMAC."
+            ),
+        }
+    }
+}
+
+/// Represents RPC auth credentials as stored in bitcoin.conf.
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub struct RpcAuth {
+    pub user: String,
+    salt: String,
+    password_hmac: String,
+}
+
+impl RpcAuth {
+    /// Returns a new `RpcAuth` object for the given `user` with a random salt and password.
+    /// This random password is also returned.
+    pub fn new(user: &str) -> Result<(Self, String), RandomnessError> {
+        // RPC auth generation follows approach in
+        // https://github.com/bitcoin/bitcoin/blob/master/share/rpcauth/rpcauth.py
+        let password =
+            random_bytes().map(|bytes| base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(bytes))?;
+        // As per the Python script, only use 16 bytes for the salt.
+        let salt = random_bytes().map(|bytes| hex::encode(&bytes[..16]))?;
+        let mut engine = HmacEngine::<sha256::Hash>::new(salt.as_bytes());
+        engine.input(password.as_bytes());
+        let password_hmac = Hmac::<sha256::Hash>::from_engine(engine);
+
+        Ok((
+            Self {
+                user: user.to_string(),
+                salt,
+                password_hmac: hex::encode(&password_hmac[..]),
+            },
+            password,
+        ))
+    }
+}
+
+impl std::fmt::Display for RpcAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}:{}${}", self.user, self.salt, self.password_hmac)
+    }
+}
+
+impl std::str::FromStr for RpcAuth {
+    type Err = RpcAuthParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (user, salt_pw) = s.split_once(':').ok_or(RpcAuthParseError::MissingColon)?;
+        let (salt, pw) = salt_pw
+            .split_once('$')
+            .ok_or(RpcAuthParseError::MissingDollarSign)?;
+        Ok(Self {
+            user: user.to_string(),
+            salt: salt.to_string(),
+            password_hmac: pw.to_string(),
+        })
+    }
+}
+
 /// Represents section for a single network in `bitcoin.conf` file.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct InternalBitcoindNetworkConfig {
     pub rpc_port: u16,
     pub p2p_port: u16,
     pub prune: u32,
+    pub rpc_auth: Option<RpcAuth>,
 }
 
 /// Represents the `bitcoin.conf` file to be used by internal bitcoind.
@@ -183,7 +263,7 @@ impl InternalBitcoindConfig {
             if let Some(sec) = maybe_sec {
                 let network = Network::from_core_arg(sec)
                     .map_err(|e| InternalBitcoindConfigError::UnexpectedSection(e.to_string()))?;
-                if prop.len() > 3 {
+                if prop.len() > 4 {
                     return Err(InternalBitcoindConfigError::TooManyElements(
                         sec.to_string(),
                     ));
@@ -203,12 +283,22 @@ impl InternalBitcoindConfig {
                     .ok_or_else(|| InternalBitcoindConfigError::KeyNotFound("prune".to_string()))?
                     .parse::<u32>()
                     .map_err(|e| InternalBitcoindConfigError::CouldNotParseValue(e.to_string()))?;
+                let rpc_auth = prop
+                    .get("rpcauth")
+                    .map(|v| {
+                        v.parse::<RpcAuth>().map_err(|e| {
+                            InternalBitcoindConfigError::CouldNotParseValue(e.to_string())
+                        })
+                    })
+                    .transpose()?;
+
                 networks.insert(
                     network,
                     InternalBitcoindNetworkConfig {
                         rpc_port,
                         p2p_port,
                         prune,
+                        rpc_auth,
                     },
                 );
             } else if !prop.is_empty() {
@@ -239,6 +329,11 @@ impl InternalBitcoindConfig {
                 .set("rpcport", network_conf.rpc_port.to_string())
                 .set("port", network_conf.p2p_port.to_string())
                 .set("prune", network_conf.prune.to_string());
+            if let Some(rpc_auth) = network_conf.rpc_auth.as_ref() {
+                conf_ini
+                    .with_section(Some(network.to_core_arg()))
+                    .set("rpcauth", rpc_auth.to_string());
+            }
         }
         conf_ini
     }
@@ -477,17 +572,24 @@ mod tests {
             .with_section(Some("regtest"))
             .set("rpcport", "34067")
             .set("port", "45175")
-            .set("prune", "2043");
+            .set("prune", "2043")
+            .set("rpcauth", "my_user:my_salt$my_pw_hmac");
         let conf = InternalBitcoindConfig::from_ini(&conf_ini).expect("Loading conf from ini");
         let main_conf = InternalBitcoindNetworkConfig {
             rpc_port: 43345,
             p2p_port: 42355,
             prune: 15246,
+            rpc_auth: None,
         };
         let regtest_conf = InternalBitcoindNetworkConfig {
             rpc_port: 34067,
             p2p_port: 45175,
             prune: 2043,
+            rpc_auth: Some(RpcAuth {
+                user: "my_user".to_string(),
+                salt: "my_salt".to_string(),
+                password_hmac: "my_pw_hmac".to_string(),
+            }),
         };
         assert_eq!(conf.networks.len(), 2);
         assert_eq!(
@@ -506,18 +608,22 @@ mod tests {
         conf.networks.insert(Network::Regtest, regtest_conf);
         for (sec, prop) in &conf.to_ini() {
             if let Some(sec) = sec {
-                assert_eq!(prop.len(), 3);
                 let rpc_port = prop.get("rpcport").expect("rpcport");
                 let p2p_port = prop.get("port").expect("port");
                 let prune = prop.get("prune").expect("prune");
+                let rpc_auth = prop.get("rpcauth");
                 if sec == "main" {
+                    assert_eq!(prop.len(), 3);
                     assert_eq!(rpc_port, "43345");
                     assert_eq!(p2p_port, "42355");
                     assert_eq!(prune, "15246");
+                    assert!(rpc_auth.is_none());
                 } else if sec == "regtest" {
+                    assert_eq!(prop.len(), 4);
                     assert_eq!(rpc_port, "34067");
                     assert_eq!(p2p_port, "45175");
                     assert_eq!(prune, "2043");
+                    assert_eq!(rpc_auth, Some("my_user:my_salt$my_pw_hmac"));
                 } else {
                     panic!("Unexpected section");
                 }

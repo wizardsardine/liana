@@ -64,7 +64,9 @@ impl Daemon for EmbeddedDaemon {
     }
 
     fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
-        Ok(self.control()?.list_spend())
+        self.control()?
+            .list_spend(None)
+            .map_err(|e| DaemonError::Unexpected(e.to_string()))
     }
 
     fn list_confirmed_txs(
