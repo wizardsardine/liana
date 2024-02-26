@@ -24,10 +24,10 @@ pub struct PsbtsPanel {
 }
 
 impl PsbtsPanel {
-    pub fn new(wallet: Arc<Wallet>, spend_txs: &[SpendTx]) -> Self {
+    pub fn new(wallet: Arc<Wallet>) -> Self {
         Self {
             wallet,
-            spend_txs: spend_txs.to_vec(),
+            spend_txs: Vec::new(),
             warning: None,
             selected_tx: None,
             import_tx: None,

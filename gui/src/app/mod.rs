@@ -32,7 +32,7 @@ use state::{
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
     bitcoind::Bitcoind,
-    daemon::{embedded::EmbeddedDaemon, Daemon},
+    daemon::{embedded::EmbeddedDaemon, model::Coin, Daemon},
 };
 
 use self::state::SettingsState;
@@ -52,21 +52,22 @@ struct Panels {
 impl Panels {
     fn new(
         cache: &Cache,
+        coins: &[Coin],
         wallet: Arc<Wallet>,
         data_dir: PathBuf,
         internal_bitcoind: Option<&Bitcoind>,
     ) -> Panels {
         Self {
             current: Menu::Home,
-            home: Home::new(wallet.clone(), &cache.coins),
-            coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
+            home: Home::new(wallet.clone(), coins),
+            coins: CoinsPanel::new(coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(),
-            psbts: PsbtsPanel::new(wallet.clone(), &cache.spend_txs),
-            recovery: RecoveryPanel::new(wallet.clone(), &cache.coins, cache.blockheight),
+            psbts: PsbtsPanel::new(wallet.clone()),
+            recovery: RecoveryPanel::new(wallet.clone(), &coins, cache.blockheight),
             receive: ReceivePanel::new(data_dir.clone(), wallet.clone()),
             create_spend: CreateSpendPanel::new(
                 wallet.clone(),
-                &cache.coins,
+                &coins,
                 cache.blockheight as u32,
                 cache.network,
             ),
@@ -131,6 +132,7 @@ impl App {
     ) -> (App, Command<Message>) {
         let mut panels = Panels::new(
             &cache,
+            &cache.coins,
             wallet.clone(),
             data_dir.clone(),
             internal_bitcoind.as_ref(),
@@ -155,17 +157,15 @@ impl App {
             menu::Menu::PsbtPreSelected(txid) => {
                 // Get preselected spend from DB in case it's not yet in the cache.
                 // We only need this single spend as we will go straight to its view and not show the PSBTs list.
-                // In case of any error loading the spend or if it doesn't exist, fall back to using the cache
-                // and load PSBTs list in usual way.
-                self.panels.psbts = match self
+                // In case of any error loading the spend or if it doesn't exist, load PSBTs list in usual way.
+                if let Ok(Some(spend_tx)) = self
                     .daemon
                     .list_spend_transactions(Some(&[*txid]))
                     .map(|txs| txs.first().cloned())
                 {
-                    Ok(Some(spend_tx)) => {
-                        PsbtsPanel::new_preselected(self.wallet.clone(), spend_tx)
-                    }
-                    _ => PsbtsPanel::new(self.wallet.clone(), &self.cache.spend_txs),
+                    self.panels.psbts = PsbtsPanel::new_preselected(self.wallet.clone(), spend_tx);
+                    self.panels.current = menu;
+                    return Command::none();
                 };
             }
             menu::Menu::RefreshCoins(preselected) => {
@@ -218,9 +218,6 @@ impl App {
         match &message {
             Message::Coins(Ok(coins)) => {
                 self.cache.coins = coins.clone();
-            }
-            Message::SpendTxs(Ok(txs)) => {
-                self.cache.spend_txs = txs.clone();
             }
             Message::Info(Ok(info)) => {
                 self.cache.blockheight = info.block_height;
