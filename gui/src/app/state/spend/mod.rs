@@ -63,6 +63,10 @@ impl CreateSpendPanel {
             ],
         }
     }
+
+    pub fn is_first_step(&self) -> bool {
+        self.current == 0
+    }
 }
 
 impl State for CreateSpendPanel {

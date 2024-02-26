@@ -177,6 +177,17 @@ impl App {
                     self.cache.network,
                 );
             }
+            menu::Menu::CreateSpendTx => {
+                // redo the process of spending only if user want to start a new one.
+                if !self.panels.create_spend.is_first_step() {
+                    self.panels.create_spend = CreateSpendPanel::new(
+                        self.wallet.clone(),
+                        &self.cache.coins,
+                        self.cache.blockheight as u32,
+                        self.cache.network,
+                    );
+                }
+            }
             _ => {}
         };
         self.panels.current = menu;
