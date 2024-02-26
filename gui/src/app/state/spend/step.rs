@@ -2,6 +2,7 @@ use std::{cmp::Ordering, collections::HashMap, str::FromStr, sync::Arc};
 
 use iced::{Command, Subscription};
 use liana::{
+    commands::ListCoinsEntry,
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
         address, psbt::Psbt, secp256k1, Address, Amount, Denomination, Network, OutPoint,
@@ -398,6 +399,19 @@ impl Step for DefineSpend {
                     view::CreateSpendMessage::BatchLabelEdited(label) => {
                         self.batch_label.valid = label.len() <= 100;
                         self.batch_label.value = label;
+                    }
+                    view::CreateSpendMessage::Clear => {
+                        *self = Self::new(
+                            self.network,
+                            self.descriptor.clone(),
+                            self.coins
+                                .iter()
+                                .map(|(c, _)| c.clone())
+                                .collect::<Vec<ListCoinsEntry>>()
+                                .as_slice(),
+                            self.timelock,
+                        );
+                        return Command::none();
                     }
                     view::CreateSpendMessage::AddRecipient => {
                         self.recipients.push(Recipient::default());

@@ -98,7 +98,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let spend_button = if *menu == Menu::CreateSpendTx {
         row!(
             button::menu_active(Some(send_icon()), "Send")
-                .on_press(Message::Menu(Menu::CreateSpendTx))
+                .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_green_bar()
         )

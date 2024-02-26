@@ -294,7 +294,7 @@ pub fn create_spend_tx<'a>(
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::primary(None, "Clear")
-                            .on_press(Message::Menu(Menu::CreateSpendTx))
+                            .on_press(Message::CreateSpend(CreateSpendMessage::Clear))
                             .width(Length::Fixed(100.0)),
                     )
                     .push(

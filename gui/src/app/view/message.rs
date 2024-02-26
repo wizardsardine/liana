@@ -38,6 +38,7 @@ pub enum CreateSpendMessage {
     SelectPath(usize),
     Generate,
     SendMaxToRecipient(usize),
+    Clear,
 }
 
 #[derive(Debug, Clone)]
