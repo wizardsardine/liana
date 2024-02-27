@@ -114,7 +114,7 @@ fn sanity_check_psbt(
     // index set for signing devices to recognize them as ours.
     let mut value_in = 0;
     for psbtin in psbt.inputs.iter() {
-        if psbtin.bip32_derivation.is_empty() {
+        if psbtin.bip32_derivation.is_empty() && psbtin.tap_key_origins.is_empty() {
             return Err(SpendCreationError::SanityCheckFailure(psbt.clone()));
         }
         value_in += psbtin
