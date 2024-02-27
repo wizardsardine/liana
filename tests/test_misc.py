@@ -14,6 +14,7 @@ from test_framework.utils import (
     COIN,
     TIMEOUT,
     IS_NOT_BITCOIND_24,
+    USE_TAPROOT,
 )
 
 from threading import Thread
@@ -66,9 +67,7 @@ def receive_and_send(lianad, bitcoind):
     psbt = PSBT.from_base64(res["psbt"])
     txid = psbt.tx.txid().hex()
     # If we sign only with two keys it won't be able to finalize
-    with pytest.raises(
-        RpcError, match="Miniscript Error: could not satisfy at index 0"
-    ):
+    with pytest.raises(RpcError, match="ould not satisfy.* at index 0"):
         signed_psbt = lianad.signer.sign_psbt(psbt, range(2))
         lianad.rpc.updatespend(signed_psbt.to_base64())
         lianad.rpc.broadcastspend(txid)
@@ -242,7 +241,7 @@ def test_coinbase_deposit(lianad, bitcoind):
 
 
 @pytest.mark.skipif(
-    OLD_LIANAD_PATH is None, reason="Need the old lianad binary to create the datadir."
+    OLD_LIANAD_PATH is None or USE_TAPROOT, reason="Need the old lianad binary to create the datadir."
 )
 def test_migration(lianad_multisig, bitcoind):
     """Test we can start a newer lianad on a datadir created by an older lianad."""

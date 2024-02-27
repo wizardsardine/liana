@@ -24,6 +24,7 @@ DEFAULT_BITCOIND_PATH = "bitcoind"
 BITCOIND_PATH = os.getenv("BITCOIND_PATH", DEFAULT_BITCOIND_PATH)
 OLD_LIANAD_PATH = os.getenv("OLD_LIANAD_PATH", None)
 IS_NOT_BITCOIND_24 = bool(int(os.getenv("IS_NOT_BITCOIND_24", True)))
+USE_TAPROOT = bool(int(os.getenv("USE_TAPROOT", False)))  # TODO: switch to True in a couple releases.
 
 
 COIN = 10**8
@@ -71,6 +72,21 @@ def get_txid(hex_tx):
     return tx.txid().hex()
 
 
+def sign_and_broadcast(lianad, bitcoind, psbt, recovery=False):
+    """Sign a PSBT, finalize it, extract the transaction and broadcast it."""
+    signed_psbt = lianad.signer.sign_psbt(psbt, recovery)
+    # Under Taproot i didn't bother implementing a finalizer in the test suite.
+    if USE_TAPROOT:
+        lianad.rpc.updatespend(signed_psbt.to_base64())
+        txid = signed_psbt.tx.txid().hex()
+        lianad.rpc.broadcastspend(txid)
+        lianad.rpc.delspendtx(txid)
+        return txid
+    finalized_psbt = lianad.finalize_psbt(signed_psbt)
+    tx = finalized_psbt.tx.serialize_with_witness().hex()
+    return bitcoind.rpc.sendrawtransaction(tx)
+
+
 def spend_coins(lianad, bitcoind, coins):
     """Spend these coins, no matter how.
     This will create a single transaction spending them all at once at the minimum
@@ -84,21 +100,8 @@ def spend_coins(lianad, bitcoind, coins):
         bitcoind.rpc.getnewaddress(): total_value - 11 - 31 - 300 * len(coins)
     }
     res = lianad.rpc.createspend(destinations, [c["outpoint"] for c in coins], 1)
-
-    signed_psbt = lianad.signer.sign_psbt(PSBT.from_base64(res["psbt"]))
-    finalized_psbt = lianad.finalize_psbt(signed_psbt)
-    tx = finalized_psbt.tx.serialize_with_witness().hex()
-    bitcoind.rpc.sendrawtransaction(tx)
-
-    return tx
-
-
-def sign_and_broadcast(lianad, bitcoind, psbt, recovery=False):
-    """Sign a PSBT, finalize it, extract the transaction and broadcast it."""
-    signed_psbt = lianad.signer.sign_psbt(psbt, recovery)
-    finalized_psbt = lianad.finalize_psbt(signed_psbt)
-    tx = finalized_psbt.tx.serialize_with_witness().hex()
-    return bitcoind.rpc.sendrawtransaction(tx)
+    txid = sign_and_broadcast(lianad, bitcoind, PSBT.from_base64(res["psbt"]))
+    return bitcoind.rpc.getrawtransaction(txid)
 
 
 def sign_and_broadcast_psbt(lianad, psbt):

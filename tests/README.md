@@ -44,6 +44,16 @@ From the root of the repository:
 pytest tests/
 ```
 
+For running the tests under Taproot a `bitcoind` version 26.0 or superior must be used. It can be
+pointed to using the `BITCOIND_PATH` variable. For now, one must also compile the `taproot_signer`
+Rust program:
+```
+(cd tests/tools/taproot_signer && cargo build --release)
+```
+
+Then the test suite can be run by using Taproot descriptors instead of P2WSH descriptors by setting
+the `USE_TAPROOT` environment variable to `1`.
+
 ### Tips and tricks
 #### Logging
 

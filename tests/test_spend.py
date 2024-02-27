@@ -1,6 +1,6 @@
 from fixtures import *
 from test_framework.serializations import PSBT, uint256_from_str
-from test_framework.utils import sign_and_broadcast_psbt, wait_for, COIN, RpcError
+from test_framework.utils import sign_and_broadcast_psbt, wait_for, COIN, RpcError, USE_TAPROOT
 
 
 def test_spend_change(lianad, bitcoind):
@@ -121,11 +121,12 @@ def test_coin_marked_spent(lianad, bitcoind):
     res = lianad.rpc.createspend(destinations, [outpoint], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
+    change_amount = 840 if USE_TAPROOT else 830
     assert len(psbt.o) == 1
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == "Change amount of 830 sats added to fee as it was too small to create a transaction output."
+        == f"Change amount of {change_amount} sats added to fee as it was too small to create a transaction output."
     )
 
     # Spend the third coin to an address of ours, no change
@@ -137,11 +138,12 @@ def test_coin_marked_spent(lianad, bitcoind):
     res = lianad.rpc.createspend(destinations, [outpoint_3], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
+    change_amount = 828 if USE_TAPROOT else 818
     assert len(psbt.o) == 1
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == "Change amount of 818 sats added to fee as it was too small to create a transaction output."
+        == f"Change amount of {change_amount} sats added to fee as it was too small to create a transaction output."
     )
 
     # Spend the fourth coin to an address of ours, with change
@@ -223,7 +225,8 @@ def test_send_to_self(lianad, bitcoind):
     assert len(spend_psbt.o) == len(spend_psbt.tx.vout) == 1
 
     # Note they may ask for an impossible send-to-self. In this case we'll report missing amount.
-    assert "missing" in lianad.rpc.createspend({}, outpoints, 40500)
+    huge_feerate = 50_000 if USE_TAPROOT else 40_500
+    assert "missing" in lianad.rpc.createspend({}, outpoints, huge_feerate)
 
     # Sign and broadcast the send-to-self transaction created above.
     signed_psbt = lianad.signer.sign_psbt(spend_psbt)
@@ -237,7 +240,12 @@ def test_send_to_self(lianad, bitcoind):
     # FIXME: a 15% increase is huge.
     res = bitcoind.rpc.getmempoolentry(spend_txid)
     spend_feerate = int(res["fees"]["base"] * COIN / res["vsize"])
-    assert specified_feerate <= spend_feerate <= int(specified_feerate * 115 / 100)
+    if not USE_TAPROOT:
+        assert specified_feerate <= spend_feerate <= int(specified_feerate * 115 / 100)
+    else:
+        # FIXME: under Taproot we should not consider the max feerate of all leaves if there
+        # is a spendable internal key.
+        assert specified_feerate <= spend_feerate <= int(specified_feerate * 125 / 100)
 
     # We should by now only have one coin.
     bitcoind.generate_block(1, wait_for_mempool=spend_txid)
