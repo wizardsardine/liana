@@ -41,7 +41,9 @@ impl fmt::Display for DerivedPublicKey {
         for byte in fingerprint.as_bytes().iter() {
             write!(f, "{:02x}", byte)?;
         }
-        write!(f, "/{}", deriv_path)?;
+        for child in deriv_path {
+            write!(f, "/{}", child)?;
+        }
         write!(f, "]{}", self.key)
     }
 }
@@ -78,7 +80,10 @@ impl str::FromStr for DerivedPublicKey {
         }
         let fingerprint = bip32::Fingerprint::from_str(&fg_deriv[..8])
             .map_err(|_| DescKeyError::DerivedKeyParsing)?;
-        let deriv_path = bip32::DerivationPath::from_str(&fg_deriv[9..])
+        let deriv_path = fg_deriv[9..]
+            .split('/')
+            .map(bip32::ChildNumber::from_str)
+            .collect::<Result<bip32::DerivationPath, _>>()
             .map_err(|_| DescKeyError::DerivedKeyParsing)?;
         if deriv_path.into_iter().any(bip32::ChildNumber::is_hardened) {
             return Err(DescKeyError::DerivedKeyParsing);
@@ -132,5 +137,19 @@ impl ToPublicKey for DerivedPublicKey {
 
     fn to_hash160(hash: &hash160::Hash) -> hash160::Hash {
         *hash
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn derived_pubkey_roundtrip() {
+        let der_pub_str =
+            "[7c461e5d/0/42]03cd3dc23adaab61731285f8f7bf2f85150bb7c0a379aea48fad5bc82c35e771a2";
+        let der_pub = DerivedPublicKey::from_str(der_pub_str).unwrap();
+        assert_eq!(der_pub.to_string(), der_pub_str);
     }
 }
