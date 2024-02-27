@@ -33,6 +33,7 @@ use crate::{
 pub fn spend_view<'a>(
     cache: &'a Cache,
     tx: &'a SpendTx,
+    spend_warnings: &'a Vec<String>,
     saved: bool,
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
@@ -48,6 +49,21 @@ pub fn spend_view<'a>(
             .spacing(20)
             .push(Container::new(h3("Send")).width(Length::Fill))
             .push(psbt::spend_header(tx, labels_editing))
+            .push_maybe(if spend_warnings.is_empty() || saved {
+                None
+            } else {
+                Some(spend_warnings.iter().fold(
+                    Column::new().padding(15).spacing(5),
+                    |col, warning| {
+                        col.push(
+                            Row::new()
+                                .spacing(5)
+                                .push(icon::warning_icon().style(color::ORANGE))
+                                .push(text(warning).style(color::ORANGE)),
+                        )
+                    },
+                ))
+            })
             .push(psbt::spend_overview_view(tx, desc_info, key_aliases))
             .push(
                 Column::new()

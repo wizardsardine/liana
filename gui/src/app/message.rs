@@ -29,7 +29,7 @@ pub enum Message {
     Coins(Result<Vec<Coin>, Error>),
     Labels(Result<HashMap<String, String>, Error>),
     SpendTxs(Result<Vec<SpendTx>, Error>),
-    Psbt(Result<Psbt, Error>),
+    Psbt(Result<(Psbt, Vec<String>), Error>),
     RbfPsbt(Result<Txid, Error>),
     Recovery(Result<SpendTx, Error>),
     Signed(Fingerprint, Result<Psbt, Error>),
