@@ -13,7 +13,7 @@ from test_framework.utils import (
     LIANAD_PATH,
     COIN,
     TIMEOUT,
-    IS_BITCOIND_25,
+    IS_NOT_BITCOIND_24,
 )
 
 from threading import Thread
@@ -275,7 +275,7 @@ def test_migration(lianad_multisig, bitcoind):
 
 
 @pytest.mark.skipif(
-    not IS_BITCOIND_25, reason="Need 'generateblock' with 'submit=False'"
+    not IS_NOT_BITCOIND_24, reason="Need 'generateblock' with 'submit=False'"
 )
 def test_bitcoind_submit_block(bitcoind):
     block_count = bitcoind.rpc.getblockcount()
@@ -297,7 +297,7 @@ def bitcoind_wait_new_block(bitcoind):
 
 
 @pytest.mark.skipif(
-    not IS_BITCOIND_25, reason="Need 'generateblock' with 'submit=False'"
+    not IS_NOT_BITCOIND_24, reason="Need 'generateblock' with 'submit=False'"
 )
 def test_retry_on_workqueue_exceeded(lianad, bitcoind, executor):
     """Make sure we retry requests to bitcoind if it is temporarily overloaded."""
