@@ -606,7 +606,10 @@ mod tests {
         let mut conf = InternalBitcoindConfig::new();
         conf.networks.insert(Network::Bitcoin, main_conf);
         conf.networks.insert(Network::Regtest, regtest_conf);
-        for (sec, prop) in &conf.to_ini() {
+        conf_ini = conf.to_ini();
+        assert_eq!(conf_ini.len(), 3); // 2 network sections plus the empty general section
+        assert!(conf_ini.general_section().is_empty());
+        for (sec, prop) in &conf_ini {
             if let Some(sec) = sec {
                 let rpc_port = prop.get("rpcport").expect("rpcport");
                 let p2p_port = prop.get("port").expect("port");
