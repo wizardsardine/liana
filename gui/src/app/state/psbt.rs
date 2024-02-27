@@ -574,6 +574,12 @@ fn merge_signatures(psbt: &mut Psbt, signed_psbt: &Psbt) {
         psbtin
             .partial_sigs
             .extend(&mut signed_psbtin.partial_sigs.iter());
+        psbtin
+            .tap_script_sigs
+            .extend(&mut signed_psbtin.tap_script_sigs.iter());
+        if let Some(sig) = signed_psbtin.tap_key_sig {
+            psbtin.tap_key_sig = Some(sig);
+        }
     }
 }
 
