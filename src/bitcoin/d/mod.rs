@@ -754,13 +754,27 @@ impl BitcoinD {
         // Check our main descriptor is imported in this wallet.
         let receive_desc = main_descriptor.receive_descriptor();
         let change_desc = main_descriptor.change_descriptor();
-        let desc_list: Vec<String> = self
+        let desc_list: Vec<_> = self
             .list_descriptors()
             .into_iter()
-            .map(|entry| entry.desc)
+            .filter_map(|entry| {
+                match descriptor::Descriptor::<descriptor::DescriptorPublicKey>::from_str(
+                    &entry.desc,
+                ) {
+                    Ok(desc) => Some(desc),
+                    Err(e) => {
+                        log::error!(
+                            "Error deserializing descriptor: {}. Descriptor: {}.",
+                            e,
+                            entry.desc
+                        );
+                        None
+                    }
+                }
+            })
             .collect();
-        if !desc_list.contains(&receive_desc.to_string())
-            || !desc_list.contains(&change_desc.to_string())
+        if !desc_list.iter().any(|desc| *receive_desc == *desc)
+            || !desc_list.iter().any(|desc| *change_desc == *desc)
         {
             return Err(BitcoindError::Wallet(
                 self.watchonly_wallet_path.clone(),
