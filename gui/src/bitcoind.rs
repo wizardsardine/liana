@@ -1,7 +1,7 @@
 use base64::Engine;
 use bitcoin_hashes::{sha256, Hash, HashEngine, Hmac, HmacEngine};
 use liana::{
-    config::{BitcoindConfig, BitcoindRpcAuth},
+    config::BitcoindConfig,
     miniscript::bitcoin::{self, Network},
     random::{random_bytes, RandomnessError},
 };
@@ -402,7 +402,7 @@ impl Bitcoind {
     /// Start internal bitcoind for the given network.
     pub fn start(
         network: &bitcoin::Network,
-        mut config: BitcoindConfig,
+        config: BitcoindConfig,
         liana_datadir: &PathBuf,
     ) -> Result<Self, StartInternalBitcoindError> {
         let bitcoind_datadir = internal_bitcoind_datadir(liana_datadir);
@@ -476,10 +476,6 @@ impl Bitcoind {
             log::info!("Waiting for bitcoind to start.");
             thread::sleep(time::Duration::from_millis(500));
         }
-
-        config.rpc_auth = BitcoindRpcAuth::CookieFile(cookie_path.canonicalize().map_err(|e| {
-            StartInternalBitcoindError::CouldNotCanonicalizeCookiePath(e.to_string())
-        })?);
 
         liana::BitcoinD::new(&config, "internal_bitcoind_start".to_string())
             .map_err(|e| StartInternalBitcoindError::BitcoinDError(e.to_string()))?;

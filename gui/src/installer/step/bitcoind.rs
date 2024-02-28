@@ -693,17 +693,24 @@ impl Step for InternalBitcoindStep {
                     }
                 }
                 message::InternalBitcoindMsg::Start => {
-                    if let Err(e) = self.bitcoind_datadir.canonicalize() {
-                        self.started = Some(Err(
-                            StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()),
-                        ));
-                        return Command::none();
-                    }
-
-                    let cookie_path = bitcoind::internal_bitcoind_cookie_path(
-                        &self.bitcoind_datadir,
-                        &self.network,
-                    );
+                    let bitcoind_datadir = match self.bitcoind_datadir.canonicalize() {
+                        Ok(path) => path,
+                        Err(e) => {
+                            self.started = Some(Err(
+                                StartInternalBitcoindError::CouldNotCanonicalizeDataDir(
+                                    e.to_string(),
+                                ),
+                            ));
+                            return Command::none();
+                        }
+                    };
+                    // Pass the canonicalized `bitcoind_datadir` so that the cookie path returned
+                    // by `internal_bitcoind_cookie_path` is also canonicalized. This way, the
+                    // canonicalized path will later be saved to the config file.
+                    // We cannot use `cookie_path.canonicalize()` as we have not yet started
+                    // bitcoind and so the path does not exist.
+                    let cookie_path =
+                        bitcoind::internal_bitcoind_cookie_path(&bitcoind_datadir, &self.network);
 
                     let rpc_port = self
                         .internal_bitcoind_config
