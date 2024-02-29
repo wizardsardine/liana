@@ -220,8 +220,14 @@ pub fn create_spend_tx<'a>(
                                         .push(amount_with_size(amount_left, P2_SIZE))
                                         .push(p2_regular("left to select").style(color::GREY_3))
                                 } else {
-                                    Row::new()
-                                        .push(text("Feerate needs to be set.").style(color::GREY_3))
+                                    Row::new().push(
+                                        text(if feerate.value.is_empty() || !feerate.valid {
+                                            "Feerate needs to be set."
+                                        } else {
+                                            "Add recipient details."
+                                        })
+                                        .style(color::GREY_3),
+                                    )
                                 })
                                 .width(Length::Fill),
                         )
