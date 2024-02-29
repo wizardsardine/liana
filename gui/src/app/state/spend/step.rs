@@ -192,6 +192,13 @@ impl DefineSpend {
     /// if the user did not select a coin manually
     fn redraft(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) {
         if !self.form_values_are_valid() || self.exists_duplicate() || self.recipients.is_empty() {
+            // The current form details are not valid to draft a spend, so remove any previously
+            // calculated amount as it will no longer be valid and could be misleading, e.g. if
+            // the user removes the amount from one of the recipients.
+            // We can leave any coins selected as they will either be automatically updated
+            // as soon as the form is valid or the user has selected these specific coins and
+            // so we should not touch them.
+            self.amount_left_to_select = None;
             return;
         }
 
