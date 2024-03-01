@@ -176,7 +176,10 @@ pub fn create_spend_tx<'a>(
                                         Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
                                     },
                                 )
-                                .warning("Feerate must be an integer less than or equal to 1000 sats/vbyte")
+                                .warning(
+                                    "Feerate must be an integer less than \
+                                    or equal to 1000 sats/vbyte",
+                                )
                                 .size(20)
                                 .padding(10),
                             )
@@ -253,7 +256,8 @@ pub fn create_spend_tx<'a>(
                             .width(Length::Fixed(100.0)),
                     )
                     .push(
-                        if is_valid && !duplicate
+                        if is_valid
+                            && !duplicate
                             && (is_self_send
                                 || (total_amount < *balance_available
                                     && Some(&Amount::from_sat(0)) == amount_left))
