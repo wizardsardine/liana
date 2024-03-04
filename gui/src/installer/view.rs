@@ -81,7 +81,7 @@ const NETWORKS: [Network; 4] = [
     Network::Regtest,
 ];
 
-pub fn welcome<'a>() -> Element<'a, Message> {
+pub fn welcome<'a>(path: &Option<PathBuf>) -> Element<'a, Message> {
     Container::new(
         Column::new()
             .push(
@@ -160,8 +160,17 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                     .padding(20),
                                 ),
                         )
+                        .push_maybe(path.as_ref().map(|p| {
+                            Row::new()
+                                .push(Space::with_width(Length::Fill))
+                                .push(Container::new(
+                                    button::secondary(None, " Previous ")
+                                        .on_press(Message::Back(p.clone())),
+                                ))
+                                .push(Space::with_width(Length::Fill))
+                        }))
                         .push(Space::with_height(Length::Fixed(100.0)))
-                        .spacing(50)
+                        .spacing(25)
                         .align_items(Alignment::Center),
                 )
                 .center_y()

@@ -52,11 +52,19 @@ pub trait Step {
 }
 
 #[derive(Default)]
-pub struct Welcome {}
+pub struct Welcome {
+    path: Option<PathBuf>,
+}
+
+impl Welcome {
+    pub fn new(path: Option<PathBuf>) -> Self {
+        Welcome { path }
+    }
+}
 
 impl Step for Welcome {
     fn view(&self, _hws: &HardwareWallets, _progress: (usize, usize)) -> Element<Message> {
-        view::welcome()
+        view::welcome(&self.path)
     }
 }
 

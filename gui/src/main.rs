@@ -137,7 +137,7 @@ impl Application for GUI {
                     datadir_path.clone(),
                     log_level.unwrap_or(LevelFilter::INFO),
                 );
-                let (install, command) = Installer::new(datadir_path, network);
+                let (install, command) = Installer::new(datadir_path, network, false);
                 (
                     Self {
                         state: State::Installer(Box::new(install)),
@@ -196,7 +196,7 @@ impl Application for GUI {
                         self.log_level.unwrap_or(LevelFilter::INFO),
                     );
                     let (install, command) =
-                        Installer::new(datadir_path, bitcoin::Network::Bitcoin);
+                        Installer::new(datadir_path, bitcoin::Network::Bitcoin, true);
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
@@ -213,8 +213,8 @@ impl Application for GUI {
                 }
                 _ => l.update(*msg).map(|msg| Message::Launch(Box::new(msg))),
             },
-            (State::Installer(i), Message::Install(msg)) => {
-                if let installer::Message::Exit(path, internal_bitcoind) = *msg {
+            (State::Installer(i), Message::Install(msg)) => match *msg {
+                installer::Message::Exit(path, internal_bitcoind) => {
                     let cfg = app::Config::from_file(&path).unwrap();
                     let daemon_cfg =
                         DaemonConfig::from_file(cfg.daemon_config_path.clone()).unwrap();
@@ -239,10 +239,13 @@ impl Application for GUI {
                     );
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
-                } else {
-                    i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
                 }
-            }
+                installer::Message::Back(path) => {
+                    self.state = State::Launcher(Box::new(Launcher::new(path)));
+                    Command::none()
+                }
+                _ => i.update(*msg).map(|msg| Message::Install(Box::new(msg))),
+            },
             (State::Loader(loader), Message::Load(msg)) => match *msg {
                 loader::Message::View(loader::ViewMessage::SwitchNetwork) => {
                     self.state =

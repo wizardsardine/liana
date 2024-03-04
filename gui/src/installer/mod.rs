@@ -33,6 +33,7 @@ pub struct Installer {
     steps: Vec<Box<dyn Step>>,
     hws: HardwareWallets,
     signer: Arc<Mutex<Signer>>,
+    back_button: bool,
 
     /// Context is data passed through each step.
     context: Context,
@@ -58,14 +59,21 @@ impl Installer {
     pub fn new(
         destination_path: PathBuf,
         network: bitcoin::Network,
+        back_button: bool,
     ) -> (Installer, Command<Message>) {
+        let path = if back_button {
+            Some(destination_path.clone())
+        } else {
+            None
+        };
         (
             Installer {
                 current: 0,
                 hws: HardwareWallets::new(destination_path.clone(), network),
-                steps: vec![Welcome::default().into()],
+                steps: vec![Welcome::new(path).into()],
                 context: Context::new(network, destination_path),
                 signer: Arc::new(Mutex::new(Signer::generate(network).unwrap())),
+                back_button,
             },
             Command::none(),
         )
@@ -134,10 +142,15 @@ impl Installer {
     }
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
+        let path = if self.back_button {
+            Some(self.context.data_dir.clone())
+        } else {
+            None
+        };
         match message {
             Message::CreateWallet => {
                 self.steps = vec![
-                    Welcome::default().into(),
+                    Welcome::new(path).into(),
                     DefineDescriptor::new(self.signer.clone()).into(),
                     BackupMnemonic::new(self.signer.clone()).into(),
                     BackupDescriptor::default().into(),
@@ -151,7 +164,7 @@ impl Installer {
             }
             Message::ParticipateWallet => {
                 self.steps = vec![
-                    Welcome::default().into(),
+                    Welcome::new(path).into(),
                     ParticipateXpub::new(self.signer.clone()).into(),
                     ImportDescriptor::new(false).into(),
                     BackupMnemonic::new(self.signer.clone()).into(),
@@ -166,7 +179,7 @@ impl Installer {
             }
             Message::ImportWallet => {
                 self.steps = vec![
-                    Welcome::default().into(),
+                    Welcome::new(path).into(),
                     ImportDescriptor::new(true).into(),
                     RecoverMnemonic::default().into(),
                     RegisterDescriptor::new_import_wallet().into(),
