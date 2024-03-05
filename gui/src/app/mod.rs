@@ -161,7 +161,7 @@ impl App {
                     .list_spend_transactions(Some(&[*txid]))
                     .map(|txs| txs.first().cloned())
                 {
-                    self.panels.psbts = PsbtsPanel::new_preselected(self.wallet.clone(), spend_tx);
+                    self.panels.psbts.preselect(spend_tx);
                     self.panels.current = menu;
                     return Command::none();
                 };
