@@ -5,6 +5,7 @@ pub enum Menu {
     Receive,
     PSBTs,
     Transactions,
+    TransactionPreSelected(Txid),
     Settings,
     Coins,
     CreateSpendTx,

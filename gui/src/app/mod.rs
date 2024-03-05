@@ -84,6 +84,7 @@ impl Panels {
             Menu::Receive => &self.receive,
             Menu::PSBTs => &self.psbts,
             Menu::Transactions => &self.transactions,
+            Menu::TransactionPreSelected(_) => &self.transactions,
             Menu::Settings => &self.settings,
             Menu::Coins => &self.coins,
             Menu::CreateSpendTx => &self.create_spend,
@@ -99,6 +100,7 @@ impl Panels {
             Menu::Receive => &mut self.receive,
             Menu::PSBTs => &mut self.psbts,
             Menu::Transactions => &mut self.transactions,
+            Menu::TransactionPreSelected(_) => &mut self.transactions,
             Menu::Settings => &mut self.settings,
             Menu::Coins => &mut self.coins,
             Menu::CreateSpendTx => &mut self.create_spend,
@@ -152,6 +154,17 @@ impl App {
 
     fn set_current_panel(&mut self, menu: Menu) -> Command<Message> {
         match &menu {
+            menu::Menu::TransactionPreSelected(txid) => {
+                if let Ok(Some(tx)) = self
+                    .daemon
+                    .get_history_txs(&[*txid])
+                    .map(|txs| txs.first().cloned())
+                {
+                    self.panels.transactions.preselect(tx);
+                    self.panels.current = menu;
+                    return Command::none();
+                };
+            }
             menu::Menu::PsbtPreSelected(txid) => {
                 // Get preselected spend from DB in case it's not yet in the cache.
                 // We only need this single spend as we will go straight to its view and not show the PSBTs list.

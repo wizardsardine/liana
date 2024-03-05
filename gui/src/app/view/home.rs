@@ -315,31 +315,8 @@ pub fn payment_view<'a>(
                     .spacing(5),
             ))
             .push(
-                Column::new()
-                    .spacing(20)
-                    // We do not need to display inputs for external incoming transactions
-                    .push_maybe(if tx.is_external() {
-                        None
-                    } else {
-                        Some(super::psbt::inputs_view(
-                            &tx.coins,
-                            &tx.tx,
-                            &tx.labels,
-                            labels_editing,
-                        ))
-                    })
-                    .push(super::psbt::outputs_view(
-                        &tx.tx,
-                        cache.network,
-                        if tx.is_external() {
-                            None
-                        } else {
-                            Some(tx.change_indexes.clone())
-                        },
-                        &tx.labels,
-                        labels_editing,
-                        tx.is_single_payment().is_some(),
-                    )),
+                button::primary(None, "See transaction details")
+                    .on_press(Message::Menu(Menu::TransactionPreSelected(tx.tx.txid()))),
             )
             .spacing(20),
     )

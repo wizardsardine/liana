@@ -184,6 +184,44 @@ pub trait Daemon: Debug {
         Ok(txs)
     }
 
+    fn get_history_txs(
+        &self,
+        txids: &[Txid],
+    ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
+        let info = self.get_info()?;
+        let coins = self.list_coins()?.coins;
+        let txs = self.list_txs(txids)?.transactions;
+        let mut txs = txs
+            .into_iter()
+            .map(|tx| {
+                let mut tx_coins = Vec::new();
+                let mut change_indexes = Vec::new();
+                for coin in &coins {
+                    if coin.outpoint.txid == tx.tx.txid() {
+                        change_indexes.push(coin.outpoint.vout as usize)
+                    } else if tx
+                        .tx
+                        .input
+                        .iter()
+                        .any(|input| input.previous_output == coin.outpoint)
+                    {
+                        tx_coins.push(coin.clone());
+                    }
+                }
+                model::HistoryTransaction::new(
+                    tx.tx,
+                    tx.height,
+                    tx.time,
+                    tx_coins,
+                    change_indexes,
+                    info.network,
+                )
+            })
+            .collect();
+        load_labels(self, &mut txs)?;
+        Ok(txs)
+    }
+
     fn list_pending_txs(&self) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
         let info = self.get_info()?;
         let coins = self.list_coins()?.coins;

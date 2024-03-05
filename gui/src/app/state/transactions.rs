@@ -36,7 +36,7 @@ pub struct TransactionsPanel {
     pending_txs: Vec<HistoryTransaction>,
     txs: Vec<HistoryTransaction>,
     labels_edited: LabelsEdited,
-    selected_tx: Option<usize>,
+    selected_tx: Option<HistoryTransaction>,
     warning: Option<Error>,
     create_rbf_modal: Option<CreateRbfModal>,
 }
@@ -52,16 +52,17 @@ impl TransactionsPanel {
             create_rbf_modal: None,
         }
     }
+
+    pub fn preselect(&mut self, tx: HistoryTransaction) {
+        self.selected_tx = Some(tx);
+        self.warning = None;
+        self.create_rbf_modal = None;
+    }
 }
 
 impl State for TransactionsPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Some(i) = self.selected_tx {
-            let tx = if i < self.pending_txs.len() {
-                &self.pending_txs[i]
-            } else {
-                &self.txs[i - self.pending_txs.len()]
-            };
+        if let Some(tx) = self.selected_tx.as_ref() {
             let content = view::transactions::tx_view(
                 cache,
                 tx,
@@ -121,40 +122,42 @@ impl State for TransactionsPanel {
                 return self.reload(daemon);
             }
             Message::View(view::Message::Select(i)) => {
-                self.selected_tx = Some(i);
+                self.selected_tx = if i < self.pending_txs.len() {
+                    self.pending_txs.get(i).cloned()
+                } else {
+                    self.txs.get(i - self.pending_txs.len()).cloned()
+                };
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Cancel)) => {
                 self.create_rbf_modal = None;
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::New(is_cancel))) => {
-                if let Some(idx) = self.selected_tx {
-                    if let Some(tx) = self.pending_txs.get(idx) {
-                        if tx.fee_amount.is_some() {
-                            let tx = tx.clone();
-                            let txid = tx.tx.txid();
-                            return Command::perform(
-                                async move {
-                                    daemon
-                                        // TODO: filter for spending coins when this is possible:
-                                        // https://github.com/wizardsardine/liana/issues/677
-                                        .list_coins()
-                                        .map(|res| {
-                                            res.coins
-                                                .iter()
-                                                .filter_map(|c| {
-                                                    if c.outpoint.txid == txid {
-                                                        c.spend_info.map(|info| info.txid)
-                                                    } else {
-                                                        None
-                                                    }
-                                                })
-                                                .collect()
-                                        })
-                                        .map_err(|e| e.into())
-                                },
-                                move |res| Message::RbfModal(tx, is_cancel, res),
-                            );
-                        }
+                if let Some(tx) = &self.selected_tx {
+                    if tx.fee_amount.is_some() {
+                        let tx = tx.clone();
+                        let txid = tx.tx.txid();
+                        return Command::perform(
+                            async move {
+                                daemon
+                                    // TODO: filter for spending coins when this is possible:
+                                    // https://github.com/wizardsardine/liana/issues/677
+                                    .list_coins()
+                                    .map(|res| {
+                                        res.coins
+                                            .iter()
+                                            .filter_map(|c| {
+                                                if c.outpoint.txid == txid {
+                                                    c.spend_info.map(|info| info.txid)
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect()
+                                    })
+                                    .map_err(|e| e.into())
+                            },
+                            move |res| Message::RbfModal(tx, is_cancel, res),
+                        );
                     }
                 }
             }
