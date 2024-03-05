@@ -24,8 +24,8 @@ use crate::{
     bitcoind::{
         self, bitcoind_network_dir, internal_bitcoind_datadir, internal_bitcoind_directory,
         Bitcoind, ConfigField, InternalBitcoindConfig, InternalBitcoindConfigError,
-        InternalBitcoindNetworkConfig, RpcAuthType, RpcAuthValues, StartInternalBitcoindError,
-        VERSION,
+        InternalBitcoindNetworkConfig, RpcAuth, RpcAuthType, RpcAuthValues,
+        StartInternalBitcoindError, VERSION,
     },
     download,
     hw::HardwareWallets,
@@ -598,9 +598,12 @@ impl Step for InternalBitcoindStep {
                             return Command::none();
                         }
                     };
-                    // Insert entry for network if not present.
-                    if conf.networks.get(&self.network).is_none() {
-                        let network_conf = match (get_available_port(), get_available_port()) {
+                    let (rpc_port, p2p_port) = if let Some(network_conf) =
+                        conf.networks.get(&self.network)
+                    {
+                        (network_conf.rpc_port, network_conf.p2p_port)
+                    } else {
+                        match (get_available_port(), get_available_port()) {
                             (Ok(rpc_port), Ok(p2p_port)) => {
                                 // In case ports are the same, user will need to click button again for another attempt.
                                 if rpc_port == p2p_port {
@@ -610,12 +613,7 @@ impl Step for InternalBitcoindStep {
                                     );
                                     return Command::none();
                                 }
-                                InternalBitcoindNetworkConfig {
-                                    rpc_port,
-                                    p2p_port,
-                                    prune: PRUNE_DEFAULT,
-                                    rpc_auth: None,
-                                }
+                                (rpc_port, p2p_port)
                             }
                             (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
                                 self.error = Some(format!("Could not get available port: {}.", e));
@@ -626,9 +624,27 @@ impl Step for InternalBitcoindStep {
                                     Some(format!("Could not get available ports: {}; {}.", e1, e2));
                                 return Command::none();
                             }
-                        };
-                        conf.networks.insert(self.network, network_conf);
-                    }
+                        }
+                    };
+                    let (rpc_auth, rpc_password) = match RpcAuth::new("liana") {
+                        Ok((rpc_auth, password)) => (rpc_auth, password),
+                        Err(e) => {
+                            self.error = Some(e.to_string());
+                            return Command::none();
+                        }
+                    };
+                    let bitcoind_config = BitcoindConfig {
+                        rpc_auth: BitcoindRpcAuth::UserPass(rpc_auth.user.clone(), rpc_password),
+                        addr: internal_bitcoind_address(rpc_port),
+                    };
+                    let network_conf = InternalBitcoindNetworkConfig {
+                        rpc_port,
+                        p2p_port,
+                        prune: PRUNE_DEFAULT,
+                        // Overwrite any previous entry for this network as we would no longer know the RPC password.
+                        rpc_auth: Some(rpc_auth),
+                    };
+                    conf.networks.insert(self.network, network_conf);
                     if let Err(e) = conf.to_file(&bitcoind::internal_bitcoind_config_path(
                         &self.bitcoind_datadir,
                     )) {
@@ -636,7 +652,8 @@ impl Step for InternalBitcoindStep {
                         return Command::none();
                     };
                     self.error = None;
-                    self.internal_bitcoind_config = Some(conf.clone());
+                    self.internal_bitcoind_config = Some(conf);
+                    self.bitcoind_config = Some(bitcoind_config);
                     return Command::perform(async {}, |_| {
                         Message::InternalBitcoind(message::InternalBitcoindMsg::Reload)
                     });
@@ -693,43 +710,18 @@ impl Step for InternalBitcoindStep {
                     }
                 }
                 message::InternalBitcoindMsg::Start => {
-                    let bitcoind_datadir = match self.bitcoind_datadir.canonicalize() {
-                        Ok(path) => path,
-                        Err(e) => {
-                            self.started = Some(Err(
-                                StartInternalBitcoindError::CouldNotCanonicalizeDataDir(
-                                    e.to_string(),
-                                ),
-                            ));
-                            return Command::none();
-                        }
+                    if let Err(e) = self.bitcoind_datadir.canonicalize() {
+                        self.started = Some(Err(
+                            StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()),
+                        ));
+                        return Command::none();
                     };
-                    // Pass the canonicalized `bitcoind_datadir` so that the cookie path returned
-                    // by `internal_bitcoind_cookie_path` is also canonicalized. This way, the
-                    // canonicalized path will later be saved to the config file.
-                    // We cannot use `cookie_path.canonicalize()` as we have not yet started
-                    // bitcoind and so the path does not exist.
-                    let cookie_path =
-                        bitcoind::internal_bitcoind_cookie_path(&bitcoind_datadir, &self.network);
-
-                    let rpc_port = self
-                        .internal_bitcoind_config
+                    let bitcoind_config = self
+                        .bitcoind_config
                         .as_ref()
-                        .expect("Already added")
-                        .clone()
-                        .networks
-                        .get(&self.network)
-                        .expect("Already added")
-                        .rpc_port;
-
-                    match Bitcoind::start(
-                        &self.network,
-                        BitcoindConfig {
-                            rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
-                            addr: internal_bitcoind_address(rpc_port),
-                        },
-                        &self.liana_datadir,
-                    ) {
+                        .expect("already added")
+                        .clone();
+                    match Bitcoind::start(&self.network, bitcoind_config, &self.liana_datadir) {
                         Err(e) => {
                             self.started =
                                 Some(Err(StartInternalBitcoindError::CommandError(e.to_string())));
@@ -737,7 +729,6 @@ impl Step for InternalBitcoindStep {
                         }
                         Ok(bitcoind) => {
                             self.error = None;
-                            self.bitcoind_config = Some(bitcoind.config.clone());
                             self.started = Some(Ok(()));
                             self.internal_bitcoind = Some(bitcoind);
                         }
