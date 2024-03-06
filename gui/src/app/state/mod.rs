@@ -186,11 +186,7 @@ impl State for Home {
                 Err(e) => self.warning = Some(e),
                 Ok(events) => {
                     self.warning = None;
-                    for event in events {
-                        if !self.pending_events.iter().any(|other| other.tx == event.tx) {
-                            self.pending_events.push(event);
-                        }
-                    }
+                    self.pending_events = events;
                 }
             },
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {

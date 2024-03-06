@@ -105,11 +105,7 @@ impl State for TransactionsPanel {
                 Err(e) => self.warning = Some(e),
                 Ok(txs) => {
                     self.warning = None;
-                    for tx in txs {
-                        if !self.pending_txs.iter().any(|other| other.tx == tx.tx) {
-                            self.pending_txs.push(tx);
-                        }
-                    }
+                    self.pending_txs = txs;
                 }
             },
             Message::RbfModal(tx, is_cancel, res) => match res {
