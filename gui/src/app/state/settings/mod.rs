@@ -55,14 +55,14 @@ impl State for SettingsState {
                 );
                 self.setting
                     .as_mut()
-                    .map(|s| s.load(daemon))
+                    .map(|s| s.reload(daemon))
                     .unwrap_or_else(Command::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::AboutSection)) => {
                 self.setting = Some(AboutSettingsState::default().into());
                 self.setting
                     .as_mut()
-                    .map(|s| s.load(daemon))
+                    .map(|s| s.reload(daemon))
                     .unwrap_or_else(Command::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditWalletSettings)) => {
@@ -71,7 +71,7 @@ impl State for SettingsState {
                 );
                 self.setting
                     .as_mut()
-                    .map(|s| s.load(daemon))
+                    .map(|s| s.reload(daemon))
                     .unwrap_or_else(Command::none)
             }
             _ => self
@@ -96,6 +96,11 @@ impl State for SettingsState {
         } else {
             view::settings::list(cache)
         }
+    }
+
+    fn reload(&mut self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+        self.setting = None;
+        Command::none()
     }
 }
 
@@ -145,7 +150,7 @@ impl State for AboutSettingsState {
         Command::none()
     }
 
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         Command::perform(
             async move { daemon.get_info().map_err(|e| e.into()) },
             Message::Info,

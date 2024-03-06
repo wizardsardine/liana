@@ -16,7 +16,7 @@ use liana::{
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
-    app::{cache::Cache, error::Error, message::Message, view, State},
+    app::{cache::Cache, error::Error, message::Message, state::settings::State, view},
     bitcoind::{RpcAuthType, RpcAuthValues},
     daemon::Daemon,
 };

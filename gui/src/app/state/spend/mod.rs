@@ -63,6 +63,10 @@ impl CreateSpendPanel {
             ],
         }
     }
+
+    pub fn is_first_step(&self) -> bool {
+        self.current == 0
+    }
 }
 
 impl State for CreateSpendPanel {
@@ -108,7 +112,7 @@ impl State for CreateSpendPanel {
         Command::none()
     }
 
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
         Command::batch(vec![

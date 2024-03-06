@@ -11,7 +11,7 @@ use liana::{
 };
 
 use crate::{
-    app::{error::Error, view, wallet::Wallet},
+    app::{cache::Cache, error::Error, view, wallet::Wallet},
     daemon::model::*,
     hw::HardwareWalletMessage,
 };
@@ -19,6 +19,7 @@ use crate::{
 #[derive(Debug)]
 pub enum Message {
     Tick,
+    UpdateCache(Result<Cache, Error>),
     View(view::Message),
     LoadDaemonConfig(Box<DaemonConfig>),
     DaemonConfigLoaded(Result<(), Error>),

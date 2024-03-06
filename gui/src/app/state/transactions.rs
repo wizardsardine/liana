@@ -105,11 +105,7 @@ impl State for TransactionsPanel {
                 Err(e) => self.warning = Some(e),
                 Ok(txs) => {
                     self.warning = None;
-                    for tx in txs {
-                        if !self.pending_txs.iter().any(|other| other.tx == tx.tx) {
-                            self.pending_txs.push(tx);
-                        }
-                    }
+                    self.pending_txs = txs;
                 }
             },
             Message::RbfModal(tx, is_cancel, res) => match res {
@@ -121,8 +117,8 @@ impl State for TransactionsPanel {
                     self.warning = e.into();
                 }
             },
-            Message::View(view::Message::Close) => {
-                self.selected_tx = None;
+            Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
+                return self.reload(daemon);
             }
             Message::View(view::Message::Select(i)) => {
                 self.selected_tx = Some(i);
@@ -225,7 +221,8 @@ impl State for TransactionsPanel {
         Command::none()
     }
 
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+        self.selected_tx = None;
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
         let daemon3 = daemon.clone();

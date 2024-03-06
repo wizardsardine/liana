@@ -34,6 +34,12 @@ pub struct Addresses {
     labels: HashMap<String, String>,
 }
 
+impl Addresses {
+    fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+}
+
 impl Labelled for Addresses {
     fn labelled(&self) -> Vec<LabelItem> {
         self.list
@@ -154,7 +160,18 @@ impl State for ReceivePanel {
                 ));
                 Command::none()
             }
-            Message::View(view::Message::Next) => self.load(daemon),
+            Message::View(view::Message::Next) => {
+                let daemon = daemon.clone();
+                Command::perform(
+                    async move {
+                        daemon
+                            .get_new_address()
+                            .map(|res| (res.address, res.derivation_index))
+                            .map_err(|e| e.into())
+                    },
+                    Message::ReceiveAddress,
+                )
+            }
             _ => self
                 .modal
                 .as_mut()
@@ -163,17 +180,22 @@ impl State for ReceivePanel {
         }
     }
 
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        let daemon = daemon.clone();
-        Command::perform(
-            async move {
-                daemon
-                    .get_new_address()
-                    .map(|res| (res.address, res.derivation_index))
-                    .map_err(|e| e.into())
-            },
-            Message::ReceiveAddress,
-        )
+    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+        // Fill at least with one address, user will then use the generate button.
+        if self.addresses.is_empty() {
+            let daemon = daemon.clone();
+            Command::perform(
+                async move {
+                    daemon
+                        .get_new_address()
+                        .map(|res| (res.address, res.derivation_index))
+                        .map_err(|e| e.into())
+                },
+                Message::ReceiveAddress,
+            )
+        } else {
+            Command::none()
+        }
     }
 }
 

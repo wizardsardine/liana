@@ -45,7 +45,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let home_button = if *menu == Menu::Home {
         row!(
             button::menu_active(Some(home_icon()), "Home")
-                .on_press(Message::Menu(Menu::Home))
+                .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_green_bar(),
         )
@@ -58,7 +58,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let transactions_button = if *menu == Menu::Transactions {
         row!(
             button::menu_active(Some(history_icon()), "Transactions")
-                .on_press(Message::Menu(Menu::Transactions))
+                .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_green_bar()
         )
@@ -85,7 +85,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let psbt_button = if *menu == Menu::PSBTs {
         row!(
             button::menu_active(Some(history_icon()), "PSBTs")
-                .on_press(Message::Menu(Menu::PSBTs))
+                .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_green_bar()
         )
@@ -98,7 +98,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let spend_button = if *menu == Menu::CreateSpendTx {
         row!(
             button::menu_active(Some(send_icon()), "Send")
-                .on_press(Message::Menu(Menu::CreateSpendTx))
+                .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_green_bar()
         )

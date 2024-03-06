@@ -44,7 +44,7 @@ pub trait State {
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
     }
-    fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(&mut self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         Command::none()
     }
 }
@@ -186,11 +186,7 @@ impl State for Home {
                 Err(e) => self.warning = Some(e),
                 Ok(events) => {
                     self.warning = None;
-                    for event in events {
-                        if !self.pending_events.iter().any(|other| other.tx == event.tx) {
-                            self.pending_events.push(event);
-                        }
-                    }
+                    self.pending_events = events;
                 }
             },
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
@@ -209,6 +205,9 @@ impl State for Home {
                         self.warning = Some(e);
                     }
                 };
+            }
+            Message::View(view::Message::Reload) => {
+                return self.reload(daemon);
             }
             Message::View(view::Message::Close) => {
                 self.selected_event = None;
@@ -259,7 +258,8 @@ impl State for Home {
         Command::none()
     }
 
-    fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+        self.selected_event = None;
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
         let daemon3 = daemon.clone();

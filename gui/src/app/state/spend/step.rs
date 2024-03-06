@@ -1,7 +1,14 @@
-use std::{cmp::Ordering, collections::HashMap, str::FromStr, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    iter::FromIterator,
+    str::FromStr,
+    sync::Arc,
+};
 
 use iced::{Command, Subscription};
 use liana::{
+    commands::ListCoinsEntry,
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
         address, psbt::Psbt, secp256k1, Address, Amount, Denomination, Network, OutPoint,
@@ -142,6 +149,11 @@ impl DefineSpend {
     }
 
     pub fn with_coins_sorted(mut self, blockheight: u32) -> Self {
+        self.sort_coins(blockheight);
+        self
+    }
+
+    fn sort_coins(&mut self, blockheight: u32) {
         let timelock = self.timelock;
         self.coins.sort_by(|(a, a_selected), (b, b_selected)| {
             if *a_selected && !b_selected || !a_selected && *b_selected {
@@ -156,7 +168,6 @@ impl DefineSpend {
                 a.block_height.cmp(&b.block_height)
             }
         });
-        self
     }
 
     pub fn self_send(mut self) -> Self {
@@ -399,6 +410,19 @@ impl Step for DefineSpend {
                         self.batch_label.valid = label.len() <= 100;
                         self.batch_label.value = label;
                     }
+                    view::CreateSpendMessage::Clear => {
+                        *self = Self::new(
+                            self.network,
+                            self.descriptor.clone(),
+                            self.coins
+                                .iter()
+                                .map(|(c, _)| c.clone())
+                                .collect::<Vec<ListCoinsEntry>>()
+                                .as_slice(),
+                            self.timelock,
+                        );
+                        return Command::none();
+                    }
                     view::CreateSpendMessage::AddRecipient => {
                         self.recipients.push(Recipient::default());
                     }
@@ -525,6 +549,35 @@ impl Step for DefineSpend {
             Message::Labels(res) => match res {
                 Ok(labels) => {
                     self.coins_labels = labels;
+                }
+                Err(e) => self.warning = Some(e),
+            },
+            Message::Coins(res) => match res {
+                Ok(coins) => {
+                    let selected: HashSet<OutPoint> =
+                        HashSet::from_iter(self.coins.iter().filter_map(|(c, selected)| {
+                            if *selected {
+                                Some(c.outpoint)
+                            } else {
+                                None
+                            }
+                        }));
+                    self.coins = coins
+                        .into_iter()
+                        .filter_map(|coin| {
+                            if coin.spend_info.is_none() && !coin.is_immature {
+                                let selected = selected.contains(&coin.outpoint);
+                                Some((coin, selected))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    self.sort_coins(cache.blockheight as u32);
+                    // In case some selected coins are not spendable anymore and
+                    // new coins make more sense to be selected. A redraft is triggered
+                    // if all forms are valid (checked in the redraft method)
+                    self.redraft(daemon);
                 }
                 Err(e) => self.warning = Some(e),
             },
