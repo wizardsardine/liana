@@ -357,12 +357,10 @@ impl InternalBitcoindConfig {
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum StartInternalBitcoindError {
     CommandError(String),
-    CouldNotCanonicalizeExePath(String),
     CouldNotCanonicalizeDataDir(String),
-    CouldNotCanonicalizeCookiePath(String),
-    CookieFileNotFound(String),
     BitcoinDError(String),
     ExecutableNotFound,
+    ProcessExited(std::process::ExitStatus),
 }
 
 impl std::fmt::Display for StartInternalBitcoindError {
@@ -371,24 +369,14 @@ impl std::fmt::Display for StartInternalBitcoindError {
             Self::CommandError(e) => {
                 write!(f, "Command to start bitcoind returned an error: {}", e)
             }
-            Self::CouldNotCanonicalizeExePath(e) => {
-                write!(f, "Failed to canonicalize executable path: {}", e)
-            }
             Self::CouldNotCanonicalizeDataDir(e) => {
                 write!(f, "Failed to canonicalize datadir: {}", e)
             }
-            Self::CouldNotCanonicalizeCookiePath(e) => {
-                write!(f, "Failed to canonicalize cookie path: {}", e)
-            }
-            Self::CookieFileNotFound(path) => {
-                write!(
-                    f,
-                    "Cookie file was not found at the expected path: {}",
-                    path
-                )
-            }
             Self::BitcoinDError(e) => write!(f, "bitcoind connection check failed: {}", e),
             Self::ExecutableNotFound => write!(f, "bitcoind executable not found."),
+            Self::ProcessExited(status) => {
+                write!(f, "bitcoind process exited with status '{}'.", status)
+            }
         }
     }
 }
@@ -455,35 +443,43 @@ impl Bitcoind {
             .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))?;
 
         // We've started bitcoind in the background, however it may fail to start for whatever
-        // reason. And we need its JSONRPC interface to be available to continue. Thus wait for it
-        // to have created the cookie file, regularly checking it did not fail to start.
-        let cookie_path = internal_bitcoind_cookie_path(&bitcoind_datadir, network);
+        // reason. And we need its JSONRPC interface to be available to continue. Thus wait for
+        // the interface to be created successfully, regularly checking it did not fail to start.
         loop {
             match process.try_wait() {
                 Ok(None) => {}
                 Err(e) => log::error!("Error while trying to wait for bitcoind: {}", e),
                 Ok(Some(status)) => {
                     log::error!("Bitcoind exited with status '{}'", status);
-                    return Err(StartInternalBitcoindError::CookieFileNotFound(
-                        cookie_path.to_string_lossy().into_owned(),
-                    ));
+                    return Err(StartInternalBitcoindError::ProcessExited(status));
                 }
             }
-            if cookie_path.exists() {
-                log::info!("Bitcoind seems to have successfully started.");
-                break;
+            match liana::BitcoinD::new(&config, "internal_bitcoind_start".to_string()) {
+                Ok(_) => {
+                    log::info!("Bitcoind seems to have successfully started.");
+                    return Ok(Self {
+                        config,
+                        _process: Arc::new(process),
+                    });
+                }
+                Err(liana::BitcoindError::CookieFile(_)) => {
+                    // This is only raised if we're using cookie authentication.
+                    // Assume cookie file has not been created yet and try again.
+                }
+                Err(e) => {
+                    if !e.is_transient() {
+                        // Non-transient error could happen, e.g., if RPC auth credentials are wrong.
+                        // Kill process now in case it's not possible to do via RPC command later.
+                        if let Err(e) = process.kill() {
+                            log::error!("Error trying to kill bitcoind process: '{}'", e);
+                        }
+                        return Err(StartInternalBitcoindError::BitcoinDError(e.to_string()));
+                    }
+                }
             }
             log::info!("Waiting for bitcoind to start.");
             thread::sleep(time::Duration::from_millis(500));
         }
-
-        liana::BitcoinD::new(&config, "internal_bitcoind_start".to_string())
-            .map_err(|e| StartInternalBitcoindError::BitcoinDError(e.to_string()))?;
-
-        Ok(Self {
-            config,
-            _process: Arc::new(process),
-        })
     }
 
     /// Stop (internal) bitcoind.
