@@ -8,7 +8,9 @@ use std::{
 use crate::app::{settings, wallet::Wallet};
 use async_hwi::{
     bitbox::{api::runtime, BitBox02, PairingBitbox02},
-    coldcard, ledger, specter, DeviceKind, Error as HWIError, Version, HWI,
+    coldcard,
+    jade::{self, Jade},
+    ledger, specter, DeviceKind, Error as HWIError, Version, HWI,
 };
 use liana::miniscript::bitcoin::{bip32::Fingerprint, hashes::hex::FromHex, Network};
 use serde::{Deserialize, Serialize};
@@ -21,6 +23,7 @@ pub enum UnsupportedReason {
     },
     Method(&'static str),
     NotPartOfWallet(Fingerprint),
+    WrongNetwork,
 }
 
 // Todo drop the Clone, to remove the Mutex on HardwareWallet::Locked
@@ -51,7 +54,8 @@ pub enum HardwareWallet {
 }
 
 pub enum LockedDevice {
-    BitBox02(PairingBitbox02<runtime::TokioRuntime>),
+    BitBox02(Box<PairingBitbox02<runtime::TokioRuntime>>),
+    Jade(Jade<jade::SerialTransport>),
 }
 
 impl std::fmt::Debug for LockedDevice {
@@ -221,25 +225,47 @@ impl HardwareWallets {
                             *alias = self.aliases.get(fingerprint).cloned();
                         }
                         HardwareWallet::Locked { device, id, .. } => {
-                            if let Some(LockedDevice::BitBox02(bb)) = device.lock().unwrap().take()
-                            {
-                                let id = id.to_string();
-                                let id_cloned = id.clone();
-                                let network = self.network;
-                                let wallet = self.wallet.clone();
-                                cmds.push(Command::perform(
-                                    async move {
-                                        let paired_bb = bb.wait_confirm().await?;
-                                        let mut bitbox2 =
-                                            BitBox02::from(paired_bb).with_network(network);
-                                        let fingerprint = bitbox2.get_master_fingerprint().await?;
-                                        let mut registered = false;
-                                        if let Some(wallet) = &wallet {
-                                            let desc = wallet.main_descriptor.to_string();
-                                            bitbox2 = bitbox2.with_policy(&desc)?;
-                                            registered =
-                                                bitbox2.is_policy_registered(&desc).await?;
-                                            if wallet.descriptor_keys().contains(&fingerprint) {
+                            match device.lock().unwrap().take() {
+                                None => {}
+                                Some(LockedDevice::BitBox02(bb)) => {
+                                    let id = id.to_string();
+                                    let id_cloned = id.clone();
+                                    let network = self.network;
+                                    let wallet = self.wallet.clone();
+                                    cmds.push(Command::perform(
+                                        async move {
+                                            let paired_bb = bb.wait_confirm().await?;
+                                            let mut bitbox2 =
+                                                BitBox02::from(paired_bb).with_network(network);
+                                            let fingerprint =
+                                                bitbox2.get_master_fingerprint().await?;
+                                            let mut registered = false;
+                                            if let Some(wallet) = &wallet {
+                                                let desc = wallet.main_descriptor.to_string();
+                                                bitbox2 = bitbox2.with_policy(&desc)?;
+                                                registered =
+                                                    bitbox2.is_policy_registered(&desc).await?;
+                                                if wallet.descriptor_keys().contains(&fingerprint) {
+                                                    Ok(HardwareWallet::Supported {
+                                                        id: id.clone(),
+                                                        kind: DeviceKind::BitBox02,
+                                                        fingerprint,
+                                                        device: bitbox2.into(),
+                                                        version: None,
+                                                        registered: Some(registered),
+                                                        alias: None,
+                                                    })
+                                                } else {
+                                                    Ok(HardwareWallet::Unsupported {
+                                                        id: id.clone(),
+                                                        kind: DeviceKind::BitBox02,
+                                                        version: None,
+                                                        reason: UnsupportedReason::NotPartOfWallet(
+                                                            fingerprint,
+                                                        ),
+                                                    })
+                                                }
+                                            } else {
                                                 Ok(HardwareWallet::Supported {
                                                     id: id.clone(),
                                                     kind: DeviceKind::BitBox02,
@@ -249,30 +275,33 @@ impl HardwareWallets {
                                                     registered: Some(registered),
                                                     alias: None,
                                                 })
-                                            } else {
-                                                Ok(HardwareWallet::Unsupported {
-                                                    id: id.clone(),
-                                                    kind: DeviceKind::BitBox02,
-                                                    version: None,
-                                                    reason: UnsupportedReason::NotPartOfWallet(
-                                                        fingerprint,
-                                                    ),
-                                                })
                                             }
-                                        } else {
+                                        },
+                                        |res| HardwareWalletMessage::Unlocked(id_cloned, res),
+                                    ));
+                                }
+                                Some(LockedDevice::Jade(device)) => {
+                                    let id = id.clone();
+                                    let id_cloned = id.clone();
+                                    cmds.push(Command::perform(
+                                        async move {
+                                            device.auth().await?;
+                                            let fingerprint =
+                                                device.get_master_fingerprint().await?;
+                                            let version = device.get_version().await?;
                                             Ok(HardwareWallet::Supported {
                                                 id: id.clone(),
-                                                kind: DeviceKind::BitBox02,
+                                                kind: DeviceKind::Jade,
                                                 fingerprint,
-                                                device: bitbox2.into(),
-                                                version: None,
-                                                registered: Some(registered),
+                                                device: Arc::new(device),
+                                                version: Some(version),
+                                                registered: None,
                                                 alias: None,
                                             })
-                                        }
-                                    },
-                                    |res| HardwareWalletMessage::Unlocked(id_cloned, res),
-                                ));
+                                        },
+                                        |res| HardwareWalletMessage::Unlocked(id_cloned, res),
+                                    ));
+                                }
                             }
                         }
                         _ => {}
@@ -286,8 +315,8 @@ impl HardwareWallets {
             }
             HardwareWalletMessage::Unlocked(id, res) => {
                 match res {
-                    Err(_) => {
-                        warn!("Pairing failed with an external device");
+                    Err(e) => {
+                        warn!("Pairing failed with an external device {}", e);
                         self.list.retain(|hw| hw.id() != &id);
                     }
                     Ok(hw) => {
@@ -317,6 +346,7 @@ impl HardwareWallets {
         iced::subscription::unfold(
             format!("refresh-{}", self.network),
             State {
+                network: self.network,
                 keys_aliases: self.aliases.clone(),
                 wallet: self.wallet.clone(),
                 connected_supported_hws: Vec::new(),
@@ -329,6 +359,7 @@ impl HardwareWallets {
 }
 
 struct State {
+    network: Network,
     keys_aliases: HashMap<Fingerprint, String>,
     wallet: Option<Arc<Wallet>>,
     connected_supported_hws: Vec<String>,
@@ -406,6 +437,60 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
         }
         Err(e) => warn!("Error while listing specter wallets: {}", e),
     }
+
+    match jade::SerialTransport::enumerate_potential_ports() {
+        Ok(ports) => {
+            for port in ports {
+                let id = format!("jade-{}", port);
+                if state.connected_supported_hws.contains(&id) {
+                    still.push(id);
+                } else {
+                    let mut device =
+                        Jade::new(jade::SerialTransport::new(port)).with_network(state.network);
+                    if let Some(wallet) = &state.wallet {
+                        device = device.with_wallet(wallet.name.clone());
+                    }
+                    if let Ok(info) = device.get_info().await {
+                        let version = async_hwi::parse_version(&info.jade_version).ok();
+                        // Jade may not be setup for the current network
+                        if state.network == Network::Bitcoin
+                            && info.jade_networks != jade::api::JadeNetworks::Main
+                            && info.jade_networks != jade::api::JadeNetworks::All
+                        {
+                            hws.push(HardwareWallet::Unsupported {
+                                id,
+                                kind: device.device_kind(),
+                                version,
+                                reason: UnsupportedReason::WrongNetwork,
+                            });
+                        } else if info.jade_state == jade::api::JadeState::Locked {
+                            hws.push(HardwareWallet::Locked {
+                                id,
+                                kind: DeviceKind::Jade,
+                                pairing_code: None,
+                                device: Arc::new(Mutex::new(Some(LockedDevice::Jade(device)))),
+                            });
+                        } else if info.jade_state == jade::api::JadeState::Ready {
+                            match HardwareWallet::new(
+                                id,
+                                Arc::new(device),
+                                Some(&state.keys_aliases),
+                            )
+                            .await
+                            {
+                                Ok(hw) => hws.push(hw),
+                                Err(e) => {
+                                    debug!("{}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => warn!("Error while listing jade devices: {}", e),
+    }
+
     match ledger::LedgerSimulator::try_connect().await {
         Ok(mut device) => {
             let id = "ledger-simulator".to_string();
@@ -497,7 +582,9 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                         id,
                         kind: DeviceKind::BitBox02,
                         pairing_code: device.pairing_code().map(|s| s.replace('\n', " ")),
-                        device: Arc::new(Mutex::new(Some(LockedDevice::BitBox02(device)))),
+                        device: Arc::new(Mutex::new(Some(LockedDevice::BitBox02(Box::new(
+                            device,
+                        ))))),
                     });
                 }
             }
