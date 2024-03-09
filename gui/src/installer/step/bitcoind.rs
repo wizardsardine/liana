@@ -200,7 +200,7 @@ impl InternalBitcoindConfig {
                 );
             } else if !prop.is_empty() {
                 return Err(InternalBitcoindConfigError::UnexpectedSection(
-                    "General section should be empty".to_string(),
+                    "bitcoin.conf general section should be empty".to_string(),
                 ));
             }
         }
