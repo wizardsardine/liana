@@ -398,6 +398,17 @@ impl CoinStatus {
             _ => None,
         }
     }
+
+    /// Converts a `CoinStatus` to its equivalent argument name
+    /// as used in the `listcoins` RPC command.
+    pub fn to_arg(&self) -> &'static str {
+        match self {
+            CoinStatus::Unconfirmed => "unconfirmed",
+            CoinStatus::Confirmed => "confirmed",
+            CoinStatus::Spending => "spending",
+            CoinStatus::Spent => "spent",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -450,5 +461,30 @@ impl LabelItem {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coin_status_as_arg() {
+        assert_eq!(
+            CoinStatus::from_arg(CoinStatus::Unconfirmed.to_arg()),
+            Some(CoinStatus::Unconfirmed)
+        );
+        assert_eq!(
+            CoinStatus::from_arg(CoinStatus::Confirmed.to_arg()),
+            Some(CoinStatus::Confirmed)
+        );
+        assert_eq!(
+            CoinStatus::from_arg(CoinStatus::Spending.to_arg()),
+            Some(CoinStatus::Spending)
+        );
+        assert_eq!(
+            CoinStatus::from_arg(CoinStatus::Spent.to_arg()),
+            Some(CoinStatus::Spent)
+        );
     }
 }
