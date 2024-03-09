@@ -7,7 +7,7 @@ mod database;
 pub mod descriptors;
 #[cfg(feature = "daemon")]
 mod jsonrpc;
-mod random;
+pub mod random;
 pub mod signer;
 pub mod spend;
 #[cfg(test)]
