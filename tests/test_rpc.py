@@ -22,7 +22,7 @@ from test_framework.utils import (
 
 def test_getinfo(lianad):
     res = lianad.rpc.getinfo()
-    assert 'timestamp' in res.keys()
+    assert "timestamp" in res.keys()
     assert res["version"] == "4.0.0-dev"
     assert res["network"] == "regtest"
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == 101)
@@ -457,6 +457,35 @@ def test_list_spend(lianad, bitcoind):
     assert len(lianad.rpc.listspendtxs()["spend_txs"]) == 0
     lianad.rpc.updatespend(res["psbt"])
     lianad.rpc.updatespend(res_b["psbt"])
+
+    # Check 'txids' parameter
+    list_res = lianad.rpc.listspendtxs()["spend_txs"]
+
+    txid = PSBT.from_base64(list_res[0]["psbt"]).tx.txid().hex()
+
+    filtered_res = lianad.rpc.listspendtxs(txids=[txid])
+    assert filtered_res["spend_txs"][0]["psbt"] == list_res[0]["psbt"]
+    assert len(filtered_res) == 1
+
+    with pytest.raises(
+        RpcError, match="Filter list is empty, should supply None instead."
+    ):
+        lianad.rpc.listspendtxs(txids=[])
+
+    with pytest.raises(RpcError, match="Invalid params: Invalid 'txids' parameter."):
+        lianad.rpc.listspendtxs(txids=[txid, 123])
+
+    with pytest.raises(RpcError, match="Invalid params: Invalid 'txids' parameter."):
+        lianad.rpc.listspendtxs(txids=[0])
+
+    with pytest.raises(RpcError, match="Invalid params: Invalid 'txids' parameter."):
+        lianad.rpc.listspendtxs(txids=[123])
+
+    with pytest.raises(RpcError, match="Invalid params: Invalid 'txids' parameter."):
+        lianad.rpc.listspendtxs(txids=["abc"])
+
+    with pytest.raises(RpcError, match="Invalid params: Invalid 'txids' parameter."):
+        lianad.rpc.listspendtxs(txids=["123"])
 
     # Listing all Spend transactions will list them both. It'll tell us which one has
     # change and which one doesn't.
@@ -1232,9 +1261,7 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
     # But we can't set the feerate explicitly.
     with pytest.raises(
         RpcError,
-        match=re.escape(
-            "A feerate must not be provided if creating a cancel."
-        ),
+        match=re.escape("A feerate must not be provided if creating a cancel."),
     ):
         rbf_1_res = lianad.rpc.rbfpsbt(first_txid, True, 2)
     rbf_1_psbt = PSBT.from_base64(rbf_1_res["psbt"])
