@@ -123,6 +123,10 @@ impl BitcoinInterface for DummyBitcoind {
     fn mempool_spenders(&self, _: &[bitcoin::OutPoint]) -> Vec<MempoolEntry> {
         Vec::new()
     }
+
+    fn mempool_entry(&self, _: &bitcoin::Txid) -> Option<MempoolEntry> {
+        None
+    }
 }
 
 struct DummyDbState {

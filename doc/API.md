@@ -149,7 +149,8 @@ A coin may have one of the following four statuses:
 Create a transaction spending one or more of our coins. All coins must exist and not be spent.
 
 If no coins are specified in `outpoints`, they will be selected automatically from the set of
-confirmed coins (see [`listcoins`](#listcoins) for coin status definitions).
+confirmed coins together with any unconfirmed coins that are change outputs
+(see [`listcoins`](#listcoins) for coin status definitions).
 
 Will error if the given coins are not sufficient to cover the transaction cost at 90% (or more) of
 the given feerate. If on the contrary the transaction is more than sufficiently funded, it will
