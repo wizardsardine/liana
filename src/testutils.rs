@@ -212,7 +212,7 @@ impl DatabaseConnection for DummyDatabase {
     }
 
     fn change_index(&mut self) -> bip32::ChildNumber {
-        self.db.read().unwrap().deposit_index
+        self.db.read().unwrap().change_index
     }
 
     fn set_change_index(
