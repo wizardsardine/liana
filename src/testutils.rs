@@ -34,6 +34,10 @@ impl DummyBitcoind {
 }
 
 impl BitcoinInterface for DummyBitcoind {
+    fn genesis_block_timestamp(&self) -> u32 {
+        1231006505
+    }
+
     fn genesis_block(&self) -> BlockChainTip {
         let hash = bitcoin::BlockHash::from_str(
             "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",

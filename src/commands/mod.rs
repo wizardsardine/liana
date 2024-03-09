@@ -33,9 +33,6 @@ use miniscript::{
 };
 use serde::{Deserialize, Serialize};
 
-// Timestamp in the header of the genesis block. Used for sanity checks.
-const MAINNET_GENESIS_TIME: u32 = 1231006505;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     NoOutpointForSelfSend,
@@ -953,13 +950,14 @@ impl DaemonControl {
     /// The date must be after the genesis block time and before the current tip blocktime.
     pub fn start_rescan(&self, timestamp: u32) -> Result<(), CommandError> {
         let mut db_conn = self.db.connection();
+        let genesis_timestamp = self.bitcoin.genesis_block_timestamp();
 
         let future_timestamp = self
             .bitcoin
             .tip_time()
             .map(|t| timestamp >= t)
             .unwrap_or(false);
-        if timestamp < MAINNET_GENESIS_TIME || future_timestamp {
+        if timestamp < genesis_timestamp || future_timestamp {
             return Err(CommandError::InsaneRescanTimestamp(timestamp));
         }
         if db_conn.rescan_timestamp().is_some() || self.bitcoin.rescan_progress().is_some() {
