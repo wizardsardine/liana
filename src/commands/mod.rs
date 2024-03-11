@@ -470,7 +470,7 @@ impl DaemonControl {
                 .filter_map(|(op, c)| {
                     if c.block_info.is_some() {
                         Some((c, None)) // confirmed coins have no ancestor info
-                    } else if c.is_change {
+                    } else if c.is_change && !c.is_immature {
                         // In case the mempool_entry is None, the coin will be included without
                         // any ancestor info.
                         Some((
@@ -1691,7 +1691,7 @@ mod tests {
             txid: dummy_op.txid,
             vout: dummy_op.vout + 100,
         };
-        db_conn.new_unspent_coins(&[Coin {
+        let unconfirmed_coin = Coin {
             outpoint: confirmed_op_1,
             is_immature: false,
             block_info: None,
@@ -1700,7 +1700,8 @@ mod tests {
             is_change: true,
             spend_txid: None,
             spend_block: None,
-        }]);
+        };
+        db_conn.new_unspent_coins(&[unconfirmed_coin]);
         // Coin selection error due to insufficient funds.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
@@ -1781,6 +1782,41 @@ mod tests {
         auto_input.sort();
         manual_input.sort();
         assert_eq!(auto_input, manual_input);
+
+        // Now check that the spend created above using auto-selection only works when the unconfirmed coin
+        // is change and not immature.
+        // 1. not change and not immature
+        db_conn.remove_coins(&[unconfirmed_coin.outpoint]);
+        let mut unconfirmed_coin_2 = unconfirmed_coin;
+        unconfirmed_coin_2.is_change = false;
+        unconfirmed_coin_2.is_immature = false; // (this is already the case)
+        db_conn.new_unspent_coins(&[unconfirmed_coin_2]);
+        assert!(matches!(
+            control.create_spend(&destinations, &[], 1, None),
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
+        ));
+        // 2. change and immature
+        db_conn.remove_coins(&[unconfirmed_coin_2.outpoint]);
+        unconfirmed_coin_2.is_change = true;
+        unconfirmed_coin_2.is_immature = true;
+        db_conn.new_unspent_coins(&[unconfirmed_coin_2]);
+        assert!(matches!(
+            control.create_spend(&destinations, &[], 1, None),
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
+        ));
+        // 3. not change and immature
+        db_conn.remove_coins(&[unconfirmed_coin_2.outpoint]);
+        unconfirmed_coin_2.is_change = false;
+        unconfirmed_coin_2.is_immature = true;
+        db_conn.new_unspent_coins(&[unconfirmed_coin_2]);
+        assert!(matches!(
+            control.create_spend(&destinations, &[], 1, None),
+            Ok(CreateSpendResult::InsufficientFunds { .. }),
+        ));
+
+        // Re-insert the original unconfirmed coin again.
+        db_conn.remove_coins(&[unconfirmed_coin_2.outpoint]);
+        db_conn.new_unspent_coins(&[unconfirmed_coin]);
 
         // Now do the same again, but this time specifying the change address to be the same
         // as for the auto spend.
