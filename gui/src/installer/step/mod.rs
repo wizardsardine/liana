@@ -3,8 +3,7 @@ mod descriptor;
 mod mnemonic;
 
 pub use bitcoind::{
-    DefineBitcoind, DownloadState, InstallState, InternalBitcoindConfig, InternalBitcoindStep,
-    SelectBitcoindTypeStep,
+    DefineBitcoind, DownloadState, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep,
 };
 
 pub use descriptor::{

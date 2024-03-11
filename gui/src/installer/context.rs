@@ -7,7 +7,7 @@ use crate::{
         settings::{KeySetting, Settings, WalletSetting},
         wallet::wallet_name,
     },
-    bitcoind::Bitcoind,
+    bitcoind::{Bitcoind, InternalBitcoindConfig},
     hw::HardwareWalletConfig,
     signer::Signer,
 };
@@ -18,8 +18,6 @@ use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin,
 };
-
-use super::step::InternalBitcoindConfig;
 
 #[derive(Clone)]
 pub struct Context {

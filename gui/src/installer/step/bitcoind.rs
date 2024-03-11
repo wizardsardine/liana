@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 #[cfg(target_os = "windows")]
 use std::io::{self, Cursor};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
@@ -24,7 +23,9 @@ use liana_ui::{component::form, widget::*};
 use crate::{
     bitcoind::{
         self, bitcoind_network_dir, internal_bitcoind_datadir, internal_bitcoind_directory,
-        Bitcoind, ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError, VERSION,
+        Bitcoind, ConfigField, InternalBitcoindConfig, InternalBitcoindConfigError,
+        InternalBitcoindNetworkConfig, RpcAuth, RpcAuthType, RpcAuthValues,
+        StartInternalBitcoindError, VERSION,
     },
     download,
     hw::HardwareWallets,
@@ -107,143 +108,6 @@ impl Download {
 pub const PRUNE_DEFAULT: u32 = 15_000;
 /// Default ports used by bitcoind across all networks.
 pub const BITCOIND_DEFAULT_PORTS: [u16; 8] = [8332, 8333, 18332, 18333, 18443, 18444, 38332, 38333];
-
-/// Represents section for a single network in `bitcoin.conf` file.
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub struct InternalBitcoindNetworkConfig {
-    rpc_port: u16,
-    p2p_port: u16,
-    prune: u32,
-}
-
-/// Represents the `bitcoin.conf` file to be used by internal bitcoind.
-#[derive(Debug, Clone)]
-pub struct InternalBitcoindConfig {
-    networks: BTreeMap<Network, InternalBitcoindNetworkConfig>,
-}
-
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum InternalBitcoindConfigError {
-    KeyNotFound(String),
-    CouldNotParseValue(String),
-    UnexpectedSection(String),
-    TooManyElements(String),
-    FileNotFound,
-    ReadingFile(String),
-    WritingFile(String),
-    Unexpected(String),
-}
-
-impl std::fmt::Display for InternalBitcoindConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::KeyNotFound(e) => write!(f, "Config file does not contain expected key: {}", e),
-            Self::CouldNotParseValue(e) => write!(f, "Value could not be parsed: {}", e),
-            Self::UnexpectedSection(e) => write!(f, "Unexpected section in file: {}", e),
-            Self::TooManyElements(section) => {
-                write!(f, "Section in file contains too many elements: {}", section)
-            }
-            Self::FileNotFound => write!(f, "File not found"),
-            Self::ReadingFile(e) => write!(f, "Error while reading file: {}", e),
-            Self::WritingFile(e) => write!(f, "Error while writing file: {}", e),
-            Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
-        }
-    }
-}
-
-impl Default for InternalBitcoindConfig {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl InternalBitcoindConfig {
-    pub fn new() -> Self {
-        Self {
-            networks: BTreeMap::new(),
-        }
-    }
-
-    pub fn from_ini(ini: &ini::Ini) -> Result<Self, InternalBitcoindConfigError> {
-        let mut networks = BTreeMap::new();
-        for (maybe_sec, prop) in ini {
-            if let Some(sec) = maybe_sec {
-                let network = Network::from_core_arg(sec)
-                    .map_err(|e| InternalBitcoindConfigError::UnexpectedSection(e.to_string()))?;
-                if prop.len() > 3 {
-                    return Err(InternalBitcoindConfigError::TooManyElements(
-                        sec.to_string(),
-                    ));
-                }
-                let rpc_port = prop
-                    .get("rpcport")
-                    .ok_or_else(|| InternalBitcoindConfigError::KeyNotFound("rpcport".to_string()))?
-                    .parse::<u16>()
-                    .map_err(|e| InternalBitcoindConfigError::CouldNotParseValue(e.to_string()))?;
-                let p2p_port = prop
-                    .get("port")
-                    .ok_or_else(|| InternalBitcoindConfigError::KeyNotFound("port".to_string()))?
-                    .parse::<u16>()
-                    .map_err(|e| InternalBitcoindConfigError::CouldNotParseValue(e.to_string()))?;
-                let prune = prop
-                    .get("prune")
-                    .ok_or_else(|| InternalBitcoindConfigError::KeyNotFound("prune".to_string()))?
-                    .parse::<u32>()
-                    .map_err(|e| InternalBitcoindConfigError::CouldNotParseValue(e.to_string()))?;
-                networks.insert(
-                    network,
-                    InternalBitcoindNetworkConfig {
-                        rpc_port,
-                        p2p_port,
-                        prune,
-                    },
-                );
-            } else if !prop.is_empty() {
-                return Err(InternalBitcoindConfigError::UnexpectedSection(
-                    "General section should be empty".to_string(),
-                ));
-            }
-        }
-        Ok(Self { networks })
-    }
-
-    pub fn from_file(path: &PathBuf) -> Result<Self, InternalBitcoindConfigError> {
-        if !path.exists() {
-            return Err(InternalBitcoindConfigError::FileNotFound);
-        }
-        let conf_ini = ini::Ini::load_from_file(path)
-            .map_err(|e| InternalBitcoindConfigError::ReadingFile(e.to_string()))?;
-
-        Self::from_ini(&conf_ini)
-    }
-
-    pub fn to_ini(&self) -> ini::Ini {
-        let mut conf_ini = ini::Ini::new();
-
-        for (network, network_conf) in &self.networks {
-            conf_ini
-                .with_section(Some(network.to_core_arg()))
-                .set("rpcport", network_conf.rpc_port.to_string())
-                .set("port", network_conf.p2p_port.to_string())
-                .set("prune", network_conf.prune.to_string());
-        }
-        conf_ini
-    }
-
-    pub fn to_file(&self, path: &PathBuf) -> Result<(), InternalBitcoindConfigError> {
-        std::fs::create_dir_all(
-            path.parent()
-                .ok_or_else(|| InternalBitcoindConfigError::Unexpected("No parent".to_string()))?,
-        )
-        .map_err(|e| InternalBitcoindConfigError::Unexpected(e.to_string()))?;
-        info!("Writing to file {}", path.to_string_lossy());
-        self.to_ini()
-            .write_to_file(path)
-            .map_err(|e| InternalBitcoindConfigError::WritingFile(e.to_string()))?;
-
-        Ok(())
-    }
-}
 
 #[derive(Debug)]
 pub enum InstallState {
@@ -734,9 +598,12 @@ impl Step for InternalBitcoindStep {
                             return Command::none();
                         }
                     };
-                    // Insert entry for network if not present.
-                    if conf.networks.get(&self.network).is_none() {
-                        let network_conf = match (get_available_port(), get_available_port()) {
+                    let (rpc_port, p2p_port) = if let Some(network_conf) =
+                        conf.networks.get(&self.network)
+                    {
+                        (network_conf.rpc_port, network_conf.p2p_port)
+                    } else {
+                        match (get_available_port(), get_available_port()) {
                             (Ok(rpc_port), Ok(p2p_port)) => {
                                 // In case ports are the same, user will need to click button again for another attempt.
                                 if rpc_port == p2p_port {
@@ -746,11 +613,7 @@ impl Step for InternalBitcoindStep {
                                     );
                                     return Command::none();
                                 }
-                                InternalBitcoindNetworkConfig {
-                                    rpc_port,
-                                    p2p_port,
-                                    prune: PRUNE_DEFAULT,
-                                }
+                                (rpc_port, p2p_port)
                             }
                             (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
                                 self.error = Some(format!("Could not get available port: {}.", e));
@@ -761,9 +624,27 @@ impl Step for InternalBitcoindStep {
                                     Some(format!("Could not get available ports: {}; {}.", e1, e2));
                                 return Command::none();
                             }
-                        };
-                        conf.networks.insert(self.network, network_conf);
-                    }
+                        }
+                    };
+                    let (rpc_auth, rpc_password) = match RpcAuth::new("liana") {
+                        Ok((rpc_auth, password)) => (rpc_auth, password),
+                        Err(e) => {
+                            self.error = Some(e.to_string());
+                            return Command::none();
+                        }
+                    };
+                    let bitcoind_config = BitcoindConfig {
+                        rpc_auth: BitcoindRpcAuth::UserPass(rpc_auth.user.clone(), rpc_password),
+                        addr: internal_bitcoind_address(rpc_port),
+                    };
+                    let network_conf = InternalBitcoindNetworkConfig {
+                        rpc_port,
+                        p2p_port,
+                        prune: PRUNE_DEFAULT,
+                        // Overwrite any previous entry for this network as we would no longer know the RPC password.
+                        rpc_auth: Some(rpc_auth),
+                    };
+                    conf.networks.insert(self.network, network_conf);
                     if let Err(e) = conf.to_file(&bitcoind::internal_bitcoind_config_path(
                         &self.bitcoind_datadir,
                     )) {
@@ -771,7 +652,8 @@ impl Step for InternalBitcoindStep {
                         return Command::none();
                     };
                     self.error = None;
-                    self.internal_bitcoind_config = Some(conf.clone());
+                    self.internal_bitcoind_config = Some(conf);
+                    self.bitcoind_config = Some(bitcoind_config);
                     return Command::perform(async {}, |_| {
                         Message::InternalBitcoind(message::InternalBitcoindMsg::Reload)
                     });
@@ -833,31 +715,13 @@ impl Step for InternalBitcoindStep {
                             StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()),
                         ));
                         return Command::none();
-                    }
-
-                    let cookie_path = bitcoind::internal_bitcoind_cookie_path(
-                        &self.bitcoind_datadir,
-                        &self.network,
-                    );
-
-                    let rpc_port = self
-                        .internal_bitcoind_config
+                    };
+                    let bitcoind_config = self
+                        .bitcoind_config
                         .as_ref()
-                        .expect("Already added")
-                        .clone()
-                        .networks
-                        .get(&self.network)
-                        .expect("Already added")
-                        .rpc_port;
-
-                    match Bitcoind::start(
-                        &self.network,
-                        BitcoindConfig {
-                            rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
-                            addr: internal_bitcoind_address(rpc_port),
-                        },
-                        &self.liana_datadir,
-                    ) {
+                        .expect("already added")
+                        .clone();
+                    match Bitcoind::start(&self.network, bitcoind_config, &self.liana_datadir) {
                         Err(e) => {
                             self.started =
                                 Some(Err(StartInternalBitcoindError::CommandError(e.to_string())));
@@ -865,7 +729,6 @@ impl Step for InternalBitcoindStep {
                         }
                         Ok(bitcoind) => {
                             self.error = None;
-                            self.bitcoind_config = Some(bitcoind.config.clone());
                             self.started = Some(Ok(()));
                             self.internal_bitcoind = Some(bitcoind);
                         }
@@ -941,75 +804,7 @@ impl Step for InternalBitcoindStep {
 
 #[cfg(test)]
 mod tests {
-    use crate::installer::step::bitcoind::{
-        verify_hash, InternalBitcoindConfig, InternalBitcoindNetworkConfig,
-    };
-    use ini::Ini;
-    use liana::miniscript::bitcoin::Network;
-
-    // Test the format of the internal bitcoind configuration file.
-    #[test]
-    fn internal_bitcoind_config() {
-        // A valid config
-        let mut conf_ini = Ini::new();
-        conf_ini
-            .with_section(Some("main"))
-            .set("rpcport", "43345")
-            .set("port", "42355")
-            .set("prune", "15246");
-        conf_ini
-            .with_section(Some("regtest"))
-            .set("rpcport", "34067")
-            .set("port", "45175")
-            .set("prune", "2043");
-        let conf = InternalBitcoindConfig::from_ini(&conf_ini).expect("Loading conf from ini");
-        let main_conf = InternalBitcoindNetworkConfig {
-            rpc_port: 43345,
-            p2p_port: 42355,
-            prune: 15246,
-        };
-        let regtest_conf = InternalBitcoindNetworkConfig {
-            rpc_port: 34067,
-            p2p_port: 45175,
-            prune: 2043,
-        };
-        assert_eq!(conf.networks.len(), 2);
-        assert_eq!(
-            conf.networks.get(&Network::Bitcoin).expect("Missing main"),
-            &main_conf
-        );
-        assert_eq!(
-            conf.networks
-                .get(&Network::Regtest)
-                .expect("Missing regtest"),
-            &regtest_conf
-        );
-
-        let mut conf = InternalBitcoindConfig::new();
-        conf.networks.insert(Network::Bitcoin, main_conf);
-        conf.networks.insert(Network::Regtest, regtest_conf);
-        for (sec, prop) in &conf.to_ini() {
-            if let Some(sec) = sec {
-                assert_eq!(prop.len(), 3);
-                let rpc_port = prop.get("rpcport").expect("rpcport");
-                let p2p_port = prop.get("port").expect("port");
-                let prune = prop.get("prune").expect("prune");
-                if sec == "main" {
-                    assert_eq!(rpc_port, "43345");
-                    assert_eq!(p2p_port, "42355");
-                    assert_eq!(prune, "15246");
-                } else if sec == "regtest" {
-                    assert_eq!(rpc_port, "34067");
-                    assert_eq!(p2p_port, "45175");
-                    assert_eq!(prune, "2043");
-                } else {
-                    panic!("Unexpected section");
-                }
-            } else {
-                assert!(prop.is_empty())
-            }
-        }
-    }
+    use super::verify_hash;
 
     #[test]
     fn hash() {
