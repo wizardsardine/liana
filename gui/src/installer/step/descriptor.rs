@@ -193,11 +193,12 @@ impl Setup {
 }
 
 pub struct DefineDescriptor {
+    data_dir: Option<PathBuf>,
+    setup: HashMap<Network, Setup>,
+
     network: Network,
     network_valid: bool,
     use_taproot: bool,
-    data_dir: Option<PathBuf>,
-    setup: HashMap<Network, Setup>,
 
     modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Mutex<Signer>>,
@@ -213,7 +214,6 @@ impl DefineDescriptor {
             setup: HashMap::from([(Network::Bitcoin, Setup::new())]),
             data_dir: None,
             network_valid: true,
-
             modal: None,
             signer,
             error: None,

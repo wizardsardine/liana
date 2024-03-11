@@ -175,19 +175,85 @@ pub fn welcome<'a>() -> Element<'a, Message> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DescriptorKind {
-    Legacy,
+    P2WSH,
     Taproot,
 }
 
-const DESCRIPTOR_KINDS: [DescriptorKind; 2] = [DescriptorKind::Legacy, DescriptorKind::Taproot];
+const DESCRIPTOR_KINDS: [DescriptorKind; 2] = [DescriptorKind::P2WSH, DescriptorKind::Taproot];
 
 impl std::fmt::Display for DescriptorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Legacy => write!(f, "Default"),
+            Self::P2WSH => write!(f, "P2WSH"),
             Self::Taproot => write!(f, "Taproot"),
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn define_descriptor_advanced_settings<'a>(
+    network: bitcoin::Network,
+    network_valid: bool,
+    use_taproot: bool,
+) -> Element<'a, Message> {
+    let col_network = Column::new()
+        .spacing(10)
+        .push(text("Network").bold())
+        .push(container(
+            pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
+                Message::Network(net.into())
+            })
+            .style(if network_valid {
+                theme::PickList::Secondary
+            } else {
+                theme::PickList::Invalid
+            })
+            .padding(10),
+        ))
+        .push_maybe(if network_valid {
+            None
+        } else {
+            Some(text("A data directory already exists for this network").style(color::RED))
+        });
+
+    let col_wallet = Column::new()
+        .spacing(10)
+        .push(text("Descriptor type").bold())
+        .push(container(
+            pick_list(
+                &DESCRIPTOR_KINDS[..],
+                Some(if use_taproot {
+                    DescriptorKind::Taproot
+                } else {
+                    DescriptorKind::P2WSH
+                }),
+                |kind| Message::CreateTaprootDescriptor(kind == DescriptorKind::Taproot),
+            )
+            .style(theme::PickList::Secondary)
+            .padding(10),
+        ));
+
+    container(
+        Column::new()
+            .spacing(20)
+            .push(Space::with_height(0))
+            .push(separation().width(500))
+            .push(
+                Row::new()
+                    .push(col_network)
+                    .push(Space::with_width(100))
+                    .push(col_wallet),
+            )
+            .push_maybe(if use_taproot {
+                Some(
+                    p1_regular("Taproot is only supported by Liana version 5.0 and above")
+                        .style(color::GREY_2),
+                )
+            } else {
+                None
+            }),
+    )
+    .into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -202,43 +268,6 @@ pub fn define_descriptor<'a>(
     valid: bool,
     error: Option<&String>,
 ) -> Element<'a, Message> {
-    let col_network = Column::new()
-        .spacing(10)
-        .push(text("Network").bold())
-        .push(container(
-            pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
-                Message::Network(net.into())
-            })
-            .style(if network_valid {
-                theme::PickList::Simple
-            } else {
-                theme::PickList::Invalid
-            })
-            .padding(10),
-        ))
-        .push_maybe(if network_valid {
-            None
-        } else {
-            Some(text("A data directory already exists for this network").style(color::RED))
-        });
-
-    let col_wallet = Column::new()
-        .spacing(10)
-        .push(text("Wallet").bold())
-        .push(container(
-            pick_list(
-                &DESCRIPTOR_KINDS[..],
-                Some(if use_taproot {
-                    DescriptorKind::Taproot
-                } else {
-                    DescriptorKind::Legacy
-                }),
-                |kind| Message::CreateTaprootDescriptor(kind == DescriptorKind::Taproot),
-            )
-            .style(theme::PickList::Secondary)
-            .padding(10),
-        ));
-
     let col_spending_keys = Column::new()
         .push(
             Row::new()
@@ -298,16 +327,32 @@ pub fn define_descriptor<'a>(
         progress,
         "Create the wallet",
         Column::new()
+            .push(collapse::Collapse::new(
+                || {
+                    Button::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Advanced settings").small().bold())
+                            .push(icon::collapse_icon()),
+                    )
+                    .style(theme::Button::Transparent)
+                },
+                || {
+                    Button::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Advanced settings").small().bold())
+                            .push(icon::collapsed_icon()),
+                    )
+                    .style(theme::Button::Transparent)
+                },
+                move || define_descriptor_advanced_settings(network, network_valid, use_taproot),
+            ))
             .push(
                 Column::new()
                     .width(Length::Fill)
-                    .push(
-                        Row::new()
-                            .push(col_network)
-                            .push(Space::with_width(Length::Fixed(100.0)))
-                            .push(col_wallet)
-                            .align_items(Alignment::Start),
-                    )
                     .push(
                         Column::new()
                             .spacing(25)

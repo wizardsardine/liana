@@ -473,7 +473,7 @@ impl pick_list::StyleSheet for Theme {
                 border_width: 1.0,
                 border_color: color::GREY_3,
                 border_radius: 25.0,
-                text_color: color::GREY_3,
+                text_color: color::GREY_2,
             },
         }
     }
