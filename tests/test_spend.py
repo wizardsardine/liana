@@ -258,7 +258,7 @@ def test_send_to_self(lianad, bitcoind):
     assert len(lianad.rpc.listaddresses()["addresses"]) == 3
     # Create a new spend to the receive address with index 3.
     recv_addr = lianad.rpc.listaddresses(3, 1)["addresses"][0]["receive"]
-    res = lianad.rpc.createspend({recv_addr: 11_955_000}, [], 1)
+    res = lianad.rpc.createspend({recv_addr: 11_955_000}, [], 2)
     assert "psbt" in res
     # Max(receive_index, change_index) is now 4:
     assert len(lianad.rpc.listaddresses()["addresses"]) == 4
@@ -316,42 +316,52 @@ def test_coin_selection(lianad, bitcoind):
     dest_addr_2 = bitcoind.rpc.getnewaddress()
     # If feerate is higher than ancestor, we'll need to pay extra.
 
+    def additional_fees(anc_vsize, anc_fee, target_feerate):
+        """The additional fee which must have been computed by lianad."""
+        computed_anc_vsize = int(anc_fee / target_feerate)
+        print(f"c  ", computed_anc_vsize)
+        extra_vsize = anc_vsize - computed_anc_vsize
+        print("e  ", extra_vsize)
+        return extra_vsize * target_feerate
+
     # Try 10 sat/vb:
-    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], 10)
+    feerate = 10
+    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], feerate)
     assert "psbt" in spend_res_2
     spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
     # The spend is using the unconfirmed change.
     assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
         bytes.fromhex(spend_txid_1)[::-1]
     )
-    assert bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"] == 161
-    assert bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN == 339
-    # ancestor vsize at feerate 10 sat/vb = ancestor_fee / 10 = 339 / 10 = 33
-    # extra_weight <= (extra vsize * witness factor) = (161 - 33) * 4 = 512
-    # additional fee at 10 sat/vb (2.5 sat/wu) = 512 * 2.5 = 1280
+    anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
+    anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
+    if not USE_TAPROOT:
+        assert anc_vsize == 161 and anc_fees == 339
+    additional_fee = additional_fees(anc_vsize, anc_fees, feerate)
     assert len(spend_res_2["warnings"]) == 1
     assert (
         spend_res_2["warnings"][0]
-        == "An additional fee of 1280 sats has been added to pay for ancestors at the target feerate."
+        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
     )
 
     # Try 3 sat/vb:
-    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], 3)
+    feerate = 3
+    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], feerate)
     assert "psbt" in spend_res_2
     spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
     # The spend is using the unconfirmed change.
     assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
         bytes.fromhex(spend_txid_1)[::-1]
     )
-    assert bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"] == 161
-    assert bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN == 339
-    # ancestor vsize at feerate 3 sat/vb = ancestor_fee / 3 = 339 / 3 = 113
-    # extra_weight <= (extra vsize * witness factor) = (161 - 113) * 4 = 192
-    # additional fee at 3 sat/vb (0.75 sat/wu) = 192 * 0.75 = 144
+    anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
+    anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
+    if not USE_TAPROOT:
+        assert anc_vsize == 161 and anc_fees == 339
+    additional_fee = additional_fees(anc_vsize, anc_fees, feerate)
     assert len(spend_res_2["warnings"]) == 1
     assert (
         spend_res_2["warnings"][0]
-        == "An additional fee of 144 sats has been added to pay for ancestors at the target feerate."
+        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
     )
 
     # 2 sat/vb is same feerate as ancestor and we have no warnings:
@@ -386,20 +396,21 @@ def test_coin_selection(lianad, bitcoind):
     # We'll need to pay extra for each unconfirmed coin's ancestors.
     outpoints = [c["outpoint"] for c in lianad.rpc.listcoins(["unconfirmed"])["coins"]]
 
-    spend_res_3 = lianad.rpc.createspend({dest_addr_3: 20_000}, outpoints, 10)
+    feerate = 10
+    spend_res_3 = lianad.rpc.createspend({dest_addr_3: 20_000}, outpoints, feerate)
     assert "psbt" in spend_res_3
-    assert bitcoind.rpc.getmempoolentry(deposit_2)["ancestorsize"] == 165
-    assert bitcoind.rpc.getmempoolentry(deposit_2)["fees"]["ancestor"] * COIN == 165
-    # From above, extra fee for unconfirmed change at 10 sat/vb = 1280.
-    # For unconfirmed non-change:
-    # ancestor vsize at feerate 10 sat/vb = ancestor_fee / 10 = 165 / 10 = 16
-    # extra_weight <= (extra vsize * witness factor) = (165 - 16) * 4 = 596
-    # additional fee at 10 sat/vb (2.5 sat/wu) = 596 * 2.5 = 1490
-    # Sum of extra ancestor fees = 1280 + 1490 = 2770.
+    anc_vsize = bitcoind.rpc.getmempoolentry(deposit_2)["ancestorsize"]
+    anc_fees = int(bitcoind.rpc.getmempoolentry(deposit_2)["fees"]["ancestor"] * COIN)
+    prev_anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
+    prev_anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
+    if not USE_TAPROOT:
+        assert anc_vsize == anc_fees == 165
+        assert prev_anc_vsize == 161 and prev_anc_fees == 339
+    additional_fee = additional_fees(anc_vsize, anc_fees, feerate) + additional_fees(prev_anc_vsize, prev_anc_fees, feerate)
     assert len(spend_res_3["warnings"]) == 1
     assert (
         spend_res_3["warnings"][0]
-        == "An additional fee of 2770 sats has been added to pay for ancestors at the target feerate."
+        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
     )
     spend_psbt_3 = PSBT.from_base64(spend_res_3["psbt"])
     spend_txid_3 = sign_and_broadcast_psbt(lianad, spend_psbt_3)
