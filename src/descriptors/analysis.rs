@@ -25,6 +25,7 @@ pub enum LianaPolicyError {
     /// The spending policy is not a valid Miniscript policy: it may for instance be malleable, or
     /// overflow some limit.
     InvalidPolicy(compiler::CompilerError),
+    PolicyAnalysis(miniscript::Error),
 }
 
 impl std::fmt::Display for LianaPolicyError {
@@ -54,6 +55,7 @@ impl std::fmt::Display for LianaPolicyError {
                 "Descriptor is not compatible with a Liana spending policy."
             ),
             Self::InvalidPolicy(e) => write!(f, "Invalid Miniscript policy: {}", e),
+            Self::PolicyAnalysis(e) => write!(f, "Analyzing the policy of the miniscript: {}", e),
         }
     }
 }
@@ -452,7 +454,7 @@ impl LianaPolicy {
         };
         let policy = ms
             .lift()
-            .expect("Lifting can't fail on a Miniscript")
+            .map_err(LianaPolicyError::PolicyAnalysis)?
             .normalized();
 
         // The policy must always be "1 of N spending paths" with at least an always-available
