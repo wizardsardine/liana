@@ -8,7 +8,11 @@ use miniscript::{
     descriptor, translate_hash_clone, ForEachKey, TranslatePk, Translator,
 };
 
-use std::{collections::BTreeMap, convert::TryInto, error, fmt, str};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    convert::TryInto,
+    error, fmt, str,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +51,29 @@ impl From<LianaPolicyError> for LianaDescError {
     fn from(e: LianaPolicyError) -> LianaDescError {
         LianaDescError::Policy(e)
     }
+}
+
+// Whether the key identified by its fingerprint+derivation path was derived from one of the xpubs
+// for this spending path.
+fn key_is_for_path(
+    path_origins: &HashMap<bip32::Fingerprint, HashSet<bip32::DerivationPath>>,
+    fg: &bip32::Fingerprint,
+    der_path: &bip32::DerivationPath,
+) -> bool {
+    // Does it come from a signer used in this spending path?
+    if let Some(der_paths) = path_origins.get(fg) {
+        // Get the derivation path from the master fingerprint to the parent used to
+        // derive this key, in order to check whether it's part of the derivation paths
+        // used in this spending path (only checking the fingerprint isn't sufficient
+        // as a single signer may be used in more than one spending path).
+        // NOTE: this assumes there is only one derivation step after the key used in
+        // the policy. This is fine, because the keys in the policy are normalized (so
+        // the derivation path up to the wildcard is part of the origin).
+        if let Some((_, der_path_no_wildcard)) = der_path[..].split_last() {
+            return der_paths.contains(&der_path_no_wildcard.into());
+        }
+    }
+    false
 }
 
 /// An [SinglePathLianaDesc] that contains multipath keys for (and only for) the receive keychain
@@ -378,24 +405,9 @@ impl LianaDescriptor {
         // Go through all the PSBT inputs and drop the BIP32 derivations for keys that are not from
         // this spending path.
         for psbt_in in psbt.inputs.iter_mut() {
-            psbt_in.bip32_derivation.retain(|_, (fg, der_path)| {
-                // Does it come from a signer used in this spending path?
-                if let Some(der_paths) = path_origins.get(fg) {
-                    // Get the derivation path from the master fingerprint to the parent used to
-                    // derive this key, in order to check whether it's part of the derivation paths
-                    // used in this spending path (only checking the fingerprint isn't sufficient
-                    // as a single signer may be used in more than one spending path).
-                    // NOTE: this assumes there is only one derivation step after the key used in
-                    // the policy. This is fine, because the keys in the policy are normalized (so
-                    // the derivation path up to the wildcard is part of the origin).
-                    if let Some((_, der_path_no_wildcard)) = der_path[..].split_last() {
-                        if der_paths.contains(&der_path_no_wildcard.into()) {
-                            return true;
-                        }
-                    }
-                }
-                false
-            });
+            psbt_in
+                .bip32_derivation
+                .retain(|_, (fg, der_path)| key_is_for_path(&path_origins, fg, der_path));
         }
 
         psbt
