@@ -3,6 +3,7 @@ import copy
 from fixtures import *
 from test_framework.utils import (
     wait_for,
+    wait_for_while_condition_holds,
     get_txid,
     spend_coins,
     RpcError,
@@ -407,7 +408,13 @@ def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
             return False
         return coin["spend_info"]["txid"] == txid.hex()
 
-    wait_for(lambda: is_spent_by(lianad, spent_coin["outpoint"], txid_b))
+    wait_for_while_condition_holds(
+        lambda: is_spent_by(lianad, spent_coin["outpoint"], txid_b),
+        lambda: lianad.rpc.listcoins([], [spent_coin["outpoint"]])["coins"][0][
+            "spend_info"
+        ]
+        is not None,  # The spend txid changes directly from txid_a to txid_b
+    )
 
 
 def test_spend_replacement(lianad, bitcoind):
@@ -454,11 +461,15 @@ def test_spend_replacement(lianad, bitcoind):
     # newly marked as spending, the second one's spend_txid should be updated and
     # the first one's spend txid should be dropped.
     second_txid = sign_and_broadcast_psbt(lianad, second_psbt)
-    wait_for(
+    wait_for_while_condition_holds(
         lambda: all(
             c["spend_info"] is not None and c["spend_info"]["txid"] == second_txid
             for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
-        )
+        ),
+        lambda: lianad.rpc.listcoins([], [coins[1]["outpoint"]])["coins"][0][
+            "spend_info"
+        ]
+        is not None,  # The spend txid of coin from first spend is updated directly
     )
     wait_for(
         lambda: lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]
@@ -467,11 +478,15 @@ def test_spend_replacement(lianad, bitcoind):
 
     # Now RBF the second transaction with a send-to-self, just because.
     third_txid = sign_and_broadcast_psbt(lianad, third_psbt)
-    wait_for(
+    wait_for_while_condition_holds(
         lambda: all(
             c["spend_info"] is not None and c["spend_info"]["txid"] == third_txid
             for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
-        )
+        ),
+        lambda: all(
+            c["spend_info"] is not None
+            for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
+        ),  # The spend txid of all coins are updated directly
     )
     assert (
         lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"] is None

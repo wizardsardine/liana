@@ -35,17 +35,33 @@ def wait_for(success, timeout=TIMEOUT, debug_fn=None):
     debug_fn is logged at each call to success, it can be useful for debugging
     when tests fail.
     """
+    wait_for_while_condition_holds(success, lambda: True, timeout, debug_fn)
+
+
+def wait_for_while_condition_holds(success, condition, timeout=TIMEOUT, debug_fn=None):
+    """
+    Run success() either until it returns True, or until the timeout is reached,
+    as long as condition() holds.
+    debug_fn is logged at each call to success, it can be useful for debugging
+    when tests fail.
+    """
     start_time = time.time()
     interval = 0.25
-    while not success() and time.time() < start_time + timeout:
+    while True:
+        if time.time() >= start_time + timeout:
+            raise ValueError("Error waiting for {}", success)
+        if not condition():
+            raise ValueError(
+                "Condition {} not met while waiting for {}", condition, success
+            )
+        if success():
+            return
         if debug_fn is not None:
             logging.info(debug_fn())
         time.sleep(interval)
         interval *= 2
         if interval > 5:
             interval = 5
-    if time.time() > start_time + timeout:
-        raise ValueError("Error waiting for {}", success)
 
 
 def get_txid(hex_tx):
