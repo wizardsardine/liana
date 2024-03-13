@@ -1,0 +1,31 @@
+[package]
+name = "liana-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+secp256k1 = { version = "0.28", features = ["global-context-less-secure"] }
+
+
+[dependencies.liana]
+path = ".."
+
+[[bin]]
+name = "descriptor_parse"
+path = "fuzz_targets/descriptor_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "descriptors"
+path = "fuzz_targets/descriptors.rs"
+test = false
+doc = false
+bench = false
