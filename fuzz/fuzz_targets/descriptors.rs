@@ -101,6 +101,7 @@ struct Config {
     pub recovery_paths: Vec<RecPathConfig>,
     pub der_index: u16,
     pub dummy_psbt: DummyPsbt,
+    pub use_taproot: bool,
 }
 
 fuzz_target!(|config: Config| {
@@ -126,7 +127,12 @@ fuzz_target!(|config: Config| {
     } else {
         return;
     };
-    let policy = if let Ok(policy) = LianaPolicy::new(prim_path_info, rec_paths_info) {
+    let policy = if config.use_taproot {
+        LianaPolicy::new(prim_path_info, rec_paths_info)
+    } else {
+        LianaPolicy::new_legacy(prim_path_info, rec_paths_info)
+    };
+    let policy = if let Ok(policy) = policy {
         policy
     } else {
         return;
