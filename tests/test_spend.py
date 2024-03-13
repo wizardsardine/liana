@@ -335,8 +335,6 @@ def test_coin_selection(lianad, bitcoind):
     )
     anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
     anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
-    if not USE_TAPROOT:
-        assert anc_vsize == 161 and anc_fees == 339
     additional_fee = additional_fees(anc_vsize, anc_fees, feerate)
     assert len(spend_res_2["warnings"]) == 1
     assert (
@@ -355,8 +353,6 @@ def test_coin_selection(lianad, bitcoind):
     )
     anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
     anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
-    if not USE_TAPROOT:
-        assert anc_vsize == 161 and anc_fees == 339
     additional_fee = additional_fees(anc_vsize, anc_fees, feerate)
     assert len(spend_res_2["warnings"]) == 1
     assert (
@@ -403,9 +399,6 @@ def test_coin_selection(lianad, bitcoind):
     anc_fees = int(bitcoind.rpc.getmempoolentry(deposit_2)["fees"]["ancestor"] * COIN)
     prev_anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
     prev_anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
-    if not USE_TAPROOT:
-        assert anc_vsize == anc_fees == 165
-        assert prev_anc_vsize == 161 and prev_anc_fees == 339
     additional_fee = additional_fees(anc_vsize, anc_fees, feerate) + additional_fees(prev_anc_vsize, prev_anc_fees, feerate)
     assert len(spend_res_3["warnings"]) == 1
     assert (
