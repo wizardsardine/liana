@@ -414,7 +414,19 @@ pub fn import_descriptor<'a>(
                     } else {
                         None
                     })
-                    .push(col_descriptor),
+                    .push(col_descriptor)
+                    .push_maybe(if change_network {
+                        // only show message when importing a descriptor
+                        Some(text(
+                            "After creating the wallet, \
+                            you will need to perform a rescan of \
+                            the blockchain in order to see your \
+                            coins and past transactions. This can \
+                            be done in Settings > Bitcoin Core.",
+                        ))
+                    } else {
+                        None
+                    }),
             )
             .push(
                 if imported_descriptor.value.is_empty() || !imported_descriptor.valid {
