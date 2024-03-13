@@ -1405,5 +1405,10 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn unliftable_miniscript() {
+        LianaDescriptor::from_str("wsh(0)").unwrap_err();
+    }
+
     // TODO: test error conditions of deserialization.
 }
