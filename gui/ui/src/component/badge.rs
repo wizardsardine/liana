@@ -75,66 +75,45 @@ pub fn coin<T>() -> Container<'static, T> {
 }
 
 pub fn recovery<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(
-        tooltip::Tooltip::new(
-            Container::new(text::p2_regular("  Recovery  "))
-                .padding(10)
-                .style(theme::Container::Pill(theme::Pill::Simple)),
-            "This transaction is using a recovery path",
-            tooltip::Position::Top,
-        )
-        .style(theme::Container::Card(theme::Card::Simple)),
-    )
+    badge_pill("  Recovery  ", "This transaction is using a recovery path")
 }
 
 pub fn unconfirmed<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(
-        tooltip::Tooltip::new(
-            Container::new(text::p2_regular("  Unconfirmed  "))
-                .padding(10)
-                .style(theme::Container::Pill(theme::Pill::Simple)),
-            "Do not treat this as a payment until it is confirmed",
-            tooltip::Position::Top,
-        )
-        .style(theme::Container::Card(theme::Card::Simple)),
+    badge_pill(
+        "  Unconfirmed  ",
+        "Do not treat this as a payment until it is confirmed",
     )
 }
 
 pub fn batch<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(
-        tooltip::Tooltip::new(
-            Container::new(text::p2_regular("  Batch  "))
-                .padding(10)
-                .style(theme::Container::Pill(theme::Pill::Simple)),
-            "This transaction contains multiple payments",
-            tooltip::Position::Top,
-        )
-        .style(theme::Container::Card(theme::Card::Simple)),
-    )
+    badge_pill("  Batch  ", "This transaction contains multiple payments")
 }
 
 pub fn deprecated<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(
-        tooltip::Tooltip::new(
-            Container::new(text::p2_regular("  Deprecated  "))
-                .padding(10)
-                .style(theme::Container::Pill(theme::Pill::Simple)),
-            "This transaction cannot be included in the blockchain anymore.",
-            tooltip::Position::Top,
-        )
-        .style(theme::Container::Card(theme::Card::Simple)),
+    badge_pill(
+        "  Deprecated  ",
+        "This transaction cannot be included in the blockchain anymore.",
     )
 }
 
 pub fn spent<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(
+    badge_pill(
+        "  Spent  ",
+        "The transaction was included in the blockchain.",
+    )
+}
+
+pub fn badge_pill<'a, T: 'a>(label: &'a str, tooltip: &'a str) -> Container<'a, T> {
+    Container::new({
         tooltip::Tooltip::new(
-            Container::new(text::p2_regular("  Spent  "))
+            Container::new(text::p2_regular(label))
                 .padding(10)
+                .width(Length::Fill)
+                .center_x()
                 .style(theme::Container::Pill(theme::Pill::Simple)),
-            "The transaction was included in the blockchain.",
+            tooltip,
             tooltip::Position::Top,
         )
-        .style(theme::Container::Card(theme::Card::Simple)),
-    )
+        .style(theme::Container::Card(theme::Card::Simple))
+    })
 }
