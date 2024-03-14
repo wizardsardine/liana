@@ -33,7 +33,7 @@ use std::{error, fmt, fs, io, path, sync, thread};
 use miniscript::bitcoin::secp256k1;
 
 #[cfg(not(test))]
-use std::{panic, process};
+use std::panic;
 // A panic in any thread should stop the main thread, and print the panic.
 #[cfg(not(test))]
 fn setup_panic_hook() {
@@ -60,8 +60,6 @@ fn setup_panic_hook() {
             info,
             bt
         );
-
-        process::exit(1);
     }));
 }
 
@@ -309,9 +307,6 @@ impl DaemonHandle {
     /// default Bitcoin interface (`bitcoind` JSONRPC) will be used.
     /// You may specify a custom Database interface through the `db` parameter. If `None`, the
     /// default Database interface (SQLite) will be used.
-    ///
-    /// **Note**: we internally use threads, and set a panic hook. A downstream application must
-    /// not overwrite this panic hook.
     pub fn start(
         config: Config,
         bitcoin: Option<impl BitcoinInterface + 'static>,
