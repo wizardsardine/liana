@@ -17,6 +17,7 @@ from test_framework.utils import (
     spend_coins,
     sign_and_broadcast,
     sign_and_broadcast_psbt,
+    USE_TAPROOT,
 )
 
 
@@ -405,13 +406,21 @@ def test_create_spend(lianad, bitcoind):
     assert len(spend_psbt.o) == 4
     assert len(spend_psbt.tx.vout) == 4
 
-    # The transaction must contain the spent transaction for each input.
+    # The transaction must contain the spent transaction for each input for P2WSH. But not for Taproot.
     # We don't make assumptions about the ordering of PSBT inputs.
-    assert sorted(
-        [psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in spend_psbt.i]
-    ) == sorted(
-        [bytes.fromhex(bitcoind.rpc.gettransaction(op[:64])["hex"]) for op in outpoints]
-    )
+    if USE_TAPROOT:
+        assert all(
+            PSBT_IN_NON_WITNESS_UTXO not in psbt_in.map for psbt_in in spend_psbt.i
+        )
+    else:
+        assert sorted(
+            [psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in spend_psbt.i]
+        ) == sorted(
+            [
+                bytes.fromhex(bitcoind.rpc.gettransaction(op[:64])["hex"])
+                for op in outpoints
+            ]
+        )
 
     # We can sign it and broadcast it.
     sign_and_broadcast(lianad, bitcoind, PSBT.from_base64(res["psbt"]))
@@ -1092,9 +1101,9 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     rbf_1_res = lianad.rpc.rbfpsbt(first_txid, False, 10)
     rbf_1_psbt = PSBT.from_base64(rbf_1_res["psbt"])
     # The inputs are the same in both (no new inputs needed in the replacement).
-    assert sorted(
-        psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in first_psbt.i
-    ) == sorted(psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in rbf_1_psbt.i)
+    assert sorted(i.prevout.serialize() for i in first_psbt.tx.vin) == sorted(
+        i.prevout.serialize() for i in rbf_1_psbt.tx.vin
+    )
     # Check non-change output is the same in both.
     assert first_psbt.tx.vout[0].nValue == rbf_1_psbt.tx.vout[0].nValue
     assert first_psbt.tx.vout[0].scriptPubKey == rbf_1_psbt.tx.vout[0].scriptPubKey
@@ -1114,8 +1123,9 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     # transaction:
     with pytest.raises(RpcError, match=f"Feerate too low: 10."):
         lianad.rpc.rbfpsbt(first_txid, False, 10)
-    # Using 11 for feerate works.
-    lianad.rpc.rbfpsbt(first_txid, False, 11)
+    # Using 11 for feerate works for P2WSH. For Taproot we need 12.
+    feerate = 12 if USE_TAPROOT else 11
+    lianad.rpc.rbfpsbt(first_txid, False, feerate)
     # Add a new transaction spending the change from the first RBF.
     desc_1_destinations = {
         bitcoind.rpc.getnewaddress(): 500_000,
@@ -1149,12 +1159,12 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
         )
     )
     # Now replace the first RBF, which will also remove its descendants.
-    rbf_2_res = lianad.rpc.rbfpsbt(rbf_1_txid, False, 11)
+    rbf_2_res = lianad.rpc.rbfpsbt(rbf_1_txid, False, feerate)
     rbf_2_psbt = PSBT.from_base64(rbf_2_res["psbt"])
     # The inputs are the same in both (no new inputs needed in the replacement).
-    assert sorted(
-        psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in rbf_1_psbt.i
-    ) == sorted(psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in rbf_2_psbt.i)
+    assert sorted(i.prevout.serialize() for i in rbf_1_psbt.tx.vin) == sorted(
+        i.prevout.serialize() for i in rbf_2_psbt.tx.vin
+    )
     # Check non-change output is the same in both.
     assert rbf_1_psbt.tx.vout[0].nValue == rbf_2_psbt.tx.vout[0].nValue
     assert rbf_1_psbt.tx.vout[0].scriptPubKey == rbf_2_psbt.tx.vout[0].scriptPubKey
@@ -1204,7 +1214,8 @@ def test_rbfpsbt_insufficient_funds(lianad, bitcoind):
     spend_txid_1 = sign_and_broadcast_psbt(lianad, spend_psbt_1)
 
     # We don't have sufficient funds to bump the fee.
-    assert "missing" in lianad.rpc.rbfpsbt(spend_txid_1, False, 2)
+    feerate = 3 if USE_TAPROOT else 2
+    assert "missing" in lianad.rpc.rbfpsbt(spend_txid_1, False, feerate)
     # We can still cancel it as the coin has enough value to create a single
     # output at a higher feerate.
     assert "psbt" in lianad.rpc.rbfpsbt(spend_txid_1, True)
@@ -1273,8 +1284,8 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
     # Replacement only has a single input.
     assert len(rbf_1_psbt.i) == 1
     # This input is one of the two from the previous transaction.
-    assert rbf_1_psbt.i[0].map[PSBT_IN_NON_WITNESS_UTXO] in [
-        psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in rbf_1_psbt.i
+    assert rbf_1_psbt.tx.vin[0].prevout.serialize() in [
+        i.prevout.serialize() for i in first_psbt.tx.vin
     ]
     # The replacement only has a change output.
     assert len(rbf_1_psbt.tx.vout) == 1
@@ -1340,13 +1351,12 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
     # Now cancel the first RBF, which will also remove its descendants.
     rbf_2_res = lianad.rpc.rbfpsbt(rbf_1_txid, True)
     rbf_2_psbt = PSBT.from_base64(rbf_2_res["psbt"])
-    #
-    assert len(rbf_2_psbt.i) == 1
-    assert (
-        rbf_1_psbt.i[0].map[PSBT_IN_NON_WITNESS_UTXO]
-        == rbf_2_psbt.i[0].map[PSBT_IN_NON_WITNESS_UTXO]
-    )
     # The inputs are the same in both (no new inputs needed in the replacement).
+    assert len(rbf_2_psbt.tx.vin) == 1
+    assert (
+        rbf_1_psbt.tx.vin[0].prevout.serialize()
+        == rbf_2_psbt.tx.vin[0].prevout.serialize()
+    )
 
     # Only a single output (change) in the replacement.
     assert len(rbf_2_psbt.tx.vout) == 1

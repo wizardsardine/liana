@@ -591,6 +591,12 @@ impl DaemonControl {
                 psbtin
                     .partial_sigs
                     .extend(db_psbtin.partial_sigs.clone().into_iter());
+                psbtin
+                    .tap_script_sigs
+                    .extend(db_psbtin.tap_script_sigs.clone().into_iter());
+                if psbtin.tap_key_sig.is_none() {
+                    psbtin.tap_key_sig = db_psbtin.tap_key_sig;
+                }
             }
         } else {
             // If the transaction doesn't exist in DB already, sanity check its inputs.

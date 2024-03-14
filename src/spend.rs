@@ -114,7 +114,7 @@ fn sanity_check_psbt(
     // index set for signing devices to recognize them as ours.
     let mut value_in = 0;
     for psbtin in psbt.inputs.iter() {
-        if psbtin.bip32_derivation.is_empty() {
+        if psbtin.bip32_derivation.is_empty() && psbtin.tap_key_origins.is_empty() {
             return Err(SpendCreationError::SanityCheckFailure(psbt.clone()));
         }
         value_in += psbtin
@@ -649,20 +649,17 @@ pub fn create_spend(
         });
         // If it's an address of ours, signal it as change to signing devices by adding the
         // BIP32 derivation path to the PSBT output.
-        let bip32_derivation = if let Some(AddrInfo { index, is_change }) = address.info {
+        let mut psbt_out = PsbtOut::default();
+        if let Some(AddrInfo { index, is_change }) = address.info {
             let desc = if is_change {
                 main_descriptor.change_descriptor()
             } else {
                 main_descriptor.receive_descriptor()
             };
-            desc.derive(index, secp).bip32_derivations()
-        } else {
-            Default::default()
-        };
-        psbt_outs.push(PsbtOut {
-            bip32_derivation,
-            ..PsbtOut::default()
-        });
+            desc.derive(index, secp)
+                .update_change_psbt_out(&mut psbt_out)
+        }
+        psbt_outs.push(psbt_out);
     }
     assert_eq!(tx.output.is_empty(), is_self_send);
 
@@ -718,24 +715,21 @@ pub fn create_spend(
 
         // If the change address is ours, tell the signers by setting the BIP32 derivations in the
         // PSBT output.
-        let bip32_derivation = if let Some(AddrInfo { index, is_change }) = change_addr.info {
+        let mut psbt_out = PsbtOut::default();
+        if let Some(AddrInfo { index, is_change }) = change_addr.info {
             let desc = if is_change {
                 main_descriptor.change_descriptor()
             } else {
                 main_descriptor.receive_descriptor()
             };
-            desc.derive(index, secp).bip32_derivations()
-        } else {
-            Default::default()
-        };
+            desc.derive(index, secp)
+                .update_change_psbt_out(&mut psbt_out);
+        }
 
         // TODO: shuffle once we have Taproot
         change_txo.value = change_amount;
         tx.output.push(change_txo);
-        psbt_outs.push(PsbtOut {
-            bip32_derivation,
-            ..PsbtOut::default()
-        });
+        psbt_outs.push(psbt_out);
     } else if max_change_amount.to_sat() > 0 {
         warnings.push(CreateSpendWarning::ChangeAddedToFee(
             max_change_amount.to_sat(),
@@ -762,21 +756,17 @@ pub fn create_spend(
         });
 
         // Populate the PSBT input with the information needed by signers.
+        let mut psbt_in = PsbtIn::default();
         let coin_desc = derived_desc(secp, main_descriptor, cand);
-        let witness_script = Some(coin_desc.witness_script());
-        let witness_utxo = Some(bitcoin::TxOut {
+        coin_desc.update_psbt_in(&mut psbt_in);
+        psbt_in.witness_utxo = Some(bitcoin::TxOut {
             value: cand.amount,
             script_pubkey: coin_desc.script_pubkey(),
         });
-        let non_witness_utxo = tx_getter.get_tx(&cand.outpoint.txid);
-        let bip32_derivation = coin_desc.bip32_derivations();
-        psbt_ins.push(PsbtIn {
-            witness_script,
-            witness_utxo,
-            bip32_derivation,
-            non_witness_utxo,
-            ..PsbtIn::default()
-        });
+        if !main_descriptor.is_taproot() {
+            psbt_in.non_witness_utxo = tx_getter.get_tx(&cand.outpoint.txid);
+        }
+        psbt_ins.push(psbt_in);
     }
 
     // Finally, create the PSBT with all inputs and outputs, sanity check it and return it.

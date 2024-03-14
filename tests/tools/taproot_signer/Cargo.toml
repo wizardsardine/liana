@@ -1,0 +1,10 @@
+[package]
+name = "taproot_signer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitcoin = { version = "0.31", features = ["base64"] }
+
+# Avoid it being built under Liana's target dir.
+[workspace]

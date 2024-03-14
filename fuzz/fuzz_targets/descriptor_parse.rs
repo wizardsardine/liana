@@ -67,10 +67,12 @@ fuzz_target!(|data: &[u8]| {
         desc.receive_descriptor().derive(der_index, &SECP256K1),
         desc.change_descriptor().derive(der_index, &SECP256K1),
     ];
+    let mut psbt_in = Default::default();
+    let mut psbt_out = Default::default();
     for desc in der_descs {
         desc.address(Network::Bitcoin);
         desc.script_pubkey();
-        desc.witness_script();
-        desc.bip32_derivations();
+        desc.update_psbt_in(&mut psbt_in);
+        desc.update_change_psbt_out(&mut psbt_out);
     }
 });

@@ -45,6 +45,9 @@ const BITCOIND_RETRY_LIMIT: usize = 60;
 // The minimum bitcoind version that can be used with lianad.
 const MIN_BITCOIND_VERSION: u64 = 240000;
 
+// The minimum bitcoind version that can be used with lianad and a Taproot descriptor.
+const MIN_TAPROOT_BITCOIND_VERSION: u64 = 260000;
+
 /// An error in the bitcoind interface.
 #[derive(Debug)]
 pub enum BitcoindError {
@@ -129,8 +132,8 @@ impl std::fmt::Display for BitcoindError {
             BitcoindError::InvalidVersion(v) => {
                 write!(
                     f,
-                    "Invalid bitcoind version '{}', minimum supported is '{}'.",
-                    v, MIN_BITCOIND_VERSION
+                    "Invalid bitcoind version '{}', minimum supported is '{}' and minimum supported if using Taproot is '{}'.",
+                    v, MIN_BITCOIND_VERSION, MIN_TAPROOT_BITCOIND_VERSION
                 )
             }
             BitcoindError::NetworkMismatch(conf_net, bitcoind_net) => {
@@ -699,10 +702,14 @@ impl BitcoinD {
     pub fn node_sanity_checks(
         &self,
         config_network: bitcoin::Network,
+        is_taproot: bool,
     ) -> Result<(), BitcoindError> {
         // Check the minimum supported bitcoind version
         let version = self.get_bitcoind_version();
         if version < MIN_BITCOIND_VERSION {
+            return Err(BitcoindError::InvalidVersion(version));
+        }
+        if is_taproot && version < MIN_TAPROOT_BITCOIND_VERSION {
             return Err(BitcoindError::InvalidVersion(version));
         }
 
@@ -747,13 +754,27 @@ impl BitcoinD {
         // Check our main descriptor is imported in this wallet.
         let receive_desc = main_descriptor.receive_descriptor();
         let change_desc = main_descriptor.change_descriptor();
-        let desc_list: Vec<String> = self
+        let desc_list: Vec<_> = self
             .list_descriptors()
             .into_iter()
-            .map(|entry| entry.desc)
+            .filter_map(|entry| {
+                match descriptor::Descriptor::<descriptor::DescriptorPublicKey>::from_str(
+                    &entry.desc,
+                ) {
+                    Ok(desc) => Some(desc),
+                    Err(e) => {
+                        log::error!(
+                            "Error deserializing descriptor: {}. Descriptor: {}.",
+                            e,
+                            entry.desc
+                        );
+                        None
+                    }
+                }
+            })
             .collect();
-        if !desc_list.contains(&receive_desc.to_string())
-            || !desc_list.contains(&change_desc.to_string())
+        if !desc_list.iter().any(|desc| *receive_desc == *desc)
+            || !desc_list.iter().any(|desc| *change_desc == *desc)
         {
             return Err(BitcoindError::Wallet(
                 self.watchonly_wallet_path.clone(),

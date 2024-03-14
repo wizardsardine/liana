@@ -5,10 +5,9 @@ from concurrent import futures
 from test_framework.bitcoind import Bitcoind
 from test_framework.lianad import Lianad
 from test_framework.signer import SingleSigner, MultiSigner
-from test_framework.utils import (
-    EXECUTOR_WORKERS,
-)
+from test_framework.utils import EXECUTOR_WORKERS, USE_TAPROOT
 
+import hashlib
 import os
 import pytest
 import shutil
@@ -120,22 +119,36 @@ def xpub_fingerprint(hd):
     return _pubkey_to_fingerprint(hd.pubkey).hex()
 
 
+def single_key_desc(prim_fg, prim_xpub, reco_fg, reco_xpub, csv_value, is_taproot):
+    if is_taproot:
+        return f"tr([{prim_fg}]{prim_xpub}/<0;1>/*,and_v(v:pk([{reco_fg}]{reco_xpub}/<0;1>/*),older({csv_value})))"
+    else:
+        return f"wsh(or_d(pk([{prim_fg}]{prim_xpub}/<0;1>/*),and_v(v:pkh([{reco_fg}]{reco_xpub}/<0;1>/*),older({csv_value}))))"
+
+
 @pytest.fixture
 def lianad(bitcoind, directory):
     datadir = os.path.join(directory, "lianad")
     os.makedirs(datadir, exist_ok=True)
     bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
 
-    signer = SingleSigner()
+    signer = SingleSigner(is_taproot=USE_TAPROOT)
     (prim_fingerprint, primary_xpub), (reco_fingerprint, recovery_xpub) = (
         (xpub_fingerprint(signer.primary_hd), signer.primary_hd.get_xpub()),
         (xpub_fingerprint(signer.recovery_hd), signer.recovery_hd.get_xpub()),
     )
     csv_value = 10
-    # NOTE: origins are the actual xpub themselves which is incorrect but make it
+    # NOTE: origins are the actual xpub themselves which is incorrect but makes it
     # possible to differentiate them.
     main_desc = Descriptor.from_str(
-        f"wsh(or_d(pk([{prim_fingerprint}]{primary_xpub}/<0;1>/*),and_v(v:pkh([{reco_fingerprint}]{recovery_xpub}/<0;1>/*),older({csv_value}))))"
+        single_key_desc(
+            prim_fingerprint,
+            primary_xpub,
+            reco_fingerprint,
+            recovery_xpub,
+            csv_value,
+            is_taproot=USE_TAPROOT,
+        )
     )
 
     lianad = Lianad(
@@ -156,8 +169,19 @@ def lianad(bitcoind, directory):
     lianad.cleanup()
 
 
-def multi_expression(thresh, keys):
-    exp = f"multi({thresh},"
+def unspendable_internal_xpub(xpubs):
+    """Deterministic, unique, unspendable internal key.
+    See See https://delvingbitcoin.org/t/unspendable-keys-in-descriptors/304/21
+    """
+    chaincode = hashlib.sha256(b"".join(xpub.pubkey for xpub in xpubs)).digest()
+    bip341_nums = bytes.fromhex(
+        "0250929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
+    )
+    return BIP32(chaincode, pubkey=bip341_nums, network="test")
+
+
+def multi_expression(thresh, keys, is_taproot):
+    exp = f"multi_a({thresh}," if is_taproot else f"multi({thresh},"
     for i, key in enumerate(keys):
         # NOTE: origins are the actual xpub themselves which is incorrect but make it
         # possible to differentiate them.
@@ -168,6 +192,21 @@ def multi_expression(thresh, keys):
     return exp + ")"
 
 
+def multisig_desc(multi_signer, csv_value, is_taproot):
+    prim_multi, recov_multi = (
+        multi_expression(3, multi_signer.prim_hds, is_taproot),
+        multi_expression(2, multi_signer.recov_hds[csv_value], is_taproot),
+    )
+    if is_taproot:
+        all_xpubs = [
+            hd for hd in multi_signer.prim_hds + multi_signer.recov_hds[csv_value]
+        ]
+        internal_key = unspendable_internal_xpub(all_xpubs).get_xpub()
+        return f"tr([00000000]{internal_key}/<0;1>/*,{{{prim_multi},and_v(v:{recov_multi},older({csv_value}))}})"
+    else:
+        return f"wsh(or_d({prim_multi},and_v(v:{recov_multi},older({csv_value}))))"
+
+
 @pytest.fixture
 def lianad_multisig(bitcoind, directory):
     datadir = os.path.join(directory, "lianad")
@@ -176,13 +215,9 @@ def lianad_multisig(bitcoind, directory):
 
     # A 3-of-4 that degrades into a 2-of-5 after 10 blocks
     csv_value = 10
-    signer = MultiSigner(4, {csv_value: 5})
-    prim_multi, recov_multi = (
-        multi_expression(3, signer.prim_hds),
-        multi_expression(2, signer.recov_hds[csv_value]),
-    )
+    signer = MultiSigner(4, {csv_value: 5}, is_taproot=USE_TAPROOT)
     main_desc = Descriptor.from_str(
-        f"wsh(or_d({prim_multi},and_v(v:{recov_multi},older({csv_value}))))"
+        multisig_desc(signer, csv_value, is_taproot=USE_TAPROOT)
     )
 
     lianad = Lianad(
@@ -203,6 +238,28 @@ def lianad_multisig(bitcoind, directory):
     lianad.cleanup()
 
 
+def multipath_desc(multi_signer, csv_values, is_taproot):
+    prim_multi = multi_expression(3, multi_signer.prim_hds, is_taproot)
+    first_recov_multi = multi_expression(
+        3, multi_signer.recov_hds[csv_values[0]], is_taproot
+    )
+    second_recov_multi = multi_expression(
+        1, multi_signer.recov_hds[csv_values[1]], is_taproot
+    )
+    if is_taproot:
+        all_xpubs = [
+            hd
+            for hd in multi_signer.prim_hds
+            + multi_signer.recov_hds[csv_values[0]]
+            + multi_signer.recov_hds[csv_values[1]]
+        ]
+        internal_key = unspendable_internal_xpub(all_xpubs).get_xpub()
+        # On purpose we use a single leaf instead of 3 different ones. It shouldn't be an issue.
+        return f"tr([00000000]{internal_key}/<0;1>/*,or_d({prim_multi},or_i(and_v(v:{first_recov_multi},older({csv_values[0]})),and_v(v:{second_recov_multi},older({csv_values[1]})))))"
+    else:
+        return f"wsh(or_d({prim_multi},or_i(and_v(v:{first_recov_multi},older({csv_values[0]})),and_v(v:{second_recov_multi},older({csv_values[1]})))))"
+
+
 @pytest.fixture
 def lianad_multipath(bitcoind, directory):
     datadir = os.path.join(directory, "lianad")
@@ -211,12 +268,11 @@ def lianad_multipath(bitcoind, directory):
 
     # A 3-of-4 that degrades into a 3-of-5 after 10 blocks and into a 1-of-10 after 20 blocks.
     csv_values = [10, 20]
-    signer = MultiSigner(4, {csv_values[0]: 5, csv_values[1]: 10})
-    prim_multi = multi_expression(3, signer.prim_hds)
-    first_recov_multi = multi_expression(3, signer.recov_hds[csv_values[0]])
-    second_recov_multi = multi_expression(1, signer.recov_hds[csv_values[1]])
+    signer = MultiSigner(
+        4, {csv_values[0]: 5, csv_values[1]: 10}, is_taproot=USE_TAPROOT
+    )
     main_desc = Descriptor.from_str(
-        f"wsh(or_d({prim_multi},or_i(and_v(v:{first_recov_multi},older({csv_values[0]})),and_v(v:{second_recov_multi},older({csv_values[1]})))))"
+        multipath_desc(signer, csv_values, is_taproot=USE_TAPROOT)
     )
 
     lianad = Lianad(

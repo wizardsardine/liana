@@ -10,6 +10,7 @@ from test_framework.utils import (
     COIN,
     sign_and_broadcast,
     sign_and_broadcast_psbt,
+    USE_TAPROOT,
 )
 from test_framework.serializations import PSBT
 
@@ -354,6 +355,9 @@ def test_rescan_and_recovery(lianad, bitcoind):
     sign_and_broadcast(lianad, bitcoind, reco_psbt, recovery=True)
 
 
+@pytest.mark.skipif(
+    USE_TAPROOT, reason="Needs a finalizer implemented in the Python test framework."
+)
 def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
     """Test we'll update the spending txid of a coin if a conflicting spend enters our mempool."""
     # Get an (unconfirmed, on purpose) coin to be spent by 2 different txs.

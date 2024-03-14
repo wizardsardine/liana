@@ -229,7 +229,10 @@ fn setup_bitcoind(
         .as_ref()
         .ok_or(StartupError::MissingBitcoindConfig)?;
     let bitcoind = BitcoinD::new(bitcoind_config, wo_path_str)?;
-    bitcoind.node_sanity_checks(config.bitcoin_config.network)?;
+    bitcoind.node_sanity_checks(
+        config.bitcoin_config.network,
+        config.main_descriptor.is_taproot(),
+    )?;
     if fresh_data_dir {
         log::info!("Creating a new watchonly wallet on bitcoind.");
         bitcoind.create_watchonly_wallet(&config.main_descriptor)?;

@@ -14,7 +14,7 @@ where
 {
     let string = String::deserialize(deserializer)?;
     T::from_str(&string)
-        .map_err(|e| de::Error::custom(format!("Error parsing descriptor '{}': '{}'", string, e)))
+        .map_err(|e| de::Error::custom(format!("Error parsing '{}': {}", string, e)))
 }
 
 pub fn serialize_to_string<T: std::fmt::Display, S: Serializer>(
@@ -305,6 +305,26 @@ mod tests {
             daemon = false
             log_level = 'TRACE'
             main_descriptor = 'wsh(andor(pk([aabbccdd]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk([aabbccdd]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#dw4ulnrs'
+
+            [bitcoin_config]
+            network = 'bitcoin'
+            poll_interval_secs = 18
+
+            [bitcoind_config]
+            cookie_path = '/home/user/.bitcoin/.cookie'
+            addr = '127.0.0.1:8332'
+            "#.trim_start().replace("            ", "");
+        let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
+        let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
+        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
+        assert_eq!(toml_str, serialized);
+
+        // A valid, round-tripping, config for a Taproot descriptor.
+        let toml_str = r#"
+            data_dir = '/home/wizardsardine/custom/folder/'
+            daemon = false
+            log_level = 'TRACE'
+            main_descriptor = 'tr([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,and_v(v:pk([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560)))#0mt7e93c'
 
             [bitcoin_config]
             network = 'bitcoin'

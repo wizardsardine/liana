@@ -101,6 +101,7 @@ struct Config {
     pub recovery_paths: Vec<RecPathConfig>,
     pub der_index: u16,
     pub dummy_psbt: DummyPsbt,
+    pub use_taproot: bool,
 }
 
 fuzz_target!(|config: Config| {
@@ -126,7 +127,12 @@ fuzz_target!(|config: Config| {
     } else {
         return;
     };
-    let policy = if let Ok(policy) = LianaPolicy::new(prim_path_info, rec_paths_info) {
+    let policy = if config.use_taproot {
+        LianaPolicy::new(prim_path_info, rec_paths_info)
+    } else {
+        LianaPolicy::new_legacy(prim_path_info, rec_paths_info)
+    };
+    let policy = if let Ok(policy) = policy {
         policy
     } else {
         return;
@@ -154,11 +160,13 @@ fuzz_target!(|config: Config| {
         desc.receive_descriptor().derive(der_index, &SECP256K1),
         desc.change_descriptor().derive(der_index, &SECP256K1),
     ];
+    let mut psbt_in = Default::default();
+    let mut psbt_out = Default::default();
     for desc in &der_descs {
         desc.address(Network::Bitcoin);
         desc.script_pubkey();
-        desc.witness_script();
-        desc.bip32_derivations();
+        desc.update_psbt_in(&mut psbt_in);
+        desc.update_change_psbt_out(&mut psbt_out);
     }
 
     // Exercise the methods gathering information from a PSBT. TODO: get more useful PSBTs.
@@ -172,12 +180,11 @@ fuzz_target!(|config: Config| {
         // for outputs.
         let rec_desc = &der_descs[0];
         for psbt_in in psbt.inputs.iter_mut() {
-            psbt_in.witness_script = Some(rec_desc.witness_script());
-            psbt_in.bip32_derivation = rec_desc.bip32_derivations();
+            rec_desc.update_psbt_in(psbt_in);
         }
         let change_desc = &der_descs[1];
         for psbt_out in psbt.outputs.iter_mut() {
-            psbt_out.bip32_derivation = change_desc.bip32_derivations();
+            change_desc.update_change_psbt_out(psbt_out);
         }
 
         // Now get the spend info again with these info.

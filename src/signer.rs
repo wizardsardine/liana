@@ -18,7 +18,8 @@ use miniscript::bitcoin::{
     bip32::{self, Error as Bip32Error},
     ecdsa,
     hashes::Hash,
-    psbt::Psbt,
+    key::TapTweak,
+    psbt::{Input as PsbtIn, Psbt},
     secp256k1, sighash,
 };
 
@@ -228,56 +229,167 @@ impl HotSigner {
         bip32::Xpub::from_priv(secp, &xpriv)
     }
 
+    // Provide an ECDSA signature for this transaction input from the PSBT input information.
+    fn sign_p2wsh(
+        &self,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
+        sighash_cache: &mut sighash::SighashCache<&bitcoin::Transaction>,
+        master_fingerprint: bip32::Fingerprint,
+        psbt_in: &mut PsbtIn,
+        input_index: usize,
+    ) -> Result<(), SignerError> {
+        // First of all compute the sighash for this input. We assume P2WSH spend: the sighash
+        // script code is always the witness script.
+        let witscript = psbt_in
+            .witness_script
+            .as_ref()
+            .ok_or(SignerError::IncompletePsbt)?;
+        let value = psbt_in
+            .witness_utxo
+            .as_ref()
+            .ok_or(SignerError::IncompletePsbt)?
+            .value;
+        let sig_type = sighash::EcdsaSighashType::All;
+        let sighash = sighash_cache
+            .p2wsh_signature_hash(input_index, witscript, value, sig_type)
+            .map_err(|_| SignerError::InsanePsbt)?;
+        let sighash = secp256k1::Message::from_digest_slice(sighash.as_byte_array())
+            .expect("Sighash is always 32 bytes.");
+
+        // Then provide a signature for all the keys they asked for.
+        for (curr_pubkey, (fingerprint, der_path)) in psbt_in.bip32_derivation.iter() {
+            if *fingerprint != master_fingerprint {
+                continue;
+            }
+            let privkey = self.xpriv_at(der_path, secp).to_priv();
+            let pubkey = privkey.public_key(secp);
+            if pubkey.inner != *curr_pubkey {
+                return Err(SignerError::InsanePsbt);
+            }
+            let sig = secp.sign_ecdsa_low_r(&sighash, &privkey.inner);
+            psbt_in.partial_sigs.insert(
+                pubkey,
+                ecdsa::Signature {
+                    sig,
+                    hash_ty: sig_type,
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    // Provide a BIP340 signature for this transaction input from the PSBT input information.
+    fn sign_taproot(
+        &self,
+        secp: &secp256k1::Secp256k1<secp256k1::All>,
+        sighash_cache: &mut sighash::SighashCache<&bitcoin::Transaction>,
+        master_fingerprint: bip32::Fingerprint,
+        prevouts: &[bitcoin::TxOut],
+        psbt_in: &mut PsbtIn,
+        input_index: usize,
+    ) -> Result<(), SignerError> {
+        let sig_type = sighash::TapSighashType::Default;
+        let prevouts = sighash::Prevouts::All(prevouts);
+
+        // If the details of the internal key are filled, provide a keypath signature.
+        if let Some(ref int_key) = psbt_in.tap_internal_key {
+            // NB: we don't check for empty leaf hashes on purpose, in case the internal key also
+            // appears in a leaf.
+            if let Some((_, (fg, der_path))) = psbt_in.tap_key_origins.get(int_key) {
+                if *fg == master_fingerprint {
+                    let privkey = self.xpriv_at(der_path, secp).to_priv();
+                    let keypair = secp256k1::Keypair::from_secret_key(secp, &privkey.inner);
+                    if keypair.x_only_public_key().0 != *int_key {
+                        return Err(SignerError::InsanePsbt);
+                    }
+                    let keypair = keypair.tap_tweak(secp, psbt_in.tap_merkle_root).to_inner();
+                    let sighash = sighash_cache
+                        .taproot_key_spend_signature_hash(input_index, &prevouts, sig_type)
+                        .map_err(|_| SignerError::InsanePsbt)?;
+                    let sighash = secp256k1::Message::from_digest_slice(sighash.as_byte_array())
+                        .expect("Sighash is always 32 bytes.");
+                    let sig = secp.sign_schnorr_no_aux_rand(&sighash, &keypair);
+                    let sig = bitcoin::taproot::Signature {
+                        sig,
+                        hash_ty: sig_type,
+                    };
+                    psbt_in.tap_key_sig = Some(sig);
+                }
+            }
+        }
+
+        // Now sign for all the public keys derived from our master secret, in all the leaves where
+        // they are present.
+        for (pubkey, (leaf_hashes, (fg, der_path))) in &psbt_in.tap_key_origins {
+            if *fg != master_fingerprint {
+                continue;
+            }
+
+            for leaf_hash in leaf_hashes {
+                let privkey = self.xpriv_at(der_path, secp).to_priv();
+                let keypair = secp256k1::Keypair::from_secret_key(secp, &privkey.inner);
+                let sighash = sighash_cache
+                    .taproot_script_spend_signature_hash(
+                        input_index,
+                        &prevouts,
+                        *leaf_hash,
+                        sig_type,
+                    )
+                    .map_err(|_| SignerError::InsanePsbt)?;
+                let sighash = secp256k1::Message::from_digest_slice(sighash.as_byte_array())
+                    .expect("Sighash is always 32 bytes.");
+                let sig = secp.sign_schnorr_no_aux_rand(&sighash, &keypair);
+                let sig = bitcoin::taproot::Signature {
+                    sig,
+                    hash_ty: sig_type,
+                };
+                psbt_in.tap_script_sigs.insert((*pubkey, *leaf_hash), sig);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Sign all inputs of the given PSBT.
     ///
     /// **This does not perform any check. It will blindly sign anything that's passed.**
     pub fn sign_psbt(
         &self,
         mut psbt: Psbt,
-        secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
+        secp: &secp256k1::Secp256k1<secp256k1::All>,
     ) -> Result<Psbt, SignerError> {
         let master_fingerprint = self.fingerprint(secp);
         let mut sighash_cache = sighash::SighashCache::new(&psbt.unsigned_tx);
 
+        let prevouts: Vec<_> = psbt
+            .inputs
+            .iter()
+            .filter_map(|psbt_in| psbt_in.witness_utxo.clone())
+            .collect();
+        if prevouts.len() != psbt.inputs.len() {
+            return Err(SignerError::IncompletePsbt);
+        }
+
         // Sign each input in the PSBT.
         for i in 0..psbt.inputs.len() {
-            // First of all compute the sighash for this input. We assume P2WSH spend: the sighash
-            // script code is always the witness script.
-            let witscript = psbt.inputs[i]
-                .witness_script
-                .as_ref()
-                .ok_or(SignerError::IncompletePsbt)?;
-            let value = psbt.inputs[i]
-                .witness_utxo
-                .as_ref()
-                .ok_or(SignerError::IncompletePsbt)?
-                .value;
-            let sig_type = sighash::EcdsaSighashType::All;
-            let sighash = sighash_cache
-                .p2wsh_signature_hash(i, witscript, value, sig_type)
-                .map_err(|_| SignerError::InsanePsbt)?;
-            let sighash = secp256k1::Message::from_digest_slice(sighash.as_byte_array())
-                .expect("Sighash is always 32 bytes.");
-
-            // Then provide a signature for all the keys they asked for.
-            let input = &mut psbt.inputs[i]; // for borrowck reasons
-            for (curr_pubkey, (fingerprint, der_path)) in input.bip32_derivation.iter() {
-                if *fingerprint != master_fingerprint {
-                    continue;
-                }
-                let privkey = self.xpriv_at(der_path, secp).to_priv();
-                let pubkey = privkey.public_key(secp);
-                if pubkey.inner != *curr_pubkey {
-                    return Err(SignerError::InsanePsbt);
-                }
-                let sig = secp.sign_ecdsa_low_r(&sighash, &privkey.inner);
-                input.partial_sigs.insert(
-                    pubkey,
-                    ecdsa::Signature {
-                        sig,
-                        hash_ty: sig_type,
-                    },
-                );
+            if psbt.inputs[i].witness_script.is_some() {
+                self.sign_p2wsh(
+                    secp,
+                    &mut sighash_cache,
+                    master_fingerprint,
+                    &mut psbt.inputs[i],
+                    i,
+                )?;
+            } else {
+                self.sign_taproot(
+                    secp,
+                    &mut sighash_cache,
+                    master_fingerprint,
+                    &prevouts,
+                    &mut psbt.inputs[i],
+                    i,
+                )?;
             }
         }
 
@@ -357,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn hot_signer_sign() {
+    fn hot_signer_sign_p2wsh() {
         let secp = secp256k1::Secp256k1::new();
         let network = bitcoin::Network::Bitcoin;
 
@@ -419,14 +531,22 @@ mod tests {
             wildcard: Wildcard::Unhardened,
         });
         let recov_keys = descriptors::PathInfo::Single(recov_key);
-        let policy =
-            descriptors::LianaPolicy::new(prim_keys, [(46, recov_keys)].iter().cloned().collect())
-                .unwrap();
+        let policy = descriptors::LianaPolicy::new_legacy(
+            prim_keys,
+            [(46, recov_keys)].iter().cloned().collect(),
+        )
+        .unwrap();
         let desc = descriptors::LianaDescriptor::new(policy);
 
         // Create a dummy PSBT spending a coin from this descriptor with a single input and single
         // (external) output. We'll be modifying it as we go.
         let spent_coin_desc = desc.receive_descriptor().derive(42.into(), &secp);
+        let mut psbt_in = PsbtIn::default();
+        spent_coin_desc.update_psbt_in(&mut psbt_in);
+        psbt_in.witness_utxo = Some(bitcoin::TxOut {
+            value: Amount::from_sat(19_000),
+            script_pubkey: spent_coin_desc.script_pubkey(),
+        });
         let mut dummy_psbt = Psbt {
             unsigned_tx: bitcoin::Transaction {
                 version: bitcoin::transaction::Version::TWO,
@@ -453,15 +573,7 @@ mod tests {
             xpub: BTreeMap::new(),
             proprietary: BTreeMap::new(),
             unknown: BTreeMap::new(),
-            inputs: vec![PsbtIn {
-                witness_script: Some(spent_coin_desc.witness_script()),
-                bip32_derivation: spent_coin_desc.bip32_derivations(),
-                witness_utxo: Some(bitcoin::TxOut {
-                    value: Amount::from_sat(19_000),
-                    script_pubkey: spent_coin_desc.script_pubkey(),
-                }),
-                ..PsbtIn::default()
-            }],
+            inputs: vec![psbt_in],
             outputs: Vec::new(),
         };
 
@@ -469,12 +581,20 @@ mod tests {
         // that it manages.
         let psbt = dummy_psbt.clone();
         assert!(psbt.inputs[0].partial_sigs.is_empty());
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
         let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 1);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
         let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 2);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
         let psbt = recov_signer.sign_psbt(psbt, &secp).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 4);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
 
         // We can add another external output to the transaction, we can still sign without issue.
         // The output can be insane, we don't check it. It doesn't even need an accompanying PSBT
@@ -482,25 +602,31 @@ mod tests {
         dummy_psbt.unsigned_tx.output.push(bitcoin::TxOut::NULL);
         let psbt = dummy_psbt.clone();
         assert!(psbt.inputs[0].partial_sigs.is_empty());
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
         let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 1);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
         let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 2);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
         let psbt = recov_signer.sign_psbt(psbt, &secp).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 4);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
 
         // We can add another input to the PSBT. If we don't attach also another transaction input
         // it will fail.
         let other_spent_coin_desc = desc.receive_descriptor().derive(84.into(), &secp);
-        dummy_psbt.inputs.push(PsbtIn {
-            witness_script: Some(other_spent_coin_desc.witness_script()),
-            bip32_derivation: other_spent_coin_desc.bip32_derivations(),
-            witness_utxo: Some(bitcoin::TxOut {
-                value: Amount::from_sat(19_000),
-                script_pubkey: other_spent_coin_desc.script_pubkey(),
-            }),
-            ..PsbtIn::default()
+        let mut psbt_in = PsbtIn::default();
+        other_spent_coin_desc.update_psbt_in(&mut psbt_in);
+        psbt_in.witness_utxo = Some(bitcoin::TxOut {
+            value: Amount::from_sat(19_000),
+            script_pubkey: other_spent_coin_desc.script_pubkey(),
         });
+        dummy_psbt.inputs.push(psbt_in);
         let psbt = dummy_psbt.clone();
         assert!(prim_signer_a
             .sign_psbt(psbt, &secp)
@@ -524,31 +650,63 @@ mod tests {
             .inputs
             .iter()
             .all(|psbt_in| psbt_in.partial_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_none()));
         let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
         assert!(psbt
             .inputs
             .iter()
             .all(|psbt_in| psbt_in.partial_sigs.len() == 1));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_none()));
         let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
         assert!(psbt
             .inputs
             .iter()
             .all(|psbt_in| psbt_in.partial_sigs.len() == 2));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_none()));
         let psbt = recov_signer.sign_psbt(psbt, &secp).unwrap();
         assert!(psbt
             .inputs
             .iter()
             .all(|psbt_in| psbt_in.partial_sigs.len() == 4));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_none()));
 
-        // If the witness script is missing for one of the inputs it'll tell us the PSBT is
-        // incomplete.
+        // If the witness script is missing for one of the inputs it'll assume it's a Taproot input
+        // and provide Taproot signatures. But since we haven't provided any Taproot details it
+        // won't fill anything.
         let mut psbt = dummy_psbt.clone();
         psbt.inputs[1].witness_script = None;
-        assert!(prim_signer_a
-            .sign_psbt(psbt, &secp)
-            .unwrap_err()
-            .to_string()
-            .contains("The PSBT is missing some information necessary for signing."));
+        let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
+        assert!(psbt.inputs[1].partial_sigs.is_empty());
+        assert!(psbt.inputs[1].tap_key_sig.is_none());
+        assert!(psbt.inputs[1].tap_script_sigs.is_empty());
 
         // If the witness utxo is missing for one of the inputs it'll tell us the PSBT is
         // incomplete.
@@ -569,6 +727,322 @@ mod tests {
         let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
         assert!(psbt.inputs[0].partial_sigs.is_empty());
         assert_eq!(psbt.inputs[1].partial_sigs.len(), 1);
+    }
+
+    #[test]
+    fn hot_signer_sign_taproot() {
+        let secp = secp256k1::Secp256k1::new();
+        let network = bitcoin::Network::Bitcoin;
+
+        // Create a Liana descriptor with as primary path a 2-of-3 with three hot signers and a
+        // single hot signer as recovery path. (The recovery path signer is also used in the
+        // primary path.) Use various random derivation paths.
+        let (prim_signer_a, prim_signer_b, recov_signer) = (
+            HotSigner::generate(network).unwrap(),
+            HotSigner::generate(network).unwrap(),
+            HotSigner::generate(network).unwrap(),
+        );
+        let origin_der = bip32::DerivationPath::from_str("m/0'/12'/42").unwrap();
+        let xkey = prim_signer_a.xpub_at(&origin_der, &secp);
+        let prim_key_a = DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
+            origin: Some((prim_signer_a.fingerprint(&secp), origin_der)),
+            xkey,
+            derivation_paths: DerivPaths::new(vec![
+                bip32::DerivationPath::from_str("m/420/56/0").unwrap(),
+                bip32::DerivationPath::from_str("m/420/56/1").unwrap(),
+            ])
+            .unwrap(),
+            wildcard: Wildcard::Unhardened,
+        });
+        let origin_der = bip32::DerivationPath::from_str("m/18'/24'").unwrap();
+        let xkey = prim_signer_b.xpub_at(&origin_der, &secp);
+        let prim_key_b = DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
+            origin: Some((prim_signer_b.fingerprint(&secp), origin_der)),
+            xkey,
+            derivation_paths: DerivPaths::new(vec![
+                bip32::DerivationPath::from_str("m/31/0").unwrap(),
+                bip32::DerivationPath::from_str("m/31/1").unwrap(),
+            ])
+            .unwrap(),
+            wildcard: Wildcard::Unhardened,
+        });
+        let origin_der = bip32::DerivationPath::from_str("m/18'/25'").unwrap();
+        let xkey = recov_signer.xpub_at(&origin_der, &secp);
+        let prim_key_c = DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
+            origin: Some((recov_signer.fingerprint(&secp), origin_der)),
+            xkey,
+            derivation_paths: DerivPaths::new(vec![
+                bip32::DerivationPath::from_str("m/0").unwrap(),
+                bip32::DerivationPath::from_str("m/1").unwrap(),
+            ])
+            .unwrap(),
+            wildcard: Wildcard::Unhardened,
+        });
+        let prim_keys =
+            descriptors::PathInfo::Multi(2, vec![prim_key_a.clone(), prim_key_b, prim_key_c]);
+        let origin_der = bip32::DerivationPath::from_str("m/1/2'/3/4'").unwrap();
+        let xkey = recov_signer.xpub_at(&origin_der, &secp);
+        let recov_key = DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
+            origin: Some((recov_signer.fingerprint(&secp), origin_der)),
+            xkey,
+            derivation_paths: DerivPaths::new(vec![
+                bip32::DerivationPath::from_str("m/5/6/0").unwrap(),
+                bip32::DerivationPath::from_str("m/5/6/1").unwrap(),
+            ])
+            .unwrap(),
+            wildcard: Wildcard::Unhardened,
+        });
+        let recov_keys = descriptors::PathInfo::Single(recov_key.clone());
+        let policy =
+            descriptors::LianaPolicy::new(prim_keys, [(46, recov_keys)].iter().cloned().collect())
+                .unwrap();
+        let desc = descriptors::LianaDescriptor::new(policy);
+
+        // Create a dummy PSBT spending a coin from this descriptor with a single input and single
+        // (external) output. We'll be modifying it as we go.
+        let spent_coin_desc = desc.receive_descriptor().derive(42.into(), &secp);
+        let mut psbt_in = PsbtIn::default();
+        spent_coin_desc.update_psbt_in(&mut psbt_in);
+        psbt_in.witness_utxo = Some(bitcoin::TxOut {
+            value: Amount::from_sat(19_000),
+            script_pubkey: spent_coin_desc.script_pubkey(),
+        });
+        let mut dummy_psbt = Psbt {
+            unsigned_tx: bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
+                input: vec![bitcoin::TxIn {
+                    sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    previous_output: bitcoin::OutPoint::from_str(
+                        "4613e078e4cdbb0fce1bc6e44b028f0e11621a134a1605efdc456c32d155c922:19",
+                    )
+                    .unwrap(),
+                    ..bitcoin::TxIn::default()
+                }],
+                output: vec![bitcoin::TxOut {
+                    value: Amount::from_sat(18_420),
+                    script_pubkey: bitcoin::Address::from_str(
+                        "bc1qvklensptw5lk7d470ds60pcpsr0psdpgyvwepv",
+                    )
+                    .unwrap()
+                    .payload()
+                    .script_pubkey(),
+                }],
+            },
+            version: 0,
+            xpub: BTreeMap::new(),
+            proprietary: BTreeMap::new(),
+            unknown: BTreeMap::new(),
+            inputs: vec![psbt_in],
+            outputs: Vec::new(),
+        };
+
+        // Sign the PSBT with the two primary signers. The recovery signer will sign for the two keys
+        // that it manages.
+        let psbt = dummy_psbt.clone();
+        assert!(psbt.inputs[0].partial_sigs.is_empty());
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
+        let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
+        assert_eq!(psbt.inputs[0].tap_script_sigs.len(), 1);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].partial_sigs.is_empty());
+        let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
+        assert_eq!(psbt.inputs[0].tap_script_sigs.len(), 2);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].partial_sigs.is_empty());
+        let psbt = recov_signer.sign_psbt(psbt, &secp).unwrap();
+        assert_eq!(psbt.inputs[0].tap_script_sigs.len(), 4);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].partial_sigs.is_empty());
+
+        // We can add another external output to the transaction, we can still sign without issue.
+        // The output can be insane, we don't check it. It doesn't even need an accompanying PSBT
+        // output.
+        dummy_psbt.unsigned_tx.output.push(bitcoin::TxOut::NULL);
+        let psbt = dummy_psbt.clone();
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
+        let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
+        assert_eq!(psbt.inputs[0].tap_script_sigs.len(), 1);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].partial_sigs.is_empty());
+        let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
+        assert_eq!(psbt.inputs[0].tap_script_sigs.len(), 2);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].partial_sigs.is_empty());
+        let psbt = recov_signer.sign_psbt(psbt, &secp).unwrap();
+        assert_eq!(psbt.inputs[0].tap_script_sigs.len(), 4);
+        assert!(psbt.inputs[0].tap_key_sig.is_none());
+        assert!(psbt.inputs[0].partial_sigs.is_empty());
+
+        // We can add another input to the PSBT. If we don't attach also another transaction input
+        // it will fail.
+        let other_spent_coin_desc = desc.receive_descriptor().derive(84.into(), &secp);
+        let mut psbt_in = PsbtIn::default();
+        other_spent_coin_desc.update_psbt_in(&mut psbt_in);
+        psbt_in.witness_utxo = Some(bitcoin::TxOut {
+            value: Amount::from_sat(19_000),
+            script_pubkey: other_spent_coin_desc.script_pubkey(),
+        });
+        dummy_psbt.inputs.push(psbt_in);
+        let psbt = dummy_psbt.clone();
+        assert!(prim_signer_a
+            .sign_psbt(psbt, &secp)
+            .unwrap_err()
+            .to_string()
+            .contains("Information contained in the PSBT is wrong"));
+
+        // But now if we add the inputs also to the transaction itself, it will have signed both
+        // inputs.
+        dummy_psbt.unsigned_tx.input.push(bitcoin::TxIn {
+            // Note the sequence can be different. We don't care.
+            sequence: bitcoin::Sequence::ENABLE_LOCKTIME_NO_RBF,
+            previous_output: bitcoin::OutPoint::from_str(
+                "5613e078e4cdbb0fce1bc6e44b028f0e11621a134a1605efdc456c32d155c922:0",
+            )
+            .unwrap(),
+            ..bitcoin::TxIn::default()
+        });
+        let psbt = dummy_psbt.clone();
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_none()));
+        let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.len() == 1));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.partial_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_none()));
+        let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.len() == 2));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.partial_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_none()));
+        let psbt = recov_signer.sign_psbt(psbt, &secp).unwrap();
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.len() == 4));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.partial_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_none()));
+
+        // If the witness script is set it'll assume it's a P2WSH input and provide ECDSA sigs.
+        // But since we haven't provided any P2WSH details it won't fill anything.
+        let mut psbt = dummy_psbt.clone();
+        psbt.inputs[1].witness_script = Some(Default::default());
+        let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
+        assert!(psbt.inputs[1].partial_sigs.is_empty());
+        assert!(psbt.inputs[1].tap_key_sig.is_none());
+        assert!(psbt.inputs[1].tap_script_sigs.is_empty());
+
+        // If the witness utxo is missing for one of the inputs it'll tell us the PSBT is
+        // incomplete.
+        let mut psbt = dummy_psbt.clone();
+        psbt.inputs[1].witness_utxo = None;
+        assert!(prim_signer_a
+            .sign_psbt(psbt, &secp)
+            .unwrap_err()
+            .to_string()
+            .contains("The PSBT is missing some information necessary for signing."));
+
+        // If we remove the BIP32 derivations for the first input it will only provide signatures
+        // for the second one.
+        let mut psbt = dummy_psbt.clone();
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
+        assert!(psbt.inputs[1].tap_script_sigs.is_empty());
+        psbt.inputs[0].tap_key_origins.clear();
+        let psbt = prim_signer_b.sign_psbt(psbt, &secp).unwrap();
+        assert!(psbt.inputs[0].tap_script_sigs.is_empty());
+        assert_eq!(psbt.inputs[1].tap_script_sigs.len(), 1);
+
+        // Now use a Taproot descriptor such as there is a single primary key as the internal key.
+        let prim_keys = descriptors::PathInfo::Single(prim_key_a);
+        let recov_keys = descriptors::PathInfo::Single(recov_key);
+        let policy =
+            descriptors::LianaPolicy::new(prim_keys, [(42, recov_keys)].iter().cloned().collect())
+                .unwrap();
+        let desc = descriptors::LianaDescriptor::new(policy);
+        let spent_coin_desc = desc.receive_descriptor().derive(412.into(), &secp);
+
+        // Update the two inputs with the details for this descriptor.
+        dummy_psbt.inputs[0].tap_key_origins.clear();
+        spent_coin_desc.update_psbt_in(&mut dummy_psbt.inputs[0]);
+        dummy_psbt.inputs[1].tap_key_origins.clear();
+        spent_coin_desc.update_psbt_in(&mut dummy_psbt.inputs[1]);
+
+        // Sign the PSBT with the primary and recovery signers. The prim signer will add a sig for
+        // the key path and the recov signer for the script path.
+        let psbt = dummy_psbt.clone();
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_none()));
+        let psbt = prim_signer_a.sign_psbt(psbt, &secp).unwrap();
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_some()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.is_empty()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.partial_sigs.is_empty()));
+        let psbt = recov_signer.sign_psbt(psbt, &secp).unwrap();
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_key_sig.is_some()));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.tap_script_sigs.len() == 1));
+        assert!(psbt
+            .inputs
+            .iter()
+            .all(|psbt_in| psbt_in.partial_sigs.is_empty()));
     }
 
     #[test]
