@@ -2,13 +2,13 @@ use crate::{
     bitcoin::{BitcoinInterface, Block, BlockChainTip, MempoolEntry, SyncProgress, UTxO},
     config::{BitcoinConfig, Config},
     database::{BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem},
-    descriptors, DaemonHandle,
+    descriptors, DaemonControl, DaemonHandle,
 };
 
 use std::convert::TryInto;
 use std::{
     collections::{HashMap, HashSet},
-    env, fs, io, path, process,
+    env, fs, path, process,
     str::FromStr,
     sync, thread, time,
     time::{SystemTime, UNIX_EPOCH},
@@ -464,9 +464,10 @@ pub fn tmp_dir() -> path::PathBuf {
 
 impl DummyLiana {
     /// Creates a new DummyLiana interface
-    pub fn new(
+    pub fn _new(
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
+        rpc_server: bool,
     ) -> DummyLiana {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
@@ -497,19 +498,37 @@ impl DummyLiana {
             main_descriptor: desc,
         };
 
-        let handle = DaemonHandle::start(config, Some(bitcoin_interface), Some(database)).unwrap();
+        let handle =
+            DaemonHandle::start(config, Some(bitcoin_interface), Some(database), rpc_server)
+                .unwrap();
         DummyLiana { tmp_dir, handle }
     }
 
-    #[cfg(feature = "daemon")]
-    pub fn rpc_server(self) -> Result<(), io::Error> {
-        self.handle.rpc_server()?;
-        fs::remove_dir_all(&self.tmp_dir)?;
-        Ok(())
+    /// Creates a new DummyLiana interface
+    pub fn new(
+        bitcoin_interface: impl BitcoinInterface + 'static,
+        database: impl DatabaseInterface + 'static,
+    ) -> DummyLiana {
+        Self::_new(bitcoin_interface, database, false)
+    }
+
+    /// Creates a new DummyLiana interface which also spins up an RPC server.
+    pub fn new_server(
+        bitcoin_interface: impl BitcoinInterface + 'static,
+        database: impl DatabaseInterface + 'static,
+    ) -> DummyLiana {
+        Self::_new(bitcoin_interface, database, true)
+    }
+
+    pub fn control(&self) -> &DaemonControl {
+        match self.handle {
+            DaemonHandle::Controller { ref control, .. } => control,
+            DaemonHandle::Server { .. } => unreachable!(),
+        }
     }
 
     pub fn shutdown(self) {
-        self.handle.shutdown();
-        fs::remove_dir_all(&self.tmp_dir).unwrap();
+        self.handle.stop().unwrap();
+        fs::remove_dir_all(self.tmp_dir).unwrap();
     }
 }

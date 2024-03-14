@@ -70,13 +70,16 @@ fn main() {
         process::exit(1);
     });
 
-    let daemon = DaemonHandle::start_default(config).unwrap_or_else(|e| {
+    let handle = DaemonHandle::start_default(config, true).unwrap_or_else(|e| {
         log::error!("Error starting Liana daemon: {}", e);
         process::exit(1);
     });
-    daemon
-        .rpc_server()
-        .expect("JSONRPC server must terminate cleanly");
+    while handle.is_alive() {
+        thread::sleep(time::Duration::from_millis(500));
+    }
+    if let Err(e) = handle.stop() {
+        log::error!("Error stopping Liana daemon: {}", e);
+    }
 
     // We are always logging to stdout, should it be then piped to the log file (if self) or
     // not. So just make sure that all messages were actually written.
