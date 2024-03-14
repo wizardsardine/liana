@@ -336,7 +336,7 @@ mod tests {
 
         let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::new(
             PathBuf::new(),
-            Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap())),
+            Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap(), 0)),
         ));
         let client = Arc::new(Lianad::new(daemon.run()));
         let sandbox = sandbox.load(client, &Cache::default()).await;

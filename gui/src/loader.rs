@@ -364,8 +364,11 @@ pub async fn load_application(
     ),
     Error,
 > {
-    let wallet =
-        Wallet::new(info.descriptors.main).load_settings(&gui_config, &datadir_path, network)?;
+    let wallet = Wallet::new(info.descriptors.main, info.timestamp).load_settings(
+        &gui_config,
+        &datadir_path,
+        network,
+    )?;
 
     let coins = daemon.list_coins().map(|res| res.coins)?;
 
