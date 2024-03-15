@@ -8,6 +8,8 @@ from test_framework.serializations import (
     PSBT,
     PSBT_IN_PARTIAL_SIG,
     PSBT_IN_NON_WITNESS_UTXO,
+    PSBT_IN_TAP_SCRIPT_SIG,
+    PSBT_IN_TAP_KEY_SIG
 )
 from test_framework.utils import (
     wait_for,
@@ -574,6 +576,80 @@ def test_update_spend(lianad, bitcoind):
     assert len(psbt_merged.i[0].map[PSBT_IN_PARTIAL_SIG]) == 2
     assert psbt_merged.i[0].map[PSBT_IN_PARTIAL_SIG][dummy_pk_a] == dummy_sig_a
     assert psbt_merged.i[0].map[PSBT_IN_PARTIAL_SIG][dummy_pk_b] == dummy_sig_b
+
+def test_update_spend_taproot(lianad, bitcoind):
+    # Start by creating a Spend PSBT
+    addr = lianad.rpc.getnewaddress()["address"]
+    bitcoind.rpc.sendtoaddress(addr, 0.2567)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) > 0)
+    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins()["coins"]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 200_000,
+    }
+    res = lianad.rpc.createspend(destinations, outpoints, 6)
+    assert "psbt" in res
+
+    # Now update it
+    assert len(lianad.rpc.listspendtxs()["spend_txs"]) == 0
+    lianad.rpc.updatespend(res["psbt"])
+    list_res = lianad.rpc.listspendtxs()["spend_txs"]
+    assert len(list_res) == 1
+    assert list_res[0]["psbt"] == res["psbt"]
+
+    # We can add a signature and update it
+    psbt_sig_a = PSBT.from_base64(res["psbt"])
+    dummy_pk_a = bytes.fromhex(
+        "0375e00eb72e29da82b89367947f29ef34afb75e8654f6ea368e0acdfd92976b7c"
+    )
+    dummy_sig_a = bytes.fromhex(
+        "304402202b925395cfeaa0171a7a92982bb4891acc4a312cbe7691d8375d36796d5b570a0220378a8ab42832848e15d1aedded5fb360fedbdd6c39226144e527f0f1e19d539801"
+    )
+    dummy_tapleaf_hash_a = bytes.fromhex(
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    )
+    psbt_sig_a.i[0].map[PSBT_IN_TAP_SCRIPT_SIG] = {dummy_pk_a + dummy_tapleaf_hash_a: dummy_sig_a}
+    psbt_sig_a_ser = psbt_sig_a.to_base64()
+    lianad.rpc.updatespend(psbt_sig_a_ser)
+
+    # We'll get it when querying
+    list_res = lianad.rpc.listspendtxs()["spend_txs"]
+    assert len(list_res) == 1
+    assert list_res[0]["psbt"] == psbt_sig_a_ser
+
+    # We can add another signature to the empty PSBT and update it again
+    psbt_sig_b = PSBT.from_base64(res["psbt"])
+    dummy_pk_b = bytes.fromhex(
+        "03a1b26313f430c4b15bb1fdce663207659d8cac749a0e53d70eff01874496feff"
+    )
+    dummy_sig_b = bytes.fromhex(
+        "3044022005aebcd649fb8965f0591710fb3704931c3e8118ee60dd44917479f63ceba6d4022018b212900e5a80e9452366894de37f0d02fb9c89f1e94f34fb6ed7fd71c15c4101"
+    )
+    dummy_tapleaf_hash_b = bytes.fromhex(
+        "167112362adb3b2041c11f7337437872f9d821e57e8c3edd68d87a1d0babd0f5"
+    )
+    psbt_sig_b.i[0].map[PSBT_IN_TAP_SCRIPT_SIG] = {dummy_pk_b + dummy_tapleaf_hash_b: dummy_sig_b}
+    psbt_sig_b_ser = psbt_sig_b.to_base64()
+    lianad.rpc.updatespend(psbt_sig_b_ser)
+
+    # It will have merged both.
+    list_res = lianad.rpc.listspendtxs()["spend_txs"]
+    assert len(list_res) == 1
+    psbt_merged = PSBT.from_base64(list_res[0]["psbt"])
+    assert len(psbt_merged.i[0].map[PSBT_IN_TAP_SCRIPT_SIG]) == 2
+    assert psbt_merged.i[0].map[PSBT_IN_TAP_SCRIPT_SIG][dummy_pk_a + dummy_tapleaf_hash_a] == dummy_sig_a
+    assert psbt_merged.i[0].map[PSBT_IN_TAP_SCRIPT_SIG][dummy_pk_b + dummy_tapleaf_hash_b] == dummy_sig_b
+
+    # Test if the TAP_KEY_SIG is also stored.
+    dummy_sig_c = bytes.fromhex(
+        "304402202b925395cfeaa0171a7a92982bb4891acc4a312cbe7691d8375d36796d5b570a0220378a8ab42832848e15d1aedded5fb360fedbdd6c39226144e527f0f1e19d539801"
+    )
+    psbt_merged.i[0].map[PSBT_IN_TAP_KEY_SIG] = dummy_sig_c
+    psbt_key_signed = psbt_merged.to_base64()
+    lianad.rpc.updatespend(psbt_key_signed)
+
+    list_res = lianad.rpc.listspendtxs()["spend_txs"]
+    assert len(list_res) == 1
+    assert list_res[0]["psbt"] == psbt_key_signed
 
 
 def test_broadcast_spend(lianad, bitcoind):
