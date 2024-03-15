@@ -257,6 +257,7 @@ fn setup_bitcoind(
 pub struct DaemonControl {
     config: Config,
     bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+    poller_sender: mpsc::SyncSender<poller::PollerMessage>,
     // FIXME: Should we require Sync on DatabaseInterface rather than using a Mutex?
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
@@ -266,12 +267,14 @@ impl DaemonControl {
     pub(crate) fn new(
         config: Config,
         bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+        poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     ) -> DaemonControl {
         DaemonControl {
             config,
             bitcoin,
+            poller_sender,
             db,
             secp,
         }
@@ -387,7 +390,7 @@ impl DaemonHandle {
 
         // Create the API the external world will use to talk to us, either directly through the Rust
         // structure or through the JSONRPC server we may setup below.
-        let control = DaemonControl::new(config, bit, db, secp);
+        let control = DaemonControl::new(config, bit, poller_sender.clone(), db, secp);
 
         Ok(if with_rpc_server {
             let rpcserver_shutdown = sync::Arc::from(sync::atomic::AtomicBool::from(false));

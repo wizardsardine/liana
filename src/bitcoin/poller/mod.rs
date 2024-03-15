@@ -12,6 +12,9 @@ use miniscript::bitcoin::secp256k1;
 #[derive(Debug, Clone)]
 pub enum PollerMessage {
     Shutdown,
+    /// Ask the Bitcoin poller to poll immediately, get notified through the passed channel once
+    /// it's done.
+    PollNow(mpsc::SyncSender<()>),
 }
 
 /// The Bitcoin poller handler.
@@ -83,6 +86,16 @@ impl Poller {
                 Ok(PollerMessage::Shutdown) => {
                     log::info!("Bitcoin poller was told to shut down.");
                     return;
+                }
+                Ok(PollerMessage::PollNow(sender)) => {
+                    // We've been asked to poll, don't wait any further and signal completion to
+                    // the caller.
+                    last_poll = Some(time::Instant::now());
+                    looper::poll(&self.bit, &self.db, &self.secp, &self.descs);
+                    if let Err(e) = sender.send(()) {
+                        log::error!("Error sending immediate poll completion signal: {}.", e);
+                    }
+                    continue;
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // It's been long enough since the last poll.

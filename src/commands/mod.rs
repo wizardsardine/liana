@@ -8,6 +8,7 @@ use crate::{
     bitcoin::BitcoinInterface,
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
+    poller::PollerMessage,
     spend::{
         create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes, SpendCreationError,
         SpendOutputAddress, SpendTxFees, TxGetter,
@@ -24,7 +25,8 @@ use utils::{
 
 use std::{
     collections::{hash_map, HashMap, HashSet},
-    fmt, sync,
+    fmt,
+    sync::{self, mpsc},
 };
 
 use miniscript::{
@@ -688,7 +690,18 @@ impl DaemonControl {
         let final_tx = spend_psbt.extract_tx_unchecked_fee_rate();
         self.bitcoin
             .broadcast_tx(&final_tx)
-            .map_err(CommandError::TxBroadcast)
+            .map_err(CommandError::TxBroadcast)?;
+
+        // Finally, update our state with the changes from this transaction.
+        let (tx, rx) = mpsc::sync_channel(0);
+        if let Err(e) = self.poller_sender.send(PollerMessage::PollNow(tx)) {
+            log::error!("Error requesting update from poller: {}", e);
+        }
+        if let Err(e) = rx.recv() {
+            log::error!("Error receiving completion signal from poller: {}", e);
+        }
+
+        Ok(())
     }
 
     /// Create PSBT to replace the given transaction using RBF.
