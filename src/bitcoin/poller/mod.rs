@@ -3,11 +3,16 @@ mod looper;
 use crate::{bitcoin::BitcoinInterface, database::DatabaseInterface, descriptors};
 
 use std::{
-    sync::{self, atomic},
-    thread, time,
+    sync::{self, mpsc},
+    time,
 };
 
 use miniscript::bitcoin::secp256k1;
+
+#[derive(Debug, Clone)]
+pub enum PollerMessage {
+    Shutdown,
+}
 
 /// The Bitcoin poller handler.
 pub struct Poller {
@@ -50,29 +55,44 @@ impl Poller {
     pub fn poll_forever(
         &self,
         poll_interval: time::Duration,
-        shutdown: sync::Arc<atomic::AtomicBool>,
+        receiver: mpsc::Receiver<PollerMessage>,
     ) {
         let mut last_poll = None;
         let mut synced = false;
 
-        while !shutdown.load(atomic::Ordering::Relaxed) || last_poll.is_none() {
-            let now = time::Instant::now();
-
-            if let Some(last_poll) = last_poll {
-                let time_since_poll = now.duration_since(last_poll);
+        loop {
+            // How long to wait before the next poll.
+            let time_before_poll = if let Some(last_poll) = last_poll {
+                let time_since_poll = time::Instant::now().duration_since(last_poll);
+                // Until we are synced we poll less often to avoid harassing bitcoind and impeding
+                // the sync. As a function since it's mocked for the tests.
                 let poll_interval = if synced {
                     poll_interval
                 } else {
-                    // Until we are synced we poll less often to avoid harassing bitcoind and impeding
-                    // the sync. As a function since it's mocked for the tests.
                     looper::sync_poll_interval()
                 };
-                if time_since_poll < poll_interval {
-                    thread::sleep(time::Duration::from_millis(500));
-                    continue;
+                poll_interval.saturating_sub(time_since_poll)
+            } else {
+                // Don't wait before doing the first poll.
+                time::Duration::ZERO
+            };
+
+            // Wait for the duration of the interval between polls, but listen to messages in the
+            // meantime.
+            match receiver.recv_timeout(time_before_poll) {
+                Ok(PollerMessage::Shutdown) => {
+                    log::info!("Bitcoin poller was told to shut down.");
+                    return;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // It's been long enough since the last poll.
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    log::error!("Bitcoin poller communication channel got disconnected. Exiting.");
+                    return;
                 }
             }
-            last_poll = Some(now);
+            last_poll = Some(time::Instant::now());
 
             // Don't poll until the Bitcoin backend is fully synced.
             if !synced {

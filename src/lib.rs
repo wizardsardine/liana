@@ -28,7 +28,11 @@ use crate::{
     },
 };
 
-use std::{error, fmt, fs, io, path, sync, thread};
+use std::{
+    error, fmt, fs, io, path,
+    sync::{self, mpsc},
+    thread,
+};
 
 use miniscript::bitcoin::secp256k1;
 
@@ -284,12 +288,12 @@ impl DaemonControl {
 /// JSONRPC server or one which exposes its API through a `DaemonControl`.
 pub enum DaemonHandle {
     Controller {
-        poller_shutdown: sync::Arc<sync::atomic::AtomicBool>,
+        poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         poller_handle: thread::JoinHandle<()>,
         control: DaemonControl,
     },
     Server {
-        poller_shutdown: sync::Arc<sync::atomic::AtomicBool>,
+        poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         poller_handle: thread::JoinHandle<()>,
         rpcserver_shutdown: sync::Arc<sync::atomic::AtomicBool>,
         rpcserver_handle: thread::JoinHandle<Result<(), io::Error>>,
@@ -368,15 +372,14 @@ impl DaemonHandle {
         // an atomic to be able to stop it.
         let bitcoin_poller =
             poller::Poller::new(bit.clone(), db.clone(), config.main_descriptor.clone());
-        let poller_shutdown = sync::Arc::from(sync::atomic::AtomicBool::from(false));
+        let (poller_sender, poller_receiver) = mpsc::sync_channel(0);
         let poller_handle = thread::Builder::new()
             .name("Bitcoin Network poller".to_string())
             .spawn({
                 let poll_interval = config.bitcoin_config.poll_interval_secs;
-                let shutdown = poller_shutdown.clone();
                 move || {
                     log::info!("Bitcoin poller started.");
-                    bitcoin_poller.poll_forever(poll_interval, shutdown);
+                    bitcoin_poller.poll_forever(poll_interval, poller_receiver);
                     log::info!("Bitcoin poller stopped.");
                 }
             })
@@ -406,14 +409,14 @@ impl DaemonHandle {
                 .expect("Spawning the RPC server thread should never fail.");
 
             DaemonHandle::Server {
-                poller_shutdown,
+                poller_sender,
                 poller_handle,
                 rpcserver_shutdown,
                 rpcserver_handle,
             }
         } else {
             DaemonHandle::Controller {
-                poller_shutdown,
+                poller_sender,
                 poller_handle,
                 control,
             }
@@ -454,21 +457,25 @@ impl DaemonHandle {
     pub fn stop(self) -> Result<(), Box<dyn error::Error>> {
         match self {
             Self::Controller {
-                poller_shutdown,
+                poller_sender,
                 poller_handle,
                 ..
             } => {
-                poller_shutdown.store(true, sync::atomic::Ordering::Relaxed);
+                poller_sender
+                    .send(poller::PollerMessage::Shutdown)
+                    .expect("The other end should never have hung up before this.");
                 poller_handle.join().expect("Poller thread must not panic");
                 Ok(())
             }
             Self::Server {
-                poller_shutdown,
+                poller_sender,
                 poller_handle,
                 rpcserver_shutdown,
                 rpcserver_handle,
             } => {
-                poller_shutdown.store(true, sync::atomic::Ordering::Relaxed);
+                poller_sender
+                    .send(poller::PollerMessage::Shutdown)
+                    .expect("The other end should never have hung up before this.");
                 rpcserver_shutdown.store(true, sync::atomic::Ordering::Relaxed);
                 rpcserver_handle
                     .join()
@@ -656,18 +663,6 @@ mod tests {
         stream.flush().unwrap();
     }
 
-    // Send them a response to 'getblockchaininfo' saying we are far from being synced
-    fn complete_sync_check(server: &net::TcpListener) {
-        let net_resp = [
-            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"verificationprogress\":0.1,\"headers\":1000,\"blocks\":100}}\n".as_bytes(),
-        ]
-        .concat();
-        let (mut stream, _) = server.accept().unwrap();
-        read_til_json_end(&mut stream);
-        stream.write_all(&net_resp).unwrap();
-        stream.flush().unwrap();
-    }
-
     // TODO: we could move the dummy bitcoind thread stuff to the bitcoind module to test the
     // bitcoind interface, and use the DummyLiana from testutils to sanity check the startup.
     // Note that startup as checked by this unit test is also tested in the functional test
@@ -744,7 +739,8 @@ mod tests {
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
         complete_tip_init(&server);
-        complete_sync_check(&server);
+        // We don't have to complete the sync check as the poller checks whether it needs to stop
+        // before checking the bitcoind sync status.
         t.join().unwrap();
 
         // The datadir is created now, so if we restart it it won't create the wo wallet.
@@ -761,7 +757,8 @@ mod tests {
         complete_wallet_loading(&server);
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
-        complete_sync_check(&server);
+        // We don't have to complete the sync check as the poller checks whether it needs to stop
+        // before checking the bitcoind sync status.
         t.join().unwrap();
 
         fs::remove_dir_all(&tmp_dir).unwrap();
