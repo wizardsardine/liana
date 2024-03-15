@@ -3,10 +3,11 @@ use std::collections::{HashMap, HashSet};
 use iced::{
     widget::{
         qr_code::{self, QRCode},
-        scrollable, Space,
+        scrollable,
     },
     Alignment, Length,
 };
+use iced_native::widget::Space;
 
 use liana::miniscript::bitcoin::{
     self,
@@ -37,7 +38,6 @@ use super::message::Message;
 
 pub fn receive<'a>(
     addresses: &'a [bitcoin::Address],
-    qr: Option<&'a qr_code::State>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
@@ -111,22 +111,23 @@ pub fn receive<'a>(
                                             .align_items(Alignment::Center),
                                     )
                                     .push(
-                                        button::primary(None, "Verify on hardware device")
-                                            .on_press(Message::Select(i)),
+                                        Row::new()
+                                            .push(
+                                                button::primary(None, "Verify on hardware device")
+                                                    .on_press(Message::Select(i)),
+                                            )
+                                            .push(Space::with_width(Length::Fill))
+                                            .push(
+                                                button::primary(None, "Show QR Code")
+                                                    .on_press(Message::ShowQrCode(i)),
+                                            ),
                                     )
                                     .spacing(10),
                             )
                             .padding(20),
                         )
                     },
-                ))
-                .push(if let Some(qr) = qr {
-                    Container::new(QRCode::new(qr).cell_size(5))
-                        .padding(10)
-                        .style(theme::Container::QrCode)
-                } else {
-                    Container::new(Space::with_width(Length::Fill)).width(Length::Fixed(200.0))
-                }),
+                )),
         )
         .spacing(20)
         .into()
@@ -212,5 +213,28 @@ pub fn verify_address_modal<'a>(
         ))
         .width(Length::Fill)
         .max_width(750)
+        .into()
+}
+
+pub fn qr_modal<'a>(qr: &'a qr_code::State, address: &'a String) -> Element<'a, Message> {
+    Column::new()
+        .push(
+            Row::new()
+                .push(Space::with_width(Length::Fill))
+                .push(
+                    Container::new(QRCode::new(qr).cell_size(8))
+                        .padding(10)
+                        .style(theme::Container::QrCode),
+                )
+                .push(Space::with_width(Length::Fill)),
+        )
+        .push(Space::with_height(Length::Fixed(15.0)))
+        .push(
+            Container::new(text(address).size(15))
+                .width(Length::Fill)
+                .center_x(),
+        )
+        .width(Length::Fill)
+        .max_width(400)
         .into()
 }
