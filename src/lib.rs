@@ -295,6 +295,7 @@ pub enum DaemonHandle {
         poller_handle: thread::JoinHandle<()>,
         control: DaemonControl,
     },
+    #[cfg(feature = "daemon")]
     Server {
         poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         poller_handle: thread::JoinHandle<()>,
@@ -318,7 +319,7 @@ impl DaemonHandle {
         config: Config,
         bitcoin: Option<impl BitcoinInterface + 'static>,
         db: Option<impl DatabaseInterface + 'static>,
-        with_rpc_server: bool,
+        #[cfg(feature = "daemon")] with_rpc_server: bool,
     ) -> Result<Self, StartupError> {
         #[cfg(not(test))]
         setup_panic_hook();
@@ -392,7 +393,8 @@ impl DaemonHandle {
         // structure or through the JSONRPC server we may setup below.
         let control = DaemonControl::new(config, bit, poller_sender.clone(), db, secp);
 
-        Ok(if with_rpc_server {
+        #[cfg(feature = "daemon")]
+        if with_rpc_server {
             let rpcserver_shutdown = sync::Arc::from(sync::atomic::AtomicBool::from(false));
             let rpcserver_handle = thread::Builder::new()
                 .name("Bitcoin Network poller".to_string())
@@ -411,18 +413,18 @@ impl DaemonHandle {
                 })
                 .expect("Spawning the RPC server thread should never fail.");
 
-            DaemonHandle::Server {
+            return Ok(DaemonHandle::Server {
                 poller_sender,
                 poller_handle,
                 rpcserver_shutdown,
                 rpcserver_handle,
-            }
-        } else {
-            DaemonHandle::Controller {
-                poller_sender,
-                poller_handle,
-                control,
-            }
+            });
+        }
+
+        Ok(DaemonHandle::Controller {
+            poller_sender,
+            poller_handle,
+            control,
         })
     }
 
@@ -430,12 +432,13 @@ impl DaemonHandle {
     /// and SQLite).
     pub fn start_default(
         config: Config,
-        with_rpc_server: bool,
+        #[cfg(feature = "daemon")] with_rpc_server: bool,
     ) -> Result<DaemonHandle, StartupError> {
         Self::start(
             config,
             Option::<BitcoinD>::None,
             Option::<SqliteDb>::None,
+            #[cfg(feature = "daemon")]
             with_rpc_server,
         )
     }
@@ -448,6 +451,7 @@ impl DaemonHandle {
             Self::Controller {
                 ref poller_handle, ..
             } => !poller_handle.is_finished(),
+            #[cfg(feature = "daemon")]
             Self::Server {
                 ref poller_handle,
                 ref rpcserver_handle,
@@ -470,6 +474,7 @@ impl DaemonHandle {
                 poller_handle.join().expect("Poller thread must not panic");
                 Ok(())
             }
+            #[cfg(feature = "daemon")]
             Self::Server {
                 poller_sender,
                 poller_handle,
@@ -730,7 +735,12 @@ mod tests {
         let t = thread::spawn({
             let config = config.clone();
             move || {
-                let handle = DaemonHandle::start_default(config, false).unwrap();
+                let handle = DaemonHandle::start_default(
+                    config,
+                    #[cfg(feature = "daemon")]
+                    false,
+                )
+                .unwrap();
                 handle.stop().unwrap();
             }
         });
@@ -750,7 +760,12 @@ mod tests {
         let t = thread::spawn({
             let config = config.clone();
             move || {
-                let handle = DaemonHandle::start_default(config, false).unwrap();
+                let handle = DaemonHandle::start_default(
+                    config,
+                    #[cfg(feature = "daemon")]
+                    false,
+                )
+                .unwrap();
                 handle.stop().unwrap();
             }
         });
