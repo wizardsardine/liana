@@ -20,7 +20,7 @@ log_level = "debug"
 #
 # YOUR DESCRIPTOR IS UNIQUE AND MUST BE BACKED UP, WITHOUT IT YOU WONT BE ABLE TO RECOVER YOUR FUNDS.
 #
-main_descriptor = "wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/<0;1>/*),and_v(v:pkh(tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/<0;1>/*),older(2))))#uact7s3g"
+main_descriptor = "wsh(or_d(pk([0dd8c6f0/48'/1'/0'/2']tpubDFMbZ7U5k5hEfsttnZTKMmwrGMHnqUGxhShsvBjHimXBpmAp5KmxpyGsLx2toCaQgYq5TipBLhTUtA2pRSB9b14m5KwSohTDoCHkk1EnqtZ/<0;1>/*),and_v(v:pkh([d4ab66f1/48'/1'/0'/2']tpubDEXYN145WM4rVKtcWpySBYiVQ229pmrnyAGJT14BBh2QJr7ABJswchDicZfFaauLyXhDad1nCoCZQEwAW87JPotP93ykC9WJvoASnBjYBxW/<0;1>/*),older(65535))))#7nvn6ssc"
 
 # This section is the configuration related to the Bitcoin backend.
 # On what network shall it operate?
