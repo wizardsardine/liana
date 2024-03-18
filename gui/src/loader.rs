@@ -9,6 +9,7 @@ use iced::{Alignment, Command, Length, Subscription};
 use tracing::{debug, info, warn};
 
 use liana::{
+    commands::CoinStatus,
     config::{Config, ConfigError},
     miniscript::bitcoin,
     StartupError,
@@ -370,7 +371,9 @@ pub async fn load_application(
     let wallet =
         Wallet::new(info.descriptors.main).load_settings(&gui_config, &datadir_path, network)?;
 
-    let coins = daemon.list_coins(&[], &[]).map(|res| res.coins)?;
+    let coins = daemon
+        .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+        .map(|res| res.coins)?;
 
     let cache = Cache {
         datadir_path,
