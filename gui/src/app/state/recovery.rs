@@ -194,6 +194,11 @@ impl State for RecoveryPanel {
 
     fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         let daemon = daemon.clone();
+        self.selected_path = None;
+        self.warning = None;
+        self.feerate = form::Value::default();
+        self.recipient = form::Value::default();
+        self.generated = None;
         Command::perform(
             async move {
                 daemon
