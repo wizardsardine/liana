@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 use super::{model::*, Daemon, DaemonError};
 use liana::{
@@ -10,21 +11,32 @@ use liana::{
 
 pub struct EmbeddedDaemon {
     config: Config,
-    handle: DaemonHandle,
+    handle: Mutex<Option<DaemonHandle>>,
 }
 
 impl EmbeddedDaemon {
     pub fn start(config: Config) -> Result<EmbeddedDaemon, DaemonError> {
         let handle = DaemonHandle::start_default(config.clone()).map_err(DaemonError::Start)?;
-        Ok(Self { handle, config })
+        Ok(Self {
+            handle: Mutex::new(Some(handle)),
+            config,
+        })
     }
 
-    fn control(&self) -> Result<&DaemonControl, DaemonError> {
-        if self.handle.shutdown_complete() {
-            Err(DaemonError::DaemonStopped)
-        } else {
-            Ok(&self.handle.control)
+    pub fn command<T, F>(&self, method: F) -> Result<T, DaemonError>
+    where
+        F: FnOnce(&DaemonControl) -> Result<T, DaemonError>,
+    {
+        match self.handle.lock()?.as_ref() {
+            Some(DaemonHandle::Controller { control, .. }) => method(control),
+            None => Err(DaemonError::DaemonStopped),
         }
+    }
+}
+
+impl<T> From<std::sync::PoisonError<T>> for DaemonError {
+    fn from(value: std::sync::PoisonError<T>) -> Self {
+        DaemonError::Unexpected(format!("Daemon panic: {}", value))
     }
 }
 
@@ -43,30 +55,48 @@ impl Daemon for EmbeddedDaemon {
         Some(&self.config)
     }
 
-    fn stop(&self) {
-        self.handle.trigger_shutdown();
-        while !self.handle.shutdown_complete() {
-            tracing::debug!("Waiting daemon to shutdown");
-            std::thread::sleep(std::time::Duration::from_millis(500));
+    fn is_alive(&self) -> Result<(), DaemonError> {
+        let mut handle = self.handle.lock()?;
+        if let Some(h) = handle.as_ref() {
+            if h.is_alive() {
+                return Ok(());
+            }
         }
+        // if the daemon poller is not alive, we try to terminate it to fetch the error.
+        if let Some(h) = handle.take() {
+            h.stop()
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn stop(&self) -> Result<(), DaemonError> {
+        let mut handle = self.handle.lock()?;
+        if let Some(h) = handle.take() {
+            h.stop()
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
+        }
+        Ok(())
     }
 
     fn get_info(&self) -> Result<GetInfoResult, DaemonError> {
-        Ok(self.control()?.get_info())
+        self.command(|daemon| Ok(daemon.get_info()))
     }
 
     fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
-        Ok(self.control()?.get_new_address())
+        self.command(|daemon| Ok(daemon.get_new_address()))
     }
 
     fn list_coins(&self) -> Result<ListCoinsResult, DaemonError> {
-        Ok(self.control()?.list_coins(&[], &[]))
+        self.command(|daemon| Ok(daemon.list_coins(&[], &[])))
     }
 
     fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
-        self.control()?
-            .list_spend(None)
-            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        self.command(|daemon| {
+            daemon
+                .list_spend(None)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
     }
 
     fn list_confirmed_txs(
@@ -75,13 +105,11 @@ impl Daemon for EmbeddedDaemon {
         end: u32,
         limit: u64,
     ) -> Result<ListTransactionsResult, DaemonError> {
-        Ok(self
-            .control()?
-            .list_confirmed_transactions(start, end, limit))
+        self.command(|daemon| Ok(daemon.list_confirmed_transactions(start, end, limit)))
     }
 
     fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
-        Ok(self.control()?.list_transactions(txids))
+        self.command(|daemon| Ok(daemon.list_transactions(txids)))
     }
 
     fn create_spend_tx(
@@ -91,9 +119,11 @@ impl Daemon for EmbeddedDaemon {
         feerate_vb: u64,
         change_address: Option<Address<address::NetworkUnchecked>>,
     ) -> Result<CreateSpendResult, DaemonError> {
-        self.control()?
-            .create_spend(destinations, coins_outpoints, feerate_vb, change_address)
-            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        self.command(|daemon| {
+            daemon
+                .create_spend(destinations, coins_outpoints, feerate_vb, change_address)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
     }
 
     fn rbf_psbt(
@@ -102,32 +132,42 @@ impl Daemon for EmbeddedDaemon {
         is_cancel: bool,
         feerate_vb: Option<u64>,
     ) -> Result<CreateSpendResult, DaemonError> {
-        self.control()?
-            .rbf_psbt(txid, is_cancel, feerate_vb)
-            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        self.command(|daemon| {
+            daemon
+                .rbf_psbt(txid, is_cancel, feerate_vb)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
     }
 
     fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
-        self.control()?
-            .update_spend(psbt.clone())
-            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        self.command(|daemon| {
+            daemon
+                .update_spend(psbt.clone())
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
     }
 
     fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
-        self.control()?.delete_spend(txid);
-        Ok(())
+        self.command(|daemon| {
+            daemon.delete_spend(txid);
+            Ok(())
+        })
     }
 
     fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
-        self.control()?
-            .broadcast_spend(txid)
-            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        self.command(|daemon| {
+            daemon
+                .broadcast_spend(txid)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
     }
 
     fn start_rescan(&self, t: u32) -> Result<(), DaemonError> {
-        self.control()?
-            .start_rescan(t)
-            .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        self.command(|daemon| {
+            daemon
+                .start_rescan(t)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
     }
 
     fn create_recovery(
@@ -136,21 +176,25 @@ impl Daemon for EmbeddedDaemon {
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError> {
-        self.control()?
-            .create_recovery(address, feerate_vb, sequence)
-            .map_err(|e| DaemonError::Unexpected(e.to_string()))
-            .map(|res| res.psbt)
+        self.command(|daemon| {
+            daemon
+                .create_recovery(address, feerate_vb, sequence)
+                .map(|res| res.psbt)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
     }
 
     fn get_labels(
         &self,
         items: &HashSet<LabelItem>,
     ) -> Result<HashMap<String, String>, DaemonError> {
-        Ok(self.handle.control.get_labels(items).labels)
+        self.command(|daemon| Ok(daemon.get_labels(items).labels))
     }
 
     fn update_labels(&self, items: &HashMap<LabelItem, Option<String>>) -> Result<(), DaemonError> {
-        self.handle.control.update_labels(items);
-        Ok(())
+        self.command(|daemon| {
+            daemon.update_labels(items);
+            Ok(())
+        })
     }
 }
