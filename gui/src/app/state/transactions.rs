@@ -249,7 +249,6 @@ impl State for TransactionsPanel {
         self.selected_tx = None;
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
-        let daemon3 = daemon.clone();
         let now: u32 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -258,7 +257,7 @@ impl State for TransactionsPanel {
             .unwrap();
         Command::batch(vec![
             Command::perform(
-                async move { daemon3.list_pending_txs().map_err(|e| e.into()) },
+                async move { daemon2.list_pending_txs().map_err(|e| e.into()) },
                 Message::PendingTransactions,
             ),
             Command::perform(
@@ -268,15 +267,6 @@ impl State for TransactionsPanel {
                         .map_err(|e| e.into())
                 },
                 Message::HistoryTransactions,
-            ),
-            Command::perform(
-                async move {
-                    daemon2
-                        .list_coins(&[], &[])
-                        .map(|res| res.coins)
-                        .map_err(|e| e.into())
-                },
-                Message::Coins,
             ),
         ])
     }
