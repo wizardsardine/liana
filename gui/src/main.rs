@@ -2,7 +2,14 @@
 
 use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
 
-use iced::{executor, Application, Command, Settings, Subscription};
+use iced::{
+    event::{self, Event},
+    executor,
+    keyboard::{self, KeyCode},
+    subscription,
+    widget::{focus_next, focus_previous},
+    Application, Command, Settings, Subscription,
+};
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
 extern crate serde;
@@ -76,6 +83,11 @@ enum State {
 }
 
 #[derive(Debug)]
+pub enum Key {
+    Tab(bool),
+}
+
+#[derive(Debug)]
 pub enum Message {
     CtrlC,
     Launch(Box<launcher::Message>),
@@ -83,6 +95,7 @@ pub enum Message {
     Load(Box<loader::Message>),
     Run(Box<app::Message>),
     Event(iced_native::Event),
+    KeyPressed(Key),
 }
 
 async fn ctrl_c() -> Result<(), ()> {
@@ -189,6 +202,14 @@ impl Application for GUI {
                 };
                 iced::window::close()
             }
+            (_, Message::KeyPressed(Key::Tab(shift))) => {
+                log::debug!("Tab pressed!");
+                if shift {
+                    focus_previous()
+                } else {
+                    focus_next()
+                }
+            }
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
                 launcher::Message::Install(datadir_path) => {
                     self.logger.set_installer_mode(
@@ -278,12 +299,27 @@ impl Application for GUI {
                 State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
                 State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
             },
-            iced_native::subscription::events().map(Self::Message::Event),
+            subscription::events_with(|event, status| match (&event, status) {
+                (
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key_code: KeyCode::Tab,
+                        modifiers,
+                        ..
+                    }),
+                    event::Status::Ignored,
+                ) => Some(Message::KeyPressed(Key::Tab(modifiers.shift()))),
+                (
+                    iced::Event::Window(iced_native::window::Event::CloseRequested),
+                    event::Status::Ignored,
+                ) => Some(Message::Event(event)),
+                _ => None,
+            }),
         ])
         .with_filter(|(event, _status)| {
             matches!(
                 event,
                 iced::Event::Window(iced_native::window::Event::CloseRequested)
+                    | iced::Event::Keyboard(_)
             )
         })
     }
