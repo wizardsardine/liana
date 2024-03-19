@@ -1457,7 +1457,7 @@ CREATE TABLE spend_transactions (
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(424242),
                 derivation_index: bip32::ChildNumber::from_normal_idx(4103).unwrap(),
-                is_change: false, // Cannot be both a coinbase deposit and change.
+                is_change: false,
                 spend_txid: None,
                 spend_block: None,
             };
