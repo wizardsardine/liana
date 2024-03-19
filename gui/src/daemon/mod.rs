@@ -107,15 +107,26 @@ pub trait Daemon: Debug {
         txids: Option<&[Txid]>,
     ) -> Result<Vec<model::SpendTx>, DaemonError> {
         let info = self.get_info()?;
-        let coins = self.list_coins(&[], &[])?.coins;
         let mut spend_txs = Vec::new();
         let curve = secp256k1::Secp256k1::verification_only();
-        for tx in self.list_spend_txs()?.spend_txs {
-            if let Some(txids) = txids {
-                if !txids.contains(&tx.psbt.unsigned_tx.txid()) {
-                    continue;
-                }
-            }
+        // TODO: Use filters in `list_spend_txs` command.
+        let mut txs = self.list_spend_txs()?.spend_txs;
+        if let Some(txids) = txids {
+            txs.retain(|tx| txids.contains(&tx.psbt.unsigned_tx.txid()));
+        }
+        let outpoints: Vec<_> = txs
+            .iter()
+            .flat_map(|tx| {
+                tx.psbt
+                    .unsigned_tx
+                    .input
+                    .iter()
+                    .map(|txin| txin.previous_output)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let coins = self.list_coins(&[], &outpoints)?.coins;
+        for tx in txs {
             let coins = coins
                 .iter()
                 .filter(|coin| {
