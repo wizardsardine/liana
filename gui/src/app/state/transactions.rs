@@ -100,6 +100,7 @@ impl State for TransactionsPanel {
                             self.txs.push(tx);
                         }
                     }
+                    self.txs.sort_by(|a, b| b.time.cmp(&a.time));
                 }
             },
             Message::PendingTransactions(res) => match res {

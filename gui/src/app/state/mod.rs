@@ -180,6 +180,7 @@ impl State for Home {
                             self.events.push(event);
                         }
                     }
+                    self.events.sort_by(|a, b| b.time.cmp(&a.time));
                 }
             },
             Message::PendingTransactions(res) => match res {
