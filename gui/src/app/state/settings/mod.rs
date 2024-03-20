@@ -53,25 +53,28 @@ impl State for SettingsState {
                     )
                     .into(),
                 );
+                let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon))
+                    .map(|s| s.reload(daemon, wallet))
                     .unwrap_or_else(Command::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::AboutSection)) => {
                 self.setting = Some(AboutSettingsState::default().into());
+                let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon))
+                    .map(|s| s.reload(daemon, wallet))
                     .unwrap_or_else(Command::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditWalletSettings)) => {
                 self.setting = Some(
                     WalletSettingsState::new(self.data_dir.clone(), self.wallet.clone()).into(),
                 );
+                let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon))
+                    .map(|s| s.reload(daemon, wallet))
                     .unwrap_or_else(Command::none)
             }
             _ => self
@@ -98,8 +101,13 @@ impl State for SettingsState {
         }
     }
 
-    fn reload(&mut self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: Arc<Wallet>,
+    ) -> Command<Message> {
         self.setting = None;
+        self.wallet = wallet;
         Command::none()
     }
 }
@@ -150,7 +158,11 @@ impl State for AboutSettingsState {
         Command::none()
     }
 
-    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _wallet: Arc<Wallet>,
+    ) -> Command<Message> {
         Command::perform(
             async move { daemon.get_info().map_err(|e| e.into()) },
             Message::Info,

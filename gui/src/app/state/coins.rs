@@ -14,6 +14,7 @@ use crate::{
         message::Message,
         state::{label::LabelsEdited, State},
         view,
+        wallet::Wallet,
     },
     daemon::{
         model::{Coin, LabelItem, Labelled},
@@ -150,7 +151,11 @@ impl State for CoinsPanel {
         Command::none()
     }
 
-    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _wallet: Arc<Wallet>,
+    ) -> Command<Message> {
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
         Command::batch(vec![

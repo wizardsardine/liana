@@ -60,7 +60,7 @@ impl Panels {
             current: Menu::Home,
             home: Home::new(wallet.clone(), &cache.coins),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
-            transactions: TransactionsPanel::new(),
+            transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
             recovery: RecoveryPanel::new(wallet.clone(), &cache.coins, cache.blockheight),
             receive: ReceivePanel::new(data_dir.clone(), wallet.clone()),
@@ -137,7 +137,7 @@ impl App {
             data_dir.clone(),
             internal_bitcoind.as_ref(),
         );
-        let cmd = panels.home.reload(daemon.clone());
+        let cmd = panels.home.reload(daemon.clone(), wallet.clone());
         (
             Self {
                 panels,
@@ -202,7 +202,9 @@ impl App {
             _ => {}
         };
         self.panels.current = menu;
-        self.panels.current_mut().reload(self.daemon.clone())
+        self.panels
+            .current_mut()
+            .reload(self.daemon.clone(), self.wallet.clone())
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

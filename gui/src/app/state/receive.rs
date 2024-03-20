@@ -191,7 +191,12 @@ impl State for ReceivePanel {
         }
     }
 
-    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: Arc<Wallet>,
+    ) -> Command<Message> {
+        self.wallet = wallet;
         // Fill at least with one address, user will then use the generate button.
         if self.addresses.is_empty() {
             let daemon = daemon.clone();
@@ -364,13 +369,11 @@ mod tests {
                 ChildNumber::from_normal_idx(0).unwrap()
             ))),
         )]);
-
-        let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::new(
-            PathBuf::new(),
-            Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap())),
-        ));
+        let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
+        let sandbox: Sandbox<ReceivePanel> =
+            Sandbox::new(ReceivePanel::new(PathBuf::new(), wallet.clone()));
         let client = Arc::new(Lianad::new(daemon.run()));
-        let sandbox = sandbox.load(client, &Cache::default()).await;
+        let sandbox = sandbox.load(client, &Cache::default(), wallet).await;
 
         let panel = sandbox.state();
         assert_eq!(panel.addresses.list, vec![addr]);

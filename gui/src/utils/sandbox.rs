@@ -3,7 +3,7 @@ use std::sync::Arc;
 use iced_native::command::Action;
 
 use crate::{
-    app::{cache::Cache, message::Message, state::State},
+    app::{cache::Cache, message::Message, state::State, wallet::Wallet},
     daemon::Daemon,
 };
 
@@ -37,8 +37,13 @@ impl<S: State + Send + 'static> Sandbox<S> {
         self
     }
 
-    pub async fn load(mut self, daemon: Arc<dyn Daemon + Sync + Send>, cache: &Cache) -> Self {
-        let cmd = self.state.reload(daemon.clone());
+    pub async fn load(
+        mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        wallet: Arc<Wallet>,
+    ) -> Self {
+        let cmd = self.state.reload(daemon.clone(), wallet);
         for action in cmd.actions() {
             if let Action::Future(f) = action {
                 let msg = f.await;
