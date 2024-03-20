@@ -43,7 +43,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 3;
+const DB_VERSION: i64 = 4;
 
 #[derive(Debug)]
 pub enum SqliteDbError {
@@ -806,6 +806,92 @@ CREATE TABLE spend_transactions (
     id INTEGER PRIMARY KEY NOT NULL,
     psbt BLOB UNIQUE NOT NULL,
     txid BLOB UNIQUE NOT NULL
+);
+";
+
+    const V3_SCHEMA: &str = "\
+CREATE TABLE version (
+    version INTEGER NOT NULL
+);
+
+/* About the Bitcoin network. */
+CREATE TABLE tip (
+    network TEXT NOT NULL,
+    blockheight INTEGER,
+    blockhash BLOB
+);
+
+/* This stores metadata about our wallet. We only support single wallet for
+ * now (and the foreseeable future).
+ *
+ * The 'timestamp' field is the creation date of the wallet. We guarantee to have seen all
+ * information related to our descriptor(s) that occured after this date.
+ * The optional 'rescan_timestamp' field is a the timestamp we need to rescan the chain
+ * for events related to our descriptor(s) from.
+ */
+CREATE TABLE wallets (
+    id INTEGER PRIMARY KEY NOT NULL,
+    timestamp INTEGER NOT NULL,
+    main_descriptor TEXT NOT NULL,
+    deposit_derivation_index INTEGER NOT NULL,
+    change_derivation_index INTEGER NOT NULL,
+    rescan_timestamp INTEGER
+);
+
+/* Our (U)TxOs.
+ *
+ * The 'spend_block_height' and 'spend_block.time' are only present if the spending
+ * transaction for this coin exists and was confirmed.
+ *
+ * The 'is_immature' field is for coinbase deposits that are not yet buried under 100
+ * blocks. Note coinbase deposits can't be change. They also technically can't be
+ * unconfirmed but we keep them as such until they become mature.
+ */
+CREATE TABLE coins (
+    id INTEGER PRIMARY KEY NOT NULL,
+    wallet_id INTEGER NOT NULL,
+    blockheight INTEGER,
+    blocktime INTEGER,
+    txid BLOB NOT NULL,
+    vout INTEGER NOT NULL,
+    amount_sat INTEGER NOT NULL,
+    derivation_index INTEGER NOT NULL,
+    is_change BOOLEAN NOT NULL CHECK (is_change IN (0,1)),
+    spend_txid BLOB,
+    spend_block_height INTEGER,
+    spend_block_time INTEGER,
+    is_immature BOOLEAN NOT NULL CHECK (is_immature IN (0,1)),
+    CHECK (is_change IS 0 OR is_immature IS 0),
+    UNIQUE (txid, vout),
+    FOREIGN KEY (wallet_id) REFERENCES wallets (id)
+        ON UPDATE RESTRICT
+        ON DELETE RESTRICT
+);
+
+/* A mapping from descriptor address to derivation index. Necessary until
+ * we can get the derivation index from the parent descriptor from bitcoind.
+ */
+CREATE TABLE addresses (
+    receive_address TEXT NOT NULL UNIQUE,
+    change_address TEXT NOT NULL UNIQUE,
+    derivation_index INTEGER NOT NULL UNIQUE
+);
+
+/* Transactions we created that spend some of our coins. */
+CREATE TABLE spend_transactions (
+    id INTEGER PRIMARY KEY NOT NULL,
+    psbt BLOB UNIQUE NOT NULL,
+    txid BLOB UNIQUE NOT NULL,
+    updated_at INTEGER
+);
+
+/* Labels applied on addresses (0), outpoints (1), txids (2) */
+CREATE TABLE labels (
+    id INTEGER PRIMARY KEY NOT NULL,
+    wallet_id INTEGER NOT NULL,
+    item_kind INTEGER NOT NULL CHECK (item_kind IN (0,1,2)),
+    item TEXT UNIQUE NOT NULL,
+    value TEXT NOT NULL
 );
 ";
 
@@ -2130,7 +2216,198 @@ CREATE TABLE spend_transactions (
     }
 
     #[test]
-    fn v0_to_v3_migration() {
+    fn v3_to_v4_migration() {
+        let secp = secp256k1::Secp256k1::verification_only();
+
+        // Create a database with version 3, using the old schema.
+        let tmp_dir = tmp_dir();
+        fs::create_dir_all(&tmp_dir).unwrap();
+        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v3.sqlite3")]
+            .iter()
+            .collect();
+        let mut options = dummy_options();
+        options.schema = V3_SCHEMA;
+        options.version = 3;
+        create_fresh_db(&db_path, options, &secp).unwrap();
+
+        {
+            // Don't use SqliteDb::new() in order not to apply migration.
+            let db = SqliteDb {
+                db_path: db_path.clone(),
+            };
+            let mut conn = db.connection().unwrap();
+            assert!(conn.db_version() == 3);
+
+            // The following coins will be inserted into the DB as unconfirmed and then
+            // some of them will be subsequently confirmed and spent.
+            // Note that `block_info`, `spend_txid` and `spend_block` will all be set to
+            // NULL in the DB by the `new_unspent_coins` method, but are set to `None`
+            // here anyway.
+            let coin_a = Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
+                )
+                .unwrap(),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(1231001),
+                derivation_index: bip32::ChildNumber::from_normal_idx(101).unwrap(),
+                is_change: false,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+            };
+            let coin_b = Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "81b2f327d4c1fd67afd039374f8798fd9ff37932c6f5c221c1c569350eac5ac8:19234",
+                )
+                .unwrap(),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(23145),
+                derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                is_change: false,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+            };
+            let coin_c = Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6:932",
+                )
+                .unwrap(),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(354764),
+                derivation_index: bip32::ChildNumber::from_normal_idx(3401).unwrap(),
+                is_change: true,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+            };
+            let coin_d = Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:1456",
+                )
+                .unwrap(),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(23200),
+                derivation_index: bip32::ChildNumber::from_normal_idx(4793235).unwrap(),
+                is_change: true,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+            };
+            let coin_e = Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "4753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:4633",
+                )
+                .unwrap(),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(675000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(3).unwrap(),
+                is_change: false,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+            };
+            let coin_imma_a = Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "c449539458c60bee6c0d8905ba1dadb20b9187b82045d306a408b894cea492b0:5",
+                )
+                .unwrap(),
+                is_immature: true,
+                amount: bitcoin::Amount::from_sat(4564347),
+                derivation_index: bip32::ChildNumber::from_normal_idx(453).unwrap(),
+                is_change: false,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+            };
+            let coin_imma_b = Coin {
+                outpoint: bitcoin::OutPoint::from_str(
+                    "f0801fd9ca8bca0624c230ab422b2e2c4c8dc995e4e1dbc6412510959cce1e4f:19234",
+                )
+                .unwrap(),
+                is_immature: true,
+                amount: bitcoin::Amount::from_sat(731453),
+                derivation_index: bip32::ChildNumber::from_normal_idx(98).unwrap(),
+                is_change: false,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+            };
+            // After the following operations, the state of the coins will be:
+            // - coin_a is spent.
+            // - coin_b is confirmed and spending.
+            // - coin_c is confirmed.
+            // - coin_d is the unconfirmed output of coin_b's spend and is spending.
+            // - coin_e is the unconfirmed output of coin_d's spend.
+            // - coin_imma_a is confirmed.
+            // - coin_imma_b is still immature.
+            conn.new_unspent_coins(&[
+                coin_a,
+                coin_b,
+                coin_c,
+                coin_d,
+                coin_e,
+                coin_imma_a,
+                coin_imma_b,
+            ]);
+            conn.confirm_coins(&[
+                (coin_a.outpoint, 175500, 1755001001),
+                (coin_b.outpoint, 175502, 1755001032),
+                (coin_c.outpoint, 175504, 1755005032),
+                (coin_imma_a.outpoint, 176001, 1755001004),
+            ]);
+            conn.spend_coins(&[
+                (
+                    coin_a.outpoint,
+                    bitcoin::Txid::from_slice(&[1; 32][..]).unwrap(),
+                ),
+                (coin_b.outpoint, coin_d.outpoint.txid),
+                (coin_d.outpoint, coin_e.outpoint.txid),
+            ]);
+            conn.confirm_spend(&[(
+                coin_a.outpoint,
+                bitcoin::Txid::from_slice(&[1; 32][..]).unwrap(),
+                245500,
+                1755003000,
+            )]);
+            assert_eq!(conn.coins(&[CoinStatus::Unconfirmed], &[]).len(), 2);
+            assert_eq!(conn.coins(&[CoinStatus::Confirmed], &[]).len(), 2);
+            assert_eq!(conn.coins(&[CoinStatus::Spending], &[]).len(), 2);
+            assert_eq!(conn.coins(&[CoinStatus::Spent], &[]).len(), 1);
+            let coins_pre = conn.coins(&[], &[]);
+            assert_eq!(coins_pre.len(), 7);
+            assert_eq!(
+                coins_pre
+                    .iter()
+                    .filter(|c| c.is_immature)
+                    .collect::<Vec<_>>()
+                    .len(),
+                1
+            );
+            assert_eq!(
+                coins_pre
+                    .iter()
+                    .filter(|c| c.is_change)
+                    .collect::<Vec<_>>()
+                    .len(),
+                2
+            );
+
+            // Migrate the DB.
+            maybe_apply_migration(&db_path).unwrap();
+            assert!(conn.db_version() == 4);
+            maybe_apply_migration(&db_path).unwrap(); // Migrating twice will be a no-op.
+            assert!(conn.db_version() == 4);
+            let coins_post = conn.coins(&[], &[]);
+            assert_eq!(coins_pre, coins_post);
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn v0_to_v4_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 0, using the old schema.
@@ -2150,7 +2427,7 @@ CREATE TABLE spend_transactions (
         {
             let mut conn = db.connection().unwrap();
             let version = conn.db_version();
-            assert_eq!(version, 3);
+            assert_eq!(version, 4);
 
             let txid_str = "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7";
             let txid = LabelItem::from_str(txid_str, bitcoin::Network::Bitcoin).unwrap();
