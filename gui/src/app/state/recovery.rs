@@ -192,8 +192,13 @@ impl State for RecoveryPanel {
         Command::none()
     }
 
-    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: Arc<Wallet>,
+    ) -> Command<Message> {
         let daemon = daemon.clone();
+        self.wallet = wallet;
         self.selected_path = None;
         self.warning = None;
         self.feerate = form::Value::default();

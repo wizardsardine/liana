@@ -22,6 +22,7 @@ use crate::{
         message::Message,
         state::{label::LabelsEdited, State},
         view,
+        wallet::Wallet,
     },
     daemon::model,
 };
@@ -31,8 +32,8 @@ use crate::daemon::{
     Daemon,
 };
 
-#[derive(Default)]
 pub struct TransactionsPanel {
+    wallet: Arc<Wallet>,
     pending_txs: Vec<HistoryTransaction>,
     txs: Vec<HistoryTransaction>,
     labels_edited: LabelsEdited,
@@ -42,8 +43,9 @@ pub struct TransactionsPanel {
 }
 
 impl TransactionsPanel {
-    pub fn new() -> Self {
+    pub fn new(wallet: Arc<Wallet>) -> Self {
         Self {
+            wallet,
             selected_tx: None,
             txs: Vec::new(),
             pending_txs: Vec::new(),
@@ -120,7 +122,7 @@ impl State for TransactionsPanel {
                 }
             },
             Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
-                return self.reload(daemon);
+                return self.reload(daemon, self.wallet.clone());
             }
             Message::View(view::Message::Select(i)) => {
                 self.selected_tx = if i < self.pending_txs.len() {
@@ -225,7 +227,11 @@ impl State for TransactionsPanel {
         Command::none()
     }
 
-    fn reload(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    fn reload(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _wallet: Arc<Wallet>,
+    ) -> Command<Message> {
         self.selected_tx = None;
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
