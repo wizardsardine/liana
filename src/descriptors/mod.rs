@@ -400,11 +400,21 @@ impl LianaDescriptor {
             // BIP32 derivations belong to us. And they all use the same last derivation index,
             // since that's where the wildcard is in the descriptor. So just pick the first one and
             // infer the derivation index to use to derive the spks below from it.
-            let der_index = if let Some(i) = psbt_out
+            let wsh_der_index = psbt_out
                 .bip32_derivation
                 .values()
                 .next()
-                .and_then(|(_, der_path)| der_path.into_iter().last())
+                .map(|(_, der_path)| der_path);
+            let tap_der_index = psbt_out
+                .tap_key_origins
+                .values()
+                .next()
+                .map(|(_, (_, der_path))| der_path);
+            let der_index = if let Some(i) = wsh_der_index
+                .into_iter()
+                .chain(tap_der_index.into_iter())
+                .next()
+                .and_then(|der_path| der_path.into_iter().last())
             {
                 i
             } else {
@@ -1942,32 +1952,28 @@ mod tests {
         assert!(tap_psbt.inputs[0].tap_key_origins.is_empty());
     }
 
-    #[test]
-    fn change_detection() {
-        let secp = secp256k1::Secp256k1::verification_only();
-
-        // Reuse a desc from above desciptor_creation unit test and a psbt from unrelated above
-        // bip32_derivs_pruning unit test.
-        let desc = LianaDescriptor::from_str("wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*)),older(26352))))").unwrap();
+    fn run_change_detection(
+        desc: LianaDescriptor,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
+    ) {
+        // Unrelated PSBT from another unit test above.
         let mut psbt = Psbt::from_str("cHNidP8BAFICAAAAAc+3IQFejOVro5Hlwy18au5Jr5mJX+tNMGk0ZE1hydIbAQAAAAD9////ARhzAQAAAAAAFgAUqJZUU7Fqu+bIvxjNw+TAtTwP9HQAAAAAAAEAzQIAAAAAAQEIoAeUdfZj04Ds8EspEK222TJdDNy1WZb/Mg1PJbQekwAAAAAA/f///wKQCQQAAAAAACJRIPJojBgnDc9oUS5lDNx/YJznYR2NPQue7h/d+o5Z+2FQoIYBAAAAAAAiACDZrCBvscZpg+S+IaoZBJjyKDdrNS3oXPaF17DNaB+4mAFAe9yuRS3Vn8A5NUglhwiX7vN0wpQ0Q43ClWtJRnC2HJ66h5HYJ/p8xHgHOhRDUWRzcXLLGl+brc5dW+k0OvIZEyuLAgABASughgEAAAAAACIAINmsIG+xxmmD5L4hqhkEmPIoN2s1Lehc9oXXsM1oH7iYAQX9GQFjdqkU2zK+b9oTL/KfnOSYtq3wmtf4qP6IrGt2qRTSNOD0U7fuHdAnKchIf8GmUO904YisbJNrdqkUE5TQk5mdyYtviaGAsIiOgc4y6wGIrGyTU4hWsmdTIQOirPI1KXBtP2Tg2FQxSo4BjFBTf+dCKtZwDQt056slgCEDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkhA2nPUthIMe1SeFegiZEKZF69yJerP1RFVlyu66C5lOVVU65zZHapFEUmCTccyLJXczvUfPUOCXr7CN0uiKxrdqkUeJmVqUt1Q4aFREOUWKX9U/SuZZ2IrGyTa3apFBDmKn40ceTWVbwxRI21c2qji1tOiKxsk1KIU7JoaCIGAjCZLg7xtlG43xEvns0TRd5gHpPrZWzAaYjo3lheMw/hHJAxFe8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgI0Y2/HRNvXA3niUE3RvrzQcCDiJ4F6vVog0uIanRUWHhwXK6G8MAAAgAEAAIAAAACAAgAAgAIAAAAIAAAAIgYCQKZf/IBUWv4F4mGVTv5PlqCceXFtlhfOgW0kIAPI74scFyuhvDAAAIABAACAAAAAgAIAAIAEAAAACAAAACIGAkDfArY5kwHyHvKllcCMhQLErtDmT/A13vABH8PBQ6yIHGNq3z8wAACAAQAAgAAAAIACAACABAAAAAgAAAAiBgLp9dq4ku0u9UKpIRasIb5QEPgPkDcxdcSXYBfW7mUcqByQMRXvMAAAgAEAAIAAAACAAgAAgAQAAAAIAAAAIgYDDHE7Hpxq++JsjZdbfwsPiA6pmq0dV00tR3hc2sus8KkcFyuhvDAAAIABAACAAAAAgAIAAIAAAAAACAAAACIGA0SIq7IkQJYb7brFx54mPzwUl/DzCGja0pdwFFckfm6WHGNq3z8wAACAAQAAgAAAAIACAACAAgAAAAgAAAAiBgNpz1LYSDHtUnhXoImRCmRevciXqz9URVZcruuguZTlVRyQMRXvMAAAgAEAAIAAAACAAgAAgAAAAAAIAAAAIgYDoqzyNSlwbT9k4NhUMUqOAYxQU3/nQirWcA0LdOerJYAcY2rfPzAAAIABAACAAAAAgAIAAIAAAAAACAAAAAAA").unwrap();
 
         // The PSBT has unrelated outputs. Those aren't detected as change.
         assert!(!psbt.outputs.is_empty());
-        assert_eq!(desc.change_indexes(&psbt, &secp).len(), 0);
+        assert_eq!(desc.change_indexes(&psbt, secp).len(), 0);
 
         // Add a change output, it's correctly detected as such.
-        let der_desc = desc.change_descriptor().derive(999.into(), &secp);
+        let der_desc = desc.change_descriptor().derive(999.into(), secp);
         let txo = bitcoin::TxOut {
             script_pubkey: der_desc.script_pubkey(),
             value: bitcoin::Amount::MAX_MONEY,
         };
-        let psbt_out = bitcoin::psbt::Output {
-            bip32_derivation: der_desc.bip32_derivations(),
-            ..Default::default()
-        };
+        let mut psbt_out = Default::default();
+        der_desc.update_change_psbt_out(&mut psbt_out);
         psbt.unsigned_tx.output.push(txo);
         psbt.outputs.push(psbt_out);
-        let indexes = desc.change_indexes(&psbt, &secp);
+        let indexes = desc.change_indexes(&psbt, secp);
         assert_eq!(indexes.len(), 1);
         assert!(matches!(
             indexes[0],
@@ -1975,18 +1981,16 @@ mod tests {
         ));
 
         // Add another change output, but to a deposit address. Both change outputs are detected.
-        let der_desc = desc.receive_descriptor().derive(424242.into(), &secp);
+        let der_desc = desc.receive_descriptor().derive(424242.into(), secp);
         let txo = bitcoin::TxOut {
             script_pubkey: der_desc.script_pubkey(),
             value: bitcoin::Amount::MAX_MONEY,
         };
-        let psbt_out = bitcoin::psbt::Output {
-            bip32_derivation: der_desc.bip32_derivations(),
-            ..Default::default()
-        };
+        let mut psbt_out = Default::default();
+        der_desc.update_change_psbt_out(&mut psbt_out);
         psbt.unsigned_tx.output.push(txo);
         psbt.outputs.push(psbt_out);
-        let indexes = desc.change_indexes(&psbt, &secp);
+        let indexes = desc.change_indexes(&psbt, secp);
         assert_eq!(indexes.len(), 2);
         assert!(matches!(
             indexes[0],
@@ -1996,6 +2000,18 @@ mod tests {
             indexes[1],
             ChangeOutput::DepositAddress { index: 2 }
         ));
+    }
+
+    #[test]
+    fn change_detection() {
+        let secp = secp256k1::Secp256k1::verification_only();
+
+        // Check the change detection both under P2WSH and Taproot. We reuse descriptor from unit
+        // tests above.
+        let desc = LianaDescriptor::from_str("wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*)),older(26352))))").unwrap();
+        run_change_detection(desc, &secp);
+        let desc = LianaDescriptor::from_str("tr(tpubD6NzVbkrYhZ4YdBUPkUhDYj6Sd1QK8vgiCf5RwHnAnSNK5ozemAZzPTYZbgQq4diod7oxFJJYGa8FNRHzRo7URkixzQTuudh38xRRdSc4Hu/<0;1>/*,{and_v(v:multi_a(1,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*,[da2ee873/48'/1'/0'/2']tpubDEbXY6RbN9mxAvQW797WxReGGkrdyRfdYcehVVaQQcQ3kyfhxSMcnU9qGpUVRHXXALvBtc99jcuxx5tkzcLaJbAukSNpP9h2ti4XFRosv1g/<2;3>/*),older(2)),multi_a(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[da2ee873/48'/1'/0'/2']tpubDEbXY6RbN9mxAvQW797WxReGGkrdyRfdYcehVVaQQcQ3kyfhxSMcnU9qGpUVRHXXALvBtc99jcuxx5tkzcLaJbAukSNpP9h2ti4XFRosv1g/<0;1>/*)})").unwrap();
+        run_change_detection(desc, &secp);
     }
 
     #[test]
