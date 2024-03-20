@@ -33,11 +33,12 @@ pub fn hw_list_view(
                     alias.as_ref(),
                 )
             } else if *registered == Some(false) {
-                hw::unregistered_hardware_wallet(
+                hw::warning_hardware_wallet(
                     kind,
                     version.as_ref(),
                     fingerprint,
                     alias.as_ref(),
+                    "The wallet descriptor is not registered on the device.\n You can register it in the settings.",
                 )
             } else {
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())

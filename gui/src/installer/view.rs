@@ -23,7 +23,7 @@ use liana_ui::{
 
 use crate::{
     bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
-    hw::HardwareWallet,
+    hw::{is_compatible_with_tapminiscript, HardwareWallet},
     installer::{
         message::{self, Message},
         prompt,
@@ -173,16 +173,28 @@ pub fn welcome<'a>() -> Element<'a, Message> {
     .into()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DescriptorKind {
+    P2WSH,
+    Taproot,
+}
+
+const DESCRIPTOR_KINDS: [DescriptorKind; 2] = [DescriptorKind::P2WSH, DescriptorKind::Taproot];
+
+impl std::fmt::Display for DescriptorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::P2WSH => write!(f, "P2WSH"),
+            Self::Taproot => write!(f, "Taproot"),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn define_descriptor<'a>(
-    progress: (usize, usize),
+pub fn define_descriptor_advanced_settings<'a>(
     network: bitcoin::Network,
     network_valid: bool,
-    spending_keys: Vec<Element<'a, Message>>,
-    spending_threshold: usize,
-    recovery_paths: Vec<Element<'a, Message>>,
-    valid: bool,
-    error: Option<&String>,
+    use_taproot: bool,
 ) -> Element<'a, Message> {
     let col_network = Column::new()
         .spacing(10)
@@ -192,7 +204,7 @@ pub fn define_descriptor<'a>(
                 Message::Network(net.into())
             })
             .style(if network_valid {
-                theme::PickList::Simple
+                theme::PickList::Secondary
             } else {
                 theme::PickList::Invalid
             })
@@ -204,6 +216,58 @@ pub fn define_descriptor<'a>(
             Some(text("A data directory already exists for this network").style(color::RED))
         });
 
+    let col_wallet = Column::new()
+        .spacing(10)
+        .push(text("Descriptor type").bold())
+        .push(container(
+            pick_list(
+                &DESCRIPTOR_KINDS[..],
+                Some(if use_taproot {
+                    DescriptorKind::Taproot
+                } else {
+                    DescriptorKind::P2WSH
+                }),
+                |kind| Message::CreateTaprootDescriptor(kind == DescriptorKind::Taproot),
+            )
+            .style(theme::PickList::Secondary)
+            .padding(10),
+        ));
+
+    container(
+        Column::new()
+            .spacing(20)
+            .push(Space::with_height(0))
+            .push(separation().width(500))
+            .push(
+                Row::new()
+                    .push(col_network)
+                    .push(Space::with_width(100))
+                    .push(col_wallet),
+            )
+            .push_maybe(if use_taproot {
+                Some(
+                    p1_regular("Taproot is only supported by Liana version 5.0 and above")
+                        .style(color::GREY_2),
+                )
+            } else {
+                None
+            }),
+    )
+    .into()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn define_descriptor<'a>(
+    progress: (usize, usize),
+    network: bitcoin::Network,
+    network_valid: bool,
+    use_taproot: bool,
+    spending_keys: Vec<Element<'a, Message>>,
+    spending_threshold: usize,
+    recovery_paths: Vec<Element<'a, Message>>,
+    valid: bool,
+    error: Option<&String>,
+) -> Element<'a, Message> {
     let col_spending_keys = Column::new()
         .push(
             Row::new()
@@ -263,10 +327,32 @@ pub fn define_descriptor<'a>(
         progress,
         "Create the wallet",
         Column::new()
+            .push(collapse::Collapse::new(
+                || {
+                    Button::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Advanced settings").small().bold())
+                            .push(icon::collapse_icon()),
+                    )
+                    .style(theme::Button::Transparent)
+                },
+                || {
+                    Button::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Advanced settings").small().bold())
+                            .push(icon::collapsed_icon()),
+                    )
+                    .style(theme::Button::Transparent)
+                },
+                move || define_descriptor_advanced_settings(network, network_valid, use_taproot),
+            ))
             .push(
                 Column::new()
                     .width(Length::Fill)
-                    .push(col_network)
                     .push(
                         Column::new()
                             .spacing(25)
@@ -707,6 +793,7 @@ pub fn register_descriptor<'a>(
                                     hw.fingerprint()
                                         .map(|fg| registered.contains(&fg))
                                         .unwrap_or(false),
+                                    false,
                                 ))
                             }),
                     )
@@ -1287,6 +1374,7 @@ pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
 pub fn defined_descriptor_key<'a>(
     name: String,
     duplicate_name: bool,
+    incompatible_with_tapminiscript: bool,
 ) -> Element<'a, message::DefineKey> {
     let col = Column::new()
         .width(Length::Fill)
@@ -1335,6 +1423,21 @@ pub fn defined_descriptor_key<'a>(
                     .width(Length::Fixed(150.0)),
             )
             .push(text("Duplicate name").small().style(color::RED))
+            .into()
+    } else if incompatible_with_tapminiscript {
+        Column::new()
+            .align_items(Alignment::Center)
+            .push(
+                card::invalid(col)
+                    .padding(5)
+                    .height(Length::Fixed(150.0))
+                    .width(Length::Fixed(150.0)),
+            )
+            .push(
+                text("Taproot is not supported\nby this key device")
+                    .small()
+                    .style(color::RED),
+            )
             .into()
     } else {
         card::simple(col)
@@ -1594,6 +1697,7 @@ pub fn hw_list_view(
     chosen: bool,
     processing: bool,
     selected: bool,
+    device_must_support_taproot: bool,
 ) -> Element<Message> {
     let mut bttn = Button::new(match hw {
         HardwareWallet::Supported {
@@ -1607,6 +1711,16 @@ pub fn hw_list_view(
                 hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             } else if selected {
                 hw::selected_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
+            } else if device_must_support_taproot
+                && !is_compatible_with_tapminiscript(kind, version.as_ref())
+            {
+                hw::warning_hardware_wallet(
+                    kind,
+                    version.as_ref(),
+                    fingerprint,
+                    alias.as_ref(),
+                    "Device firmware version does not support taproot miniscript",
+                )
             } else {
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             }
@@ -1634,19 +1748,31 @@ pub fn key_list_view<'a>(
     name: &'a str,
     fingerprint: &'a Fingerprint,
     kind: Option<&'a DeviceKind>,
+    version: Option<&'a async_hwi::Version>,
     chosen: bool,
+    device_must_support_taproot: bool,
 ) -> Element<'a, Message> {
     let bttn = Button::new(if chosen {
         hw::selected_hardware_wallet(
             kind.map(|k| k.to_string()).unwrap_or_default(),
-            None::<String>,
+            version,
             fingerprint,
             Some(name),
+        )
+    } else if device_must_support_taproot
+        && kind.map(|kind| is_compatible_with_tapminiscript(kind, version)) == Some(false)
+    {
+        hw::warning_hardware_wallet(
+            kind.map(|k| k.to_string()).unwrap_or_default(),
+            version,
+            fingerprint,
+            Some(name),
+            "Device firmware version does not support taproot miniscript",
         )
     } else {
         hw::supported_hardware_wallet(
             kind.map(|k| k.to_string()).unwrap_or_default(),
-            None::<String>,
+            version,
             fingerprint,
             Some(name),
         )

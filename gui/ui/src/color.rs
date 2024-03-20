@@ -1,5 +1,6 @@
 use iced::Color;
 pub const BLACK: Color = iced::Color::BLACK;
+pub const TRANSPARENT: Color = iced::Color::TRANSPARENT;
 pub const LIGHT_BLACK: Color = Color::from_rgb(
     0x14 as f32 / 255.0,
     0x14 as f32 / 255.0,
