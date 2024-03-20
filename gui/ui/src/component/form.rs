@@ -1,3 +1,4 @@
+use bitcoin::Denomination;
 use iced::{widget::text_input, Length};
 
 use crate::{color, component::text, theme, util::Collection, widget::*};
@@ -57,6 +58,29 @@ where
         Self {
             input: text_input::TextInput::new(placeholder, &value.value)
                 .on_input(move |s| on_change(s.trim().to_string())),
+            warning: None,
+            valid: value.valid,
+        }
+    }
+
+    /// Creates a new [`Form`] that restrict input values to valid btc amount before applying the
+    /// `on_change` function.
+    /// It expects:
+    /// - a placeholder
+    /// - the current value
+    /// - a function that produces a message when the [`Form`] changes
+    pub fn new_amount_btc<F>(placeholder: &str, value: &'a Value<String>, on_change: F) -> Self
+    where
+        F: 'static + Fn(String) -> Message,
+    {
+        Self {
+            input: text_input::TextInput::new(placeholder, &value.value).on_input(move |s| {
+                if bitcoin::Amount::from_str_in(&s, Denomination::Bitcoin).is_ok() || s.is_empty() {
+                    on_change(s)
+                } else {
+                    on_change(value.value.clone())
+                }
+            }),
             warning: None,
             valid: value.valid,
         }

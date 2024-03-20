@@ -319,9 +319,9 @@ pub fn create_spend_tx<'a>(
 
 pub fn recipient_view<'a>(
     index: usize,
-    address: &form::Value<String>,
-    amount: &form::Value<String>,
-    label: &form::Value<String>,
+    address: &'a form::Value<String>,
+    amount: &'a form::Value<String>,
+    label: &'a form::Value<String>,
     is_max_selected: bool,
 ) -> Element<'a, CreateSpendMessage> {
     Container::new(
@@ -395,7 +395,7 @@ pub fn recipient_view<'a>(
                         None
                     })
                     .push_maybe(if !is_max_selected {
-                        Some(form::Form::new_trimmed("0.001 (in BTC)", amount, move |msg| {
+                        Some(form::Form::new_amount_btc("0.001 (in BTC)", amount, move |msg| {
                             CreateSpendMessage::RecipientEdited(index, "amount", msg)
                         })
                         .warning(
