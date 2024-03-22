@@ -228,8 +228,11 @@ impl Loader {
         if let Step::Syncing { daemon, .. } = &mut self.step {
             if !daemon.is_external() {
                 info!("Stopping internal daemon...");
-                daemon.stop();
-                info!("Internal daemon stopped");
+                if let Err(e) = daemon.stop() {
+                    warn!("Internal daemon failed to stop: {}", e);
+                } else {
+                    info!("Internal daemon stopped");
+                }
             }
         }
 

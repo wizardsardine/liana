@@ -61,7 +61,11 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         None
     }
 
-    fn stop(&self) {
+    fn is_alive(&self) -> Result<(), DaemonError> {
+        Ok(())
+    }
+
+    fn stop(&self) -> Result<(), DaemonError> {
         unreachable!("GUI should not ask external client to stop")
     }
 

@@ -260,10 +260,9 @@ impl Installer {
 pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
     // Start Daemon to check correctness of installation
     match liana::DaemonHandle::start_default(cfg) {
-        Ok(daemon) => {
-            daemon.shutdown();
-            Ok(())
-        }
+        Ok(daemon) => daemon
+            .stop()
+            .map_err(|e| Error::Unexpected(format!("Failed to stop Liana daemon: {}", e))),
         Err(e) => Err(Error::Unexpected(format!(
             "Failed to start Liana daemon: {}",
             e

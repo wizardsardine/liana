@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::{clipboard, time, Command, Subscription};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 pub use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
 use liana_ui::widget::Element;
@@ -217,8 +217,11 @@ impl App {
     pub fn stop(&mut self) {
         info!("Close requested");
         if !self.daemon.is_external() {
-            self.daemon.stop();
-            info!("Internal daemon stopped");
+            if let Err(e) = self.daemon.stop() {
+                error!("{}", e);
+            } else {
+                info!("Internal daemon stopped");
+            }
             if let Some(bitcoind) = &self.internal_bitcoind {
                 bitcoind.stop();
             }
@@ -232,6 +235,9 @@ impl App {
                 let datadir_path = self.cache.datadir_path.clone();
                 Command::perform(
                     async move {
+                        // we check every 10 second if the daemon poller is alive
+                        daemon.is_alive()?;
+
                         let info = daemon.get_info()?;
                         // todo: filter coins to only have current coins.
                         let coins = daemon.list_coins()?;
@@ -278,7 +284,7 @@ impl App {
         daemon_config_path: &PathBuf,
         cfg: DaemonConfig,
     ) -> Result<(), Error> {
-        self.daemon.stop();
+        self.daemon.stop()?;
         let daemon = EmbeddedDaemon::start(cfg)?;
         self.daemon = Arc::new(daemon);
 
