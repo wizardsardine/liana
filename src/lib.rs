@@ -28,12 +28,16 @@ use crate::{
     },
 };
 
-use std::{error, fmt, fs, io, path, sync};
+use std::{
+    error, fmt, fs, io, path,
+    sync::{self, mpsc},
+    thread,
+};
 
 use miniscript::bitcoin::secp256k1;
 
 #[cfg(not(test))]
-use std::{panic, process};
+use std::panic;
 // A panic in any thread should stop the main thread, and print the panic.
 #[cfg(not(test))]
 fn setup_panic_hook() {
@@ -60,8 +64,6 @@ fn setup_panic_hook() {
             info,
             bt
         );
-
-        process::exit(1);
     }));
 }
 
@@ -255,21 +257,24 @@ fn setup_bitcoind(
 pub struct DaemonControl {
     config: Config,
     bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+    poller_sender: mpsc::SyncSender<poller::PollerMessage>,
     // FIXME: Should we require Sync on DatabaseInterface rather than using a Mutex?
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 }
 
 impl DaemonControl {
-    pub fn new(
+    pub(crate) fn new(
         config: Config,
         bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+        poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     ) -> DaemonControl {
         DaemonControl {
             config,
             bitcoin,
+            poller_sender,
             db,
             secp,
         }
@@ -282,25 +287,39 @@ impl DaemonControl {
     }
 }
 
-pub struct DaemonHandle {
-    pub control: DaemonControl,
-    bitcoin_poller: poller::Poller,
+/// The handle to a Liana daemon. It might either be the handle for a daemon which exposes a
+/// JSONRPC server or one which exposes its API through a `DaemonControl`.
+pub enum DaemonHandle {
+    Controller {
+        poller_sender: mpsc::SyncSender<poller::PollerMessage>,
+        poller_handle: thread::JoinHandle<()>,
+        control: DaemonControl,
+    },
+    #[cfg(feature = "daemon")]
+    Server {
+        poller_sender: mpsc::SyncSender<poller::PollerMessage>,
+        poller_handle: thread::JoinHandle<()>,
+        rpcserver_shutdown: sync::Arc<sync::atomic::AtomicBool>,
+        rpcserver_handle: thread::JoinHandle<Result<(), io::Error>>,
+    },
 }
 
 impl DaemonHandle {
-    /// This starts the Liana daemon. Call `shutdown` to shut it down.
+    /// This starts the Liana daemon. A user of this interface should regularly poll the `is_alive`
+    /// method to check for internal errors. To shut down the daemon use the `stop` method.
+    ///
+    /// The `with_rpc_server` controls whether we should start a JSONRPC server to receive queries
+    /// or instead return a `DaemonControl` object for a caller to access the daemon's API.
     ///
     /// You may specify a custom Bitcoin interface through the `bitcoin` parameter. If `None`, the
     /// default Bitcoin interface (`bitcoind` JSONRPC) will be used.
     /// You may specify a custom Database interface through the `db` parameter. If `None`, the
     /// default Database interface (SQLite) will be used.
-    ///
-    /// **Note**: we internally use threads, and set a panic hook. A downstream application must
-    /// not overwrite this panic hook.
     pub fn start(
         config: Config,
         bitcoin: Option<impl BitcoinInterface + 'static>,
         db: Option<impl DatabaseInterface + 'static>,
+        #[cfg(feature = "daemon")] with_rpc_server: bool,
     ) -> Result<Self, StartupError> {
         #[cfg(not(test))]
         setup_panic_hook();
@@ -353,82 +372,126 @@ impl DaemonHandle {
             }
         }
 
-        // Spawn the bitcoind poller with a retry limit high enough that we'd fail after that.
-        let bitcoin_poller = poller::Poller::start(
-            bit.clone(),
-            db.clone(),
-            config.bitcoin_config.poll_interval_secs,
-            config.main_descriptor.clone(),
-        );
+        // Start the poller thread. Keep the thread handle to be able to check if it crashed. Store
+        // an atomic to be able to stop it.
+        let bitcoin_poller =
+            poller::Poller::new(bit.clone(), db.clone(), config.main_descriptor.clone());
+        let (poller_sender, poller_receiver) = mpsc::sync_channel(0);
+        let poller_handle = thread::Builder::new()
+            .name("Bitcoin Network poller".to_string())
+            .spawn({
+                let poll_interval = config.bitcoin_config.poll_interval_secs;
+                move || {
+                    log::info!("Bitcoin poller started.");
+                    bitcoin_poller.poll_forever(poll_interval, poller_receiver);
+                    log::info!("Bitcoin poller stopped.");
+                }
+            })
+            .expect("Spawning the poller thread must never fail.");
 
-        // Finally, set up the API.
-        let control = DaemonControl::new(config, bit, db, secp);
+        // Create the API the external world will use to talk to us, either directly through the Rust
+        // structure or through the JSONRPC server we may setup below.
+        let control = DaemonControl::new(config, bit, poller_sender.clone(), db, secp);
 
-        Ok(Self {
+        #[cfg(feature = "daemon")]
+        if with_rpc_server {
+            let rpcserver_shutdown = sync::Arc::from(sync::atomic::AtomicBool::from(false));
+            let rpcserver_handle = thread::Builder::new()
+                .name("Bitcoin Network poller".to_string())
+                .spawn({
+                    let shutdown = rpcserver_shutdown.clone();
+                    move || {
+                        let mut rpc_socket = data_dir;
+                        rpc_socket.push("lianad_rpc");
+                        let listener = rpcserver_setup(&rpc_socket)?;
+                        log::info!("JSONRPC server started.");
+
+                        rpcserver_loop(listener, control, shutdown)?;
+                        log::info!("JSONRPC server stopped.");
+                        Ok(())
+                    }
+                })
+                .expect("Spawning the RPC server thread should never fail.");
+
+            return Ok(DaemonHandle::Server {
+                poller_sender,
+                poller_handle,
+                rpcserver_shutdown,
+                rpcserver_handle,
+            });
+        }
+
+        Ok(DaemonHandle::Controller {
+            poller_sender,
+            poller_handle,
             control,
-            bitcoin_poller,
         })
     }
 
     /// Start the Liana daemon with the default Bitcoin and database interfaces (`bitcoind` RPC
     /// and SQLite).
-    pub fn start_default(config: Config) -> Result<DaemonHandle, StartupError> {
-        DaemonHandle::start(config, Option::<BitcoinD>::None, Option::<SqliteDb>::None)
+    pub fn start_default(
+        config: Config,
+        #[cfg(feature = "daemon")] with_rpc_server: bool,
+    ) -> Result<DaemonHandle, StartupError> {
+        Self::start(
+            config,
+            Option::<BitcoinD>::None,
+            Option::<SqliteDb>::None,
+            #[cfg(feature = "daemon")]
+            with_rpc_server,
+        )
     }
 
-    /// Start the JSONRPC server and listen for incoming commands until we die.
-    /// Like DaemonHandle::shutdown(), this stops the Bitcoin poller at teardown.
-    #[cfg(feature = "daemon")]
-    pub fn rpc_server(self) -> Result<(), io::Error> {
-        let DaemonHandle {
-            control,
-            bitcoin_poller: poller,
-        } = self;
-
-        let rpc_socket: path::PathBuf = [
-            control
-                .config
-                .data_dir()
-                .expect("Didn't fail at startup, must not now")
-                .as_path(),
-            path::Path::new(&control.config.bitcoin_config.network.to_string()),
-            path::Path::new("lianad_rpc"),
-        ]
-        .iter()
-        .collect();
-        let listener = rpcserver_setup(&rpc_socket)?;
-        log::info!("JSONRPC server started.");
-
-        rpcserver_loop(listener, control)?;
-        log::info!("JSONRPC server stopped.");
-
-        poller.stop();
-
-        Ok(())
+    /// Check whether the daemon is still up and running. This needs to be regularly polled to
+    /// check for internal errors. If this returns `false`, collect the error using the `stop`
+    /// method.
+    pub fn is_alive(&self) -> bool {
+        match self {
+            Self::Controller {
+                ref poller_handle, ..
+            } => !poller_handle.is_finished(),
+            #[cfg(feature = "daemon")]
+            Self::Server {
+                ref poller_handle,
+                ref rpcserver_handle,
+                ..
+            } => !poller_handle.is_finished() && !rpcserver_handle.is_finished(),
+        }
     }
 
-    /// Shut down the Liana daemon.
-    pub fn shutdown(self) {
-        self.bitcoin_poller.stop();
-    }
-
-    /// Tell the daemon to shut down. This will return before the shutdown completes. The structure
-    /// must not be reused after triggering shutdown.
-    #[cfg(feature = "nonblocking_shutdown")]
-    pub fn trigger_shutdown(&self) {
-        self.bitcoin_poller.trigger_stop()
-    }
-
-    /// Whether the daemon has finished shutting down.
-    #[cfg(feature = "nonblocking_shutdown")]
-    pub fn shutdown_complete(&self) -> bool {
-        self.bitcoin_poller.is_stopped()
-    }
-
-    // We need a shutdown utility that does not move for implementing Drop for the DummyLiana
-    #[cfg(test)]
-    pub fn test_shutdown(&mut self) {
-        self.bitcoin_poller.test_stop();
+    /// Stop the Liana daemon. This returns any error which may have occurred.
+    pub fn stop(self) -> Result<(), Box<dyn error::Error>> {
+        match self {
+            Self::Controller {
+                poller_sender,
+                poller_handle,
+                ..
+            } => {
+                poller_sender
+                    .send(poller::PollerMessage::Shutdown)
+                    .expect("The other end should never have hung up before this.");
+                poller_handle.join().expect("Poller thread must not panic");
+                Ok(())
+            }
+            #[cfg(feature = "daemon")]
+            Self::Server {
+                poller_sender,
+                poller_handle,
+                rpcserver_shutdown,
+                rpcserver_handle,
+            } => {
+                poller_sender
+                    .send(poller::PollerMessage::Shutdown)
+                    .expect("The other end should never have hung up before this.");
+                rpcserver_shutdown.store(true, sync::atomic::Ordering::Relaxed);
+                rpcserver_handle
+                    .join()
+                    .expect("Poller thread must not panic")?;
+                poller_handle.join().expect("Poller thread must not panic");
+                Ok(())
+            }
+        }
     }
 }
 
@@ -608,18 +671,6 @@ mod tests {
         stream.flush().unwrap();
     }
 
-    // Send them a response to 'getblockchaininfo' saying we are far from being synced
-    fn complete_sync_check(server: &net::TcpListener) {
-        let net_resp = [
-            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"verificationprogress\":0.1,\"headers\":1000,\"blocks\":100}}\n".as_bytes(),
-        ]
-        .concat();
-        let (mut stream, _) = server.accept().unwrap();
-        read_til_json_end(&mut stream);
-        stream.write_all(&net_resp).unwrap();
-        stream.flush().unwrap();
-    }
-
     // TODO: we could move the dummy bitcoind thread stuff to the bitcoind module to test the
     // bitcoind interface, and use the DummyLiana from testutils to sanity check the startup.
     // Note that startup as checked by this unit test is also tested in the functional test
@@ -681,11 +732,16 @@ mod tests {
         };
 
         // Start the daemon in a new thread so the current one acts as the bitcoind server.
-        let daemon_thread = thread::spawn({
+        let t = thread::spawn({
             let config = config.clone();
             move || {
-                let handle = DaemonHandle::start_default(config).unwrap();
-                handle.shutdown();
+                let handle = DaemonHandle::start_default(
+                    config,
+                    #[cfg(feature = "daemon")]
+                    false,
+                )
+                .unwrap();
+                handle.stop().unwrap();
             }
         });
         complete_sanity_check(&server);
@@ -696,13 +752,22 @@ mod tests {
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
         complete_tip_init(&server);
-        complete_sync_check(&server);
-        daemon_thread.join().unwrap();
+        // We don't have to complete the sync check as the poller checks whether it needs to stop
+        // before checking the bitcoind sync status.
+        t.join().unwrap();
 
         // The datadir is created now, so if we restart it it won't create the wo wallet.
-        let daemon_thread = thread::spawn(move || {
-            let handle = DaemonHandle::start_default(config).unwrap();
-            handle.shutdown();
+        let t = thread::spawn({
+            let config = config.clone();
+            move || {
+                let handle = DaemonHandle::start_default(
+                    config,
+                    #[cfg(feature = "daemon")]
+                    false,
+                )
+                .unwrap();
+                handle.stop().unwrap();
+            }
         });
         complete_sanity_check(&server);
         complete_version_check(&server);
@@ -710,8 +775,9 @@ mod tests {
         complete_wallet_loading(&server);
         complete_wallet_check(&server, &wo_path);
         complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
-        complete_sync_check(&server);
-        daemon_thread.join().unwrap();
+        // We don't have to complete the sync check as the poller checks whether it needs to stop
+        // before checking the bitcoind sync status.
+        t.join().unwrap();
 
         fs::remove_dir_all(&tmp_dir).unwrap();
     }

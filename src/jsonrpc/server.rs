@@ -122,11 +122,11 @@ fn connection_handler(
 pub fn rpcserver_loop(
     listener: net::UnixListener,
     daemon_control: DaemonControl,
+    shutdown: sync::Arc<atomic::AtomicBool>,
 ) -> Result<(), io::Error> {
     // Keep it simple. We don't need great performances so just treat each connection in
     // its thread, with a given maximum number of connections.
     let connections_counter = sync::Arc::from(atomic::AtomicU32::new(0));
-    let shutdown = sync::Arc::from(atomic::AtomicBool::new(false));
 
     listener.set_nonblocking(true)?;
     while !shutdown.load(atomic::Ordering::Relaxed) {
@@ -400,7 +400,7 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn server_sanity_check() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyLiana::new_server(DummyBitcoind::new(), DummyDatabase::new());
         let socket_path: path::PathBuf = [
             ms.tmp_dir.as_path(),
             path::Path::new("d"),
@@ -410,7 +410,6 @@ mod tests {
         .iter()
         .collect();
 
-        let t = thread::spawn(move || ms.rpc_server().unwrap());
         while !socket_path.exists() {
             thread::sleep(time::Duration::from_millis(100));
         }
@@ -426,6 +425,6 @@ mod tests {
             &[&serde_json::to_vec(&stop_req).unwrap(), b"\n"],
         );
 
-        t.join().unwrap();
+        ms.shutdown();
     }
 }

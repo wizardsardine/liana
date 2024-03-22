@@ -8,6 +8,7 @@ use crate::{
     bitcoin::BitcoinInterface,
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
+    poller::PollerMessage,
     spend::{
         create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes, SpendCreationError,
         SpendOutputAddress, SpendTxFees, TxGetter,
@@ -24,7 +25,8 @@ use utils::{
 
 use std::{
     collections::{hash_map, HashMap, HashSet},
-    fmt, sync,
+    fmt,
+    sync::{self, mpsc},
 };
 
 use miniscript::{
@@ -688,7 +690,18 @@ impl DaemonControl {
         let final_tx = spend_psbt.extract_tx_unchecked_fee_rate();
         self.bitcoin
             .broadcast_tx(&final_tx)
-            .map_err(CommandError::TxBroadcast)
+            .map_err(CommandError::TxBroadcast)?;
+
+        // Finally, update our state with the changes from this transaction.
+        let (tx, rx) = mpsc::sync_channel(0);
+        if let Err(e) = self.poller_sender.send(PollerMessage::PollNow(tx)) {
+            log::error!("Error requesting update from poller: {}", e);
+        }
+        if let Err(e) = rx.recv() {
+            log::error!("Error receiving completion signal from poller: {}", e);
+        }
+
+        Ok(())
     }
 
     /// Create PSBT to replace the given transaction using RBF.
@@ -1251,7 +1264,7 @@ mod tests {
     fn getinfo() {
         let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
         // We can query getinfo
-        ms.handle.control.get_info();
+        ms.control().get_info();
         ms.shutdown();
     }
 
@@ -1259,7 +1272,7 @@ mod tests {
     fn getnewaddress() {
         let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
 
-        let control = &ms.handle.control;
+        let control = &ms.control();
         // We can get an address
         let addr = control.get_new_address().address;
         assert_eq!(
@@ -1281,7 +1294,7 @@ mod tests {
     fn listaddresses() {
         let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
 
-        let control = &ms.handle.control;
+        let control = &ms.control();
 
         let list = control.list_addresses(Some(2), Some(5)).unwrap();
 
@@ -1412,7 +1425,7 @@ mod tests {
             ),
         );
         let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
-        let control = &ms.handle.control;
+        let control = &ms.control();
 
         // Arguments sanity checking
         let dummy_addr =
@@ -1900,7 +1913,7 @@ mod tests {
             .insert(dummy_op_a.txid, (dummy_tx.clone(), None));
         dummy_bitcoind.txs.insert(dummy_op_b.txid, (dummy_tx, None));
         let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
-        let control = &ms.handle.control;
+        let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
 
         // Add two (unconfirmed) coins in DB
@@ -2046,7 +2059,7 @@ mod tests {
         let dummy_txid_a = dummy_psbt_a.unsigned_tx.txid();
         dummy_bitcoind.txs.insert(dummy_txid_a, (dummy_tx_a, None));
         let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
-        let control = &ms.handle.control;
+        let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
         // The spend needs to be in DB before using RBF.
         assert_eq!(
@@ -2284,7 +2297,7 @@ mod tests {
 
         let ms = DummyLiana::new(btc, db);
 
-        let control = &ms.handle.control;
+        let control = &ms.control();
 
         let transactions = control.list_confirmed_transactions(0, 4, 10).transactions;
         assert_eq!(transactions.len(), 4);
@@ -2416,7 +2429,7 @@ mod tests {
 
         let ms = DummyLiana::new(btc, DummyDatabase::new());
 
-        let control = &ms.handle.control;
+        let control = &ms.control();
 
         let transactions = control.list_transactions(&[tx1.txid()]).transactions;
         assert_eq!(transactions.len(), 1);
