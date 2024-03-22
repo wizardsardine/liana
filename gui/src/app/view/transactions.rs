@@ -26,7 +26,7 @@ pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 pub fn transactions_view<'a>(
     cache: &'a Cache,
     pending_txs: &'a [HistoryTransaction],
-    txs: &'a Vec<HistoryTransaction>,
+    txs: &'a [HistoryTransaction],
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     dashboard(
