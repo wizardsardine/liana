@@ -130,6 +130,14 @@ impl State for TransactionsPanel {
                 } else {
                     self.txs.get(i - self.pending_txs.len()).cloned()
                 };
+                // Clear modal if it's for a different tx.
+                if let Some(modal) = &self.create_rbf_modal {
+                    if Some(modal.tx.tx.txid())
+                        != self.selected_tx.as_ref().map(|selected| selected.tx.txid())
+                    {
+                        self.create_rbf_modal = None;
+                    }
+                }
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Cancel)) => {
                 self.create_rbf_modal = None;
