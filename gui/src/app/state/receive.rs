@@ -174,8 +174,11 @@ impl State for ReceivePanel {
                 )
             }
             Message::View(view::Message::ShowQrCode(i)) => {
-                if let Some(address) = self.addresses.list.get(i) {
-                    if let Some(modal) = ShowQrCodeModal::new(address, i) {
+                if let (Some(address), Some(index)) = (
+                    self.addresses.list.get(i),
+                    self.addresses.derivation_indexes.get(i),
+                ) {
+                    if let Some(modal) = ShowQrCodeModal::new(address, *index) {
                         self.modal = Modal::ShowQrCode(modal);
                     }
                 }
@@ -312,8 +315,8 @@ pub struct ShowQrCodeModal {
 }
 
 impl ShowQrCodeModal {
-    pub fn new(address: &Address, i: usize) -> Option<Self> {
-        qr_code::State::new(format!("bitcoin:{}?index={}", address, i))
+    pub fn new(address: &Address, index: ChildNumber) -> Option<Self> {
+        qr_code::State::new(format!("bitcoin:{}?index={}", address, index))
             .ok()
             .map(|qr_code| Self {
                 qr_code,
