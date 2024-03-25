@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use iced::{widget::qr_code, Command, Subscription};
 use liana::miniscript::bitcoin::{
@@ -105,11 +106,14 @@ impl State for ReceivePanel {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        if let Modal::VerifyAddress(modal) = &self.modal {
-            modal.subscription()
-        } else {
-            Subscription::none()
-        }
+        Subscription::batch(vec![
+            iced::time::every(Duration::from_secs(10)).map(|_| Message::CheckUsedAddresses),
+            if let Modal::VerifyAddress(modal) = &self.modal {
+                modal.subscription()
+            } else {
+                Subscription::none()
+            },
+        ])
     }
 
     fn update(
@@ -131,6 +135,46 @@ impl State for ReceivePanel {
                         Command::none()
                     }
                 }
+            }
+            // TODO: use list_addresses with address status.
+            Message::CheckUsedAddresses => {
+                let min_derivation_index = self.addresses.derivation_indexes.last().cloned();
+                Command::perform(
+                    async move {
+                        let coins = daemon.list_coins().map(|res| res.coins)?;
+                        Ok(coins
+                            .into_iter()
+                            .filter_map(|c| {
+                                if c.is_change || Some(c.derivation_index) < min_derivation_index {
+                                    None
+                                } else {
+                                    Some(c)
+                                }
+                            })
+                            .collect())
+                    },
+                    Message::Coins,
+                )
+            }
+            Message::Coins(res) => {
+                match res {
+                    Ok(coins) => {
+                        for coin in coins {
+                            for i in 0..self.addresses.derivation_indexes.len() {
+                                if Some(&coin.derivation_index)
+                                    == self.addresses.derivation_indexes.get(i)
+                                {
+                                    self.addresses.derivation_indexes.remove(i);
+                                    self.addresses.list.remove(i);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.warning = Some(e);
+                    }
+                }
+                Command::none()
             }
             Message::ReceiveAddress(res) => {
                 match res {
@@ -213,7 +257,24 @@ impl State for ReceivePanel {
                 Message::ReceiveAddress,
             )
         } else {
-            Command::none()
+            // TODO: use list_addresses with address status.
+            let min_derivation_index = self.addresses.derivation_indexes.last().cloned();
+            Command::perform(
+                async move {
+                    let coins = daemon.list_coins().map(|res| res.coins)?;
+                    Ok(coins
+                        .into_iter()
+                        .filter_map(|c| {
+                            if c.is_change || Some(c.derivation_index) < min_derivation_index {
+                                None
+                            } else {
+                                Some(c)
+                            }
+                        })
+                        .collect())
+                },
+                Message::Coins,
+            )
         }
     }
 }

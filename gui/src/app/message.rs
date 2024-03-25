@@ -26,6 +26,7 @@ pub enum Message {
     LoadWallet,
     WalletLoaded(Result<Arc<Wallet>, Error>),
     Info(Result<GetInfoResult, Error>),
+    CheckUsedAddresses,
     ReceiveAddress(Result<(Address, ChildNumber), Error>),
     Coins(Result<Vec<Coin>, Error>),
     Labels(Result<HashMap<String, String>, Error>),
