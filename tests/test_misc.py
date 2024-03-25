@@ -239,6 +239,20 @@ def test_coinbase_deposit(lianad, bitcoind):
         and coin["spend_info"] is not None
     )
 
+    # We must also properly detect coinbase deposits to a change address. We used to have
+    # an assertion that a coin cannot both be change and a coinbase deposit. Since change
+    # is determined by the address... Technically we can.
+    change_desc = lianad.multi_desc.singlepath_descriptors()[1]
+    change_addr = bitcoind.rpc.deriveaddresses(str(change_desc), [0, 0])[0]
+    bitcoind.rpc.generatetoaddress(1, change_addr)
+    wait_for(lambda: any(c["is_immature"] for c in lianad.rpc.listcoins()["coins"]))
+    coin = next(c for c in lianad.rpc.listcoins()["coins"] if c["is_immature"])
+    assert coin["is_change"]
+    bitcoind.generate_block(100)
+    wait_for_sync()
+    coin = next(c for c in lianad.rpc.listcoins()["coins"] if c["outpoint"] == coin["outpoint"])
+    assert not coin["is_immature"] and coin["block_height"] is not None
+
 
 @pytest.mark.skipif(
     OLD_LIANAD_PATH is None or USE_TAPROOT, reason="Need the old lianad binary to create the datadir."

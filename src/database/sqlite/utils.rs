@@ -194,6 +194,41 @@ fn migrate_v2_to_v3(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
     Ok(())
 }
 
+fn migrate_v3_to_v4(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError> {
+    db_exec(conn, |tx| {
+        tx.execute_batch(
+            "CREATE TABLE coins_new (
+                id INTEGER PRIMARY KEY NOT NULL,
+                wallet_id INTEGER NOT NULL,
+                blockheight INTEGER,
+                blocktime INTEGER,
+                txid BLOB NOT NULL,
+                vout INTEGER NOT NULL,
+                amount_sat INTEGER NOT NULL,
+                derivation_index INTEGER NOT NULL,
+                is_change BOOLEAN NOT NULL CHECK (is_change IN (0,1)),
+                spend_txid BLOB,
+                spend_block_height INTEGER,
+                spend_block_time INTEGER,
+                is_immature BOOLEAN NOT NULL CHECK (is_immature IN (0,1)),
+                UNIQUE (txid, vout),
+                FOREIGN KEY (wallet_id) REFERENCES wallets (id)
+                    ON UPDATE RESTRICT
+                    ON DELETE RESTRICT
+            );
+
+            INSERT INTO coins_new SELECT * FROM coins;
+
+            DROP TABLE coins;
+
+            ALTER TABLE coins_new RENAME TO coins;
+
+            UPDATE version SET version = 4;",
+        )
+    })?;
+    Ok(())
+}
+
 /// Check the database version and if necessary apply the migrations to upgrade it to the current
 /// one.
 pub fn maybe_apply_migration(db_path: &path::Path) -> Result<(), SqliteDbError> {
@@ -221,6 +256,11 @@ pub fn maybe_apply_migration(db_path: &path::Path) -> Result<(), SqliteDbError> 
                 log::warn!("Upgrading database from version 2 to version 3.");
                 migrate_v2_to_v3(&mut conn)?;
                 log::warn!("Migration from database version 2 to version 3 successful.");
+            }
+            3 => {
+                log::warn!("Upgrading database from version 3 to version 4.");
+                migrate_v3_to_v4(&mut conn)?;
+                log::warn!("Migration from database version 3 to version 4 successful.");
             }
             _ => return Err(SqliteDbError::UnsupportedVersion(version)),
         }
