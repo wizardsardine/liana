@@ -179,7 +179,12 @@ impl State for TransactionsPanel {
                     self.pending_txs
                         .iter_mut()
                         .map(|tx| tx as &mut dyn Labelled)
-                        .chain(self.txs.iter_mut().map(|tx| tx as &mut dyn Labelled)),
+                        .chain(self.txs.iter_mut().map(|tx| tx as &mut dyn Labelled))
+                        .chain(
+                            self.selected_tx
+                                .iter_mut()
+                                .map(|tx| tx as &mut dyn Labelled),
+                        ),
                 ) {
                     Ok(cmd) => {
                         return cmd;
