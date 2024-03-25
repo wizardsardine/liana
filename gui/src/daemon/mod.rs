@@ -3,6 +3,7 @@ pub mod embedded;
 pub mod model;
 
 use std::collections::{HashMap, HashSet};
+use std::convert::TryInto;
 use std::fmt::Debug;
 use std::io::ErrorKind;
 use std::iter::FromIterator;
@@ -154,7 +155,25 @@ pub trait Daemon: Debug {
         txs: Vec<TransactionInfo>,
     ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
         let info = self.get_info()?;
-        let coins = self.list_coins(&[], &[])?.coins;
+        let outpoints: Vec<_> = txs
+            .iter()
+            .flat_map(|tx| {
+                (0..tx.tx.output.len())
+                    .map(|vout| {
+                        OutPoint::new(
+                            tx.tx.txid(),
+                            vout.try_into()
+                                .expect("number of transaction outputs must fit in u32"),
+                        )
+                    })
+                    .chain(tx.tx.input.iter().map(|txin| txin.previous_output))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<HashSet<_>>() // remove duplicates
+            .iter()
+            .cloned()
+            .collect();
+        let coins = self.list_coins(&[], &outpoints)?.coins;
         let mut txs = txs
             .into_iter()
             .map(|tx| {
