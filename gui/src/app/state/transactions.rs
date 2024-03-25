@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use iced::Command;
@@ -25,6 +24,7 @@ use crate::{
         wallet::Wallet,
     },
     daemon::model,
+    time,
 };
 
 use crate::daemon::{
@@ -249,12 +249,7 @@ impl State for TransactionsPanel {
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
         let daemon3 = daemon.clone();
-        let now: u32 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            .try_into()
-            .unwrap();
+
         Command::batch(vec![
             Command::perform(
                 async move { daemon3.list_pending_txs().map_err(|e| e.into()) },
@@ -262,6 +257,10 @@ impl State for TransactionsPanel {
             ),
             Command::perform(
                 async move {
+                    let now: u32 = time::now()
+                        .timestamp()
+                        .try_into()
+                        .expect("i64 conversion to u32 for timestamp");
                     daemon1
                         .list_history_txs(0, now, view::home::HISTORY_EVENT_PAGE_SIZE)
                         .map_err(|e| e.into())
@@ -459,4 +458,59 @@ async fn rbf(
 
     daemon.update_spend_tx(&psbt)?;
     Ok(psbt.unsigned_tx.txid())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app::cache::Cache,
+        daemon::{
+            client::{Lianad, Request},
+            model::*,
+        },
+        utils::{
+            mock::{mock_descriptor, mock_wallet, Daemon},
+            sandbox::Sandbox,
+        },
+    };
+
+    use liana::miniscript::bitcoin::Network;
+
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_transactions_panel() {
+        let daemon = Daemon::new(vec![
+            (
+                Some(json!({"method": "getinfo", "params": Option::<Request>::None})),
+                Ok(json!(GetInfoResult {
+                    version: "".to_string(),
+                    network: Network::Testnet,
+                    block_height: 1,
+                    sync: 1.0,
+                    rescan_progress: None,
+                    descriptors: GetInfoDescriptors {
+                        main: mock_descriptor()
+                    },
+                    timestamp: 1,
+                })),
+            ),
+            (
+                Some(json!({"method": "listcoins", "params": Option::<Request>::None})),
+                Ok(json!(ListCoinsResult { coins: Vec::new() })),
+            ),
+            (
+                Some(json!({"method": "listcoins", "params": Option::<Request>::None})),
+                Ok(json!(ListCoinsResult { coins: Vec::new() })),
+            ),
+        ]);
+        let wallet = Arc::new(mock_wallet());
+        let sandbox: Sandbox<TransactionsPanel> =
+            Sandbox::new(TransactionsPanel::new(wallet.clone()));
+        let client = Arc::new(Lianad::new(daemon.run()));
+        let sandbox = sandbox.load(client, &Cache::default(), wallet).await;
+
+        let _panel = sandbox.state();
+    }
 }

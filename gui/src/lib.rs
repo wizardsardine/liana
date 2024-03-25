@@ -8,6 +8,7 @@ pub mod launcher;
 pub mod loader;
 pub mod logger;
 pub mod signer;
+pub mod time;
 pub mod utils;
 
 use liana::Version;

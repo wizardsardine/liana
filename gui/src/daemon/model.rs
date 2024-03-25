@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use liana::descriptors::LianaDescriptor;
 pub use liana::{
     commands::{
-        CreateSpendResult, GetAddressResult, GetInfoResult, GetLabelsResult, LabelItem,
-        ListCoinsEntry, ListCoinsResult, ListSpendEntry, ListSpendResult, ListTransactionsResult,
-        TransactionInfo,
+        CreateSpendResult, GetAddressResult, GetInfoDescriptors, GetInfoResult, GetLabelsResult,
+        LabelItem, ListCoinsEntry, ListCoinsResult, ListSpendEntry, ListSpendResult,
+        ListTransactionsResult, TransactionInfo,
     },
     descriptors::{LianaPolicy, PartialSpendInfo, PathSpendInfo},
     miniscript::bitcoin::{
