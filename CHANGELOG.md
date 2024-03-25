@@ -1,5 +1,77 @@
 # Liana daemon and GUI release notes
 
+## 5.0
+
+This release introduces support for the Coldcard signing device, experimental Taproot support and a
+number of user experience improvements.
+
+### Features
+
+#### Liana daemon / library
+
+- Experimental support for Taproot was added.
+- It's now possible to configure the connection to `bitcoind` using a user and a password in place
+  of the cookie file. See the discussion at https://github.com/wizardsardine/liana/issues/356.
+- The `getinfo` result now contains the "descriptor's timestamp": that is the oldest date at which
+  we scanned the blockchain for coins.
+- The `createspend` command now doesn't error anymore on insufficient funds, it instead returns the
+  missing amount in its result.
+- The `listspendtxs` command now accepts a new optional parameter to filter the result by txids.
+
+#### Liana GUI
+
+- Support for Coldcard was added. At the time of writing Miniscript support on the Coldcard is only
+  available on the Edge firmware.
+- You can now choose to create a Taproot descriptor in the installer. See
+  [doc/signing_devices.md](doc/signing_devices.md) for details about the compatibility with hardware
+  wallets.
+- When creating a Spend transaction using automated coin selection (the default), setting the amount
+  for any recipient to "Max" to sweep all the funds from the wallet to this recipient, minus the
+  amount set for any other recipients.
+- When creating a Spend transaction using manual coin selection, setting the amount of any of the
+  recipient to "Max" will sweep all the *selected* coins (not all funds in the wallet) to this
+  recipient, minus the amount set for other recipients.
+- The automated coin selection when creating a spend transaction now also considers unconfirmed
+  coins.
+- When creating a Spend transaction, you can now change screen and come back to your draft. The
+  state does not get cleared as soon as you leave the "Spend" menu anymore.
+- We now display warnings to the user when creating a Spend transaction. For instance when the
+  change output's value was too small that we added it to fees.
+- RBF transaction now get automatically labeled.
+- Signing a transaction on a hardware device does not hide the transaction details anymore.
+- When broadcasting a transaction, the payments are now immediately available on the home page.
+- The QR code for deposit address is now shown in a pop-up, which makes it available for all new
+  addresses a user may generate on the Deposit screen.
+- The address QR codes now also contain the derivation index in the URI.
+- We now display a warning if a user tries to RBF a transaction whose change output is being spent
+  by a later transaction. A warning is also displayed when broadcasting a spend if any of the inputs
+  are currently being spent by another transaction.
+- We now directly open the installer when starting Liana on a new datadir.
+- The "Backup Descriptor" step was dropped from the installer flow when recovering from a
+  descriptor.
+- A new command line argument was added: `--version`.
+- It's now possible to use `<Tab>` to move between text inputs across the GUI.
+
+### Fixes
+
+#### Liana daemon / library
+
+- We now disallow rescanning from timestamps before the genesis block on test networks too.
+- A potential crash was fixed when an immature coinbase transaction contains an output which pays to
+  our *change* address.
+- An off-by-one in address usage detection was fixed.
+
+#### Liana GUI
+
+- We now use a user/password to connect to `bitcoind` in the installer, removing the potential for
+  flakiness due to having to detect the `.cookie` file.
+- A crash was fixed in the installer when the user would change the network in step 1 after having
+  started the managed bitcoind in step 4.
+- Errors when triggering a rescan are now correctly displayed.
+- In the installer, the details to connect to bitcoind in step 4 are now correctly updated when
+  changing the network in step 1.
+- In the list of PSBTs, the labels are now correctly aligned.
+
 ## 4.0
 
 This release introduces support for bumping the fees of a transaction, verifying a deposit address

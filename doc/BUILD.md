@@ -8,13 +8,13 @@ this repository. They are pinned in a [`Cargo.lock`](../Cargo.lock) file at the 
 We take security very seriously, and toolchain is a big part of that. We are moderately conservative
 with dependencies and aim to target reasonable compiler versions that have had time to mature (ie
 that had the chance to be reviewed and distributed by third parties, as well as tested by the
-community).  The minimum supported Rust version for `lianad` currently is `1.54`.
+community).  See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the currently minimum Rust version
+supported by `lianad`.
 
-If you want to not only build the daemon but the whole wallet including the GUI, you'll
-unfortunately have to use a more recent `cargo`. The minimum version supported by the GUI at the
-moment is `1.65`. You will most likely have to [manually download
+To build the GUI too, you'll unfortunately need a more recent Rust version. The minimum version
+supported by the GUI at the moment is `1.65`. You will most likely have to [manually download
 it](#by-manually-downloading-the-latest-stable-version) or [use `rustup`](#through-rustup) to
-install such a recent compiler.
+install more recent compilers.
 
 
 ## Getting `Cargo`

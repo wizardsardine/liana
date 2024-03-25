@@ -6,16 +6,30 @@ The connection to the signing devices is implemented in [another
 repository](https://github.com/wizardsardine/async-hwi).
 
 
-## Specter
+## [Specter DIY](https://github.com/cryptoadvance/specter-diy)
 
-[Specter DIY](https://github.com/cryptoadvance/specter-diy) version v1.5.0 and above is supported.
+Version 1.5.0 and above of the firmware is supported for use in P2WSH descriptors.
 
-## Ledger
+Support for use in Taproot descriptors has been implemented but not yet released.
 
-Minimum supported version of the Bitcoin application is 2.1.0 (the first version to have full
-Miniscript descriptors support).
+## [Ledger](https://github.com/LedgerHQ/app-bitcoin-new)
 
-## BitBox02
+The Bitcoin application is supported for use in P2WSH descriptors starting with version 2.1.0. It is
+supported for use in Taproot descriptors starting with version 2.2.1.
 
-[BitBox02](https://github.com/digitalbitbox/bitbox02-firmware) version 9.15.0 and above is
-supported.
+## [BitBox02](https://github.com/digitalbitbox/bitbox02-firmware)
+
+Version 9.15.0 of the firmware is supported for use in P2WSH descriptors.
+
+Support for use in Taproot descriptors is not yet available in the firmware.
+
+## [Coldcard](https://github.com/Coldcard/firmware)
+
+Support for use in both P2WSH and Taproot descriptors has only been released in Beta as of this
+writing. It is only supported by the [Edge
+firmware](https://github.com/Coldcard/firmware?tab=readme-ov-file#long-lived-branches).
+
+As of this writing, Coldcard on Taproot will only be usable for descriptors which only use a single
+key as their primary path. This is due to a discrepancy in how Coldcard derives [deterministically
+unspendable Taproot internal
+keys](https://delvingbitcoin.org/t/unspendable-keys-in-descriptors/304).
