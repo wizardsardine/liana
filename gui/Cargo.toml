@@ -1,6 +1,6 @@
 [package]
 name = "liana_gui"
-version = "4.0.0"
+version = "5.0.0"
 readme = "README.md"
 description = "Liana GUI"
 repository = "https://github.com/wizardsardine/liana"
