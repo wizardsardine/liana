@@ -68,7 +68,6 @@ pub trait Step {
 }
 
 pub struct DefineSpend {
-    balance_available: Amount,
     recipients: Vec<Recipient>,
     /// If set, this is the index of a recipient that should
     /// receive the max amount.
@@ -99,16 +98,6 @@ impl DefineSpend {
         coins: &[Coin],
         timelock: u16,
     ) -> Self {
-        let balance_available = coins
-            .iter()
-            .filter_map(|coin| {
-                if coin.spend_info.is_none() {
-                    Some(coin.amount)
-                } else {
-                    None
-                }
-            })
-            .sum();
         let coins: Vec<(Coin, bool)> = coins
             .iter()
             .filter_map(|c| {
@@ -121,7 +110,6 @@ impl DefineSpend {
             .collect();
 
         Self {
-            balance_available,
             network,
             descriptor,
             curve: secp256k1::Secp256k1::verification_only(),
@@ -630,7 +618,6 @@ impl Step for DefineSpend {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         view::spend::create_spend_tx(
             cache,
-            &self.balance_available,
             self.recipients
                 .iter()
                 .enumerate()
@@ -640,12 +627,6 @@ impl Step for DefineSpend {
                         .map(view::Message::CreateSpend)
                 })
                 .collect(),
-            Amount::from_sat(
-                self.recipients
-                    .iter()
-                    .map(|r| r.amount().unwrap_or(0_u64))
-                    .sum(),
-            ),
             self.is_valid,
             self.is_duplicate,
             self.timelock,

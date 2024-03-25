@@ -112,9 +112,7 @@ pub fn spend_view<'a>(
 #[allow(clippy::too_many_arguments)]
 pub fn create_spend_tx<'a>(
     cache: &'a Cache,
-    balance_available: &'a Amount,
     recipients: Vec<Element<'a, Message>>,
-    total_amount: Amount,
     is_valid: bool,
     duplicate: bool,
     timelock: u16,
@@ -300,9 +298,7 @@ pub fn create_spend_tx<'a>(
                     .push(
                         if is_valid
                             && !duplicate
-                            && (is_self_send
-                                || (total_amount < *balance_available
-                                    && Some(&Amount::from_sat(0)) == amount_left))
+                            && (is_self_send || Some(&Amount::from_sat(0)) == amount_left)
                         {
                             button::primary(None, "Next")
                                 .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
