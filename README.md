@@ -136,9 +136,9 @@ For now, the following signing devices are supported:
 - Ledger Nano S and S+
 - BitBox02
 - Specter DIY
+- Coldcard
 
-With more signing devices implementing Miniscript capability, support for new ones will be added in
-the near future. For more information (such as minimum supported versions) please read the [signing
+For more information (such as compatibility and minimum supported versions) please read the [signing
 devices documentation](./doc/signing_devices.md).
 
 
