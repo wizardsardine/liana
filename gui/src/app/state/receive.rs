@@ -350,14 +350,15 @@ mod tests {
             client::{Lianad, Request},
             model::*,
         },
-        utils::{mock::Daemon, sandbox::Sandbox},
+        utils::{
+            mock::{mock_wallet, Daemon},
+            sandbox::Sandbox,
+        },
     };
 
-    use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::Address};
+    use liana::miniscript::bitcoin::Address;
     use serde_json::json;
     use std::str::FromStr;
-
-    const DESC: &str = "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp";
 
     #[tokio::test]
     async fn test_receive_panel() {
@@ -372,7 +373,7 @@ mod tests {
                 ChildNumber::from_normal_idx(0).unwrap()
             ))),
         )]);
-        let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
+        let wallet = Arc::new(mock_wallet());
         let sandbox: Sandbox<ReceivePanel> =
             Sandbox::new(ReceivePanel::new(PathBuf::new(), wallet.clone()));
         let client = Arc::new(Lianad::new(daemon.run()));

@@ -239,6 +239,10 @@ pub trait Daemon: Debug {
             }
         }
 
+        if txids.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let txs = self.list_txs(&txids)?.transactions;
         let mut txs = txs
             .into_iter()
