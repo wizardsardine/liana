@@ -406,8 +406,9 @@ pub fn recipient_view<'a>(
                         checkbox("MAX", is_max_selected, move |_| {
                             CreateSpendMessage::SendMaxToRecipient(index)
                         }),
-                        "Total amount remaining after paying fee and any other recipients",
-                        tooltip::Position::Left,
+                        // Add spaces at end so that text is padded at screen edge.
+                        "Total amount remaining after paying fee and any other recipients     ",
+                        tooltip::Position::Bottom,
                     ))
                     .width(Length::Fill),
             ),
