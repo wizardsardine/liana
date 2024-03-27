@@ -63,9 +63,29 @@ We do not yet distribute codesigned binaries for Windows at this time.
 
 ### Starting the software
 
-TODO: for the GUI explain they'll have to go through the installer, etc..
+You will most likely want to use the graphical user interface. Start the software you just installed
+in the previous section. This will start the "installer": a configuration wizard for your Liana
+wallet.
+
+The installer will guide you through a few steps:
+- Configuring the policy for your wallet:
+  - Set the key(s) which should be able to spend immediately
+  - Set how many recovery path(s) you want, and set the lockup period
+- Making sure your backup your descriptor and register it on your signing device
+- Configuring the connection to the Bitcoin network
+
+Once you've been through these steps, your Liana wallet will open.
+
+You might have to wait for Bitcoin Core to perform its initial block download. When using Liana, the
+connection to the Bitcoin network is established by using a full node. This means you are fully
+sovereign: you are not trusting a third party to get your onchain data. This does come with a
+drawback: you have to wait for Bitcoin Core to download and validate the historical block chain. But
+fear not! This is just a one time cost. Also, the full node is pruned so it will not use more than
+20GB of disk space.
 
 #### Using the daemon
+
+Liana can be run as a headless server using the `lianad` program.
 
 As a Bitcoin wallet, Liana needs to be able to connect to the Bitcoin network. The software has been
 developed such as multiple ways to connect to the Bitcoin network may be available. However for now
@@ -75,10 +95,39 @@ Therefore in order to use Liana you need to have the Bitcoin Core daemon (`bitco
 desired network (mainnet, signet, testnet or regtest). The `bitcoind` installation may be pruned (note this may affect block chain
 rescans) up to the maximum (around 550MB of blocks).
 
-The minimum supported version of Bitcoin Core is `24.0.1`. If you don't have Bitcoin Core installed on
-your machine yet, you can download it [there](https://bitcoincore.org/en/download/).
+The minimum supported version of Bitcoin Core is `24.0.1` (if you want to use Taproot it's `26.0`).
+If you don't have Bitcoin Core installed on your machine yet, you can download it
+[there](https://bitcoincore.org/en/download/).
 
-TODO: minimum supported version for Taproot.
+You can use the `liana-cli` program to send commands to it. It will need the path to the same
+configuration as the daemon. You can find a full documentation of the JSONRPC API exposed by
+`lianad` at [`API.md`](API.md). For instance:
+```
+$ liana-cli --conf ./signet_config.toml getinfo
+{
+  "result": {
+    "block_height": 3083,
+    "descriptors": {
+      "main": {
+        "change_desc": "wsh(or_i(and_v(v:thresh(1,pkh([b883f127/48'/1'/2'/2']tpubDEP7MLK6TGe1EWhKGpMWdQQCvMmS6pRjCyN7PW24afniPJYdfeMMUb2fau3xTku6EPgA68oGuR4hSCTUpu2bqaoYrLn2UmhkytXXSzxcaqt/1/*),a:pkh([636adf3f/48'/1'/2'/2']tpubDFnPUtXZhnftEFD5vg4LfVoApf5ZVB8Nkrf8CNe9pT9j1EEPXssJnMgAjmvbTChHugnkfVfsmGafFnE6gwoifJNybSasAJ316dRpsP86EFb/1/*),a:pkh([b883f127/48'/1'/3'/2']tpubDFPMBua4idthySDayX1GxgXgPbpaEVfU7GwMc1HAfneknhqov5syrNuq4NVdSVWa2mPVP3BD6f2pGB98pMsbnVvWqrxcLgwv9PbEWyLJ6cW/1/*)),older(20)),or_i(and_v(v:pkh([636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/1/*),older(19)),or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/1/*,[b883f127/48'/1'/0'/2']tpubDET11c81MZjJvsqBikGXfn1YUzXofoYQ4HkueCrH7kE94MYkdyBvGzyikBd2KrcBAFZWDB6nLmTa8sJ381rWSQj8qFvqiidxqn6aQv1wrJw/1/*),and_v(v:pkh([b883f127/48'/1'/1'/2']tpubDEA6SKh5epTZXebgZtcNxpLj6CeZ9UhgHGoGArACFE7QHCgx76vwkzJMP5wQ9yYEc6g9qSGW8EVzn4PhRxiFz1RUvAXBg7txFnvZFv62uFL/1/*),older(18))))))#056xvvp3",
+        "multi_desc": "wsh(or_i(and_v(v:thresh(1,pkh([b883f127/48'/1'/2'/2']tpubDEP7MLK6TGe1EWhKGpMWdQQCvMmS6pRjCyN7PW24afniPJYdfeMMUb2fau3xTku6EPgA68oGuR4hSCTUpu2bqaoYrLn2UmhkytXXSzxcaqt/<0;1>/*),a:pkh([636adf3f/48'/1'/2'/2']tpubDFnPUtXZhnftEFD5vg4LfVoApf5ZVB8Nkrf8CNe9pT9j1EEPXssJnMgAjmvbTChHugnkfVfsmGafFnE6gwoifJNybSasAJ316dRpsP86EFb/<0;1>/*),a:pkh([b883f127/48'/1'/3'/2']tpubDFPMBua4idthySDayX1GxgXgPbpaEVfU7GwMc1HAfneknhqov5syrNuq4NVdSVWa2mPVP3BD6f2pGB98pMsbnVvWqrxcLgwv9PbEWyLJ6cW/<0;1>/*)),older(20)),or_i(and_v(v:pkh([636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/<0;1>/*),older(19)),or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*,[b883f127/48'/1'/0'/2']tpubDET11c81MZjJvsqBikGXfn1YUzXofoYQ4HkueCrH7kE94MYkdyBvGzyikBd2KrcBAFZWDB6nLmTa8sJ381rWSQj8qFvqiidxqn6aQv1wrJw/<0;1>/*),and_v(v:pkh([b883f127/48'/1'/1'/2']tpubDEA6SKh5epTZXebgZtcNxpLj6CeZ9UhgHGoGArACFE7QHCgx76vwkzJMP5wQ9yYEc6g9qSGW8EVzn4PhRxiFz1RUvAXBg7txFnvZFv62uFL/<0;1>/*),older(18))))))#yl5jehy9",
+        "receive_desc": "wsh(or_i(and_v(v:thresh(1,pkh([b883f127/48'/1'/2'/2']tpubDEP7MLK6TGe1EWhKGpMWdQQCvMmS6pRjCyN7PW24afniPJYdfeMMUb2fau3xTku6EPgA68oGuR4hSCTUpu2bqaoYrLn2UmhkytXXSzxcaqt/0/*),a:pkh([636adf3f/48'/1'/2'/2']tpubDFnPUtXZhnftEFD5vg4LfVoApf5ZVB8Nkrf8CNe9pT9j1EEPXssJnMgAjmvbTChHugnkfVfsmGafFnE6gwoifJNybSasAJ316dRpsP86EFb/0/*),a:pkh([b883f127/48'/1'/3'/2']tpubDFPMBua4idthySDayX1GxgXgPbpaEVfU7GwMc1HAfneknhqov5syrNuq4NVdSVWa2mPVP3BD6f2pGB98pMsbnVvWqrxcLgwv9PbEWyLJ6cW/0/*)),older(20)),or_i(and_v(v:pkh([636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/0/*),older(19)),or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/0/*,[b883f127/48'/1'/0'/2']tpubDET11c81MZjJvsqBikGXfn1YUzXofoYQ4HkueCrH7kE94MYkdyBvGzyikBd2KrcBAFZWDB6nLmTa8sJ381rWSQj8qFvqiidxqn6aQv1wrJw/0/*),and_v(v:pkh([b883f127/48'/1'/1'/2']tpubDEA6SKh5epTZXebgZtcNxpLj6CeZ9UhgHGoGArACFE7QHCgx76vwkzJMP5wQ9yYEc6g9qSGW8EVzn4PhRxiFz1RUvAXBg7txFnvZFv62uFL/0/*),older(18))))))#v3g9rzum"
+      }
+    },
+    "network": "regtest",
+    "rescan_progress": null,
+    "sync": 1.0,
+    "version": "1.0.0"
+  }
+}
+```
+
+A sample configuration file is available [here](../contrib/lianad_config_example.toml). Notably you
+will need to generate an output descriptor. The easiest way to achieve it is to use the Liana GUI's
+installer (see above).
+
+Note also that you might connect the GUI to a running `lianad`. If the GUI detects a daemon is
+already running, it will plug to it and communicate through the JSONRPC API.
 
 
 ### Wallet usage tips and tricks
@@ -126,36 +175,6 @@ For now, the following signing devices are supported:
 
 For more information (such as compatibility and minimum supported versions) please read the [signing
 devices documentation](./signing_devices.md).
-
-#### Using the daemon
-
-Liana can be run as a headless server using the `lianad` program.
-
-You can use the `liana-cli` program to send commands to it. It will need the path to the same
-configuration as the daemon. You can find a full documentation of the JSONRPC API exposed by
-`lianad` at [`API.md`](API.md). For instance:
-```
-$ liana-cli --conf ./signet_config.toml getinfo
-{
-  "result": {
-    "block_height": 3083,
-    "descriptors": {
-      "main": {
-        "change_desc": "wsh(or_i(and_v(v:thresh(1,pkh([b883f127/48'/1'/2'/2']tpubDEP7MLK6TGe1EWhKGpMWdQQCvMmS6pRjCyN7PW24afniPJYdfeMMUb2fau3xTku6EPgA68oGuR4hSCTUpu2bqaoYrLn2UmhkytXXSzxcaqt/1/*),a:pkh([636adf3f/48'/1'/2'/2']tpubDFnPUtXZhnftEFD5vg4LfVoApf5ZVB8Nkrf8CNe9pT9j1EEPXssJnMgAjmvbTChHugnkfVfsmGafFnE6gwoifJNybSasAJ316dRpsP86EFb/1/*),a:pkh([b883f127/48'/1'/3'/2']tpubDFPMBua4idthySDayX1GxgXgPbpaEVfU7GwMc1HAfneknhqov5syrNuq4NVdSVWa2mPVP3BD6f2pGB98pMsbnVvWqrxcLgwv9PbEWyLJ6cW/1/*)),older(20)),or_i(and_v(v:pkh([636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/1/*),older(19)),or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/1/*,[b883f127/48'/1'/0'/2']tpubDET11c81MZjJvsqBikGXfn1YUzXofoYQ4HkueCrH7kE94MYkdyBvGzyikBd2KrcBAFZWDB6nLmTa8sJ381rWSQj8qFvqiidxqn6aQv1wrJw/1/*),and_v(v:pkh([b883f127/48'/1'/1'/2']tpubDEA6SKh5epTZXebgZtcNxpLj6CeZ9UhgHGoGArACFE7QHCgx76vwkzJMP5wQ9yYEc6g9qSGW8EVzn4PhRxiFz1RUvAXBg7txFnvZFv62uFL/1/*),older(18))))))#056xvvp3",
-        "multi_desc": "wsh(or_i(and_v(v:thresh(1,pkh([b883f127/48'/1'/2'/2']tpubDEP7MLK6TGe1EWhKGpMWdQQCvMmS6pRjCyN7PW24afniPJYdfeMMUb2fau3xTku6EPgA68oGuR4hSCTUpu2bqaoYrLn2UmhkytXXSzxcaqt/<0;1>/*),a:pkh([636adf3f/48'/1'/2'/2']tpubDFnPUtXZhnftEFD5vg4LfVoApf5ZVB8Nkrf8CNe9pT9j1EEPXssJnMgAjmvbTChHugnkfVfsmGafFnE6gwoifJNybSasAJ316dRpsP86EFb/<0;1>/*),a:pkh([b883f127/48'/1'/3'/2']tpubDFPMBua4idthySDayX1GxgXgPbpaEVfU7GwMc1HAfneknhqov5syrNuq4NVdSVWa2mPVP3BD6f2pGB98pMsbnVvWqrxcLgwv9PbEWyLJ6cW/<0;1>/*)),older(20)),or_i(and_v(v:pkh([636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/<0;1>/*),older(19)),or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*,[b883f127/48'/1'/0'/2']tpubDET11c81MZjJvsqBikGXfn1YUzXofoYQ4HkueCrH7kE94MYkdyBvGzyikBd2KrcBAFZWDB6nLmTa8sJ381rWSQj8qFvqiidxqn6aQv1wrJw/<0;1>/*),and_v(v:pkh([b883f127/48'/1'/1'/2']tpubDEA6SKh5epTZXebgZtcNxpLj6CeZ9UhgHGoGArACFE7QHCgx76vwkzJMP5wQ9yYEc6g9qSGW8EVzn4PhRxiFz1RUvAXBg7txFnvZFv62uFL/<0;1>/*),older(18))))))#yl5jehy9",
-        "receive_desc": "wsh(or_i(and_v(v:thresh(1,pkh([b883f127/48'/1'/2'/2']tpubDEP7MLK6TGe1EWhKGpMWdQQCvMmS6pRjCyN7PW24afniPJYdfeMMUb2fau3xTku6EPgA68oGuR4hSCTUpu2bqaoYrLn2UmhkytXXSzxcaqt/0/*),a:pkh([636adf3f/48'/1'/2'/2']tpubDFnPUtXZhnftEFD5vg4LfVoApf5ZVB8Nkrf8CNe9pT9j1EEPXssJnMgAjmvbTChHugnkfVfsmGafFnE6gwoifJNybSasAJ316dRpsP86EFb/0/*),a:pkh([b883f127/48'/1'/3'/2']tpubDFPMBua4idthySDayX1GxgXgPbpaEVfU7GwMc1HAfneknhqov5syrNuq4NVdSVWa2mPVP3BD6f2pGB98pMsbnVvWqrxcLgwv9PbEWyLJ6cW/0/*)),older(20)),or_i(and_v(v:pkh([636adf3f/48'/1'/1'/2']tpubDDvF2khuoBBj8vcSjQfa7iKaxsQZE7YjJ7cJL8A8eaneadMPKbHSpoSr4JD1F5LUvWD82HCxdtSppGfrMUmiNbFxrA2EHEVLnrdCFNFe75D/0/*),older(19)),or_d(multi(2,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/0/*,[b883f127/48'/1'/0'/2']tpubDET11c81MZjJvsqBikGXfn1YUzXofoYQ4HkueCrH7kE94MYkdyBvGzyikBd2KrcBAFZWDB6nLmTa8sJ381rWSQj8qFvqiidxqn6aQv1wrJw/0/*),and_v(v:pkh([b883f127/48'/1'/1'/2']tpubDEA6SKh5epTZXebgZtcNxpLj6CeZ9UhgHGoGArACFE7QHCgx76vwkzJMP5wQ9yYEc6g9qSGW8EVzn4PhRxiFz1RUvAXBg7txFnvZFv62uFL/0/*),older(18))))))#v3g9rzum"
-      }
-    },
-    "network": "regtest",
-    "rescan_progress": null,
-    "sync": 1.0,
-    "version": "1.0.0"
-  }
-}
-```
-
-Note also that you might connect the GUI to a running `lianad`. If the GUI detects a daemon is
-already running, it will plug to it and communicate through the JSONRPC API.
 
 #### Using the recovery path
 
