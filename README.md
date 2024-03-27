@@ -40,6 +40,8 @@ To quickly try out Liana on Bitcoin Signet, see [`doc/TRY.md`](doc/TRY.md).
 
 To install and start using Liana, see [`doc/USAGE.md`](doc/USAGE.md).
 
+A more accessible version of Liana is available as a web application [here](https://lianalite.com/).
+
 
 ## Hacking on Liana
 
