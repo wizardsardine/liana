@@ -543,7 +543,7 @@ pub enum SpendTxFees {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CreateSpendWarning {
     ChangeAddedToFee(u64),
-    AddtionalFeeForAncestors(u64),
+    AdditionalFeeForAncestors(u64),
 }
 
 impl fmt::Display for CreateSpendWarning {
@@ -555,7 +555,7 @@ impl fmt::Display for CreateSpendWarning {
                 amt,
                 if *amt > 1 {"s"} else {""},
             ),
-            CreateSpendWarning::AddtionalFeeForAncestors(amt) => write!(
+            CreateSpendWarning::AdditionalFeeForAncestors(amt) => write!(
                 f,
                 "An additional fee of {} sat{} has been added to pay for ancestors at the target feerate.",
                 amt,
@@ -737,7 +737,7 @@ pub fn create_spend(
     }
 
     if fee_for_ancestors.to_sat() > 0 {
-        warnings.push(CreateSpendWarning::AddtionalFeeForAncestors(
+        warnings.push(CreateSpendWarning::AdditionalFeeForAncestors(
             fee_for_ancestors.to_sat(),
         ));
     }
