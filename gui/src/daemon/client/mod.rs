@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::iter::FromIterator;
 
-use liana::commands::CreateRecoveryResult;
+use liana::commands::{CoinStatus, CreateRecoveryResult};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -77,8 +77,18 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         self.call("getnewaddress", Option::<Request>::None)
     }
 
-    fn list_coins(&self) -> Result<ListCoinsResult, DaemonError> {
-        self.call("listcoins", Option::<Request>::None)
+    fn list_coins(
+        &self,
+        statuses: &[CoinStatus],
+        outpoints: &[OutPoint],
+    ) -> Result<ListCoinsResult, DaemonError> {
+        self.call(
+            "listcoins",
+            Some(vec![
+                json!(statuses.iter().map(|s| s.to_arg()).collect::<Vec<&str>>()),
+                json!(outpoints),
+            ]),
+        )
     }
 
     fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {

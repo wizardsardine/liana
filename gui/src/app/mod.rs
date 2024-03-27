@@ -18,7 +18,7 @@ use std::time::Duration;
 use iced::{clipboard, time, Command, Subscription};
 use tracing::{error, info, warn};
 
-pub use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
+pub use liana::{commands::CoinStatus, config::Config as DaemonConfig, miniscript::bitcoin};
 use liana_ui::widget::Element;
 
 pub use config::Config;
@@ -239,8 +239,8 @@ impl App {
                         daemon.is_alive()?;
 
                         let info = daemon.get_info()?;
-                        // todo: filter coins to only have current coins.
-                        let coins = daemon.list_coins()?;
+                        let coins = daemon
+                            .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])?;
                         Ok(Cache {
                             datadir_path,
                             coins: coins.coins,

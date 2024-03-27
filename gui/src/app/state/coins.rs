@@ -4,6 +4,7 @@ use std::{cmp::Ordering, collections::HashSet};
 
 use iced::Command;
 
+use liana::commands::CoinStatus;
 use liana_ui::widget::Element;
 
 use crate::{
@@ -162,7 +163,7 @@ impl State for CoinsPanel {
             Command::perform(
                 async move {
                     daemon1
-                        .list_coins()
+                        .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
                         .map(|res| res.coins)
                         .map_err(|e| e.into())
                 },
@@ -171,7 +172,7 @@ impl State for CoinsPanel {
             Command::perform(
                 async move {
                     let coins = daemon2
-                        .list_coins()
+                        .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
                         .map(|res| res.coins)
                         .map_err(Error::from)?;
                     let mut targets = HashSet::<LabelItem>::new();

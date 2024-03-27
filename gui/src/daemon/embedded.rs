@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use super::{model::*, Daemon, DaemonError};
 use liana::{
-    commands::LabelItem,
+    commands::{CoinStatus, LabelItem},
     config::Config,
     miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
     DaemonControl, DaemonHandle,
@@ -87,8 +87,12 @@ impl Daemon for EmbeddedDaemon {
         self.command(|daemon| Ok(daemon.get_new_address()))
     }
 
-    fn list_coins(&self) -> Result<ListCoinsResult, DaemonError> {
-        self.command(|daemon| Ok(daemon.list_coins(&[], &[])))
+    fn list_coins(
+        &self,
+        statuses: &[CoinStatus],
+        outpoints: &[OutPoint],
+    ) -> Result<ListCoinsResult, DaemonError> {
+        self.command(|daemon| Ok(daemon.list_coins(statuses, outpoints)))
     }
 
     fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
