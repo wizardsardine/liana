@@ -9,6 +9,15 @@ from test_framework.utils import (
 )
 
 
+def additional_fees(anc_vsize, anc_fee, target_feerate):
+    """The additional fee which must have been computed by lianad."""
+    computed_anc_vsize = int(anc_fee / target_feerate)
+    print(f"c  ", computed_anc_vsize)
+    extra_vsize = anc_vsize - computed_anc_vsize
+    print("e  ", extra_vsize)
+    return extra_vsize * target_feerate
+
+
 def test_spend_change(lianad, bitcoind):
     """We can spend a coin that was received on a change address."""
     # Receive a coin on a receive address
@@ -179,15 +188,13 @@ def test_coin_marked_spent(lianad, bitcoind):
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
     assert len(psbt.o) == 4
-    assert bitcoind.rpc.getmempoolentry(deposit_d)["ancestorsize"] == 165
-    assert bitcoind.rpc.getmempoolentry(deposit_d)["fees"]["ancestor"] * COIN == 165
-    # ancestor vsize at feerate 2 sat/vb = ancestor_fee / 2 = 165 / 2 = 82
-    # extra_weight <= (extra vsize * witness factor) = (165 - 82) * 4 = 332
-    # additional fee at 2 sat/vb (0.5 sat/wu) = 332 * 0.5 = 166
+    anc_vsize = bitcoind.rpc.getmempoolentry(deposit_d)["ancestorsize"]
+    anc_fees = int(bitcoind.rpc.getmempoolentry(deposit_d)["fees"]["ancestor"] * COIN)
+    additional_fee = additional_fees(anc_vsize, anc_fees, 2)
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == "An additional fee of 166 sats has been added to pay for ancestors at the target feerate."
+        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
     )
 
     # All the spent coins must have been detected as such
@@ -321,14 +328,6 @@ def test_coin_selection(lianad, bitcoind):
     # Depending on the feerate, we'll get a warning about paying extra for the ancestor.
     dest_addr_2 = bitcoind.rpc.getnewaddress()
     # If feerate is higher than ancestor, we'll need to pay extra.
-
-    def additional_fees(anc_vsize, anc_fee, target_feerate):
-        """The additional fee which must have been computed by lianad."""
-        computed_anc_vsize = int(anc_fee / target_feerate)
-        print(f"c  ", computed_anc_vsize)
-        extra_vsize = anc_vsize - computed_anc_vsize
-        print("e  ", extra_vsize)
-        return extra_vsize * target_feerate
 
     # Try 10 sat/vb:
     feerate = 10
