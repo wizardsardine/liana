@@ -250,12 +250,15 @@ def test_coinbase_deposit(lianad, bitcoind):
     assert coin["is_change"]
     bitcoind.generate_block(100)
     wait_for_sync()
-    coin = next(c for c in lianad.rpc.listcoins()["coins"] if c["outpoint"] == coin["outpoint"])
+    coin = next(
+        c for c in lianad.rpc.listcoins()["coins"] if c["outpoint"] == coin["outpoint"]
+    )
     assert not coin["is_immature"] and coin["block_height"] is not None
 
 
 @pytest.mark.skipif(
-    OLD_LIANAD_PATH is None or USE_TAPROOT, reason="Need the old lianad binary to create the datadir."
+    OLD_LIANAD_PATH is None or USE_TAPROOT,
+    reason="Need the old lianad binary to create the datadir.",
 )
 def test_migration(lianad_multisig, bitcoind):
     """Test we can start a newer lianad on a datadir created by an older lianad."""

@@ -1571,7 +1571,14 @@ mod tests {
         );
         assert_eq!(tx.output[0].value.to_sat(), 95_000);
         // change = 100_000 - 95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 = 4830
-        assert_eq!(warnings, vec!["Change amount of 4830 sats added to fee as it was too small to create a transaction output."]);
+        assert_eq!(
+            warnings,
+            vec![
+                "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. \
+                Instead of creating a change of 4830 sats, it was added to the \
+                transaction fee. Select a larger input to avoid this from happening."
+            ]
+        );
 
         // Increase the target value by the change amount and the warning will disappear.
         *destinations.get_mut(&dummy_addr).unwrap() = 95_000 + 4_830;
@@ -1622,7 +1629,14 @@ mod tests {
             panic!("expect successful spend creation")
         };
         // Message uses "sat" instead of "sats" when value is 1.
-        assert_eq!(warnings, vec!["Change amount of 1 sat added to fee as it was too small to create a transaction output."]);
+        assert_eq!(
+            warnings,
+            vec![
+                "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. \
+                Instead of creating a change of 1 sat, it was added to the \
+                transaction fee. Select a larger input to avoid this from happening."
+            ]
+        );
 
         // Now decrease the target value so that we have enough for a change output.
         *destinations.get_mut(&dummy_addr).unwrap() =
@@ -1651,7 +1665,14 @@ mod tests {
         } else {
             panic!("expect successful spend creation")
         };
-        assert_eq!(warnings, vec!["Change amount of 4999 sats added to fee as it was too small to create a transaction output."]);
+        assert_eq!(
+            warnings,
+            vec![
+                "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. \
+                Instead of creating a change of 4999 sats, it was added to the \
+                transaction fee. Select a larger input to avoid this from happening."
+            ]
+        );
 
         // Now if we mark the coin as spent, we won't create another Spend transaction containing
         // it.

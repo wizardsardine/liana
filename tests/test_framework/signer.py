@@ -93,7 +93,9 @@ def sign_psbt_taproot(psbt, hds):
     psbt_str = psbt.to_base64()
     for hd in hds:
         xprv = hd.get_xpriv()
-        proc = subprocess.run([bin_path, psbt_str, xprv], capture_output=True, check=True)
+        proc = subprocess.run(
+            [bin_path, psbt_str, xprv], capture_output=True, check=True
+        )
         psbt_str = proc.stdout.decode("utf-8")
 
     return PSBT.from_base64(psbt_str)
