@@ -23,9 +23,8 @@ the recovery path (multisig). You may have more than one recovery path.
 Here is an example of a Liana wallet configuration:
 - Owner's key (can always spend)
 - Any 2 keys from the owner's spouse and two kids (after 1 year)
-- A third party, in case [all else
-  failed](https://testing.wizardsardine.com/liana/plans#section-safety-net) (after 1 year and 3
-  months)
+- A third party, in case [all else failed](https://wizardsardine.com/liana/plans#section-safety-net)
+  (after 1 year and 3 months)
 
 The lockup period is enforced onchain by the Bitcoin network. This is achieved by leveraging
 timelock capabilities of Bitcoin smart contracts (Script).
@@ -36,11 +35,11 @@ Liana can be used for **trustless inheritance**, **loss protection** or **safer 
 
 ## Usage
 
-To quickly try out Liana on Bitcoin Signet, see [`doc/TRY.md`](doc/TRY.md).
+Liana is available on Windows, Mac and Linux. To install and start using it see
+[`doc/USAGE.md`](doc/USAGE.md). A more accessible version of Liana is also available as a web
+application [here](https://lianalite.com/).
 
-To install and start using Liana, see [`doc/USAGE.md`](doc/USAGE.md).
-
-A more accessible version of Liana is available as a web application [here](https://lianalite.com/).
+If you just want to quickly try out Liana on Bitcoin Signet, see [`doc/TRY.md`](doc/TRY.md).
 
 
 ## Hacking on Liana
