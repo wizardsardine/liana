@@ -141,7 +141,9 @@ def test_coin_marked_spent(lianad, bitcoind):
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == f"Change amount of {change_amount} sats added to fee as it was too small to create a transaction output."
+        == "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. "
+        f"Instead of creating a change of {change_amount} sats, it was added to the "
+        "transaction fee. Select a larger input to avoid this from happening."
     )
 
     # Spend the third coin to an address of ours, no change
@@ -158,7 +160,9 @@ def test_coin_marked_spent(lianad, bitcoind):
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == f"Change amount of {change_amount} sats added to fee as it was too small to create a transaction output."
+        == "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. "
+        f"Instead of creating a change of {change_amount} sats, it was added to the "
+        "transaction fee. Select a larger input to avoid this from happening."
     )
 
     # Spend the fourth coin to an address of ours, with change
@@ -194,7 +198,9 @@ def test_coin_marked_spent(lianad, bitcoind):
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
+        == "CPFP: an unconfirmed input was selected. The current transaction fee "
+        f"was increased by {additional_fee} sats to make the average feerate of "
+        "both the input and current transaction equal to the selected feerate."
     )
 
     # All the spent coins must have been detected as such
@@ -346,7 +352,9 @@ def test_coin_selection(lianad, bitcoind):
     assert len(spend_res_2["warnings"]) == 1
     assert (
         spend_res_2["warnings"][0]
-        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
+        == "CPFP: an unconfirmed input was selected. The current transaction fee "
+        f"was increased by {additional_fee} sats to make the average feerate of "
+        "both the input and current transaction equal to the selected feerate."
     )
 
     # Try 3 sat/vb:
@@ -366,7 +374,9 @@ def test_coin_selection(lianad, bitcoind):
     assert len(spend_res_2["warnings"]) == 1
     assert (
         spend_res_2["warnings"][0]
-        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
+        == "CPFP: an unconfirmed input was selected. The current transaction fee "
+        f"was increased by {additional_fee} sats to make the average feerate of "
+        "both the input and current transaction equal to the selected feerate."
     )
 
     # 2 sat/vb is same feerate as ancestor and we have no warnings:
@@ -416,7 +426,9 @@ def test_coin_selection(lianad, bitcoind):
     assert len(spend_res_3["warnings"]) == 1
     assert (
         spend_res_3["warnings"][0]
-        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
+        == "CPFP: an unconfirmed input was selected. The current transaction fee "
+        f"was increased by {additional_fee} sats to make the average feerate of "
+        "both the input and current transaction equal to the selected feerate."
     )
     spend_psbt_3 = PSBT.from_base64(spend_res_3["psbt"])
     spend_txid_3 = sign_and_broadcast_psbt(lianad, spend_psbt_3)
