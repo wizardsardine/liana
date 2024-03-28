@@ -12,9 +12,7 @@ from test_framework.utils import (
 def additional_fees(anc_vsize, anc_fee, target_feerate):
     """The additional fee which must have been computed by lianad."""
     computed_anc_vsize = int(anc_fee / target_feerate)
-    print(f"c  ", computed_anc_vsize)
     extra_vsize = anc_vsize - computed_anc_vsize
-    print("e  ", extra_vsize)
     return extra_vsize * target_feerate
 
 
