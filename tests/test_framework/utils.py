@@ -24,7 +24,9 @@ DEFAULT_BITCOIND_PATH = "bitcoind"
 BITCOIND_PATH = os.getenv("BITCOIND_PATH", DEFAULT_BITCOIND_PATH)
 OLD_LIANAD_PATH = os.getenv("OLD_LIANAD_PATH", None)
 IS_NOT_BITCOIND_24 = bool(int(os.getenv("IS_NOT_BITCOIND_24", True)))
-USE_TAPROOT = bool(int(os.getenv("USE_TAPROOT", False)))  # TODO: switch to True in a couple releases.
+USE_TAPROOT = bool(
+    int(os.getenv("USE_TAPROOT", False))
+)  # TODO: switch to True in a couple releases.
 
 
 COIN = 10**8

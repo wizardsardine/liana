@@ -1,6 +1,12 @@
 from fixtures import *
 from test_framework.serializations import PSBT, uint256_from_str
-from test_framework.utils import sign_and_broadcast_psbt, wait_for, COIN, RpcError, USE_TAPROOT
+from test_framework.utils import (
+    sign_and_broadcast_psbt,
+    wait_for,
+    COIN,
+    RpcError,
+    USE_TAPROOT,
+)
 
 
 def test_spend_change(lianad, bitcoind):
@@ -334,7 +340,9 @@ def test_coin_selection(lianad, bitcoind):
         bytes.fromhex(spend_txid_1)[::-1]
     )
     anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
-    anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
+    anc_fees = int(
+        bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN
+    )
     additional_fee = additional_fees(anc_vsize, anc_fees, feerate)
     assert len(spend_res_2["warnings"]) == 1
     assert (
@@ -352,7 +360,9 @@ def test_coin_selection(lianad, bitcoind):
         bytes.fromhex(spend_txid_1)[::-1]
     )
     anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
-    anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
+    anc_fees = int(
+        bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN
+    )
     additional_fee = additional_fees(anc_vsize, anc_fees, feerate)
     assert len(spend_res_2["warnings"]) == 1
     assert (
@@ -398,8 +408,12 @@ def test_coin_selection(lianad, bitcoind):
     anc_vsize = bitcoind.rpc.getmempoolentry(deposit_2)["ancestorsize"]
     anc_fees = int(bitcoind.rpc.getmempoolentry(deposit_2)["fees"]["ancestor"] * COIN)
     prev_anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
-    prev_anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
-    additional_fee = additional_fees(anc_vsize, anc_fees, feerate) + additional_fees(prev_anc_vsize, prev_anc_fees, feerate)
+    prev_anc_fees = int(
+        bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN
+    )
+    additional_fee = additional_fees(anc_vsize, anc_fees, feerate) + additional_fees(
+        prev_anc_vsize, prev_anc_fees, feerate
+    )
     assert len(spend_res_3["warnings"]) == 1
     assert (
         spend_res_3["warnings"][0]
