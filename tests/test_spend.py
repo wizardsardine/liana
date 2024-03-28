@@ -1,6 +1,19 @@
 from fixtures import *
 from test_framework.serializations import PSBT, uint256_from_str
-from test_framework.utils import sign_and_broadcast_psbt, wait_for, COIN, RpcError, USE_TAPROOT
+from test_framework.utils import (
+    sign_and_broadcast_psbt,
+    wait_for,
+    COIN,
+    RpcError,
+    USE_TAPROOT,
+)
+
+
+def additional_fees(anc_vsize, anc_fee, target_feerate):
+    """The additional fee which must have been computed by lianad."""
+    computed_anc_vsize = int(anc_fee / target_feerate)
+    extra_vsize = anc_vsize - computed_anc_vsize
+    return extra_vsize * target_feerate
 
 
 def test_spend_change(lianad, bitcoind):
@@ -126,7 +139,9 @@ def test_coin_marked_spent(lianad, bitcoind):
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == f"Change amount of {change_amount} sats added to fee as it was too small to create a transaction output."
+        == "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. "
+        f"Instead of creating a change of {change_amount} sats, it was added to the "
+        "transaction fee. Select a larger input to avoid this from happening."
     )
 
     # Spend the third coin to an address of ours, no change
@@ -143,7 +158,9 @@ def test_coin_marked_spent(lianad, bitcoind):
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == f"Change amount of {change_amount} sats added to fee as it was too small to create a transaction output."
+        == "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. "
+        f"Instead of creating a change of {change_amount} sats, it was added to the "
+        "transaction fee. Select a larger input to avoid this from happening."
     )
 
     # Spend the fourth coin to an address of ours, with change
@@ -173,15 +190,15 @@ def test_coin_marked_spent(lianad, bitcoind):
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
     assert len(psbt.o) == 4
-    assert bitcoind.rpc.getmempoolentry(deposit_d)["ancestorsize"] == 165
-    assert bitcoind.rpc.getmempoolentry(deposit_d)["fees"]["ancestor"] * COIN == 165
-    # ancestor vsize at feerate 2 sat/vb = ancestor_fee / 2 = 165 / 2 = 82
-    # extra_weight <= (extra vsize * witness factor) = (165 - 82) * 4 = 332
-    # additional fee at 2 sat/vb (0.5 sat/wu) = 332 * 0.5 = 166
+    anc_vsize = bitcoind.rpc.getmempoolentry(deposit_d)["ancestorsize"]
+    anc_fees = int(bitcoind.rpc.getmempoolentry(deposit_d)["fees"]["ancestor"] * COIN)
+    additional_fee = additional_fees(anc_vsize, anc_fees, 2)
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == "An additional fee of 166 sats has been added to pay for ancestors at the target feerate."
+        == "CPFP: an unconfirmed input was selected. The current transaction fee "
+        f"was increased by {additional_fee} sats to make the average feerate of "
+        "both the input and current transaction equal to the selected feerate."
     )
 
     # All the spent coins must have been detected as such
@@ -316,14 +333,6 @@ def test_coin_selection(lianad, bitcoind):
     dest_addr_2 = bitcoind.rpc.getnewaddress()
     # If feerate is higher than ancestor, we'll need to pay extra.
 
-    def additional_fees(anc_vsize, anc_fee, target_feerate):
-        """The additional fee which must have been computed by lianad."""
-        computed_anc_vsize = int(anc_fee / target_feerate)
-        print(f"c  ", computed_anc_vsize)
-        extra_vsize = anc_vsize - computed_anc_vsize
-        print("e  ", extra_vsize)
-        return extra_vsize * target_feerate
-
     # Try 10 sat/vb:
     feerate = 10
     spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], feerate)
@@ -334,12 +343,16 @@ def test_coin_selection(lianad, bitcoind):
         bytes.fromhex(spend_txid_1)[::-1]
     )
     anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
-    anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
+    anc_fees = int(
+        bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN
+    )
     additional_fee = additional_fees(anc_vsize, anc_fees, feerate)
     assert len(spend_res_2["warnings"]) == 1
     assert (
         spend_res_2["warnings"][0]
-        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
+        == "CPFP: an unconfirmed input was selected. The current transaction fee "
+        f"was increased by {additional_fee} sats to make the average feerate of "
+        "both the input and current transaction equal to the selected feerate."
     )
 
     # Try 3 sat/vb:
@@ -352,12 +365,16 @@ def test_coin_selection(lianad, bitcoind):
         bytes.fromhex(spend_txid_1)[::-1]
     )
     anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
-    anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
+    anc_fees = int(
+        bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN
+    )
     additional_fee = additional_fees(anc_vsize, anc_fees, feerate)
     assert len(spend_res_2["warnings"]) == 1
     assert (
         spend_res_2["warnings"][0]
-        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
+        == "CPFP: an unconfirmed input was selected. The current transaction fee "
+        f"was increased by {additional_fee} sats to make the average feerate of "
+        "both the input and current transaction equal to the selected feerate."
     )
 
     # 2 sat/vb is same feerate as ancestor and we have no warnings:
@@ -398,12 +415,18 @@ def test_coin_selection(lianad, bitcoind):
     anc_vsize = bitcoind.rpc.getmempoolentry(deposit_2)["ancestorsize"]
     anc_fees = int(bitcoind.rpc.getmempoolentry(deposit_2)["fees"]["ancestor"] * COIN)
     prev_anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
-    prev_anc_fees = int(bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN)
-    additional_fee = additional_fees(anc_vsize, anc_fees, feerate) + additional_fees(prev_anc_vsize, prev_anc_fees, feerate)
+    prev_anc_fees = int(
+        bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN
+    )
+    additional_fee = additional_fees(anc_vsize, anc_fees, feerate) + additional_fees(
+        prev_anc_vsize, prev_anc_fees, feerate
+    )
     assert len(spend_res_3["warnings"]) == 1
     assert (
         spend_res_3["warnings"][0]
-        == f"An additional fee of {additional_fee} sats has been added to pay for ancestors at the target feerate."
+        == "CPFP: an unconfirmed input was selected. The current transaction fee "
+        f"was increased by {additional_fee} sats to make the average feerate of "
+        "both the input and current transaction equal to the selected feerate."
     )
     spend_psbt_3 = PSBT.from_base64(spend_res_3["psbt"])
     spend_txid_3 = sign_and_broadcast_psbt(lianad, spend_psbt_3)
