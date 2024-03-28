@@ -543,7 +543,7 @@ pub enum SpendTxFees {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CreateSpendWarning {
     ChangeAddedToFee(u64),
-    AddtionalFeeForAncestors(u64),
+    AdditionalFeeForAncestors(u64),
 }
 
 impl fmt::Display for CreateSpendWarning {
@@ -551,15 +551,20 @@ impl fmt::Display for CreateSpendWarning {
         match self {
             CreateSpendWarning::ChangeAddedToFee(amt) => write!(
                 f,
-                "Change amount of {} sat{} added to fee as it was too small to create a transaction output.",
+                "Dust UTXO. The minimal change output allowed by Liana is {} sats. \
+                Instead of creating a change of {} sat{}, it was added to the \
+                transaction fee. Select a larger input to avoid this from happening.",
+                DUST_OUTPUT_SATS,
                 amt,
-                if *amt > 1 {"s"} else {""},
+                if *amt > 1 { "s" } else { "" },
             ),
-            CreateSpendWarning::AddtionalFeeForAncestors(amt) => write!(
+            CreateSpendWarning::AdditionalFeeForAncestors(amt) => write!(
                 f,
-                "An additional fee of {} sat{} has been added to pay for ancestors at the target feerate.",
+                "CPFP: an unconfirmed input was selected. The current transaction fee \
+                was increased by {} sat{} to make the average feerate of both the input \
+                and current transaction equal to the selected feerate.",
                 amt,
-                if *amt > 1 {"s"} else {""},
+                if *amt > 1 { "s" } else { "" },
             ),
         }
     }
@@ -737,7 +742,7 @@ pub fn create_spend(
     }
 
     if fee_for_ancestors.to_sat() > 0 {
-        warnings.push(CreateSpendWarning::AddtionalFeeForAncestors(
+        warnings.push(CreateSpendWarning::AdditionalFeeForAncestors(
             fee_for_ancestors.to_sat(),
         ));
     }
