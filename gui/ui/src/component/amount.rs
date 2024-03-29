@@ -1,6 +1,6 @@
 pub use bitcoin::Amount;
 
-use crate::{color, component::text::*, util::Collection, widget::*};
+use crate::{color, component::text::*, widget::*};
 
 pub fn amount<'a, T: 'a>(a: &Amount) -> Row<'a, T> {
     amount_with_size(a, P1_SIZE)

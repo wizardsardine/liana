@@ -1,7 +1,7 @@
 use bitcoin::Denomination;
 use iced::{widget::text_input, Length};
 
-use crate::{color, component::text, theme, util::Collection, widget::*};
+use crate::{color, component::text, theme, widget::*};
 
 #[derive(Debug, Clone)]
 pub struct Value<T> {
@@ -19,7 +19,7 @@ impl std::default::Default for Value<String> {
 }
 
 pub struct Form<'a, Message> {
-    input: text_input::TextInput<'a, Message, iced::Renderer<theme::Theme>>,
+    input: TextInput<'a, Message>,
     warning: Option<&'a str>,
     valid: bool,
 }

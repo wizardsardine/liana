@@ -15,7 +15,6 @@ use liana_ui::{
     color,
     component::{amount::*, badge, button, form, text::*},
     icon, theme,
-    util::Collection,
     widget::*,
 };
 
@@ -405,9 +404,8 @@ pub fn recipient_view<'a>(
                         None
                     })
                     .push(tooltip::Tooltip::new(
-                        checkbox("MAX", is_max_selected, move |_| {
-                            CreateSpendMessage::SendMaxToRecipient(index)
-                        }),
+                        checkbox("MAX", is_max_selected)
+                            .on_toggle(move |_| CreateSpendMessage::SendMaxToRecipient(index)),
                         // Add spaces at end so that text is padded at screen edge.
                         "Total amount remaining after paying fee and any other recipients     ",
                         tooltip::Position::Bottom,
@@ -431,9 +429,11 @@ fn coin_list_view<'a>(
     Row::new()
         .push(
             Row::new()
-                .push(checkbox("", selected, move |_| {
-                    Message::CreateSpend(CreateSpendMessage::SelectCoin(i))
-                }))
+                .push(
+                    checkbox("", selected).on_toggle(move |_| {
+                        Message::CreateSpend(CreateSpendMessage::SelectCoin(i))
+                    }),
+                )
                 .push(
                     if let Some(label) = coins_labels.get(&coin.outpoint.to_string()) {
                         Container::new(p1_regular(label)).width(Length::Fill)

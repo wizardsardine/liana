@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use super::theme::Theme;
-
 use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{layout, mouse, overlay, renderer};
 use iced::advanced::{Clipboard, Layout, Shell, Widget};
@@ -13,18 +11,18 @@ pub trait Toast {
     fn body(&self) -> &str;
 }
 
-pub struct Manager<'a, Message, Renderer> {
-    content: Element<'a, Message, Renderer>,
-    toasts: Vec<Element<'a, Message, Renderer>>,
+pub struct Manager<'a, Message, Theme, Renderer> {
+    content: Element<'a, Message, Theme, Renderer>,
+    toasts: Vec<Element<'a, Message, Theme, Renderer>>,
 }
 
-impl<'a, Message> Manager<'a, Message, iced::Renderer<Theme>>
+impl<'a, Message, Theme> Manager<'a, Message, Theme, iced::Renderer>
 where
     Message: 'a + Clone,
 {
     pub fn new(
-        content: impl Into<Element<'a, Message, iced::Renderer<Theme>>>,
-        toasts: Vec<Element<'a, Message, iced::Renderer<Theme>>>,
+        content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
+        toasts: Vec<Element<'a, Message, Theme, iced::Renderer>>,
     ) -> Self {
         Self {
             content: content.into(),
@@ -33,20 +31,24 @@ where
     }
 }
 
-impl<'a, Message, Renderer> Widget<Message, Renderer> for Manager<'a, Message, Renderer>
+impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for Manager<'a, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer,
 {
-    fn width(&self) -> Length {
-        self.content.as_widget().width()
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
     }
 
-    fn height(&self) -> Length {
-        self.content.as_widget().height()
-    }
-
-    fn layout(&self, renderer: &Renderer, limits: &layout::Limits) -> layout::Node {
-        self.content.as_widget().layout(renderer, limits)
+    fn layout(
+        &self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn tag(&self) -> iced::advanced::widget::tree::Tag {
@@ -130,7 +132,7 @@ where
         &self,
         state: &Tree,
         renderer: &mut Renderer,
-        theme: &<Renderer as iced::advanced::Renderer>::Theme,
+        theme: &Theme,
         style: &renderer::Style,
         layout: Layout<'_>,
         cursor_position: iced::mouse::Cursor,
@@ -169,25 +171,26 @@ where
         state: &'b mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
-    ) -> Option<overlay::Element<'b, Message, Renderer>> {
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         let instants = state.state.downcast_mut::<Vec<Option<Instant>>>();
 
         let (content_state, toasts_state) = state.children.split_at_mut(1);
 
-        let content = self
-            .content
-            .as_widget_mut()
-            .overlay(&mut content_state[0], layout, renderer);
+        let content = self.content.as_widget_mut().overlay(
+            &mut content_state[0],
+            layout,
+            renderer,
+            translation,
+        );
 
         let toasts = (!self.toasts.is_empty()).then(|| {
-            overlay::Element::new(
-                layout.bounds().position(),
-                Box::new(Overlay {
-                    toasts: &mut self.toasts,
-                    state: toasts_state,
-                    instants,
-                }),
-            )
+            overlay::Element::new(Box::new(Overlay {
+                position: layout.bounds().position() + translation,
+                toasts: &mut self.toasts,
+                state: toasts_state,
+                instants,
+            }))
         });
         let overlays = content.into_iter().chain(toasts).collect::<Vec<_>>();
 
@@ -195,18 +198,19 @@ where
     }
 }
 
-struct Overlay<'a, 'b, Message, Renderer> {
-    toasts: &'b mut [Element<'a, Message, Renderer>],
+struct Overlay<'a, 'b, Message, Theme, Renderer> {
+    position: Point,
+    toasts: &'b mut [Element<'a, Message, Theme, Renderer>],
     state: &'b mut [Tree],
     instants: &'b mut [Option<Instant>],
 }
 
-impl<'a, 'b, Message, Renderer> overlay::Overlay<Message, Renderer>
-    for Overlay<'a, 'b, Message, Renderer>
+impl<'a, 'b, Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
+    for Overlay<'a, 'b, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer,
 {
-    fn layout(&self, renderer: &Renderer, bounds: Size, position: Point) -> layout::Node {
+    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
         let limits = layout::Limits::new(Size::ZERO, bounds)
             .width(Length::Fill)
             .height(Length::Fill);
@@ -215,12 +219,15 @@ where
             layout::flex::Axis::Vertical,
             renderer,
             &limits,
+            Length::Fill,
+            Length::Fill,
             10.into(),
             10.0,
             Alignment::End,
             self.toasts,
+            self.state,
         )
-        .translate(Vector::new(position.x, position.y))
+        .translate(Vector::new(self.position.x, self.position.y))
     }
 
     fn on_event(
@@ -267,7 +274,7 @@ where
     fn draw(
         &self,
         renderer: &mut Renderer,
-        theme: &<Renderer as iced::advanced::Renderer>::Theme,
+        theme: &Theme,
         style: &renderer::Style,
         layout: Layout<'_>,
         cursor_position: iced::mouse::Cursor,
@@ -342,12 +349,14 @@ where
     }
 }
 
-impl<'a, Message, Renderer> From<Manager<'a, Message, Renderer>> for Element<'a, Message, Renderer>
+impl<'a, Message, Theme, Renderer> From<Manager<'a, Message, Theme, Renderer>>
+    for Element<'a, Message, Theme, Renderer>
 where
     Renderer: 'a + iced::advanced::Renderer,
     Message: 'a,
+    Theme: 'a,
 {
-    fn from(manager: Manager<'a, Message, Renderer>) -> Self {
+    fn from(manager: Manager<'a, Message, Theme, Renderer>) -> Self {
         Element::new(manager)
     }
 }

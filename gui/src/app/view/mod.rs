@@ -29,7 +29,6 @@ use liana_ui::{
     },
     image::*,
     theme,
-    util::Collection,
     widget::*,
 };
 

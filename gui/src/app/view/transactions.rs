@@ -7,7 +7,6 @@ use liana_ui::{
     color,
     component::{amount::*, badge, button, card, form, text::*},
     icon, theme,
-    util::Collection,
     widget::*,
 };
 

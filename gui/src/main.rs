@@ -5,9 +5,9 @@ use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
 use iced::{
     event::{self, Event},
     executor,
-    keyboard::{self, KeyCode},
-    subscription,
+    keyboard::{self},
     widget::{focus_next, focus_previous},
+    window::settings::PlatformSpecific,
     Application, Command, Settings, Subscription,
 };
 use tracing::{error, info};
@@ -180,14 +180,14 @@ impl Application for GUI {
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match (&mut self.state, message) {
             (_, Message::CtrlC)
-            | (_, Message::Event(iced::Event::Window(iced::window::Event::CloseRequested))) => {
+            | (_, Message::Event(iced::Event::Window(_, iced::window::Event::CloseRequested))) => {
                 match &mut self.state {
                     State::Loader(s) => s.stop(),
                     State::Launcher(s) => s.stop(),
                     State::Installer(s) => s.stop(),
                     State::App(s) => s.stop(),
                 };
-                iced::window::close()
+                iced::window::close(iced::window::Id::MAIN)
             }
             (_, Message::KeyPressed(Key::Tab(shift))) => {
                 log::debug!("Tab pressed!");
@@ -286,22 +286,29 @@ impl Application for GUI {
                 State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
                 State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
             },
-            subscription::events_with(|event, status| match (&event, status) {
+            iced::event::listen_with(|event, status| match (&event, status) {
                 (
                     Event::Keyboard(keyboard::Event::KeyPressed {
-                        key_code: KeyCode::Tab,
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
                         modifiers,
                         ..
                     }),
                     event::Status::Ignored,
                 ) => Some(Message::KeyPressed(Key::Tab(modifiers.shift()))),
                 (
-                    iced::Event::Window(iced::window::Event::CloseRequested),
+                    iced::Event::Window(_, iced::window::Event::CloseRequested),
                     event::Status::Ignored,
                 ) => Some(Message::Event(event)),
                 _ => None,
             }),
         ])
+        .with_filter(|event| {
+            matches!(
+                event,
+                iced::Event::Window(_, iced::window::Event::CloseRequested)
+                    | iced::Event::Keyboard(_)
+            )
+        })
     }
 
     fn view(&self) -> Element<Self::Message> {
@@ -436,13 +443,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     settings.window.icon = Some(image::liana_app_icon());
     settings.default_text_size = text::P1_SIZE.into();
     settings.default_font = liana_ui::font::REGULAR;
-    settings.exit_on_close_request = false;
+    settings.window.exit_on_close_request = false;
 
     settings.id = Some("Liana".to_string());
 
     #[cfg(target_os = "linux")]
     {
-        settings.window.platform_specific = iced::window::PlatformSpecific {
+        settings.window.platform_specific = PlatformSpecific {
             application_id: "Liana".to_string(),
         };
     }

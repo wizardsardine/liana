@@ -11,7 +11,6 @@ use liana_ui::{
     color,
     component::{badge, button, card, modal::Modal, notification, text::*},
     icon, image, theme,
-    util::*,
     widget::*,
 };
 

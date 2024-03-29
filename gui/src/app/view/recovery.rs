@@ -13,7 +13,6 @@ use liana::miniscript::bitcoin::{
 use liana_ui::{
     component::{amount::*, button, form, text::*},
     icon, theme,
-    util::*,
     widget::*,
 };
 
@@ -144,9 +143,10 @@ pub fn recovery_path_view<'a>(
     selected: bool,
 ) -> Element<'a, Message> {
     Row::new()
-        .push(checkbox("", selected, move |_| {
-            Message::CreateSpend(CreateSpendMessage::SelectPath(index))
-        }))
+        .push(
+            checkbox("", selected)
+                .on_toggle(move |_| Message::CreateSpend(CreateSpendMessage::SelectPath(index))),
+        )
         .push(
             Column::new()
                 .push(
@@ -170,7 +170,7 @@ pub fn recovery_path_view<'a>(
                                             Container::new(text(alias))
                                                 .padding(5)
                                                 .style(theme::Container::Pill(theme::Pill::Simple)),
-                                            fg.to_string(),
+                                            liana_ui::widget::Text::new(fg.to_string()),
                                             tooltip::Position::Bottom,
                                         )
                                         .style(theme::Container::Card(theme::Card::Simple)),

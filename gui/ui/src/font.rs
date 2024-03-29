@@ -6,14 +6,14 @@ use iced::{
 pub const BOLD: Font = Font {
     family: Family::Name("IBM Plex Sans"),
     weight: Weight::Bold,
-    monospaced: false,
+    style: iced::font::Style::Normal,
     stretch: Stretch::Normal,
 };
 
 pub const MEDIUM: Font = Font {
     family: Family::Name("IBM Plex Sans"),
     weight: Weight::Medium,
-    monospaced: false,
+    style: iced::font::Style::Normal,
     stretch: Stretch::Normal,
 };
 

@@ -19,7 +19,6 @@ use liana_ui::{
     color,
     component::{button, notification, text::*},
     icon,
-    util::Collection,
     widget::*,
 };
 

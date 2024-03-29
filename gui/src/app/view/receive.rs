@@ -21,7 +21,6 @@ use liana_ui::{
         text::{self, *},
     },
     icon, theme,
-    util::Collection,
     widget::*,
 };
 
@@ -216,13 +215,13 @@ pub fn verify_address_modal<'a>(
         .into()
 }
 
-pub fn qr_modal<'a>(qr: &'a qr_code::State, address: &'a String) -> Element<'a, Message> {
+pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, Message> {
     Column::new()
         .push(
             Row::new()
                 .push(Space::with_width(Length::Fill))
                 .push(
-                    Container::new(QRCode::new(qr).cell_size(8))
+                    Container::new(QRCode::<liana_ui::theme::Theme>::new(qr).cell_size(8))
                         .padding(10)
                         .style(theme::Container::QrCode),
                 )

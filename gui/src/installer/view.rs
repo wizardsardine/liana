@@ -18,7 +18,6 @@ use liana_ui::{
         tooltip,
     },
     icon, image, theme,
-    util::Collection,
     widget::*,
 };
 
@@ -720,11 +719,10 @@ pub fn participate_xpub<'a>(
                     .push(signer)
                     .width(Length::Fill),
             )
-            .push(checkbox(
-                "I have shared my extended public key",
-                shared,
-                Message::UserActionDone,
-            ))
+            .push(
+                checkbox("I have shared my extended public key", shared)
+                    .on_toggle(Message::UserActionDone),
+            )
             .push(if shared && network_valid {
                 button::primary(None, "Next")
                     .width(Length::Fixed(200.0))
@@ -807,8 +805,7 @@ pub fn register_descriptor<'a>(
             .push_maybe(created_desc.then_some(checkbox(
                 "I have registered the descriptor on my device(s)",
                 done,
-                Message::UserActionDone,
-            )))
+            ).on_toggle(Message::UserActionDone)))
             .push(if !created_desc || (done && !processing) {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
@@ -872,11 +869,9 @@ pub fn backup_descriptor<'a>(
                     .spacing(10)
                     .max_width(1000),
             ))
-            .push(checkbox(
-                "I have backed up my descriptor",
-                done,
-                Message::UserActionDone,
-            ))
+            .push(
+                checkbox("I have backed up my descriptor", done).on_toggle(Message::UserActionDone),
+            )
             .push(if done {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
@@ -1678,7 +1673,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                                 message::SequenceModal::SequenceEdited(v.to_string()),
                             ))
                         })
-                        .step(144), // 144 blocks per day
+                        .step(144_u16), // 144 blocks per day
                     )
                     .width(Length::Fixed(500.0)),
                 );
@@ -1821,11 +1816,7 @@ pub fn backup_mnemonic<'a>(
                         )
                     }),
             )
-            .push(checkbox(
-                "I have backed up my mnemonic",
-                done,
-                Message::UserActionDone,
-            ))
+            .push(checkbox("I have backed up my mnemonic", done).on_toggle(Message::UserActionDone))
             .push(if done {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
@@ -2041,7 +2032,7 @@ mod threshsold_input {
         }
     }
 
-    impl<Message> Component<Message, iced::Renderer<theme::Theme>> for ThresholdInput<Message> {
+    impl<Message> Component<Message, theme::Theme> for ThresholdInput<Message> {
         type State = ();
         type Event = Event;
 

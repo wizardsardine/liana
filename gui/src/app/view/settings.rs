@@ -18,7 +18,6 @@ use liana_ui::{
     color,
     component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
     icon, theme,
-    util::Collection,
     widget::*,
 };
 

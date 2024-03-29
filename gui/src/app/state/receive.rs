@@ -302,13 +302,13 @@ impl VerifyAddressModal {
 }
 
 pub struct ShowQrCodeModal {
-    qr_code: qr_code::State,
+    qr_code: qr_code::Data,
     address: String,
 }
 
 impl ShowQrCodeModal {
     pub fn new(address: &Address, index: ChildNumber) -> Option<Self> {
-        qr_code::State::new(format!("bitcoin:{}?index={}", address, index))
+        qr_code::Data::new(format!("bitcoin:{}?index={}", address, index))
             .ok()
             .map(|qr_code| Self {
                 qr_code,

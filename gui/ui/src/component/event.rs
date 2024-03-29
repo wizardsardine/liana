@@ -2,7 +2,6 @@ use crate::{
     color,
     component::{amount, badge, text},
     theme,
-    util::Collection,
     widget::*,
 };
 use bitcoin::Amount;
@@ -12,7 +11,7 @@ use iced::{
 };
 
 pub fn unconfirmed_outgoing_event<'a, T: Clone + 'a>(
-    label: Option<iced::widget::Text<'a, iced::Renderer<theme::Theme>>>,
+    label: Option<Text<'a>>,
     amount: &Amount,
     msg: T,
 ) -> Container<'a, T> {
@@ -39,7 +38,7 @@ pub fn unconfirmed_outgoing_event<'a, T: Clone + 'a>(
 }
 
 pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
-    label: Option<iced::widget::Text<'a, iced::Renderer<theme::Theme>>>,
+    label: Option<Text<'a>>,
     date: chrono::NaiveDateTime,
     amount: &Amount,
     msg: T,
@@ -72,7 +71,7 @@ pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
 }
 
 pub fn unconfirmed_incoming_event<'a, T: Clone + 'a>(
-    label: Option<iced::widget::Text<'a, iced::Renderer<theme::Theme>>>,
+    label: Option<Text<'a>>,
     amount: &Amount,
     msg: T,
 ) -> Container<'a, T> {
@@ -99,7 +98,7 @@ pub fn unconfirmed_incoming_event<'a, T: Clone + 'a>(
 }
 
 pub fn confirmed_incoming_event<'a, T: Clone + 'a>(
-    label: Option<iced::widget::Text<'a, iced::Renderer<theme::Theme>>>,
+    label: Option<Text<'a>>,
     date: chrono::NaiveDateTime,
     amount: &Amount,
     msg: T,
