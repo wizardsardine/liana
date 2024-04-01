@@ -6,27 +6,17 @@ Bitcoin Signet, check out [this guide](doc/TRY.md) instead.
 
 ### Installing the software
 
-The recommended installation method for regular users is to download [an executable software
-release](https://github.com/wizardsardine/liana/releases). If you prefer to build the project from
-source, see [`BUILD.md`](BUILD.md) instead.
+The recommended installation method for regular users is to download [an executable software release
+from our website](https://wizardsardine.com/liana/). If you prefer to build the project from source,
+see [`BUILD.md`](BUILD.md) instead.
 
-Head to the [release page](https://github.com/wizardsardine/liana/releases) and download the right
-executable for your platform. If you are not sure what is the "right" executable for your platform,
-choose:
-- `Liana.zip` if you are on MacOS,
-- `liana-4.0.exe` if you are on Windows,
-- `liana_4.0.deb` if you are running a Debian-based Linux (such as Ubuntu). Use `apt install
-  ./liana_4.0.deb` as root (or preceded by `sudo`) to install it.
-- `liana-4.0.tar.gz` if you use another Linux distribution. Note you may have to
-  compile the software yourself if you are on Linux. See the [section
-  below](#a-note-on-linux-binaries-and-glibc-version).
-
-For every file available on the release page, there is an accompanying `.asc` file with the same
-name. This is a GPG signature made with Antoine Poinsot's key:
-`590B7292695AFFA5B672CBB2E13FC145CD3F4304`. This key is available elsewhere for cross-checking, such
-as on [his Twitter profile](https://twitter.com/darosior) or his [personal
-website](http://download.darosior.ninja/darosior.pub). It is recommended you verify your download
-against this key.
+We recommend you verify the software you downloaded against a PGP signature made by Antoine Poinsot
+using his key `590B7292695AFFA5B672CBB2E13FC145CD3F4304`. For now the PGP signatures for the
+binaries downloaded on our website are only available on the [Github release
+page](https://github.com/wizardsardine/liana/releases). Find the `.asc` file in the list
+corresponding to the binary you downloaded. Antoine's key is available elsewhere for cross-checking,
+such as on [his Twitter profile](https://twitter.com/darosior) or [Bitcoin Core's like of builder
+keys](https://github.com/bitcoin-core/guix.sigs/blob/main/builder-keys/darosior.gpg).
 
 For Arch users, a `liana-bin` is also available at the [AUR](https://aur.archlinux.org/). You can
 install it using your favourite wrapper (eg `paru -S liana-bin` or `yay -S liana-bin`), or manually:
