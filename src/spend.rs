@@ -8,8 +8,8 @@ use std::{
 
 pub use bdk_coin_select::InsufficientFunds;
 use bdk_coin_select::{
-    change_policy, metrics::LowestFee, Candidate, CoinSelector, DrainWeights, FeeRate, Target,
-    TXIN_BASE_WEIGHT,
+    metrics::LowestFee, Candidate, ChangePolicy, CoinSelector, DrainWeights, FeeRate, Replace,
+    Target, TargetFee, TargetOutputs, TXIN_BASE_WEIGHT,
 };
 use miniscript::bitcoin::{
     self,
@@ -223,47 +223,24 @@ pub struct CoinSelectionRes {
 ///
 /// Using this metric with `must_have_change: false` is equivalent to using
 /// [`LowestFee`].
-struct LowestFeeChangeCondition<'c, C> {
+struct LowestFeeChangeCondition {
     /// The underlying [`LowestFee`] metric to use.
-    pub lowest_fee: LowestFee<'c, C>,
+    pub lowest_fee: LowestFee,
     /// If `true`, only solutions with change will be found.
     pub must_have_change: bool,
 }
 
-impl<'c, C> bdk_coin_select::BnbMetric for LowestFeeChangeCondition<'c, C>
-where
-    for<'a, 'b> C: Fn(&'b CoinSelector<'a>, Target) -> bdk_coin_select::Drain,
-{
-    fn score(&mut self, cs: &CoinSelector<'_>) -> Option<bdk_coin_select::float::Ordf32> {
-        let drain = (self.lowest_fee.change_policy)(cs, self.lowest_fee.target);
+impl bdk_coin_select::BnbMetric for LowestFeeChangeCondition {
+    fn score(&mut self, cs: &CoinSelector) -> Option<bdk_coin_select::float::Ordf32> {
+        let drain = cs.drain(self.lowest_fee.target, self.lowest_fee.change_policy);
         if drain.is_none() && self.must_have_change {
             None
         } else {
-            // This is a temporary partial fix for https://github.com/bitcoindevkit/coin-select/issues/6
-            // until it has been fixed upstream.
-            // TODO: Revert this change once upstream fix has been made.
-            // When calculating the score, the excess should be added to changeless solutions instead of
-            // those with change.
-            // Given a solution has been found, this fix adds or removes the excess to its incorrectly
-            // calculated score as required so that two changeless solutions can be differentiated
-            // if one has higher excess (and therefore pays a higher fee).
-            // Note that the `bound` function is also affected by this bug, which could mean some branches
-            // are not considered when running BnB, but at least this fix will mean the score for those
-            // solutions that are found is correct.
-            self.lowest_fee.score(cs).map(|score| {
-                // See https://github.com/bitcoindevkit/coin-select/blob/29b187f5509a01ba125a0354f6711e317bb5522a/src/metrics/lowest_fee.rs#L35-L45
-                assert!(cs.selected_value() >= self.lowest_fee.target.value);
-                let excess = (cs.selected_value() - self.lowest_fee.target.value) as f32;
-                bdk_coin_select::float::Ordf32(if drain.is_none() {
-                    score.0 + excess
-                } else {
-                    score.0 - excess
-                })
-            })
+            self.lowest_fee.score(cs)
         }
     }
 
-    fn bound(&mut self, cs: &CoinSelector<'_>) -> Option<bdk_coin_select::float::Ordf32> {
+    fn bound(&mut self, cs: &CoinSelector) -> Option<bdk_coin_select::float::Ordf32> {
         self.lowest_fee.bound(cs)
     }
 
@@ -287,7 +264,10 @@ where
 /// and change may result in a slightly lower feerate than this as the underlying
 /// function instead uses a minimum feerate of `feerate_vb / 4.0` sats/wu.
 ///
-/// `min_fee` is the minimum fee (in sats) that the selection must have.
+/// If this is a replacement spend using RBF, then `min_fee` should be set to
+/// the total fees (in sats) of the transaction(s) being replaced, including any
+/// descendants, which will ensure that RBF rule 4 is satisfied.
+/// Otherwise, it should be set to 0.
 ///
 /// `max_sat_weight` is the maximum weight difference of an input in the
 /// transaction before and after satisfaction.
@@ -304,24 +284,21 @@ fn select_coins_for_spend(
     must_have_change: bool,
 ) -> Result<CoinSelectionRes, InsufficientFunds> {
     let out_value_nochange = base_tx.output.iter().map(|o| o.value.to_sat()).sum();
-
-    // Create the coin selector from the given candidates. NOTE: the coin selector keeps track
-    // of the original ordering of candidates so we can select any mandatory candidates using their
-    // original indices.
-    let mut base_weight: u32 = base_tx
-        .weight()
-        .to_wu()
-        .try_into()
-        .expect("Transaction weight must fit in u32");
-    // Starting with version 0.31, rust-bitcoin now accounts for the segwit marker when serializing
-    // transactions with no input. But BDK's coin selector does add the segwit marker cost to the
-    // transaction size upon selecting the first segwit coin. To avoid accounting twice for it,
-    // drop it from the base weight (but only when it was added).
-    // NOTE: make sure to reconsider this when updating rust-bitcoin!! Behaviour may change again
-    // who knows.
-    if base_tx.input.is_empty() {
-        base_weight = base_weight.saturating_sub(2);
-    }
+    let out_weight_nochange: u32 = {
+        let mut total: u32 = 0;
+        for output in &base_tx.output {
+            let weight: u32 = output
+                .weight()
+                .to_wu()
+                .try_into()
+                .expect("an output's weight must fit in u32");
+            total = total
+                .checked_add(weight)
+                .expect("sum of transaction outputs' weights must fit in u32");
+        }
+        total
+    };
+    let n_outputs_nochange = base_tx.output.len();
     let max_input_weight = TXIN_BASE_WEIGHT + max_sat_weight;
     // Get feerate as u32 for calculation relating to ancestor below.
     // We expect `feerate_vb` to be a positive integer, but take ceil()
@@ -368,7 +345,7 @@ fn select_coins_for_spend(
             is_segwit: true, // We only support receiving on Segwit scripts.
         })
         .collect();
-    let mut selector = CoinSelector::new(&candidates, base_weight);
+    let mut selector = CoinSelector::new(&candidates);
     for (i, cand) in candidate_coins.iter().enumerate() {
         if cand.must_select {
             // It's fine because the index passed to `select` refers to the original candidates ordering
@@ -378,42 +355,53 @@ fn select_coins_for_spend(
     }
 
     // Now set the change policy. We use a policy which ensures no change output is created with a
-    // lower value than our custom dust limit. NOTE: the change output weight must account for a
-    // potential difference in the size of the outputs count varint. This is why we take the whole
-    // change txo as argument and compute the weight difference below.
+    // lower value than our custom dust limit. NOTE: the change output weight must not account for
+    // a potential difference in the size of the outputs count varint.
+    let feerate = FeeRate::from_sat_per_vb(feerate_vb);
     let long_term_feerate = FeeRate::from_sat_per_vb(LONG_TERM_FEERATE_VB);
+    let change_output_weight: u32 = change_txo
+        .weight()
+        .to_wu()
+        .try_into()
+        .expect("output weight must fit in u32");
     let drain_weights = DrainWeights {
-        output_weight: {
-            // We don't reuse the above base_weight.since 2 WU may have been substracted from it.
-            // See comment above for details.
-            let nochange_weight = base_tx.weight().to_wu();
-            let mut tx_with_change = base_tx;
-            tx_with_change.output.push(change_txo);
-            tx_with_change
-                .weight()
-                .to_wu()
-                .checked_sub(nochange_weight)
-                .expect("base_weight can't be larger")
-                .try_into()
-                .expect("tx size must always fit in u32")
-        },
+        output_weight: change_output_weight,
         spend_weight: max_input_weight,
+        n_outputs: 1, // we only want a single change output
     };
-    let change_policy =
-        change_policy::min_value_and_waste(drain_weights, DUST_OUTPUT_SATS, long_term_feerate);
+    // As of bdk_coin_select v0.3.0, the min change value is exclusive so we must subtract 1.
+    let change_min_value = DUST_OUTPUT_SATS.saturating_sub(1);
+    let change_policy = ChangePolicy::min_value_and_waste(
+        drain_weights,
+        change_min_value,
+        feerate,
+        long_term_feerate,
+    );
 
     // Finally, run the coin selection algorithm. We use an opportunistic BnB and if it couldn't
     // find any solution we fall back to selecting coins by descending value.
-    let feerate = FeeRate::from_sat_per_vb(feerate_vb);
+    let replace = if min_fee > 0 {
+        Some(Replace::new(min_fee))
+    } else {
+        None
+    };
+    let target_fee = TargetFee {
+        rate: feerate,
+        replace,
+    };
+    let target_outputs = TargetOutputs {
+        value_sum: out_value_nochange,
+        weight_sum: out_weight_nochange,
+        n_outputs: n_outputs_nochange,
+    };
     let target = Target {
-        value: out_value_nochange,
-        feerate,
-        min_fee,
+        fee: target_fee,
+        outputs: target_outputs,
     };
     let lowest_fee = LowestFee {
         target,
         long_term_feerate,
-        change_policy: &change_policy,
+        change_policy,
     };
     let lowest_fee_change_cond = LowestFeeChangeCondition {
         lowest_fee,
@@ -436,8 +424,10 @@ fn select_coins_for_spend(
         selector.sort_candidates_by_descending_value_pwu();
         // Select more coins until target is met and change condition satisfied.
         loop {
-            let drain = change_policy(&selector, target);
-            if selector.is_target_met(target, drain) && (drain.is_some() || !must_have_change) {
+            let drain = selector.drain(target, change_policy);
+            if selector.is_target_met_with_drain(target, drain)
+                && (drain.is_some() || !must_have_change)
+            {
                 break;
             }
             if !selector.select_next() {
@@ -457,7 +447,7 @@ fn select_coins_for_spend(
         }
     }
     // By now, selection is complete and we can check how much change to give according to our policy.
-    let drain = change_policy(&selector, target);
+    let drain = selector.drain(target, change_policy);
     let change_amount = bitcoin::Amount::from_sat(drain.value);
     // Max available change is given by the excess when adding a change output with zero value.
     let drain_novalue = bdk_coin_select::Drain {
@@ -536,7 +526,8 @@ pub trait TxGetter {
 pub enum SpendTxFees {
     /// The target feerate in sats/vb for this transaction.
     Regular(u64),
-    /// The (target feerate, minimum absolute fees) for this transactions. Both in sats.
+    /// The (target feerate in sats/vb, total fees in sats of transaction(s) to be replaced
+    /// including descendants) for this transaction.
     Rbf(u64, u64),
 }
 

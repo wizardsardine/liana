@@ -29,7 +29,7 @@ nonblocking_shutdown = []
 miniscript = { version = "11.0", features = ["serde", "compiler", "base64"] }
 
 # Coin selection algorithms for spend transaction creation.
-bdk_coin_select = { version = "0.1.0" }
+bdk_coin_select = "0.3"
 
 # Don't reinvent the wheel
 dirs = "5.0"
