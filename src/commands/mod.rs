@@ -897,18 +897,13 @@ impl DaemonControl {
         if !is_cancel {
             candidate_coins.extend(&confirmed_cands);
         }
-        // Try with increasing fee until fee paid by replacement transaction is high enough.
-        // Replacement fee must be at least:
-        // sum of fees paid by original transactions + incremental feerate * replacement size.
-        // Loop will continue until either we find a suitable replacement or we have insufficient funds.
-        let mut replacement_vsize = 0;
-        for incremental_feerate in 0.. {
-            let min_fee = descendant_fees.to_sat() + replacement_vsize * incremental_feerate;
-            let CreateSpendRes {
-                psbt: rbf_psbt,
-                has_change,
-                warnings,
-            } = match create_spend(
+        // The min fee is the fee of the transaction being replaced and its descendants. Coin selection
+        // will ensure that the replacement transaction additionally pays for its own weight as per
+        // RBF rule 4.
+        let min_fee = descendant_fees.to_sat();
+        // This loop can have up to 2 iterations in the case of cancel and otherwise only 1.
+        loop {
+            match create_spend(
                 &self.config.main_descriptor,
                 &self.secp,
                 &mut tx_getter,
@@ -917,7 +912,25 @@ impl DaemonControl {
                 SpendTxFees::Rbf(feerate_vb, min_fee),
                 change_address.clone(),
             ) {
-                Ok(psbt) => psbt,
+                Ok(CreateSpendRes {
+                    psbt,
+                    has_change,
+                    warnings,
+                }) => {
+                    // In case of success, make sure to update our next derivation index if any address
+                    // used in the transaction outputs was from the future.
+                    for (addr, _) in destinations {
+                        self.maybe_increase_next_deriv_index(&mut db_conn, &addr.info);
+                    }
+                    if has_change {
+                        self.maybe_increase_next_deriv_index(&mut db_conn, &change_address.info);
+                    }
+
+                    return Ok(CreateSpendResult::Success {
+                        psbt,
+                        warnings: warnings.iter().map(|w| w.to_string()).collect(),
+                    });
+                }
                 Err(SpendCreationError::CoinSelection(e)) => {
                     // If we get a coin selection error due to insufficient funds and we want to cancel the
                     // transaction, then set all previous coins as mandatory and add confirmed coins as
@@ -936,32 +949,7 @@ impl DaemonControl {
                     return Err(e.into());
                 }
             };
-            replacement_vsize = self
-                .config
-                .main_descriptor
-                .unsigned_tx_max_vbytes(&rbf_psbt.unsigned_tx);
-
-            // Make sure it satisfies RBF rule 4.
-            if rbf_psbt.fee().expect("has already been sanity checked")
-                >= descendant_fees + bitcoin::Amount::from_sat(replacement_vsize)
-            {
-                // In case of success, make sure to update our next derivation index if any address
-                // used in the transaction outputs was from the future.
-                for (addr, _) in destinations {
-                    self.maybe_increase_next_deriv_index(&mut db_conn, &addr.info);
-                }
-                if has_change {
-                    self.maybe_increase_next_deriv_index(&mut db_conn, &change_address.info);
-                }
-
-                return Ok(CreateSpendResult::Success {
-                    psbt: rbf_psbt,
-                    warnings: warnings.iter().map(|w| w.to_string()).collect(),
-                });
-            }
         }
-
-        unreachable!("We keep increasing the min fee until we run out of funds or satisfy rule 4.")
     }
 
     /// Trigger a rescan of the block chain for transactions involving our main descriptor between
