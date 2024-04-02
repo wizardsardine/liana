@@ -130,6 +130,6 @@ impl Text for iced::widget::Text<'_, iced::Renderer<Theme>> {
         self.font(font::BOLD)
     }
     fn small(self) -> Self {
-        self.size(20)
+        self.size(P1_SIZE)
     }
 }

@@ -72,7 +72,7 @@ pub fn recovery<'a>(
                                 ))
                             })
                             .warning("Invalid Bitcoin address")
-                            .size(20)
+                            .size(P1_SIZE)
                             .padding(10),
                         )
                         .max_width(500)
@@ -85,7 +85,7 @@ pub fn recovery<'a>(
                                 Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
                             })
                             .warning("Invalid feerate")
-                            .size(20)
+                            .size(P1_SIZE)
                             .padding(10),
                         )
                         .width(Length::Fixed(200.0)),
