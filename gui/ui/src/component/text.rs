@@ -1,22 +1,14 @@
 use crate::{font, theme::Theme};
 use std::borrow::Cow;
 
-// 40 * 1.2
-pub const H1_SIZE: u16 = 48;
-// 29 * 1.2
-pub const H2_SIZE: u16 = 35;
-// 24 * 1.2
-pub const H3_SIZE: u16 = 29;
-// 20 * 1.2
-pub const H4_SIZE: u16 = 24;
-// 18 * 1.2
-pub const H5_SIZE: u16 = 22;
-// 16 * 1.2
-pub const P1_SIZE: u16 = 20;
-// 14 * 1.2
-pub const P2_SIZE: u16 = 17;
-// 12 * 1.2
-pub const CAPTION_SIZE: u16 = 15;
+pub const H1_SIZE: u16 = 40;
+pub const H2_SIZE: u16 = 29;
+pub const H3_SIZE: u16 = 24;
+pub const H4_SIZE: u16 = 20;
+pub const H5_SIZE: u16 = 18;
+pub const P1_SIZE: u16 = 16;
+pub const P2_SIZE: u16 = 14;
+pub const CAPTION_SIZE: u16 = 12;
 
 pub fn h1<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
