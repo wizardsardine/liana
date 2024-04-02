@@ -276,7 +276,7 @@ pub fn bitcoind_edit<'a>(
                         |value| SettingsEditMessage::FieldEdited("cookie_file_path", value),
                     )
                     .warning("Please enter a valid filesystem path")
-                    .size(20)
+                    .size(P1_SIZE)
                     .padding(5),
                 )
                 .spacing(5),
@@ -288,7 +288,7 @@ pub fn bitcoind_edit<'a>(
                                 SettingsEditMessage::FieldEdited("user", value)
                             })
                             .warning("Please enter a valid user")
-                            .size(20)
+                            .size(P1_SIZE)
                             .padding(5),
                         )
                         .push(
@@ -296,7 +296,7 @@ pub fn bitcoind_edit<'a>(
                                 SettingsEditMessage::FieldEdited("password", value)
                             })
                             .warning("Please enter a valid password")
-                            .size(20)
+                            .size(P1_SIZE)
                             .padding(5),
                         )
                         .spacing(10),
@@ -311,7 +311,7 @@ pub fn bitcoind_edit<'a>(
                         SettingsEditMessage::FieldEdited("socket_address", value)
                     })
                     .warning("Please enter a valid address")
-                    .size(20)
+                    .size(P1_SIZE)
                     .padding(5),
                 )
                 .spacing(5),
@@ -512,7 +512,7 @@ pub fn rescan<'a>(
                                     form::Form::new_trimmed("2022", year, |value| {
                                         SettingsEditMessage::FieldEdited("rescan_year", value)
                                     })
-                                    .size(20)
+                                    .size(P1_SIZE)
                                     .padding(5),
                                 )
                                 .push(text("Month:").bold().small())
@@ -520,7 +520,7 @@ pub fn rescan<'a>(
                                     form::Form::new_trimmed("12", month, |value| {
                                         SettingsEditMessage::FieldEdited("rescan_month", value)
                                     })
-                                    .size(20)
+                                    .size(P1_SIZE)
                                     .padding(5),
                                 )
                                 .push(text("Day:").bold().small())
@@ -528,7 +528,7 @@ pub fn rescan<'a>(
                                     form::Form::new_trimmed("31", day, |value| {
                                         SettingsEditMessage::FieldEdited("rescan_day", value)
                                     })
-                                    .size(20)
+                                    .size(P1_SIZE)
                                     .padding(5),
                                 )
                                 .align_items(Alignment::Center)
@@ -674,7 +674,7 @@ pub fn wallet_settings<'a>(
                                             )
                                         })
                                         .warning("Please enter correct alias")
-                                        .size(20)
+                                        .size(P1_SIZE)
                                         .padding(10),
                                     ),
                             )

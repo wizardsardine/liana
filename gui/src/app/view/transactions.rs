@@ -251,7 +251,7 @@ pub fn create_rbf_modal<'a>(
                                 "Feerate must be greater than previous value and \
                                 less than or equal to 1000 sats/vbyte",
                             )
-                            .size(20)
+                            .size(P1_SIZE)
                             .padding(10),
                         )
                         .width(Length::Fill),

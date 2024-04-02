@@ -194,7 +194,7 @@ pub fn create_spend_tx<'a>(
                                     "Feerate must be an integer less than \
                                     or equal to 1000 sats/vbyte",
                                 )
-                                .size(20)
+                                .size(P1_SIZE)
                                 .padding(10),
                             )
                             .width(Length::FillPortion(1)),
@@ -346,7 +346,7 @@ pub fn recipient_view<'a>(
                             CreateSpendMessage::RecipientEdited(index, "address", msg)
                         })
                         .warning("Invalid address (maybe it is for another network?)")
-                        .size(20)
+                        .size(P1_SIZE)
                         .padding(10),
                     ),
             )
@@ -365,7 +365,7 @@ pub fn recipient_view<'a>(
                             CreateSpendMessage::RecipientEdited(index, "label", msg)
                         })
                         .warning("Label length is too long (> 100 char)")
-                        .size(20)
+                        .size(P1_SIZE)
                         .padding(10),
                     ),
             )
@@ -382,7 +382,9 @@ pub fn recipient_view<'a>(
                     .push_maybe(if is_max_selected {
                         Some(
                             Container::new(
-                                text(amount.value.clone()).size(20).style(color::GREY_2),
+                                text(amount.value.clone())
+                                    .size(P1_SIZE)
+                                    .style(color::GREY_2),
                             )
                             .padding(10)
                             .width(Length::Fill),
@@ -397,7 +399,7 @@ pub fn recipient_view<'a>(
                         .warning(
                             "Invalid amount. (Note amounts lower than 0.00005 BTC are invalid.)",
                         )
-                        .size(20)
+                        .size(P1_SIZE)
                         .padding(10))
                     } else {
                         None

@@ -1,4 +1,4 @@
-use crate::widget::*;
+use crate::{component::text::P1_SIZE, widget::*};
 use iced::{alignment, Font, Length};
 
 const BOOTSTRAP_ICONS: Font = Font::External {
@@ -11,7 +11,7 @@ fn bootstrap_icon(unicode: char) -> Text<'static> {
         .font(BOOTSTRAP_ICONS)
         .width(Length::Fixed(20.0))
         .horizontal_alignment(alignment::Horizontal::Center)
-        .size(20)
+        .size(P1_SIZE)
 }
 
 pub fn cross_icon() -> Text<'static> {
@@ -128,7 +128,7 @@ fn iconex_icon(unicode: char) -> Text<'static> {
         .font(ICONEX_ICONS)
         .width(Length::Fixed(20.0))
         .horizontal_alignment(alignment::Horizontal::Center)
-        .size(20)
+        .size(P1_SIZE)
 }
 
 pub fn arrow_repeat() -> Text<'static> {

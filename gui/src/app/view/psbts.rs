@@ -31,7 +31,7 @@ pub fn import_psbt_view<'a>(
                         Message::ImportSpend(ImportSpendMessage::PsbtEdited(msg))
                     })
                     .warning("Please enter a base64 encoded PSBT")
-                    .size(20)
+                    .size(P1_SIZE)
                     .padding(10),
                 )
                 .push(Row::new().push(Space::with_width(Length::Fill)).push(

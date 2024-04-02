@@ -5,6 +5,7 @@ use iced::widget::{
 use iced::{alignment, widget::progress_bar, Alignment, Length};
 
 use async_hwi::DeviceKind;
+use liana_ui::component::text;
 use std::path::PathBuf;
 use std::{collections::HashSet, str::FromStr};
 
@@ -484,7 +485,7 @@ pub fn import_descriptor<'a>(
             } else {
                 "Failed to read the descriptor"
             })
-            .size(20)
+            .size(text::P1_SIZE)
             .padding(10),
         )
         .spacing(10);
@@ -906,7 +907,7 @@ pub fn define_bitcoin<'a>(
                 ))
             })
             .warning("Please enter correct address")
-            .size(20)
+            .size(text::P1_SIZE)
             .padding(10),
         )
         .spacing(10);
@@ -944,7 +945,7 @@ pub fn define_bitcoin<'a>(
                     ))
                 })
                 .warning("Please enter correct path")
-                .size(20)
+                .size(text::P1_SIZE)
                 .padding(10),
             ),
             RpcAuthType::UserPass => Row::new()
@@ -956,7 +957,7 @@ pub fn define_bitcoin<'a>(
                         ))
                     })
                     .warning("Please enter correct user")
-                    .size(20)
+                    .size(text::P1_SIZE)
                     .padding(10),
                 )
                 .push(
@@ -967,7 +968,7 @@ pub fn define_bitcoin<'a>(
                         ))
                     })
                     .warning("Please enter correct password")
-                    .size(20)
+                    .size(text::P1_SIZE)
                     .padding(10),
                 )
                 .spacing(10),
@@ -1518,7 +1519,7 @@ pub fn edit_key_modal<'a>(
                                     } else {
                                         "Please enter correct tpub with origin and without appended derivation path"
                                     })
-                                    .size(20)
+                    .size(text::P1_SIZE)
                                     .padding(10),
                                 )
                                 .spacing(10)
@@ -1568,7 +1569,7 @@ pub fn edit_key_modal<'a>(
                                     ))
                                 })
                                 .warning("Please enter correct alias")
-                                .size(20)
+                                .size(text::P1_SIZE)
                                 .padding(10),
                             )
                     } else {
