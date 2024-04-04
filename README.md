@@ -45,8 +45,11 @@ If you just want to quickly try out Liana on Bitcoin Signet, see [`doc/TRY.md`](
 ## Hacking on Liana
 
 Liana is an open source project. It is [hosted at Github](https://github.com/wizardsardine/liana).
-Contributions are very welcome. See [here](CONTRIBUTING.md) for guidelines. Liana is separated in
-two main components: the daemon and the Graphical User Interface.
+Contributions are very welcome. See [here](CONTRIBUTING.md) for guidelines. Most regular
+contributors hang out on [our Discord](https://discord.gg/9rAqZHwkv6). Join us there if you have any
+question about contributing.
+
+Liana is separated in two main components: the daemon and the Graphical User Interface.
 
 #### Liana daemon
 
