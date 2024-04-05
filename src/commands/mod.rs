@@ -897,10 +897,10 @@ impl DaemonControl {
         if !is_cancel {
             candidate_coins.extend(&confirmed_cands);
         }
-        // The min fee is the fee of the transaction being replaced and its descendants. Coin selection
+        // The replaced fee is the fee of the transaction being replaced and its descendants. Coin selection
         // will ensure that the replacement transaction additionally pays for its own weight as per
         // RBF rule 4.
-        let min_fee = descendant_fees.to_sat();
+        let replaced_fee = descendant_fees.to_sat();
         // This loop can have up to 2 iterations in the case of cancel and otherwise only 1.
         loop {
             match create_spend(
@@ -909,7 +909,7 @@ impl DaemonControl {
                 &mut tx_getter,
                 &destinations,
                 &candidate_coins,
-                SpendTxFees::Rbf(feerate_vb, min_fee),
+                SpendTxFees::Rbf(feerate_vb, replaced_fee),
                 change_address.clone(),
             ) {
                 Ok(CreateSpendRes {

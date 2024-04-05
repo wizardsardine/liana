@@ -264,10 +264,10 @@ impl bdk_coin_select::BnbMetric for LowestFeeChangeCondition {
 /// and change may result in a slightly lower feerate than this as the underlying
 /// function instead uses a minimum feerate of `feerate_vb / 4.0` sats/wu.
 ///
-/// If this is a replacement spend using RBF, then `min_fee` should be set to
+/// If this is a replacement spend using RBF, then `replaced_fee` should be set to
 /// the total fees (in sats) of the transaction(s) being replaced, including any
 /// descendants, which will ensure that RBF rule 4 is satisfied.
-/// Otherwise, it should be set to 0.
+/// Otherwise, it should be `None`.
 ///
 /// `max_sat_weight` is the maximum weight difference of an input in the
 /// transaction before and after satisfaction.
@@ -279,7 +279,7 @@ fn select_coins_for_spend(
     base_tx: bitcoin::Transaction,
     change_txo: bitcoin::TxOut,
     feerate_vb: f32,
-    min_fee: u64,
+    replaced_fee: Option<u64>,
     max_sat_weight: u32,
     must_have_change: bool,
 ) -> Result<CoinSelectionRes, InsufficientFunds> {
@@ -380,11 +380,7 @@ fn select_coins_for_spend(
 
     // Finally, run the coin selection algorithm. We use an opportunistic BnB and if it couldn't
     // find any solution we fall back to selecting coins by descending value.
-    let replace = if min_fee > 0 {
-        Some(Replace::new(min_fee))
-    } else {
-        None
-    };
+    let replace = replaced_fee.map(Replace::new);
     let target_fee = TargetFee {
         rate: feerate,
         replace,
@@ -617,9 +613,9 @@ pub fn create_spend(
     // 4. Finalize the PSBT and sanity check it before returning it.
 
     let mut warnings = Vec::new();
-    let (feerate_vb, min_fee) = match fees {
-        SpendTxFees::Regular(feerate) => (feerate, 0),
-        SpendTxFees::Rbf(feerate, fee) => (feerate, fee),
+    let (feerate_vb, replaced_fee) = match fees {
+        SpendTxFees::Regular(feerate) => (feerate, None),
+        SpendTxFees::Rbf(feerate, fee) => (feerate, Some(fee)),
     };
     let is_self_send = destinations.is_empty();
     if feerate_vb < 1 {
@@ -696,7 +692,7 @@ pub fn create_spend(
             tx.clone(),
             change_txo.clone(),
             feerate_vb,
-            min_fee,
+            replaced_fee,
             max_sat_wu,
             is_self_send,
         )
