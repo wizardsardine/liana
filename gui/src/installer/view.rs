@@ -758,7 +758,16 @@ pub fn register_descriptor<'a>(
             .push(card::simple(
                 Column::new()
                     .push(text("The descriptor:").small().bold())
-                    .push(text(descriptor.clone()).small())
+                    .push(
+                        scrollable(
+                            Column::new()
+                                .push(text(descriptor.to_owned()).small())
+                                .push(Space::with_height(Length::Fixed(5.0))),
+                        )
+                        .direction(scrollable::Direction::Horizontal(
+                            scrollable::Properties::new().width(5).scroller_width(5),
+                        )),
+                    )
                     .push(
                         Row::new().push(Column::new().width(Length::Fill)).push(
                             button::secondary(Some(icon::clipboard_icon()), "Copy")
@@ -859,7 +868,16 @@ pub fn backup_descriptor<'a>(
             .push(card::simple(
                 Column::new()
                     .push(text("The descriptor:").small().bold())
-                    .push(text(descriptor.clone()).small())
+                    .push(
+                        scrollable(
+                            Column::new()
+                                .push(text(descriptor.to_owned()).small())
+                                .push(Space::with_height(Length::Fixed(5.0))),
+                        )
+                        .direction(scrollable::Direction::Horizontal(
+                            scrollable::Properties::new().width(5).scroller_width(5),
+                        )),
+                    )
                     .push(
                         Row::new().push(Column::new().width(Length::Fill)).push(
                             button::secondary(Some(icon::clipboard_icon()), "Copy")
