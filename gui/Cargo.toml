@@ -21,7 +21,7 @@ liana_ui = { path = "ui" }
 backtrace = "0.3"
 hex = "0.4.3"
 
-iced = { version = "0.12.1", default-features = false, features = ["tokio", "svg", "qr_code", "image", "lazy", "wgpu"] }
+iced = { version = "0.12.1", default-features = false, features = ["tokio", "svg", "qr_code", "image", "lazy", "wgpu", "advanced"] }
 iced_runtime = "0.12.1"
 
 tokio = {version = "1.21.0", features = ["signal"]}
