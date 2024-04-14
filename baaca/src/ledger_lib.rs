@@ -1,8 +1,11 @@
 use ledger_apdu::APDUCommand;
 use ledger_transport_hidapi::TransportNativeHID;
 use serde_derive::Deserialize;
+use form_urlencoded::Serializer as UrlSerializer;
 
+use crate::ledger::{Model, Version};
 use std::{error, str};
+use ledger_transport_hidapi::hidapi::HidApi;
 
 // https://github.com/LedgerHQ/ledger-live/blob/dd1d17fd3ce7ed42558204b2f93707fb9b1599de/libs/device-core/src/commands/use-cases/getVersion.ts#L6
 const GET_VERSION_COMMAND: APDUCommand<&[u8]> = APDUCommand {
@@ -548,6 +551,8 @@ pub fn bitcoin_app(
         "bitcoin"
     };
     log::debug!("call ledger API");
+    // TODO: minreq seems to be way too long to connect API
+    // TODO: Or can we map firmware_version_name values to the version names?
     let resp_apps = minreq::Request::new(
         minreq::Method::Get,
         format!("{}/apps/by-target", BASE_API_V2_URL),
@@ -588,3 +593,269 @@ pub fn open_bitcoin_app(
 
     Ok(())
 }
+
+/// Call Ledger API in order to have app details
+pub fn get_app_version(info: &DeviceInfo, testnet: bool) -> Result<(Model, Version), String> {
+    log::debug!("get_app_version()");
+    match bitcoin_app(info, testnet) {
+        Ok(r) => {
+            log::debug!("decoding app data");
+            // example for nano s
+            // BitcoinAppV2 { version_name: "Bitcoin Test", perso: "perso_11", delete_key: "nanos/2.1.0/bitcoin_testnet/app_2.2.1_del_key", firmware: "nanos/2.1.0/bitcoin_testnet/app_2.2.1", firmware_key: "nanos/2.1.0/bitcoin_testnet/app_2.2.1_key", hash: "7f07efc20d96faaf8c93bd179133c88d1350113169da914f88e52beb35fcdd1e" }
+            // example for nano s+
+            // BitcoinAppV2 { version_name: "Bitcoin Test", perso: "perso_11", delete_key: "nanos+/1.1.0/bitcoin_testnet/app_2.2.0-beta_del_key", firmware: "nanos+/1.1.0/bitcoin_testnet/app_2.2.0-beta", firmware_key: "nanos+/1.1.0/bitcoin_testnet/app_2.2.0-beta_key", hash: "3c6d6ebebb085da948c0211434b90bc4504a04a133b8d0621aa0ee91fd3a0b4f" }
+            if let Some(app) = r {
+                let chunks: Vec<&str> = app.firmware.split('/').collect();
+                let model = chunks.first().map(|m| m.to_string());
+                let version = chunks.last().map(|m| m.to_string());
+                if let (Some(model), Some(version)) = (model, version) {
+                    let model = if model == "nanos" {
+                        Model::NanoS
+                    } else if model == "nanos+" {
+                        Model::NanoSP
+                        // i guess `nanox` for the nano x but i don't have device to test
+                    } else if model == "nanox" {
+                        Model::NanoX
+                    } else {
+                        Model::Unknown
+                    };
+
+                    let version = if version.contains("app_") {
+                        version.replace("app_", "")
+                    } else {
+                        version
+                    };
+
+                    let version = Version::Installed(version);
+                    if testnet {
+                        log::debug!("Testnet Model{}, Version{}", model.clone(), version.clone());
+                    } else {
+                        log::debug!("Mainnet Model{}, Version{}", model.clone(), version.clone());
+                    }
+                    Ok((model, version))
+                } else {
+                    Err(format!("Failed to parse  model/version in {:?}", chunks))
+                }
+            } else {
+                log::debug!("Fail to get version info");
+                Err("Fail to get version info".to_string())
+            }
+        }
+        Err(e) => {
+            log::debug!("Fail to get version info: {}", e);
+            Err(format!("Fail to get version info: {}", e))
+        }
+    }
+}
+
+pub struct VersionInfo {
+    pub device_model: Option<Model>,
+    pub device_version: Option<String>,
+    pub mainnet_version: Option<Version>,
+    pub testnet_version: Option<Version>,
+}
+
+pub fn get_version_info<V, M>(
+    transport: TransportNativeHID,
+    actual_device_version: &Option<String>,
+    version_callback: V,
+    msg_callback: M,
+) -> Result<VersionInfo, ()>
+where
+    V: Fn(Option<String>, Option<String>),
+    M: Fn(&str, bool),
+{
+    let mut device_version: Option<String> = None;
+    let info = match device_info(&transport) {
+        Ok(info) => {
+            log::info!("Device connected");
+            log::debug!("Device version: {}", &info.version);
+            msg_callback(
+                &format!("Device connected, version: {}", &info.version),
+                false,
+            );
+            if actual_device_version.is_none() {
+                version_callback(Some("Ledger".to_string()), Some(info.version.clone()));
+            }
+            device_version = Some(info.version.clone());
+            Some(info)
+        }
+        Err(e) => {
+            log::debug!("Failed connect device: {}", &e);
+            msg_callback(&e, true);
+            None
+        }
+    };
+
+    if let Some(info) = info {
+        // if it's our first connection, we check the if apps are installed & version
+        msg_callback(
+            "Querying installed apps. Please confirm on device.",
+            false,
+        );
+        if actual_device_version.is_none() && device_version.is_some() {
+            if let Ok((main_installed, test_installed)) =
+                check_apps_installed(&transport, &msg_callback)
+            {
+                // get the mainnet app version name
+                let (main_model, main_version) = if main_installed {
+                    msg_callback("Call ledger API....", false);
+                    match get_app_version(&info, true) {
+                        Ok((model, version)) => (model, version),
+                        Err(e) => {
+                            msg_callback(&e, true);
+                            (Model::Unknown, Version::None)
+                        }
+                    }
+                } else {
+                    log::debug!("Mainnet app not installed!");
+                    // self.display_message("Mainnet app not installed!", false);
+                    (Model::Unknown, Version::NotInstalled)
+                };
+
+                // get the testnet app version name
+                let (test_model, test_version) = if test_installed {
+                    msg_callback("Call ledger API....", false);
+                    match get_app_version(&info, true) {
+                        Ok((model, version)) => (model, version),
+                        Err(e) => {
+                            msg_callback(&e, false);
+                            (Model::Unknown, Version::None)
+                        }
+                    }
+                } else {
+                    log::debug!("Testnet app not installed!");
+                    (Model::Unknown, Version::NotInstalled)
+                };
+
+                let model = match (&main_model, &test_model) {
+                    (Model::Unknown, _) => test_model,
+                    _ => main_model,
+                };
+                msg_callback("", false);
+
+                return Ok(VersionInfo {
+                    device_model: Some(model),
+                    device_version,
+                    mainnet_version: Some(main_version),
+                    testnet_version: Some(test_version),
+                });
+            }
+        }
+        Ok(VersionInfo {
+            device_model: None,
+            device_version,
+            mainnet_version: None,
+            testnet_version: None,
+        })
+    } else {
+        Err(())
+    }
+}
+
+fn check_apps_installed<M>(
+    transport: &TransportNativeHID,
+    msg_callback: M,
+) -> Result<(bool, bool), ()>
+where
+    M: Fn(&str, bool),
+{
+    msg_callback(
+        "Querying installed apps. Please confirm on device.",
+        false,
+    );
+    let mut mainnet = false;
+    let mut testnet = false;
+    match list_installed_apps(transport) {
+        Ok(apps) => {
+            log::debug!("List installed apps:");
+            msg_callback("List installed apps...", false);
+            for app in apps {
+                log::debug!("  [{}]", &app.name);
+                if app.name == "Bitcoin" {
+                    mainnet = true
+                }
+                if app.name == "Bitcoin Test" {
+                    testnet = true
+                }
+            }
+        }
+        Err(e) => {
+            log::debug!("Error listing installed applications: {}.", e);
+            msg_callback(
+                &format!("Error listing installed applications: {}.", e),
+                true,
+            );
+            return Err(());
+        }
+    }
+    if mainnet {
+        log::debug!("Mainnet App installed");
+    }
+    if testnet {
+        log::debug!("Testnet App installed");
+    }
+    msg_callback("", false);
+    Ok((mainnet, testnet))
+}
+
+pub fn install_app<M>(
+    transport: &TransportNativeHID,
+    msg_callback: M,
+    testnet: bool)
+where
+    M: Fn(&str, bool),
+{
+    log::debug!("install_app(testnet={})", testnet);
+
+    msg_callback("Get device info from API...", false);
+    if let Ok(device_info) = device_info(transport) {
+        let bitcoin_app = match bitcoin_app(&device_info, testnet) {
+            Ok(Some(a)) => a,
+            Ok(None) => {
+                msg_callback("Could not get info about Bitcoin app.", true);
+                return;
+            }
+            Err(e) => {
+                msg_callback(
+                    &format!("Error querying info about Bitcoin app: {}.", e),
+                    true,
+                );
+                return;
+            }
+        };
+        msg_callback(
+            "Installing, please allow Ledger manager on device...",
+            false,
+        );
+        // Now install the app by connecting through their websocket thing to their HSM. Make sure to
+        // properly escape the parameters in the request's parameter.
+        let install_ws_url = UrlSerializer::new(format!("{}/install?", BASE_SOCKET_URL))
+            .append_pair("targetId", &device_info.target_id.to_string())
+            .append_pair("perso", &bitcoin_app.perso)
+            .append_pair("deleteKey", &bitcoin_app.delete_key)
+            .append_pair("firmware", &bitcoin_app.firmware)
+            .append_pair("firmwareKey", &bitcoin_app.firmware_key)
+            .append_pair("hash", &bitcoin_app.hash)
+            .finish();
+        msg_callback("Install app...", false);
+        if let Err(e) = query_via_websocket(transport, &install_ws_url) {
+            msg_callback(&format!("Got an error when installing Bitcoin app from Ledger's remote HSM: {}.", e), false);
+            return;
+        }
+        msg_callback("Successfully installed the app.", false);
+    } else {
+        msg_callback("Fail to fetch device info!", true);
+    }
+}
+
+pub fn ledger_api() -> Result<HidApi, String> {
+    HidApi::new().map_err(|e| format!("Error initializing HDI api: {}.", e))
+}
+
+pub fn device_info(ledger_api: &TransportNativeHID) -> Result<DeviceInfo, String> {
+    DeviceInfo::new(ledger_api)
+        .map_err(|e| format!("Error fetching device info: {}. Is the Ledger unlocked?", e))
+}
+
+

@@ -1,6 +1,6 @@
 use async_channel::{Receiver, Sender};
 
-pub trait ClientFn<Message, Args> {
+pub trait ServiceFn<Message, Args> {
     fn new(sender: Sender<Message>, receiver: Receiver<Message>, args: Args) -> Self;
     async fn run(&mut self);
 }

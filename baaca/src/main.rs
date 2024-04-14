@@ -1,21 +1,23 @@
-mod client;
 mod color;
 mod gui;
 mod ledger;
 mod ledger_lib;
-mod ledger_manager;
-mod theme;
 mod logger;
+mod service;
+mod theme;
 
-use crate::{client::ClientFn, gui::{Flags, LedgerInstaller}, ledger::LedgerClient};
+use crate::{
+    gui::{Flags, LedgerInstaller},
+    ledger::LedgerService,
+    service::ServiceFn,
+};
 
 use iced::{window::icon, Application, Settings, Size};
-
 
 #[tokio::main]
 async fn main() {
     logger::set_logger(true);
-    
+
     let (ledger_sender, gui_ledger_receiver) = async_channel::unbounded();
     let (gui_ledger_sender, ledger_receiver) = async_channel::unbounded();
 
@@ -24,7 +26,7 @@ async fn main() {
         ledger_receiver: gui_ledger_receiver,
     };
 
-    let ledger = LedgerClient::new(ledger_sender, ledger_receiver, gui_ledger_sender);
+    let ledger = LedgerService::new(ledger_sender, ledger_receiver, gui_ledger_sender);
     ledger.start();
 
     const ICON: &[u8] = include_bytes!("sardine.png");

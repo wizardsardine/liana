@@ -20,7 +20,7 @@ pub struct Flags {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    LedgerClientMsg(LedgerMessage),
+    LedgerServiceMsg(LedgerMessage),
 
     UpdateMain,
     InstallMain,
@@ -84,7 +84,7 @@ impl Application for LedgerInstaller {
     fn update(&mut self, event: Message) -> Command<Message> {
         log::debug!("Gui receive: {:?}", event.clone());
         match event {
-            Message::LedgerClientMsg(ledger) => match ledger {
+            Message::LedgerServiceMsg(ledger) => match ledger {
                 LedgerMessage::Connected(model, version) => {
                     if model.is_none() {
                         self.main_app_version = Version::None;
