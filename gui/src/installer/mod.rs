@@ -155,7 +155,6 @@ impl Installer {
                     ParticipateXpub::new(self.signer.clone()).into(),
                     ImportDescriptor::new(false).into(),
                     BackupMnemonic::new(self.signer.clone()).into(),
-                    BackupDescriptor::default().into(),
                     RegisterDescriptor::new_import_wallet().into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&self.context.data_dir).into(),

@@ -721,7 +721,7 @@ pub fn participate_xpub<'a>(
                 shared,
                 Message::UserActionDone,
             ))
-            .push(if shared {
+            .push(if shared && network_valid {
                 button::primary(None, "Next")
                     .width(Length::Fixed(200.0))
                     .on_press(Message::Next)
