@@ -33,3 +33,18 @@ As of this writing, Coldcard on Taproot will only be usable for descriptors whic
 key as their primary path. This is due to a discrepancy in how Coldcard derives [deterministically
 unspendable Taproot internal
 keys](https://delvingbitcoin.org/t/unspendable-keys-in-descriptors/304).
+
+## [Jade](https://github.com/Blockstream/Jade)
+
+Version 1.0.30 of the firmware is supported for use in P2WSH descriptors.
+
+Support for use in Taproot descriptors is not yet available in the firmware.
+
+After the setup of the device, the first connection to set the pin will set also the network.
+The network cannot be change unless doing a factory reset.
+
+If using "QrCode" mode, the device will refuse other communication channels like USB.
+
+If using "Temporary Signer", the first connection through USB will setup the network, a new session
+is required in order to change it. If using the Liana gui installer, is is advised to first choose
+the network before connecting the Jade in "Temporary signer" mode.
