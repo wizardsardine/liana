@@ -66,7 +66,7 @@ impl LabelsEdited {
                     }
                     return Ok(Command::perform(
                         async move {
-                            daemon.update_labels(&updated_labels)?;
+                            daemon.update_labels(&updated_labels).await?;
                             Ok(updated_labels_str)
                         },
                         Message::LabelsUpdated,

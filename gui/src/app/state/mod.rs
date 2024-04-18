@@ -230,8 +230,9 @@ impl State for Home {
                     return Command::perform(
                         async move {
                             let mut limit = view::home::HISTORY_EVENT_PAGE_SIZE;
-                            let mut events =
-                                daemon.list_history_txs(0_u32, last_event_date, limit)?;
+                            let mut events = daemon
+                                .list_history_txs(0_u32, last_event_date, limit)
+                                .await?;
 
                             // because gethistory cursor is inclusive and use blocktime
                             // multiple events can occur in the same block.
@@ -253,7 +254,7 @@ impl State for Home {
                             {
                                 // increments of the equivalent of one page more.
                                 limit += view::home::HISTORY_EVENT_PAGE_SIZE;
-                                events = daemon.list_history_txs(0, last_event_date, limit)?;
+                                events = daemon.list_history_txs(0, last_event_date, limit).await?;
                             }
                             Ok(events)
                         },
@@ -284,13 +285,14 @@ impl State for Home {
             .unwrap();
         Command::batch(vec![
             Command::perform(
-                async move { daemon3.list_pending_txs().map_err(|e| e.into()) },
+                async move { daemon3.list_pending_txs().await.map_err(|e| e.into()) },
                 Message::PendingTransactions,
             ),
             Command::perform(
                 async move {
                     daemon1
                         .list_history_txs(0, now, view::home::HISTORY_EVENT_PAGE_SIZE)
+                        .await
                         .map_err(|e| e.into())
                 },
                 Message::HistoryTransactions,
@@ -299,6 +301,7 @@ impl State for Home {
                 async move {
                     daemon2
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+                        .await
                         .map(|res| res.coins)
                         .map_err(|e| e.into())
                 },

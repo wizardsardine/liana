@@ -161,6 +161,7 @@ impl State for ReceivePanel {
                     async move {
                         daemon
                             .get_new_address()
+                            .await
                             .map(|res| (res.address, res.derivation_index))
                             .map_err(|e| e.into())
                     },
@@ -200,6 +201,7 @@ impl State for ReceivePanel {
             async move {
                 daemon
                     .get_new_address()
+                    .await
                     .map(|res| (res.address, res.derivation_index))
                     .map_err(|e| e.into())
             },

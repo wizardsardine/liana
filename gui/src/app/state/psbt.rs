@@ -173,6 +173,7 @@ impl PsbtState {
                     async move {
                         daemon
                             .list_coins(&[CoinStatus::Spending], &outpoints)
+                            .await
                             .map(|res| {
                                 res.coins
                                     .iter()
@@ -275,8 +276,8 @@ impl Action for SaveAction {
                 }
                 return Command::perform(
                     async move {
-                        daemon.update_spend_tx(&psbt)?;
-                        daemon.update_labels(&labels).map_err(|e| e.into())
+                        daemon.update_spend_tx(&psbt).await?;
+                        daemon.update_labels(&labels).await.map_err(|e| e.into())
                     },
                     Message::Updated,
                 );
@@ -323,6 +324,7 @@ impl Action for BroadcastAction {
                     async move {
                         daemon
                             .broadcast_spend_tx(&psbt.unsigned_tx.txid())
+                            .await
                             .map_err(|e| e.into())
                     },
                     Message::Updated,
@@ -375,6 +377,7 @@ impl Action for DeleteAction {
                     async move {
                         daemon
                             .delete_spend_tx(&psbt.unsigned_tx.txid())
+                            .await
                             .map_err(|e| e.into())
                     },
                     Message::Updated,
@@ -482,7 +485,7 @@ impl Action for SignAction {
                         merge_signatures(&mut tx.psbt, &psbt);
                         if self.is_saved {
                             return Command::perform(
-                                async move { daemon.update_spend_tx(&psbt).map_err(|e| e.into()) },
+                                async move { daemon.update_spend_tx(&psbt).await.map_err(|e| e.into()) },
                                 Message::Updated,
                             );
                         // If the spend transaction was never saved before, then both the psbt and
@@ -496,8 +499,8 @@ impl Action for SignAction {
                             }
                             return Command::perform(
                                 async move {
-                                    daemon.update_spend_tx(&psbt)?;
-                                    daemon.update_labels(&labels).map_err(|e| e.into())
+                                    daemon.update_spend_tx(&psbt).await?;
+                                    daemon.update_labels(&labels).await.map_err(|e| e.into())
                                 },
                                 Message::Updated,
                             );
@@ -727,7 +730,7 @@ impl Action for UpdateAction {
                     self.error = None;
                     let updated = Psbt::from_str(&self.updated.value).expect("Already checked");
                     return Command::perform(
-                        async move { daemon.update_spend_tx(&updated).map_err(|e| e.into()) },
+                        async move { daemon.update_spend_tx(&updated).await.map_err(|e| e.into()) },
                         Message::Updated,
                     );
                 }

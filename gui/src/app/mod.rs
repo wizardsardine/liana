@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::{clipboard, time, Command, Subscription};
+use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
 pub use liana::{commands::CoinStatus, config::Config as DaemonConfig, miniscript::bitcoin};
@@ -155,11 +156,12 @@ impl App {
     fn set_current_panel(&mut self, menu: Menu) -> Command<Message> {
         match &menu {
             menu::Menu::TransactionPreSelected(txid) => {
-                if let Ok(Some(tx)) = self
-                    .daemon
-                    .get_history_txs(&[*txid])
-                    .map(|txs| txs.first().cloned())
-                {
+                if let Ok(Some(tx)) = Handle::current().block_on(async {
+                    self.daemon
+                        .get_history_txs(&[*txid])
+                        .await
+                        .map(|txs| txs.first().cloned())
+                }) {
                     self.panels.transactions.preselect(tx);
                     self.panels.current = menu;
                     return Command::none();
@@ -169,11 +171,12 @@ impl App {
                 // Get preselected spend from DB in case it's not yet in the cache.
                 // We only need this single spend as we will go straight to its view and not show the PSBTs list.
                 // In case of any error loading the spend or if it doesn't exist, load PSBTs list in usual way.
-                if let Ok(Some(spend_tx)) = self
-                    .daemon
-                    .list_spend_transactions(Some(&[*txid]))
-                    .map(|txs| txs.first().cloned())
-                {
+                if let Ok(Some(spend_tx)) = Handle::current().block_on(async {
+                    self.daemon
+                        .list_spend_transactions(Some(&[*txid]))
+                        .await
+                        .map(|txs| txs.first().cloned())
+                }) {
                     self.panels.psbts.preselect(spend_tx);
                     self.panels.current = menu;
                     return Command::none();
@@ -201,6 +204,7 @@ impl App {
             }
             _ => {}
         };
+
         self.panels.current = menu;
         self.panels
             .current_mut()
@@ -217,7 +221,7 @@ impl App {
     pub fn stop(&mut self) {
         info!("Close requested");
         if !self.daemon.is_external() {
-            if let Err(e) = self.daemon.stop() {
+            if let Err(e) = Handle::current().block_on(async { self.daemon.stop().await }) {
                 error!("{}", e);
             } else {
                 info!("Internal daemon stopped");
@@ -236,11 +240,12 @@ impl App {
                 Command::perform(
                     async move {
                         // we check every 10 second if the daemon poller is alive
-                        daemon.is_alive()?;
+                        daemon.is_alive().await?;
 
-                        let info = daemon.get_info()?;
+                        let info = daemon.get_info().await?;
                         let coins = daemon
-                            .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])?;
+                            .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+                            .await?;
                         Ok(Cache {
                             datadir_path,
                             coins: coins.coins,
@@ -284,7 +289,7 @@ impl App {
         daemon_config_path: &PathBuf,
         cfg: DaemonConfig,
     ) -> Result<(), Error> {
-        self.daemon.stop()?;
+        Handle::current().block_on(async { self.daemon.stop().await })?;
         let daemon = EmbeddedDaemon::start(cfg)?;
         self.daemon = Arc::new(daemon);
 

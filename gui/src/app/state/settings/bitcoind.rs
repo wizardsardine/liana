@@ -420,7 +420,9 @@ impl RescanSetting {
                 info!("Asking deamon to rescan with timestamp: {}", t);
                 return Command::perform(
                     async move {
-                        daemon.start_rescan(t.try_into().expect("t cannot be inferior to 0 otherwise genesis block timestam is chosen")).map_err(|e| e.into())
+                        daemon.start_rescan(t.try_into().expect("t cannot be inferior to 0 otherwise genesis block timestamp is chosen"))
+                            .await
+                            .map_err(|e| e.into())
                     },
                     Message::StartRescan,
                 );

@@ -128,7 +128,12 @@ impl State for PsbtsPanel {
         self.import_tx = None;
         let daemon = daemon.clone();
         Command::perform(
-            async move { daemon.list_spend_transactions(None).map_err(|e| e.into()) },
+            async move {
+                daemon
+                    .list_spend_transactions(None)
+                    .await
+                    .map_err(|e| e.into())
+            },
             Message::SpendTxs,
         )
     }
@@ -194,7 +199,12 @@ impl ImportPsbtModal {
                     self.error = None;
                     let imported = Psbt::from_str(&self.imported.value).expect("Already checked");
                     return Command::perform(
-                        async move { daemon.update_spend_tx(&imported).map_err(|e| e.into()) },
+                        async move {
+                            daemon
+                                .update_spend_tx(&imported)
+                                .await
+                                .map_err(|e| e.into())
+                        },
                         Message::Updated,
                     );
                 }

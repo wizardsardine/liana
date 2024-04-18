@@ -164,7 +164,7 @@ impl State for AboutSettingsState {
         _wallet: Arc<Wallet>,
     ) -> Command<Message> {
         Command::perform(
-            async move { daemon.get_info().map_err(|e| e.into()) },
+            async move { daemon.get_info().await.map_err(|e| e.into()) },
             Message::Info,
         )
     }

@@ -2643,6 +2643,7 @@ name = "liana_gui"
 version = "5.0.0"
 dependencies = [
  "async-hwi",
+ "async-trait",
  "backtrace",
  "base64 0.21.6",
  "bitcoin_hashes 0.12.0",

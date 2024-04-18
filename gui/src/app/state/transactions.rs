@@ -160,6 +160,7 @@ impl State for TransactionsPanel {
                             async move {
                                 daemon
                                     .list_coins(&[CoinStatus::Spending], &outpoints)
+                                    .await
                                     .map(|res| {
                                         res.coins
                                             .iter()
@@ -202,7 +203,8 @@ impl State for TransactionsPanel {
                     return Command::perform(
                         async move {
                             let mut limit = view::home::HISTORY_EVENT_PAGE_SIZE;
-                            let mut txs = daemon.list_history_txs(0_u32, last_tx_date, limit)?;
+                            let mut txs =
+                                daemon.list_history_txs(0_u32, last_tx_date, limit).await?;
 
                             // because gethistory cursor is inclusive and use blocktime
                             // multiple txs can occur in the same block.
@@ -224,7 +226,7 @@ impl State for TransactionsPanel {
                             {
                                 // increments of the equivalent of one page more.
                                 limit += view::home::HISTORY_EVENT_PAGE_SIZE;
-                                txs = daemon.list_history_txs(0, last_tx_date, limit)?;
+                                txs = daemon.list_history_txs(0, last_tx_date, limit).await?;
                             }
                             Ok(txs)
                         },
@@ -257,13 +259,14 @@ impl State for TransactionsPanel {
             .unwrap();
         Command::batch(vec![
             Command::perform(
-                async move { daemon2.list_pending_txs().map_err(|e| e.into()) },
+                async move { daemon2.list_pending_txs().await.map_err(|e| e.into()) },
                 Message::PendingTransactions,
             ),
             Command::perform(
                 async move {
                     daemon1
                         .list_history_txs(0, now, view::home::HISTORY_EVENT_PAGE_SIZE)
+                        .await
                         .map_err(|e| e.into())
                 },
                 Message::HistoryTransactions,
@@ -405,7 +408,10 @@ async fn rbf(
     feerate_vb: Option<u64>,
 ) -> Result<Txid, Error> {
     let previous_txid = previous_tx.tx.txid();
-    let psbt = match daemon.rbf_psbt(&previous_txid, is_cancel, feerate_vb)? {
+    let psbt = match daemon
+        .rbf_psbt(&previous_txid, is_cancel, feerate_vb)
+        .await?
+    {
         CreateSpendResult::Success { psbt, .. } => psbt,
         CreateSpendResult::InsufficientFunds { missing } => {
             return Err(
@@ -445,9 +451,9 @@ async fn rbf(
             }
         }
 
-        daemon.update_labels(&labels)?;
+        daemon.update_labels(&labels).await?;
     }
 
-    daemon.update_spend_tx(&psbt)?;
+    daemon.update_spend_tx(&psbt).await?;
     Ok(psbt.unsigned_tx.txid())
 }

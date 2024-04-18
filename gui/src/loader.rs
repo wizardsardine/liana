@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::{Alignment, Command, Length, Subscription};
+use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
 use liana::{
@@ -229,7 +230,7 @@ impl Loader {
         if let Step::Syncing { daemon, .. } = &mut self.step {
             if !daemon.is_external() {
                 info!("Stopping internal daemon...");
-                if let Err(e) = daemon.stop() {
+                if let Err(e) = Handle::current().block_on(async { daemon.stop().await }) {
                     warn!("Internal daemon failed to stop: {}", e);
                 } else {
                     info!("Internal daemon stopped");
@@ -373,6 +374,7 @@ pub async fn load_application(
 
     let coins = daemon
         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+        .await
         .map(|res| res.coins)?;
 
     let cache = Cache {
@@ -484,7 +486,7 @@ async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, 
     let daemon = Lianad::new(client);
 
     debug!("Searching for external daemon");
-    daemon.get_info()?;
+    daemon.get_info().await?;
     info!("Connected to external daemon");
 
     Ok(Arc::new(daemon))
@@ -532,7 +534,7 @@ async fn sync(
     if sleep {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
-    daemon.get_info()
+    daemon.get_info().await
 }
 
 #[allow(clippy::large_enum_variant)]
