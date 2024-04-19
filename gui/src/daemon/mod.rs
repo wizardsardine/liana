@@ -3,12 +3,13 @@ pub mod embedded;
 pub mod model;
 
 use std::collections::{HashMap, HashSet};
+use std::convert::TryInto;
 use std::fmt::Debug;
 use std::io::ErrorKind;
 use std::iter::FromIterator;
 
 use liana::{
-    commands::LabelItem,
+    commands::{CoinStatus, LabelItem, TransactionInfo},
     config::Config,
     miniscript::bitcoin::{address, psbt::Psbt, secp256k1, Address, OutPoint, Txid},
     StartupError,
@@ -56,7 +57,11 @@ pub trait Daemon: Debug {
     fn stop(&self) -> Result<(), DaemonError>;
     fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;
     fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;
-    fn list_coins(&self) -> Result<model::ListCoinsResult, DaemonError>;
+    fn list_coins(
+        &self,
+        statuses: &[CoinStatus],
+        outpoints: &[OutPoint],
+    ) -> Result<model::ListCoinsResult, DaemonError>;
     fn list_spend_txs(&self) -> Result<model::ListSpendResult, DaemonError>;
     fn create_spend_tx(
         &self,
@@ -102,15 +107,26 @@ pub trait Daemon: Debug {
         txids: Option<&[Txid]>,
     ) -> Result<Vec<model::SpendTx>, DaemonError> {
         let info = self.get_info()?;
-        let coins = self.list_coins()?.coins;
         let mut spend_txs = Vec::new();
         let curve = secp256k1::Secp256k1::verification_only();
-        for tx in self.list_spend_txs()?.spend_txs {
-            if let Some(txids) = txids {
-                if !txids.contains(&tx.psbt.unsigned_tx.txid()) {
-                    continue;
-                }
-            }
+        // TODO: Use filters in `list_spend_txs` command.
+        let mut txs = self.list_spend_txs()?.spend_txs;
+        if let Some(txids) = txids {
+            txs.retain(|tx| txids.contains(&tx.psbt.unsigned_tx.txid()));
+        }
+        let outpoints: Vec<_> = txs
+            .iter()
+            .flat_map(|tx| {
+                tx.psbt
+                    .unsigned_tx
+                    .input
+                    .iter()
+                    .map(|txin| txin.previous_output)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let coins = self.list_coins(&[], &outpoints)?.coins;
+        for tx in txs {
             let coins = coins
                 .iter()
                 .filter(|coin| {
@@ -145,87 +161,86 @@ pub trait Daemon: Debug {
         Ok(spend_txs)
     }
 
+    fn txs_to_historytxs(
+        &self,
+        txs: Vec<TransactionInfo>,
+    ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
+        let info = self.get_info()?;
+        let outpoints: Vec<_> = txs
+            .iter()
+            .flat_map(|tx| {
+                (0..tx.tx.output.len())
+                    .map(|vout| {
+                        OutPoint::new(
+                            tx.tx.txid(),
+                            vout.try_into()
+                                .expect("number of transaction outputs must fit in u32"),
+                        )
+                    })
+                    .chain(tx.tx.input.iter().map(|txin| txin.previous_output))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<HashSet<_>>() // remove duplicates
+            .iter()
+            .cloned()
+            .collect();
+        let coins = self.list_coins(&[], &outpoints)?.coins;
+        let mut txs = txs
+            .into_iter()
+            .map(|tx| {
+                let mut tx_coins = Vec::new();
+                let mut change_indexes = Vec::new();
+                for coin in &coins {
+                    if coin.outpoint.txid == tx.tx.txid() {
+                        change_indexes.push(coin.outpoint.vout as usize)
+                    } else if tx
+                        .tx
+                        .input
+                        .iter()
+                        .any(|input| input.previous_output == coin.outpoint)
+                    {
+                        tx_coins.push(coin.clone());
+                    }
+                }
+                model::HistoryTransaction::new(
+                    tx.tx,
+                    tx.height,
+                    tx.time,
+                    tx_coins,
+                    change_indexes,
+                    info.network,
+                )
+            })
+            .collect();
+        load_labels(self, &mut txs)?;
+        Ok(txs)
+    }
+
     fn list_history_txs(
         &self,
         start: u32,
         end: u32,
         limit: u64,
     ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
-        let info = self.get_info()?;
-        let coins = self.list_coins()?.coins;
         let txs = self.list_confirmed_txs(start, end, limit)?.transactions;
-        let mut txs = txs
-            .into_iter()
-            .map(|tx| {
-                let mut tx_coins = Vec::new();
-                let mut change_indexes = Vec::new();
-                for coin in &coins {
-                    if coin.outpoint.txid == tx.tx.txid() {
-                        change_indexes.push(coin.outpoint.vout as usize)
-                    } else if tx
-                        .tx
-                        .input
-                        .iter()
-                        .any(|input| input.previous_output == coin.outpoint)
-                    {
-                        tx_coins.push(coin.clone());
-                    }
-                }
-                model::HistoryTransaction::new(
-                    tx.tx,
-                    tx.height,
-                    tx.time,
-                    tx_coins,
-                    change_indexes,
-                    info.network,
-                )
-            })
-            .collect();
-        load_labels(self, &mut txs)?;
-        Ok(txs)
+        self.txs_to_historytxs(txs)
     }
 
     fn get_history_txs(
         &self,
         txids: &[Txid],
     ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
-        let info = self.get_info()?;
-        let coins = self.list_coins()?.coins;
         let txs = self.list_txs(txids)?.transactions;
-        let mut txs = txs
-            .into_iter()
-            .map(|tx| {
-                let mut tx_coins = Vec::new();
-                let mut change_indexes = Vec::new();
-                for coin in &coins {
-                    if coin.outpoint.txid == tx.tx.txid() {
-                        change_indexes.push(coin.outpoint.vout as usize)
-                    } else if tx
-                        .tx
-                        .input
-                        .iter()
-                        .any(|input| input.previous_output == coin.outpoint)
-                    {
-                        tx_coins.push(coin.clone());
-                    }
-                }
-                model::HistoryTransaction::new(
-                    tx.tx,
-                    tx.height,
-                    tx.time,
-                    tx_coins,
-                    change_indexes,
-                    info.network,
-                )
-            })
-            .collect();
-        load_labels(self, &mut txs)?;
-        Ok(txs)
+        self.txs_to_historytxs(txs)
     }
 
     fn list_pending_txs(&self) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
         let info = self.get_info()?;
-        let coins = self.list_coins()?.coins;
+        // We want coins that are inputs to and/or outputs of a pending tx,
+        // which can only be unconfirmed and spending coins.
+        let coins = self
+            .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Spending], &[])?
+            .coins;
         let mut txids: Vec<Txid> = Vec::new();
         for coin in &coins {
             if coin.block_height.is_none() && !txids.contains(&coin.outpoint.txid) {
@@ -233,7 +248,7 @@ pub trait Daemon: Debug {
             }
 
             if let Some(spend) = coin.spend_info {
-                if spend.height.is_none() && !txids.contains(&spend.txid) {
+                if !txids.contains(&spend.txid) {
                     txids.push(spend.txid);
                 }
             }

@@ -7,6 +7,7 @@ use std::{
 
 use iced::Command;
 use liana::{
+    commands::CoinStatus,
     miniscript::bitcoin::{OutPoint, Txid},
     spend::{SpendCreationError, MAX_FEERATE},
 };
@@ -146,23 +147,23 @@ impl State for TransactionsPanel {
                 if let Some(tx) = &self.selected_tx {
                     if tx.fee_amount.is_some() {
                         let tx = tx.clone();
-                        let txid = tx.tx.txid();
+                        let outpoints: Vec<_> = (0..tx.tx.output.len())
+                            .map(|vout| {
+                                OutPoint::new(
+                                    tx.tx.txid(),
+                                    vout.try_into()
+                                        .expect("number of transaction outputs must fit in u32"),
+                                )
+                            })
+                            .collect();
                         return Command::perform(
                             async move {
                                 daemon
-                                    // TODO: filter for spending coins when this is possible:
-                                    // https://github.com/wizardsardine/liana/issues/677
-                                    .list_coins()
+                                    .list_coins(&[CoinStatus::Spending], &outpoints)
                                     .map(|res| {
                                         res.coins
                                             .iter()
-                                            .filter_map(|c| {
-                                                if c.outpoint.txid == txid {
-                                                    c.spend_info.map(|info| info.txid)
-                                                } else {
-                                                    None
-                                                }
-                                            })
+                                            .filter_map(|c| c.spend_info.map(|info| info.txid))
                                             .collect()
                                     })
                                     .map_err(|e| e.into())
@@ -248,7 +249,6 @@ impl State for TransactionsPanel {
         self.selected_tx = None;
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
-        let daemon3 = daemon.clone();
         let now: u32 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -257,7 +257,7 @@ impl State for TransactionsPanel {
             .unwrap();
         Command::batch(vec![
             Command::perform(
-                async move { daemon3.list_pending_txs().map_err(|e| e.into()) },
+                async move { daemon2.list_pending_txs().map_err(|e| e.into()) },
                 Message::PendingTransactions,
             ),
             Command::perform(
@@ -267,15 +267,6 @@ impl State for TransactionsPanel {
                         .map_err(|e| e.into())
                 },
                 Message::HistoryTransactions,
-            ),
-            Command::perform(
-                async move {
-                    daemon2
-                        .list_coins()
-                        .map(|res| res.coins)
-                        .map_err(|e| e.into())
-                },
-                Message::Coins,
             ),
         ])
     }
