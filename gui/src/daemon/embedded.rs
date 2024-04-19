@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 use super::{model::*, Daemon, DaemonError};
 use async_trait::async_trait;
@@ -24,11 +24,11 @@ impl EmbeddedDaemon {
         })
     }
 
-    pub fn command<T, F>(&self, method: F) -> Result<T, DaemonError>
+    pub async fn command<T, F>(&self, method: F) -> Result<T, DaemonError>
     where
         F: FnOnce(&DaemonControl) -> Result<T, DaemonError>,
     {
-        match self.handle.lock()?.as_ref() {
+        match self.handle.lock().await.as_ref() {
             Some(DaemonHandle::Controller { control, .. }) => method(control),
             None => Err(DaemonError::DaemonStopped),
         }
@@ -58,7 +58,7 @@ impl Daemon for EmbeddedDaemon {
     }
 
     async fn is_alive(&self) -> Result<(), DaemonError> {
-        let mut handle = self.handle.lock()?;
+        let mut handle = self.handle.lock().await;
         if let Some(h) = handle.as_ref() {
             if h.is_alive() {
                 return Ok(());
@@ -73,7 +73,7 @@ impl Daemon for EmbeddedDaemon {
     }
 
     async fn stop(&self) -> Result<(), DaemonError> {
-        let mut handle = self.handle.lock()?;
+        let mut handle = self.handle.lock().await;
         if let Some(h) = handle.take() {
             h.stop()
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
@@ -82,11 +82,11 @@ impl Daemon for EmbeddedDaemon {
     }
 
     async fn get_info(&self) -> Result<GetInfoResult, DaemonError> {
-        self.command(|daemon| Ok(daemon.get_info()))
+        self.command(|daemon| Ok(daemon.get_info())).await
     }
 
     async fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
-        self.command(|daemon| Ok(daemon.get_new_address()))
+        self.command(|daemon| Ok(daemon.get_new_address())).await
     }
 
     async fn list_coins(
@@ -95,6 +95,7 @@ impl Daemon for EmbeddedDaemon {
         outpoints: &[OutPoint],
     ) -> Result<ListCoinsResult, DaemonError> {
         self.command(|daemon| Ok(daemon.list_coins(statuses, outpoints)))
+            .await
     }
 
     async fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
@@ -103,6 +104,7 @@ impl Daemon for EmbeddedDaemon {
                 .list_spend(None)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
+        .await
     }
 
     async fn list_confirmed_txs(
@@ -112,10 +114,12 @@ impl Daemon for EmbeddedDaemon {
         limit: u64,
     ) -> Result<ListTransactionsResult, DaemonError> {
         self.command(|daemon| Ok(daemon.list_confirmed_transactions(start, end, limit)))
+            .await
     }
 
     async fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
         self.command(|daemon| Ok(daemon.list_transactions(txids)))
+            .await
     }
 
     async fn create_spend_tx(
@@ -130,6 +134,7 @@ impl Daemon for EmbeddedDaemon {
                 .create_spend(destinations, coins_outpoints, feerate_vb, change_address)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
+        .await
     }
 
     async fn rbf_psbt(
@@ -143,6 +148,7 @@ impl Daemon for EmbeddedDaemon {
                 .rbf_psbt(txid, is_cancel, feerate_vb)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
+        .await
     }
 
     async fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
@@ -151,6 +157,7 @@ impl Daemon for EmbeddedDaemon {
                 .update_spend(psbt.clone())
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
+        .await
     }
 
     async fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
@@ -158,6 +165,7 @@ impl Daemon for EmbeddedDaemon {
             daemon.delete_spend(txid);
             Ok(())
         })
+        .await
     }
 
     async fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
@@ -166,6 +174,7 @@ impl Daemon for EmbeddedDaemon {
                 .broadcast_spend(txid)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
+        .await
     }
 
     async fn start_rescan(&self, t: u32) -> Result<(), DaemonError> {
@@ -174,6 +183,7 @@ impl Daemon for EmbeddedDaemon {
                 .start_rescan(t)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
+        .await
     }
 
     async fn create_recovery(
@@ -188,6 +198,7 @@ impl Daemon for EmbeddedDaemon {
                 .map(|res| res.psbt)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
+        .await
     }
 
     async fn get_labels(
@@ -195,6 +206,7 @@ impl Daemon for EmbeddedDaemon {
         items: &HashSet<LabelItem>,
     ) -> Result<HashMap<String, String>, DaemonError> {
         self.command(|daemon| Ok(daemon.get_labels(items).labels))
+            .await
     }
 
     async fn update_labels(
@@ -205,5 +217,6 @@ impl Daemon for EmbeddedDaemon {
             daemon.update_labels(items);
             Ok(())
         })
+        .await
     }
 }
