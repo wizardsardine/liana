@@ -222,7 +222,7 @@ pub fn qr_modal<'a>(qr: &'a qr_code::State, address: &'a String) -> Element<'a, 
             Row::new()
                 .push(Space::with_width(Length::Fill))
                 .push(
-                    Container::new(QRCode::new(qr).cell_size(8))
+                    Container::new(QRCode::new(qr).cell_size(12))
                         .padding(10)
                         .style(theme::Container::QrCode),
                 )
@@ -235,6 +235,6 @@ pub fn qr_modal<'a>(qr: &'a qr_code::State, address: &'a String) -> Element<'a, 
                 .center_x(),
         )
         .width(Length::Fill)
-        .max_width(400)
+        .width(550)
         .into()
 }
