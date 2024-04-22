@@ -127,6 +127,7 @@ impl State for CreateSpendPanel {
                 async move {
                     daemon1
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+                        .await
                         .map(|res| res.coins)
                         .map_err(|e| e.into())
                 },
@@ -136,6 +137,7 @@ impl State for CreateSpendPanel {
                 async move {
                     let coins = daemon
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+                        .await
                         .map(|res| res.coins)
                         .map_err(Error::from)?;
                     let mut targets = HashSet::<LabelItem>::new();
@@ -143,7 +145,7 @@ impl State for CreateSpendPanel {
                         targets.insert(LabelItem::OutPoint(coin.outpoint));
                         targets.insert(LabelItem::Txid(coin.outpoint.txid));
                     }
-                    daemon2.get_labels(&targets).map_err(|e| e.into())
+                    daemon2.get_labels(&targets).await.map_err(|e| e.into())
                 },
                 Message::Labels,
             ),

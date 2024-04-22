@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::iter::FromIterator;
 
+use async_trait::async_trait;
 use liana::commands::{CoinStatus, CreateRecoveryResult};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -52,7 +53,8 @@ impl<C: Client> Lianad<C> {
     }
 }
 
-impl<C: Client + Debug> Daemon for Lianad<C> {
+#[async_trait]
+impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
     fn is_external(&self) -> bool {
         true
     }
@@ -61,23 +63,25 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         None
     }
 
-    fn is_alive(&self) -> Result<(), DaemonError> {
+    async fn is_alive(&self) -> Result<(), DaemonError> {
         Ok(())
     }
 
-    fn stop(&self) -> Result<(), DaemonError> {
-        unreachable!("GUI should not ask external client to stop")
+    async fn stop(&self) -> Result<(), DaemonError> {
+        Err(DaemonError::Unexpected(
+            "GUI should not ask external client to stop".to_string(),
+        ))
     }
 
-    fn get_info(&self) -> Result<GetInfoResult, DaemonError> {
+    async fn get_info(&self) -> Result<GetInfoResult, DaemonError> {
         self.call("getinfo", Option::<Request>::None)
     }
 
-    fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
+    async fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
         self.call("getnewaddress", Option::<Request>::None)
     }
 
-    fn list_coins(
+    async fn list_coins(
         &self,
         statuses: &[CoinStatus],
         outpoints: &[OutPoint],
@@ -91,11 +95,11 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         )
     }
 
-    fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
+    async fn list_spend_txs(&self) -> Result<ListSpendResult, DaemonError> {
         self.call("listspendtxs", Option::<Request>::None)
     }
 
-    fn create_spend_tx(
+    async fn create_spend_tx(
         &self,
         coins_outpoints: &[OutPoint],
         destinations: &HashMap<Address<address::NetworkUnchecked>, u64>,
@@ -113,7 +117,7 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         self.call("createspend", Some(input))
     }
 
-    fn rbf_psbt(
+    async fn rbf_psbt(
         &self,
         txid: &Txid,
         is_cancel: bool,
@@ -126,30 +130,30 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         self.call("rbfpsbt", Some(input))
     }
 
-    fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
+    async fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
         let spend_tx = psbt.to_string();
         let _res: serde_json::value::Value = self.call("updatespend", Some(vec![spend_tx]))?;
         Ok(())
     }
 
-    fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
+    async fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
         let _res: serde_json::value::Value =
             self.call("delspendtx", Some(vec![txid.to_string()]))?;
         Ok(())
     }
 
-    fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
+    async fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
         let _res: serde_json::value::Value =
             self.call("broadcastspend", Some(vec![txid.to_string()]))?;
         Ok(())
     }
 
-    fn start_rescan(&self, t: u32) -> Result<(), DaemonError> {
+    async fn start_rescan(&self, t: u32) -> Result<(), DaemonError> {
         let _res: serde_json::value::Value = self.call("startrescan", Some(vec![t]))?;
         Ok(())
     }
 
-    fn list_confirmed_txs(
+    async fn list_confirmed_txs(
         &self,
         start: u32,
         end: u32,
@@ -161,11 +165,11 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         )
     }
 
-    fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
+    async fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
         self.call("listtransactions", Some(vec![txids]))
     }
 
-    fn create_recovery(
+    async fn create_recovery(
         &self,
         address: Address<address::NetworkUnchecked>,
         feerate_vb: u64,
@@ -178,7 +182,7 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         Ok(res.psbt)
     }
 
-    fn get_labels(
+    async fn get_labels(
         &self,
         items: &HashSet<LabelItem>,
     ) -> Result<HashMap<String, String>, DaemonError> {
@@ -187,7 +191,10 @@ impl<C: Client + Debug> Daemon for Lianad<C> {
         Ok(res.labels)
     }
 
-    fn update_labels(&self, items: &HashMap<LabelItem, Option<String>>) -> Result<(), DaemonError> {
+    async fn update_labels(
+        &self,
+        items: &HashMap<LabelItem, Option<String>>,
+    ) -> Result<(), DaemonError> {
         let labels: HashMap<String, Option<String>> =
             HashMap::from_iter(items.iter().map(|(a, l)| (a.to_string(), l.clone())));
         let _res: serde_json::value::Value = self.call("updatelabels", Some(vec![labels]))?;

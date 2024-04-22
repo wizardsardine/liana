@@ -157,14 +157,19 @@ impl State for RecoveryPanel {
                     let network = cache.network;
                     return Command::perform(
                         async move {
-                            let psbt = daemon.create_recovery(address, feerate_vb, sequence)?;
+                            let psbt = daemon
+                                .create_recovery(address, feerate_vb, sequence)
+                                .await?;
                             let outpoints: Vec<_> = psbt
                                 .unsigned_tx
                                 .input
                                 .iter()
                                 .map(|txin| txin.previous_output)
                                 .collect();
-                            let coins = daemon.list_coins(&[], &outpoints).map(|res| res.coins)?;
+                            let coins = daemon
+                                .list_coins(&[], &outpoints)
+                                .await
+                                .map(|res| res.coins)?;
                             Ok(SpendTx::new(
                                 None,
                                 psbt,
@@ -208,6 +213,7 @@ impl State for RecoveryPanel {
             async move {
                 daemon
                     .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+                    .await
                     .map(|res| res.coins)
                     .map_err(|e| e.into())
             },

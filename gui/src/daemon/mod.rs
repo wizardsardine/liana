@@ -8,6 +8,8 @@ use std::fmt::Debug;
 use std::io::ErrorKind;
 use std::iter::FromIterator;
 
+use async_trait::async_trait;
+
 use liana::{
     commands::{CoinStatus, LabelItem, TransactionInfo},
     config::Config,
@@ -50,67 +52,70 @@ impl std::fmt::Display for DaemonError {
     }
 }
 
+#[async_trait]
 pub trait Daemon: Debug {
     fn is_external(&self) -> bool;
     fn config(&self) -> Option<&Config>;
-    fn is_alive(&self) -> Result<(), DaemonError>;
-    fn stop(&self) -> Result<(), DaemonError>;
-    fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;
-    fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;
-    fn list_coins(
+    async fn is_alive(&self) -> Result<(), DaemonError>;
+    async fn stop(&self) -> Result<(), DaemonError>;
+    async fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;
+    async fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;
+    async fn list_coins(
         &self,
         statuses: &[CoinStatus],
         outpoints: &[OutPoint],
     ) -> Result<model::ListCoinsResult, DaemonError>;
-    fn list_spend_txs(&self) -> Result<model::ListSpendResult, DaemonError>;
-    fn create_spend_tx(
+    async fn list_spend_txs(&self) -> Result<model::ListSpendResult, DaemonError>;
+    async fn create_spend_tx(
         &self,
         coins_outpoints: &[OutPoint],
         destinations: &HashMap<Address<address::NetworkUnchecked>, u64>,
         feerate_vb: u64,
         change_address: Option<Address<address::NetworkUnchecked>>,
     ) -> Result<model::CreateSpendResult, DaemonError>;
-    fn rbf_psbt(
+    async fn rbf_psbt(
         &self,
         txid: &Txid,
         is_cancel: bool,
         feerate_vb: Option<u64>,
     ) -> Result<model::CreateSpendResult, DaemonError>;
-    fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError>;
-    fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
-    fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
-    fn start_rescan(&self, t: u32) -> Result<(), DaemonError>;
-    fn list_confirmed_txs(
+    async fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError>;
+    async fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
+    async fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError>;
+    async fn start_rescan(&self, t: u32) -> Result<(), DaemonError>;
+    async fn list_confirmed_txs(
         &self,
         _start: u32,
         _end: u32,
         _limit: u64,
     ) -> Result<model::ListTransactionsResult, DaemonError>;
-    fn create_recovery(
+    async fn create_recovery(
         &self,
         address: Address<address::NetworkUnchecked>,
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError>;
-    fn list_txs(&self, txid: &[Txid]) -> Result<model::ListTransactionsResult, DaemonError>;
-    fn get_labels(
+    async fn list_txs(&self, txid: &[Txid]) -> Result<model::ListTransactionsResult, DaemonError>;
+    async fn get_labels(
         &self,
         labels: &HashSet<LabelItem>,
     ) -> Result<HashMap<String, String>, DaemonError>;
-    fn update_labels(&self, labels: &HashMap<LabelItem, Option<String>>)
-        -> Result<(), DaemonError>;
+    async fn update_labels(
+        &self,
+        labels: &HashMap<LabelItem, Option<String>>,
+    ) -> Result<(), DaemonError>;
 
     // List spend transactions, optionally filtered to the specified `txids`.
     // Set `txids` to `None` for no filter (passing an empty slice returns no transactions).
-    fn list_spend_transactions(
+    async fn list_spend_transactions(
         &self,
         txids: Option<&[Txid]>,
     ) -> Result<Vec<model::SpendTx>, DaemonError> {
-        let info = self.get_info()?;
+        let info = self.get_info().await?;
         let mut spend_txs = Vec::new();
         let curve = secp256k1::Secp256k1::verification_only();
         // TODO: Use filters in `list_spend_txs` command.
-        let mut txs = self.list_spend_txs()?.spend_txs;
+        let mut txs = self.list_spend_txs().await?.spend_txs;
         if let Some(txids) = txids {
             txs.retain(|tx| txids.contains(&tx.psbt.unsigned_tx.txid()));
         }
@@ -125,7 +130,7 @@ pub trait Daemon: Debug {
                     .collect::<Vec<_>>()
             })
             .collect();
-        let coins = self.list_coins(&[], &outpoints)?.coins;
+        let coins = self.list_coins(&[], &outpoints).await?.coins;
         for tx in txs {
             let coins = coins
                 .iter()
@@ -148,7 +153,7 @@ pub trait Daemon: Debug {
                 info.network,
             ));
         }
-        load_labels(self, &mut spend_txs)?;
+        load_labels(self, &mut spend_txs).await?;
         spend_txs.sort_by(|a, b| {
             if a.status == b.status {
                 // last updated first
@@ -161,11 +166,11 @@ pub trait Daemon: Debug {
         Ok(spend_txs)
     }
 
-    fn txs_to_historytxs(
+    async fn txs_to_historytxs(
         &self,
         txs: Vec<TransactionInfo>,
     ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
-        let info = self.get_info()?;
+        let info = self.get_info().await?;
         let outpoints: Vec<_> = txs
             .iter()
             .flat_map(|tx| {
@@ -184,7 +189,7 @@ pub trait Daemon: Debug {
             .iter()
             .cloned()
             .collect();
-        let coins = self.list_coins(&[], &outpoints)?.coins;
+        let coins = self.list_coins(&[], &outpoints).await?.coins;
         let mut txs = txs
             .into_iter()
             .map(|tx| {
@@ -212,34 +217,38 @@ pub trait Daemon: Debug {
                 )
             })
             .collect();
-        load_labels(self, &mut txs)?;
+        load_labels(self, &mut txs).await?;
         Ok(txs)
     }
 
-    fn list_history_txs(
+    async fn list_history_txs(
         &self,
         start: u32,
         end: u32,
         limit: u64,
     ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
-        let txs = self.list_confirmed_txs(start, end, limit)?.transactions;
-        self.txs_to_historytxs(txs)
+        let txs = self
+            .list_confirmed_txs(start, end, limit)
+            .await?
+            .transactions;
+        self.txs_to_historytxs(txs).await
     }
 
-    fn get_history_txs(
+    async fn get_history_txs(
         &self,
         txids: &[Txid],
     ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
-        let txs = self.list_txs(txids)?.transactions;
-        self.txs_to_historytxs(txs)
+        let txs = self.list_txs(txids).await?.transactions;
+        self.txs_to_historytxs(txs).await
     }
 
-    fn list_pending_txs(&self) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
-        let info = self.get_info()?;
+    async fn list_pending_txs(&self) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
+        let info = self.get_info().await?;
         // We want coins that are inputs to and/or outputs of a pending tx,
         // which can only be unconfirmed and spending coins.
         let coins = self
-            .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Spending], &[])?
+            .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Spending], &[])
+            .await?
             .coins;
         let mut txids: Vec<Txid> = Vec::new();
         for coin in &coins {
@@ -254,7 +263,7 @@ pub trait Daemon: Debug {
             }
         }
 
-        let txs = self.list_txs(&txids)?.transactions;
+        let txs = self.list_txs(&txids).await?.transactions;
         let mut txs = txs
             .into_iter()
             .map(|tx| {
@@ -283,12 +292,12 @@ pub trait Daemon: Debug {
             })
             .collect();
 
-        load_labels(self, &mut txs)?;
+        load_labels(self, &mut txs).await?;
         Ok(txs)
     }
 }
 
-fn load_labels<T: model::Labelled, D: Daemon + ?Sized>(
+async fn load_labels<T: model::Labelled, D: Daemon + ?Sized>(
     daemon: &D,
     targets: &mut Vec<T>,
 ) -> Result<(), DaemonError> {
@@ -303,7 +312,8 @@ fn load_labels<T: model::Labelled, D: Daemon + ?Sized>(
     }
     let labels = HashMap::from_iter(
         daemon
-            .get_labels(&items)?
+            .get_labels(&items)
+            .await?
             .into_iter()
             .map(|(k, v)| (k, Some(v))),
     );

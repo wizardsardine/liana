@@ -307,13 +307,16 @@ impl DefineSpend {
         };
 
         let feerate_vb = self.feerate.value.parse::<u64>().expect("Checked before");
-
-        match daemon.create_spend_tx(
-            &outpoints,
-            &destinations,
-            feerate_vb,
-            Some(change_address.clone()),
-        ) {
+        match tokio::runtime::Handle::current().block_on(async {
+            daemon
+                .create_spend_tx(
+                    &outpoints,
+                    &destinations,
+                    feerate_vb,
+                    Some(change_address.clone()),
+                )
+                .await
+        }) {
             Ok(CreateSpendResult::Success { psbt, .. }) => {
                 self.warning = None;
                 if !self.is_user_coin_selection {
@@ -483,6 +486,7 @@ impl Step for DefineSpend {
                             async move {
                                 daemon
                                     .create_spend_tx(&inputs, &outputs, feerate_vb, None)
+                                    .await
                                     .map_err(|e| e.into())
                                     .and_then(|res| match res {
                                         CreateSpendResult::Success { psbt, warnings } => {

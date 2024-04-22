@@ -164,6 +164,7 @@ impl State for CoinsPanel {
                 async move {
                     daemon1
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+                        .await
                         .map(|res| res.coins)
                         .map_err(|e| e.into())
                 },
@@ -173,6 +174,7 @@ impl State for CoinsPanel {
                 async move {
                     let coins = daemon2
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+                        .await
                         .map(|res| res.coins)
                         .map_err(Error::from)?;
                     let mut targets = HashSet::<LabelItem>::new();
@@ -181,7 +183,7 @@ impl State for CoinsPanel {
                         targets.insert(LabelItem::Txid(coin.outpoint.txid));
                         targets.insert(LabelItem::Address(coin.address));
                     }
-                    daemon2.get_labels(&targets).map_err(|e| e.into())
+                    daemon2.get_labels(&targets).await.map_err(|e| e.into())
                 },
                 Message::Labels,
             ),
