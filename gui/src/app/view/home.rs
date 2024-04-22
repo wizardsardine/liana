@@ -28,9 +28,9 @@ pub fn home_view<'a>(
     balance: &'a bitcoin::Amount,
     unconfirmed_balance: &'a bitcoin::Amount,
     remaining_sequence: &Option<u32>,
-    expiring_coins: &Vec<bitcoin::OutPoint>,
+    expiring_coins: &[bitcoin::OutPoint],
     pending_events: &'a [HistoryTransaction],
-    events: &'a Vec<HistoryTransaction>,
+    events: &'a [HistoryTransaction],
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
@@ -88,7 +88,7 @@ pub fn home_view<'a>(
                         )
                         .push(
                             button::primary(Some(icon::arrow_repeat()), "Refresh coins").on_press(
-                                Message::Menu(Menu::RefreshCoins(expiring_coins.clone())),
+                                Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned())),
                             ),
                         ),
                 )

@@ -531,7 +531,7 @@ pub fn import_descriptor<'a>(
     )
 }
 
-pub fn signer_xpubs(xpubs: &Vec<String>) -> Element<Message> {
+pub fn signer_xpubs(xpubs: &[String]) -> Element<Message> {
     Container::new(
         Column::new()
             .push(
@@ -1837,7 +1837,7 @@ pub fn recover_mnemonic<'a>(
     progress: (usize, usize),
     words: &'a [(String, bool); 12],
     current: usize,
-    suggestions: &'a Vec<String>,
+    suggestions: &'a [String],
     recover: bool,
     error: Option<&'a String>,
 ) -> Element<'a, Message> {

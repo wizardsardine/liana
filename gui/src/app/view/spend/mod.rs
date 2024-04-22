@@ -33,7 +33,7 @@ use crate::{
 pub fn spend_view<'a>(
     cache: &'a Cache,
     tx: &'a SpendTx,
-    spend_warnings: &'a Vec<String>,
+    spend_warnings: &'a [String],
     saved: bool,
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
