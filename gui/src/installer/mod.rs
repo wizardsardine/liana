@@ -73,13 +73,10 @@ impl Installer {
 
     pub fn subscription(&self) -> Subscription<Message> {
         if self.current > 0 {
-            Subscription::batch(vec![
-                self.hws.refresh().map(Message::HardwareWallets),
-                self.steps
-                    .get(self.current)
-                    .expect("There is always a step")
-                    .subscription(),
-            ])
+            self.steps
+                .get(self.current)
+                .expect("There is always a step")
+                .subscription(&self.hws)
         } else {
             Subscription::none()
         }

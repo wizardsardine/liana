@@ -739,7 +739,7 @@ impl Step for InternalBitcoindStep {
         Command::none()
     }
 
-    fn subscription(&self) -> Subscription<Message> {
+    fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
         if let Some(download) = self.exe_download.as_ref() {
             return download.subscription();
         }

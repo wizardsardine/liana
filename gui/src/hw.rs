@@ -204,6 +204,7 @@ impl HardwareWallets {
 
     pub fn set_network(&mut self, network: Network) {
         self.network = network;
+        self.list = Vec::new();
     }
 
     pub fn update(
