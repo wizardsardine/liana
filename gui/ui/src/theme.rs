@@ -549,11 +549,11 @@ impl pick_list::StyleSheet for Theme {
                 text_color: color::RED,
             },
             PickList::Secondary => pick_list::Appearance {
-                placeholder_color: color::GREY_3,
-                handle_color: color::GREY_3,
-                background: color::TRANSPARENT.into(),
+                placeholder_color: color::GREY_6,
+                handle_color: color::GREY_6,
+                background: color::GREY_6.into(),
                 border: iced::Border {
-                    color: color::GREY_3,
+                    color: color::GREY_7,
                     width: 1.0,
                     radius: 25.0.into(),
                 },
