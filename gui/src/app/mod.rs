@@ -309,11 +309,8 @@ impl App {
     }
 
     pub fn load_wallet(&mut self) -> Result<Arc<Wallet>, Error> {
-        let wallet = Wallet::new(self.wallet.main_descriptor.clone()).load_settings(
-            &self.config,
-            &self.data_dir,
-            self.cache.network,
-        )?;
+        let wallet = Wallet::new(self.wallet.main_descriptor.clone())
+            .load_settings(&self.data_dir, self.cache.network)?;
 
         self.wallet = Arc::new(wallet);
 

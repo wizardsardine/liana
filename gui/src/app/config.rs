@@ -1,4 +1,3 @@
-use crate::hw::HardwareWalletConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::filter;
@@ -13,9 +12,6 @@ pub struct Config {
     pub log_level: Option<String>,
     /// Use iced debug feature if true.
     pub debug: Option<bool>,
-    /// hardware wallets config.
-    /// LEGACY: Use Settings module instead.
-    pub hardware_wallets: Option<Vec<HardwareWalletConfig>>,
     /// Start internal bitcoind executable.
     #[serde(default)]
     pub start_internal_bitcoind: bool,
@@ -30,7 +26,6 @@ impl Config {
             daemon_rpc_path: None,
             log_level: None,
             debug: None,
-            hardware_wallets: None,
             start_internal_bitcoind,
         }
     }

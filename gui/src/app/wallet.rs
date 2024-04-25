@@ -1,11 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::{
-    app::{config::Config, settings},
-    hw::HardwareWalletConfig,
-    signer::Signer,
-};
+use crate::{app::settings, hw::HardwareWalletConfig, signer::Signer};
 
 use liana::{miniscript::bitcoin, signer::HotSigner};
 
@@ -93,16 +89,9 @@ impl Wallet {
 
     pub fn load_settings(
         self,
-        gui_config: &Config,
         datadir_path: &Path,
         network: bitcoin::Network,
     ) -> Result<Self, WalletError> {
-        let gui_config_hws = gui_config
-            .hardware_wallets
-            .as_ref()
-            .cloned()
-            .unwrap_or_default();
-
         let mut wallet = match settings::Settings::from_file(datadir_path.to_path_buf(), network) {
             Ok(settings) => {
                 if let Some(wallet_setting) = settings.wallets.first() {
@@ -110,18 +99,17 @@ impl Wallet {
                         .with_hardware_wallets(wallet_setting.hardware_wallets.clone())
                         .with_key_aliases(wallet_setting.keys_aliases())
                 } else {
-                    self.with_hardware_wallets(gui_config_hws)
+                    self
                 }
             }
             Err(settings::SettingsError::NotFound) => {
-                let wallet = self.with_hardware_wallets(gui_config_hws);
                 let s = settings::Settings {
-                    wallets: vec![settings::WalletSetting::from(&wallet)],
+                    wallets: vec![settings::WalletSetting::from(&self)],
                 };
 
                 tracing::info!("Settings file not found, creating one");
                 s.to_file(datadir_path.to_path_buf(), network)?;
-                wallet
+                self
             }
             Err(e) => return Err(e.into()),
         };
