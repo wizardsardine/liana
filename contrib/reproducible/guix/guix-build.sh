@@ -60,7 +60,7 @@ for project_folder in "" "gui"; do
     PROJECT_ROOT="$PWD/$project_folder"
     PROJECT_VENDOR_DIR="$VENDOR_DIR/$project_folder"
     PROJECT_OUT_DIR="$OUT_DIR/$project_folder"
-    PROJECT_PATCHES_ROOT="$PWD/contrib/reproducible/guix/patches/$project_folder"
+    PROJECT_PATCHES_ROOT="$PWD/contrib/reproducible/guix/liana-patches/$project_folder"
 
     project_needs_patches() {
         test "$(ls -A1q "$PROJECT_PATCHES_ROOT" |grep patch)"

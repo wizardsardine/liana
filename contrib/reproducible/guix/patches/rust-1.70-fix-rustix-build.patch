@@ -1,0 +1,21 @@
+@@ -0,0 +1,20 @@
+--- a/vendor/fd-lock/Cargo.toml        2023-05-31 14:44:48.000000000 -0700
++++ b/vendor/fd-lock/Cargo.toml        2023-07-14 21:19:34.637702319 -0700
+@@ -45,7 +45,7 @@
+
+ [target."cfg(unix)".dependencies.rustix]
+ version = "0.37.0"
+-features = ["fs"]
++features = ["fs", "cc"]
+
+ [target."cfg(windows)".dependencies.windows-sys]
+ version = "0.45.0"
+--- a/src/bootstrap/Cargo.lock 2023-07-11 20:32:40.000000000 -0700
++++ b/src/bootstrap/Cargo.lock 2023-07-14 22:41:53.269284713 -0700
+@@ -618,6 +618,7 @@
+ dependencies = [
+  "bitflags",
++ "cc",
+  "errno",
+  "io-lifetimes",
+  "libc",
