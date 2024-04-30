@@ -20,7 +20,7 @@ replace-with = "vendored_sources"
 
 [source."https://github.com/edouardparis/iced"]
 git = "https://github.com/edouardparis/iced"
-branch = "fix-futures-recipe"
+branch = "patch-0.12.3"
 replace-with = "vendored_sources"
 EOF
 
