@@ -30,6 +30,9 @@ pub const VERSION: &str = VERSIONS[0];
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 pub const SHA256SUM: &str = "acb50edd20692a9d023de12da573b64ca0fd9b4e9a2b88d1251020a3022b0f27";
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub const SHA256SUM: &str = "8a8e415763b7ffd5988153cf03967d812eca629016dd3b0ddf6da3ab6f4a3621";
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub const SHA256SUM: &str = "a5b7d206384a8100058d3f2e2f02123a8e49e83f523499e70e86e121a4897d5b";
 
@@ -39,6 +42,11 @@ pub const SHA256SUM: &str = "7bd0849e47472aeff99a0ea2c0cefd98f5be829e5a2d3b0168b
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 pub fn download_filename() -> String {
     format!("bitcoin-{}-x86_64-apple-darwin.tar.gz", &VERSION)
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub fn download_filename() -> String {
+    format!("bitcoin-{}-arm64-apple-darwin.tar.gz", &VERSION)
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
