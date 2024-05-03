@@ -1,4 +1,5 @@
 use crate::{font, theme::Theme};
+use iced::advanced::text::Shaping;
 use std::borrow::Cow;
 
 pub const H1_SIZE: u16 = 40;
@@ -12,78 +13,91 @@ pub const CAPTION_SIZE: u16 = 12;
 
 pub fn h1<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(H1_SIZE)
 }
 
 pub fn h2<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(H2_SIZE)
 }
 
 pub fn h3<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(H3_SIZE)
 }
 
 pub fn h4_bold<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(H4_SIZE)
 }
 
 pub fn h4_regular<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(H4_SIZE)
 }
 
 pub fn h5_medium<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::MEDIUM)
         .size(H5_SIZE)
 }
 
 pub fn h5_regular<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(H5_SIZE)
 }
 
 pub fn p1_bold<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(P1_SIZE)
 }
 
 pub fn p1_medium<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::MEDIUM)
         .size(P1_SIZE)
 }
 
 pub fn p1_regular<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(P1_SIZE)
 }
 
 pub fn p2_medium<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::MEDIUM)
         .size(P2_SIZE)
 }
 
 pub fn p2_regular<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(P2_SIZE)
 }
 
 pub fn caption<'a>(content: impl Into<Cow<'a, str>>) -> iced::widget::Text<'a, Theme> {
     iced::widget::Text::new(content)
+        .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(CAPTION_SIZE)
 }

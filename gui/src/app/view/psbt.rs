@@ -425,7 +425,7 @@ pub fn signatures<'a>(
                                             Container::new(text(alias))
                                                 .padding(10)
                                                 .style(theme::Container::Pill(theme::Pill::Simple)),
-                                            liana_ui::widget::Text::new(value.to_string()),
+                                            text(value.to_string()),
                                             tooltip::Position::Bottom,
                                         )
                                         .style(theme::Container::Card(theme::Card::Simple)),

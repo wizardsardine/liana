@@ -1,4 +1,4 @@
-use iced::{widget::row, Alignment};
+use iced::{advanced::text::Shaping, widget::row, Alignment};
 
 use liana_ui::{
     component::{button, form},
@@ -17,7 +17,9 @@ pub fn label_editable(
         if !label.is_empty() {
             return Container::new(
                 row!(
-                    iced::widget::Text::new(label).size(size),
+                    iced::widget::Text::new(label)
+                        .size(size)
+                        .shaping(Shaping::Advanced),
                     button::primary(Some(icon::pencil_icon()), "Edit").on_press(
                         view::Message::Label(
                             labelled,
