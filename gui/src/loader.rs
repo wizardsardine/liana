@@ -202,7 +202,6 @@ impl Loader {
                                 load_application(
                                     daemon.clone(),
                                     info,
-                                    self.gui_config.clone(),
                                     self.datadir_path.clone(),
                                     self.network,
                                     self.internal_bitcoind.clone(),
@@ -355,7 +354,6 @@ impl Loader {
 pub async fn load_application(
     daemon: Arc<dyn Daemon + Sync + Send>,
     info: GetInfoResult,
-    gui_config: GUIConfig,
     datadir_path: PathBuf,
     network: bitcoin::Network,
     internal_bitcoind: Option<Bitcoind>,
@@ -368,8 +366,7 @@ pub async fn load_application(
     ),
     Error,
 > {
-    let wallet =
-        Wallet::new(info.descriptors.main).load_settings(&gui_config, &datadir_path, network)?;
+    let wallet = Wallet::new(info.descriptors.main).load_settings(&datadir_path, network)?;
 
     let coins = daemon
         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
