@@ -18,7 +18,6 @@ use liana_ui::{
         tooltip,
     },
     icon, image, theme,
-    util::Collection,
     widget::*,
 };
 
@@ -319,7 +318,9 @@ pub fn define_descriptor<'a>(
                             )
                             .padding(5),
                     )
-                    .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
+                    .direction(scrollable::Direction::Horizontal(
+                        Properties::new().width(3).scroller_width(3),
+                    )),
                 ),
         ))
         .spacing(10);
@@ -436,7 +437,9 @@ pub fn recovery_path_view(
                                 )
                                 .padding(5),
                         )
-                        .horizontal_scroll(Properties::new().width(3).scroller_width(3)),
+                        .direction(scrollable::Direction::Horizontal(
+                            Properties::new().width(3).scroller_width(3),
+                        )),
                     ),
             ),
     )
@@ -568,9 +571,9 @@ pub fn signer_xpubs(xpubs: &[String]) -> Element<Message> {
                             .push(
                                 Container::new(
                                     scrollable(Container::new(text(xpub).small()).padding(10))
-                                        .horizontal_scroll(
+                                        .direction(scrollable::Direction::Horizontal(
                                             Properties::new().width(5).scroller_width(5),
-                                        ),
+                                        )),
                                 )
                                 .width(Length::Fill),
                             )
@@ -641,9 +644,9 @@ pub fn hardware_wallet_xpubs<'a>(
                             .push(
                                 Container::new(
                                     scrollable(Container::new(text(xpub).small()).padding(10))
-                                        .horizontal_scroll(
+                                        .direction(scrollable::Direction::Horizontal(
                                             Properties::new().width(5).scroller_width(5),
-                                        ),
+                                        )),
                                 )
                                 .width(Length::Fill),
                             )
@@ -716,11 +719,10 @@ pub fn participate_xpub<'a>(
                     .push(signer)
                     .width(Length::Fill),
             )
-            .push(checkbox(
-                "I have shared my extended public key",
-                shared,
-                Message::UserActionDone,
-            ))
+            .push(
+                checkbox("I have shared my extended public key", shared)
+                    .on_toggle(Message::UserActionDone),
+            )
             .push(if shared && network_valid {
                 button::primary(None, "Next")
                     .width(Length::Fixed(200.0))
@@ -756,7 +758,16 @@ pub fn register_descriptor<'a>(
             .push(card::simple(
                 Column::new()
                     .push(text("The descriptor:").small().bold())
-                    .push(text(descriptor.clone()).small())
+                    .push(
+                        scrollable(
+                            Column::new()
+                                .push(text(descriptor.to_owned()).small())
+                                .push(Space::with_height(Length::Fixed(5.0))),
+                        )
+                        .direction(scrollable::Direction::Horizontal(
+                            scrollable::Properties::new().width(5).scroller_width(5),
+                        )),
+                    )
                     .push(
                         Row::new().push(Column::new().width(Length::Fill)).push(
                             button::secondary(Some(icon::clipboard_icon()), "Copy")
@@ -803,8 +814,7 @@ pub fn register_descriptor<'a>(
             .push_maybe(created_desc.then_some(checkbox(
                 "I have registered the descriptor on my device(s)",
                 done,
-                Message::UserActionDone,
-            )))
+            ).on_toggle(Message::UserActionDone)))
             .push(if !created_desc || (done && !processing) {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
@@ -858,7 +868,16 @@ pub fn backup_descriptor<'a>(
             .push(card::simple(
                 Column::new()
                     .push(text("The descriptor:").small().bold())
-                    .push(text(descriptor.clone()).small())
+                    .push(
+                        scrollable(
+                            Column::new()
+                                .push(text(descriptor.to_owned()).small())
+                                .push(Space::with_height(Length::Fixed(5.0))),
+                        )
+                        .direction(scrollable::Direction::Horizontal(
+                            scrollable::Properties::new().width(5).scroller_width(5),
+                        )),
+                    )
                     .push(
                         Row::new().push(Column::new().width(Length::Fill)).push(
                             button::secondary(Some(icon::clipboard_icon()), "Copy")
@@ -868,11 +887,9 @@ pub fn backup_descriptor<'a>(
                     .spacing(10)
                     .max_width(1000),
             ))
-            .push(checkbox(
-                "I have backed up my descriptor",
-                done,
-                Message::UserActionDone,
-            ))
+            .push(
+                checkbox("I have backed up my descriptor", done).on_toggle(Message::UserActionDone),
+            )
             .push(if done {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
@@ -1401,7 +1418,9 @@ pub fn defined_descriptor_key<'a>(
                                 .push(text(name).bold())
                                 .push(Space::with_height(Length::Fixed(5.0))),
                         )
-                        .horizontal_scroll(Properties::new().width(5).scroller_width(5)),
+                        .direction(scrollable::Direction::Horizontal(
+                            Properties::new().width(5).scroller_width(5),
+                        )),
                     )
                     .push(image::success_mark_icon().width(Length::Fixed(50.0)))
                     .push(Space::with_width(Length::Fixed(1.0))),
@@ -1672,7 +1691,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                                 message::SequenceModal::SequenceEdited(v.to_string()),
                             ))
                         })
-                        .step(144), // 144 blocks per day
+                        .step(144_u16), // 144 blocks per day
                     )
                     .width(Length::Fixed(500.0)),
                 );
@@ -1815,11 +1834,7 @@ pub fn backup_mnemonic<'a>(
                         )
                     }),
             )
-            .push(checkbox(
-                "I have backed up my mnemonic",
-                done,
-                Message::UserActionDone,
-            ))
+            .push(checkbox("I have backed up my mnemonic", done).on_toggle(Message::UserActionDone))
             .push(if done {
                 button::primary(None, "Next")
                     .on_press(Message::Next)
@@ -1997,8 +2012,8 @@ fn layout<'a>(
 
 mod threshsold_input {
     use iced::alignment::{self, Alignment};
+    use iced::widget::{component, Component};
     use iced::Length;
-    use iced_lazy::{self, Component};
     use liana_ui::{component::text::*, icon, theme, widget::*};
 
     pub struct ThresholdInput<Message> {
@@ -2035,7 +2050,7 @@ mod threshsold_input {
         }
     }
 
-    impl<Message> Component<Message, iced::Renderer<theme::Theme>> for ThresholdInput<Message> {
+    impl<Message> Component<Message, theme::Theme> for ThresholdInput<Message> {
         type State = ();
         type Event = Event;
 
@@ -2085,7 +2100,7 @@ mod threshsold_input {
         Message: 'a,
     {
         fn from(numeric_input: ThresholdInput<Message>) -> Self {
-            iced_lazy::component(numeric_input)
+            component(numeric_input)
         }
     }
 }

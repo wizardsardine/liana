@@ -1626,7 +1626,7 @@ impl From<BackupDescriptor> for Box<dyn Step> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced_native::command::Action;
+    use iced_runtime::command::Action;
     use std::sync::{Arc, Mutex};
 
     pub struct Sandbox<S: Step> {

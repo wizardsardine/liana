@@ -6,8 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-iced = { version = "0.9", default_features = false, features = ["svg", "image", "glow"] }
-iced_native = "0.10"
-iced_lazy = { version = "0.6"}
+iced = { version = "0.12.1", default-features = false, features = ["svg", "image", "lazy", "qr_code", "advanced", "webgl"] }
 bitcoin = "0.31"
 chrono = "0.4"

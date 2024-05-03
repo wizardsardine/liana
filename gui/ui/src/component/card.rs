@@ -34,7 +34,7 @@ pub fn error<'a, T: 'a>(message: &'static str, error: String) -> Container<'a, T
                 .align_items(iced::Alignment::Center)
                 .push(icon::warning_icon().style(color::RED))
                 .push(text(message).style(color::RED)),
-            error,
+            Text::new(error),
             iced::widget::tooltip::Position::Bottom,
         )
         .style(theme::Container::Card(theme::Card::Error)),

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use iced::{
+    alignment::Horizontal,
     widget::{tooltip, Space},
     Alignment, Command, Length, Subscription,
 };
@@ -10,7 +11,6 @@ use liana_ui::{
     color,
     component::{badge, button, card, modal::Modal, notification, text::*},
     icon, image, theme,
-    util::*,
     widget::*,
 };
 
@@ -330,7 +330,7 @@ impl DeleteWalletModal {
                                 .push(icon::circle_check_icon().style(color::GREEN))
                                 .push(text("Wallet successfully deleted").style(color::GREEN))
                         })
-                        .align_x(iced_native::alignment::Horizontal::Center)
+                        .align_x(Horizontal::Center)
                         .width(Length::Fill),
                     ),
             )

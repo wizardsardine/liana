@@ -1,10 +1,7 @@
 use crate::{component::text::P1_SIZE, widget::*};
 use iced::{alignment, Font, Length};
 
-const BOOTSTRAP_ICONS: Font = Font::External {
-    name: "Bootstrap icons",
-    bytes: include_bytes!("../static/icons/bootstrap-icons.ttf"),
-};
+const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
 
 fn bootstrap_icon(unicode: char) -> Text<'static> {
     Text::new(unicode.to_string())
@@ -118,10 +115,7 @@ pub fn previous_icon() -> Text<'static> {
     bootstrap_icon('\u{F284}')
 }
 
-const ICONEX_ICONS: Font = Font::External {
-    name: "Iconex icons",
-    bytes: include_bytes!("../static/icons/iconex/iconex-icons.ttf"),
-};
+const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
 fn iconex_icon(unicode: char) -> Text<'static> {
     Text::new(unicode.to_string())

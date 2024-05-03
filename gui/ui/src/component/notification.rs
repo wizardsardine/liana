@@ -5,7 +5,6 @@ use crate::{
     color,
     component::{collapse, text},
     icon, theme,
-    util::*,
     widget::*,
 };
 use iced::{

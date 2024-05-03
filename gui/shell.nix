@@ -9,7 +9,7 @@ let
    pkgs = import <nixpkgs> {};
 in
 pkgs.mkShell rec {
-  buildInputs = [
+  buildInputs = with pkgs; [
     pkgs.expat
     pkgs.fontconfig
     pkgs.freetype
@@ -17,6 +17,8 @@ pkgs.mkShell rec {
     pkgs.libGL
     pkgs.pkgconfig
     pkgs.udev
+    pkgs.wayland
+    pkgs.libxkbcommon
     pkgs.xorg.libX11
     pkgs.xorg.libXcursor
     pkgs.xorg.libXi
