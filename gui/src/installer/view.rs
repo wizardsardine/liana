@@ -23,7 +23,7 @@ use liana_ui::{
 
 use crate::{
     bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
-    hw::{is_compatible_with_tapminiscript, HardwareWallet},
+    hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
         message::{self, Message},
         prompt,
@@ -614,9 +614,20 @@ pub fn hardware_wallet_xpubs<'a>(
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             }
         }
-        HardwareWallet::Unsupported { version, kind, .. } => {
-            hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
-        }
+        HardwareWallet::Unsupported {
+            version,
+            kind,
+            reason,
+            ..
+        } => match reason {
+            UnsupportedReason::NotPartOfWallet(fg) => {
+                hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
+            }
+            UnsupportedReason::WrongNetwork => {
+                hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
+            }
+            _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
+        },
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
@@ -1745,9 +1756,20 @@ pub fn hw_list_view(
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             }
         }
-        HardwareWallet::Unsupported { version, kind, .. } => {
-            hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
-        }
+        HardwareWallet::Unsupported {
+            version,
+            kind,
+            reason,
+            ..
+        } => match reason {
+            UnsupportedReason::NotPartOfWallet(fg) => {
+                hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
+            }
+            UnsupportedReason::WrongNetwork => {
+                hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
+            }
+            _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
+        },
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),

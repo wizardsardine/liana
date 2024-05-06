@@ -53,6 +53,9 @@ pub fn hw_list_view(
             UnsupportedReason::NotPartOfWallet(fg) => {
                 hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
             }
+            UnsupportedReason::WrongNetwork => {
+                hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
+            }
             _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
         },
         HardwareWallet::Locked {
@@ -110,6 +113,9 @@ pub fn hw_list_view_for_registration(
         } => match reason {
             UnsupportedReason::NotPartOfWallet(fg) => {
                 hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
+            }
+            UnsupportedReason::WrongNetwork => {
+                hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
             }
             _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
         },
@@ -179,6 +185,9 @@ pub fn hw_list_view_verify_address(
             match reason {
                 UnsupportedReason::NotPartOfWallet(fg) => {
                     hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
+                }
+                UnsupportedReason::WrongNetwork => {
+                    hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
                 }
                 _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
             },

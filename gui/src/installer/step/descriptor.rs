@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use iced::Command;
+use iced::{Command, Subscription};
 use liana::miniscript::bitcoin::bip32::Xpub;
 use liana::{
     descriptors::{LianaDescriptor, LianaPolicy, PathInfo},
@@ -46,6 +46,9 @@ pub trait DescriptorEditModal {
         Command::none()
     }
     fn view<'a>(&'a self, _hws: &'a HardwareWallets) -> Element<'a, Message>;
+    fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
+        Subscription::none()
+    }
 }
 
 pub struct RecoveryPath {
@@ -459,6 +462,14 @@ impl Step for DefineDescriptor {
     fn load_context(&mut self, ctx: &Context) {
         self.data_dir = Some(ctx.data_dir.clone());
         self.set_network(ctx.bitcoin_config.network)
+    }
+
+    fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
+        if let Some(modal) = &self.modal {
+            modal.subscription(hws)
+        } else {
+            Subscription::none()
+        }
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
@@ -1013,6 +1024,11 @@ impl DescriptorEditModal for EditXpubModal {
         };
         Command::none()
     }
+
+    fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
+        hws.refresh().map(Message::HardwareWallets)
+    }
+
     fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
         let chosen_signer = self.chosen_signer.as_ref().map(|s| s.0);
         view::edit_key_modal(
@@ -1270,6 +1286,10 @@ impl Step for ParticipateXpub {
             _ => {}
         };
         Command::none()
+    }
+
+    fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
+        hws.refresh().map(Message::HardwareWallets)
     }
 
     fn load_context(&mut self, ctx: &Context) {
@@ -1549,6 +1569,9 @@ impl Step for RegisterDescriptor {
             ctx.hws.push((*kind, *fingerprint, *token));
         }
         true
+    }
+    fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
+        hws.refresh().map(Message::HardwareWallets)
     }
     fn load(&self) -> Command<Message> {
         Command::none()

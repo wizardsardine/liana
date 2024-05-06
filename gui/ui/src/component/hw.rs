@@ -14,7 +14,14 @@ pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
         column(vec![
             Row::new()
                 .spacing(5)
-                .push(text::p1_bold("Locked, check code:"))
+                .push(text::p1_bold(format!(
+                    "Locked{}",
+                    if pairing_code.is_some() {
+                        ", check code:"
+                    } else {
+                        ""
+                    }
+                )))
                 .push_maybe(pairing_code.map(|a| text::p1_bold(a)))
                 .into(),
             Row::new()
@@ -270,6 +277,38 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
             ])
             .align_items(Alignment::Center)
             .spacing(5)
+            .into(),
+        ])
+        .align_items(Alignment::Center),
+    )
+    .padding(10)
+}
+
+pub fn wrong_network_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
+    kind: K,
+    version: Option<V>,
+) -> Container<'a, T> {
+    container(
+        row(vec![
+            column(vec![
+                Row::new()
+                    .spacing(5)
+                    .push(text::p1_bold("Wrong network in the device settings"))
+                    .into(),
+                Row::new()
+                    .spacing(5)
+                    .push(text::caption(kind.to_string()))
+                    .push_maybe(version.map(|v| text::caption(v.to_string())))
+                    .into(),
+            ])
+            .width(Length::Fill)
+            .into(),
+            tooltip::Tooltip::new(
+                icon::warning_icon(),
+                "The wrong bitcoin application is open or the device was initialized with the wrong network",
+                tooltip::Position::Bottom,
+            )
+            .style(theme::Container::Card(theme::Card::Simple))
             .into(),
         ])
         .align_items(Alignment::Center),

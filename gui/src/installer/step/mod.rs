@@ -28,7 +28,7 @@ pub trait Step {
     fn update(&mut self, _hws: &mut HardwareWallets, _message: Message) -> Command<Message> {
         Command::none()
     }
-    fn subscription(&self) -> Subscription<Message> {
+    fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
         Subscription::none()
     }
     fn view<'a>(
