@@ -10,6 +10,8 @@ use iced::{
     Alignment, Length,
 };
 
+use chrono::{DateTime, Local, Utc};
+
 pub fn unconfirmed_outgoing_event<'a, T: Clone + 'a>(
     label: Option<Text<'a>>,
     amount: &Amount,
@@ -39,7 +41,7 @@ pub fn unconfirmed_outgoing_event<'a, T: Clone + 'a>(
 
 pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
     label: Option<Text<'a>>,
-    date: chrono::NaiveDateTime,
+    date: DateTime<Utc>,
     amount: &Amount,
     msg: T,
 ) -> Container<'a, T> {
@@ -49,8 +51,12 @@ pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
                 row!(
                     badge::spend(),
                     Column::new().push_maybe(label).push(
-                        text::p2_regular(date.format("%b. %d, %Y - %T").to_string())
-                            .style(color::GREY_3)
+                        text::p2_regular(
+                            date.with_timezone(&Local)
+                                .format("%b. %d, %Y - %T")
+                                .to_string()
+                        )
+                        .style(color::GREY_3)
                     )
                 )
                 .spacing(10)
@@ -99,7 +105,7 @@ pub fn unconfirmed_incoming_event<'a, T: Clone + 'a>(
 
 pub fn confirmed_incoming_event<'a, T: Clone + 'a>(
     label: Option<Text<'a>>,
-    date: chrono::NaiveDateTime,
+    date: DateTime<Utc>,
     amount: &Amount,
     msg: T,
 ) -> Container<'a, T> {
@@ -109,8 +115,12 @@ pub fn confirmed_incoming_event<'a, T: Clone + 'a>(
                 row!(
                     badge::receive(),
                     Column::new().push_maybe(label).push(
-                        text::p2_regular(date.format("%b. %d, %Y - %T").to_string())
-                            .style(color::GREY_3)
+                        text::p2_regular(
+                            date.with_timezone(&Local)
+                                .format("%b. %d, %Y - %T")
+                                .to_string()
+                        )
+                        .style(color::GREY_3)
                     )
                 )
                 .spacing(10)
