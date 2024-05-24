@@ -39,7 +39,7 @@ log = "0.4"
 dirs = "3.0.1"
 toml = "0.5"
 
-chrono = "0.4"
+chrono = "0.4.38"
 
 # Used for managing internal bitcoind
 base64 = "0.21"

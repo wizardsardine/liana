@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use chrono::prelude::*;
+use chrono::{NaiveDate, Utc};
 use iced::Command;
 use tracing::info;
 
@@ -368,7 +368,7 @@ impl RescanSetting {
                     u32::from_str(&self.day.value).unwrap_or(1),
                 )
                 .and_then(|d| d.and_hms_opt(0, 0, 0))
-                .map(|d| d.timestamp())
+                .map(|d| d.and_utc().timestamp())
                 {
                     match cache.network {
                         Network::Bitcoin => {

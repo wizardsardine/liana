@@ -1,6 +1,6 @@
-use chrono::NaiveDateTime;
 use std::collections::{HashMap, HashSet};
 
+use chrono::{DateTime, Local, Utc};
 use iced::{alignment, widget::tooltip, Alignment, Length};
 
 use liana_ui::{
@@ -105,12 +105,13 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                                 })
                                 .push_maybe(tx.time.map(|t| {
                                     Container::new(
-                                        text(format!(
-                                            "{}",
-                                            NaiveDateTime::from_timestamp_opt(t as i64, 0)
-                                                .unwrap()
-                                                .format("%b. %d, %Y - %T"),
-                                        ))
+                                        text(
+                                            DateTime::<Utc>::from_timestamp(t as i64, 0)
+                                                .expect("Correct unix timestamp")
+                                                .with_timezone(&Local)
+                                                .format("%b. %d, %Y - %T")
+                                                .to_string(),
+                                        )
                                         .style(color::GREY_3)
                                         .small(),
                                     )
@@ -374,9 +375,10 @@ pub fn tx_view<'a>(
             .push(card::simple(
                 Column::new()
                     .push_maybe(tx.time.map(|t| {
-                        let date = NaiveDateTime::from_timestamp_opt(t as i64, 0)
-                            .unwrap()
-                            .format("%b. %d, %Y - %T");
+                        let date = DateTime::<Utc>::from_timestamp(t as i64, 0)
+                                        .expect("Correct unix timestamp")
+                                        .with_timezone(&Local)
+                                        .format("%b. %d, %Y - %T");
                         Row::new()
                             .width(Length::Fill)
                             .push(Container::new(text("Date:").bold()).width(Length::Fill))
