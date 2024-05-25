@@ -620,7 +620,7 @@ pub fn wallet_settings<'a>(
                     .push(
                         Button::new(text("Wallet").size(30).bold())
                             .style(theme::Button::Transparent)
-                            .on_press(Message::Settings(SettingsMessage::AboutSection)),
+                            .on_press(Message::Settings(SettingsMessage::EditWalletSettings)),
                     ),
             )
             .push(card::simple(
