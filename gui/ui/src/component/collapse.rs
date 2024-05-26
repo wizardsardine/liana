@@ -10,6 +10,7 @@ pub struct Collapse<'a, M, H, F, C> {
     after: F,
     content: C,
     phantom: PhantomData<&'a M>,
+    state: bool,
 }
 
 impl<'a, Message, T, H, F, C, Theme, Renderer> Collapse<'a, Message, H, F, C>
@@ -28,7 +29,13 @@ where
             after,
             content,
             phantom: PhantomData,
+            state: false,
         }
+    }
+
+    pub fn collapsed(mut self, state: bool) -> Self {
+        self.state = state;
+        self
     }
 }
 
@@ -51,18 +58,18 @@ where
     type State = bool;
     type Event = Event<T>;
 
-    fn update(&mut self, state: &mut Self::State, event: Event<T>) -> Option<Message> {
+    fn update(&mut self, _state: &mut Self::State, event: Event<T>) -> Option<Message> {
         match event {
             Event::Internal(e) => Some(e.into()),
             Event::Collapse(s) => {
-                *state = s;
+                self.state = s;
                 None
             }
         }
     }
 
-    fn view(&self, state: &Self::State) -> Element<Self::Event, Theme, Renderer> {
-        if *state {
+    fn view(&self, _state: &Self::State) -> Element<Self::Event, Theme, Renderer> {
+        if self.state {
             column![
                 (self.after)().on_press(Event::Collapse(false)),
                 (self.content)().map(Event::Internal)
