@@ -329,29 +329,34 @@ pub fn define_descriptor<'a>(
         progress,
         "Create the wallet",
         Column::new()
-            .push(collapse::Collapse::new(
-                || {
-                    Button::new(
-                        Row::new()
-                            .align_items(Alignment::Center)
-                            .spacing(10)
-                            .push(text("Advanced settings").small().bold())
-                            .push(icon::collapse_icon()),
-                    )
-                    .style(theme::Button::Transparent)
-                },
-                || {
-                    Button::new(
-                        Row::new()
-                            .align_items(Alignment::Center)
-                            .spacing(10)
-                            .push(text("Advanced settings").small().bold())
-                            .push(icon::collapsed_icon()),
-                    )
-                    .style(theme::Button::Transparent)
-                },
-                move || define_descriptor_advanced_settings(network, network_valid, use_taproot),
-            ))
+            .push(
+                collapse::Collapse::new(
+                    || {
+                        Button::new(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .spacing(10)
+                                .push(text("Advanced settings").small().bold())
+                                .push(icon::collapse_icon()),
+                        )
+                        .style(theme::Button::Transparent)
+                    },
+                    || {
+                        Button::new(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .spacing(10)
+                                .push(text("Advanced settings").small().bold())
+                                .push(icon::collapsed_icon()),
+                        )
+                        .style(theme::Button::Transparent)
+                    },
+                    move || {
+                        define_descriptor_advanced_settings(network, network_valid, use_taproot)
+                    },
+                )
+                .collapsed(!network_valid),
+            )
             .push(
                 Column::new()
                     .width(Length::Fill)
@@ -379,7 +384,7 @@ pub fn define_descriptor<'a>(
                             ))
                             .width(Length::Fixed(200.0)),
                     )
-                    .push(if !valid {
+                    .push(if !valid || !network_valid {
                         button::primary(None, "Next").width(Length::Fixed(200.0))
                     } else {
                         button::primary(None, "Next")
