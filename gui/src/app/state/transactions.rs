@@ -346,7 +346,6 @@ impl CreateRbfModal {
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::FeerateEdited(s))) => {
                 self.warning = None;
                 if let Ok(value) = s.parse::<u64>() {
-                    self.feerate_val.value = s;
                     self.feerate_val.valid = value >= self.min_feerate_vb && value <= MAX_FEERATE;
                     if self.feerate_val.valid {
                         self.feerate_vb = Some(value);
@@ -357,6 +356,7 @@ impl CreateRbfModal {
                 if !self.feerate_val.valid {
                     self.feerate_vb = None;
                 }
+                self.feerate_val.value = s; // save form value even if it cannot be parsed
             }
             Message::RbfPsbt(res) => {
                 self.processing = false;
