@@ -36,7 +36,7 @@ use state::{
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
     bitcoind::Bitcoind,
-    daemon::{embedded::EmbeddedDaemon, Daemon},
+    daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
 };
 
 use self::state::SettingsState;
@@ -116,7 +116,6 @@ impl Panels {
 }
 
 pub struct App {
-    data_dir: PathBuf,
     cache: Cache,
     config: Config,
     wallet: Arc<Wallet>,
@@ -135,17 +134,11 @@ impl App {
         data_dir: PathBuf,
         internal_bitcoind: Option<Bitcoind>,
     ) -> (App, Command<Message>) {
-        let mut panels = Panels::new(
-            &cache,
-            wallet.clone(),
-            data_dir.clone(),
-            internal_bitcoind.as_ref(),
-        );
+        let mut panels = Panels::new(&cache, wallet.clone(), data_dir, internal_bitcoind.as_ref());
         let cmd = panels.home.reload(daemon.clone(), wallet.clone());
         (
             Self {
                 panels,
-                data_dir,
                 cache,
                 config,
                 daemon,
@@ -218,14 +211,26 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
-            time::every(Duration::from_secs(10)).map(|_| Message::Tick),
+            time::every(Duration::from_secs(
+                // LianaLite has no rescan feature, the cache refresh loop is only
+                // to fetch the new block height tip which is only used to warn user
+                // about recovery availability.
+                if self.daemon.backend() == DaemonBackend::RemoteBackend {
+                    120
+                // For the rescan feature, we set a higher frequency of cache refresh
+                // to give to user an up-to-date view of the rescan progress.
+                } else {
+                    10
+                },
+            ))
+            .map(|_| Message::Tick),
             self.panels.current().subscription(),
         ])
     }
 
     pub fn stop(&mut self) {
         info!("Close requested");
-        if !self.daemon.is_external() {
+        if self.daemon.backend() == DaemonBackend::EmbeddedLianad {
             if let Err(e) = Handle::current().block_on(async { self.daemon.stop().await }) {
                 error!("{}", e);
             } else {
@@ -245,6 +250,7 @@ impl App {
                 Command::perform(
                     async move {
                         // we check every 10 second if the daemon poller is alive
+                        // or if the access token is not expired.
                         daemon.is_alive().await?;
 
                         let info = daemon.get_info().await?;
@@ -276,9 +282,13 @@ impl App {
                 let res = self.load_daemon_config(&path, *cfg);
                 self.update(Message::DaemonConfigLoaded(res))
             }
-            Message::LoadWallet => {
-                let res = self.load_wallet();
-                self.update(Message::WalletLoaded(res))
+            Message::WalletUpdated(Ok(wallet)) => {
+                self.wallet = wallet.clone();
+                self.panels.current_mut().update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::WalletUpdated(Ok(wallet)),
+                )
             }
             Message::View(view::Message::Menu(menu)) => self.set_current_panel(menu),
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
@@ -311,15 +321,6 @@ impl App {
                 warn!("failed to write to file: {:?}", e);
                 Error::Config(e.to_string())
             })
-    }
-
-    pub fn load_wallet(&mut self) -> Result<Arc<Wallet>, Error> {
-        let wallet = Wallet::new(self.wallet.main_descriptor.clone())
-            .load_settings(&self.data_dir, self.cache.network)?;
-
-        self.wallet = Arc::new(wallet);
-
-        Ok(self.wallet.clone())
     }
 
     pub fn view(&self) -> Element<Message> {

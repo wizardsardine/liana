@@ -18,7 +18,7 @@ use liana::{
     miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
 };
 
-use super::{model::*, Daemon, DaemonError};
+use super::{model::*, Daemon, DaemonBackend, DaemonError};
 
 pub trait Client {
     type Error: Into<DaemonError> + Debug;
@@ -55,8 +55,8 @@ impl<C: Client> Lianad<C> {
 
 #[async_trait]
 impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
-    fn is_external(&self) -> bool {
-        true
+    fn backend(&self) -> DaemonBackend {
+        DaemonBackend::ExternalLianad
     }
 
     fn config(&self) -> Option<&Config> {

@@ -2,10 +2,7 @@ pub mod api;
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
-    },
+    sync::Arc,
 };
 
 use async_trait::async_trait;
@@ -17,6 +14,7 @@ use liana::{
     miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid},
 };
 use reqwest::{Error, IntoUrl, Method, RequestBuilder, Response};
+use tokio::sync::RwLock;
 
 use crate::{
     daemon::{model::*, Daemon, DaemonBackend, DaemonError},
@@ -53,11 +51,10 @@ fn request<U: IntoUrl>(
     req
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BackendClient {
     auth: Arc<RwLock<auth::AccessTokenResponse>>,
     auth_client: auth::AuthClient,
-    auth_refreshing: AtomicBool,
 
     url: String,
     network: Network,
@@ -90,7 +87,6 @@ impl BackendClient {
         Ok(Self {
             auth: Arc::new(RwLock::new(credentials)),
             auth_client,
-            auth_refreshing: AtomicBool::new(false),
             network: Network::Signet,
             url,
             user_id,
@@ -112,18 +108,15 @@ impl BackendClient {
         ))
     }
 
-    fn request<U: IntoUrl>(&self, method: Method, url: U) -> Result<RequestBuilder, DaemonError> {
-        let access_token = &self
-            .auth
-            .read()
-            .map_err(|e| DaemonError::Unexpected(e.to_string()))?
-            .access_token;
-        Ok(request(&self.http, method, url, access_token))
+    async fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
+        let access_token = &self.auth.read().await.access_token;
+        request(&self.http, method, url, access_token)
     }
 
     pub async fn list_wallets(&self) -> Result<Vec<api::Wallet>, DaemonError> {
         let response = self
-            .request(Method::GET, &format!("{}/v1/wallets", self.url))?
+            .request(Method::GET, &format!("{}/v1/wallets", self.url))
+            .await
             .send()
             .await?;
         if !response.status().is_success() {
@@ -138,7 +131,7 @@ impl BackendClient {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BackendWalletClient {
     inner: BackendClient,
     wallet_uuid: String,
@@ -177,7 +170,8 @@ impl BackendWalletClient {
             .request(
                 Method::GET,
                 &format!("{}/v1/wallets/{}/psbts", self.inner.url, self.wallet_uuid),
-            )?
+            )
+            .await
             .query(&query)
             .send()
             .await?;
@@ -219,7 +213,8 @@ impl BackendWalletClient {
                     "{}/v1/wallets/{}/transactions",
                     self.inner.url, self.wallet_uuid
                 ),
-            )?
+            )
+            .await
             .query(&query)
             .send()
             .await?;
@@ -254,7 +249,8 @@ impl BackendWalletClient {
                     "{}/v1/wallets/{}/transactions",
                     self.inner.url, self.wallet_uuid
                 ),
-            )?
+            )
+            .await
             .query(&query)
             .send()
             .await?;
@@ -300,7 +296,8 @@ impl BackendWalletClient {
             .request(
                 Method::GET,
                 &format!("{}/v1/wallets/{}/coins", self.inner.url, self.wallet_uuid),
-            )?
+            )
+            .await
             .query(&query)
             .send()
             .await?;
@@ -316,13 +313,8 @@ impl BackendWalletClient {
         Ok(res)
     }
 
-    fn auth(&self) -> Result<AccessTokenResponse, DaemonError> {
-        Ok(self
-            .inner
-            .auth
-            .read()
-            .map_err(|e| DaemonError::Unexpected(e.to_string()))?
-            .clone())
+    async fn auth(&self) -> AccessTokenResponse {
+        self.inner.auth.read().await.clone()
     }
 }
 
@@ -337,27 +329,25 @@ impl Daemon for BackendWalletClient {
     }
 
     /// refresh the token if close to expiration.
-    /// auth_refreshing enforce that no other thread will try to refresh the
-    /// access credentials in the same time.
     async fn is_alive(&self) -> Result<(), DaemonError> {
-        let auth = self.auth()?;
-        if auth.expires_at < Utc::now().timestamp() + 60
-            && !self.inner.auth_refreshing.load(Ordering::Relaxed)
-        {
-            self.inner.auth_refreshing.store(true, Ordering::Relaxed);
-            let new = self
-                .inner
-                .auth_client
-                .refresh_token(&auth.refresh_token)
-                .await?;
-            let mut old = self
-                .inner
-                .auth
-                .write()
-                .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
-            *old = new;
-            tracing::info!("Liana backend access was refreshed");
-            self.inner.auth_refreshing.store(false, Ordering::Relaxed);
+        let auth = self.auth().await;
+        if auth.expires_at < Utc::now().timestamp() + 60 {
+            match self.inner.auth.try_write() {
+                Err(_) => {
+                    // something is using the lock, we will try next time.
+                    return Ok(());
+                }
+                Ok(mut old) => {
+                    let new = self
+                        .inner
+                        .auth_client
+                        .refresh_token(&auth.refresh_token)
+                        .await?;
+
+                    *old = new;
+                    tracing::info!("Liana backend access was refreshed");
+                }
+            }
         }
         Ok(())
     }
@@ -391,7 +381,8 @@ impl Daemon for BackendWalletClient {
                     "{}/v1/wallets/{}/addresses",
                     self.inner.url, self.wallet_uuid
                 ),
-            )?
+            )
+            .await
             .send()
             .await?;
 
@@ -527,7 +518,8 @@ impl Daemon for BackendWalletClient {
                     "{}/v1/wallets/{}/psbts/generate",
                     self.inner.url, self.wallet_uuid
                 ),
-            )?
+            )
+            .await
             .json(&api::payload::GeneratePsbt {
                 save: false,
                 feerate: feerate_vb,
@@ -563,7 +555,8 @@ impl Daemon for BackendWalletClient {
                     "{}/v1/wallets/{}/psbts/rbf",
                     self.inner.url, self.wallet_uuid
                 ),
-            )?
+            )
+            .await
             .json(&api::payload::GenerateRbfPsbt {
                 txid: *txid,
                 is_cancel,
@@ -591,7 +584,8 @@ impl Daemon for BackendWalletClient {
             .request(
                 Method::POST,
                 &format!("{}/v1/wallets/{}/psbts", self.inner.url, self.wallet_uuid),
-            )?
+            )
+            .await
             .json(&api::payload::ImportPsbt {
                 psbt: psbt.to_string(),
             })
@@ -625,7 +619,8 @@ impl Daemon for BackendWalletClient {
             .request(
                 Method::DELETE,
                 &format!("{}/v1/psbts/{}", self.inner.url, psbt.uuid),
-            )?
+            )
+            .await
             .send()
             .await?;
 
@@ -653,7 +648,8 @@ impl Daemon for BackendWalletClient {
             .request(
                 Method::POST,
                 &format!("{}/v1/psbts/{}/broadcast", self.inner.url, psbt.uuid),
-            )?
+            )
+            .await
             .send()
             .await?;
 
@@ -685,7 +681,8 @@ impl Daemon for BackendWalletClient {
                     "{}/v1/wallets/{}/psbts/recovery",
                     self.inner.url, self.wallet_uuid
                 ),
-            )?
+            )
+            .await
             .json(&api::payload::GenerateRecoveryPsbt {
                 save: false,
                 feerate: feerate_vb,
@@ -715,7 +712,8 @@ impl Daemon for BackendWalletClient {
                 .request(
                     Method::GET,
                     &format!("{}/v1/wallets/{}/labels", self.inner.url, self.wallet_uuid),
-                )?
+                )
+                .await
                 .query(&[("items", chunk.join(","))])
                 .send()
                 .await?;
@@ -743,7 +741,8 @@ impl Daemon for BackendWalletClient {
             .request(
                 Method::POST,
                 &format!("{}/v1/wallets/{}/labels", self.inner.url, self.wallet_uuid),
-            )?
+            )
+            .await
             .json(&api::payload::Labels {
                 labels: items
                     .iter()
@@ -858,7 +857,7 @@ impl Daemon for BackendWalletClient {
         hws: &[HardwareWalletConfig],
     ) -> Result<(), DaemonError> {
         let wallet = self.get_wallet().await?;
-        let ledger_kinds = vec![
+        let ledger_kinds = [
             async_hwi::DeviceKind::Ledger.to_string(),
             async_hwi::DeviceKind::LedgerSimulator.to_string(),
         ];
@@ -873,7 +872,8 @@ impl Daemon for BackendWalletClient {
                     .request(
                         Method::PATCH,
                         &format!("{}/v1/wallets/{}", self.inner.url, self.wallet_uuid),
-                    )?
+                    )
+                    .await
                     .json(&api::payload::UpdateWallet {
                         ledger_hmac: Some(api::payload::UpdateLedgerHmac {
                             fingerprint: cfg.fingerprint.to_string(),
@@ -908,7 +908,8 @@ impl Daemon for BackendWalletClient {
                 .request(
                     Method::PATCH,
                     &format!("{}/v1/wallets/{}", self.inner.url, self.wallet_uuid),
-                )?
+                )
+                .await
                 .json(&api::payload::UpdateWallet {
                     ledger_hmac: None,
                     fingerprint_aliases: Some(

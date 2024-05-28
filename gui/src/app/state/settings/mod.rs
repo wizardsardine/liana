@@ -14,7 +14,7 @@ use wallet::WalletSettingsState;
 
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::State, view, wallet::Wallet},
-    daemon::Daemon,
+    daemon::{Daemon, DaemonBackend},
 };
 
 pub struct SettingsState {
@@ -48,7 +48,7 @@ impl State for SettingsState {
                     BitcoindSettingsState::new(
                         daemon.config().cloned(),
                         cache,
-                        daemon.is_external(),
+                        daemon.backend() != DaemonBackend::EmbeddedLianad,
                         self.internal_bitcoind,
                     )
                     .into(),

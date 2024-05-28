@@ -13,16 +13,22 @@ use async_trait::async_trait;
 use liana::{
     commands::{CoinStatus, LabelItem, TransactionInfo},
     config::Config,
-    miniscript::bitcoin::{address, psbt::Psbt, secp256k1, Address, OutPoint, Txid},
+    miniscript::bitcoin::{
+        address, bip32::Fingerprint, psbt::Psbt, secp256k1, Address, OutPoint, Txid,
+    },
     StartupError,
 };
+
+use crate::hw::HardwareWalletConfig;
 
 #[derive(Debug)]
 pub enum DaemonError {
     /// Something was wrong with the request.
     Rpc(i32, String),
-    /// Something was wrong with the communication.
-    Transport(Option<ErrorKind>, String),
+    /// Something was wrong with the rpc socket communication.
+    RpcSocket(Option<ErrorKind>, String),
+    /// Something was wrong with the http communication.
+    Http(Option<u16>, String),
     /// Something unexpected happened.
     Unexpected(String),
     /// No response.
@@ -43,7 +49,8 @@ impl std::fmt::Display for DaemonError {
             Self::Rpc(code, e) => write!(f, "Daemon error rpc call: [{:?}] {}", code, e),
             Self::NoAnswer => write!(f, "Daemon returned no answer"),
             Self::DaemonStopped => write!(f, "Daemon stopped"),
-            Self::Transport(kind, e) => write!(f, "Daemon transport error: [{:?}] {}", kind, e),
+            Self::RpcSocket(kind, e) => write!(f, "Daemon transport error: [{:?}] {}", kind, e),
+            Self::Http(kind, e) => write!(f, "Http error: [{:?}] {}", kind, e),
             Self::Unexpected(e) => write!(f, "Daemon unexpected error: {}", e),
             Self::Start(e) => write!(f, "Daemon did not start: {}", e),
             Self::ClientNotSupported => write!(f, "Daemon communication is not supported"),
@@ -52,9 +59,16 @@ impl std::fmt::Display for DaemonError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DaemonBackend {
+    EmbeddedLianad,
+    ExternalLianad,
+    RemoteBackend,
+}
+
 #[async_trait]
 pub trait Daemon: Debug {
-    fn is_external(&self) -> bool;
+    fn backend(&self) -> DaemonBackend;
     fn config(&self) -> Option<&Config>;
     async fn is_alive(&self) -> Result<(), DaemonError>;
     async fn stop(&self) -> Result<(), DaemonError>;
@@ -263,6 +277,10 @@ pub trait Daemon: Debug {
             }
         }
 
+        if txids.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let txs = self.list_txs(&txids).await?.transactions;
         let mut txs = txs
             .into_iter()
@@ -294,6 +312,14 @@ pub trait Daemon: Debug {
 
         load_labels(self, &mut txs).await?;
         Ok(txs)
+    }
+    /// Implemented by LianaLite backend
+    async fn update_wallet_metadata(
+        &self,
+        _fingerprint_aliases: &HashMap<Fingerprint, String>,
+        _hws: &[HardwareWalletConfig],
+    ) -> Result<(), DaemonError> {
+        Ok(())
     }
 }
 
