@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 
-use super::{model::*, Daemon, DaemonError};
+use super::{model::*, Daemon, DaemonBackend, DaemonError};
 use async_trait::async_trait;
 use liana::{
     commands::{CoinStatus, LabelItem},
@@ -49,8 +49,8 @@ impl std::fmt::Debug for EmbeddedDaemon {
 
 #[async_trait]
 impl Daemon for EmbeddedDaemon {
-    fn is_external(&self) -> bool {
-        false
+    fn backend(&self) -> DaemonBackend {
+        DaemonBackend::EmbeddedLianad
     }
 
     fn config(&self) -> Option<&Config> {

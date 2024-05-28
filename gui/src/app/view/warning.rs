@@ -25,12 +25,16 @@ impl From<&Error> for WarningMessage {
                         WarningMessage("Internal error".to_string())
                     }
                 }
+                DaemonError::Http(Some(code), error) => {
+                    WarningMessage(format!("HTTP error {}: {}", code, error))
+                }
+                DaemonError::Http(None, error) => WarningMessage(format!("HTTP error: {}", error)),
                 DaemonError::Unexpected(_) => WarningMessage("Unknown error".to_string()),
                 DaemonError::Start(_) => WarningMessage("Daemon failed to start".to_string()),
                 DaemonError::ClientNotSupported => {
                     WarningMessage("Daemon client is not supported".to_string())
                 }
-                DaemonError::NoAnswer | DaemonError::Transport(..) => {
+                DaemonError::NoAnswer | DaemonError::RpcSocket(..) => {
                     WarningMessage("Communication with Daemon failed".to_string())
                 }
                 DaemonError::DaemonStopped => WarningMessage("Daemon stopped".to_string()),

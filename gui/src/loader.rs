@@ -22,6 +22,7 @@ use liana_ui::{
     widget::*,
 };
 
+use crate::daemon::DaemonBackend;
 use crate::{
     app::{
         cache::Cache,
@@ -128,8 +129,8 @@ impl Loader {
                     self.step = Step::Error(Box::new(e));
                 }
                 Error::Daemon(DaemonError::ClientNotSupported)
-                | Error::Daemon(DaemonError::Transport(Some(ErrorKind::ConnectionRefused), _))
-                | Error::Daemon(DaemonError::Transport(Some(ErrorKind::NotFound), _)) => {
+                | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::ConnectionRefused), _))
+                | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::NotFound), _)) => {
                     if let Some(daemon_config_path) = self.gui_config.daemon_config_path.clone() {
                         self.step = Step::StartingDaemon;
                         self.daemon_started = true;
@@ -226,7 +227,7 @@ impl Loader {
     pub fn stop(&mut self) {
         info!("Close requested");
         if let Step::Syncing { daemon, .. } = &mut self.step {
-            if !daemon.is_external() {
+            if daemon.backend() == DaemonBackend::EmbeddedLianad {
                 info!("Stopping internal daemon...");
                 if let Err(e) = Handle::current().block_on(async { daemon.stop().await }) {
                     warn!("Internal daemon failed to stop: {}", e);
@@ -366,7 +367,9 @@ pub async fn load_application(
     ),
     Error,
 > {
-    let wallet = Wallet::new(info.descriptors.main).load_settings(&datadir_path, network)?;
+    let wallet = Wallet::new(info.descriptors.main)
+        .load_from_settings(&datadir_path, network)?
+        .load_hotsigners(&datadir_path, network)?;
 
     let coins = daemon
         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])

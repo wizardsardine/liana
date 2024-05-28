@@ -16,7 +16,7 @@ use crate::{
     app::{
         cache::Cache, error::Error, message::Message, settings, state::State, view, wallet::Wallet,
     },
-    daemon::Daemon,
+    daemon::{Daemon, DaemonBackend},
     hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
 };
 
@@ -106,30 +106,21 @@ impl State for WalletSettingsState {
         message: Message,
     ) -> Command<Message> {
         match message {
-            Message::Updated(res) => match res {
-                Ok(()) => {
-                    self.processing = false;
-                    self.updated = true;
-                    Command::perform(async {}, |_| Message::LoadWallet)
-                }
-                Err(e) => {
-                    self.processing = false;
-                    self.warning = Some(e);
+            Message::WalletUpdated(res) => {
+                self.processing = false;
+                if let Some(modal) = &mut self.modal {
+                    modal.update(daemon, cache, Message::WalletUpdated(res))
+                } else {
+                    match res {
+                        Ok(wallet) => {
+                            self.keys_aliases = Self::keys_aliases(&wallet);
+                            self.wallet = wallet;
+                            self.updated = true;
+                        }
+                        Err(e) => self.warning = Some(e),
+                    };
                     Command::none()
                 }
-            },
-            Message::WalletLoaded(res) => {
-                match res {
-                    Ok(wallet) => {
-                        if let Some(modal) = &mut self.modal {
-                            modal.wallet = wallet.clone();
-                        }
-                        self.keys_aliases = Self::keys_aliases(&wallet);
-                        self.wallet = wallet;
-                    }
-                    Err(e) => self.warning = Some(e),
-                };
-                Command::none()
             }
             Message::View(view::Message::Settings(
                 view::SettingsMessage::FingerprintAliasEdited(fg, value),
@@ -156,8 +147,9 @@ impl State for WalletSettingsState {
                             .iter()
                             .map(|(fg, name)| (*fg, name.value.to_owned()))
                             .collect(),
+                        daemon,
                     ),
-                    Message::Updated,
+                    Message::WalletUpdated,
                 )
             }
             Message::View(view::Message::Close) => {
@@ -246,7 +238,7 @@ impl RegisterWalletModal {
 
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
     ) -> Command<Message> {
@@ -263,13 +255,16 @@ impl RegisterWalletModal {
                     Command::none()
                 }
             },
-            Message::WalletRegistered(res) => {
+            Message::WalletUpdated(res) => {
                 self.processing = false;
                 self.chosen_hw = None;
                 match res {
-                    Ok(fingerprint) => {
-                        self.registered.insert(fingerprint);
-                        return Command::perform(async {}, |_| Message::LoadWallet);
+                    Ok(wallet) => {
+                        self.registered = HashSet::new();
+                        for hw in &wallet.hardware_wallets {
+                            self.registered.insert(hw.fingerprint);
+                        }
+                        self.wallet = wallet;
                     }
                     Err(e) => {
                         if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
@@ -295,8 +290,9 @@ impl RegisterWalletModal {
                             device.clone(),
                             *fingerprint,
                             self.wallet.clone(),
+                            daemon,
                         ),
-                        Message::WalletRegistered,
+                        Message::WalletUpdated,
                     )
                 } else {
                     Command::none()
@@ -313,40 +309,61 @@ async fn register_wallet(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     fingerprint: Fingerprint,
     wallet: Arc<Wallet>,
-) -> Result<Fingerprint, Error> {
+    daemon: Arc<dyn Daemon + Sync + Send>,
+) -> Result<Arc<Wallet>, Error> {
     let hmac = hw
         .register_wallet(&wallet.name, &wallet.main_descriptor.to_string())
         .await
         .map_err(Error::from)?;
 
     if let Some(hmac) = hmac {
-        let mut settings = settings::Settings::from_file(data_dir.clone(), network)?;
-        let checksum = wallet.descriptor_checksum();
-        if let Some(wallet_setting) = settings
-            .wallets
-            .iter_mut()
-            .find(|w| w.descriptor_checksum == checksum)
-        {
-            let kind = hw.device_kind().to_string();
-            if let Some(hw_config) = wallet_setting
-                .hardware_wallets
+        let kind = hw.device_kind().to_string();
+        let hw_cfg = HardwareWalletConfig {
+            kind: kind.clone(),
+            token: hex::encode(hmac),
+            fingerprint,
+        };
+
+        if daemon.backend() != DaemonBackend::RemoteBackend {
+            let mut settings = settings::Settings::from_file(data_dir.clone(), network)?;
+            let checksum = wallet.descriptor_checksum();
+
+            if let Some(wallet_setting) = settings
+                .wallets
                 .iter_mut()
-                .find(|cfg| cfg.kind == kind && cfg.fingerprint == fingerprint)
+                .find(|w| w.descriptor_checksum == checksum)
             {
-                hw_config.token = hex::encode(hmac);
-            } else {
-                wallet_setting.hardware_wallets.push(HardwareWalletConfig {
-                    kind,
-                    token: hex::encode(hmac),
-                    fingerprint,
-                })
+                if let Some(hw_config) = wallet_setting
+                    .hardware_wallets
+                    .iter_mut()
+                    .find(|cfg| cfg.kind == kind && cfg.fingerprint == fingerprint)
+                {
+                    *hw_config = hw_cfg.clone();
+                } else {
+                    wallet_setting.hardware_wallets.push(hw_cfg.clone())
+                }
             }
+
+            settings.to_file(data_dir, network)?;
         }
 
-        settings.to_file(data_dir, network)?;
+        let mut wallet = wallet.as_ref().clone();
+        if let Some(hw_config) = wallet
+            .hardware_wallets
+            .iter_mut()
+            .find(|cfg| cfg.kind == kind && cfg.fingerprint == fingerprint)
+        {
+            *hw_config = hw_cfg.clone();
+        } else {
+            wallet.hardware_wallets.push(hw_cfg)
+        }
+        daemon
+            .update_wallet_metadata(&wallet.keys_aliases, &wallet.hardware_wallets)
+            .await?;
+        return Ok(Arc::new(wallet));
     }
 
-    Ok(fingerprint)
+    Ok(wallet)
 }
 
 async fn update_keys_aliases(
@@ -354,24 +371,34 @@ async fn update_keys_aliases(
     network: Network,
     wallet: Arc<Wallet>,
     keys_aliases: Vec<(Fingerprint, String)>,
-) -> Result<(), Error> {
-    let mut settings = settings::Settings::from_file(data_dir.clone(), network)?;
-    let checksum = wallet.descriptor_checksum();
-    if let Some(wallet_setting) = settings
-        .wallets
-        .iter_mut()
-        .find(|w| w.descriptor_checksum == checksum)
-    {
-        wallet_setting.keys = keys_aliases
-            .into_iter()
-            .map(|(master_fingerprint, name)| settings::KeySetting {
-                master_fingerprint,
-                name,
-            })
-            .collect();
+    daemon: Arc<dyn Daemon + Sync + Send>,
+) -> Result<Arc<Wallet>, Error> {
+    if daemon.backend() != DaemonBackend::RemoteBackend {
+        let mut settings = settings::Settings::from_file(data_dir.clone(), network)?;
+        let checksum = wallet.descriptor_checksum();
+        if let Some(wallet_setting) = settings
+            .wallets
+            .iter_mut()
+            .find(|w| w.descriptor_checksum == checksum)
+        {
+            wallet_setting.keys = keys_aliases
+                .iter()
+                .map(|(master_fingerprint, name)| settings::KeySetting {
+                    master_fingerprint: *master_fingerprint,
+                    name: name.clone(),
+                })
+                .collect();
+        }
+
+        settings.to_file(data_dir, network)?;
     }
 
-    settings.to_file(data_dir, network)?;
+    let mut wallet = wallet.as_ref().clone();
+    wallet.keys_aliases = keys_aliases.into_iter().collect();
 
-    Ok(())
+    daemon
+        .update_wallet_metadata(&wallet.keys_aliases, &wallet.hardware_wallets)
+        .await?;
+
+    Ok(Arc::new(wallet))
 }
