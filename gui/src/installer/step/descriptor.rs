@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::iter::FromIterator;
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
@@ -196,11 +195,9 @@ impl Setup {
 }
 
 pub struct DefineDescriptor {
-    data_dir: Option<PathBuf>,
-    setup: HashMap<Network, Setup>,
+    setup: Setup,
 
     network: Network,
-    network_valid: bool,
     use_taproot: bool,
 
     modal: Option<Box<dyn DescriptorEditModal>>,
@@ -210,13 +207,11 @@ pub struct DefineDescriptor {
 }
 
 impl DefineDescriptor {
-    pub fn new(signer: Arc<Mutex<Signer>>) -> Self {
+    pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
         Self {
-            network: Network::Bitcoin,
+            network,
             use_taproot: false,
-            setup: HashMap::from([(Network::Bitcoin, Setup::new())]),
-            data_dir: None,
-            network_valid: true,
+            setup: Setup::new(),
             modal: None,
             signer,
             error: None,
@@ -224,25 +219,10 @@ impl DefineDescriptor {
     }
 
     fn valid(&self) -> bool {
-        self.setup[&self.network].valid()
+        self.setup.valid()
     }
     fn setup_mut(&mut self) -> &mut Setup {
-        self.setup
-            .get_mut(&self.network)
-            .expect("There is always one")
-    }
-
-    fn set_network(&mut self, network: Network) {
-        self.network = network;
-        if self.setup.get(&self.network).is_none() {
-            self.setup.insert(self.network, Setup::new());
-        }
-        self.signer.lock().unwrap().set_network(network);
-        if let Some(mut network_datadir) = self.data_dir.clone() {
-            network_datadir.push(self.network.to_string());
-            self.network_valid = !network_datadir.exists();
-        }
-        self.check_setup()
+        &mut self.setup
     }
 
     fn check_setup(&mut self) {
@@ -257,15 +237,10 @@ impl Step for DefineDescriptor {
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
-        let network = self.network;
         self.error = None;
         match message {
             Message::Close => {
                 self.modal = None;
-            }
-            Message::Network(network) => {
-                hws.set_network(network);
-                self.set_network(network)
             }
             Message::CreateTaprootDescriptor(use_taproot) => {
                 self.use_taproot = use_taproot;
@@ -313,6 +288,7 @@ impl Step for DefineDescriptor {
                     }
                     message::DefineKey::Edit => {
                         let use_taproot = self.use_taproot;
+                        let network = self.network;
                         let setup = self.setup_mut();
                         let modal = EditXpubModal::new(
                             use_taproot,
@@ -424,7 +400,7 @@ impl Step for DefineDescriptor {
                             j,
                             self.network,
                             self.signer.clone(),
-                            self.setup[&self.network].keys.clone(),
+                            self.setup.keys.clone(),
                         );
                         let cmd = modal.load();
                         self.modal = Some(Box::new(modal));
@@ -459,11 +435,6 @@ impl Step for DefineDescriptor {
         Command::none()
     }
 
-    fn load_context(&mut self, ctx: &Context) {
-        self.data_dir = Some(ctx.data_dir.clone());
-        self.set_network(ctx.bitcoin_config.network)
-    }
-
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
         if let Some(modal) = &self.modal {
             modal.subscription(hws)
@@ -478,9 +449,10 @@ impl Step for DefineDescriptor {
         let mut hw_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
         let mut key_derivation_index = HashMap::<Fingerprint, usize>::new();
-        for spending_key in self.setup[&self.network].spending_keys.iter().clone() {
+        for spending_key in self.setup.spending_keys.iter().clone() {
             let fingerprint = spending_key.expect("Must be present at this step");
-            let key = self.setup[&self.network]
+            let key = self
+                .setup
                 .keys
                 .iter()
                 .find(|key| key.key.master_fingerprint() == fingerprint)
@@ -506,11 +478,12 @@ impl Step for DefineDescriptor {
 
         let mut recovery_paths = BTreeMap::new();
 
-        for path in &self.setup[&self.network].recovery_paths {
+        for path in &self.setup.recovery_paths {
             let mut recovery_keys: Vec<DescriptorPublicKey> = Vec::new();
             for recovery_key in path.keys.iter().clone() {
                 let fingerprint = recovery_key.expect("Must be present at this step");
-                let key = self.setup[&self.network]
+                let key = self
+                    .setup
                     .keys
                     .iter()
                     .find(|key| key.key.master_fingerprint() == fingerprint)
@@ -544,14 +517,14 @@ impl Step for DefineDescriptor {
             recovery_paths.insert(path.sequence, recovery_keys);
         }
 
-        if !self.network_valid || spending_keys.is_empty() {
+        if spending_keys.is_empty() {
             return false;
         }
 
         let spending_keys = if spending_keys.len() == 1 {
             PathInfo::Single(spending_keys[0].clone())
         } else {
-            PathInfo::Multi(self.setup[&self.network].spending_threshold, spending_keys)
+            PathInfo::Multi(self.setup.spending_threshold, spending_keys)
         };
 
         let policy = match if self.use_taproot {
@@ -576,13 +549,11 @@ impl Step for DefineDescriptor {
         hws: &'a HardwareWallets,
         progress: (usize, usize),
     ) -> Element<'a, Message> {
-        let aliases = self.setup[&self.network].keys_aliases();
+        let aliases = self.setup.keys_aliases();
         let content = view::define_descriptor(
             progress,
-            self.network,
-            self.network_valid,
             self.use_taproot,
-            self.setup[&self.network]
+            self.setup
                 .spending_keys
                 .iter()
                 .enumerate()
@@ -590,10 +561,8 @@ impl Step for DefineDescriptor {
                     if let Some(key) = key {
                         view::defined_descriptor_key(
                             aliases.get(key).unwrap().to_string(),
-                            self.setup[&self.network].duplicate_name.contains(key),
-                            self.setup[&self.network]
-                                .incompatible_with_tapminiscript
-                                .contains(key),
+                            self.setup.duplicate_name.contains(key),
+                            self.setup.incompatible_with_tapminiscript.contains(key),
                         )
                     } else {
                         view::undefined_descriptor_key()
@@ -605,16 +574,16 @@ impl Step for DefineDescriptor {
                     })
                 })
                 .collect(),
-            self.setup[&self.network].spending_threshold,
-            self.setup[&self.network]
+            self.setup.spending_threshold,
+            self.setup
                 .recovery_paths
                 .iter()
                 .enumerate()
                 .map(|(i, path)| {
                     path.view(
                         &aliases,
-                        &self.setup[&self.network].duplicate_name,
-                        &self.setup[&self.network].incompatible_with_tapminiscript,
+                        &self.setup.duplicate_name,
+                        &self.setup.incompatible_with_tapminiscript,
                     )
                     .map(move |msg| {
                         Message::DefineDescriptor(message::DefineDescriptor::RecoveryPath(i, msg))
@@ -1133,13 +1102,6 @@ pub struct HardwareWalletXpubs {
     error: Option<Error>,
 }
 
-impl HardwareWalletXpubs {
-    fn reset(&mut self) {
-        self.error = None;
-        self.xpubs = Vec::new();
-    }
-}
-
 pub struct SignerXpubs {
     signer: Arc<Mutex<Signer>>,
     xpubs: Vec<String>,
@@ -1153,11 +1115,6 @@ impl SignerXpubs {
             xpubs: Vec::new(),
             next_account: ChildNumber::from_hardened_idx(0).unwrap(),
         }
-    }
-
-    fn reset(&mut self) {
-        self.xpubs = Vec::new();
-        self.next_account = ChildNumber::from_hardened_idx(0).unwrap();
     }
 
     fn select(&mut self, network: Network) {
@@ -1180,8 +1137,6 @@ impl SignerXpubs {
 
 pub struct ParticipateXpub {
     network: Network,
-    network_valid: bool,
-    data_dir: Option<PathBuf>,
 
     shared: bool,
 
@@ -1190,31 +1145,12 @@ pub struct ParticipateXpub {
 }
 
 impl ParticipateXpub {
-    pub fn new(signer: Arc<Mutex<Signer>>) -> Self {
+    pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
         Self {
-            network: Network::Bitcoin,
-            network_valid: true,
-            data_dir: None,
+            network,
             hw_xpubs: Vec::new(),
             shared: false,
             xpubs_signer: SignerXpubs::new(signer),
-        }
-    }
-
-    fn set_network(&mut self, network: Network) {
-        if network != self.network {
-            self.hw_xpubs.iter_mut().for_each(|hw| hw.reset());
-            self.xpubs_signer.reset();
-        }
-        self.network = network;
-        self.xpubs_signer
-            .signer
-            .lock()
-            .unwrap()
-            .set_network(network);
-        if let Some(mut network_datadir) = self.data_dir.clone() {
-            network_datadir.push(self.network.to_string());
-            self.network_valid = !network_datadir.exists();
         }
     }
 }
@@ -1224,10 +1160,6 @@ impl Step for ParticipateXpub {
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         match message {
-            Message::Network(network) => {
-                hws.set_network(network);
-                self.set_network(network);
-            }
             Message::UserActionDone(shared) => self.shared = shared,
             Message::ImportXpub(fg, res) => {
                 if let Some(hw_xpubs) = self.hw_xpubs.iter_mut().find(|x| x.fingerprint == fg) {
@@ -1292,11 +1224,6 @@ impl Step for ParticipateXpub {
         hws.refresh().map(Message::HardwareWallets)
     }
 
-    fn load_context(&mut self, ctx: &Context) {
-        self.data_dir = Some(ctx.data_dir.clone());
-        self.set_network(ctx.bitcoin_config.network);
-    }
-
     fn apply(&mut self, ctx: &mut Context) -> bool {
         ctx.bitcoin_config.network = self.network;
         // Drop connections to hardware wallets.
@@ -1307,8 +1234,6 @@ impl Step for ParticipateXpub {
     fn view<'a>(&'a self, hws: &'a HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         view::participate_xpub(
             progress,
-            self.network,
-            self.network_valid,
             hws.list
                 .iter()
                 .enumerate()
@@ -1344,21 +1269,15 @@ impl From<ParticipateXpub> for Box<dyn Step> {
 
 pub struct ImportDescriptor {
     network: Network,
-    network_valid: bool,
-    change_network: bool,
-    data_dir: Option<PathBuf>,
     imported_descriptor: form::Value<String>,
     wrong_network: bool,
     error: Option<String>,
 }
 
 impl ImportDescriptor {
-    pub fn new(change_network: bool) -> Self {
+    pub fn new(network: Network) -> Self {
         Self {
-            change_network,
-            network: Network::Bitcoin,
-            network_valid: true,
-            data_dir: None,
+            network,
             imported_descriptor: form::Value::default(),
             wrong_network: false,
             error: None,
@@ -1397,32 +1316,13 @@ impl Step for ImportDescriptor {
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
-        match message {
-            Message::Network(network) => {
-                self.network = network;
-                let mut network_datadir = self.data_dir.clone().unwrap();
-                network_datadir.push(self.network.to_string());
-                self.network_valid = !network_datadir.exists();
-                self.check_descriptor(self.network);
-            }
-            Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) => {
-                self.imported_descriptor.value = desc;
-                self.check_descriptor(self.network);
-            }
-            _ => {}
-        };
-        Command::none()
-    }
-
-    fn load_context(&mut self, ctx: &Context) {
-        if ctx.bitcoin_config.network != self.network {
-            self.check_descriptor(ctx.bitcoin_config.network);
+        if let Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) =
+            message
+        {
+            self.imported_descriptor.value = desc;
+            self.check_descriptor(self.network);
         }
-        self.network = ctx.bitcoin_config.network;
-        self.data_dir = Some(ctx.data_dir.clone());
-        let mut network_datadir = ctx.data_dir.clone();
-        network_datadir.push(self.network.to_string());
-        self.network_valid = !network_datadir.exists();
+        Command::none()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
@@ -1441,9 +1341,6 @@ impl Step for ImportDescriptor {
     fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
         view::import_descriptor(
             progress,
-            self.change_network,
-            self.network,
-            self.network_valid,
             &self.imported_descriptor,
             self.wrong_network,
             self.error.as_ref(),
@@ -1650,6 +1547,7 @@ impl From<BackupDescriptor> for Box<dyn Step> {
 mod tests {
     use super::*;
     use iced_runtime::command::Action;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     pub struct Sandbox<S: Step> {
@@ -1686,9 +1584,10 @@ mod tests {
     #[tokio::test]
     async fn test_define_descriptor_use_hotkey() {
         let mut ctx = Context::new(Network::Signet, PathBuf::from_str("/").unwrap());
-        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(Arc::new(
-            Mutex::new(Signer::generate(Network::Bitcoin).unwrap()),
-        )));
+        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
+            Network::Bitcoin,
+            Arc::new(Mutex::new(Signer::generate(Network::Bitcoin).unwrap())),
+        ));
 
         // Edit primary key
         sandbox
@@ -1767,9 +1666,10 @@ mod tests {
     #[tokio::test]
     async fn test_define_descriptor_stores_if_hw_is_used() {
         let mut ctx = Context::new(Network::Testnet, PathBuf::from_str("/").unwrap());
-        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(Arc::new(
-            Mutex::new(Signer::generate(Network::Testnet).unwrap()),
-        )));
+        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
+            Network::Testnet,
+            Arc::new(Mutex::new(Signer::generate(Network::Testnet).unwrap())),
+        ));
         sandbox.load(&ctx).await;
 
         let specter_key = message::DefinePath::Key(

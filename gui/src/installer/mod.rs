@@ -29,6 +29,7 @@ use step::{
 };
 
 pub struct Installer {
+    network: bitcoin::Network,
     current: usize,
     steps: Vec<Box<dyn Step>>,
     hws: HardwareWallets,
@@ -61,6 +62,7 @@ impl Installer {
     ) -> (Installer, Command<Message>) {
         (
             Installer {
+                network,
                 current: 0,
                 hws: HardwareWallets::new(destination_path.clone(), network),
                 steps: vec![Welcome::default().into()],
@@ -135,7 +137,7 @@ impl Installer {
             Message::CreateWallet => {
                 self.steps = vec![
                     Welcome::default().into(),
-                    DefineDescriptor::new(self.signer.clone()).into(),
+                    DefineDescriptor::new(self.network, self.signer.clone()).into(),
                     BackupMnemonic::new(self.signer.clone()).into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::new_create_wallet().into(),
@@ -149,8 +151,8 @@ impl Installer {
             Message::ParticipateWallet => {
                 self.steps = vec![
                     Welcome::default().into(),
-                    ParticipateXpub::new(self.signer.clone()).into(),
-                    ImportDescriptor::new(false).into(),
+                    ParticipateXpub::new(self.network, self.signer.clone()).into(),
+                    ImportDescriptor::new(self.network).into(),
                     BackupMnemonic::new(self.signer.clone()).into(),
                     RegisterDescriptor::new_import_wallet().into(),
                     SelectBitcoindTypeStep::new().into(),
@@ -163,7 +165,7 @@ impl Installer {
             Message::ImportWallet => {
                 self.steps = vec![
                     Welcome::default().into(),
-                    ImportDescriptor::new(true).into(),
+                    ImportDescriptor::new(self.network).into(),
                     RecoverMnemonic::default().into(),
                     RegisterDescriptor::new_import_wallet().into(),
                     SelectBitcoindTypeStep::new().into(),

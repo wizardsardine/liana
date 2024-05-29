@@ -1,7 +1,4 @@
-use liana::miniscript::{
-    bitcoin::{bip32::Fingerprint, Network},
-    DescriptorPublicKey,
-};
+use liana::miniscript::{bitcoin::bip32::Fingerprint, DescriptorPublicKey};
 use std::path::PathBuf;
 
 use super::Error;
@@ -29,7 +26,6 @@ pub enum Message {
     Select(usize),
     UseHotSigner,
     Installed(Result<PathBuf, Error>),
-    Network(Network),
     CreateTaprootDescriptor(bool),
     SelectBitcoindType(SelectBitcoindTypeMsg),
     InternalBitcoind(InternalBitcoindMsg),
