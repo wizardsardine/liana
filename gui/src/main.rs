@@ -246,6 +246,10 @@ impl Application for GUI {
                     );
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
+                } else if let installer::Message::BackToLauncher = *msg {
+                    let launcher = Launcher::new(i.destination_path());
+                    self.state = State::Launcher(Box::new(launcher));
+                    Command::none()
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
                 }

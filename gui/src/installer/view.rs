@@ -111,6 +111,11 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                     .padding(20),
                                 ),
                         )
+                        .push(
+                            button::secondary(Some(icon::previous_icon()), "Change network")
+                                .width(Length::Fixed(200.0))
+                                .on_press(Message::BackToLauncher),
+                        )
                         .push(Space::with_height(Length::Fixed(100.0)))
                         .spacing(50)
                         .align_items(Alignment::Center),

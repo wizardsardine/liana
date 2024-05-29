@@ -73,6 +73,10 @@ impl Installer {
         )
     }
 
+    pub fn destination_path(&self) -> PathBuf {
+        self.context.data_dir.clone()
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         if self.current > 0 {
             self.steps

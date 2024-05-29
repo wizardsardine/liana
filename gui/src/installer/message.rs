@@ -20,6 +20,7 @@ pub enum Message {
     Next,
     Skip,
     Previous,
+    BackToLauncher,
     Install,
     Close,
     Reload,
