@@ -199,6 +199,18 @@ impl Application for GUI {
             }
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
                 launcher::Message::Install(datadir_path, network) => {
+                    if !datadir_path.exists() {
+                        // datadir is created right before launching the installer
+                        // so logs can go in <datadir_path>/installer.log
+                        if let Err(e) = create_datadir(&datadir_path) {
+                            error!("Failed to create datadir: {}", e);
+                        } else {
+                            info!(
+                                "Created a fresh data directory at {}",
+                                &datadir_path.to_string_lossy()
+                            );
+                        }
+                    }
                     self.logger.set_installer_mode(
                         datadir_path.clone(),
                         self.log_level.unwrap_or(LevelFilter::INFO),
