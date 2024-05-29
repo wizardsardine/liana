@@ -5,8 +5,11 @@ mod step;
 mod view;
 
 use iced::{clipboard, Command, Subscription};
-use liana::miniscript::bitcoin;
-use liana_ui::widget::Element;
+use liana::miniscript::bitcoin::{self, Network};
+use liana_ui::{
+    component::network_banner,
+    widget::{Column, Element},
+};
 use tracing::{error, info, warn};
 
 use context::Context;
@@ -252,10 +255,17 @@ impl Installer {
     }
 
     pub fn view(&self) -> Element<Message> {
-        self.steps
+        let content = self
+            .steps
             .get(self.current)
             .expect("There is always a step")
-            .view(&self.hws, self.progress())
+            .view(&self.hws, self.progress());
+
+        if self.network != Network::Bitcoin {
+            Column::with_children(vec![network_banner(self.network).into(), content]).into()
+        } else {
+            content
+        }
     }
 }
 

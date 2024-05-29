@@ -20,7 +20,10 @@ use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
 pub use liana::{commands::CoinStatus, config::Config as DaemonConfig, miniscript::bitcoin};
-use liana_ui::widget::Element;
+use liana_ui::{
+    component::network_banner,
+    widget::{Column, Element},
+};
 
 pub use config::Config;
 pub use message::Message;
@@ -318,6 +321,11 @@ impl App {
     }
 
     pub fn view(&self) -> Element<Message> {
-        self.panels.current().view(&self.cache).map(Message::View)
+        let content = self.panels.current().view(&self.cache).map(Message::View);
+        if self.cache.network != bitcoin::Network::Bitcoin {
+            Column::with_children(vec![network_banner(self.cache.network).into(), content]).into()
+        } else {
+            content
+        }
     }
 }
