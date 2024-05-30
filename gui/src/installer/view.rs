@@ -32,55 +32,6 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Network {
-    Mainnet,
-    Testnet,
-    Regtest,
-    Signet,
-}
-
-impl From<bitcoin::Network> for Network {
-    fn from(n: bitcoin::Network) -> Self {
-        match n {
-            bitcoin::Network::Bitcoin => Network::Mainnet,
-            bitcoin::Network::Testnet => Network::Testnet,
-            bitcoin::Network::Regtest => Network::Regtest,
-            bitcoin::Network::Signet => Network::Signet,
-            _ => Network::Mainnet,
-        }
-    }
-}
-
-impl From<Network> for bitcoin::Network {
-    fn from(network: Network) -> bitcoin::Network {
-        match network {
-            Network::Mainnet => bitcoin::Network::Bitcoin,
-            Network::Testnet => bitcoin::Network::Testnet,
-            Network::Regtest => bitcoin::Network::Regtest,
-            Network::Signet => bitcoin::Network::Signet,
-        }
-    }
-}
-
-impl std::fmt::Display for Network {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Mainnet => write!(f, "Bitcoin mainnet"),
-            Self::Testnet => write!(f, "Bitcoin testnet"),
-            Self::Regtest => write!(f, "Bitcoin regtest"),
-            Self::Signet => write!(f, "Bitcoin signet"),
-        }
-    }
-}
-
-const NETWORKS: [Network; 4] = [
-    Network::Mainnet,
-    Network::Testnet,
-    Network::Signet,
-    Network::Regtest,
-];
-
 pub fn welcome<'a>() -> Element<'a, Message> {
     Container::new(
         Column::new()
@@ -160,6 +111,11 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                     .padding(20),
                                 ),
                         )
+                        .push(
+                            button::secondary(Some(icon::previous_icon()), "Change network")
+                                .width(Length::Fixed(200.0))
+                                .on_press(Message::BackToLauncher),
+                        )
                         .push(Space::with_height(Length::Fixed(100.0)))
                         .spacing(50)
                         .align_items(Alignment::Center),
@@ -191,31 +147,7 @@ impl std::fmt::Display for DescriptorKind {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn define_descriptor_advanced_settings<'a>(
-    network: bitcoin::Network,
-    network_valid: bool,
-    use_taproot: bool,
-) -> Element<'a, Message> {
-    let col_network = Column::new()
-        .spacing(10)
-        .push(text("Network").bold())
-        .push(container(
-            pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
-                Message::Network(net.into())
-            })
-            .style(if network_valid {
-                theme::PickList::Secondary
-            } else {
-                theme::PickList::Invalid
-            })
-            .padding(10),
-        ))
-        .push_maybe(if network_valid {
-            None
-        } else {
-            Some(text("A data directory already exists for this network").style(color::RED))
-        });
-
+pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a, Message> {
     let col_wallet = Column::new()
         .spacing(10)
         .push(text("Descriptor type").bold())
@@ -238,12 +170,7 @@ pub fn define_descriptor_advanced_settings<'a>(
             .spacing(20)
             .push(Space::with_height(0))
             .push(separation().width(500))
-            .push(
-                Row::new()
-                    .push(col_network)
-                    .push(Space::with_width(100))
-                    .push(col_wallet),
-            )
+            .push(Row::new().push(col_wallet))
             .push_maybe(if use_taproot {
                 Some(
                     p1_regular("Taproot is only supported by Liana version 5.0 and above")
@@ -259,8 +186,6 @@ pub fn define_descriptor_advanced_settings<'a>(
 #[allow(clippy::too_many_arguments)]
 pub fn define_descriptor<'a>(
     progress: (usize, usize),
-    network: bitcoin::Network,
-    network_valid: bool,
     use_taproot: bool,
     spending_keys: Vec<Element<'a, Message>>,
     spending_threshold: usize,
@@ -329,34 +254,29 @@ pub fn define_descriptor<'a>(
         progress,
         "Create the wallet",
         Column::new()
-            .push(
-                collapse::Collapse::new(
-                    || {
-                        Button::new(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .spacing(10)
-                                .push(text("Advanced settings").small().bold())
-                                .push(icon::collapse_icon()),
-                        )
-                        .style(theme::Button::Transparent)
-                    },
-                    || {
-                        Button::new(
-                            Row::new()
-                                .align_items(Alignment::Center)
-                                .spacing(10)
-                                .push(text("Advanced settings").small().bold())
-                                .push(icon::collapsed_icon()),
-                        )
-                        .style(theme::Button::Transparent)
-                    },
-                    move || {
-                        define_descriptor_advanced_settings(network, network_valid, use_taproot)
-                    },
-                )
-                .collapsed(!network_valid),
-            )
+            .push(collapse::Collapse::new(
+                || {
+                    Button::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Advanced settings").small().bold())
+                            .push(icon::collapse_icon()),
+                    )
+                    .style(theme::Button::Transparent)
+                },
+                || {
+                    Button::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Advanced settings").small().bold())
+                            .push(icon::collapsed_icon()),
+                    )
+                    .style(theme::Button::Transparent)
+                },
+                move || define_descriptor_advanced_settings(use_taproot),
+            ))
             .push(
                 Column::new()
                     .width(Length::Fill)
@@ -384,7 +304,7 @@ pub fn define_descriptor<'a>(
                             ))
                             .width(Length::Fixed(200.0)),
                     )
-                    .push(if !valid || !network_valid {
+                    .push(if !valid {
                         button::primary(None, "Next").width(Length::Fixed(200.0))
                     } else {
                         button::primary(None, "Next")
@@ -455,33 +375,10 @@ pub fn recovery_path_view(
 
 pub fn import_descriptor<'a>(
     progress: (usize, usize),
-    change_network: bool,
-    network: bitcoin::Network,
-    network_valid: bool,
     imported_descriptor: &form::Value<String>,
     wrong_network: bool,
     error: Option<&String>,
 ) -> Element<'a, Message> {
-    let row_network = Row::new()
-        .spacing(10)
-        .align_items(Alignment::Center)
-        .push(text("Network:").bold())
-        .push(Container::new(
-            pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
-                Message::Network(net.into())
-            })
-            .style(if network_valid {
-                theme::PickList::Simple
-            } else {
-                theme::PickList::Invalid
-            })
-            .padding(10),
-        ))
-        .push_maybe(if network_valid {
-            None
-        } else {
-            Some(text("A data directory already exists for this network").style(color::RED))
-        });
     let col_descriptor = Column::new()
         .push(text("Descriptor:").bold())
         .push(
@@ -501,28 +398,13 @@ pub fn import_descriptor<'a>(
         progress,
         "Import the wallet",
         Column::new()
-            .push(
-                Column::new()
-                    .spacing(20)
-                    .push_maybe(if change_network {
-                        Some(row_network)
-                    } else {
-                        None
-                    })
-                    .push(col_descriptor)
-                    .push_maybe(if change_network {
-                        // only show message when importing a descriptor
-                        Some(text(
-                            "After creating the wallet, \
+            .push(Column::new().spacing(20).push(col_descriptor).push(text(
+                "After creating the wallet, \
                             you will need to perform a rescan of \
                             the blockchain in order to see your \
                             coins and past transactions. This can \
                             be done in Settings > Bitcoin Core.",
-                        ))
-                    } else {
-                        None
-                    }),
-            )
+            )))
             .push(
                 if imported_descriptor.value.is_empty() || !imported_descriptor.valid {
                     button::primary(None, "Next").width(Length::Fixed(200.0))
@@ -684,43 +566,14 @@ pub fn hardware_wallet_xpubs<'a>(
 
 pub fn participate_xpub<'a>(
     progress: (usize, usize),
-    network: bitcoin::Network,
-    network_valid: bool,
     hws: Vec<Element<'a, Message>>,
     signer: Element<'a, Message>,
     shared: bool,
 ) -> Element<'a, Message> {
-    let row_network = Row::new()
-        .spacing(10)
-        .align_items(Alignment::Center)
-        .push(text("Network:").bold())
-        .push(Container::new(
-            pick_list(&NETWORKS[..], Some(Network::from(network)), |net| {
-                Message::Network(net.into())
-            })
-            .style(if network_valid {
-                theme::PickList::Simple
-            } else {
-                theme::PickList::Invalid
-            })
-            .padding(10),
-        ))
-        .push_maybe(if network_valid {
-            None
-        } else {
-            Some(text("A data directory already exists for this network").style(color::RED))
-        });
-
     layout(
         progress,
         "Share your public keys",
         Column::new()
-            .push(
-                Column::new()
-                    .spacing(20)
-                    .width(Length::Fill)
-                    .push(row_network),
-            )
             .push(
                 Column::new()
                     .push(
@@ -739,7 +592,7 @@ pub fn participate_xpub<'a>(
                 checkbox("I have shared my extended public key", shared)
                     .on_toggle(Message::UserActionDone),
             )
-            .push(if shared && network_valid {
+            .push(if shared {
                 button::primary(None, "Next")
                     .width(Length::Fixed(200.0))
                     .on_press(Message::Next)

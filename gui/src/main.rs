@@ -198,13 +198,24 @@ impl Application for GUI {
                 }
             }
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
-                launcher::Message::Install(datadir_path) => {
+                launcher::Message::Install(datadir_path, network) => {
+                    if !datadir_path.exists() {
+                        // datadir is created right before launching the installer
+                        // so logs can go in <datadir_path>/installer.log
+                        if let Err(e) = create_datadir(&datadir_path) {
+                            error!("Failed to create datadir: {}", e);
+                        } else {
+                            info!(
+                                "Created a fresh data directory at {}",
+                                &datadir_path.to_string_lossy()
+                            );
+                        }
+                    }
                     self.logger.set_installer_mode(
                         datadir_path.clone(),
                         self.log_level.unwrap_or(LevelFilter::INFO),
                     );
-                    let (install, command) =
-                        Installer::new(datadir_path, bitcoin::Network::Bitcoin);
+                    let (install, command) = Installer::new(datadir_path, network);
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
@@ -247,6 +258,10 @@ impl Application for GUI {
                     );
                     self.state = State::Loader(Box::new(loader));
                     command.map(|msg| Message::Load(Box::new(msg)))
+                } else if let installer::Message::BackToLauncher = *msg {
+                    let launcher = Launcher::new(i.destination_path());
+                    self.state = State::Launcher(Box::new(launcher));
+                    Command::none()
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
                 }
@@ -364,13 +379,6 @@ impl Config {
                 Err(ConfigError::NotFound) => Ok(Config::Install(datadir_path, network)),
                 Err(e) => Err(format!("Failed to read configuration file: {}", e).into()),
             }
-        } else if !datadir_path.exists()
-            || (!datadir_path.join("bitcoin").exists()
-                && !datadir_path.join("testnet").exists()
-                && !datadir_path.join("signet").exists()
-                && !datadir_path.join("regtest").exists())
-        {
-            Ok(Config::Install(datadir_path, bitcoin::Network::Bitcoin))
         } else {
             Ok(Config::Launcher(datadir_path))
         }

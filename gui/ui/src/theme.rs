@@ -91,6 +91,7 @@ pub enum Container {
     Background,
     Foreground,
     Border,
+    Banner,
     Card(Card),
     Badge(Badge),
     Pill(Pill),
@@ -142,6 +143,16 @@ impl container::StyleSheet for Theme {
                     },
                     ..container::Appearance::default()
                 },
+                Container::Banner => container::Appearance {
+                    background: Some(color::WHITE.into()),
+                    border: iced::Border {
+                        color: color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 0.0.into(),
+                    },
+                    text_color: color::LIGHT_BLACK.into(),
+                    ..container::Appearance::default()
+                },
             },
             Theme::Dark => match style {
                 Container::Transparent => container::Appearance {
@@ -180,6 +191,16 @@ impl container::StyleSheet for Theme {
                         width: 0.0,
                         radius: 25.0.into(),
                     },
+                    ..container::Appearance::default()
+                },
+                Container::Banner => container::Appearance {
+                    background: Some(color::BLUE.into()),
+                    border: iced::Border {
+                        color: color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 0.0.into(),
+                    },
+                    text_color: color::LIGHT_BLACK.into(),
                     ..container::Appearance::default()
                 },
             },

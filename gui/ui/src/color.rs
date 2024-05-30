@@ -55,3 +55,9 @@ pub const RED: Color = Color::from_rgb(
 
 pub const ORANGE: Color =
     Color::from_rgb(0xFF as f32 / 255.0, 0xa7 as f32 / 255.0, 0x0 as f32 / 255.0);
+
+pub const BLUE: Color = Color::from_rgb(
+    0x7D as f32 / 255.0,
+    0xD3 as f32 / 255.0,
+    0xFC as f32 / 255.0,
+);
