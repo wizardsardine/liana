@@ -35,6 +35,7 @@ pub trait Step {
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
+        email: Option<&'a str>,
     ) -> Element<'a, Message>;
 
     fn load_context(&mut self, _ctx: &Context) {}
@@ -54,8 +55,13 @@ pub trait Step {
 pub struct Welcome {}
 
 impl Step for Welcome {
-    fn view(&self, _hws: &HardwareWallets, _progress: (usize, usize)) -> Element<Message> {
-        view::welcome()
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        _progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
+        view::welcome(email)
     }
 }
 
@@ -128,9 +134,15 @@ impl Step for Final {
         Command::none()
     }
 
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
         view::install(
             progress,
+            email,
             self.generating,
             self.config_path.as_ref(),
             self.warning.as_ref(),

@@ -548,10 +548,12 @@ impl Step for DefineDescriptor {
         &'a self,
         hws: &'a HardwareWallets,
         progress: (usize, usize),
+        email: Option<&'a str>,
     ) -> Element<'a, Message> {
         let aliases = self.setup.keys_aliases();
         let content = view::define_descriptor(
             progress,
+            email,
             self.use_taproot,
             self.setup
                 .spending_keys
@@ -1231,9 +1233,15 @@ impl Step for ParticipateXpub {
         true
     }
 
-    fn view<'a>(&'a self, hws: &'a HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
         view::participate_xpub(
             progress,
+            email,
             hws.list
                 .iter()
                 .enumerate()
@@ -1338,9 +1346,15 @@ impl Step for ImportDescriptor {
         }
     }
 
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
         view::import_descriptor(
             progress,
+            email,
             &self.imported_descriptor,
             self.wrong_network,
             self.error.as_ref(),
@@ -1477,10 +1491,12 @@ impl Step for RegisterDescriptor {
         &'a self,
         hws: &'a HardwareWallets,
         progress: (usize, usize),
+        email: Option<&'a str>,
     ) -> Element<'a, Message> {
         let desc = self.descriptor.as_ref().unwrap();
         view::register_descriptor(
             progress,
+            email,
             desc.to_string(),
             &hws.list,
             &self.registered,
@@ -1531,9 +1547,14 @@ impl Step for BackupDescriptor {
             self.done = false;
         }
     }
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
         let desc = self.descriptor.as_ref().unwrap();
-        view::backup_descriptor(progress, desc.to_string(), self.done)
+        view::backup_descriptor(progress, email, desc.to_string(), self.done)
     }
 }
 

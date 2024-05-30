@@ -32,11 +32,19 @@ use crate::{
     },
 };
 
-pub fn welcome<'a>() -> Element<'a, Message> {
+pub fn welcome(email: Option<&str>) -> Element<'_, Message> {
     Container::new(
         Column::new()
             .push(
-                Container::new(image::liana_brand_grey().width(Length::Fixed(200.0))).padding(100),
+                Row::new()
+                    .push(
+                        Container::new(image::liana_brand_grey().width(Length::Fixed(200.0)))
+                            .padding(100)
+                            .width(Length::Fill),
+                    )
+                    .push_maybe(email.map(|email| {
+                        Container::new(p1_regular(email).style(color::GREEN)).padding(20)
+                    })),
             )
             .push(
                 Container::new(
@@ -186,6 +194,7 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
 #[allow(clippy::too_many_arguments)]
 pub fn define_descriptor<'a>(
     progress: (usize, usize),
+    email: Option<&'a str>,
     use_taproot: bool,
     spending_keys: Vec<Element<'a, Message>>,
     spending_threshold: usize,
@@ -252,6 +261,7 @@ pub fn define_descriptor<'a>(
 
     layout(
         progress,
+        email,
         "Create the wallet",
         Column::new()
             .push(collapse::Collapse::new(
@@ -375,6 +385,7 @@ pub fn recovery_path_view(
 
 pub fn import_descriptor<'a>(
     progress: (usize, usize),
+    email: Option<&'a str>,
     imported_descriptor: &form::Value<String>,
     wrong_network: bool,
     error: Option<&String>,
@@ -396,6 +407,7 @@ pub fn import_descriptor<'a>(
         .spacing(10);
     layout(
         progress,
+        email,
         "Import the wallet",
         Column::new()
             .push(Column::new().spacing(20).push(col_descriptor).push(text(
@@ -566,12 +578,14 @@ pub fn hardware_wallet_xpubs<'a>(
 
 pub fn participate_xpub<'a>(
     progress: (usize, usize),
+    email: Option<&'a str>,
     hws: Vec<Element<'a, Message>>,
     signer: Element<'a, Message>,
     shared: bool,
 ) -> Element<'a, Message> {
     layout(
         progress,
+        email,
         "Share your public keys",
         Column::new()
             .push(
@@ -608,6 +622,7 @@ pub fn participate_xpub<'a>(
 #[allow(clippy::too_many_arguments)]
 pub fn register_descriptor<'a>(
     progress: (usize, usize),
+    email: Option<&'a str>,
     descriptor: String,
     hws: &'a [HardwareWallet],
     registered: &HashSet<bitcoin::bip32::Fingerprint>,
@@ -619,6 +634,7 @@ pub fn register_descriptor<'a>(
 ) -> Element<'a, Message> {
     layout(
         progress,
+        email,
         "Register descriptor",
         Column::new()
             .push_maybe((!created_desc).then_some(
@@ -697,13 +713,15 @@ pub fn register_descriptor<'a>(
     )
 }
 
-pub fn backup_descriptor<'a>(
+pub fn backup_descriptor(
     progress: (usize, usize),
+    email: Option<&str>,
     descriptor: String,
     done: bool,
-) -> Element<'a, Message> {
+) -> Element<'_, Message> {
     layout(
         progress,
+        email,
         "Backup your wallet descriptor",
         Column::new()
             .push(
@@ -863,6 +881,7 @@ pub fn define_bitcoin<'a>(
 
     layout(
         progress,
+        None,
         "Set up connection to the Bitcoin full node",
         Column::new()
             .push(col_address)
@@ -917,6 +936,7 @@ pub fn define_bitcoin<'a>(
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
     layout(
         progress,
+        None,
         "Bitcoin node management",
         Column::new().push(
             Row::new()
@@ -1023,6 +1043,7 @@ pub fn start_internal_bitcoind<'a>(
     };
     layout(
         progress,
+        None,
         "Start Bitcoin full node",
         Column::new()
             .push_maybe(download_state.map(|s| {
@@ -1127,6 +1148,7 @@ pub fn start_internal_bitcoind<'a>(
 
 pub fn install<'a>(
     progress: (usize, usize),
+    email: Option<&'a str>,
     generating: bool,
     config_path: Option<&std::path::PathBuf>,
     warning: Option<&'a String>,
@@ -1138,6 +1160,7 @@ pub fn install<'a>(
     };
     layout(
         progress,
+        email,
         "Finalize installation",
         Column::new()
             .push_maybe(warning.map(|e| card::invalid(text(e))))
@@ -1690,11 +1713,13 @@ pub fn key_list_view<'a>(
 
 pub fn backup_mnemonic<'a>(
     progress: (usize, usize),
+    email: Option<&'a str>,
     words: &'a [&'static str; 12],
     done: bool,
 ) -> Element<'a, Message> {
     layout(
         progress,
+        email,
         "Backup your mnemonic",
         Column::new()
             .push(text(prompt::MNEMONIC_HELP))
@@ -1730,6 +1755,7 @@ pub fn backup_mnemonic<'a>(
 
 pub fn recover_mnemonic<'a>(
     progress: (usize, usize),
+    email: Option<&'a str>,
     words: &'a [(String, bool); 12],
     current: usize,
     suggestions: &'a [String],
@@ -1738,6 +1764,7 @@ pub fn recover_mnemonic<'a>(
 ) -> Element<'a, Message> {
     layout(
         progress,
+        email,
         "Import Mnemonic",
         Column::new()
             .push(text(prompt::RECOVER_MNEMONIC_HELP))
@@ -1833,6 +1860,7 @@ pub fn recover_mnemonic<'a>(
 
 fn layout<'a>(
     progress: (usize, usize),
+    email: Option<&'a str>,
     title: &'static str,
     content: impl Into<Element<'a, Message>>,
     padding_left: bool,
@@ -1845,6 +1873,9 @@ fn layout<'a>(
     Container::new(scrollable(
         Column::new()
             .width(Length::Fill)
+            .push(Row::new().push(Space::with_width(Length::Fill)).push_maybe(
+                email.map(|e| Container::new(p1_regular(e).style(color::GREEN)).padding(20)),
+            ))
             .push(Space::with_height(Length::Fixed(100.0)))
             .push(
                 Row::new()
@@ -1856,9 +1887,11 @@ fn layout<'a>(
                     )
                     .push(Container::new(h3(title)).width(Length::FillPortion(8)))
                     .push(
-                        Container::new(text(format!("{} | {}", progress.0, progress.1)))
-                            .width(Length::FillPortion(2))
-                            .center_x(),
+                        Row::new().spacing(20).push(
+                            Container::new(text(format!("{} | {}", progress.0, progress.1)))
+                                .width(Length::FillPortion(2))
+                                .center_x(),
+                        ),
                     ),
             )
             .push(

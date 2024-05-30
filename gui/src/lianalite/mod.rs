@@ -1,36 +1,27 @@
 pub mod client;
+pub mod login;
 
-use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use liana::miniscript::bitcoin::Network;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Config {
-    auth: HashMap<String, NetworkAuthConfig>,
+pub struct AuthConfig {
+    pub email: String,
+    pub refresh_token: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct NetworkAuthConfig {
-    email: String,
-    access_token: String,
-    expires_at: i64,
-    refresh_token: String,
-}
+pub const DEFAULT_FILE_NAME: &str = "auth.json";
 
-pub const DEFAULT_FILE_NAME: &str = "lite.json";
-
-impl Config {
-    pub fn file_path(datadir: PathBuf, network: Network) -> PathBuf {
-        let mut path = datadir;
-        path.push(network.to_string());
-        path.push(DEFAULT_FILE_NAME);
-        path
+impl AuthConfig {
+    pub fn file_path(datadir: &Path, network: Network) -> PathBuf {
+        datadir.join(network.to_string()).join(DEFAULT_FILE_NAME)
     }
-    pub fn from_file(datadir: PathBuf, network: Network) -> Result<Self, ConfigError> {
+
+    pub fn from_file(datadir: &Path, network: Network) -> Result<Self, ConfigError> {
         let path = Self::file_path(datadir, network);
 
         let config = std::fs::read(path)
@@ -39,13 +30,13 @@ impl Config {
                 _ => ConfigError::ReadingFile(format!("Reading settings file: {}", e)),
             })
             .and_then(|file_content| {
-                serde_json::from_slice::<Config>(&file_content)
+                serde_json::from_slice::<AuthConfig>(&file_content)
                     .map_err(|e| ConfigError::ReadingFile(format!("Parsing settings file: {}", e)))
             })?;
         Ok(config)
     }
 
-    pub fn to_file(&self, datadir: PathBuf, network: Network) -> Result<(), ConfigError> {
+    pub fn to_file(&self, datadir: &Path, network: Network) -> Result<(), ConfigError> {
         let path = Self::file_path(datadir, network);
 
         let content = serde_json::to_string_pretty(&self).map_err(|e| {
@@ -62,7 +53,10 @@ impl Config {
         settings_file.write_all(content.as_bytes()).map_err(|e| {
             tracing::warn!("failed to write to file: {:?}", e);
             ConfigError::WritingFile(e.to_string())
-        })
+        })?;
+
+        tracing::info!("Done writing authorization file");
+        Ok(())
     }
 }
 
