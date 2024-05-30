@@ -160,8 +160,14 @@ impl Step for ShareXpubs {
         true
     }
 
-    fn view<'a>(&'a self, hws: &'a HardwareWallets, _progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        hws: &'a HardwareWallets,
+        _progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
         view::share_xpubs(
+            email,
             hws.list
                 .iter()
                 .enumerate()

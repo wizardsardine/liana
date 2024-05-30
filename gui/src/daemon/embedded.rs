@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use tokio::sync::Mutex;
 
 use super::{model::*, Daemon, DaemonBackend, DaemonError};
@@ -6,7 +7,7 @@ use async_trait::async_trait;
 use liana::{
     commands::{CoinStatus, LabelItem},
     config::Config,
-    miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
+    miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid},
     DaemonControl, DaemonHandle,
 };
 
@@ -57,7 +58,7 @@ impl Daemon for EmbeddedDaemon {
         Some(&self.config)
     }
 
-    async fn is_alive(&self) -> Result<(), DaemonError> {
+    async fn is_alive(&self, _datadir: &Path, _network: Network) -> Result<(), DaemonError> {
         let mut handle = self.handle.lock().await;
         if let Some(h) = handle.as_ref() {
             if h.is_alive() {

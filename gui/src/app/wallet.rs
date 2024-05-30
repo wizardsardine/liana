@@ -105,7 +105,23 @@ impl Wallet {
             }
             Err(settings::SettingsError::NotFound) => {
                 let s = settings::Settings {
-                    wallets: vec![settings::WalletSetting::from(&self)],
+                    wallets: vec![settings::WalletSetting {
+                        name: self.name.clone(),
+                        hardware_wallets: self.hardware_wallets.clone(),
+                        keys: self
+                            .keys_aliases
+                            .clone()
+                            .into_iter()
+                            .map(|(master_fingerprint, name)| settings::KeySetting {
+                                name,
+                                master_fingerprint,
+                            })
+                            .collect(),
+                        descriptor_checksum: self.descriptor_checksum(),
+                        // Only local wallet from previous version of Liana GUI may not have a
+                        // settings.json file
+                        remote_backend_auth: None,
+                    }],
                 };
 
                 tracing::info!("Settings file not found, creating one");

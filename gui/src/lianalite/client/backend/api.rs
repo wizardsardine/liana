@@ -303,7 +303,7 @@ pub struct Address {
 }
 
 pub mod payload {
-    use liana::miniscript::bitcoin;
+    use liana::{descriptors::LianaDescriptor, miniscript::bitcoin};
     use serde::{Serialize, Serializer};
 
     pub fn ser_to_string<T: std::fmt::Display, S: Serializer>(
@@ -311,6 +311,13 @@ pub mod payload {
         s: S,
     ) -> Result<S::Ok, S::Error> {
         s.serialize_str(&field.to_string())
+    }
+
+    #[derive(Serialize)]
+    pub struct CreateWallet<'a> {
+        pub name: &'a str,
+        #[serde(serialize_with = "ser_to_string")]
+        pub descriptor: &'a LianaDescriptor,
     }
 
     #[derive(Serialize)]

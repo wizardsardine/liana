@@ -255,11 +255,12 @@ impl App {
             Message::Tick => {
                 let daemon = self.daemon.clone();
                 let datadir_path = self.cache.datadir_path.clone();
+                let network = self.cache.network;
                 Command::perform(
                     async move {
                         // we check every 10 second if the daemon poller is alive
                         // or if the access token is not expired.
-                        daemon.is_alive().await?;
+                        daemon.is_alive(&datadir_path, network).await?;
 
                         let info = daemon.get_info().await?;
                         let coins = daemon
