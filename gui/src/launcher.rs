@@ -237,11 +237,6 @@ impl Launcher {
                                             )
                                             .fold(
                                                 Column::new()
-                                                    .push(
-                                                        text("Open an existing wallet:")
-                                                            .small()
-                                                            .bold(),
-                                                    )
                                                     .spacing(10),
                                                 |col, choice| {
                                                     col.push(
@@ -263,7 +258,7 @@ impl Launcher {
                                                                         _ => theme::Badge::Standard,
                                                                     }),
                                                                 )
-                                                                .push(text(wallet_name(choice))),
+                                                                .push(text(format!("Open wallet on {}", choice))),
                                                         )
                                                         .on_press(ViewMessage::Check(*choice))
                                                         .padding(10)
@@ -317,11 +312,6 @@ impl Launcher {
                                                 })
                                                 .fold(
                                                     Column::new()
-                                                        .push(
-                                                            text("Create a new wallet:")
-                                                                .small()
-                                                                .bold(),
-                                                        )
                                                         .spacing(10),
                                                     |col, choice| {
                                                         col.push(
@@ -340,7 +330,7 @@ impl Launcher {
                                                                     _ => theme::Badge::Standard,
                                                                 }),
                                                             )
-                                                            .push(text(wallet_name(choice))),
+                                                            .push(text(format!("Create wallet on {}", wallet_name(choice)))),
                                                     )
                                                     .on_press(ViewMessage::StartInstall(*choice))
                                                     .padding(10)
