@@ -24,6 +24,9 @@ hex = "0.4.3"
 iced = { version = "0.12.1", default-features = false, features = ["tokio", "svg", "qr_code", "image", "lazy", "wgpu", "advanced"] }
 iced_runtime = "0.12.1"
 
+# Used to verify RFC-compliance of an email
+email_address = "0.2.7"
+
 tokio = {version = "1.21.0", features = ["signal"]}
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

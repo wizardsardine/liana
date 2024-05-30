@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
 use serde::{Deserialize, Serialize};
 
-use crate::{app::wallet::Wallet, hw::HardwareWalletConfig};
+use crate::hw::HardwareWalletConfig;
 
 pub const DEFAULT_FILE_NAME: &str = "settings.json";
 
@@ -60,13 +60,25 @@ impl Settings {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AuthConfig {
+    pub email: String,
+    pub wallet_id: String,
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WalletSetting {
     pub name: String,
     pub descriptor_checksum: String,
+    // if wallet is using remote backend, then this information is stored on the remote backend
+    // wallet metadata
     #[serde(default)]
     pub keys: Vec<KeySetting>,
+    // if wallet is using remote backend, then this information is stored on the remote backend
+    // wallet metadata
     #[serde(default)]
     pub hardware_wallets: Vec<HardwareWalletConfig>,
+    pub remote_backend_auth: Option<AuthConfig>,
 }
 
 impl WalletSetting {
@@ -76,25 +88,6 @@ impl WalletSetting {
             map.insert(key.master_fingerprint, key.name.clone());
         }
         map
-    }
-}
-
-impl From<&Wallet> for WalletSetting {
-    fn from(w: &Wallet) -> WalletSetting {
-        Self {
-            name: w.name.clone(),
-            hardware_wallets: w.hardware_wallets.clone(),
-            keys: w
-                .keys_aliases
-                .clone()
-                .into_iter()
-                .map(|(master_fingerprint, name)| KeySetting {
-                    name,
-                    master_fingerprint,
-                })
-                .collect(),
-            descriptor_checksum: w.descriptor_checksum(),
-        }
     }
 }
 

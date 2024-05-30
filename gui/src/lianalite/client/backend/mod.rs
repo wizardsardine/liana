@@ -2,6 +2,7 @@ pub mod api;
 
 use std::{
     collections::{HashMap, HashSet},
+    path::Path,
     sync::Arc,
 };
 
@@ -17,6 +18,7 @@ use reqwest::{Error, IntoUrl, Method, RequestBuilder, Response};
 use tokio::sync::RwLock;
 
 use crate::{
+    app::settings::{AuthConfig, Settings},
     daemon::{model::*, Daemon, DaemonBackend, DaemonError},
     hw::HardwareWalletConfig,
 };
@@ -53,7 +55,7 @@ fn request<U: IntoUrl>(
 
 #[derive(Debug, Clone)]
 pub struct BackendClient {
-    auth: Arc<RwLock<auth::AccessTokenResponse>>,
+    pub auth: Arc<RwLock<auth::AccessTokenResponse>>,
     auth_client: auth::AuthClient,
 
     url: String,
@@ -94,6 +96,10 @@ impl BackendClient {
         })
     }
 
+    pub fn user_email(&self) -> &str {
+        &self.auth_client.email
+    }
+
     pub async fn connect_first(self) -> Result<(BackendWalletClient, api::Wallet), DaemonError> {
         let wallets = self.list_wallets().await?;
         let first = wallets.first().cloned().ok_or(DaemonError::NoAnswer)?;
@@ -129,6 +135,119 @@ impl BackendClient {
         let list: api::ListWallets = response.json().await?;
         Ok(list.wallets)
     }
+
+    pub async fn create_wallet(
+        &self,
+        name: &str,
+        descriptor: &LianaDescriptor,
+    ) -> Result<api::Wallet, DaemonError> {
+        let response = self
+            .request(Method::POST, &format!("{}/v1/wallets", self.url))
+            .await
+            .json(&api::payload::CreateWallet { name, descriptor })
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(DaemonError::Http(
+                Some(response.status().into()),
+                response.text().await?,
+            ));
+        }
+
+        let wallet: api::Wallet = response.json().await?;
+        Ok(wallet)
+    }
+
+    pub async fn update_wallet_metadata(
+        &self,
+        wallet_uuid: &str,
+        fingerprint_aliases: &HashMap<Fingerprint, String>,
+        hws: &[HardwareWalletConfig],
+    ) -> Result<(), DaemonError> {
+        let wallets = self.list_wallets().await?;
+        let wallet = wallets
+            .iter()
+            .find(|w| w.id == wallet_uuid)
+            .ok_or(DaemonError::Http(
+                Some(404),
+                "No wallet exists for this uui".to_string(),
+            ))?;
+        let ledger_kinds = [
+            async_hwi::DeviceKind::Ledger.to_string(),
+            async_hwi::DeviceKind::LedgerSimulator.to_string(),
+        ];
+        for cfg in hws {
+            if ledger_kinds.contains(&cfg.kind)
+                && !wallet.metadata.ledger_hmacs.iter().any(|ledger_hmac| {
+                    ledger_hmac.fingerprint == cfg.fingerprint && ledger_hmac.hmac == cfg.token
+                })
+            {
+                let response: Response = self
+                    .request(
+                        Method::PATCH,
+                        &format!("{}/v1/wallets/{}", self.url, wallet_uuid),
+                    )
+                    .await
+                    .json(&api::payload::UpdateWallet {
+                        ledger_hmac: Some(api::payload::UpdateLedgerHmac {
+                            fingerprint: cfg.fingerprint.to_string(),
+                            hmac: cfg.token.clone(),
+                        }),
+                        fingerprint_aliases: None,
+                    })
+                    .send()
+                    .await?;
+
+                if !response.status().is_success() {
+                    return Err(DaemonError::Http(
+                        Some(response.status().into()),
+                        response.text().await?,
+                    ));
+                }
+            }
+        }
+
+        if fingerprint_aliases.iter().any(|(fg, alias)| {
+            !wallet
+                .metadata
+                .fingerprint_aliases
+                .contains(&api::FingerprintAlias {
+                    alias: alias.to_string(),
+                    user_id: self.user_id.clone(),
+                    fingerprint: *fg,
+                })
+        }) {
+            let response: Response = self
+                .request(
+                    Method::PATCH,
+                    &format!("{}/v1/wallets/{}", self.url, wallet_uuid),
+                )
+                .await
+                .json(&api::payload::UpdateWallet {
+                    ledger_hmac: None,
+                    fingerprint_aliases: Some(
+                        fingerprint_aliases
+                            .iter()
+                            .map(|(fg, alias)| api::payload::UpdateFingerprintAlias {
+                                fingerprint: fg.to_string(),
+                                alias: alias.to_string(),
+                            })
+                            .collect(),
+                    ),
+                })
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                return Err(DaemonError::Http(
+                    Some(response.status().into()),
+                    response.text().await?,
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -140,8 +259,20 @@ pub struct BackendWalletClient {
 }
 
 impl BackendWalletClient {
+    pub fn inner_client(&self) -> &BackendClient {
+        &self.inner
+    }
+
     pub fn user_id(&self) -> &str {
         &self.inner.user_id
+    }
+
+    pub fn wallet_id(&self) -> String {
+        self.wallet_uuid.clone()
+    }
+
+    pub fn user_email(&self) -> &str {
+        self.inner.user_email()
     }
 
     async fn get_wallet(&self) -> Result<api::Wallet, DaemonError> {
@@ -313,7 +444,7 @@ impl BackendWalletClient {
         Ok(res)
     }
 
-    async fn auth(&self) -> AccessTokenResponse {
+    pub async fn auth(&self) -> AccessTokenResponse {
         self.inner.auth.read().await.clone()
     }
 }
@@ -329,7 +460,7 @@ impl Daemon for BackendWalletClient {
     }
 
     /// refresh the token if close to expiration.
-    async fn is_alive(&self) -> Result<(), DaemonError> {
+    async fn is_alive(&self, datadir: &Path, network: Network) -> Result<(), DaemonError> {
         let auth = self.auth().await;
         if auth.expires_at < Utc::now().timestamp() + 60 {
             match self.inner.auth.try_write() {
@@ -343,6 +474,39 @@ impl Daemon for BackendWalletClient {
                         .auth_client
                         .refresh_token(&auth.refresh_token)
                         .await?;
+
+                    let mut settings = Settings::from_file(datadir.to_path_buf(), network)
+                        .map_err(|e| {
+                            DaemonError::Unexpected(format!(
+                                "Cannot access to settings.json file: {}",
+                                e
+                            ))
+                        })?;
+
+                    if let Some(wallet_settings) = settings.wallets.iter_mut().find(|w| {
+                        if let Some(auth) = &w.remote_backend_auth {
+                            auth.wallet_id == self.wallet_uuid
+                        } else {
+                            false
+                        }
+                    }) {
+                        wallet_settings.remote_backend_auth = Some(AuthConfig {
+                            email: self.inner.auth_client.email.clone(),
+                            wallet_id: self.wallet_id(),
+                            refresh_token: new.refresh_token.clone(),
+                        });
+                    } else {
+                        tracing::info!("Wallet id was not found in the settings");
+                    }
+
+                    settings
+                        .to_file(datadir.to_path_buf(), network)
+                        .map_err(|e| {
+                            DaemonError::Unexpected(format!(
+                                "Cannot access to settings.json file: {}",
+                                e
+                            ))
+                        })?;
 
                     *old = new;
                     tracing::info!("Liana backend access was refreshed");
@@ -856,84 +1020,9 @@ impl Daemon for BackendWalletClient {
         fingerprint_aliases: &HashMap<Fingerprint, String>,
         hws: &[HardwareWalletConfig],
     ) -> Result<(), DaemonError> {
-        let wallet = self.get_wallet().await?;
-        let ledger_kinds = [
-            async_hwi::DeviceKind::Ledger.to_string(),
-            async_hwi::DeviceKind::LedgerSimulator.to_string(),
-        ];
-        for cfg in hws {
-            if ledger_kinds.contains(&cfg.kind)
-                && !wallet.metadata.ledger_hmacs.iter().any(|ledger_hmac| {
-                    ledger_hmac.fingerprint == cfg.fingerprint && ledger_hmac.hmac == cfg.token
-                })
-            {
-                let response: Response = self
-                    .inner
-                    .request(
-                        Method::PATCH,
-                        &format!("{}/v1/wallets/{}", self.inner.url, self.wallet_uuid),
-                    )
-                    .await
-                    .json(&api::payload::UpdateWallet {
-                        ledger_hmac: Some(api::payload::UpdateLedgerHmac {
-                            fingerprint: cfg.fingerprint.to_string(),
-                            hmac: cfg.token.clone(),
-                        }),
-                        fingerprint_aliases: None,
-                    })
-                    .send()
-                    .await?;
-
-                if !response.status().is_success() {
-                    return Err(DaemonError::Http(
-                        Some(response.status().into()),
-                        response.text().await?,
-                    ));
-                }
-            }
-        }
-
-        if fingerprint_aliases.iter().any(|(fg, alias)| {
-            !wallet
-                .metadata
-                .fingerprint_aliases
-                .contains(&api::FingerprintAlias {
-                    alias: alias.to_string(),
-                    user_id: self.inner.user_id.clone(),
-                    fingerprint: *fg,
-                })
-        }) {
-            let response: Response = self
-                .inner
-                .request(
-                    Method::PATCH,
-                    &format!("{}/v1/wallets/{}", self.inner.url, self.wallet_uuid),
-                )
-                .await
-                .json(&api::payload::UpdateWallet {
-                    ledger_hmac: None,
-                    fingerprint_aliases: Some(
-                        fingerprint_aliases
-                            .iter()
-                            .map(|(fg, alias)| api::payload::UpdateFingerprintAlias {
-                                fingerprint: fg.to_string(),
-                                alias: alias.to_string(),
-                            })
-                            .collect(),
-                    ),
-                })
-                .send()
-                .await?;
-
-            if !response.status().is_success() {
-                return Err(DaemonError::Http(
-                    Some(response.status().into()),
-                    response.text().await?,
-                ));
-            }
-        }
-
-        Ok(())
+        self.inner
+            .update_wallet_metadata(&self.wallet_uuid, fingerprint_aliases, hws)
+            .await
     }
 }
 

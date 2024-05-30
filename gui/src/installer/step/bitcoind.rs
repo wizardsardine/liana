@@ -302,6 +302,9 @@ impl SelectBitcoindTypeStep {
 }
 
 impl Step for SelectBitcoindTypeStep {
+    fn skip(&self, ctx: &Context) -> bool {
+        ctx.remote_backend.is_some()
+    }
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         if let Message::SelectBitcoindType(msg) = message {
             match msg {
@@ -326,7 +329,12 @@ impl Step for SelectBitcoindTypeStep {
         true
     }
 
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view(
+        &self,
+        _hws: &HardwareWallets,
+        progress: (usize, usize),
+        _email: Option<&str>,
+    ) -> Element<Message> {
         view::select_bitcoind_type(progress)
     }
 }
@@ -479,7 +487,12 @@ impl Step for DefineBitcoind {
         }
     }
 
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view(
+        &self,
+        _hws: &HardwareWallets,
+        progress: (usize, usize),
+        _email: Option<&str>,
+    ) -> Element<Message> {
         view::define_bitcoin(
             progress,
             &self.address,
@@ -494,7 +507,7 @@ impl Step for DefineBitcoind {
     }
 
     fn skip(&self, ctx: &Context) -> bool {
-        !ctx.bitcoind_is_external
+        !ctx.bitcoind_is_external || ctx.remote_backend.is_some()
     }
 }
 
@@ -787,7 +800,12 @@ impl Step for InternalBitcoindStep {
         false
     }
 
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view(
+        &self,
+        _hws: &HardwareWallets,
+        progress: (usize, usize),
+        _email: Option<&str>,
+    ) -> Element<Message> {
         view::start_internal_bitcoind(
             progress,
             self.exe_path.as_ref(),
@@ -806,7 +824,7 @@ impl Step for InternalBitcoindStep {
     }
 
     fn skip(&self, ctx: &Context) -> bool {
-        ctx.bitcoind_is_external
+        ctx.bitcoind_is_external || ctx.remote_backend.is_some()
     }
 }
 
