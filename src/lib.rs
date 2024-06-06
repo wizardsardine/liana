@@ -230,7 +230,24 @@ fn setup_bitcoind(
         .bitcoind_config
         .as_ref()
         .ok_or(StartupError::MissingBitcoindConfig)?;
-    let bitcoind = BitcoinD::new(bitcoind_config, wo_path_str)?;
+
+    let is_remote = !bitcoind_config.addr.ip().is_loopback();
+
+    // Extract wallet fingerprint and append it to the wallet name
+    let descriptor_str = config.main_descriptor.clone().to_string();
+    let descriptor_fingerprint = descriptor_str
+        .split('#')
+        .last()
+        .expect("Descriptor always has a fingerprint");
+    let new_wo_path_str = format!("liana-{}", descriptor_fingerprint);
+
+    let new_wo_path = if is_remote {
+        new_wo_path_str.clone()
+    } else {
+        wo_path_str.clone()
+    };
+
+    let mut bitcoind = BitcoinD::new(bitcoind_config, new_wo_path)?;
     bitcoind.node_sanity_checks(
         config.bitcoin_config.network,
         config.main_descriptor.is_taproot(),
@@ -239,14 +256,27 @@ fn setup_bitcoind(
         log::info!("Creating a new watchonly wallet on bitcoind.");
         bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
         log::info!("Watchonly wallet created.");
-    } else {
+    } else if !is_remote {
         #[cfg(windows)]
         if !cfg!(test) && !wo_path.exists() {
             return Err(StartupError::NoWatchonlyInDatadir);
         }
     }
+
     log::info!("Loading our watchonly wallet on bitcoind.");
-    bitcoind.maybe_load_watchonly_wallet()?;
+    if let Err(e) = bitcoind.maybe_load_watchonly_wallet() {
+        // here if is_remote and errored we blindly fallback to legacy naming in order
+        // to handle unexpected edge cases like user setup w/ 127.0.0.1
+        // and later change it to its local 192.168.x.x ....
+        if is_remote {
+            log::info!("Loading legacy wallet.");
+            bitcoind = BitcoinD::new(bitcoind_config, wo_path_str)?;
+            bitcoind.maybe_load_watchonly_wallet()?;
+        } else {
+            Err(e)?
+        }
+    }
+
     bitcoind.wallet_sanity_checks(&config.main_descriptor)?;
     log::info!("Watchonly wallet loaded on bitcoind and sanity checked.");
 
