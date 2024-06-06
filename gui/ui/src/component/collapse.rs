@@ -10,7 +10,7 @@ pub struct Collapse<'a, M, H, F, C> {
     after: F,
     content: C,
     phantom: PhantomData<&'a M>,
-    state: bool,
+    init_state: bool,
 }
 
 impl<'a, Message, T, H, F, C, Theme, Renderer> Collapse<'a, Message, H, F, C>
@@ -29,12 +29,12 @@ where
             after,
             content,
             phantom: PhantomData,
-            state: false,
+            init_state: false,
         }
     }
 
     pub fn collapsed(mut self, state: bool) -> Self {
-        self.state = state;
+        self.init_state = state;
         self
     }
 }
@@ -55,28 +55,38 @@ where
     Renderer: 'a + advanced::Renderer,
     Theme: 'a + iced::widget::button::StyleSheet,
 {
-    type State = bool;
+    type State = Option<bool>;
     type Event = Event<T>;
 
-    fn update(&mut self, _state: &mut Self::State, event: Event<T>) -> Option<Message> {
+    fn update(&mut self, state: &mut Self::State, event: Event<T>) -> Option<Message> {
         match event {
             Event::Internal(e) => Some(e.into()),
             Event::Collapse(s) => {
-                self.state = s;
+                *state = Some(s);
                 None
             }
         }
     }
 
-    fn view(&self, _state: &Self::State) -> Element<Self::Event, Theme, Renderer> {
-        if self.state {
-            column![
+    fn view(&self, state: &Self::State) -> Element<Self::Event, Theme, Renderer> {
+        match state {
+            Some(true) => column![
                 (self.after)().on_press(Event::Collapse(false)),
                 (self.content)().map(Event::Internal)
             ]
-            .into()
-        } else {
-            column![(self.before)().on_press(Event::Collapse(true))].into()
+            .into(),
+            Some(false) => column![(self.before)().on_press(Event::Collapse(true))].into(),
+            None => {
+                if self.init_state {
+                    column![
+                        (self.after)().on_press(Event::Collapse(false)),
+                        (self.content)().map(Event::Internal)
+                    ]
+                    .into()
+                } else {
+                    column![(self.before)().on_press(Event::Collapse(true))].into()
+                }
+            }
         }
     }
 }
