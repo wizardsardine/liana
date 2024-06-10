@@ -396,14 +396,14 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                 match HardwareWallet::new(id, Arc::new(device), Some(&state.keys_aliases)).await {
                     Ok(hw) => hws.push(hw),
                     Err(e) => {
-                        debug!("{}", e);
+                        debug!(" Error while connecting to Specter: {}", e);
                     }
                 }
             }
         }
         Err(HWIError::DeviceNotFound) => {}
         Err(e) => {
-            debug!("{}", e);
+            debug!("Error while connecting to SpecterSimulator: {}", e);
         }
     }
 
@@ -427,7 +427,7 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                         {
                             Ok(hw) => hws.push(hw),
                             Err(e) => {
-                                debug!("{}", e);
+                                debug!("Error while connecting to Specter {}", e);
                             }
                         }
                     }
@@ -459,7 +459,7 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                             hws.push(hw);
                         }
                         Err(e) => {
-                            warn!("{:?}", e);
+                            warn!(" Error while connecting to Jade: {:?}", e);
                         }
                     }
                 }
@@ -530,7 +530,7 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
         }
         Err(HWIError::DeviceNotFound) => {}
         Err(e) => {
-            debug!("{}", e);
+            debug!("Error connecting to LedgerSimulator{}", e);
         }
     }
 
@@ -669,7 +669,7 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
             },
             Err(HWIError::DeviceNotFound) => {}
             Err(e) => {
-                debug!("{}", e);
+                debug!("Error getting Ledger master fingerprint: {}", e);
             }
         }
     }
