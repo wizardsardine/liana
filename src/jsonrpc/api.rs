@@ -156,7 +156,7 @@ fn list_coins(control: &DaemonControl, params: Option<Params>) -> Result<serde_j
             .map(|op_arg| {
                 op_arg
                     .as_str()
-                    .and_then(|op| bitcoin::OutPoint::from_str(op).map_or_else(|_| None, Some))
+                    .and_then(|op| bitcoin::OutPoint::from_str(op).ok())
                     .ok_or_else(|| {
                         Error::invalid_params(format!(
                             "Invalid value {} in 'outpoints' parameter.",

@@ -35,9 +35,6 @@ use crate::{
 };
 
 pub trait Action {
-    fn warning(&self) -> Option<&Error> {
-        None
-    }
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
         Command::none()
     }
@@ -432,10 +429,6 @@ impl SignAction {
 }
 
 impl Action for SignAction {
-    fn warning(&self) -> Option<&Error> {
-        self.error.as_ref()
-    }
-
     fn subscription(&self) -> Subscription<Message> {
         self.hws.refresh().map(Message::HardwareWallets)
     }

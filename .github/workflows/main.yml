@@ -9,7 +9,7 @@ jobs:
       - uses: actions/checkout@v1
       - uses: actions-rs/toolchain@v1
         with:
-            toolchain: 1.75.0
+            toolchain: 1.78.0
             components: rustfmt, clippy
             override: true
       - name: rustfmt
@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@v1
       - uses: actions-rs/toolchain@v1
         with:
-            toolchain: 1.76.0
+            toolchain: 1.78.0
             components: rustfmt, clippy
             override: true
       - name: rustfmt

@@ -586,7 +586,7 @@ impl Step for DefineSpend {
             .cloned()
             .collect();
         if let Some((psbt, _)) = &self.generated {
-            draft.labels = self.coins_labels.clone();
+            draft.labels.clone_from(&self.coins_labels);
             for (i, output) in psbt.unsigned_tx.output.iter().enumerate() {
                 if let Some(label) = self
                     .recipients
@@ -612,11 +612,11 @@ impl Step for DefineSpend {
                 }
             }
         }
-        draft.recipients = self.recipients.clone();
+        draft.recipients.clone_from(&self.recipients);
         if self.recipients.len() > 1 {
             draft.batch_label = Some(self.batch_label.value.clone());
         }
-        draft.generated = self.generated.clone();
+        draft.generated.clone_from(&self.generated);
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
@@ -755,7 +755,7 @@ impl Step for SaveSpend {
             &self.curve,
             draft.network,
         );
-        tx.labels = draft.labels.clone();
+        tx.labels.clone_from(&draft.labels);
 
         if tx.is_batch() {
             if let Some(label) = &draft.batch_label {

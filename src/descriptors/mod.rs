@@ -1116,7 +1116,7 @@ mod tests {
         // - Push a signature for the primary/recovery key
         // NOTE: The specific value is asserted because this was tested against a regtest
         // transaction.
-        let stack = vec![vec![0; 65], vec![0; 72]];
+        let stack = [vec![0; 65], vec![0; 72]];
         let witness_size = bitcoin::VarInt(stack.len() as u64).size()
             + stack
                 .iter()
@@ -1126,7 +1126,7 @@ mod tests {
             desc.spender_input_size(true),
             32 + 4 + 1 + 4 + wu_to_vb(witness_size),
         );
-        let stack = vec![vec![0; 65], vec![0; 0], vec![0; 33], vec![0; 72]];
+        let stack = [vec![0; 65], vec![0; 0], vec![0; 33], vec![0; 72]];
         let witness_size = bitcoin::VarInt(stack.len() as u64).size()
             + stack
                 .iter()

@@ -175,7 +175,7 @@ impl HardwareWallets {
     }
 
     pub fn with_wallet(mut self, wallet: Arc<Wallet>) -> Self {
-        self.aliases = wallet.keys_aliases.clone();
+        self.aliases.clone_from(&wallet.keys_aliases);
         self.wallet = Some(wallet);
         self
     }

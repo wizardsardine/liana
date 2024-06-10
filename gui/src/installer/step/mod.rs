@@ -91,7 +91,7 @@ impl Default for Final {
 
 impl Step for Final {
     fn load_context(&mut self, ctx: &Context) {
-        self.internal_bitcoind = ctx.internal_bitcoind.clone();
+        self.internal_bitcoind.clone_from(&ctx.internal_bitcoind);
     }
     fn load(&self) -> Command<Message> {
         if !self.generating && self.config_path.is_none() {

@@ -62,7 +62,7 @@ impl WalletSettingsState {
             .collect();
 
         for fingerprint in wallet.descriptor_keys().into_iter() {
-            if wallet.keys_aliases.get(&fingerprint).is_none() {
+            if !wallet.keys_aliases.contains_key(&fingerprint) {
                 keys_aliases.push((fingerprint, form::Value::default()));
             }
         }
