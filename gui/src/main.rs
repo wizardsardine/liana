@@ -4,11 +4,10 @@ use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
 
 use iced::{
     event::{self, Event},
-    executor,
-    keyboard::{self},
+    executor, keyboard,
     widget::{focus_next, focus_previous},
     window::settings::PlatformSpecific,
-    Application, Command, Settings, Subscription,
+    Application, Command, Settings, Size, Subscription,
 };
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
@@ -449,6 +448,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut settings = Settings::with_flags((config, log_level));
     settings.window.icon = Some(image::liana_app_icon());
+    settings.window.min_size = Some(Size {
+        width: 1000.0,
+        height: 800.0,
+    });
     settings.default_text_size = text::P1_SIZE.into();
     settings.default_font = liana_ui::font::REGULAR;
     settings.window.exit_on_close_request = false;
