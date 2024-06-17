@@ -15,7 +15,7 @@ pkgs.mkShell rec {
     pkgs.freetype
     pkgs.freetype.dev
     pkgs.libGL
-    pkgs.pkgconfig
+    pkgs.pkg-config
     pkgs.udev
     pkgs.wayland
     pkgs.libxkbcommon
