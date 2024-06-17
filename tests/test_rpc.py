@@ -1118,13 +1118,19 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
             for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
         )
     )
+    mempool_rbf_1 = bitcoind.rpc.getmempoolentry(rbf_1_txid)
+    # Note that in the mempool entry, "ancestor" includes rbf_1_txid itself.
+    rbf_1_feerate = (
+        mempool_rbf_1["fees"]["ancestor"] * COIN / mempool_rbf_1["ancestorsize"]
+    )
+    assert 9.75 < rbf_1_feerate < 10.25
     # If we try to RBF the first transaction again, it will use the first RBF's
-    # feerate of 10 sat/vb to set the min feerate, instead of 1 sat/vb of first
+    # feerate to set the min feerate, instead of 1 sat/vb of first
     # transaction:
-    with pytest.raises(RpcError, match=f"Feerate too low: 10."):
-        lianad.rpc.rbfpsbt(first_txid, False, 10)
-    # Using 11 for feerate works for P2WSH. For Taproot we need 12.
-    feerate = 12 if USE_TAPROOT else 11
+    with pytest.raises(RpcError, match=f"Feerate too low: {int(rbf_1_feerate)}."):
+        lianad.rpc.rbfpsbt(first_txid, False, int(rbf_1_feerate))
+    # Using 1 more for feerate works.
+    feerate = int(rbf_1_feerate) + 1
     lianad.rpc.rbfpsbt(first_txid, False, feerate)
     # Add a new transaction spending the change from the first RBF.
     desc_1_destinations = {
