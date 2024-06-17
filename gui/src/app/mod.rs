@@ -58,6 +58,7 @@ impl Panels {
         cache: &Cache,
         wallet: Arc<Wallet>,
         data_dir: PathBuf,
+        daemon_backend: DaemonBackend,
         internal_bitcoind: Option<&Bitcoind>,
     ) -> Panels {
         Self {
@@ -77,6 +78,7 @@ impl Panels {
             settings: state::SettingsState::new(
                 data_dir,
                 wallet.clone(),
+                daemon_backend,
                 internal_bitcoind.is_some(),
             ),
         }
@@ -134,7 +136,13 @@ impl App {
         data_dir: PathBuf,
         internal_bitcoind: Option<Bitcoind>,
     ) -> (App, Command<Message>) {
-        let mut panels = Panels::new(&cache, wallet.clone(), data_dir, internal_bitcoind.as_ref());
+        let mut panels = Panels::new(
+            &cache,
+            wallet.clone(),
+            data_dir,
+            daemon.backend(),
+            internal_bitcoind.as_ref(),
+        );
         let cmd = panels.home.reload(daemon.clone(), wallet.clone());
         (
             Self {
