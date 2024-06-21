@@ -1488,9 +1488,9 @@ mod tests {
         // rust-bitcoin's serialization of transactions with no input silently affected our fee
         // calculation.
 
-        // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 170 sats fees.
+        // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 161 sats fees.
         // At 2sats/vb, it's twice that.
-        assert_eq!(tx.output[1].value.to_sat(), 89_830);
+        assert_eq!(tx.output[1].value.to_sat(), 89_839);
         let psbt = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(&destinations, &[dummy_op], 2, None)
             .unwrap()
@@ -1500,7 +1500,7 @@ mod tests {
             panic!("expect successful spend creation")
         };
         let tx = psbt.unsigned_tx;
-        assert_eq!(tx.output[1].value.to_sat(), 89_660);
+        assert_eq!(tx.output[1].value.to_sat(), 89_678);
 
         // A feerate of 555 won't trigger the sanity checks (they were previously not taking the
         // satisfaction size into account and overestimating the feerate).
@@ -1563,13 +1563,13 @@ mod tests {
             warnings,
             vec![
                 "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. \
-                Instead of creating a change of 4830 sats, it was added to the \
+                Instead of creating a change of 4839 sats, it was added to the \
                 transaction fee. Select a larger input to avoid this from happening."
             ]
         );
 
         // Increase the target value by the change amount and the warning will disappear.
-        *destinations.get_mut(&dummy_addr).unwrap() = 95_000 + 4_830;
+        *destinations.get_mut(&dummy_addr).unwrap() = 95_000 + 4_839;
         let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -1599,7 +1599,7 @@ mod tests {
 
         // Now increase the target by 1 more sat and we will have insufficient funds.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 + 4_830 + /* fee for change output */ 43 + 1;
+            95_000 + 4_839 + /* fee for change output */ 43 + 1;
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 1, None),
             Ok(CreateSpendResult::InsufficientFunds { missing: 1 }),
@@ -1607,7 +1607,7 @@ mod tests {
 
         // Now decrease the target so that the lost change is just 1 sat.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            100_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 - 1;
+            100_000 - /* fee without change */ 118 - /* extra fee for change output */ 43 - 1;
         let warnings = if let CreateSpendResult::Success { warnings, .. } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -1628,7 +1628,7 @@ mod tests {
 
         // Now decrease the target value so that we have enough for a change output.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43;
+            95_000 - /* fee without change */ 118 - /* extra fee for change output */ 43;
         let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -1644,7 +1644,7 @@ mod tests {
 
         // Now increase the target by 1 and we'll get a warning again, this time for 1 less than the dust threshold.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 + 1;
+            95_000 - /* fee without change */ 118 - /* extra fee for change output */ 43 + 1;
         let warnings = if let CreateSpendResult::Success { warnings, .. } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -1697,12 +1697,8 @@ mod tests {
             spend_txid: None,
             spend_block: None,
         }]);
-        // Even though 1_000 is the max feerate allowed by our sanity check, we need to
-        // use 1_003 in order to exceed it and fail this test since coin selection is
-        // based on a minimum feerate of `feerate_vb / 4.0` sats/wu, which can result in
-        // the sats/vb feerate being lower than `feerate_vb`.
         assert_eq!(
-            control.create_spend(&destinations, &[dummy_op_dup], 1_003, None),
+            control.create_spend(&destinations, &[dummy_op_dup], 1_001, None),
             Err(CommandError::SpendCreation(SpendCreationError::InsaneFees(
                 InsaneFeeInfo::TooHighFeerate(1_001)
             )))

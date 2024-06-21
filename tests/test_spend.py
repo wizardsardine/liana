@@ -134,7 +134,7 @@ def test_coin_marked_spent(lianad, bitcoind):
     res = lianad.rpc.createspend(destinations, [outpoint], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
-    change_amount = 840 if USE_TAPROOT else 830
+    change_amount = 858 if USE_TAPROOT else 839
     assert len(psbt.o) == 1
     assert len(res["warnings"]) == 1
     assert (
@@ -153,7 +153,7 @@ def test_coin_marked_spent(lianad, bitcoind):
     res = lianad.rpc.createspend(destinations, [outpoint_3], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
-    change_amount = 828 if USE_TAPROOT else 818
+    change_amount = 846 if USE_TAPROOT else 827
     assert len(psbt.o) == 1
     assert len(res["warnings"]) == 1
     assert (
@@ -252,17 +252,17 @@ def test_send_to_self(lianad, bitcoind):
     lianad.rpc.broadcastspend(spend_txid)
 
     # The only output is the change output so the feerate of the transaction must
-    # not be lower than the one provided, and only possibly slightly higher (since
-    # we slightly overestimate the satisfaction size).
-    # FIXME: a 15% increase is huge.
+    # not be much lower than the one provided (it could be slightly lower since
+    # the change amount is determined using feerate in terms of sat/wu which, due
+    # to rounding, can lead to a slightly lower feerate in terms of sat/vb,
+    # especially when the number of inputs increases), and only possibly slightly
+    # higher (since we slightly overestimate the satisfaction size).
     res = bitcoind.rpc.getmempoolentry(spend_txid)
-    spend_feerate = int(res["fees"]["base"] * COIN / res["vsize"])
-    if not USE_TAPROOT:
-        assert specified_feerate <= spend_feerate <= int(specified_feerate * 115 / 100)
+    spend_feerate = res["fees"]["base"] * COIN / res["vsize"]  # keep as decimal
+    if USE_TAPROOT:
+        assert specified_feerate <= spend_feerate < specified_feerate + 0.5
     else:
-        # FIXME: under Taproot we should not consider the max feerate of all leaves if there
-        # is a spendable internal key.
-        assert specified_feerate <= spend_feerate <= int(specified_feerate * 125 / 100)
+        assert specified_feerate - 0.5 < spend_feerate < specified_feerate + 0.5
 
     # We should by now only have one coin.
     bitcoind.generate_block(1, wait_for_mempool=spend_txid)
@@ -275,7 +275,9 @@ def test_send_to_self(lianad, bitcoind):
     assert len(lianad.rpc.listaddresses()["addresses"]) == 3
     # Create a new spend to the receive address with index 3.
     recv_addr = lianad.rpc.listaddresses(3, 1)["addresses"][0]["receive"]
-    res = lianad.rpc.createspend({recv_addr: 11_955_000}, [], 2)
+    res = lianad.rpc.createspend(
+        {recv_addr: 11_965_000 if USE_TAPROOT else 11_955_000}, [], 2
+    )
     assert "psbt" in res
     # Max(receive_index, change_index) is now 4:
     assert len(lianad.rpc.listaddresses()["addresses"]) == 4
@@ -323,6 +325,14 @@ def test_coin_selection(lianad, bitcoind):
 
     # Sign and broadcast this Spend transaction.
     spend_txid_1 = sign_and_broadcast_psbt(lianad, spend_psbt_1)
+    # Check its feerate is approx 2 sat/vb
+    anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
+    anc_fees = int(
+        bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN
+    )
+    # txid_1's feerate is approx 2 sat/vb as required.
+    txid_1_feerate = anc_fees / anc_vsize
+    assert 1.99 < txid_1_feerate < 2.01
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 2)
     # Check that change output is unconfirmed.
     assert len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 1
@@ -342,17 +352,14 @@ def test_coin_selection(lianad, bitcoind):
     assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
         bytes.fromhex(spend_txid_1)[::-1]
     )
-    anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
-    anc_fees = int(
-        bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN
-    )
-    additional_fee = additional_fees(anc_vsize, anc_fees, feerate)
+    additional_fee_at_10satvb = additional_fees(anc_vsize, anc_fees, feerate)
     assert len(spend_res_2["warnings"]) == 1
     assert (
         spend_res_2["warnings"][0]
         == "CPFP: an unconfirmed input was selected. The current transaction fee "
-        f"was increased by {additional_fee} sats to make the average feerate of "
-        "both the input and current transaction equal to the selected feerate."
+        f"was increased by {additional_fee_at_10satvb} sats to make the average "
+        "feerate of both the input and current transaction equal to the selected "
+        "feerate."
     )
 
     # Try 3 sat/vb:
@@ -364,24 +371,39 @@ def test_coin_selection(lianad, bitcoind):
     assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
         bytes.fromhex(spend_txid_1)[::-1]
     )
-    anc_vsize = bitcoind.rpc.getmempoolentry(spend_txid_1)["ancestorsize"]
-    anc_fees = int(
-        bitcoind.rpc.getmempoolentry(spend_txid_1)["fees"]["ancestor"] * COIN
-    )
-    additional_fee = additional_fees(anc_vsize, anc_fees, feerate)
+    additional_fee_at_3satvb = additional_fees(anc_vsize, anc_fees, feerate)
+    assert additional_fee_at_10satvb > additional_fee_at_3satvb
     assert len(spend_res_2["warnings"]) == 1
     assert (
         spend_res_2["warnings"][0]
         == "CPFP: an unconfirmed input was selected. The current transaction fee "
-        f"was increased by {additional_fee} sats to make the average feerate of "
-        "both the input and current transaction equal to the selected feerate."
+        f"was increased by {additional_fee_at_3satvb} sats to make the average "
+        "feerate of both the input and current transaction equal to the selected "
+        "feerate."
     )
 
-    # 2 sat/vb is same feerate as ancestor and we have no warnings:
-    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], 2)
+    # 2 sat/vb is approx same feerate as ancestor:
+    feerate = 2
+    spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], feerate)
     assert "psbt" in spend_res_2
-    assert len(spend_res_2["warnings"]) == 0
     spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
+    spend_txid_2 = spend_psbt_2.tx.txid().hex()
+    if USE_TAPROOT:
+        assert len(spend_res_2["warnings"]) == 0
+    else:
+        # We still get a warning in the non-taproot case.
+        assert len(spend_res_2["warnings"]) == 1
+        additional_fee_at_2satvb = additional_fees(anc_vsize, anc_fees, feerate)
+        assert additional_fee_at_3satvb > additional_fee_at_2satvb
+        assert len(spend_res_2["warnings"]) == 1
+        assert (
+            spend_res_2["warnings"][0]
+            == "CPFP: an unconfirmed input was selected. The current transaction fee "
+            f"was increased by {additional_fee_at_2satvb} sats to make the average "
+            "feerate of both the input and current transaction equal to the selected "
+            "feerate."
+        )
+
     # The spend is using the unconfirmed change.
     assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
         bytes.fromhex(spend_txid_1)[::-1]
@@ -435,14 +457,18 @@ def test_coin_selection(lianad, bitcoind):
     # Note that in the mempool entry, "ancestor" includes spend_txid_3 itself.
     assert (
         mempool_txid_3["fees"]["ancestor"] * COIN // mempool_txid_3["ancestorsize"]
-        == 10
+        == feerate
     )
     # The spend_txid_3 transaction itself has a higher feerate.
     assert (mempool_txid_3["fees"]["base"] * COIN) // mempool_txid_3["vsize"] > 10
-    # If we subtract the extra that pays for the ancestor, the feerate is at the target value.
-    assert ((mempool_txid_3["fees"]["base"] * COIN) - 2770) // mempool_txid_3[
-        "vsize"
-    ] == 10
+    # If we subtract the extra that pays for the ancestor, the feerate is approximately
+    # at the target value.
+    assert (
+        feerate - 0.5
+        < ((mempool_txid_3["fees"]["base"] * COIN) - additional_fee)
+        / mempool_txid_3["vsize"]
+        < feerate + 0.5
+    )
 
     # Now confirm the spend.
     bitcoind.generate_block(1, wait_for_mempool=spend_txid_3)

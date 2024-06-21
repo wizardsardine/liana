@@ -446,10 +446,10 @@ def test_spend_replacement(lianad, bitcoind):
     destinations = {
         bitcoind.rpc.getnewaddress(): 650_000,
     }
-    second_res = lianad.rpc.createspend(destinations, second_outpoints, 2)
+    second_res = lianad.rpc.createspend(destinations, second_outpoints, 3)
     second_psbt = PSBT.from_base64(second_res["psbt"])
     destinations = {}
-    third_res = lianad.rpc.createspend(destinations, second_outpoints, 4)
+    third_res = lianad.rpc.createspend(destinations, second_outpoints, 5)
     third_psbt = PSBT.from_base64(third_res["psbt"])
 
     # Broadcast the first transaction. Make sure it's detected.

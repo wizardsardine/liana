@@ -99,6 +99,7 @@ fn check_output_value(value: bitcoin::Amount) -> Result<(), SpendCreationError> 
 fn sanity_check_psbt(
     spent_desc: &descriptors::LianaDescriptor,
     psbt: &Psbt,
+    use_primary_path: bool,
 ) -> Result<(), SpendCreationError> {
     let tx = &psbt.unsigned_tx;
 
@@ -137,7 +138,7 @@ fn sanity_check_psbt(
     }
 
     // Check the feerate isn't insane.
-    let tx_vb = spent_desc.unsigned_tx_max_vbytes(tx);
+    let tx_vb = spent_desc.unsigned_tx_max_vbytes(tx, use_primary_path);
     let feerate_sats_vb = abs_fee
         .checked_div(tx_vb)
         .ok_or(SpendCreationError::InsaneFees(
@@ -663,6 +664,13 @@ pub fn create_spend(
         value: bitcoin::Amount::MAX,
         script_pubkey: change_addr.addr.script_pubkey(),
     };
+    // If no candidates have relative locktime, then we should use the primary spending path.
+    // Note we set this value before actually selecting the coins, but we expect either all
+    // candidates or none to have relative locktime sequence so this is fine.
+    let use_primary_path = !candidate_coins
+        .iter()
+        .filter_map(|cand| cand.sequence)
+        .any(|seq| seq.is_relative_lock_time());
     // Now select the coins necessary using the provided candidates and determine whether
     // there is any leftover to create a change output.
     let CoinSelectionRes {
@@ -684,7 +692,7 @@ pub fn create_spend(
         }
         .into();
         let max_sat_wu = main_descriptor
-            .max_sat_weight()
+            .max_sat_weight(use_primary_path)
             .try_into()
             .expect("Weight must fit in a u32");
         select_coins_for_spend(
@@ -771,7 +779,7 @@ pub fn create_spend(
         inputs: psbt_ins,
         outputs: psbt_outs,
     };
-    sanity_check_psbt(main_descriptor, &psbt)?;
+    sanity_check_psbt(main_descriptor, &psbt, use_primary_path)?;
     // TODO: maybe check for common standardness rules (max size, ..)?
 
     Ok(CreateSpendRes {

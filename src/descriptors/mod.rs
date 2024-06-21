@@ -6,12 +6,13 @@ use miniscript::{
         secp256k1,
     },
     descriptor,
+    plan::{Assets, CanSign},
     psbt::{PsbtInputExt, PsbtOutputExt},
     translate_hash_clone, ForEachKey, TranslatePk, Translator,
 };
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     convert::TryInto,
     error, fmt,
     str::{self, FromStr},
@@ -54,6 +55,10 @@ impl From<LianaPolicyError> for LianaDescError {
     fn from(e: LianaPolicyError) -> LianaDescError {
         LianaDescError::Policy(e)
     }
+}
+
+fn varint_len(n: usize) -> usize {
+    bitcoin::VarInt(n as u64).size()
 }
 
 // Whether the key identified by its fingerprint+derivation path was derived from one of the xpubs
@@ -228,23 +233,64 @@ impl LianaDescriptor {
             .0
     }
 
-    // TODO: on Taproot we should use this for recovery but keyspend size if there is a spendable
-    // internal key.
     /// Get the maximum size difference of a transaction input spending a Script derived from this
     /// descriptor before and after satisfaction. The returned value is in weight units.
     /// Callers are expected to account for the Segwit marker (2 WU). This takes into account the
     /// size of the witness stack length varint.
-    pub fn max_sat_weight(&self) -> usize {
-        // We add one to account for the witness stack size, as the `max_weight_to_satisfy` method
-        // computes the difference in size for a satisfied input that was *already* in a
-        // transaction that spent one or more Segwit coins (and thus already have 1 WU accounted
-        // for the emtpy witness). But this method is used to account between a completely "nude"
-        // transaction (and therefore no Segwit marker nor empty witness in inputs) and a satisfied
-        // transaction.
-        self.multi_desc
-            .max_weight_to_satisfy()
-            .expect("Always satisfiable")
-            + 1
+    pub fn max_sat_weight(&self, use_primary_path: bool) -> usize {
+        if use_primary_path {
+            // Get the keys from the primary path, to get a satisfaction size estimation only
+            // considering those.
+            let keys = self
+                .policy()
+                .primary_path
+                .thresh_origins()
+                .1
+                .into_iter()
+                .fold(BTreeSet::new(), |mut keys, (fg, der_paths)| {
+                    for der_path in der_paths {
+                        keys.insert(((fg, der_path), CanSign::default()));
+                    }
+                    keys
+                });
+            let assets = Assets {
+                keys,
+                ..Default::default()
+            };
+
+            // Unfortunately rust-miniscript satisfaction size estimation is inconsistent. For
+            // Taproot it considers the whole witness (including the control block size + the
+            // script size) but under P2WSH it does not consider the witscript! Therefore we
+            // manually add the size of the witscript, but only under P2WSH by the mean of the
+            // `explicit_script()` helper.
+            let der_desc = self
+                .receive_desc
+                .0
+                .at_derivation_index(0)
+                .expect("unhardened index");
+            let witscript_size = der_desc
+                .explicit_script()
+                .map(|s| varint_len(s.len()) + s.len())
+                .unwrap_or(0);
+
+            // Finally, compute the satisfaction template for the primary path and get its size.
+            der_desc
+                .plan(&assets)
+                .expect("Always satisfiable")
+                .witness_size()
+                + witscript_size
+        } else {
+            // We add one to account for the witness stack size, as the values above give the
+            // difference in size for a satisfied input that was *already* in a transaction
+            // that spent one or more Segwit coins (and thus already have 1 WU accounted for the
+            // emtpy witness). But this method is used to account between a completely "nude"
+            // transaction (and therefore no Segwit marker nor empty witness in inputs) and a
+            // satisfied transaction.
+            self.multi_desc
+                .max_weight_to_satisfy()
+                .expect("Always satisfiable")
+                + 1
+        }
     }
 
     /// Get the maximum size difference of a transaction input spending a Script derived from this
@@ -252,8 +298,8 @@ impl LianaDescriptor {
     /// bytes.
     /// Callers are expected to account for the Segwit marker (2 WU). This takes into account the
     /// size of the witness stack length varint.
-    pub fn max_sat_vbytes(&self) -> usize {
-        self.max_sat_weight()
+    pub fn max_sat_vbytes(&self, use_primary_path: bool) -> usize {
+        self.max_sat_weight(use_primary_path)
             .checked_add(WITNESS_SCALE_FACTOR - 1)
             .unwrap()
             .checked_div(WITNESS_SCALE_FACTOR)
@@ -262,9 +308,9 @@ impl LianaDescriptor {
 
     /// Get the maximum size in virtual bytes of the whole input in a transaction spending
     /// a coin with this Script.
-    pub fn spender_input_size(&self) -> usize {
+    pub fn spender_input_size(&self, use_primary_path: bool) -> usize {
         // txid + vout + nSequence + empty scriptSig + witness
-        32 + 4 + 4 + 1 + self.max_sat_vbytes()
+        32 + 4 + 4 + 1 + self.max_sat_vbytes(use_primary_path)
     }
 
     /// Whether this is a Taproot descriptor.
@@ -492,10 +538,10 @@ impl LianaDescriptor {
     /// Maximum possible size in vbytes of an unsigned transaction, `tx`,
     /// after satisfaction, assuming all inputs of `tx` are from this
     /// descriptor.
-    pub fn unsigned_tx_max_vbytes(&self, tx: &bitcoin::Transaction) -> u64 {
+    pub fn unsigned_tx_max_vbytes(&self, tx: &bitcoin::Transaction, use_primary_path: bool) -> u64 {
         let witness_factor: u64 = WITNESS_SCALE_FACTOR.try_into().unwrap();
         let num_inputs: u64 = tx.input.len().try_into().unwrap();
-        let max_sat_weight: u64 = self.max_sat_weight().try_into().unwrap();
+        let max_sat_weight: u64 = self.max_sat_weight(use_primary_path).try_into().unwrap();
         // Add weights together before converting to vbytes to avoid rounding up multiple times.
         let tx_wu = tx
             .weight()
@@ -1055,17 +1101,31 @@ mod tests {
     #[test]
     fn inheritance_descriptor_sat_size() {
         let desc = LianaDescriptor::from_str("wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/<0;1>/*),and_v(v:pkh([abcdef01]tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/<0;1>/*),older(2))))#ravw7jw5").unwrap();
-        assert_eq!(desc.max_sat_vbytes(), (1 + 66 + 1 + 34 + 73 + 3) / 4); // See the stack details below.
+        // See the stack details below.
+        assert_eq!(desc.max_sat_vbytes(true), (1 + 66 + 73 + 3) / 4);
+        assert_eq!(desc.max_sat_vbytes(false), (1 + 66 + 1 + 34 + 73 + 3) / 4);
 
         // Maximum input size is (txid + vout + scriptsig + nSequence + max_sat).
         // Where max_sat is:
         // - Push the witness stack size
         // - Push the script
+        // If recovery:
         // - Push an empty vector for using the recovery path
         // - Push the recovery key
-        // - Push a signature for the recovery key
+        // EndIf
+        // - Push a signature for the primary/recovery key
         // NOTE: The specific value is asserted because this was tested against a regtest
         // transaction.
+        let stack = vec![vec![0; 65], vec![0; 72]];
+        let witness_size = bitcoin::VarInt(stack.len() as u64).size()
+            + stack
+                .iter()
+                .map(|item| bitcoin::VarInt(item.len() as u64).size() + item.len())
+                .sum::<usize>();
+        assert_eq!(
+            desc.spender_input_size(true),
+            32 + 4 + 1 + 4 + wu_to_vb(witness_size),
+        );
         let stack = vec![vec![0; 65], vec![0; 0], vec![0; 33], vec![0; 72]];
         let witness_size = bitcoin::VarInt(stack.len() as u64).size()
             + stack
@@ -1073,8 +1133,50 @@ mod tests {
                 .map(|item| bitcoin::VarInt(item.len() as u64).size() + item.len())
                 .sum::<usize>();
         assert_eq!(
-            desc.spender_input_size(),
+            desc.spender_input_size(false),
             32 + 4 + 1 + 4 + wu_to_vb(witness_size),
+        );
+
+        // Now perform the sanity checks under Taproot.
+        let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
+        let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*").unwrap());
+        let timelock = 52560;
+        let desc = LianaDescriptor::new(
+            LianaPolicy::new(
+                owner_key.clone(),
+                [(timelock, heir_key.clone())].iter().cloned().collect(),
+            )
+            .unwrap(),
+        );
+
+        // If using the primary path, it's a keypath spend.
+        assert_eq!(desc.max_sat_vbytes(true), (1 + 65 + 3) / 4);
+        // If using the recovery path, it's a script path spend. The script is 40 bytes long. The
+        // control block is just the internal key and parity, so 33 bytes long.
+        assert_eq!(
+            desc.max_sat_vbytes(false),
+            (1 + 65 + 1 + 40 + 1 + 33 + 3) / 4
+        );
+
+        // The same against the spender_input_size() helper, adding the size of the txin and
+        // checking against a dummy witness stack.
+        fn wit_size(stack: &[Vec<u8>]) -> usize {
+            varint_len(stack.len())
+                + stack
+                    .iter()
+                    .map(|item| varint_len(item.len()) + item.len())
+                    .sum::<usize>()
+        }
+        let txin_boilerplate = 32 + 4 + 1 + 4;
+        let stack = vec![vec![0; 64]];
+        assert_eq!(
+            desc.spender_input_size(true),
+            txin_boilerplate + wu_to_vb(wit_size(&stack)),
+        );
+        let stack = vec![vec![0; 33], vec![0; 40], vec![0; 64]];
+        assert_eq!(
+            desc.spender_input_size(false),
+            txin_boilerplate + wu_to_vb(wit_size(&stack)),
         );
     }
 
