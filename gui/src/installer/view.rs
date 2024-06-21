@@ -1,3 +1,4 @@
+use async_hwi::utils::extract_keys_and_template;
 use iced::widget::{
     checkbox, container, pick_list, radio, scrollable, scrollable::Properties, slider, Space,
     TextInput,
@@ -617,6 +618,81 @@ pub fn register_descriptor<'a>(
     done: bool,
     created_desc: bool,
 ) -> Element<'a, Message> {
+    let displayed_descriptor = if let Ok((template, keys)) =
+        extract_keys_and_template::<String>(&descriptor)
+    {
+        let mut col = Column::new()
+            .push(
+                card::simple(
+                    Column::new()
+                        .push(text("Descriptor template:").small().bold())
+                        .push(
+                            scrollable(
+                                Column::new()
+                                    .push(text(template.to_owned()).small())
+                                    .push(Space::with_height(Length::Fixed(5.0))),
+                            )
+                            .direction(
+                                scrollable::Direction::Horizontal(
+                                    scrollable::Properties::new().width(5).scroller_width(5),
+                                ),
+                            ),
+                        )
+                        .spacing(10),
+                )
+                .width(Length::Fill),
+            )
+            .push(Space::with_height(5));
+
+        for (index, key) in keys.into_iter().enumerate() {
+            col = col
+                .push(
+                    card::simple(
+                        Column::new()
+                            .push(text(format!("Key @{}:", index)).small().bold())
+                            .push(
+                                scrollable(
+                                    Column::new()
+                                        .push(text(key.to_owned()).small())
+                                        .push(Space::with_height(Length::Fixed(5.0))),
+                                )
+                                .direction(
+                                    scrollable::Direction::Horizontal(
+                                        scrollable::Properties::new().width(5).scroller_width(5),
+                                    ),
+                                ),
+                            )
+                            .spacing(10),
+                    )
+                    .width(Length::Fill),
+                )
+                .push(Space::with_height(5));
+        }
+
+        col
+    } else {
+        Column::new().push(card::simple(
+            Column::new()
+                .push(text("The descriptor:").small().bold())
+                .push(
+                    scrollable(
+                        Column::new()
+                            .push(text(descriptor.to_owned()).small())
+                            .push(Space::with_height(Length::Fixed(5.0))),
+                    )
+                    .direction(scrollable::Direction::Horizontal(
+                        scrollable::Properties::new().width(5).scroller_width(5),
+                    )),
+                )
+                .push(
+                    Row::new().push(Column::new().width(Length::Fill)).push(
+                        button::secondary(Some(icon::clipboard_icon()), "Copy")
+                            .on_press(Message::Clibpboard(descriptor)),
+                    ),
+                )
+                .spacing(10),
+        ))
+    };
     layout(
         progress,
         "Register descriptor",
@@ -624,27 +700,7 @@ pub fn register_descriptor<'a>(
             .push_maybe((!created_desc).then_some(
                 text("This step is only necessary if you are using a signing device.").bold(),
             ))
-            .push(card::simple(
-                Column::new()
-                    .push(text("The descriptor:").small().bold())
-                    .push(
-                        scrollable(
-                            Column::new()
-                                .push(text(descriptor.to_owned()).small())
-                                .push(Space::with_height(Length::Fixed(5.0))),
-                        )
-                        .direction(scrollable::Direction::Horizontal(
-                            scrollable::Properties::new().width(5).scroller_width(5),
-                        )),
-                    )
-                    .push(
-                        Row::new().push(Column::new().width(Length::Fill)).push(
-                            button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                .on_press(Message::Clibpboard(descriptor)),
-                        ),
-                    )
-                    .spacing(10),
-            ))
+            .push(displayed_descriptor)
             .push(text(prompt::REGISTER_DESCRIPTOR_HELP))
             .push_maybe(error.map(|e| card::error("Failed to register descriptor", e.to_string())))
             .push(
