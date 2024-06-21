@@ -414,20 +414,30 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                 if state.connected_supported_hws.contains(&id) {
                     still.push(id);
                 } else {
-                    let device = specter::Specter::<specter::SerialTransport>::new(port.clone());
-                    if tokio::time::timeout(
-                        std::time::Duration::from_millis(500),
-                        device.fingerprint(),
-                    )
-                    .await
-                    .is_ok()
-                    {
-                        match HardwareWallet::new(id, Arc::new(device), Some(&state.keys_aliases))
+                    match specter::Specter::<specter::SerialTransport>::new(port.clone()) {
+                        Err(e) => {
+                            warn!("{}", e);
+                        }
+                        Ok(device) => {
+                            if tokio::time::timeout(
+                                std::time::Duration::from_millis(500),
+                                device.fingerprint(),
+                            )
                             .await
-                        {
-                            Ok(hw) => hws.push(hw),
-                            Err(e) => {
-                                debug!("{}", e);
+                            .is_ok()
+                            {
+                                match HardwareWallet::new(
+                                    id,
+                                    Arc::new(device),
+                                    Some(&state.keys_aliases),
+                                )
+                                .await
+                                {
+                                    Ok(hw) => hws.push(hw),
+                                    Err(e) => {
+                                        debug!("{}", e);
+                                    }
+                                }
                             }
                         }
                     }
@@ -444,22 +454,27 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                 if state.connected_supported_hws.contains(&id) {
                     still.push(id);
                 } else {
-                    let device =
-                        Jade::new(jade::SerialTransport::new(port)).with_network(state.network);
-                    match handle_jade_device(
-                        id,
-                        state.network,
-                        device,
-                        state.wallet.as_ref().map(|w| w.as_ref()),
-                        Some(&state.keys_aliases),
-                    )
-                    .await
-                    {
-                        Ok(hw) => {
-                            hws.push(hw);
-                        }
+                    match jade::SerialTransport::new(port) {
                         Err(e) => {
                             warn!("{:?}", e);
+                        }
+                        Ok(device) => {
+                            match handle_jade_device(
+                                id,
+                                state.network,
+                                Jade::new(device).with_network(state.network),
+                                state.wallet.as_ref().map(|w| w.as_ref()),
+                                Some(&state.keys_aliases),
+                            )
+                            .await
+                            {
+                                Ok(hw) => {
+                                    hws.push(hw);
+                                }
+                                Err(e) => {
+                                    warn!("{:?}", e);
+                                }
+                            }
                         }
                     }
                 }
