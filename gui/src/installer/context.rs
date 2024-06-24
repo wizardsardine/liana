@@ -27,6 +27,7 @@ pub struct Context {
     pub keys: Vec<KeySetting>,
     pub hws: Vec<(DeviceKind, bitcoin::bip32::Fingerprint, Option<[u8; 32]>)>,
     pub data_dir: PathBuf,
+    pub network: bitcoin::Network,
     pub hw_is_used: bool,
     // In case a user entered a mnemonic,
     // we dont want to override the generated signer with it.
@@ -48,6 +49,7 @@ impl Context {
             bitcoind_config: None,
             descriptor: None,
             data_dir,
+            network,
             hw_is_used: false,
             recovered_signer: None,
             bitcoind_is_external: true,

@@ -326,7 +326,12 @@ impl Step for SelectBitcoindTypeStep {
         true
     }
 
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view(
+        &self,
+        _hws: &HardwareWallets,
+        progress: (usize, usize),
+        _email: Option<&str>,
+    ) -> Element<Message> {
         view::select_bitcoind_type(progress)
     }
 }
@@ -472,7 +477,12 @@ impl Step for DefineBitcoind {
         }
     }
 
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view(
+        &self,
+        _hws: &HardwareWallets,
+        progress: (usize, usize),
+        _email: Option<&str>,
+    ) -> Element<Message> {
         view::define_bitcoin(
             progress,
             &self.address,
@@ -779,7 +789,12 @@ impl Step for InternalBitcoindStep {
         false
     }
 
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view(
+        &self,
+        _hws: &HardwareWallets,
+        progress: (usize, usize),
+        _email: Option<&str>,
+    ) -> Element<Message> {
         view::start_internal_bitcoind(
             progress,
             self.exe_path.as_ref(),

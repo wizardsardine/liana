@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::iter::FromIterator;
+use std::path::Path;
 
 use async_trait::async_trait;
 use liana::commands::{CoinStatus, CreateRecoveryResult};
@@ -15,10 +16,10 @@ pub mod jsonrpc;
 use liana::{
     commands::LabelItem,
     config::Config,
-    miniscript::bitcoin::{address, psbt::Psbt, Address, OutPoint, Txid},
+    miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid},
 };
 
-use super::{model::*, Daemon, DaemonError};
+use super::{model::*, Daemon, DaemonBackend, DaemonError};
 
 pub trait Client {
     type Error: Into<DaemonError> + Debug;
@@ -55,15 +56,15 @@ impl<C: Client> Lianad<C> {
 
 #[async_trait]
 impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
-    fn is_external(&self) -> bool {
-        true
+    fn backend(&self) -> DaemonBackend {
+        DaemonBackend::ExternalLianad
     }
 
     fn config(&self) -> Option<&Config> {
         None
     }
 
-    async fn is_alive(&self) -> Result<(), DaemonError> {
+    async fn is_alive(&self, _datadir: &Path, _network: Network) -> Result<(), DaemonError> {
         Ok(())
     }
 

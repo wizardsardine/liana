@@ -1,6 +1,8 @@
 #![windows_subsystem = "windows"]
 
-use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
+use std::{
+    collections::HashMap, error::Error, io::Write, path::PathBuf, process, str::FromStr, sync::Arc,
+};
 
 use iced::{
     event::{self, Event},
@@ -20,11 +22,19 @@ use liana_ui::{component::text, font, image, theme, widget::Element};
 use liana_gui::{
     app::{
         self,
+        cache::Cache,
         config::{default_datadir, ConfigError},
+        wallet::Wallet,
         App,
     },
+    datadir::{self, create_directory},
+    hw::HardwareWalletConfig,
     installer::{self, Installer},
     launcher::{self, Launcher},
+    lianalite::{
+        client::{backend::api, backend::BackendWalletClient},
+        login,
+    },
     loader::{self, Loader},
     logger::Logger,
     VERSION,
@@ -78,6 +88,7 @@ enum State {
     Launcher(Box<Launcher>),
     Installer(Box<Installer>),
     Loader(Box<Loader>),
+    Login(Box<login::LianaLiteLogin>),
     App(App),
 }
 
@@ -94,6 +105,7 @@ pub enum Message {
     Install(Box<installer::Message>),
     Load(Box<loader::Message>),
     Run(Box<app::Message>),
+    Login(Box<login::Message>),
     KeyPressed(Key),
     Event(iced::Event),
 }
@@ -138,7 +150,7 @@ impl Application for GUI {
                 if !datadir_path.exists() {
                     // datadir is created right before launching the installer
                     // so logs can go in <datadir_path>/installer.log
-                    if let Err(e) = create_datadir(&datadir_path) {
+                    if let Err(e) = create_directory(&datadir_path) {
                         error!("Failed to create datadir: {}", e);
                     } else {
                         info!(
@@ -151,9 +163,15 @@ impl Application for GUI {
                     datadir_path.clone(),
                     log_level.unwrap_or(LevelFilter::INFO),
                 );
-                let (install, command) = Installer::new(datadir_path, network);
-                cmds.push(command.map(|msg| Message::Install(Box::new(msg))));
-                State::Installer(Box::new(install))
+                if network == bitcoin::Network::Bitcoin || network == bitcoin::Network::Signet {
+                    let (login, command) = login::LianaLiteLogin::new(datadir_path, network, true);
+                    cmds.push(command.map(|msg| Message::Login(Box::new(msg))));
+                    State::Login(Box::new(login))
+                } else {
+                    let (install, command) = Installer::new(datadir_path, network, None);
+                    cmds.push(command.map(|msg| Message::Install(Box::new(msg))));
+                    State::Installer(Box::new(install))
+                }
             }
             Config::Run(datadir_path, cfg, network) => {
                 logger.set_running_mode(
@@ -185,6 +203,7 @@ impl Application for GUI {
                     State::Launcher(s) => s.stop(),
                     State::Installer(s) => s.stop(),
                     State::App(s) => s.stop(),
+                    State::Login(s) => s.stop(),
                 };
                 iced::window::close(iced::window::Id::MAIN)
             }
@@ -201,7 +220,7 @@ impl Application for GUI {
                     if !datadir_path.exists() {
                         // datadir is created right before launching the installer
                         // so logs can go in <datadir_path>/installer.log
-                        if let Err(e) = create_datadir(&datadir_path) {
+                        if let Err(e) = datadir::create_directory(&datadir_path) {
                             error!("Failed to create datadir: {}", e);
                         } else {
                             info!(
@@ -214,9 +233,17 @@ impl Application for GUI {
                         datadir_path.clone(),
                         self.log_level.unwrap_or(LevelFilter::INFO),
                     );
-                    let (install, command) = Installer::new(datadir_path, network);
-                    self.state = State::Installer(Box::new(install));
-                    command.map(|msg| Message::Install(Box::new(msg)))
+
+                    if network == bitcoin::Network::Bitcoin || network == bitcoin::Network::Signet {
+                        let (login, command) =
+                            login::LianaLiteLogin::new(datadir_path, network, true);
+                        self.state = State::Login(Box::new(login));
+                        command.map(|msg| Message::Login(Box::new(msg)))
+                    } else {
+                        let (install, command) = Installer::new(datadir_path, network, None);
+                        self.state = State::Installer(Box::new(install));
+                        command.map(|msg| Message::Install(Box::new(msg)))
+                    }
                 }
                 launcher::Message::Run(datadir_path, cfg, network) => {
                     self.logger.set_running_mode(
@@ -225,38 +252,89 @@ impl Application for GUI {
                         self.log_level
                             .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                     );
-                    let (loader, command) = Loader::new(datadir_path, cfg, network, None);
-                    self.state = State::Loader(Box::new(loader));
-                    command.map(|msg| Message::Load(Box::new(msg)))
+                    if cfg.use_remote_backend {
+                        let (login, command) =
+                            login::LianaLiteLogin::new(datadir_path, network, false);
+                        self.state = State::Login(Box::new(login));
+                        command.map(|msg| Message::Login(Box::new(msg)))
+                    } else {
+                        let (loader, command) = Loader::new(datadir_path, cfg, network, None);
+                        self.state = State::Loader(Box::new(loader));
+                        command.map(|msg| Message::Load(Box::new(msg)))
+                    }
                 }
                 _ => l.update(*msg).map(|msg| Message::Launch(Box::new(msg))),
             },
+            (State::Login(l), Message::Login(msg)) => match *msg {
+                login::Message::View(login::ViewMessage::BackToLauncher) => {
+                    let launcher = Launcher::new(l.datadir.clone());
+                    self.state = State::Launcher(Box::new(launcher));
+                    Command::none()
+                }
+                login::Message::Install(remote_backend) => {
+                    let (install, command) =
+                        Installer::new(l.datadir.clone(), l.network, remote_backend);
+                    self.state = State::Installer(Box::new(install));
+                    command.map(|msg| Message::Install(Box::new(msg)))
+                }
+                login::Message::Run(backend_client, wallet) => {
+                    let config = app::Config::from_file(
+                        &l.datadir
+                            .join(l.network.to_string())
+                            .join(app::config::DEFAULT_FILE_NAME),
+                    )
+                    .expect("A gui configuration file must be present");
+                    self.logger.set_running_mode(
+                        l.datadir.clone(),
+                        l.network,
+                        config.log_level().unwrap_or(LevelFilter::INFO),
+                    );
+
+                    let (app, command) = create_app_with_remote_backend(
+                        backend_client,
+                        wallet,
+                        l.datadir.clone(),
+                        config,
+                    );
+
+                    self.state = State::App(app);
+                    command.map(|msg| Message::Run(Box::new(msg)))
+                }
+                _ => l.update(*msg).map(|msg| Message::Login(Box::new(msg))),
+            },
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(path, internal_bitcoind) = *msg {
-                    let cfg = app::Config::from_file(&path).unwrap();
-                    let daemon_cfg =
-                        DaemonConfig::from_file(cfg.daemon_config_path.clone()).unwrap();
-                    let datadir_path = daemon_cfg
-                        .data_dir
-                        .as_ref()
-                        .expect("Installer must have set it")
-                        .clone();
+                    let cfg = app::Config::from_file(&path).expect("A config file was created");
+                    if cfg.use_remote_backend {
+                        let (login, command) =
+                            login::LianaLiteLogin::new(i.datadir.clone(), i.network, false);
+                        self.state = State::Login(Box::new(login));
+                        command.map(|msg| Message::Login(Box::new(msg)))
+                    } else {
+                        let daemon_cfg =
+                            DaemonConfig::from_file(cfg.daemon_config_path.clone()).unwrap();
+                        let datadir_path = daemon_cfg
+                            .data_dir
+                            .as_ref()
+                            .expect("Installer must have set it")
+                            .clone();
 
-                    self.logger.set_running_mode(
-                        datadir_path.clone(),
-                        daemon_cfg.bitcoin_config.network,
-                        self.log_level
-                            .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
-                    );
-                    self.logger.remove_install_log_file(datadir_path.clone());
-                    let (loader, command) = Loader::new(
-                        datadir_path,
-                        cfg,
-                        daemon_cfg.bitcoin_config.network,
-                        internal_bitcoind,
-                    );
-                    self.state = State::Loader(Box::new(loader));
-                    command.map(|msg| Message::Load(Box::new(msg)))
+                        self.logger.set_running_mode(
+                            datadir_path.clone(),
+                            daemon_cfg.bitcoin_config.network,
+                            self.log_level
+                                .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
+                        );
+                        self.logger.remove_install_log_file(datadir_path.clone());
+                        let (loader, command) = Loader::new(
+                            datadir_path,
+                            cfg,
+                            daemon_cfg.bitcoin_config.network,
+                            internal_bitcoind,
+                        );
+                        self.state = State::Loader(Box::new(loader));
+                        command.map(|msg| Message::Load(Box::new(msg)))
+                    }
                 } else if let installer::Message::BackToLauncher = *msg {
                     let launcher = Launcher::new(i.destination_path());
                     self.state = State::Launcher(Box::new(launcher));
@@ -299,6 +377,7 @@ impl Application for GUI {
                 State::Loader(v) => v.subscription().map(|msg| Message::Load(Box::new(msg))),
                 State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
                 State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
+                State::Login(_) => Subscription::none(),
             },
             iced::event::listen_with(|event, status| match (&event, status) {
                 (
@@ -331,6 +410,7 @@ impl Application for GUI {
             State::App(v) => v.view().map(|msg| Message::Run(Box::new(msg))),
             State::Launcher(v) => v.view().map(|msg| Message::Launch(Box::new(msg))),
             State::Loader(v) => v.view().map(|msg| Message::Load(Box::new(msg))),
+            State::Login(v) => v.view().map(|msg| Message::Login(Box::new(msg))),
         }
     }
 
@@ -339,23 +419,53 @@ impl Application for GUI {
     }
 }
 
-fn create_datadir(datadir_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(unix)]
-    return {
-        use std::fs::DirBuilder;
-        use std::os::unix::fs::DirBuilderExt;
-
-        let mut builder = DirBuilder::new();
-        builder.mode(0o700).recursive(true).create(datadir_path)?;
-        Ok(())
-    };
-
-    // TODO: permissions on Windows..
-    #[cfg(not(unix))]
-    return {
-        std::fs::create_dir_all(datadir_path)?;
-        Ok(())
-    };
+pub fn create_app_with_remote_backend(
+    remote_backend: BackendWalletClient,
+    wallet: api::Wallet,
+    datadir: PathBuf,
+    config: app::Config,
+) -> (app::App, iced::Command<app::Message>) {
+    let hws: Vec<HardwareWalletConfig> = wallet
+        .metadata
+        .ledger_hmacs
+        .into_iter()
+        .map(|ledger_hmac| HardwareWalletConfig {
+            kind: async_hwi::DeviceKind::Ledger.to_string(),
+            fingerprint: ledger_hmac.fingerprint,
+            token: ledger_hmac.hmac,
+        })
+        .collect();
+    let aliases: HashMap<bitcoin::bip32::Fingerprint, String> = wallet
+        .metadata
+        .fingerprint_aliases
+        .into_iter()
+        .filter_map(|a| {
+            if a.user_id == remote_backend.user_id() {
+                Some((a.fingerprint, a.alias))
+            } else {
+                None
+            }
+        })
+        .collect();
+    App::new(
+        Cache {
+            network: bitcoin::Network::Signet,
+            coins: Vec::new(),
+            rescan_progress: None,
+            datadir_path: default_datadir().unwrap(),
+            blockheight: wallet.tip_height.unwrap_or(0),
+        },
+        Arc::new(
+            Wallet::new(wallet.descriptor)
+                .with_name(wallet.name)
+                .with_key_aliases(aliases)
+                .with_hardware_wallets(hws),
+        ),
+        config,
+        Arc::new(remote_backend),
+        datadir,
+        None,
+    )
 }
 
 pub enum Config {

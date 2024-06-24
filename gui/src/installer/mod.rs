@@ -19,8 +19,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    app::{config as gui_config, settings as gui_settings},
-    hw::HardwareWallets,
+    app::{config as gui_config, settings as gui_settings, wallet::wallet_name},
+    hw::{HardwareWalletConfig, HardwareWallets},
+    lianalite::{self, client::backend::BackendClient},
     signer::Signer,
 };
 
@@ -32,11 +33,14 @@ use step::{
 };
 
 pub struct Installer {
-    network: bitcoin::Network,
+    pub network: bitcoin::Network,
+    pub datadir: PathBuf,
+
     current: usize,
     steps: Vec<Box<dyn Step>>,
     hws: HardwareWallets,
     signer: Arc<Mutex<Signer>>,
+    remote_backend: Option<BackendClient>,
 
     /// Context is data passed through each step.
     context: Context,
@@ -62,15 +66,18 @@ impl Installer {
     pub fn new(
         destination_path: PathBuf,
         network: bitcoin::Network,
+        remote_backend: Option<BackendClient>,
     ) -> (Installer, Command<Message>) {
         (
             Installer {
                 network,
+                datadir: destination_path.clone(),
                 current: 0,
                 hws: HardwareWallets::new(destination_path.clone(), network),
                 steps: vec![Welcome::default().into()],
                 context: Context::new(network, destination_path),
                 signer: Arc::new(Mutex::new(Signer::generate(network).unwrap())),
+                remote_backend,
             },
             Command::none(),
         )
@@ -148,11 +155,15 @@ impl Installer {
                     BackupMnemonic::new(self.signer.clone()).into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::new_create_wallet().into(),
-                    SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&self.context.data_dir).into(),
-                    DefineBitcoind::new().into(),
-                    Final::new().into(),
                 ];
+                if self.remote_backend.is_none() {
+                    self.steps.extend(vec![
+                        SelectBitcoindTypeStep::new().into(),
+                        InternalBitcoindStep::new(&self.context.data_dir).into(),
+                        DefineBitcoind::new().into(),
+                    ]);
+                }
+                self.steps.push(Final::new().into());
                 self.next()
             }
             Message::ParticipateWallet => {
@@ -162,11 +173,15 @@ impl Installer {
                     ImportDescriptor::new(self.network).into(),
                     BackupMnemonic::new(self.signer.clone()).into(),
                     RegisterDescriptor::new_import_wallet().into(),
-                    SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&self.context.data_dir).into(),
-                    DefineBitcoind::new().into(),
-                    Final::new().into(),
                 ];
+                if self.remote_backend.is_none() {
+                    self.steps.extend(vec![
+                        SelectBitcoindTypeStep::new().into(),
+                        InternalBitcoindStep::new(&self.context.data_dir).into(),
+                        DefineBitcoind::new().into(),
+                    ]);
+                }
+                self.steps.push(Final::new().into());
                 self.next()
             }
             Message::ImportWallet => {
@@ -175,11 +190,16 @@ impl Installer {
                     ImportDescriptor::new(self.network).into(),
                     RecoverMnemonic::default().into(),
                     RegisterDescriptor::new_import_wallet().into(),
-                    SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&self.context.data_dir).into(),
-                    DefineBitcoind::new().into(),
-                    Final::new().into(),
                 ];
+                if self.remote_backend.is_none() {
+                    self.steps.extend(vec![
+                        SelectBitcoindTypeStep::new().into(),
+                        InternalBitcoindStep::new(&self.context.data_dir).into(),
+                        DefineBitcoind::new().into(),
+                    ]);
+                }
+                self.steps.push(Final::new().into());
+
                 self.next()
             }
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
@@ -201,10 +221,21 @@ impl Installer {
                     .get_mut(self.current)
                     .expect("There is always a step")
                     .update(&mut self.hws, message);
-                Command::perform(
-                    install(self.context.clone(), self.signer.clone()),
-                    Message::Installed,
-                )
+                if let Some(remote_backend) = &self.remote_backend {
+                    Command::perform(
+                        install_remote_wallet(
+                            self.context.clone(),
+                            self.signer.clone(),
+                            remote_backend.clone(),
+                        ),
+                        Message::Installed,
+                    )
+                } else {
+                    Command::perform(
+                        install_local_wallet(self.context.clone(), self.signer.clone()),
+                        Message::Installed,
+                    )
+                }
             }
             Message::Installed(Err(e)) => {
                 let mut data_dir = self.context.data_dir.clone();
@@ -259,7 +290,11 @@ impl Installer {
             .steps
             .get(self.current)
             .expect("There is always a step")
-            .view(&self.hws, self.progress());
+            .view(
+                &self.hws,
+                self.progress(),
+                self.remote_backend.as_ref().map(|b| b.user_email()),
+            );
 
         if self.network != Network::Bitcoin {
             Column::with_children(vec![network_banner(self.network).into(), content]).into()
@@ -282,7 +317,10 @@ pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
     }
 }
 
-pub async fn install(ctx: Context, signer: Arc<Mutex<Signer>>) -> Result<PathBuf, Error> {
+pub async fn install_local_wallet(
+    ctx: Context,
+    signer: Arc<Mutex<Signer>>,
+) -> Result<PathBuf, Error> {
     let mut cfg: liana::config::Config = ctx.extract_daemon_config();
     let data_dir = cfg.data_dir.unwrap();
 
@@ -367,6 +405,117 @@ pub async fn install(ctx: Context, signer: Arc<Mutex<Signer>>) -> Result<PathBuf
     )?;
 
     info!("Settings file created");
+
+    Ok(gui_config_path)
+}
+
+pub async fn install_remote_wallet(
+    ctx: Context,
+    signer: Arc<Mutex<Signer>>,
+    remote_backend: BackendClient,
+) -> Result<PathBuf, Error> {
+    let data_dir = ctx
+        .data_dir
+        .canonicalize()
+        .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e)))?;
+
+    let descriptor = ctx
+        .descriptor
+        .expect("There must be a descriptor at this point");
+
+    if descriptor
+        .to_string()
+        .contains(&signer.lock().unwrap().fingerprint().to_string())
+    {
+        signer
+            .lock()
+            .unwrap()
+            .store(&data_dir, ctx.network)
+            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+
+        info!("Hot signer mnemonic stored");
+    }
+
+    if let Some(signer) = &ctx.recovered_signer {
+        signer
+            .store(&data_dir, ctx.network)
+            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+
+        info!("Recovered signer mnemonic stored");
+    }
+
+    let mut network_datadir_path = data_dir;
+    network_datadir_path.push(ctx.network.to_string());
+
+    let gui_config_path = {
+        // create lianalite authorization file.
+        let auth = remote_backend
+            .auth
+            .read()
+            .map_err(|e| Error::Unexpected(e.to_string()))?;
+        let _ = create_and_write_file(
+            network_datadir_path.clone(),
+            lianalite::DEFAULT_FILE_NAME,
+            serde_json::to_string_pretty(&lianalite::AuthConfig {
+                email: remote_backend.user_email().to_string(),
+                refresh_token: auth.refresh_token.clone(),
+            })
+            .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+            .as_bytes(),
+        )?;
+
+        info!("Remote backend file created");
+
+        // create liana GUI configuration file
+        let gui_config_path = create_and_write_file(
+            network_datadir_path.clone(),
+            gui_config::DEFAULT_FILE_NAME,
+            toml::to_string(&gui_config::Config {
+                daemon_config_path: None,
+                daemon_rpc_path: None,
+                use_remote_backend: true,
+                log_level: Some("info".to_string()),
+                debug: Some(false),
+                start_internal_bitcoind: false,
+            })
+            .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+            .as_bytes(),
+        )?;
+
+        info!("Gui configuration file created");
+        gui_config_path
+    };
+
+    let wallet = remote_backend
+        .create_wallet(&wallet_name(&descriptor), &descriptor)
+        .await
+        .map_err(|e| Error::Unexpected(e.to_string()))?;
+
+    let hws: Vec<HardwareWalletConfig> = ctx
+        .hws
+        .iter()
+        .filter_map(|(kind, fingerprint, token)| {
+            token
+                .as_ref()
+                .map(|token| HardwareWalletConfig::new(kind, *fingerprint, token))
+        })
+        .collect();
+    let descriptor_str = descriptor.to_string();
+    let aliases = ctx
+        .keys
+        .iter()
+        .filter_map(|k| {
+            if descriptor_str.contains(&k.master_fingerprint.to_string()) {
+                Some((k.master_fingerprint, k.name.to_string()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    remote_backend
+        .update_wallet_metadata(&wallet.id, &aliases, &hws)
+        .await
+        .map_err(|e| Error::Unexpected(e.to_string()))?;
 
     Ok(gui_config_path)
 }

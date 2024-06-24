@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::filter;
 
@@ -8,6 +10,9 @@ pub struct Config {
     pub daemon_config_path: Option<PathBuf>,
     /// Path to lianad_rpc socket file.
     pub daemon_rpc_path: Option<PathBuf>,
+    /// Use remote backend
+    #[serde(default)]
+    pub use_remote_backend: bool,
     /// log level, can be "info", "debug", "trace".
     pub log_level: Option<String>,
     /// Use iced debug feature if true.
@@ -27,6 +32,7 @@ impl Config {
             log_level: None,
             debug: None,
             start_internal_bitcoind,
+            use_remote_backend: false,
         }
     }
 
@@ -45,6 +51,26 @@ impl Config {
         // check if log_level field is valid
         config.log_level()?;
         Ok(config)
+    }
+
+    pub fn to_file(&self, path: &Path) -> Result<(), ConfigError> {
+        let content = toml::to_string(&self)
+            .map_err(|e| ConfigError::WritingFile(format!("Failed to serialize config: {}", e)))?;
+
+        let mut config_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .map_err(|e| ConfigError::WritingFile(e.to_string()))?;
+
+        config_file.write_all(content.as_bytes()).map_err(|e| {
+            tracing::warn!("failed to write to file: {:?}", e);
+            ConfigError::WritingFile(e.to_string())
+        })?;
+
+        tracing::info!("Done writing gui configuration file");
+        Ok(())
     }
 
     /// TODO: Deserialize directly in the struct.
@@ -72,6 +98,7 @@ pub enum ConfigError {
     InvalidField(&'static str, String),
     NotFound,
     ReadingFile(String),
+    WritingFile(String),
     Unexpected(String),
 }
 
@@ -83,6 +110,7 @@ impl std::fmt::Display for ConfigError {
                 write!(f, "Config field {} is invalid: {}", field, message)
             }
             Self::ReadingFile(e) => write!(f, "Error while reading file: {}", e),
+            Self::WritingFile(e) => write!(f, "Error while writing file: {}", e),
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
         }
     }

@@ -44,7 +44,7 @@ chrono = "0.4.38"
 # Used for managing internal bitcoind
 base64 = "0.21"
 bitcoin_hashes = "0.12"
-reqwest = { version = "0.11", default-features=false, features = ["rustls-tls"] }
+reqwest = { version = "0.11", default-features=false, features = ["json", "rustls-tls"] }
 rust-ini = "0.19.0"
 
 
