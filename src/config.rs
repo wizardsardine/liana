@@ -158,10 +158,7 @@ pub struct Config {
 
 impl Config {
     pub fn data_dir(&self) -> Option<PathBuf> {
-        self.data_dir
-            .as_ref()
-            .map(Clone::clone)
-            .or_else(config_folder_path)
+        self.data_dir.clone().or_else(config_folder_path)
     }
 }
 

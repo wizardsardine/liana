@@ -770,9 +770,10 @@ impl Step for InternalBitcoindStep {
     fn apply(&mut self, ctx: &mut Context) -> bool {
         // Any errors have been handled as part of `message::InternalBitcoindMsg::Start`
         if let Some(Ok(_)) = self.started {
-            ctx.bitcoind_config = self.bitcoind_config.clone();
-            ctx.internal_bitcoind_config = self.internal_bitcoind_config.clone();
-            ctx.internal_bitcoind = self.internal_bitcoind.clone();
+            ctx.bitcoind_config.clone_from(&self.bitcoind_config);
+            ctx.internal_bitcoind_config
+                .clone_from(&self.internal_bitcoind_config);
+            ctx.internal_bitcoind.clone_from(&self.internal_bitcoind);
             self.error = None;
             return true;
         }

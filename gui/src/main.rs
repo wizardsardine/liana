@@ -1,7 +1,5 @@
 #![windows_subsystem = "windows"]
 
-use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
-
 use iced::{
     event::{self, Event},
     executor, keyboard,
@@ -9,6 +7,7 @@ use iced::{
     window::settings::PlatformSpecific,
     Application, Command, Settings, Size, Subscription,
 };
+use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
 extern crate serde;

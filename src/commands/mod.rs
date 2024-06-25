@@ -608,7 +608,7 @@ impl DaemonControl {
             let coins = db_conn.coins_by_outpoints(&outpoints);
             if coins.len() != outpoints.len() {
                 for op in outpoints {
-                    if coins.get(&op).is_none() {
+                    if !coins.contains_key(&op) {
                         return Err(CommandError::UnknownOutpoint(op));
                     }
                 }

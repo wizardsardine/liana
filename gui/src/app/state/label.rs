@@ -32,7 +32,7 @@ impl LabelsEdited {
                     for item in items {
                         if let Some(label) = self.0.get_mut(&item) {
                             label.valid = valid;
-                            label.value = value.clone();
+                            label.value.clone_from(&value);
                         } else {
                             self.0.insert(
                                 item,

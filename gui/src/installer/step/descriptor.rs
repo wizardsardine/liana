@@ -984,7 +984,7 @@ impl DescriptorEditModal for EditXpubModal {
                             Some((key.fingerprint, key.device_kind, key.device_version.clone()));
                         self.form_xpub.value = key.key.to_string();
                         self.form_xpub.valid = true;
-                        self.form_name.value = key.name.clone();
+                        self.form_name.value.clone_from(&key.name);
                         self.form_name.valid = true;
                     }
                 }
@@ -1394,7 +1394,7 @@ impl RegisterDescriptor {
 
 impl Step for RegisterDescriptor {
     fn load_context(&mut self, ctx: &Context) {
-        self.descriptor = ctx.descriptor.clone();
+        self.descriptor.clone_from(&ctx.descriptor);
         let mut map = HashMap::new();
         for key in ctx.keys.iter().filter(|k| !k.name.is_empty()) {
             map.insert(key.master_fingerprint, key.name.clone());
@@ -1527,7 +1527,7 @@ impl Step for BackupDescriptor {
     }
     fn load_context(&mut self, ctx: &Context) {
         if self.descriptor != ctx.descriptor {
-            self.descriptor = ctx.descriptor.clone();
+            self.descriptor.clone_from(&ctx.descriptor);
             self.done = false;
         }
     }

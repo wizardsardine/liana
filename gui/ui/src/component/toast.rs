@@ -52,7 +52,7 @@ where
     }
 
     fn tag(&self) -> iced::advanced::widget::tree::Tag {
-        struct Marker(Vec<Instant>);
+        struct Marker(());
         iced::advanced::widget::tree::Tag::of::<Marker>()
     }
 
