@@ -186,7 +186,12 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         &self,
         items: &HashSet<LabelItem>,
     ) -> Result<HashMap<String, String>, DaemonError> {
-        let items = items.iter().map(|a| a.to_string()).collect::<Vec<String>>();
+        #[allow(unused_mut)]
+        let mut items = items.iter().map(|a| a.to_string()).collect::<Vec<String>>();
+
+        #[cfg(test)]
+        items.sort();
+
         let res: GetLabelsResult = self.call("getlabels", Some(vec![items]))?;
         Ok(res.labels)
     }
