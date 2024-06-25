@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::{app::settings, hw::HardwareWalletConfig, signer::Signer};
 
@@ -24,13 +25,13 @@ pub fn wallet_name(main_descriptor: &LianaDescriptor) -> String {
     )
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Wallet {
     pub name: String,
     pub main_descriptor: LianaDescriptor,
     pub keys_aliases: HashMap<Fingerprint, String>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
-    pub signer: Option<Signer>,
+    pub signer: Option<Arc<Signer>>,
 }
 
 impl Wallet {
@@ -60,7 +61,7 @@ impl Wallet {
     }
 
     pub fn with_signer(mut self, signer: Signer) -> Self {
-        self.signer = Some(signer);
+        self.signer = Some(Arc::new(signer));
         self
     }
 
@@ -87,12 +88,12 @@ impl Wallet {
             .to_string()
     }
 
-    pub fn load_settings(
+    pub fn load_from_settings(
         self,
         datadir_path: &Path,
         network: bitcoin::Network,
     ) -> Result<Self, WalletError> {
-        let mut wallet = match settings::Settings::from_file(datadir_path.to_path_buf(), network) {
+        let wallet = match settings::Settings::from_file(datadir_path.to_path_buf(), network) {
             Ok(settings) => {
                 if let Some(wallet_setting) = settings.wallets.first() {
                     self.with_name(wallet_setting.name.clone())
@@ -114,6 +115,14 @@ impl Wallet {
             Err(e) => return Err(e.into()),
         };
 
+        Ok(wallet)
+    }
+
+    pub fn load_hotsigners(
+        self,
+        datadir_path: &Path,
+        network: bitcoin::Network,
+    ) -> Result<Self, WalletError> {
         let hot_signers = match HotSigner::from_datadir(datadir_path, network) {
             Ok(signers) => signers,
             Err(e) => match e {
@@ -129,15 +138,15 @@ impl Wallet {
         };
 
         let curve = bitcoin::secp256k1::Secp256k1::signing_only();
-        let keys = wallet.descriptor_keys();
+        let keys = self.descriptor_keys();
         if let Some(hot_signer) = hot_signers
             .into_iter()
             .find(|s| keys.contains(&s.fingerprint(&curve)))
         {
-            wallet = wallet.with_signer(Signer::new(hot_signer));
+            Ok(self.with_signer(Signer::new(hot_signer)))
+        } else {
+            Ok(self)
         }
-
-        Ok(wallet)
     }
 }
 

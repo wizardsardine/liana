@@ -240,13 +240,13 @@ impl error::Error for Error {
 impl From<Error> for super::DaemonError {
     fn from(e: Error) -> super::DaemonError {
         match e {
-            Error::Io(e) => super::DaemonError::Transport(Some(e.kind()), format!("io: {:?}", e)),
-            Error::Json(e) => super::DaemonError::Transport(None, format!("json decode: {}", e)),
+            Error::Io(e) => super::DaemonError::RpcSocket(Some(e.kind()), format!("io: {:?}", e)),
+            Error::Json(e) => super::DaemonError::RpcSocket(None, format!("json decode: {}", e)),
             Error::NonceMismatch => {
-                super::DaemonError::Transport(None, format!("transport: {}", e))
+                super::DaemonError::RpcSocket(None, format!("transport: {}", e))
             }
             Error::VersionMismatch => {
-                super::DaemonError::Transport(None, format!("transport: {}", e))
+                super::DaemonError::RpcSocket(None, format!("transport: {}", e))
             }
             Error::NoErrorOrResult => super::DaemonError::NoAnswer,
             Error::NotSupported => super::DaemonError::ClientNotSupported,
