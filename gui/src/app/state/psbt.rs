@@ -715,13 +715,14 @@ impl Action for UpdateAction {
                 self.updated.value = s;
                 if let Ok(psbt) = Psbt::from_str(&self.updated.value) {
                     self.updated.valid = tx.psbt.unsigned_tx.txid() == psbt.unsigned_tx.txid();
+                } else {
+                    self.updated.valid = false;
                 }
             }
             Message::View(view::Message::ImportSpend(view::ImportSpendMessage::Confirm)) => {
-                if self.updated.valid {
-                    self.processing = true;
-                    self.error = None;
-                    let updated = Psbt::from_str(&self.updated.value).expect("Already checked");
+                self.processing = true;
+                self.error = None;
+                if let Ok(updated) = Psbt::from_str(&self.updated.value) {
                     return Command::perform(
                         async move { daemon.update_spend_tx(&updated).await.map_err(|e| e.into()) },
                         Message::Updated,
