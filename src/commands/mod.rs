@@ -8,10 +8,11 @@ use crate::{
     bitcoin::BitcoinInterface,
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
+    miniscript::bitcoin::absolute::LockTime,
     poller::PollerMessage,
     spend::{
-        create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes, SpendCreationError,
-        SpendOutputAddress, SpendTxFees, TxGetter,
+        self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes,
+        SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
     },
     DaemonControl, VERSION,
 };
@@ -25,8 +26,10 @@ use utils::{
 
 use std::{
     collections::{hash_map, HashMap, HashSet},
+    convert::TryInto,
     fmt,
     sync::{self, mpsc},
+    time::SystemTime,
 };
 
 use miniscript::{
@@ -276,6 +279,21 @@ impl DaemonControl {
                 db_conn.set_receive_index(next_index, &self.secp);
             }
         }
+    }
+
+    // Pass relevant values to the spend module function of same name.
+    fn anti_fee_sniping_locktime(&self) -> LockTime {
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("time measured now cannot be before unix epoch");
+        let tip_time = self.bitcoin.tip_time();
+        let tip_height: u32 = self
+            .bitcoin
+            .chain_tip()
+            .height
+            .try_into()
+            .expect("block height must fit in u32");
+        spend::anti_fee_sniping_locktime(now, tip_height, tip_time)
     }
 }
 
@@ -529,6 +547,7 @@ impl DaemonControl {
         // derivation index in case any address in the transaction outputs was ours and from the
         // future.
         let change_info = change_address.info;
+        let locktime = self.anti_fee_sniping_locktime();
         let CreateSpendRes {
             psbt,
             has_change,
@@ -541,6 +560,7 @@ impl DaemonControl {
             &candidate_coins,
             SpendTxFees::Regular(feerate_vb),
             change_address,
+            locktime,
         ) {
             Ok(res) => res,
             Err(SpendCreationError::CoinSelection(e)) => {
@@ -901,6 +921,7 @@ impl DaemonControl {
         // will ensure that the replacement transaction additionally pays for its own weight as per
         // RBF rule 4.
         let replaced_fee = descendant_fees.to_sat();
+        let locktime = self.anti_fee_sniping_locktime();
         // This loop can have up to 2 iterations in the case of cancel and otherwise only 1.
         loop {
             match create_spend(
@@ -911,6 +932,7 @@ impl DaemonControl {
                 &candidate_coins,
                 SpendTxFees::Rbf(feerate_vb, replaced_fee),
                 change_address.clone(),
+                locktime,
             ) {
                 Ok(CreateSpendRes {
                     psbt,
@@ -1078,6 +1100,7 @@ impl DaemonControl {
         }
 
         let sweep_addr_info = sweep_addr.info;
+        let locktime = self.anti_fee_sniping_locktime();
         let CreateSpendRes {
             psbt, has_change, ..
         } = create_spend(
@@ -1088,6 +1111,7 @@ impl DaemonControl {
             &sweepable_coins,
             SpendTxFees::Regular(feerate_vb),
             sweep_addr,
+            locktime,
         )?;
         if has_change {
             self.maybe_increase_next_deriv_index(&mut db_conn, &sweep_addr_info);

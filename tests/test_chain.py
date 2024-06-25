@@ -150,6 +150,8 @@ def test_reorg_status_recovery(lianad, bitcoind):
     """
     list_coins = lambda: lianad.rpc.listcoins()["coins"]
 
+    # Generate blocks in order to test locktime set correctly.
+    bitcoind.generate_block(200)
     # Create two confirmed coins. Note how we take the initial_height after having
     # mined them, as we'll reorg back to this height and due to anti fee-sniping
     # these deposit transactions might not be valid anymore!
@@ -157,28 +159,37 @@ def test_reorg_status_recovery(lianad, bitcoind):
     txids = [bitcoind.rpc.sendtoaddress(addr, 0.5670) for addr in addresses]
     bitcoind.generate_block(1, wait_for_mempool=txids)
     initial_height = bitcoind.rpc.getblockcount()
+    assert initial_height > 100
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
 
     # Both coins are confirmed. Spend the second one then get their infos.
     wait_for(lambda: len(list_coins()) == 2)
     wait_for(lambda: all(c["block_height"] is not None for c in list_coins()))
     coin_b = get_coin(lianad, txids[1])
-    spend_coins(lianad, bitcoind, [coin_b])
+    tx = spend_coins(lianad, bitcoind, [coin_b])
+    locktime = bitcoind.rpc.decoderawtransaction(tx)["locktime"]
+    assert initial_height - 100 <= locktime <= initial_height
     bitcoind.generate_block(1, wait_for_mempool=1)
     wait_for(lambda: spend_confirmed_noticed(lianad, coin_b["outpoint"]))
     coin_a = get_coin(lianad, txids[0])
     coin_b = get_coin(lianad, txids[1])
 
     # Reorg the chain down to the initial height without shifting nor malleating
-    # any transaction. The coin info should be identical (except the transaction
-    # spending the second coin will be mined at the height the reorg happened).
+    # any transaction. The coin info should be identical (except the spend info
+    # of the transaction spending the second coin).
     bitcoind.simple_reorg(initial_height, shift=0)
     new_height = bitcoind.rpc.getblockcount()
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == new_height)
     new_coin_a = get_coin(lianad, coin_a["outpoint"])
     assert coin_a == new_coin_a
     new_coin_b = get_coin(lianad, coin_b["outpoint"])
-    coin_b["spend_info"]["height"] = initial_height
+
+    if locktime == initial_height:
+        # Cannot be mined until next block (initial_height + 1).
+        coin_b["spend_info"] = None
+    else:
+        # Otherwise, the tx will be mined at the height the reorg happened.
+        coin_b["spend_info"]["height"] = initial_height
     assert new_coin_b == coin_b
 
 

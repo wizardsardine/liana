@@ -114,7 +114,7 @@ impl BitcoinInterface for DummyBitcoind {
     }
 
     fn tip_time(&self) -> Option<u32> {
-        todo!()
+        None
     }
 
     fn wallet_transaction(

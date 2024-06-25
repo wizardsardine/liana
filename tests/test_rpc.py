@@ -872,6 +872,8 @@ def test_listtransactions(lianad, bitcoind):
 
 def test_create_recovery(lianad, bitcoind):
     """Test the sweep of coins that are available through the timelocked path."""
+    # Generate blocks in order to test locktime set correctly.
+    bitcoind.generate_block(200)
     # Start by getting a few coins
     destinations = {
         lianad.rpc.getnewaddress()["address"]: 0.1,
@@ -900,6 +902,13 @@ def test_create_recovery(lianad, bitcoind):
     # Now we can create a recovery tx that sweeps the first 3 coins.
     res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 18)
     reco_psbt = PSBT.from_base64(res["psbt"])
+
+    # Check locktime being set correctly.
+    tip_height = bitcoind.rpc.getblockcount()
+    assert tip_height > 100
+    locktime = reco_psbt.tx.nLockTime
+    assert tip_height - 100 <= locktime <= tip_height
+
     assert len(reco_psbt.tx.vin) == 3, "The last coin's timelock hasn't matured yet"
     assert len(reco_psbt.tx.vout) == 1
     assert int(0.5999 * COIN) < int(reco_psbt.tx.vout[0].nValue) < int(0.6 * COIN)
@@ -1048,6 +1057,8 @@ def test_labels(lianad, bitcoind):
 def test_rbfpsbt_bump_fee(lianad, bitcoind):
     """Test the use of RBF to bump the fee of a transaction."""
 
+    # Generate blocks in order to test locktime set correctly.
+    bitcoind.generate_block(200)
     # Get three coins.
     destinations = {
         lianad.rpc.getnewaddress()["address"]: 0.003,
@@ -1100,6 +1111,12 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     # Let's use an even higher feerate.
     rbf_1_res = lianad.rpc.rbfpsbt(first_txid, False, 10)
     rbf_1_psbt = PSBT.from_base64(rbf_1_res["psbt"])
+
+    # Check the locktime is being set.
+    tip_height = bitcoind.rpc.getblockcount()
+    locktime = rbf_1_psbt.tx.nLockTime
+    assert tip_height - 100 <= locktime <= tip_height
+
     # The inputs are the same in both (no new inputs needed in the replacement).
     assert sorted(i.prevout.serialize() for i in first_psbt.tx.vin) == sorted(
         i.prevout.serialize() for i in rbf_1_psbt.tx.vin
