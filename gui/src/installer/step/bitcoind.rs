@@ -1,6 +1,6 @@
 #[cfg(target_os = "windows")]
 use std::io::{self, Cursor};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -336,6 +336,7 @@ pub struct DefineBitcoind {
     selected_auth_type: RpcAuthType,
     address: form::Value<String>,
     is_running: Option<Result<(), Error>>,
+    modal_displayed: bool,
 
     // Internal cache to detect network change.
     network: Option<Network>,
@@ -348,6 +349,7 @@ impl DefineBitcoind {
             selected_auth_type: RpcAuthType::CookieFile,
             address: form::Value::default(),
             is_running: None,
+            modal_displayed: false,
             network: None,
         }
     }
@@ -411,12 +413,24 @@ impl Step for DefineBitcoind {
                     self.is_running = None;
                     return self.ping();
                 }
+                message::DefineBitcoind::PingAndCloseModal => {
+                    self.is_running = None;
+                    self.modal_displayed = false;
+                    return self.ping();
+                }
                 message::DefineBitcoind::PingBitcoindResult(res) => self.is_running = Some(res),
                 message::DefineBitcoind::ConfigFieldEdited(field, value) => match field {
                     ConfigField::Address => {
                         self.is_running = None;
-                        self.address.value = value;
-                        self.address.valid = true;
+                        self.address.value.clone_from(&value);
+                        self.address.valid = false;
+                        if let Some((ip, port)) = value.rsplit_once(':') {
+                            let port = u16::from_str(port);
+                            let (ipv4, ipv6) = (Ipv4Addr::from_str(ip), Ipv6Addr::from_str(ip));
+                            if port.is_ok() && (ipv4.is_ok() || ipv6.is_ok()) {
+                                self.address.valid = true;
+                            }
+                        }
                     }
                     ConfigField::CookieFilePath => {
                         self.is_running = None;
@@ -437,6 +451,15 @@ impl Step for DefineBitcoind {
                 message::DefineBitcoind::RpcAuthTypeSelected(auth_type) => {
                     self.is_running = None;
                     self.selected_auth_type = auth_type;
+                }
+                message::DefineBitcoind::DisplayModal(display) => {
+                    self.modal_displayed = display;
+                    if !display {
+                        // this message is produced by 'cancel' button so we reload default address
+                        if let Some(network) = self.network {
+                            self.address.value = bitcoind_default_address(&network);
+                        }
+                    }
                 }
             };
         };
@@ -479,6 +502,7 @@ impl Step for DefineBitcoind {
             &self.rpc_auth_vals,
             &self.selected_auth_type,
             self.is_running.as_ref(),
+            self.modal_displayed,
         )
     }
 

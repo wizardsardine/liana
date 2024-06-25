@@ -45,6 +45,8 @@ pub enum DefineBitcoind {
     RpcAuthTypeSelected(RpcAuthType),
     PingBitcoindResult(Result<(), Error>),
     PingBitcoind,
+    DisplayModal(bool),
+    PingAndCloseModal,
 }
 
 #[derive(Debug, Clone)]

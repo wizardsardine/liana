@@ -1,12 +1,13 @@
 use async_hwi::utils::extract_keys_and_template;
 use iced::widget::{
-    checkbox, container, pick_list, radio, scrollable, scrollable::Properties, slider, Space,
-    TextInput,
+    checkbox, container, pick_list, radio, scrollable, scrollable::Properties, slider, Button,
+    Space, TextInput,
 };
 use iced::{alignment, widget::progress_bar, Alignment, Length};
 
 use async_hwi::DeviceKind;
-use liana_ui::component::text;
+use liana_ui::component::{self, text};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::{collections::HashSet, str::FromStr};
 
@@ -838,6 +839,7 @@ pub fn define_bitcoin<'a>(
     rpc_auth_vals: &RpcAuthValues,
     selected_auth_type: &RpcAuthType,
     is_running: Option<&Result<(), Error>>,
+    display_modal: bool,
 ) -> Element<'a, Message> {
     let col_address = Column::new()
         .push(text("Address:").bold())
@@ -917,7 +919,37 @@ pub fn define_bitcoin<'a>(
         })
         .spacing(10);
 
-    layout(
+    let check_connection_message = if !address.valid {
+        None
+    } else if let RpcAuthType::UserPass = selected_auth_type {
+        if let Some((ip, _port)) = address.value.clone().split_once(':') {
+            let (ipv4, ipv6) = (Ipv4Addr::from_str(ip), Ipv6Addr::from_str(ip));
+            let is_loopback = match (ipv4, ipv6) {
+                (_, Ok(ip)) => ip.is_loopback(),
+                (Ok(ip), _) => ip.is_loopback(),
+                _ => false,
+            };
+            if rpc_auth_vals.user.value.is_empty() || rpc_auth_vals.password.value.is_empty() {
+                None
+            } else if !is_loopback {
+                Some(Message::DefineBitcoind(
+                    message::DefineBitcoind::DisplayModal(true),
+                ))
+            } else {
+                Some(Message::DefineBitcoind(
+                    message::DefineBitcoind::PingBitcoind,
+                ))
+            }
+        } else {
+            None
+        }
+    } else {
+        Some(Message::DefineBitcoind(
+            message::DefineBitcoind::PingBitcoind,
+        ))
+    };
+
+    let view = layout(
         progress,
         "Set up connection to the Bitcoin full node",
         Column::new()
@@ -951,9 +983,7 @@ pub fn define_bitcoin<'a>(
                     .spacing(10)
                     .push(Container::new(
                         button::secondary(None, "Check connection")
-                            .on_press(Message::DefineBitcoind(
-                                message::DefineBitcoind::PingBitcoind,
-                            ))
+                            .on_press_maybe(check_connection_message)
                             .width(Length::Fixed(200.0)),
                     ))
                     .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
@@ -967,7 +997,53 @@ pub fn define_bitcoin<'a>(
             .spacing(50),
         true,
         Some(Message::Previous),
+    );
+
+    let modal_warning = r#"It appears that you're attempting to connect to a remote bitcoin node, which is currently not supported.
+
+You may proceed if you're confident in your actions or if the IP address is bound to this machine.
+    "#;
+
+    let modal: Element<Message> = card::simple(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(Space::with_width(Length::Fill))
+                    .push(h3("Warning").bold())
+                    .push(Space::with_width(Length::Fill)),
+            )
+            .push(Space::with_height(10))
+            .push(
+                Row::new()
+                    .push(Space::with_width(Length::Fill))
+                    .push(text::h4_regular(modal_warning).style(color::GREEN))
+                    .push(Space::with_width(Length::Fill)),
+            )
+            .push(
+                Row::new()
+                    .push(Space::with_width(Length::Fill))
+                    .push(Button::new(" Cancel ").on_press(Message::DefineBitcoind(
+                        message::DefineBitcoind::DisplayModal(false),
+                    )))
+                    .push(Space::with_width(Length::Fill))
+                    .push(Button::new(" Continue ").on_press(Message::DefineBitcoind(
+                        message::DefineBitcoind::PingAndCloseModal,
+                    )))
+                    .push(Space::with_width(Length::Fill)),
+            )
+            .width(400),
     )
+    .into();
+
+    if display_modal {
+        component::modal::Modal::new(view, modal)
+            .on_blur(Some(Message::DefineBitcoind(
+                message::DefineBitcoind::DisplayModal(false),
+            )))
+            .into()
+    } else {
+        view
+    }
 }
 
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
