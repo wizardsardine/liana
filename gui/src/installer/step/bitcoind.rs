@@ -1,6 +1,6 @@
 #[cfg(target_os = "windows")]
 use std::io::{self, Cursor};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -415,8 +415,15 @@ impl Step for DefineBitcoind {
                 message::DefineBitcoind::ConfigFieldEdited(field, value) => match field {
                     ConfigField::Address => {
                         self.is_running = None;
-                        self.address.value = value;
-                        self.address.valid = true;
+                        self.address.value.clone_from(&value);
+                        self.address.valid = false;
+                        if let Some((ip, port)) = value.rsplit_once(':') {
+                            let port = u16::from_str(port);
+                            let (ipv4, ipv6) = (Ipv4Addr::from_str(ip), Ipv6Addr::from_str(ip));
+                            if port.is_ok() && (ipv4.is_ok() || ipv6.is_ok()) {
+                                self.address.valid = true;
+                            }
+                        }
                     }
                     ConfigField::CookieFilePath => {
                         self.is_running = None;
