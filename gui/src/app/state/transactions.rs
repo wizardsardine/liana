@@ -115,7 +115,7 @@ impl State for TransactionsPanel {
             },
             Message::RbfModal(tx, is_cancel, res) => match res {
                 Ok(descendant_txids) => {
-                    let modal = CreateRbfModal::new(tx, is_cancel, descendant_txids);
+                    let modal = CreateRbfModal::new(*tx, is_cancel, descendant_txids);
                     self.create_rbf_modal = Some(modal);
                 }
                 Err(e) => {
@@ -169,7 +169,7 @@ impl State for TransactionsPanel {
                                     })
                                     .map_err(|e| e.into())
                             },
-                            move |res| Message::RbfModal(tx, is_cancel, res),
+                            move |res| Message::RbfModal(Box::new(tx), is_cancel, res),
                         );
                     }
                 }
