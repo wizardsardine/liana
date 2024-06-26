@@ -69,6 +69,12 @@ gpg --verify liana_2.0-1_amd64.deb.asc
 ```
 GPG should tell you the signature is valid for Antoine's key.
 
+If GPG told you that Antoine key has expired, you should refresh it.
+Example for Linux (replace the signature name with the one corresponding to your download):
+```
+gpg --keyserver hkps://keys.openpgp.org --refresh-keys E13FC145CD3F4304      
+```
+
 If all is good, you can run Liana!
 
 At startup, you will have the choice between starting Liana using an existing configuration or to
