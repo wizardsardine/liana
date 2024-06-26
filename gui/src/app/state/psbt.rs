@@ -715,13 +715,14 @@ impl Action for UpdateAction {
                 self.updated.value = s;
                 if let Ok(psbt) = Psbt::from_str(&self.updated.value) {
                     self.updated.valid = tx.psbt.unsigned_tx.txid() == psbt.unsigned_tx.txid();
+                } else {
+                    self.updated.valid = false;
                 }
             }
             Message::View(view::Message::ImportSpend(view::ImportSpendMessage::Confirm)) => {
-                if self.updated.valid {
-                    self.processing = true;
-                    self.error = None;
-                    let updated = Psbt::from_str(&self.updated.value).expect("Already checked");
+                self.processing = true;
+                self.error = None;
+                if let Ok(updated) = Psbt::from_str(&self.updated.value) {
                     return Command::perform(
                         async move { daemon.update_spend_tx(&updated).await.map_err(|e| e.into()) },
                         Message::Updated,
@@ -732,5 +733,111 @@ impl Action for UpdateAction {
         }
 
         Command::none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app::{cache::Cache, state::PsbtsPanel},
+        daemon::client::{Lianad, Request},
+        utils::{mock::Daemon, sandbox::Sandbox},
+    };
+
+    use liana::descriptors::LianaDescriptor;
+    use serde_json::json;
+    use std::str::FromStr;
+
+    const DESC: &str = "wsh(or_d(multi(2,[f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<0;1>/*,[2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<0;1>/*),and_v(v:thresh(1,pkh([f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<2;3>/*),a:pkh([2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<2;3>/*)),older(65535))))#9s8ekrce";
+
+    #[tokio::test]
+    async fn test_update_psbt() {
+        let daemon = Daemon::new(vec![
+            (
+                Some(json!({"method": "getinfo", "params": Option::<Request>::None})),
+                Ok(json!({
+                    "version": "",
+                    "network": "signet",
+                    "block_height": 1000,
+                    "sync": 1.0,
+                    "descriptors": { "main": LianaDescriptor::from_str(DESC).unwrap() },
+                    "timestamp": 1000,
+                })),
+            ),
+            (
+                Some(json!({"method": "listspendtxs", "params": Option::<Request>::None})),
+                Ok(json!({ "spend_txs": [{
+                    "psbt": "cHNidP8BAIkCAAAAAc0x/jtWvFugrl8zc34KVIlWCugXT6JNtgir6UqX+Vv6AQAAAAD9////AkBCDwAAAAAAIgAgtQu/fA/8rQhJ0I6wUoBDO0vNa3lgsEpEIj7rTOMnBcXuIEkBAAAAACIAIOdCiXh7yL2V/f6S6KMTOzgqKkqyIXgmFuwDnmXbIiosAAAAAAABAP04AQIAAAAAAQKYYriMs/PtSqm6LPNWWFYskTL6nWZegJdwxYcVCRn8vwEAAAAA/f///87D7dkdgMd1Laj/v6xspNRtrQXGP+8BPFMLqkeBb6MRAQAAAAD9////AuGQDgAAAAAAIlEg7DgdNxI7WybaPUZXcMCh+uN1E4X8E5DzJIlj83S+tIMQZFgBAAAAACIAIJZAn7j5iOen7xo2sKzjMc24llTZIuS+RpdwcLHtE6ufAUCksqYUJBbHB9x8eHdoRvRqiGzG4wQXpmY96vh14zAJEM2CS/oZaNVC4Wj8rY2cdjAvZj9dlVZFPbOxx9g5tFxUAUA24s2KJ7sjSHUAcUSd4yqRK/G3CZM8qhkhyHhGDSS0zZvZaIcgoqOPe23gH32wAI9Aax1gJUDv4kKOqOx64ltg9BADAAEBKxBkWAEAAAAAIgAglkCfuPmI56fvGjawrOMxzbiWVNki5L5Gl3Bwse0Tq58BBYZSIQIeYxzruE4/cvi6zbRmB1asJO0bMfUutoH0bpubw1zAZSEDLZSmORZKW/k5A+4QxJR2/H+vcV8U0WPX9SvS+MRMffNSrnNkdqkUmNf1mL657o/oxxnHkIrtdNkbge+IrGt2qRSIigBO15eaB9dj93ihNpAX9HHDuoisbJNRiAP//wCyaCIGAh5jHOu4Tj9y+LrNtGYHVqwk7Rsx9S62gfRum5vDXMBlHPcUwigwAACAAQAAgAAAAIACAACAAAAAAAAAAAAiBgIr7HqsyKEvERWQsmsv6FleMuXThpI77+TVkQ3TSOOLURz3FMIoMAAAgAEAAIAAAACAAgAAgAIAAAAAAAAAIgYDLZSmORZKW/k5A+4QxJR2/H+vcV8U0WPX9SvS+MRMffMcJSLyPDAAAIABAACAAAAAgAIAAIAAAAAAAAAAACIGA/h0pUXGHq1+kSuTYVTO8RHKfQLJlhfNtm+qdcIIr09jHCUi8jwwAACAAQAAgAAAAIACAACAAgAAAAAAAAAAIgICGAO/4xFiX/S5DXTV6uARFTcMwP1hto8BtPkdn3gIjf0c9xTCKDAAAIABAACAAAAAgAIAAIACAAAAAgAAACICAuNOSbsNRv31XkF2ygwCOuCnsJNRLhV0isJ/VRdj1k7IHPcUwigwAACAAQAAgAAAAIACAACAAAAAAAIAAAAiAgOpBJHEchNOeXuQwuLHlwOfkAyfoGvrYfb4pCFLKEPw2hwlIvI8MAAAgAEAAIAAAACAAgAAgAIAAAACAAAAIgIDyLkJiZTjLCysDOQotYs9us5CEYev4kyTYW2uL2r5H1McJSLyPDAAAIABAACAAAAAgAIAAIAAAAAAAgAAAAAiAgIlvGBvHRPmmVP6sn9g/akW2VJAvbJagMnZ/24gLdITsxz3FMIoMAAAgAEAAIAAAACAAgAAgAMAAAADAAAAIgIDNmVQOMMezQgABjk1zjfc3I2eKFJ4xLqT55jG4BP4p0Ec9xTCKDAAAIABAACAAAAAgAIAAIABAAAAAwAAACICA4Subm7T6yYCMWLgDtMy92hOgjanJefukbCOSVEHlX0IHCUi8jwwAACAAQAAgAAAAIACAACAAQAAAAMAAAAiAgPpsETw12nxLEM6OSOPfxp4YYj8NtRcLdqBpi3S4/BTuRwlIvI8MAAAgAEAAIAAAACAAgAAgAMAAAADAAAAAA==",
+                }]})),
+            ),
+            (
+                Some(
+                    json!({"method": "listcoins", "params": vec![Vec::new(), vec!["fa5bf9974ae9ab08b64da24f17e80a5689540a7e73335faea05bbc563bfe31cd:1"]]}),
+                ),
+                Ok(json!({ "coins": [{
+                    "amount": 10000,
+                    "outpoint": "fa5bf9974ae9ab08b64da24f17e80a5689540a7e73335faea05bbc563bfe31cd:1",
+                    "address": "TB1QJEQFLW8E3RN60MC6X6C2ECE3EKUFV4XEYTJTU35HWPCTRMGN4W0S3DCXH5",
+                    "block_height": 200949,
+                    "derivation_index": 0,
+                    "is_immature": false,
+                    "is_change": false,
+
+                }]})),
+            ),
+            (
+                Some(json!({"method": "getlabels", "params": vec![vec![
+                    "4bc07e8fe753f7314b69da02a7cfbedc3e4e0d5fbee316a048240ae87b8aaa58",
+                    "4bc07e8fe753f7314b69da02a7cfbedc3e4e0d5fbee316a048240ae87b8aaa58:0",
+                    "4bc07e8fe753f7314b69da02a7cfbedc3e4e0d5fbee316a048240ae87b8aaa58:1",
+                    "fa5bf9974ae9ab08b64da24f17e80a5689540a7e73335faea05bbc563bfe31cd:1",
+                    "tb1qjeqflw8e3rn60mc6x6c2ece3ekufv4xeytjtu35hwpctrmgn4w0s3dcxh5",
+                    "tb1qk59m7lq0ljkssjws36c99qzr8d9u66mevzcy53pz8m45ece8qhzs6alndx",
+                    "tb1quapgj7rmez7etl07jt52xyem8q4z5j4jy9uzv9hvqw0xtkez9gkqaw7rgr",
+                ]]})),
+                Ok(json!({ "labels": {}})),
+            ),
+            (
+                Some(json!({"method": "updatespend", "params": vec![vec![json!({})]]})),
+                Ok(json!({})),
+            ),
+        ]);
+        let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
+        let sandbox: Sandbox<PsbtsPanel> = Sandbox::new(PsbtsPanel::new(wallet.clone()));
+        let client = Arc::new(Lianad::new(daemon.run()));
+        let cache = Cache::default();
+        let sandbox = sandbox
+            .load(client.clone(), &Cache::default(), wallet)
+            .await;
+        let _sandbox = sandbox
+            .update(
+                client.clone(),
+                &cache,
+                Message::View(view::Message::Select(0)),
+            )
+            .await
+            .update(
+                client.clone(),
+                &cache,
+                Message::View(view::Message::Spend(view::SpendTxMessage::EditPsbt)),
+            )
+            .await
+            .update(
+                client.clone(),
+                &cache,
+                Message::View(view::Message::ImportSpend(
+                    view::ImportSpendMessage::PsbtEdited("panic".to_string()),
+                )),
+            )
+            .await
+            .update(
+                client.clone(),
+                &cache,
+                Message::View(view::Message::ImportSpend(
+                    view::ImportSpendMessage::Confirm,
+                )),
+            )
+            .await;
     }
 }
