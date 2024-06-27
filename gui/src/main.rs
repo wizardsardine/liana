@@ -44,6 +44,25 @@ fn parse_args(args: Vec<String>) -> Result<Vec<Arg>, Box<dyn Error>> {
         process::exit(1);
     }
 
+    if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
+        eprintln!(
+            r#"
+Usage: liana-gui [OPTIONS]
+
+Options:
+    --conf <PATH>       Path of configuration file (gui.toml)
+    --datadir <PATH>    Path of liana datadir
+    -v, --version       Display liana-gui version
+    -h, --help          Print help
+    --bitcoin           Use bitcoin network
+    --testnet           Use testnet network
+    --signet            Use signet network
+    --regtest           Use regtest network
+        "#
+        );
+        process::exit(1);
+    }
+
     for (i, arg) in args.iter().enumerate() {
         if arg == "--conf" {
             if let Some(a) = args.get(i + 1) {
