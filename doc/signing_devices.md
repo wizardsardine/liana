@@ -40,11 +40,13 @@ Version 1.0.30 of the firmware is supported for use in P2WSH descriptors.
 
 Support for use in Taproot descriptors is not yet available in the firmware.
 
-After the setup of the device, the first connection to set the pin will set also the network.
-The network cannot be change unless doing a factory reset.
+WARNING: You won't be able to connect your Jade to Liana if you choose "QrCode" mode when setting up
+your Jade. This is because in this mode the Jade refuses to communicate through USB.
 
-If using "QrCode" mode, the device will refuse other communication channels like USB.
+WARNING: the network cannot be changed after setting up the device without a factory reset. The
+network is set at the same time as the PIN.
 
-If using "Temporary Signer", the first connection through USB will setup the network, a new session
-is required in order to change it. If using the Liana gui installer, is is advised to first choose
-the network before connecting the Jade in "Temporary signer" mode.
+It is sometimes useful to change the network without a factory reset, such as when testing the
+device and/or Liana. In this case the "Temporary signer" mode may be used. The network can be reset
+by simply disconnecting and reconnecting it. If using this mode, we advise you to first choose the
+network in the Liana installer before setting up the network on your Jade.
