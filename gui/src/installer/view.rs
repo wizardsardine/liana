@@ -1,12 +1,13 @@
 use async_hwi::utils::extract_keys_and_template;
 use iced::widget::{
-    checkbox, container, pick_list, radio, scrollable, scrollable::Properties, slider, Space,
-    TextInput,
+    checkbox, container, pick_list, radio, scrollable, scrollable::Properties, slider, Button,
+    Space, TextInput,
 };
 use iced::{alignment, widget::progress_bar, Alignment, Length};
 
 use async_hwi::DeviceKind;
 use liana_ui::component::text;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::{collections::HashSet, str::FromStr};
 
@@ -839,6 +840,17 @@ pub fn define_bitcoin<'a>(
     selected_auth_type: &RpcAuthType,
     is_running: Option<&Result<(), Error>>,
 ) -> Element<'a, Message> {
+    let is_loopback = if let Some((ip, _port)) = address.value.clone().rsplit_once(':') {
+        let (ipv4, ipv6) = (Ipv4Addr::from_str(ip), Ipv6Addr::from_str(ip));
+        match (ipv4, ipv6) {
+            (_, Ok(ip)) => ip.is_loopback(),
+            (Ok(ip), _) => ip.is_loopback(),
+            _ => false,
+        }
+    } else {
+        false
+    };
+
     let col_address = Column::new()
         .push(text("Address:").bold())
         .push(
@@ -852,6 +864,19 @@ pub fn define_bitcoin<'a>(
             .size(text::P1_SIZE)
             .padding(10),
         )
+        .push_maybe(if !is_loopback && address.valid {
+            Some(
+                iced::widget::Text::new(
+                    "Connection to a remote Bitcoin node \
+                    is not supported. Insert an IP address bound to the same machine \
+                    running Liana (ignore this warning if that's already the case)",
+                )
+                .style(color::ORANGE)
+                .size(text::CAPTION_SIZE),
+            )
+        } else {
+            None
+        })
         .spacing(10);
 
     let col_auth = Column::new()
@@ -917,6 +942,13 @@ pub fn define_bitcoin<'a>(
         })
         .spacing(10);
 
+    let check_connect_enable = if let RpcAuthType::UserPass = selected_auth_type {
+        address.valid
+            && !rpc_auth_vals.password.value.is_empty()
+            && !rpc_auth_vals.user.value.is_empty()
+    } else {
+        address.valid && !rpc_auth_vals.cookie_path.value.is_empty()
+    };
     layout(
         progress,
         "Set up connection to the Bitcoin full node",
@@ -951,9 +983,13 @@ pub fn define_bitcoin<'a>(
                     .spacing(10)
                     .push(Container::new(
                         button::secondary(None, "Check connection")
-                            .on_press(Message::DefineBitcoind(
-                                message::DefineBitcoind::PingBitcoind,
-                            ))
+                            .on_press_maybe(if check_connect_enable {
+                                Some(Message::DefineBitcoind(
+                                    message::DefineBitcoind::PingBitcoind,
+                                ))
+                            } else {
+                                None
+                            })
                             .width(Length::Fixed(200.0)),
                     ))
                     .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
