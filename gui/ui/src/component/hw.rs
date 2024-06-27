@@ -144,7 +144,7 @@ pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
             )
             .width(Length::Fill)
             .padding(10),
-            "This signer does not have a key in this wallet.",
+            "This signer key does not match this wallet",
             tooltip::Position::Bottom,
         )
         .style(theme::Container::Card(theme::Card::Simple)),
