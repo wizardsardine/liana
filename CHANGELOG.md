@@ -1,5 +1,54 @@
 # Liana daemon and GUI release notes
 
+## 6.0
+
+This release introduces support for the Jade signing device, a number of usability improvements as
+well as some bug fixes.
+
+### Breaking changes
+
+#### Liana GUI
+
+- The `hardware_wallets` field in the configuration file is now disregarded. It was deprecated since
+  version 0.2.
+
+### Features
+
+#### Liana daemon / library
+
+- We now more accurately estimate the size of a signed spend transaction, preventing overpaying fees
+  in some configurations.
+- `lianad` now accepts two new arguments: `--version` and `--help`.
+
+#### Liana GUI
+
+- We now support the Jade signing device.
+- We now use a more recent graphic renderer ([`wgpu`](https://github.com/gfx-rs/wgpu)), which offers
+  better compatibility with newer systems.
+- The network is now set first in the installer.
+- It's now possible to get back from the descriptor creation step to the installer landing page.
+- Advanced text shaping was enabled. Basically: you can now use emojis in labels and aliases.
+- Date and time are now displayed according to the system's timezone configuration.
+- We now also show the [BIP388](https://github.com/bitcoin/bips/blob/master/bip-0388.mediawiki)
+  wallet policy when registering a descriptor on a signing device.
+- The descriptor backup step was removed in installer when a descriptor was just imported in the
+  previous step.
+- We now set a minimum window size.
+
+### Fixes
+
+#### Liana daemon / library
+
+#### Liana GUI
+
+- When creating a new wallet, we now better communicate if a wallet already exists in the selected
+  network.
+- When configuring the connection to bitcoind manually, we now display a warning if specifying a
+  non-loopback IP address.
+- Clicking on "Wallet" breadcrumb in Settings used to open "About" page.
+- When entering the feerate for an RBF, it was made easier to edit a single-digit value.
+- When updating an existing transaction draft, entering an invalid PSBT could crash the application.
+
 ## 5.0
 
 This release introduces support for the Coldcard signing device, experimental Taproot support and a
