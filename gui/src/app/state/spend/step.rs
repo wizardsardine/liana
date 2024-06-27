@@ -147,8 +147,8 @@ impl DefineSpend {
         self.coins.sort_by(|(a, a_selected), (b, b_selected)| {
             if *a_selected && !b_selected || !a_selected && *b_selected {
                 b_selected.cmp(a_selected)
-            } else if remaining_sequence(a, blockheight, timelock)
-                == remaining_sequence(b, blockheight, timelock)
+            } else if remaining_sequence(a, blockheight, timelock, false)
+                == remaining_sequence(b, blockheight, timelock, false)
             {
                 // bigger amount first
                 b.amount.cmp(&a.amount)

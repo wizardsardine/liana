@@ -158,8 +158,12 @@ impl State for Home {
                             if coin.block_height.is_some() {
                                 self.balance += coin.amount;
                                 let timelock = self.wallet.main_descriptor.first_timelock_value();
-                                let seq =
-                                    remaining_sequence(&coin, cache.blockheight as u32, timelock);
+                                let seq = remaining_sequence(
+                                    &coin,
+                                    cache.blockheight as u32,
+                                    timelock,
+                                    false,
+                                );
                                 // Warn user for coins that are expiring in less than 10 percent of
                                 // the timelock.
                                 if seq <= timelock as u32 * 10 / 100 {
