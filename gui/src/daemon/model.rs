@@ -64,7 +64,7 @@ impl SpendTx {
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
         network: Network,
     ) -> Self {
-        let max_vbytes = desc.unsigned_tx_max_vbytes(&psbt.unsigned_tx);
+        let max_vbytes = desc.unsigned_tx_max_vbytes(&psbt.unsigned_tx, false);
         let change_indexes: Vec<usize> = desc
             .change_indexes(&psbt, secp)
             .into_iter()
