@@ -27,7 +27,7 @@ DARLING_DMG_REVISION=241238313a47d3cf6427ac5a75b7a0311a3a4cb4 \
 cd ..
 
 # Finally build the projects using the toolchain just created.
-alias cargo="/liana/rust-1.65.0-x86_64-unknown-linux-gnu/cargo/bin/cargo"
+alias cargo="/liana/rust-1.70.0-x86_64-unknown-linux-gnu/cargo/bin/cargo"
 
 PATH="$PATH:$PWD/osxcross/target/bin/" \
     CC=o64-clang \
