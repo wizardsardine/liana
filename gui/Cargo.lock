@@ -310,9 +310,9 @@ checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 
 [[package]]
 name = "bdk_coin_select"
-version = "0.1.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0320167c3655e83f0415d52f39618902e449186ffc7dfb090f922f79675c316"
+checksum = "3c084bf76f0f67546fc814ffa82044144be1bb4618183a15016c162f8b087ad4"
 
 [[package]]
 name = "bech32"
@@ -2579,8 +2579,8 @@ dependencies = [
 
 [[package]]
 name = "liana"
-version = "5.0.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#6d498db5e50d13a653e5592090873bf269107ed2"
+version = "6.0.0"
+source = "git+https://github.com/wizardsardine/liana?branch=master#585bb5b763127f4e0686ce8201fb846fa84137b9"
 dependencies = [
  "backtrace",
  "bdk_coin_select",
@@ -2600,7 +2600,7 @@ dependencies = [
 
 [[package]]
 name = "liana_gui"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "async-hwi",
  "async-trait",
@@ -4205,7 +4205,7 @@ version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f622567e3b4b38154fb8190bcf6b160d7a4301d70595a49195b48c116007a27"
 dependencies = [
- "bitcoin_hashes 0.13.0",
+ "bitcoin_hashes 0.12.0",
  "secp256k1-sys",
  "serde",
 ]
