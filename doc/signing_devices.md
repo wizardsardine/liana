@@ -27,7 +27,7 @@ Support for use in Taproot descriptors is not yet available in the firmware.
 
 Support for use in both P2WSH and Taproot descriptors has only been released in Beta as of this
 writing. It is only supported by the [Edge
-firmware](https://github.com/Coldcard/firmware?tab=readme-ov-file#long-lived-branches).
+firmware](https://github.com/Coldcard/firmware?tab=readme-ov-file#long-lived-branches), as of now, only on Mk4.
 
 As of this writing, Coldcard on Taproot will only be usable for descriptors which only use a single
 key as their primary path. This is due to a discrepancy in how Coldcard derives [deterministically
