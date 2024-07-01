@@ -47,6 +47,7 @@ pub trait State {
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
     }
+    fn interrupt(&mut self) {}
     fn reload(
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
