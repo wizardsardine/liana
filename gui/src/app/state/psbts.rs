@@ -67,6 +67,10 @@ impl State for PsbtsPanel {
         }
     }
 
+    fn interrupt(&mut self) {
+        self.selected_tx = None;
+    }
+
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,

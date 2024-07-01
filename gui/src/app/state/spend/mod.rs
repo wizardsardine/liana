@@ -81,6 +81,10 @@ impl State for CreateSpendPanel {
         self.steps.get(self.current).unwrap().subscription()
     }
 
+    fn interrupt(&mut self) {
+        self.steps.get_mut(self.current).unwrap().interrupt();
+    }
+
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,

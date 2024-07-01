@@ -157,6 +157,8 @@ impl App {
     }
 
     fn set_current_panel(&mut self, menu: Menu) -> Command<Message> {
+        self.panels.current_mut().interrupt();
+
         match &menu {
             menu::Menu::TransactionPreSelected(txid) => {
                 if let Ok(Some(tx)) = Handle::current().block_on(async {
