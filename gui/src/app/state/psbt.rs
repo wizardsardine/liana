@@ -107,6 +107,10 @@ impl PsbtState {
         }
     }
 
+    pub fn interrupt(&mut self) {
+        self.action = None;
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         if let Some(action) = &self.action {
             action.as_ref().subscription()
