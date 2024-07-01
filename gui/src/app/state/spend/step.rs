@@ -61,6 +61,7 @@ pub trait Step {
         message: Message,
     ) -> Command<Message>;
     fn apply(&self, _draft: &mut TransactionDraft) {}
+    fn interrupt(&mut self) {}
     fn load(&mut self, _draft: &TransactionDraft) {}
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
@@ -774,6 +775,12 @@ impl Step for SaveSpend {
             psbt::PsbtState::new(self.wallet.clone(), tx, false),
             warnings,
         ));
+    }
+
+    fn interrupt(&mut self) {
+        if let Some((psbt_state, _)) = &mut self.spend {
+            psbt_state.interrupt()
+        }
     }
 
     fn subscription(&self) -> Subscription<Message> {
