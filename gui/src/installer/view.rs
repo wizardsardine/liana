@@ -630,7 +630,7 @@ pub fn register_descriptor<'a>(
                         .push(
                             scrollable(
                                 Column::new()
-                                    .push(text(template.to_owned()).small())
+                                    .push(text(template).small())
                                     .push(Space::with_height(Length::Fixed(5.0))),
                             )
                             .direction(
