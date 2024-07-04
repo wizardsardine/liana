@@ -64,7 +64,14 @@ impl SpendTx {
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
         network: Network,
     ) -> Self {
-        let max_vbytes = desc.unsigned_tx_max_vbytes(&psbt.unsigned_tx, false);
+        // Use primary path if no inputs are using a relative locktime.
+        let use_primary_path = !psbt
+            .unsigned_tx
+            .input
+            .iter()
+            .map(|txin| txin.sequence)
+            .any(|seq| seq.is_relative_lock_time());
+        let max_vbytes = desc.unsigned_tx_max_vbytes(&psbt.unsigned_tx, use_primary_path);
         let change_indexes: Vec<usize> = desc
             .change_indexes(&psbt, secp)
             .into_iter()
