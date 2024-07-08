@@ -43,7 +43,11 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 4;
+const DB_VERSION: i64 = 5;
+
+/// Last database version for which Bitcoin transactions were not stored in database. In practice
+/// this meant we relied on the bitcoind watchonly wallet to store them for us.
+pub const MAX_DB_VERSION_NO_TX_DB: i64 = 4;
 
 #[derive(Debug)]
 pub enum SqliteDbError {
@@ -160,9 +164,14 @@ impl SqliteDb {
         Ok(SqliteDb { db_path })
     }
 
-    /// If the database version is older than expected, migrate it to the current version.
-    pub fn maybe_apply_migrations(&self) -> Result<(), SqliteDbError> {
-        maybe_apply_migration(&self.db_path)
+    /// If the database version is older than expected, migrate it to the current version. If
+    /// migrating from a database version 4 or earlier, all the wallet Bitcoin transactions must be
+    /// passed through the `bitcoin_txs` parameter otherwise the migration will fail.
+    pub fn maybe_apply_migrations(
+        &self,
+        bitcoin_txs: &[bitcoin::Transaction],
+    ) -> Result<(), SqliteDbError> {
+        maybe_apply_migration(&self.db_path, bitcoin_txs)
     }
 
     /// Get a new connection to the database.
@@ -687,6 +696,39 @@ impl SqliteConn {
         .expect("Db must not fail")
     }
 
+    /// Retrieves all txids from the transactions table whether or not they are referenced by a coin.
+    pub fn db_list_saved_txids(&mut self) -> Vec<bitcoin::Txid> {
+        db_query(
+            &mut self.conn,
+            "SELECT txid FROM transactions",
+            rusqlite::params![],
+            |row| {
+                let txid: Vec<u8> = row.get(0)?;
+                let txid: bitcoin::Txid =
+                    encode::deserialize(&txid).expect("We only store valid txids");
+                Ok(txid)
+            },
+        )
+        .expect("Db must not fail")
+    }
+
+    /// Store transactions in database, ignoring any that already exist.
+    pub fn new_txs(&mut self, txs: &[bitcoin::Transaction]) {
+        db_exec(&mut self.conn, |db_tx| {
+            for tx in txs {
+                let txid = &tx.txid()[..].to_vec();
+                let tx_ser = bitcoin::consensus::serialize(tx);
+                db_tx.execute(
+                    "INSERT INTO transactions (txid, tx) VALUES (?1, ?2) \
+                        ON CONFLICT DO NOTHING",
+                    rusqlite::params![txid, tx_ser,],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("Database must be available")
+    }
+
     pub fn delete_spend(&mut self, txid: &bitcoin::Txid) {
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(
@@ -740,7 +782,7 @@ mod tests {
         str::FromStr,
     };
 
-    use bitcoin::{bip32, hashes::Hash};
+    use bitcoin::bip32;
 
     // The database schema used by the first versions of Liana (database version 0). Used to test
     // migrations starting from the first version.
@@ -968,7 +1010,7 @@ CREATE TABLE labels (
         db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
             .unwrap();
         let db = SqliteDb::new(db_path, None, &secp).unwrap();
-        db.maybe_apply_migrations().unwrap();
+        db.maybe_apply_migrations(&[]).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
             .unwrap();
 
@@ -1051,11 +1093,18 @@ CREATE TABLE labels (
             // Necessarily empty at first.
             assert!(conn.coins(&[], &[]).is_empty());
 
+            let txs: Vec<_> = (0..6)
+                .map(|i| bitcoin::Transaction {
+                    version: bitcoin::transaction::Version::TWO,
+                    lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
+                    input: Vec::new(),
+                    output: Vec::new(),
+                })
+                .collect();
+            conn.new_txs(&txs);
+
             // Add one unconfirmed coin.
-            let outpoint_a = bitcoin::OutPoint::from_str(
-                "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
-            )
-            .unwrap();
+            let outpoint_a = bitcoin::OutPoint::new(txs.first().unwrap().txid(), 1);
             let coin_a = Coin {
                 outpoint: outpoint_a,
                 is_immature: false,
@@ -1101,10 +1150,7 @@ CREATE TABLE labels (
                 .is_empty());
 
             // Add a second coin.
-            let outpoint_b = bitcoin::OutPoint::from_str(
-                "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571936f:12",
-            )
-            .unwrap();
+            let outpoint_b = bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 12);
             let coin_b = Coin {
                 outpoint: outpoint_b,
                 is_immature: false,
@@ -1182,10 +1228,7 @@ CREATE TABLE labels (
                 && c[1].outpoint == coin_b.outpoint));
 
             // Now if we spend one, it'll be marked as such.
-            conn.spend_coins(&[(
-                coin_a.outpoint,
-                bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
-            )]);
+            conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().txid())]);
             assert!([
                 conn.coins(&[CoinStatus::Spending], &[]),
                 conn.coins(&[CoinStatus::Spending], &[outpoint_a]),
@@ -1208,7 +1251,7 @@ CREATE TABLE labels (
             // Now we confirm the spend.
             conn.confirm_spend(&[(
                 coin_a.outpoint,
-                bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
+                txs.get(2).unwrap().txid(),
                 128_097,
                 3_000_000,
             )]);
@@ -1238,10 +1281,7 @@ CREATE TABLE labels (
                 && c[1].outpoint == coin_b.outpoint));
 
             // Add a third and fourth coin.
-            let outpoint_c = bitcoin::OutPoint::from_str(
-                "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571937a:42",
-            )
-            .unwrap();
+            let outpoint_c = bitcoin::OutPoint::new(txs.get(3).unwrap().txid(), 42);
             let coin_c = Coin {
                 outpoint: outpoint_c,
                 is_immature: false,
@@ -1252,10 +1292,7 @@ CREATE TABLE labels (
                 spend_txid: None,
                 spend_block: None,
             };
-            let outpoint_d = bitcoin::OutPoint::from_str(
-                "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571937a:43",
-            )
-            .unwrap();
+            let outpoint_d = bitcoin::OutPoint::new(txs.get(4).unwrap().txid(), 43);
             let coin_d = Coin {
                 outpoint: outpoint_d,
                 is_immature: false,
@@ -1296,10 +1333,7 @@ CREATE TABLE labels (
                 && coin[1].outpoint == coin_c.outpoint));
 
             // Now spend second coin, even though it is still unconfirmed.
-            conn.spend_coins(&[(
-                coin_b.outpoint,
-                bitcoin::Txid::from_slice(&[1; 32][..]).unwrap(),
-            )]);
+            conn.spend_coins(&[(coin_b.outpoint, txs.get(5).unwrap().txid())]);
             // The coin shows as spending.
             assert!([
                 conn.coins(&[CoinStatus::Spending], &[]),
@@ -1357,15 +1391,22 @@ CREATE TABLE labels (
         {
             let mut conn = db.connection().unwrap();
 
+            let txs: Vec<_> = (0..4)
+                .map(|i| bitcoin::Transaction {
+                    version: bitcoin::transaction::Version::TWO,
+                    lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
+                    input: Vec::new(),
+                    output: Vec::new(),
+                })
+                .collect();
+            conn.new_txs(&txs);
+
             // Necessarily empty at first.
             assert!(conn.coins(&[], &[]).is_empty());
 
             // Add one, we'll get it.
             let coin_a = Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(txs.first().unwrap().txid(), 1),
                 is_immature: false,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(98765),
@@ -1407,10 +1448,7 @@ CREATE TABLE labels (
 
             // Add a second one (this one is change), we'll get both.
             let coin_b = Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571936f:12",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 12),
                 is_immature: false,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(1111),
@@ -1462,10 +1500,7 @@ CREATE TABLE labels (
             assert!(coins[1].block_info.is_none());
 
             // Now if we spend one, it'll be marked as such.
-            conn.spend_coins(&[(
-                coin_a.outpoint,
-                bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
-            )]);
+            conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().txid())]);
             let coin = conn
                 .coins(&[], &[coin_a.outpoint])
                 .into_iter()
@@ -1483,10 +1518,7 @@ CREATE TABLE labels (
             assert!(coin.spend_txid.is_none());
 
             // Spend it back. We will see it as 'spending'
-            conn.spend_coins(&[(
-                coin_a.outpoint,
-                bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
-            )]);
+            conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().txid())]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
                 .list_spending_coins()
                 .into_iter()
@@ -1507,12 +1539,7 @@ CREATE TABLE labels (
             // Now if we confirm the spend.
             let height = 128_097;
             let time = 3_000_000;
-            conn.confirm_spend(&[(
-                coin_a.outpoint,
-                bitcoin::Txid::from_slice(&[0; 32][..]).unwrap(),
-                height,
-                time,
-            )]);
+            conn.confirm_spend(&[(coin_a.outpoint, txs.get(2).unwrap().txid(), height, time)]);
             // the coin is not in a spending state.
             let outpoints: HashSet<bitcoin::OutPoint> = conn
                 .list_spending_coins()
@@ -1544,10 +1571,7 @@ CREATE TABLE labels (
             // Add an immature coin. As all coins it's first registered as unconfirmed (even though
             // it's not).
             let coin_imma = Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "61db3e276b095e5b05f1849dd6bfffb4e7e5ec1c4a4210099b98fce01571937a:42",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(txs.get(3).unwrap().txid(), 42),
                 is_immature: true,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(424242),
@@ -1700,6 +1724,15 @@ CREATE TABLE labels (
             };
             conn.update_tip(&old_tip);
 
+            let txs: Vec<_> = (0..7)
+                .map(|i| bitcoin::Transaction {
+                    version: bitcoin::transaction::Version::TWO,
+                    lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
+                    input: Vec::new(),
+                    output: Vec::new(),
+                })
+                .collect();
+            conn.new_txs(&txs);
             // 5 coins:
             // - One unconfirmed
             // - One confirmed before the rollback height
@@ -1709,10 +1742,7 @@ CREATE TABLE labels (
             // TODO: immature deposits
             let coins = [
                 Coin {
-                    outpoint: bitcoin::OutPoint::from_str(
-                        "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
-                    )
-                    .unwrap(),
+                    outpoint: bitcoin::OutPoint::new(txs.first().unwrap().txid(), 1),
                     is_immature: false,
                     block_info: None,
                     amount: bitcoin::Amount::from_sat(98765),
@@ -1722,10 +1752,7 @@ CREATE TABLE labels (
                     spend_block: None,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::from_str(
-                        "c449539458c60bee6c0d8905ba1dadb20b9187b82045d306a408b894cea492b0:2",
-                    )
-                    .unwrap(),
+                    outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 2),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_095,
@@ -1738,10 +1765,7 @@ CREATE TABLE labels (
                     spend_block: None,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::from_str(
-                        "f0801fd9ca8bca0624c230ab422b2e2c4c8dc995e4e1dbc6412510959cce1e4f:3",
-                    )
-                    .unwrap(),
+                    outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().txid(), 3),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_099,
@@ -1750,22 +1774,14 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
                     is_change: false,
-                    spend_txid: Some(
-                        bitcoin::Txid::from_str(
-                            "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7",
-                        )
-                        .unwrap(),
-                    ),
+                    spend_txid: Some(txs.get(3).unwrap().txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_199,
                         time: 1_231_678,
                     }),
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::from_str(
-                        "19f56e65069f0a7a3bfb00c6a7085cc0669e03e91befeca1ee9891c9e737b2fb:4",
-                    )
-                    .unwrap(),
+                    outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().txid(), 4),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_100,
@@ -1778,10 +1794,7 @@ CREATE TABLE labels (
                     spend_block: None,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::from_str(
-                        "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:5",
-                    )
-                    .unwrap(),
+                    outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().txid(), 5),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_102,
@@ -1790,12 +1803,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
                     is_change: false,
-                    spend_txid: Some(
-                        bitcoin::Txid::from_str(
-                            "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6",
-                        )
-                        .unwrap(),
-                    ),
+                    spend_txid: Some(txs.get(6).unwrap().txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_105,
                         time: 1_201_678,
@@ -1925,12 +1933,19 @@ CREATE TABLE labels (
         {
             let mut conn = db.connection().unwrap();
 
+            let txs: Vec<_> = (0..7)
+                .map(|i| bitcoin::Transaction {
+                    version: bitcoin::transaction::Version::TWO,
+                    lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
+                    input: Vec::new(),
+                    output: Vec::new(),
+                })
+                .collect();
+            conn.new_txs(&txs);
+
             let coins = [
                 Coin {
-                    outpoint: bitcoin::OutPoint::from_str(
-                        "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
-                    )
-                    .unwrap(),
+                    outpoint: bitcoin::OutPoint::new(txs.first().unwrap().txid(), 1),
                     is_immature: false,
                     block_info: None,
                     amount: bitcoin::Amount::from_sat(98765),
@@ -1940,10 +1955,7 @@ CREATE TABLE labels (
                     spend_block: None,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::from_str(
-                        "c449539458c60bee6c0d8905ba1dadb20b9187b82045d306a408b894cea492b0:2",
-                    )
-                    .unwrap(),
+                    outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 2),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_095,
@@ -1956,10 +1968,7 @@ CREATE TABLE labels (
                     spend_block: None,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::from_str(
-                        "f0801fd9ca8bca0624c230ab422b2e2c4c8dc995e4e1dbc6412510959cce1e4f:3",
-                    )
-                    .unwrap(),
+                    outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().txid(), 3),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_099,
@@ -1968,22 +1977,14 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
                     is_change: false,
-                    spend_txid: Some(
-                        bitcoin::Txid::from_str(
-                            "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7",
-                        )
-                        .unwrap(),
-                    ),
+                    spend_txid: Some(txs.get(3).unwrap().txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_199,
                         time: 1_123_000,
                     }),
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::from_str(
-                        "19f56e65069f0a7a3bfb00c6a7085cc0669e03e91befeca1ee9891c9e737b2fb:4",
-                    )
-                    .unwrap(),
+                    outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().txid(), 4),
                     is_immature: true,
                     block_info: Some(BlockInfo {
                         height: 101_100,
@@ -1996,10 +1997,7 @@ CREATE TABLE labels (
                     spend_block: None,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::from_str(
-                        "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:5",
-                    )
-                    .unwrap(),
+                    outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().txid(), 5),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_102,
@@ -2008,12 +2006,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
                     is_change: false,
-                    spend_txid: Some(
-                        bitcoin::Txid::from_str(
-                            "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6",
-                        )
-                        .unwrap(),
-                    ),
+                    spend_txid: Some(txs.get(6).unwrap().txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_105,
                         time: 1_126_000,
@@ -2039,42 +2032,41 @@ CREATE TABLE labels (
             );
 
             let db_txids = conn.db_list_txids(1_123_000, 1_127_000, 10);
-            assert_eq!(
-                &db_txids[..],
-                &[
-                    bitcoin::Txid::from_str(
-                        "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6"
-                    )
-                    .unwrap(),
-                    bitcoin::Txid::from_str(
-                        "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9"
-                    )
-                    .unwrap(),
-                    bitcoin::Txid::from_str(
-                        "19f56e65069f0a7a3bfb00c6a7085cc0669e03e91befeca1ee9891c9e737b2fb"
-                    )
-                    .unwrap(),
-                    bitcoin::Txid::from_str(
-                        "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7"
-                    )
-                    .unwrap()
-                ]
-            );
+            // Ordered by desc block time.
+            let expected_txids = [6, 5, 4, 3].map(|i| txs.get(i).unwrap().txid());
+            assert_eq!(&db_txids[..], &expected_txids,);
 
             let db_txids = conn.db_list_txids(1_123_000, 1_127_000, 2);
-            assert_eq!(
-                &db_txids[..],
-                &[
-                    bitcoin::Txid::from_str(
-                        "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6"
-                    )
-                    .unwrap(),
-                    bitcoin::Txid::from_str(
-                        "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9"
-                    )
-                    .unwrap(),
-                ]
-            );
+            // Ordered by desc block time.
+            let expected_txids = [6, 5].map(|i| txs.get(i).unwrap().txid());
+            assert_eq!(&db_txids[..], &expected_txids,);
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_list_saved_txids() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        {
+            let mut conn = db.connection().unwrap();
+
+            let txs: Vec<_> = (0..7)
+                .map(|i| bitcoin::Transaction {
+                    version: bitcoin::transaction::Version::TWO,
+                    lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
+                    input: Vec::new(),
+                    output: Vec::new(),
+                })
+                .collect();
+            conn.new_txs(&txs);
+
+            let mut db_txids = conn.db_list_saved_txids();
+            db_txids.sort();
+            let mut expected_txids: Vec<_> = txs.iter().map(|tx| tx.txid()).collect();
+            expected_txids.sort();
+            assert_eq!(&db_txids[..], &expected_txids,);
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
@@ -2101,6 +2093,14 @@ CREATE TABLE labels (
         let first_psbt = psbt_from_str("cHNidP8BAIkCAAAAAWi3OFgkj1CqCDT3Swm8kbxZS9lxz4L3i4W2v9KGC7nqAQAAAAD9////AkANAwAAAAAAIgAg27lNc1rog+dOq80ohRuds4Hgg/RcpxVun2XwgpuLSrFYMwwAAAAAACIAIDyWveqaElWmFGkTbFojg1zXWHODtiipSNjfgi2DqBy9AAAAAAABAOoCAAAAAAEBsRWl70USoAFFozxc86pC7Dovttdg4kvja//3WMEJskEBAAAAAP7///8CWKmCIk4GAAAWABRKBWYWkCNS46jgF0r69Ehdnq+7T0BCDwAAAAAAIgAgTt5fs+CiB+FRzNC8lHcgWLH205sNjz1pT59ghXlG5tQCRzBEAiBXK9MF8z3bX/VnY2aefgBBmiAHPL4tyDbUOe7+KpYA4AIgL5kU0DFG8szKd+szRzz/OTUWJ0tZqij41h2eU9rSe1IBIQNBB1hy+jKsg1TihMT0dXw7etpu9TkO3NuvhBDFJlBj1cP2AQABAStAQg8AAAAAACIAIE7eX7PgogfhUczQvJR3IFix9tObDY89aU+fYIV5RubUIgICSKJsNs0zFJN58yd2aYQ+C3vhMbi0x7k0FV3wBhR4THlIMEUCIQCPWWWOhs2lThxOq/G8X2fYBRvM9MXSm7qPH+dRVYQZEwIgfut2vx3RvwZWcgEj4ohQJD5lNJlwOkA4PAiN1fjx6dABIgID3mvj1zerZKohOVhKCiskYk+3qrCum6PIwDhQ16ePACpHMEQCICZNR+0/1hPkrDQwPFmg5VjUHkh6aK9cXUu3kPbM8hirAiAyE/5NUXKfmFKij30isuyysJbq8HrURjivd+S9vdRGKQEBBZNSIQJIomw2zTMUk3nzJ3ZphD4Le+ExuLTHuTQVXfAGFHhMeSEC9OfCXl+sJOrxUFLBuMV4ZUlJYjuzNGZSld5ioY14y8FSrnNkUSED3mvj1zerZKohOVhKCiskYk+3qrCum6PIwDhQ16ePACohA+ECH+HlR+8Sf3pumaXH3IwSsoqSLCH7H1THiBP93z3ZUq9SsmgiBgJIomw2zTMUk3nzJ3ZphD4Le+ExuLTHuTQVXfAGFHhMeRxjat8/MAAAgAEAAIAAAACAAgAAgAAAAAABAAAAIgYC9OfCXl+sJOrxUFLBuMV4ZUlJYjuzNGZSld5ioY14y8Ec/9Y8jTAAAIABAACAAAAAgAIAAIAAAAAAAQAAACIGA95r49c3q2SqITlYSgorJGJPt6qwrpujyMA4UNenjwAqHGNq3z8wAACAAQAAgAEAAIACAACAAAAAAAEAAAAiBgPhAh/h5UfvEn96bpmlx9yMErKKkiwh+x9Ux4gT/d892Rz/1jyNMAAAgAEAAIABAACAAgAAgAAAAAABAAAAACICAlBQ7gGocg7eF3sXrCio+zusAC9+xfoyIV95AeR69DWvHGNq3z8wAACAAQAAgAEAAIACAACAAAAAAAMAAAAiAgMvVy984eg8Kgvj058PBHetFayWbRGb7L0DMnS9KHSJzBxjat8/MAAAgAEAAIAAAACAAgAAgAAAAAADAAAAIgIDSRIG1dn6njdjsDXenHa2lUvQHWGPLKBVrSzbQOhiIxgc/9Y8jTAAAIABAACAAAAAgAIAAIAAAAAAAwAAACICA0/epE59sVEj7Et0I4R9qJQNuX23RNvDZKCRL7eUps9FHP/WPI0wAACAAQAAgAEAAIACAACAAAAAAAMAAAAAIgICgldCOK6iHscv//2NipgaMABLV5TICU/zlP7HlQmlg08cY2rfPzAAAIABAACAAQAAgAIAAIABAAAAAQAAACICApb0p9rfpJshB3J186PGWrvzQdixcwQZWmebOUMdkquZHP/WPI0wAACAAQAAgAAAAIACAACAAQAAAAEAAAAiAgLY5q+unoDxC/HI5BaNiPq12ei1REZIcUAN304JfKXUwxz/1jyNMAAAgAEAAIABAACAAgAAgAEAAAABAAAAIgIDg6cUVCJB79cMcofiURHojxFARWyS4YEhJNRixuOZZRgcY2rfPzAAAIABAACAAAAAgAIAAIABAAAAAQAAAAA=");
         let second_psbt = psbt_from_str("cHNidP8BAP0fAQIAAAAGAGo6V8K5MtKcQ8vRFedf5oJiOREiH4JJcEniyRv2800BAAAAAP3///9e3dVLjWKPAGwDeuUOmKFzOYEP5Ipu4LWdOPA+lITrRgAAAAAA/f///7cl9oeu9ssBXKnkWMCUnlgZPXhb+qQO2+OPeLEsbdGkAQAAAAD9////idkxRErbs34vsHUZ7QCYaiVaAFDV9gxNvvtwQLozwHsAAAAAAP3///9EakyJhd2PjwYh1I7zT2cmcTFI5g1nBd3srLeL7wKEewIAAAAA/f///7BcaP77nMaA2NjT/hyI6zueB/2jU/jK4oxmSqMaFkAzAQAAAAD9////AUAfAAAAAAAAFgAUqo7zdMr638p2kC3bXPYcYLv9nYUAAAAAAAEA/X4BAgAAAAABApEoe5xCmSi8hNTtIFwsy46aj3hlcLrtFrug39v5wy+EAQAAAGpHMEQCIDeI8JTWCTyX6opCCJBhWc4FytH8g6fxDaH+Wa/QqUoMAiAgbITpz8TBhwxhv/W4xEXzehZpOjOTjKnPw36GIy6SHAEhA6QnYCHUbU045FVh6ZwRwYTVineqRrB9tbqagxjaaBKh/v///+v1seDE9gGsZiWwewQs3TKuh0KSBIHiEtG8ABbz2DpAAQAAAAD+////Aqhaex4AAAAAFgAUkcVOEjVMct0jyCzhZN6zBT+lvTQvIAAAAAAAACIAIKKDUd/GWjAnwU99llS9TAK2dK80/nSRNLjmrhj0odUEAAJHMEQCICSn+boh4ItAa3/b4gRUpdfblKdcWtMLKZrgSEFFrC+zAiBtXCx/Dq0NutLSu1qmzFF1lpwSCB3w3MAxp5W90z7b/QEhA51S2ERUi0bg+l+bnJMJeAfDknaetMTagfQR9+AOrVKlxdMkAAEBKy8gAAAAAAAAIgAgooNR38ZaMCfBT32WVL1MArZ0rzT+dJE0uOauGPSh1QQiAgN+zbSfdr8oJBtlKomnQTHynF2b/UhovAwf0eS8awRSqUgwRQIhAJhm6xQvxt2LY+eNZqjhsgMOAxD0OPYty6nf9WaQZtgkAiBf/AXkeyq6ALknO9TZwY6ZRa0evY+DQ3j3XaqiBiAMfgEBBUEhA37NtJ92vygkG2UqiadBMfKcXZv9SGi8DB/R5LxrBFKprHNkdqkUxttmGj2sqzzaxSaacJTnJPDCbY6IrVqyaCIGAv9qeBDEB+5kvM/sZ8jQ7QApfZcDrqtq5OAe2gQ1V+pmDIpk8qkAAAAA0AAAACIGA37NtJ92vygkG2UqiadBMfKcXZv9SGi8DB/R5LxrBFKpDPWswv0AAAAA0AAAAAABAOoCAAAAAAEB0OPoVJs9ihvnAwjO16k/wGJuEus1IEE1Yo2KBjC2NSEAAAAAAP7///8C6AMAAAAAAAAiACBfeUS9jQv6O1a96Aw/mPV6gHxHl3mfj+f0frfAs2sMpP1QGgAAAAAAFgAUDS4UAIpdm1RlFYmg0OoCxW0yBT4CRzBEAiAPvbNlnhiUxLNshxN83AuK/lGWwlpXOvmcqoxsMLzIKwIgWwATJuYPf9buLe9z5SnXVnPVL0q6UZaWE5mjCvEl1RUBIQI54LFZmq9Lw0pxKpEGeqI74NnIfQmLMDcv5ySplUS1/wDMJAABASvoAwAAAAAAACIAIF95RL2NC/o7Vr3oDD+Y9XqAfEeXeZ+P5/R+t8CzawykIgICYn4eZbb6KGoxB1PEv/XPiujZFDhfoi/rJPtfHPVML2lHMEQCIDOHEqKdBozXIPLVgtBj3eWC1MeIxcKYDADe4zw0DbcMAiAq4+dbkTNCAjyCxJi0TKz5DWrPulxrqOdjMRHWngXHsQEBBUEhAmJ+HmW2+ihqMQdTxL/1z4ro2RQ4X6Iv6yT7Xxz1TC9prHNkdqkUzc/gCLoe6rQw63CGXhIR3YRz1qCIrVqyaCIGAmJ+HmW2+ihqMQdTxL/1z4ro2RQ4X6Iv6yT7Xxz1TC9pDPWswv0AAAAAqgAAACIGA8JCTIzdSoTJhiKN1pn+NnlkyuKOndiTgH2NIX+yNsYqDIpk8qkAAAAAqgAAAAABAOoCAAAAAAEBRGpMiYXdj48GIdSO809nJnExSOYNZwXd7Ky3i+8ChHsAAAAAAP7///8COMMQAAAAAAAWABQ5rnyuG5T8iuhqfaGAmpzlybo3t+gDAAAAAAAAIgAg7Kz3CX1RBjIvbK9LBYztmi7F1XIxQpX6mtCUkflvvl8CRzBEAiBaYx4sOHckEZwDnSrbb1ivc6seX4Puasm1PBGnBWgSTQIgCeUiXvd90ajI3F4/BHifLUI4fVIgVQFCqLTbbeXQD5oBIQOmGm+gTRx1slzF+wn8NhZoR1xfSYgoKX6bpRSVRjLcEXrOJAABASvoAwAAAAAAACIAIOys9wl9UQYyL2yvSwWM7ZouxdVyMUKV+prQlJH5b75fIgID0X2UJhC5+2jgJqUrihxZxDZHK7jgPFlrUYzoSHQTmP9HMEQCIEM4K8lVACvE2oSMZHDJiOeD81qsYgAvgpRgcSYgKc3AAiAQjdDr2COBea69W+2iVbnODuH3QwacgShW3dS4yeggJAEBBUEhA9F9lCYQufto4CalK4ocWcQ2Ryu44DxZa1GM6Eh0E5j/rHNkdqkU0DTexcgOQQ+BFjgS031OTxcWiH2IrVqyaCIGA9F9lCYQufto4CalK4ocWcQ2Ryu44DxZa1GM6Eh0E5j/DPWswv0AAAAAvwAAACIGA/xg4Uvem3JHVPpyTLP5JWiUH/yk3Y/uUI6JkZasCmHhDIpk8qkAAAAAvwAAAAABAOoCAAAAAAEBmG+mPq0O6QSWEMctsMjvv5LzWHGoT8wsA9Oa05kxIxsBAAAAAP7///8C6AMAAAAAAAAiACDUvIILFr0OxybADV3fB7ms7+ufnFZgicHR0nbI+LFCw1UoGwAAAAAAFgAUC+1ZjCC1lmMcvJ/4JkevqoZF4igCRzBEAiA3d8o96CNgNWHUkaINWHTvAUinjUINvXq0KBeWcsSWuwIgKfzRNWFR2LDbnB/fMBsBY/ylVXcSYwLs8YC+kmko1zIBIQOpEfsLv0htuertA1sgzCwGvHB0vE4zFO69wWEoHClKmAfMJAABASvoAwAAAAAAACIAINS8ggsWvQ7HJsANXd8Huazv65+cVmCJwdHSdsj4sULDIgID96jZc0sCi0IIXf2CpfE7tY+9LRmMsOdSTTHelFxfCwJHMEQCIHlaiMMznx8Cag8Y3X2gXi9Qtg0ZuyHEC6DsOzipSGOKAiAV2eC+S3Mbq6ig5QtRvTBsq5M3hCBdEJQlOrLVhWWt6AEBBUEhA/eo2XNLAotCCF39gqXxO7WPvS0ZjLDnUk0x3pRcXwsCrHNkdqkUyJ+Cbx7vYVY665yjJnMNODyYrAuIrVqyaCIGAt8UyDXk+mW3Y6IZNIBuDJHkdOaZi/UEShkN5L3GiHR5DIpk8qkAAAAAuAAAACIGA/eo2XNLAotCCF39gqXxO7WPvS0ZjLDnUk0x3pRcXwsCDPWswv0AAAAAuAAAAAABAP0JAQIAAAAAAQG7Zoy4I3J9x+OybAlIhxVKcYRuPFrkDFJfxMiC3kIqIAEAAAAA/v///wO5xxAAAAAAABYAFHgBzs9wJNVk6YwR81IMKmckTmC56AMAAAAAAAAWABTQ/LmJix5JoHBOr8LcgEChXHdLROgDAAAAAAAAIgAg7Kz3CX1RBjIvbK9LBYztmi7F1XIxQpX6mtCUkflvvl8CRzBEAiA+sIKnWVE3SmngjUgJdu1K2teW6eqeolfGe0d11b+irAIgL20zSabXaFRNM8dqVlcFsfNJ0exukzvxEOKl/OcF8VsBIQJrUspHq45AMSwbm24//2a9JM8XHFWbOKpyV+gNCtW71nrOJAABASvoAwAAAAAAACIAIOys9wl9UQYyL2yvSwWM7ZouxdVyMUKV+prQlJH5b75fIgID0X2UJhC5+2jgJqUrihxZxDZHK7jgPFlrUYzoSHQTmP9IMEUCIQCmDhJ9fyhlQwPruoOUemDuldtRu3ZkiTM3DA0OhkguSQIgYerNaYdP43DcqI5tnnL3n4jEeMHFCs+TBkOd6hDnqAkBAQVBIQPRfZQmELn7aOAmpSuKHFnENkcruOA8WWtRjOhIdBOY/6xzZHapFNA03sXIDkEPgRY4EtN9Tk8XFoh9iK1asmgiBgPRfZQmELn7aOAmpSuKHFnENkcruOA8WWtRjOhIdBOY/wz1rML9AAAAAL8AAAAiBgP8YOFL3ptyR1T6ckyz+SVolB/8pN2P7lCOiZGWrAph4QyKZPKpAAAAAL8AAAAAAQDqAgAAAAABAT6/vc6qBRzhQyjVtkC25NS2BvGyl2XjjEsw3e8vAesjAAAAAAD+////AgPBAO4HAAAAFgAUEwiWd/qI1ergMUw0F1+qLys5G/foAwAAAAAAACIAIOOPEiwmp2ZXR7ciyrveITXw0tn6zbQUA1Eikd9QlHRhAkcwRAIgJMZdO5A5u2UIMrAOgrR4NcxfNgZI6OfY7GKlZP0O8yUCIDFujbBRnamLEbf0887qidnXo6UgQA9IwTx6Zomd4RvJASEDoNmR2/XcqSyCWrE1tjGJ1oLWlKt4zsFekK9oyB4Hl0HF0yQAAQEr6AMAAAAAAAAiACDjjxIsJqdmV0e3Isq73iE18NLZ+s20FANRIpHfUJR0YSICAo3uyJxKHR9Z8fwvU7cywQCnZyPvtMl3nv54wPW1GSGqSDBFAiEAlLY98zqEL/xTUvm9ZKy5kBa4UWfr4Ryu6BmSZjseXPQCIGy7efKbZLQSDq8RhgNNjl1384gWFTN7nPwWV//SGriyAQEFQSECje7InEodH1nx/C9TtzLBAKdnI++0yXee/njA9bUZIaqsc2R2qRQhPRlaLsh/M/K/9fvbjxF/M20cNoitWrJoIgYCF7Rj5jFhe5L6VDzP5m2BeaG0mA9e7+6fMeWkWxLwpbAMimTyqQAAAADNAAAAIgYCje7InEodH1nx/C9TtzLBAKdnI++0yXee/njA9bUZIaoM9azC/QAAAADNAAAAAAA=");
 
+        let bitcoin_txs: Vec<_> = (0..2)
+            .map(|i| bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
+                input: Vec::new(),
+                output: Vec::new(),
+            })
+            .collect();
         // The helper that was used to store Spend transaction in previous versions of the software
         // when there was no associated timestamp.
         fn store_spend_old(conn: &mut rusqlite::Connection, psbt: &Psbt) {
@@ -2156,20 +2156,14 @@ CREATE TABLE labels (
             let mut conn = rusqlite::Connection::open(&db_path).unwrap();
             store_coin_old(
                 &mut conn,
-                &bitcoin::OutPoint::from_str(
-                    "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:5",
-                )
-                .unwrap(),
+                &bitcoin::OutPoint::new(bitcoin_txs.first().unwrap().txid(), 5),
                 bitcoin::Amount::from_sat(14_000),
                 24.into(),
                 true,
             );
             store_coin_old(
                 &mut conn,
-                &bitcoin::OutPoint::from_str(
-                    "81b2f327d4c1fd67afd039374f8798fd9ff37932c6f5c221c1c569350eac5ac8:2",
-                )
-                .unwrap(),
+                &bitcoin::OutPoint::new(bitcoin_txs.get(1).unwrap().txid(), 2),
                 bitcoin::Amount::from_sat(392_093_123),
                 24_567.into(),
                 false,
@@ -2177,8 +2171,9 @@ CREATE TABLE labels (
         }
 
         // Migrate the DB.
-        maybe_apply_migration(&db_path).unwrap();
-        maybe_apply_migration(&db_path).unwrap(); // Migrating twice will be a no-op.
+        maybe_apply_migration(&db_path, &bitcoin_txs).unwrap();
+        // Migrating twice will be a no-op.  No need to pass `bitcoin_txs` second time.
+        maybe_apply_migration(&db_path, &[]).unwrap();
         let db = SqliteDb::new(db_path, None, &secp).unwrap();
 
         // We should now be able to insert another PSBT, to query both, and the first PSBT must
@@ -2203,11 +2198,15 @@ CREATE TABLE labels (
         // should not be immature.
         {
             let mut conn = db.connection().unwrap();
+            let tx = bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::from_height(2).unwrap(),
+                input: Vec::new(),
+                output: Vec::new(),
+            };
+            conn.new_txs(&[tx.clone()]);
             conn.new_unspent_coins(&[Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(tx.txid(), 1),
                 is_immature: true,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(98765),
@@ -2225,7 +2224,7 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v3_to_v4_migration() {
+    fn v3_to_v5_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 3, using the old schema.
@@ -2244,16 +2243,22 @@ CREATE TABLE labels (
             let mut conn = db.connection().unwrap();
             assert!(conn.db_version() == 3);
 
+            let bitcoin_txs: Vec<_> = (0..8)
+                .map(|i| bitcoin::Transaction {
+                    version: bitcoin::transaction::Version::TWO,
+                    lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
+                    input: Vec::new(),
+                    output: Vec::new(),
+                })
+                .collect();
+
             // The following coins will be inserted into the DB as unconfirmed and then
             // some of them will be subsequently confirmed and spent.
             // Note that `block_info`, `spend_txid` and `spend_block` will all be set to
             // NULL in the DB by the `new_unspent_coins` method, but are set to `None`
             // here anyway.
             let coin_a = Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "6f0dc85a369b44458eba3a1f0ea5b5935d563afb6994f70f5b0094e05be1676c:1",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.first().unwrap().txid(), 1),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(1231001),
                 derivation_index: bip32::ChildNumber::from_normal_idx(101).unwrap(),
@@ -2263,10 +2268,7 @@ CREATE TABLE labels (
                 spend_block: None,
             };
             let coin_b = Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "81b2f327d4c1fd67afd039374f8798fd9ff37932c6f5c221c1c569350eac5ac8:19234",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(1).unwrap().txid(), 19234),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(23145),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
@@ -2276,10 +2278,7 @@ CREATE TABLE labels (
                 spend_block: None,
             };
             let coin_c = Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "7477017f992cdc7ba08acafb77cb3b5bc0f42ac340d3e1e1da0785bdda20d5f6:932",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(2).unwrap().txid(), 932),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(354764),
                 derivation_index: bip32::ChildNumber::from_normal_idx(3401).unwrap(),
@@ -2289,10 +2288,7 @@ CREATE TABLE labels (
                 spend_block: None,
             };
             let coin_d = Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "ed6c8f1af9325f84de521e785e7ddfd33dc28c9ada4d687dcd3850100bde54e9:1456",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(3).unwrap().txid(), 1456),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(23200),
                 derivation_index: bip32::ChildNumber::from_normal_idx(4793235).unwrap(),
@@ -2302,10 +2298,7 @@ CREATE TABLE labels (
                 spend_block: None,
             };
             let coin_e = Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "4753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:4633",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(4).unwrap().txid(), 4633),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(675000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(3).unwrap(),
@@ -2315,10 +2308,7 @@ CREATE TABLE labels (
                 spend_block: None,
             };
             let coin_imma_a = Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "c449539458c60bee6c0d8905ba1dadb20b9187b82045d306a408b894cea492b0:5",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(5).unwrap().txid(), 5),
                 is_immature: true,
                 amount: bitcoin::Amount::from_sat(4564347),
                 derivation_index: bip32::ChildNumber::from_normal_idx(453).unwrap(),
@@ -2328,10 +2318,7 @@ CREATE TABLE labels (
                 spend_block: None,
             };
             let coin_imma_b = Coin {
-                outpoint: bitcoin::OutPoint::from_str(
-                    "f0801fd9ca8bca0624c230ab422b2e2c4c8dc995e4e1dbc6412510959cce1e4f:19234",
-                )
-                .unwrap(),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(6).unwrap().txid(), 19234),
                 is_immature: true,
                 amount: bitcoin::Amount::from_sat(731453),
                 derivation_index: bip32::ChildNumber::from_normal_idx(98).unwrap(),
@@ -2364,16 +2351,13 @@ CREATE TABLE labels (
                 (coin_imma_a.outpoint, 176001, 1755001004),
             ]);
             conn.spend_coins(&[
-                (
-                    coin_a.outpoint,
-                    bitcoin::Txid::from_slice(&[1; 32][..]).unwrap(),
-                ),
+                (coin_a.outpoint, bitcoin_txs.get(7).unwrap().txid()),
                 (coin_b.outpoint, coin_d.outpoint.txid),
                 (coin_d.outpoint, coin_e.outpoint.txid),
             ]);
             conn.confirm_spend(&[(
                 coin_a.outpoint,
-                bitcoin::Txid::from_slice(&[1; 32][..]).unwrap(),
+                bitcoin_txs.get(7).unwrap().txid(),
                 245500,
                 1755003000,
             )]);
@@ -2401,10 +2385,11 @@ CREATE TABLE labels (
             );
 
             // Migrate the DB.
-            maybe_apply_migration(&db_path).unwrap();
-            assert!(conn.db_version() == 4);
-            maybe_apply_migration(&db_path).unwrap(); // Migrating twice will be a no-op.
-            assert!(conn.db_version() == 4);
+            maybe_apply_migration(&db_path, &bitcoin_txs).unwrap();
+            assert_eq!(conn.db_version(), 5);
+            // Migrating twice will be a no-op. No need to pass `bitcoin_txs` second time.
+            maybe_apply_migration(&db_path, &[]).unwrap();
+            assert!(conn.db_version() == 5);
             let coins_post = conn.coins(&[], &[]);
             assert_eq!(coins_pre, coins_post);
         }
@@ -2413,7 +2398,7 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v0_to_v4_migration() {
+    fn v0_to_v5_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 0, using the old schema.
@@ -2427,14 +2412,13 @@ CREATE TABLE labels (
         options.version = 0;
         create_fresh_db(&db_path, options, &secp).unwrap();
 
-        // SqliteDb new is doing the migration.
         let db = SqliteDb::new(db_path, None, &secp).unwrap();
-        db.maybe_apply_migrations().unwrap();
+        db.maybe_apply_migrations(&[]).unwrap();
 
         {
             let mut conn = db.connection().unwrap();
             let version = conn.db_version();
-            assert_eq!(version, 4);
+            assert_eq!(version, 5);
 
             let txid_str = "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7";
             let txid = LabelItem::from_str(txid_str, bitcoin::Network::Bitcoin).unwrap();

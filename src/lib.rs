@@ -23,13 +23,13 @@ use crate::{
     bitcoin::{poller, BitcoinInterface},
     config::Config,
     database::{
-        sqlite::{FreshDbOptions, SqliteDb, SqliteDbError},
+        sqlite::{FreshDbOptions, SqliteDb, SqliteDbError, MAX_DB_VERSION_NO_TX_DB},
         DatabaseInterface,
     },
 };
 
 use std::{
-    error, fmt, fs, io, path,
+    collections, error, fmt, fs, io, path,
     sync::{self, mpsc},
     thread,
 };
@@ -92,6 +92,7 @@ pub enum StartupError {
     DefaultDataDirNotFound,
     DatadirCreation(path::PathBuf, io::Error),
     MissingBitcoindConfig,
+    DbMigrateBitcoinTxs(&'static str),
     Database(SqliteDbError),
     Bitcoind(BitcoindError),
     #[cfg(unix)]
@@ -115,6 +116,10 @@ impl fmt::Display for StartupError {
             Self::MissingBitcoindConfig => write!(
                 f,
                 "Our Bitcoin interface is bitcoind but we have no 'bitcoind_config' entry in the configuration."
+            ),
+            Self::DbMigrateBitcoinTxs(msg) => write!(
+                f,
+                "Error when migrating Bitcoin transaction from Bitcoin backend to database: {}.", msg
             ),
             Self::Database(e) => write!(f, "Error initializing database: '{}'.", e),
             Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
@@ -184,6 +189,7 @@ fn setup_sqlite(
     data_dir: &path::Path,
     fresh_data_dir: bool,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    bitcoind: &Option<BitcoinD>,
 ) -> Result<SqliteDb, StartupError> {
     let db_path: path::PathBuf = [data_dir, path::Path::new("lianad.sqlite3")]
         .iter()
@@ -197,8 +203,34 @@ fn setup_sqlite(
         None
     };
 
+    // If opening an existing wallet whose database does not yet store the wallet transactions,
+    // query them from the Bitcoin backend before proceeding to the migration.
     let sqlite = SqliteDb::new(db_path, options, secp)?;
-    sqlite.maybe_apply_migrations()?;
+    if !fresh_data_dir {
+        let mut conn = sqlite.connection()?;
+        let wallet_txs = if conn.db_version() <= MAX_DB_VERSION_NO_TX_DB {
+            let bit = bitcoind.as_ref().ok_or(StartupError::DbMigrateBitcoinTxs(
+                "a connection to a Bitcoin backend is required",
+            ))?;
+            let coins = conn.db_coins(&[]);
+            let coins_txids = coins
+                .iter()
+                .map(|c| c.outpoint.txid)
+                .chain(coins.iter().filter_map(|c| c.spend_txid))
+                .collect::<collections::HashSet<_>>();
+            coins_txids
+                .into_iter()
+                .map(|txid| bit.get_transaction(&txid).map(|res| res.tx))
+                .collect::<Option<Vec<_>>>()
+                .ok_or(StartupError::DbMigrateBitcoinTxs(
+                    "missing transaction in Bitcoin backend",
+                ))?
+        } else {
+            Vec::new()
+        };
+        sqlite.maybe_apply_migrations(&wallet_txs)?;
+    }
+
     sqlite.sanity_check(config.bitcoin_config.network, &config.main_descriptor)?;
     log::info!("Database initialized and checked.");
 
@@ -355,6 +387,7 @@ impl DaemonHandle {
                 &data_dir,
                 fresh_data_dir,
                 &secp,
+                &bitcoind,
             )?)) as sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         };
 

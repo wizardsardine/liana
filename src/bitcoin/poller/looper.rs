@@ -156,6 +156,40 @@ fn update_coins(
     }
 }
 
+// Add new deposit and spend transactions to the database.
+fn add_txs_to_db(
+    bit: &impl BitcoinInterface,
+    db_conn: &mut Box<dyn DatabaseConnection>,
+    updated_coins: &UpdatedCoins,
+) {
+    let curr_txids: HashSet<_> = db_conn.list_saved_txids().into_iter().collect();
+    let mut new_txids = HashSet::new();
+    // First get all newly received coins that have not expired.
+    new_txids.extend(updated_coins.received.iter().filter_map(|c| {
+        if !updated_coins.expired.contains(&c.outpoint) {
+            Some(c.outpoint.txid)
+        } else {
+            None
+        }
+    }));
+
+    // Add spend txid for new & existing coins.
+    new_txids.extend(updated_coins.spending.iter().map(|(_, txid)| txid));
+
+    // Remove those txids we already have.
+    let missing_txids = new_txids.difference(&curr_txids);
+    log::debug!("Missing txids: {:?}", missing_txids);
+
+    // Now retrieve txs.
+    let txs: Vec<_> = missing_txids
+        .map(|txid| bit.wallet_transaction(txid).map(|(tx, _)| tx))
+        .collect::<Option<Vec<_>>>()
+        .expect("we must retrieve all txs");
+    if !txs.is_empty() {
+        db_conn.new_txs(&txs);
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum TipUpdate {
     // The best block is still the same as in the previous poll.
@@ -233,6 +267,8 @@ fn updates(
         return updates(db_conn, bit, descs, secp);
     }
 
+    // Transactions must be added to the DB before coins due to foreign key constraints.
+    add_txs_to_db(bit, db_conn, &updated_coins);
     // The chain tip did not change since we started our updates. Record them and the latest tip.
     // Having the tip in database means that, as far as the chain is concerned, we've got all
     // updates up to this block. But not more.

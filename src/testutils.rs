@@ -138,6 +138,7 @@ struct DummyDbState {
     change_index: bip32::ChildNumber,
     curr_tip: Option<BlockChainTip>,
     coins: HashMap<bitcoin::OutPoint, Coin>,
+    txs: HashMap<bitcoin::Txid, bitcoin::Transaction>,
     spend_txs: HashMap<bitcoin::Txid, (Psbt, Option<u32>)>,
     timestamp: u32,
 }
@@ -169,6 +170,7 @@ impl DummyDatabase {
                 change_index: 0.into(),
                 curr_tip: None,
                 coins: HashMap::new(),
+                txs: HashMap::new(),
                 spend_txs: HashMap::new(),
                 timestamp: now,
             })),
@@ -436,6 +438,16 @@ impl DatabaseConnection for DummyDatabase {
         txids_and_time.sort_by(|(_, t1), (_, t2)| t2.cmp(t1));
         txids_and_time.truncate(limit as usize);
         txids_and_time.into_iter().map(|(txid, _)| txid).collect()
+    }
+
+    fn list_saved_txids(&mut self) -> Vec<bitcoin::Txid> {
+        self.db.read().unwrap().txs.keys().cloned().collect()
+    }
+
+    fn new_txs(&mut self, txs: &[bitcoin::Transaction]) {
+        for tx in txs {
+            self.db.write().unwrap().txs.insert(tx.txid(), tx.clone());
+        }
     }
 }
 

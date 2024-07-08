@@ -2,7 +2,7 @@ use crate::database::sqlite::{FreshDbOptions, SqliteDbError, DB_VERSION};
 
 use std::{convert::TryInto, fs, path, time};
 
-use miniscript::bitcoin::secp256k1;
+use miniscript::bitcoin::{self, secp256k1};
 
 pub const LOOK_AHEAD_LIMIT: u32 = 200;
 
@@ -229,9 +229,80 @@ fn migrate_v3_to_v4(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
     Ok(())
 }
 
+fn migrate_v4_to_v5(
+    conn: &mut rusqlite::Connection,
+    bitcoin_txs: &[bitcoin::Transaction],
+) -> Result<(), SqliteDbError> {
+    db_exec(conn, |db_tx| {
+        db_tx.execute(
+            "
+            CREATE TABLE transactions (
+                id INTEGER PRIMARY KEY NOT NULL,
+                txid BLOB UNIQUE NOT NULL,
+                tx BLOB UNIQUE NOT NULL
+            );",
+            rusqlite::params![],
+        )?;
+
+        for bitcoin_tx in bitcoin_txs {
+            let txid = &bitcoin_tx.txid()[..].to_vec();
+            let bitcoin_tx_ser = bitcoin::consensus::serialize(bitcoin_tx);
+            db_tx.execute(
+                "INSERT INTO transactions (txid, tx) VALUES (?1, ?2);",
+                rusqlite::params![txid, bitcoin_tx_ser,],
+            )?;
+        }
+
+        // Create new coins table with foreign key constraints on transactions table.
+        db_tx.execute_batch(
+            "
+            CREATE TABLE coins_new (
+                id INTEGER PRIMARY KEY NOT NULL,
+                wallet_id INTEGER NOT NULL,
+                blockheight INTEGER,
+                blocktime INTEGER,
+                txid BLOB NOT NULL,
+                vout INTEGER NOT NULL,
+                amount_sat INTEGER NOT NULL,
+                derivation_index INTEGER NOT NULL,
+                is_change BOOLEAN NOT NULL CHECK (is_change IN (0,1)),
+                spend_txid BLOB,
+                spend_block_height INTEGER,
+                spend_block_time INTEGER,
+                is_immature BOOLEAN NOT NULL CHECK (is_immature IN (0,1)),
+                UNIQUE (txid, vout),
+                FOREIGN KEY (wallet_id) REFERENCES wallets (id)
+                    ON UPDATE RESTRICT
+                    ON DELETE RESTRICT,
+                FOREIGN KEY (txid) REFERENCES transactions (txid)
+                    ON UPDATE RESTRICT
+                    ON DELETE RESTRICT,
+                FOREIGN KEY (spend_txid) REFERENCES transactions (txid)
+                    ON UPDATE RESTRICT
+                    ON DELETE RESTRICT
+            );
+
+            INSERT INTO coins_new SELECT * FROM coins;
+
+            DROP TABLE coins;
+
+            ALTER TABLE coins_new RENAME TO coins;
+
+            UPDATE version SET version = 5;",
+        )
+    })?;
+    Ok(())
+}
+
 /// Check the database version and if necessary apply the migrations to upgrade it to the current
-/// one.
-pub fn maybe_apply_migration(db_path: &path::Path) -> Result<(), SqliteDbError> {
+/// one. The `bitcoin_txs` parameter is here for the migration from versions 4 and earlier, which
+/// did not store the Bitcoin transactions in database, to versions 5 and later, which do. For a
+/// migration from v4 or earlier to v5 or later it is assumed the caller passes *all* necessary
+/// transactions, otherwise the migration will fail.
+pub fn maybe_apply_migration(
+    db_path: &path::Path,
+    bitcoin_txs: &[bitcoin::Transaction],
+) -> Result<(), SqliteDbError> {
     let mut conn = rusqlite::Connection::open(db_path)?;
 
     // Iteratively apply the database migrations necessary.
@@ -261,6 +332,15 @@ pub fn maybe_apply_migration(db_path: &path::Path) -> Result<(), SqliteDbError> 
                 log::warn!("Upgrading database from version 3 to version 4.");
                 migrate_v3_to_v4(&mut conn)?;
                 log::warn!("Migration from database version 3 to version 4 successful.");
+            }
+            4 => {
+                log::warn!("Upgrading database from version 4 to version 5.");
+                log::warn!(
+                    "Number of bitcoin transactions to be inserted: {}.",
+                    bitcoin_txs.len()
+                );
+                migrate_v4_to_v5(&mut conn, bitcoin_txs)?;
+                log::warn!("Migration from database version 4 to version 5 successful.");
             }
             _ => return Err(SqliteDbError::UnsupportedVersion(version)),
         }

@@ -59,6 +59,12 @@ CREATE TABLE coins (
     UNIQUE (txid, vout),
     FOREIGN KEY (wallet_id) REFERENCES wallets (id)
         ON UPDATE RESTRICT
+        ON DELETE RESTRICT,
+    FOREIGN KEY (txid) REFERENCES transactions (txid)
+        ON UPDATE RESTRICT
+        ON DELETE RESTRICT,
+    FOREIGN KEY (spend_txid) REFERENCES transactions (txid)
+        ON UPDATE RESTRICT
         ON DELETE RESTRICT
 );
 
@@ -69,6 +75,13 @@ CREATE TABLE addresses (
     receive_address TEXT NOT NULL UNIQUE,
     change_address TEXT NOT NULL UNIQUE,
     derivation_index INTEGER NOT NULL UNIQUE
+);
+
+/* Transactions for all wallets. */
+CREATE TABLE transactions (
+    id INTEGER PRIMARY KEY NOT NULL,
+    txid BLOB UNIQUE NOT NULL,
+    tx BLOB UNIQUE NOT NULL
 );
 
 /* Transactions we created that spend some of our coins. */

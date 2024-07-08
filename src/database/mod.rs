@@ -146,6 +146,12 @@ pub trait DatabaseConnection {
 
     /// Retrieve a limited list of txids that where deposited or spent between the start and end timestamps (inclusive bounds)
     fn list_txids(&mut self, start: u32, end: u32, limit: u64) -> Vec<bitcoin::Txid>;
+
+    /// Retrieves all txids from the transactions table whether or not they are referenced by a coin.
+    fn list_saved_txids(&mut self) -> Vec<bitcoin::Txid>;
+
+    /// Store transactions in database, ignoring any that already exist.
+    fn new_txs(&mut self, txs: &[bitcoin::Transaction]);
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -309,6 +315,14 @@ impl DatabaseConnection for SqliteConn {
 
     fn list_txids(&mut self, start: u32, end: u32, limit: u64) -> Vec<bitcoin::Txid> {
         self.db_list_txids(start, end, limit)
+    }
+
+    fn list_saved_txids(&mut self) -> Vec<bitcoin::Txid> {
+        self.db_list_saved_txids()
+    }
+
+    fn new_txs<'a>(&mut self, txs: &[bitcoin::Transaction]) {
+        self.new_txs(txs)
     }
 }
 
