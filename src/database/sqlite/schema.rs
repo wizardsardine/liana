@@ -359,3 +359,32 @@ impl TryFrom<&rusqlite::Row<'_>> for DbLabel {
         })
     }
 }
+
+/// A transaction together with its block info.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DbWalletTransaction {
+    pub transaction: bitcoin::Transaction,
+    pub block_info: Option<DbBlockInfo>,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let transaction: Vec<u8> = row.get(0)?;
+        let transaction: bitcoin::Transaction =
+            bitcoin::consensus::deserialize(&transaction).expect("We only store valid txs");
+        let block_height: Option<i32> = row.get(1)?;
+        let block_time: Option<u32> = row.get(2)?;
+        assert_eq!(block_height.is_none(), block_time.is_none());
+        let block_info = block_height.map(|height| DbBlockInfo {
+            height,
+            time: block_time.expect("Must be there if height is"),
+        });
+
+        Ok(DbWalletTransaction {
+            transaction,
+            block_info,
+        })
+    }
+}

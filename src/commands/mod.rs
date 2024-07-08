@@ -990,39 +990,19 @@ impl DaemonControl {
         limit: u64,
     ) -> ListTransactionsResult {
         let mut db_conn = self.db.connection();
+        // Note the result could in principle be retrieved in a single database query.
         let txids = db_conn.list_txids(start, end, limit);
-        let transactions = txids
-            .iter()
-            .filter_map(|txid| {
-                // TODO: batch those calls to the Bitcoin backend
-                // so it can in turn optimize its queries.
-                self.bitcoin
-                    .wallet_transaction(txid)
-                    .map(|(tx, block)| TransactionInfo {
-                        tx,
-                        height: block.map(|b| b.height),
-                        time: block.map(|b| b.time),
-                    })
-            })
-            .collect();
-        ListTransactionsResult { transactions }
+        self.list_transactions(&txids)
     }
 
     /// list_transactions retrieves the transactions with the given txids.
     pub fn list_transactions(&self, txids: &[bitcoin::Txid]) -> ListTransactionsResult {
-        let transactions = txids
-            .iter()
-            .filter_map(|txid| {
-                // TODO: batch those calls to the Bitcoin backend
-                // so it can in turn optimize its queries.
-                self.bitcoin
-                    .wallet_transaction(txid)
-                    .map(|(tx, block)| TransactionInfo {
-                        tx,
-                        height: block.map(|b| b.height),
-                        time: block.map(|b| b.time),
-                    })
-            })
+        let transactions = self
+            .db
+            .connection()
+            .list_wallet_transactions(txids)
+            .into_iter()
+            .map(|(tx, height, time)| TransactionInfo { tx, height, time })
             .collect();
         ListTransactionsResult { transactions }
     }
@@ -2278,8 +2258,8 @@ mod tests {
             },
         ]);
 
-        let mut btc = DummyBitcoind::new();
-        btc.txs.insert(
+        let mut txs_map = HashMap::new();
+        txs_map.insert(
             deposit1.txid(),
             (
                 deposit1.clone(),
@@ -2293,7 +2273,7 @@ mod tests {
                 }),
             ),
         );
-        btc.txs.insert(
+        txs_map.insert(
             deposit2.txid(),
             (
                 deposit2.clone(),
@@ -2307,7 +2287,7 @@ mod tests {
                 }),
             ),
         );
-        btc.txs.insert(
+        txs_map.insert(
             spend_tx.txid(),
             (
                 spend_tx.clone(),
@@ -2321,7 +2301,7 @@ mod tests {
                 }),
             ),
         );
-        btc.txs.insert(
+        txs_map.insert(
             deposit3.txid(),
             (
                 deposit3.clone(),
@@ -2336,11 +2316,15 @@ mod tests {
             ),
         );
 
-        let ms = DummyLiana::new(btc, db);
+        let ms = DummyLiana::new(DummyBitcoind::new(), db);
 
         let control = &ms.control();
+        let mut db_conn = control.db.connection();
+        let txs: Vec<_> = txs_map.values().map(|(tx, _)| tx.clone()).collect();
+        db_conn.new_txs(&txs);
 
-        let transactions = control.list_confirmed_transactions(0, 4, 10).transactions;
+        let mut transactions = control.list_confirmed_transactions(0, 4, 10).transactions;
+        transactions.sort_by(|tx1, tx2| tx2.height.cmp(&tx1.height));
         assert_eq!(transactions.len(), 4);
 
         assert_eq!(transactions[0].time, Some(4));
@@ -2355,7 +2339,8 @@ mod tests {
         assert_eq!(transactions[3].time, Some(1));
         assert_eq!(transactions[3].tx, deposit1);
 
-        let transactions = control.list_confirmed_transactions(2, 3, 10).transactions;
+        let mut transactions = control.list_confirmed_transactions(2, 3, 10).transactions;
+        transactions.sort_by(|tx1, tx2| tx2.height.cmp(&tx1.height));
         assert_eq!(transactions.len(), 2);
 
         assert_eq!(transactions[0].time, Some(3));
@@ -2424,8 +2409,8 @@ mod tests {
             }],
         };
 
-        let mut btc = DummyBitcoind::new();
-        btc.txs.insert(
+        let mut txs_map = HashMap::new();
+        txs_map.insert(
             tx1.txid(),
             (
                 tx1.clone(),
@@ -2439,7 +2424,7 @@ mod tests {
                 }),
             ),
         );
-        btc.txs.insert(
+        txs_map.insert(
             tx2.txid(),
             (
                 tx2.clone(),
@@ -2453,7 +2438,7 @@ mod tests {
                 }),
             ),
         );
-        btc.txs.insert(
+        txs_map.insert(
             tx3.txid(),
             (
                 tx3.clone(),
@@ -2468,9 +2453,31 @@ mod tests {
             ),
         );
 
-        let ms = DummyLiana::new(btc, DummyDatabase::new());
-
+        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.control();
+        let mut db_conn = control.db.connection();
+        let txs: Vec<_> = txs_map.values().map(|(tx, _)| tx.clone()).collect();
+        db_conn.new_txs(&txs);
+        // We need coins in the DB in order to get the block info for the transactions.
+        for (txid, (_tx, block)) in txs_map {
+            // Insert more than one coin per transaction to check that the command does not
+            // return duplicate transactions.
+            for vout in 0..4 {
+                db_conn.new_unspent_coins(&[Coin {
+                    outpoint: bitcoin::OutPoint::new(txid, vout),
+                    is_immature: false,
+                    block_info: block.map(|b| BlockInfo {
+                        height: b.height,
+                        time: b.time,
+                    }),
+                    amount: bitcoin::Amount::from_sat(100_000),
+                    derivation_index: bip32::ChildNumber::from(13),
+                    is_change: false,
+                    spend_txid: None,
+                    spend_block: None,
+                }]);
+            }
+        }
 
         let transactions = control.list_transactions(&[tx1.txid()]).transactions;
         assert_eq!(transactions.len(), 1);

@@ -152,6 +152,12 @@ pub trait DatabaseConnection {
 
     /// Store transactions in database, ignoring any that already exist.
     fn new_txs(&mut self, txs: &[bitcoin::Transaction]);
+
+    /// Retrieve a list of transactions and their corresponding block heights and times.
+    fn list_wallet_transactions(
+        &mut self,
+        txids: &[bitcoin::Txid],
+    ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)>;
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -323,6 +329,22 @@ impl DatabaseConnection for SqliteConn {
 
     fn new_txs<'a>(&mut self, txs: &[bitcoin::Transaction]) {
         self.new_txs(txs)
+    }
+
+    fn list_wallet_transactions(
+        &mut self,
+        txids: &[bitcoin::Txid],
+    ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)> {
+        self.list_wallet_transactions(txids)
+            .into_iter()
+            .map(|wtx| {
+                (
+                    wtx.transaction,
+                    wtx.block_info.map(|b| b.height),
+                    wtx.block_info.map(|b| b.time),
+                )
+            })
+            .collect()
     }
 }
 

@@ -449,6 +449,38 @@ impl DatabaseConnection for DummyDatabase {
             self.db.write().unwrap().txs.insert(tx.txid(), tx.clone());
         }
     }
+
+    fn list_wallet_transactions(
+        &mut self,
+        txids: &[bitcoin::Txid],
+    ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)> {
+        let txs: HashMap<_, _> = self
+            .db
+            .read()
+            .unwrap()
+            .txs
+            .clone()
+            .into_iter()
+            .filter(|(txid, _tx)| txids.contains(txid))
+            .collect();
+        let coins = self.coins(&[], &[]);
+        let mut wallet_txs = Vec::with_capacity(txs.len());
+        for (txid, tx) in txs {
+            let first_block_info = coins.values().find_map(|c| {
+                if c.outpoint.txid == txid {
+                    Some(c.block_info)
+                } else if c.spend_txid == Some(txid) {
+                    Some(c.spend_block)
+                } else {
+                    None
+                }
+            });
+            if let Some(block_info) = first_block_info {
+                wallet_txs.push((tx, block_info.map(|b| b.height), block_info.map(|b| b.time)));
+            }
+        }
+        wallet_txs
+    }
 }
 
 pub struct DummyLiana {
