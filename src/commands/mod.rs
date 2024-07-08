@@ -150,27 +150,33 @@ impl fmt::Display for RbfErrorInfo {
     }
 }
 
-/// A wallet transaction getter which fetches the transaction from our Bitcoin backend with a cache
+/// A wallet transaction getter which fetches the transaction from our database backend with a cache
 /// to avoid needless redundant calls. Note the cache holds an Option<> so we also avoid redundant
-/// calls when the txid isn't known by our Bitcoin backend.
-struct BitcoindTxGetter<'a> {
-    bitcoind: &'a sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+/// calls when the txid isn't known by our database backend.
+struct DbTxGetter<'a> {
+    db: &'a sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     cache: HashMap<bitcoin::Txid, Option<bitcoin::Transaction>>,
 }
 
-impl<'a> BitcoindTxGetter<'a> {
-    pub fn new(bitcoind: &'a sync::Arc<sync::Mutex<dyn BitcoinInterface>>) -> Self {
+impl<'a> DbTxGetter<'a> {
+    pub fn new(db: &'a sync::Arc<sync::Mutex<dyn DatabaseInterface>>) -> Self {
         Self {
-            bitcoind,
+            db,
             cache: HashMap::new(),
         }
     }
 }
 
-impl<'a> TxGetter for BitcoindTxGetter<'a> {
+impl<'a> TxGetter for DbTxGetter<'a> {
     fn get_tx(&mut self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
         if let hash_map::Entry::Vacant(entry) = self.cache.entry(*txid) {
-            entry.insert(self.bitcoind.wallet_transaction(txid).map(|wtx| wtx.0));
+            let tx = self
+                .db
+                .connection()
+                .list_wallet_transactions(&[*txid])
+                .pop()
+                .map(|(tx, _, _)| tx);
+            entry.insert(tx);
         }
         self.cache.get(txid).cloned().flatten()
     }
@@ -437,7 +443,7 @@ impl DaemonControl {
             return Err(CommandError::InvalidFeerate(feerate_vb));
         }
         let mut db_conn = self.db.connection();
-        let mut tx_getter = BitcoindTxGetter::new(&self.bitcoin);
+        let mut tx_getter = DbTxGetter::new(&self.db);
 
         // Prepare the destination addresses.
         let mut destinations_checked = Vec::with_capacity(destinations.len());
@@ -732,7 +738,7 @@ impl DaemonControl {
         feerate_vb: Option<u64>,
     ) -> Result<CreateSpendResult, CommandError> {
         let mut db_conn = self.db.connection();
-        let mut tx_getter = BitcoindTxGetter::new(&self.bitcoin);
+        let mut tx_getter = DbTxGetter::new(&self.db);
 
         if is_cancel && feerate_vb.is_some() {
             return Err(CommandError::RbfError(RbfErrorInfo::SuperfluousFeerate));
@@ -1023,7 +1029,7 @@ impl DaemonControl {
         if feerate_vb < 1 {
             return Err(CommandError::InvalidFeerate(feerate_vb));
         }
-        let mut tx_getter = BitcoindTxGetter::new(&self.bitcoin);
+        let mut tx_getter = DbTxGetter::new(&self.db);
         let mut db_conn = self.db.connection();
         let sweep_addr = self.spend_addr(&mut db_conn, self.validate_address(address)?);
 
@@ -1375,25 +1381,17 @@ mod tests {
 
     #[test]
     fn create_spend() {
-        let dummy_op = bitcoin::OutPoint::from_str(
-            "3753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:0",
-        )
-        .unwrap();
-        let mut dummy_bitcoind = DummyBitcoind::new();
-        dummy_bitcoind.txs.insert(
-            dummy_op.txid,
-            (
-                bitcoin::Transaction {
-                    version: TxVersion::TWO,
-                    lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
-                    input: vec![],
-                    output: vec![],
-                },
-                None,
-            ),
-        );
-        let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
+        let dummy_tx = bitcoin::Transaction {
+            version: TxVersion::TWO,
+            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
+            input: vec![],
+            output: vec![],
+        };
+        let dummy_op = bitcoin::OutPoint::new(dummy_tx.txid(), 0);
+        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.control();
+        let mut db_conn = control.db().lock().unwrap().connection();
+        db_conn.new_txs(&[dummy_tx]);
 
         // Arguments sanity checking
         let dummy_addr =
@@ -1424,7 +1422,6 @@ mod tests {
             control.create_spend(&destinations, &[dummy_op], 1, None),
             Err(CommandError::UnknownOutpoint(dummy_op))
         );
-        let mut db_conn = control.db().lock().unwrap().connection();
         db_conn.new_unspent_coins(&[Coin {
             outpoint: dummy_op,
             is_immature: false,
