@@ -92,6 +92,7 @@ pub enum StartupError {
     DefaultDataDirNotFound,
     DatadirCreation(path::PathBuf, io::Error),
     MissingBitcoindConfig,
+    MissingBitcoinBackendConfig,
     DbMigrateBitcoinTxs(&'static str),
     Database(SqliteDbError),
     Bitcoind(BitcoindError),
@@ -116,6 +117,10 @@ impl fmt::Display for StartupError {
             Self::MissingBitcoindConfig => write!(
                 f,
                 "Our Bitcoin interface is bitcoind but we have no 'bitcoind_config' entry in the configuration."
+            ),
+            Self::MissingBitcoinBackendConfig => write!(
+                f,
+                "No Bitcoin backend entry in the configuration."
             ),
             Self::DbMigrateBitcoinTxs(msg) => write!(
                 f,
@@ -260,8 +265,8 @@ fn setup_bitcoind(
     #[cfg(target_os = "windows")]
     let wo_path_str = wo_path_str.replace("\\\\?\\", "").replace("\\\\?", "");
 
-    let bitcoind_config = config
-        .bitcoind_config
+    let config::BitcoinBackend::Bitcoind(bitcoind_config) = config
+        .bitcoin_backend
         .as_ref()
         .ok_or(StartupError::MissingBitcoindConfig)?;
     let bitcoind = BitcoinD::new(bitcoind_config, wo_path_str)?;
@@ -374,7 +379,11 @@ impl DaemonHandle {
         // Set up the connection to bitcoind (if using it) first as we may need it for the database
         // migration when setting up SQLite below.
         let bitcoind = if bitcoin.is_none() {
-            Some(setup_bitcoind(&config, &data_dir, fresh_data_dir)?)
+            if let Some(config::BitcoinBackend::Bitcoind(_)) = &config.bitcoin_backend {
+                Some(setup_bitcoind(&config, &data_dir, fresh_data_dir)?)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -392,11 +401,13 @@ impl DaemonHandle {
         };
 
         // Finally set up the Bitcoin backend.
-        let bit = match (bitcoin, bitcoind) {
-            (Some(bit), None) => sync::Arc::from(sync::Mutex::from(bit)),
-            (None, Some(bit)) => sync::Arc::from(sync::Mutex::from(bit))
+        let bit = match (bitcoin, &config.bitcoin_backend) {
+            (Some(bit), _) => sync::Arc::from(sync::Mutex::from(bit)),
+            (None, Some(config::BitcoinBackend::Bitcoind(..))) => sync::Arc::from(
+                sync::Mutex::from(bitcoind.expect("bitcoind must have been set already")),
+            )
                 as sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
-            _ => unreachable!("Either bitcoind or bitcoin interface is always set."),
+            (None, None) => Err(StartupError::MissingBitcoinBackendConfig)?,
         };
 
         // If we are on a UNIX system and they told us to daemonize, do it now.
@@ -764,7 +775,7 @@ mod tests {
         let change_desc = desc.change_descriptor().clone();
         let config = Config {
             bitcoin_config,
-            bitcoind_config: Some(bitcoind_config),
+            bitcoin_backend: Some(config::BitcoinBackend::Bitcoind(bitcoind_config)),
             data_dir: Some(data_dir),
             #[cfg(unix)]
             daemon: false,

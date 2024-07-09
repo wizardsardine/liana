@@ -534,7 +534,7 @@ impl DummyLiana {
         let desc = descriptors::LianaDescriptor::new(policy);
         let config = Config {
             bitcoin_config,
-            bitcoind_config: None,
+            bitcoin_backend: None,
             data_dir: Some(data_dir),
             #[cfg(unix)]
             daemon: false,

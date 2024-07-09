@@ -85,6 +85,14 @@ fn default_daemon() -> bool {
     false
 }
 
+/// Bitcoin backend config.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum BitcoinBackend {
+    /// Settings specific to bitcoind as the Bitcoin interface.
+    #[serde(rename = "bitcoind_config")]
+    Bitcoind(BitcoindConfig),
+}
+
 /// RPC authentication options.
 #[derive(Clone, PartialEq, Serialize)]
 pub enum BitcoindRpcAuth {
@@ -152,8 +160,9 @@ pub struct Config {
     pub main_descriptor: LianaDescriptor,
     /// Settings for the Bitcoin interface
     pub bitcoin_config: BitcoinConfig,
-    /// Settings specific to bitcoind as the Bitcoin interface
-    pub bitcoind_config: Option<BitcoindConfig>,
+    /// Settings specific to the Bitcoin backend.
+    #[serde(flatten)]
+    pub bitcoin_backend: Option<BitcoinBackend>,
 }
 
 impl Config {
