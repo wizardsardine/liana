@@ -1093,7 +1093,7 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
         )
     )
     # We can now use RBF, but the feerate must be higher than that of the first transaction.
-    with pytest.raises(RpcError, match=f"Feerate too low: 1."):
+    with pytest.raises(RpcError, match=f"Feerate 1 too low for minimum feerate 2."):
         lianad.rpc.rbfpsbt(first_txid, False, 1)
     # Using a higher feerate works.
     lianad.rpc.rbfpsbt(first_txid, False, 2)
@@ -1127,7 +1127,9 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     # If we try to RBF the first transaction again, it will use the first RBF's
     # feerate to set the min feerate, instead of 1 sat/vb of first
     # transaction:
-    with pytest.raises(RpcError, match=f"Feerate too low: {int(rbf_1_feerate)}."):
+    with pytest.raises(
+        RpcError, match=f"Feerate {int(rbf_1_feerate)} too low for minimum feerate 10."
+    ):
         lianad.rpc.rbfpsbt(first_txid, False, int(rbf_1_feerate))
     # Using 1 more for feerate works.
     feerate = int(rbf_1_feerate) + 1
