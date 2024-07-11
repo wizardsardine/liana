@@ -95,6 +95,22 @@ fn split_digits<'a, T: 'a>(mut s: String, size: u16, bold: bool) -> impl Into<El
                 });
         }
     }
+
+    // Reformat the integer portion of the amount with space separation.
+    let (integer, fraction) = match s.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (s.as_str(), "00 000 000"),
+    };
+    let mut integer = integer
+        .chars()
+        .collect::<Vec<_>>()
+        .rchunks(3)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>();
+    integer.reverse();
+    let integer = integer.join(" ");
+    s = format!("{integer}.{fraction}");
+
     if bold {
         Row::new().push(text(s).bold().size(size))
     } else {
