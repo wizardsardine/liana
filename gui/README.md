@@ -6,11 +6,13 @@ The Liana graphical interface.
 
 You will need a few dependencies in order to run correctly this software. For Linux systems, those
 are:
+- [`udev`](https://www.freedesktop.org/software/systemd/man/udev.html) (On Debian/Ubuntu `apt install udev`)
 - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/) for access to fonts (On Debian/Ubuntu `apt install libfontconfig1-dev`)
 - [`libudev-dev`](https://www.freedesktop.org/software/systemd/man/libudev.html) to communicate with devices through USB (On Debian/Ubuntu `apt install libudev-dev`)
 
 In addition, if you want to build the project from source, you will need:
 - [`pkg-config`](https://www.freedesktop.org/wiki/Software/pkg-config/) (On Debian/Ubuntu `apt install pkg-config`)
+- `cmake` (On Debian/Ubuntu apt install cmake)
 
 
 ## Usage
