@@ -14,22 +14,29 @@ use wallet::WalletSettingsState;
 
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::State, view, wallet::Wallet},
-    daemon::Daemon,
+    daemon::{Daemon, DaemonBackend},
 };
 
 pub struct SettingsState {
     data_dir: PathBuf,
     wallet: Arc<Wallet>,
     setting: Option<Box<dyn State>>,
+    daemon_backend: DaemonBackend,
     internal_bitcoind: bool,
 }
 
 impl SettingsState {
-    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>, internal_bitcoind: bool) -> Self {
+    pub fn new(
+        data_dir: PathBuf,
+        wallet: Arc<Wallet>,
+        daemon_backend: DaemonBackend,
+        internal_bitcoind: bool,
+    ) -> Self {
         Self {
             data_dir,
             wallet,
             setting: None,
+            daemon_backend,
             internal_bitcoind,
         }
     }
@@ -48,7 +55,7 @@ impl State for SettingsState {
                     BitcoindSettingsState::new(
                         daemon.config().cloned(),
                         cache,
-                        daemon.is_external(),
+                        daemon.backend() != DaemonBackend::EmbeddedLianad,
                         self.internal_bitcoind,
                     )
                     .into(),
@@ -97,7 +104,7 @@ impl State for SettingsState {
         if let Some(setting) = &self.setting {
             setting.view(cache)
         } else {
-            view::settings::list(cache)
+            view::settings::list(cache, self.daemon_backend == DaemonBackend::RemoteBackend)
         }
     }
 

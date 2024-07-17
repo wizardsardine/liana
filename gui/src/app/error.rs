@@ -29,10 +29,10 @@ impl std::fmt::Display for Error {
                 DaemonError::Unexpected(e) => write!(f, "{}", e),
                 DaemonError::NoAnswer => write!(f, "Daemon did not answer"),
                 DaemonError::DaemonStopped => write!(f, "Daemon stopped"),
-                DaemonError::Transport(Some(ErrorKind::ConnectionRefused), _) => {
+                DaemonError::RpcSocket(Some(ErrorKind::ConnectionRefused), _) => {
                     write!(f, "Failed to connect to daemon")
                 }
-                DaemonError::Transport(kind, e) => {
+                DaemonError::RpcSocket(kind, e) => {
                     if let Some(k) = kind {
                         write!(f, "{} [{:?}]", e, k)
                     } else {
@@ -46,6 +46,9 @@ impl std::fmt::Display for Error {
                     write!(f, "Daemon client is not supported")
                 }
                 DaemonError::Rpc(code, e) => {
+                    write!(f, "[{:?}] {}", code, e)
+                }
+                DaemonError::Http(code, e) => {
                     write!(f, "[{:?}] {}", code, e)
                 }
                 DaemonError::CoinSelectionError => write!(f, "{}", e),

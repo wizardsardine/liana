@@ -1,5 +1,9 @@
 #![windows_subsystem = "windows"]
 
+use std::{
+    collections::HashMap, error::Error, io::Write, path::PathBuf, process, str::FromStr, sync::Arc,
+};
+
 use iced::{
     event::{self, Event},
     executor, keyboard,
@@ -7,7 +11,6 @@ use iced::{
     window::settings::PlatformSpecific,
     Application, Command, Settings, Size, Subscription,
 };
-use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
 extern crate serde;
@@ -19,11 +22,15 @@ use liana_ui::{component::text, font, image, theme, widget::Element};
 use liana_gui::{
     app::{
         self,
+        cache::Cache,
         config::{default_datadir, ConfigError},
+        wallet::Wallet,
         App,
     },
+    hw::HardwareWalletConfig,
     installer::{self, Installer},
     launcher::{self, Launcher},
+    lianalite::client::{auth::AuthClient, backend::BackendClient, get_service_config},
     loader::{self, Loader},
     logger::Logger,
     VERSION,
@@ -34,6 +41,8 @@ enum Arg {
     ConfigPath(PathBuf),
     DatadirPath(PathBuf),
     Network(bitcoin::Network),
+    Email(String),
+    RefreshToken(String),
 }
 
 fn parse_args(args: Vec<String>) -> Result<Vec<Arg>, Box<dyn Error>> {
@@ -75,6 +84,18 @@ Options:
                 res.push(Arg::DatadirPath(PathBuf::from(a)));
             } else {
                 return Err("missing arg to --datadir".into());
+            }
+        } else if arg == "--email" {
+            if let Some(a) = args.get(i + 1) {
+                res.push(Arg::Email(a.to_string()));
+            } else {
+                return Err("missing arg to --email".into());
+            }
+        } else if arg == "--refresh_token" {
+            if let Some(a) = args.get(i + 1) {
+                res.push(Arg::RefreshToken(a.to_string()));
+            } else {
+                return Err("missing arg to --access_token".into());
             }
         } else if arg.contains("--") {
             let network = bitcoin::Network::from_str(args[i].trim_start_matches("--"))?;
@@ -182,6 +203,99 @@ impl Application for GUI {
                 let (loader, command) = Loader::new(datadir_path, cfg, network, None);
                 cmds.push(command.map(|msg| Message::Load(Box::new(msg))));
                 State::Loader(Box::new(loader))
+            }
+            Config::RunWithRemoteBackend(email, refresh_token) => {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+
+                // Spawn the root task
+                let (wallet, client) = rt.block_on(async {
+                    let config = get_service_config(bitcoin::Network::Signet).await.unwrap();
+                    let backend_url = config.backend_api_url.to_owned();
+
+                    let supabase_client =
+                        AuthClient::new(config.auth_api_url, config.auth_api_public_key);
+                    let access = match refresh_token {
+                        None => {
+                            supabase_client.sign_in_otp(&email).await.unwrap();
+
+                            eprintln!("Please enter token:");
+                            let mut token = String::new();
+                            std::io::stdin()
+                                .read_line(&mut token)
+                                .expect("Failed to read line");
+
+                            supabase_client
+                                .verify_otp(&email, token.trim_end())
+                                .await
+                                .unwrap()
+                        }
+                        Some(token) => supabase_client.refresh_token(&token).await.unwrap(),
+                    };
+
+                    let client =
+                        BackendClient::connect(supabase_client, backend_url, access.clone())
+                            .await
+                            .unwrap();
+                    let (client, wallet) = client.connect_first().await.unwrap();
+                    eprintln!(
+                        "Connected, next time connect directly without otp verification with:"
+                    );
+                    eprintln!(
+                        "cargo run -- --email {} --refresh_token {}",
+                        email, access.refresh_token
+                    );
+
+                    (wallet, client)
+                });
+                let hws: Vec<HardwareWalletConfig> = wallet
+                    .metadata
+                    .ledger_hmacs
+                    .into_iter()
+                    .map(|ledger_hmac| HardwareWalletConfig {
+                        kind: async_hwi::DeviceKind::Ledger.to_string(),
+                        fingerprint: ledger_hmac.fingerprint,
+                        token: ledger_hmac.hmac,
+                    })
+                    .collect();
+                let aliases: HashMap<bitcoin::bip32::Fingerprint, String> = wallet
+                    .metadata
+                    .fingerprint_aliases
+                    .into_iter()
+                    .filter_map(|a| {
+                        if a.user_id == client.user_id() {
+                            Some((a.fingerprint, a.alias))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let (app, command) = App::new(
+                    Cache {
+                        network: bitcoin::Network::Signet,
+                        coins: Vec::new(),
+                        rescan_progress: None,
+                        datadir_path: default_datadir().unwrap(),
+                        blockheight: wallet.tip_height.unwrap_or(0),
+                    },
+                    Arc::new(
+                        Wallet::new(wallet.descriptor)
+                            .with_name(wallet.name)
+                            .with_key_aliases(aliases)
+                            .with_hardware_wallets(hws),
+                    ),
+                    app::Config {
+                        daemon_config_path: None,
+                        daemon_rpc_path: None,
+                        log_level: None,
+                        debug: None,
+                        start_internal_bitcoind: false,
+                    },
+                    Arc::new(client),
+                    default_datadir().unwrap(),
+                    None,
+                );
+                cmds.push(command.map(|msg| Message::Run(Box::new(msg))));
+                State::App(app)
             }
         };
         (
@@ -380,6 +494,7 @@ pub enum Config {
     Run(PathBuf, app::Config, bitcoin::Network),
     Launcher(PathBuf),
     Install(PathBuf, bitcoin::Network),
+    RunWithRemoteBackend(String, Option<String>),
 }
 
 impl Config {
@@ -409,6 +524,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             let datadir_path = default_datadir().unwrap();
             Config::new(datadir_path, None)
         }
+        [Arg::Email(email)] => Ok(Config::RunWithRemoteBackend(email.to_string(), None)),
+        [Arg::Email(email), Arg::RefreshToken(token)]
+        | [Arg::RefreshToken(token), Arg::Email(email)] => Ok(Config::RunWithRemoteBackend(
+            email.to_string(),
+            Some(token.to_string()),
+        )),
         [Arg::Network(network)] => {
             let datadir_path = default_datadir().unwrap();
             Config::new(datadir_path, Some(*network))

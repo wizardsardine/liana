@@ -32,7 +32,7 @@ use crate::{
     hw::HardwareWallet,
 };
 
-pub fn list(cache: &Cache) -> Element<Message> {
+pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
     dashboard(
         &Menu::Settings,
         cache,
@@ -44,23 +44,27 @@ pub fn list(cache: &Cache) -> Element<Message> {
                 Button::new(text("Settings").size(30).bold())
                     .style(theme::Button::Transparent)
                     .on_press(Message::Menu(Menu::Settings)))
-            .push(
-                Container::new(
-                    Button::new(
-                        Row::new()
-                            .push(badge::Badge::new(icon::bitcoin_icon()))
-                            .push(text("Bitcoin Core").bold())
-                            .padding(10)
-                            .spacing(20)
-                            .align_items(Alignment::Center)
-                            .width(Length::Fill),
+            .push_maybe(
+                if !is_remote_backend {
+                    Some(Container::new(
+                        Button::new(
+                            Row::new()
+                                .push(badge::Badge::new(icon::bitcoin_icon()))
+                                .push(text("Bitcoin Core").bold())
+                                .padding(10)
+                                .spacing(20)
+                                .align_items(Alignment::Center)
+                                .width(Length::Fill),
+                        )
+                        .width(Length::Fill)
+                        .style(theme::Button::TransparentBorder)
+                        .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings))
                     )
                     .width(Length::Fill)
-                    .style(theme::Button::TransparentBorder)
-                    .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings))
-                )
-                .width(Length::Fill)
-                .style(theme::Container::Card(theme::Card::Simple))
+                    .style(theme::Container::Card(theme::Card::Simple)))
+                } else {
+                    None
+                }
             )
             .push(
                 Container::new(
