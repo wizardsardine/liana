@@ -750,7 +750,11 @@ pub fn register_descriptor<'a>(
             })
             .spacing(50),
         true,
-        Some(Message::Previous),
+        if !processing {
+        Some(Message::Previous)
+        } else {
+            None
+        }
     )
 }
 
