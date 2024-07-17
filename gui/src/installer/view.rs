@@ -38,7 +38,32 @@ pub fn welcome<'a>() -> Element<'a, Message> {
     Container::new(
         Column::new()
             .push(
-                Container::new(image::liana_brand_grey().width(Length::Fixed(200.0))).padding(100),
+                Container::new(
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .push(
+                            Container::new(image::liana_brand_grey().width(Length::Fixed(200.0)))
+                                .width(Length::Fill),
+                        )
+                        .push(
+                            Row::new()
+                                .push(
+                                    button::secondary(
+                                        Some(icon::previous_icon()),
+                                        "Change network",
+                                    )
+                                    .width(Length::Fixed(200.0))
+                                    .on_press(Message::BackToLauncher),
+                                )
+                                .push(
+                                    button::secondary(None, "Share Xpubs")
+                                        .width(Length::Fixed(200.0))
+                                        .on_press(Message::ShareXpubs),
+                                )
+                                .spacing(20),
+                        ),
+                )
+                .padding(100),
             )
             .push(
                 Container::new(
@@ -75,33 +100,12 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                             .spacing(20)
                                             .align_items(Alignment::Center)
                                             .push(
-                                                image::participate_in_new_wallet_icon()
-                                                    .width(Length::Fixed(200.0)),
-                                            )
-                                            .push(
-                                                p1_regular("Participate in new wallet")
-                                                    .style(color::GREY_3),
-                                            )
-                                            .push(
-                                                button::secondary(None, "Select")
-                                                    .width(Length::Fixed(200.0))
-                                                    .on_press(Message::ParticipateWallet),
-                                            )
-                                            .align_items(Alignment::Center),
-                                    )
-                                    .padding(20),
-                                )
-                                .push(
-                                    Container::new(
-                                        Column::new()
-                                            .spacing(20)
-                                            .align_items(Alignment::Center)
-                                            .push(
                                                 image::restore_wallet_icon()
                                                     .width(Length::Fixed(100.0)),
                                             )
                                             .push(
-                                                p1_regular("Restore a wallet").style(color::GREY_3),
+                                                p1_regular("Add an existing wallet")
+                                                    .style(color::GREY_3),
                                             )
                                             .push(
                                                 button::secondary(None, "Select")
@@ -112,11 +116,6 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                     )
                                     .padding(20),
                                 ),
-                        )
-                        .push(
-                            button::secondary(Some(icon::previous_icon()), "Change network")
-                                .width(Length::Fixed(200.0))
-                                .on_press(Message::BackToLauncher),
                         )
                         .push(Space::with_height(Length::Fixed(100.0)))
                         .spacing(50)
@@ -566,42 +565,24 @@ pub fn hardware_wallet_xpubs<'a>(
     .into()
 }
 
-pub fn participate_xpub<'a>(
-    progress: (usize, usize),
+pub fn share_xpubs<'a>(
     hws: Vec<Element<'a, Message>>,
     signer: Element<'a, Message>,
-    shared: bool,
 ) -> Element<'a, Message> {
     layout(
-        progress,
+        (0, 0),
         "Share your public keys",
         Column::new()
             .push(
-                Column::new()
-                    .push(
-                        Container::new(
-                            text("Generate an extended public key by selecting a signing device:")
-                                .bold(),
-                        )
-                        .width(Length::Fill),
-                    )
-                    .spacing(10)
-                    .push(Column::with_children(hws).spacing(10))
-                    .push(signer)
-                    .width(Length::Fill),
+                Container::new(
+                    text("Generate an extended public key by selecting a signing device:").bold(),
+                )
+                .width(Length::Fill),
             )
-            .push(
-                checkbox("I have shared my extended public key", shared)
-                    .on_toggle(Message::UserActionDone),
-            )
-            .push(if shared {
-                button::primary(None, "Next")
-                    .width(Length::Fixed(200.0))
-                    .on_press(Message::Next)
-            } else {
-                button::primary(None, "Next").width(Length::Fixed(200.0))
-            })
-            .spacing(50),
+            .spacing(10)
+            .push(Column::with_children(hws).spacing(10))
+            .push(signer)
+            .width(Length::Fill),
         true,
         Some(Message::Previous),
     )
@@ -1951,11 +1932,15 @@ fn layout<'a>(
                             .center_x(),
                     )
                     .push(Container::new(h3(title)).width(Length::FillPortion(8)))
-                    .push(
-                        Container::new(text(format!("{} | {}", progress.0, progress.1)))
-                            .width(Length::FillPortion(2))
-                            .center_x(),
-                    ),
+                    .push_maybe(if progress.1 > 0 {
+                        Some(
+                            Container::new(text(format!("{} | {}", progress.0, progress.1)))
+                                .width(Length::FillPortion(2))
+                                .center_x(),
+                        )
+                    } else {
+                        None
+                    }),
             )
             .push(
                 Row::new()

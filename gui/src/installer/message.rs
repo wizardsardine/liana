@@ -12,7 +12,7 @@ use async_hwi::{DeviceKind, Version};
 #[derive(Debug, Clone)]
 pub enum Message {
     CreateWallet,
-    ParticipateWallet,
+    ShareXpubs,
     ImportWallet,
     UserActionDone(bool),
     Exit(PathBuf, Option<Bitcoind>),
