@@ -843,7 +843,7 @@ fn ledger_version_supported(version: Option<&Version>) -> bool {
 
 // Kind and minimal version of devices supporting tapminiscript.
 // We cannot use a lazy_static HashMap yet, because DeviceKind does not implement Hash.
-const DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT: [(DeviceKind, Option<Version>); 3] = [
+const DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT: [(DeviceKind, Option<Version>); 4] = [
     (
         DeviceKind::Ledger,
         Some(Version {
@@ -855,6 +855,15 @@ const DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT: [(DeviceKind, Option<Version>); 3] 
     ),
     (DeviceKind::Specter, None),
     (DeviceKind::SpecterSimulator, None),
+    (
+        DeviceKind::Coldcard,
+        Some(Version {
+            major: 6,
+            minor: 3,
+            patch: 3,
+            prerelease: None,
+        }),
+    ),
 ];
 
 pub fn is_compatible_with_tapminiscript(
