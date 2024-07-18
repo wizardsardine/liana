@@ -27,8 +27,8 @@ use crate::{
 pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, DefineBitcoind, DefineDescriptor, Final, ImportDescriptor,
-    InternalBitcoindStep, ParticipateXpub, RecoverMnemonic, RegisterDescriptor,
-    SelectBitcoindTypeStep, Step, Welcome,
+    InternalBitcoindStep, RecoverMnemonic, RegisterDescriptor, SelectBitcoindTypeStep, ShareXpubs,
+    Step, Welcome,
 };
 
 pub struct Installer {
@@ -155,17 +155,10 @@ impl Installer {
                 ];
                 self.next()
             }
-            Message::ParticipateWallet => {
+            Message::ShareXpubs => {
                 self.steps = vec![
                     Welcome::default().into(),
-                    ParticipateXpub::new(self.network, self.signer.clone()).into(),
-                    ImportDescriptor::new(self.network).into(),
-                    BackupMnemonic::new(self.signer.clone()).into(),
-                    RegisterDescriptor::new_import_wallet().into(),
-                    SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&self.context.data_dir).into(),
-                    DefineBitcoind::new().into(),
-                    Final::new().into(),
+                    ShareXpubs::new(self.network, self.signer.clone()).into(),
                 ];
                 self.next()
             }

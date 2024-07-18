@@ -1,16 +1,16 @@
 mod bitcoind;
 mod descriptor;
 mod mnemonic;
+mod share_xpubs;
 
 pub use bitcoind::{
     DefineBitcoind, DownloadState, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep,
 };
 
-pub use descriptor::{
-    BackupDescriptor, DefineDescriptor, ImportDescriptor, ParticipateXpub, RegisterDescriptor,
-};
+pub use descriptor::{BackupDescriptor, DefineDescriptor, ImportDescriptor, RegisterDescriptor};
 
 pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
+pub use share_xpubs::ShareXpubs;
 
 use std::path::PathBuf;
 
