@@ -159,10 +159,10 @@ strongly recommend using a hardware signing device for any non-trivial amount.
 
 For now, the following signing devices are supported:
 - Ledger Nano S, S+ & X
-- BitBox02
+- BitBox02 (P2WSH only)
 - Specter DIY
-- Coldcard MK4
-- Blockstream Jade
+- Coldcard MK4 & Q
+- Blockstream Jade (P2WSH only)
 
 For more information (such as compatibility and minimum supported versions) please read the [signing
 devices documentation](./signing_devices.md).
