@@ -99,7 +99,9 @@ impl State for TransactionsPanel {
                 Ok(txs) => {
                     self.warning = None;
                     for tx in txs {
-                        if !self.txs.iter().any(|other| other.tx == tx.tx) {
+                        if let Some(t) = self.txs.iter_mut().find(|other| other.tx == tx.tx) {
+                            t.labels = tx.labels;
+                        } else {
                             self.txs.push(tx);
                         }
                     }
