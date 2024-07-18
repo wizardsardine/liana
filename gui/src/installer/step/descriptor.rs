@@ -1394,6 +1394,11 @@ impl RegisterDescriptor {
 
 impl Step for RegisterDescriptor {
     fn load_context(&mut self, ctx: &Context) {
+        // we reset device registered set if the descriptor have changed.
+        if self.descriptor != ctx.descriptor {
+            self.registered = Default::default();
+            self.done = false;
+        }
         self.descriptor.clone_from(&ctx.descriptor);
         let mut map = HashMap::new();
         for key in ctx.keys.iter().filter(|k| !k.name.is_empty()) {
