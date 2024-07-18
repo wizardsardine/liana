@@ -84,6 +84,13 @@ impl State for SettingsState {
                     .map(|s| s.reload(daemon, wallet))
                     .unwrap_or_else(Command::none)
             }
+            Message::WalletUpdated(Ok(wallet)) => {
+                self.wallet = wallet.clone();
+                self.setting
+                    .as_mut()
+                    .map(|s| s.update(daemon, cache, message))
+                    .unwrap_or_else(Command::none)
+            }
             _ => self
                 .setting
                 .as_mut()
