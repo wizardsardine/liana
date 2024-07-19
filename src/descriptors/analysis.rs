@@ -116,11 +116,10 @@ impl DescKeyChecker {
             // without origin entirely.
             if let Some(ref origin) = xpub.origin {
                 let der_paths = xpub.derivation_paths.paths();
-                let first_der_path = der_paths.first().expect("Cannot be empty");
                 // We also rule out xpubs with hardened derivation steps (non-normalized xpubs).
                 let valid = xpub.wildcard == descriptor::Wildcard::Unhardened
                     && der_paths.len() == 2
-                    && first_der_path.into_iter().all(|step| step.is_normal());
+                    && der_paths.iter().flatten().all(|step| step.is_normal());
                 if valid {
                     return Ok(origin.0);
                 }
@@ -774,5 +773,72 @@ impl PartialSpendInfo {
     /// paths.
     pub fn recovery_paths(&self) -> &BTreeMap<u16, PathSpendInfo> {
         &self.recovery_paths
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn valid_key() {
+        let xpub_str =
+            "[8c3ffb6e/48'/1'/0'/2']tpubDEMt3bpQMa99W81K9h8f2FJH1C81eSd6bbSkBP8tcqQHAfSKvuGp2fz6xiVpfShzT9sKPx7DVBphChjxvNd15WcbsCca5oVz1AcUTWHxkdS/<0;1>/*";
+        let key = descriptor::DescriptorPublicKey::from_str(xpub_str).unwrap();
+        let mut checker = DescKeyChecker::new();
+        assert!(checker.check(&key).is_ok());
+    }
+    #[test]
+    fn invalid_key() {
+        // Multipath of size 3
+        let xpub_str =
+            "[8c3ffb6e/48'/1'/0'/2']tpubDEMt3bpQMa99W81K9h8f2FJH1C81eSd6bbSkBP8tcqQHAfSKvuGp2fz6xiVpfShzT9sKPx7DVBphChjxvNd15WcbsCca5oVz1AcUTWHxkdS/<0;1;2>/*";
+        let key = descriptor::DescriptorPublicKey::from_str(xpub_str).unwrap();
+        let mut checker = DescKeyChecker::new();
+        assert!(matches!(
+            checker.check(&key),
+            Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
+        ));
+
+        // No multipath
+        let xpub_str =
+            "[8c3ffb6e/48'/1'/0'/2']tpubDEMt3bpQMa99W81K9h8f2FJH1C81eSd6bbSkBP8tcqQHAfSKvuGp2fz6xiVpfShzT9sKPx7DVBphChjxvNd15WcbsCca5oVz1AcUTWHxkdS/0/*";
+        let key = descriptor::DescriptorPublicKey::from_str(xpub_str).unwrap();
+        let mut checker = DescKeyChecker::new();
+        assert!(matches!(
+            checker.check(&key),
+            Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
+        ));
+
+        // Hardened receive path
+        let xpub_str =
+            "[8c3ffb6e/48'/1'/0'/2']tpubDEMt3bpQMa99W81K9h8f2FJH1C81eSd6bbSkBP8tcqQHAfSKvuGp2fz6xiVpfShzT9sKPx7DVBphChjxvNd15WcbsCca5oVz1AcUTWHxkdS/<0';1>/*";
+        let key = descriptor::DescriptorPublicKey::from_str(xpub_str).unwrap();
+        let mut checker = DescKeyChecker::new();
+        assert!(matches!(
+            checker.check(&key),
+            Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
+        ));
+
+        // Hardened change path
+        let xpub_str =
+            "[8c3ffb6e/48'/1'/0'/2']tpubDEMt3bpQMa99W81K9h8f2FJH1C81eSd6bbSkBP8tcqQHAfSKvuGp2fz6xiVpfShzT9sKPx7DVBphChjxvNd15WcbsCca5oVz1AcUTWHxkdS/<0;1'>/*";
+        let key = descriptor::DescriptorPublicKey::from_str(xpub_str).unwrap();
+        let mut checker = DescKeyChecker::new();
+        assert!(matches!(
+            checker.check(&key),
+            Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
+        ));
+
+        // Hardened wildcard
+        let xpub_str =
+            "[8c3ffb6e/48'/1'/0'/2']tpubDEMt3bpQMa99W81K9h8f2FJH1C81eSd6bbSkBP8tcqQHAfSKvuGp2fz6xiVpfShzT9sKPx7DVBphChjxvNd15WcbsCca5oVz1AcUTWHxkdS/<0;1>/*'";
+        let key = descriptor::DescriptorPublicKey::from_str(xpub_str).unwrap();
+        let mut checker = DescKeyChecker::new();
+        assert!(matches!(
+            checker.check(&key),
+            Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
+        ));
     }
 }
