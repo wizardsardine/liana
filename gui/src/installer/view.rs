@@ -422,18 +422,22 @@ pub fn import_descriptor<'a>(
     )
 }
 
-pub fn signer_xpubs(xpubs: &[String]) -> Element<Message> {
+const BACKUP_WARNING: &str =
+    "Beware to back up the mnemonic as it will NOT be stored on the computer.";
+
+pub fn signer_xpubs<'a>(
+    xpubs: &'a [String],
+    words: &'a [&'static str; 12],
+    did_backup: bool,
+) -> Element<'a, Message> {
     Container::new(
         Column::new()
             .push(
                 Button::new(
                     Row::new().align_items(Alignment::Center).push(
                         Column::new()
-                            .push(text("This computer").bold())
-                            .push(
-                                text("Derive a key from a mnemonic stored on this computer")
-                                    .small(),
-                            )
+                            .push(text("Generate a new mnemonic").bold())
+                            .push(text(BACKUP_WARNING).small().style(color::ORANGE))
                             .spacing(5)
                             .width(Length::Fill),
                     ),
@@ -451,6 +455,39 @@ pub fn signer_xpubs(xpubs: &[String]) -> Element<Message> {
             .push_maybe(if xpubs.is_empty() {
                 None
             } else {
+                Some(
+                    Container::new(words.iter().enumerate().fold(
+                        Column::new().spacing(5),
+                        |acc, (i, w)| {
+                            acc.push(
+                                Row::new()
+                                    .align_items(Alignment::End)
+                                    .push(
+                                        Container::new(text(format!("#{}", i + 1)).small())
+                                            .width(Length::Fixed(50.0)),
+                                    )
+                                    .push(text(*w).bold()),
+                            )
+                        },
+                    ))
+                    .padding(15),
+                )
+            })
+            .push_maybe(if !xpubs.is_empty() {
+                Some(
+                    Container::new(
+                        checkbox(
+                            "I have backed up the mnemonic, show the extended public key",
+                            did_backup,
+                        )
+                        .on_toggle(Message::UserActionDone),
+                    )
+                    .padding(10),
+                )
+            } else {
+                None
+            })
+            .push_maybe(if !xpubs.is_empty() && did_backup {
                 Some(xpubs.iter().fold(Column::new().padding(15), |col, xpub| {
                     col.push(
                         Row::new()
@@ -475,6 +512,8 @@ pub fn signer_xpubs(xpubs: &[String]) -> Element<Message> {
                             ),
                     )
                 }))
+            } else {
+                None
             }),
     )
     .style(theme::Container::Card(theme::Card::Simple))
@@ -571,17 +610,24 @@ pub fn share_xpubs<'a>(
 ) -> Element<'a, Message> {
     layout(
         (0, 0),
-        "Share your public keys",
+        "Share your public keys (Xpubs)",
         Column::new()
             .push(
                 Container::new(
-                    text("Generate an extended public key by selecting a signing device:").bold(),
+                    text("Import an extended public key by selecting a signing device:").bold(),
                 )
                 .width(Length::Fill),
             )
+            .push_maybe(if hws.is_empty() {
+                Some(p1_regular("No signing device connected").style(color::GREY_3))
+            } else {
+                None
+            })
             .spacing(10)
             .push(Column::with_children(hws).spacing(10))
+            .push(Container::new(text("Or create a new random key:").bold()).width(Length::Fill))
             .push(signer)
+            .push(Space::with_height(10))
             .width(Length::Fill),
         true,
         Some(Message::Previous),

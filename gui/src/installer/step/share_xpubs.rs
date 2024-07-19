@@ -32,14 +32,19 @@ pub struct SignerXpubs {
     signer: Arc<Mutex<Signer>>,
     xpubs: Vec<String>,
     next_account: ChildNumber,
+    words: [&'static str; 12],
+    did_backup: bool,
 }
 
 impl SignerXpubs {
     fn new(signer: Arc<Mutex<Signer>>) -> Self {
+        let words = { signer.lock().unwrap().mnemonic() };
         Self {
+            words,
             signer,
             xpubs: Vec::new(),
             next_account: ChildNumber::from_hardened_idx(0).unwrap(),
+            did_backup: false,
         }
     }
 
@@ -57,15 +62,12 @@ impl SignerXpubs {
     }
 
     pub fn view(&self) -> Element<Message> {
-        view::signer_xpubs(&self.xpubs)
+        view::signer_xpubs(&self.xpubs, &self.words, self.did_backup)
     }
 }
 
 pub struct ShareXpubs {
     network: Network,
-
-    shared: bool,
-
     hw_xpubs: Vec<HardwareWalletXpubs>,
     xpubs_signer: SignerXpubs,
 }
@@ -75,7 +77,6 @@ impl ShareXpubs {
         Self {
             network,
             hw_xpubs: Vec::new(),
-            shared: false,
             xpubs_signer: SignerXpubs::new(signer),
         }
     }
@@ -86,7 +87,6 @@ impl Step for ShareXpubs {
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         match message {
-            Message::UserActionDone(shared) => self.shared = shared,
             Message::ImportXpub(fg, res) => {
                 if let Some(hw_xpubs) = self.hw_xpubs.iter_mut().find(|x| x.fingerprint == fg) {
                     hw_xpubs.processing = false;
@@ -104,6 +104,9 @@ impl Step for ShareXpubs {
             }
             Message::UseHotSigner => {
                 self.xpubs_signer.select(self.network);
+            }
+            Message::UserActionDone(done) => {
+                self.xpubs_signer.did_backup = done;
             }
             Message::Select(i) => {
                 if let Some(HardwareWallet::Supported {
