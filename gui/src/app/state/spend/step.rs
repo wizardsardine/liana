@@ -571,6 +571,7 @@ impl Step for DefineSpend {
                     // new coins make more sense to be selected. A redraft is triggered
                     // if all forms are valid (checked in the redraft method)
                     self.redraft(daemon);
+                    self.check_valid();
                 }
                 Err(e) => self.warning = Some(e),
             },
