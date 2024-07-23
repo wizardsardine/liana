@@ -10,7 +10,7 @@ repository](https://github.com/wizardsardine/async-hwi).
 
 Version 1.5.0 and above of the firmware is supported for use in P2WSH descriptors.
 
-Support for use in Taproot descriptors has been implemented but not yet released.
+For use in Taproot descriptors you should use version 1.9.0 or higher.
 
 ## [Ledger](https://github.com/LedgerHQ/app-bitcoin-new)
 
@@ -28,11 +28,8 @@ Support for use in Taproot descriptors is not yet available in the firmware.
 Support for use in both P2WSH and Taproot descriptors has only been released in Beta as of this
 writing. It is only supported by the [Edge
 firmware](https://github.com/Coldcard/firmware?tab=readme-ov-file#long-lived-branches).
+For use in Taproot descriptors you should use version 6.3.3 or higher.
 
-As of this writing, Coldcard on Taproot will only be usable for descriptors which only use a single
-key as their primary path. This is due to a discrepancy in how Coldcard derives [deterministically
-unspendable Taproot internal
-keys](https://delvingbitcoin.org/t/unspendable-keys-in-descriptors/304).
 
 ## [Jade](https://github.com/Blockstream/Jade)
 

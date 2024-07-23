@@ -7,7 +7,7 @@ This document is a short set of instructions for trying out Liana on Bitcoin sig
 give any nuance, details or describe alternative configurations.
 
 This guide will make use Liana as a "hot wallet", and use the "Liana managed" `bitcoind` option.
-You can also connect your Ledger or SpecterDIY hardware signer if you have some at hand (and maybe by the time you read this guide, Bitbox, Coldcard and Jade - integration is coming soon).
+You can find [here](./SIGNING_DEVICES.md) the list of supported signing devices.
 If you'd like to try out Liana using emulators of
 hardware signing device you can use the [Specter
 simulator](https://github.com/cryptoadvance/specter-diy/blob/master/docs/simulator.md) or the
