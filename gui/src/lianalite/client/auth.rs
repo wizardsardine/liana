@@ -87,9 +87,18 @@ impl AuthClient {
         req
     }
 
+    /// the redirect_to is setup so the supabase html template has the information
+    /// that user is using the desktop to authenticate and will display the token
+    /// instead of the confirmation link button.
     pub async fn sign_in_otp(&self) -> Result<(), AuthError> {
         let response: Response = self
-            .request(Method::POST, &format!("{}/auth/v1/otp", self.url))
+            .request(
+                Method::POST,
+                &format!(
+                    "{}/auth/v1/otp?redirect_to=https://desktop.lianalite.com",
+                    self.url
+                ),
+            )
             .json(&SignInOtp {
                 email: &self.email,
                 create_user: true,
