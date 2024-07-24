@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     app::{config as gui_config, settings as gui_settings},
-    hw::HardwareWallets,
+    hw::{HardwareWalletMessage, HardwareWallets},
     signer::Signer,
 };
 
@@ -158,7 +158,7 @@ impl Installer {
             Message::ShareXpubs => {
                 self.steps = vec![
                     Welcome::default().into(),
-                    ShareXpubs::new(self.network, self.signer.clone()).into(),
+                    ShareXpubs::new(self.network, self.signer.clone(), false).into(),
                 ];
                 self.next()
             }
@@ -175,6 +175,11 @@ impl Installer {
                 ];
                 self.next()
             }
+            Message::HardwareWallets(HardwareWalletMessage::LockModal(upgrading)) => self
+                .steps
+                .get_mut(self.current)
+                .expect("There is always a step")
+                .update(&mut self.hws, Message::LockModal(upgrading)),
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {

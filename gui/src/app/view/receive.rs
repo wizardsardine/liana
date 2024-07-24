@@ -11,7 +11,7 @@ use iced::{
 use liana::miniscript::bitcoin::{
     self,
     bip32::{ChildNumber, Fingerprint},
-    Address,
+    Address, Network,
 };
 
 use liana_ui::{
@@ -138,6 +138,8 @@ pub fn verify_address_modal<'a>(
     chosen_hws: &HashSet<Fingerprint>,
     address: &Address,
     derivation_index: &ChildNumber,
+    upgrading: bool,
+    network: Network,
 ) -> Element<'a, Message> {
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
@@ -201,6 +203,8 @@ pub fn verify_address_modal<'a>(
                                     } else {
                                         false
                                     },
+                                    upgrading,
+                                    network,
                                 ))
                             },
                         ))

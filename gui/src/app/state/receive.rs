@@ -9,6 +9,7 @@ use liana::miniscript::bitcoin::{
 };
 use liana_ui::{component::modal, widget::*};
 
+use crate::hw::{hw_subscriptions, HardwareWalletMessage};
 use crate::{
     app::{
         cache::Cache,
@@ -19,12 +20,11 @@ use crate::{
         view,
         wallet::Wallet,
     },
+    daemon::{
+        model::{LabelItem, Labelled},
+        Daemon,
+    },
     hw::{HardwareWallet, HardwareWallets},
-};
-
-use crate::daemon::{
-    model::{LabelItem, Labelled},
-    Daemon,
 };
 
 pub enum Modal {
@@ -89,7 +89,11 @@ impl State for ReceivePanel {
 
         match &self.modal {
             Modal::VerifyAddress(m) => modal::Modal::new(content, m.view())
-                .on_blur(Some(view::Message::Close))
+                .on_blur(if !m.upgrading {
+                    Some(view::Message::Close)
+                } else {
+                    None
+                })
                 .into(),
             Modal::ShowQrCode(m) => modal::Modal::new(content, m.view())
                 .on_blur(Some(view::Message::Close))
@@ -152,6 +156,7 @@ impl State for ReceivePanel {
                         .derivation_indexes
                         .get(i)
                         .expect("Must be present"),
+                    self.wallet.main_descriptor.is_taproot(),
                 ));
                 Command::none()
             }
@@ -222,6 +227,8 @@ pub struct VerifyAddressModal {
     hws: HardwareWallets,
     address: Address,
     derivation_index: ChildNumber,
+    taproot: bool,
+    pub upgrading: bool,
 }
 
 impl VerifyAddressModal {
@@ -231,6 +238,7 @@ impl VerifyAddressModal {
         network: Network,
         address: Address,
         derivation_index: ChildNumber,
+        taproot: bool,
     ) -> Self {
         Self {
             warning: None,
@@ -238,23 +246,28 @@ impl VerifyAddressModal {
             hws: HardwareWallets::new(data_dir, network).with_wallet(wallet),
             address,
             derivation_index,
+            taproot,
+            upgrading: false,
         }
     }
 }
 
 impl VerifyAddressModal {
     fn view(&self) -> Element<view::Message> {
+        let network = self.address.network();
         view::receive::verify_address_modal(
             self.warning.as_ref(),
             &self.hws.list,
             &self.chosen_hws,
             &self.address,
             &self.derivation_index,
+            self.upgrading,
+            *network,
         )
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        hw_subscriptions(&self.hws, Some(self.taproot)).map(Message::HardwareWallets)
     }
 
     fn update(
@@ -264,6 +277,22 @@ impl VerifyAddressModal {
         message: Message,
     ) -> Command<Message> {
         match message {
+            Message::HardwareWallets(HardwareWalletMessage::LockModal(upgrading)) => {
+                self.upgrading = upgrading;
+                Command::none()
+            }
+            Message::View(view::Message::UpgradeLedger(id, network)) => {
+                match self
+                    .hws
+                    .update(HardwareWalletMessage::UpgradeLedger(id, network))
+                {
+                    Ok(cmd) => cmd.map(Message::HardwareWallets),
+                    Err(e) => {
+                        self.warning = Some(e.into());
+                        Command::none()
+                    }
+                }
+            }
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {

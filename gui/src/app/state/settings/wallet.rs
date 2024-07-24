@@ -17,7 +17,10 @@ use crate::{
         cache::Cache, error::Error, message::Message, settings, state::State, view, wallet::Wallet,
     },
     daemon::{Daemon, DaemonBackend},
-    hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
+    hw::{
+        hw_subscriptions, HardwareWallet, HardwareWalletConfig, HardwareWalletMessage,
+        HardwareWallets,
+    },
 };
 
 pub struct WalletSettingsState {
@@ -84,7 +87,11 @@ impl State for WalletSettingsState {
         );
         if let Some(m) = &self.modal {
             modal::Modal::new(content, m.view())
-                .on_blur(Some(view::Message::Close))
+                .on_blur(if !m.upgrading {
+                    Some(view::Message::Close)
+                } else {
+                    None
+                })
                 .into()
         } else {
             content
@@ -201,6 +208,7 @@ pub struct RegisterWalletModal {
     hws: HardwareWallets,
     registered: HashSet<Fingerprint>,
     processing: bool,
+    pub upgrading: bool,
 }
 
 impl RegisterWalletModal {
@@ -217,23 +225,37 @@ impl RegisterWalletModal {
             wallet,
             processing: false,
             registered,
+            upgrading: false,
         }
     }
 }
 
 impl RegisterWalletModal {
     fn view(&self) -> Element<view::Message> {
+        let upgrading = self.hws.list.iter().any(|hw| hw.is_upgrade_in_progress());
+        let network = if self
+            .wallet
+            .main_descriptor
+            .all_xpubs_net_is(Network::Bitcoin)
+        {
+            Network::Bitcoin
+        } else {
+            Network::Testnet
+        };
         view::settings::register_wallet_modal(
             self.warning.as_ref(),
             &self.hws.list,
             self.processing,
             self.chosen_hw,
             &self.registered,
+            upgrading,
+            network,
         )
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        hw_subscriptions(&self.hws, Some(self.wallet.main_descriptor.is_taproot()))
+            .map(Message::HardwareWallets)
     }
 
     fn update(
@@ -247,6 +269,22 @@ impl RegisterWalletModal {
                 self.chosen_hw = None;
                 self.warning = None;
                 Command::none()
+            }
+            Message::HardwareWallets(HardwareWalletMessage::LockModal(upgrading)) => {
+                self.upgrading = upgrading;
+                Command::none()
+            }
+            Message::View(view::Message::UpgradeLedger(id, network)) => {
+                match self
+                    .hws
+                    .update(HardwareWalletMessage::UpgradeLedger(id, network))
+                {
+                    Ok(cmd) => cmd.map(Message::HardwareWallets),
+                    Err(e) => {
+                        self.warning = Some(e.into());
+                        Command::none()
+                    }
+                }
             }
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),

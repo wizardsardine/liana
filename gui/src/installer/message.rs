@@ -37,6 +37,7 @@ pub enum Message {
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
     MnemonicWord(usize, String),
     ImportMnemonic(bool),
+    LockModal(bool),
 }
 
 #[derive(Debug, Clone)]

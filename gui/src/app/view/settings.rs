@@ -715,6 +715,8 @@ pub fn register_wallet_modal<'a>(
     processing: bool,
     chosen_hw: Option<usize>,
     registered: &HashSet<Fingerprint>,
+    upgrading: bool,
+    network: Network,
 ) -> Element<'a, Message> {
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
@@ -741,6 +743,8 @@ pub fn register_wallet_modal<'a>(
                                         } else {
                                             false
                                         },
+                                    upgrading,
+                                    network,
                                 ))
                             },
                         ))
@@ -750,6 +754,6 @@ pub fn register_wallet_modal<'a>(
                 .width(Length::Fill)
                 .align_items(Alignment::Center),
         ))
-        .width(Length::Fixed(500.0))
+        .width(Length::Fixed(600.0))
         .into()
 }

@@ -18,6 +18,7 @@ use liana_ui::{
     widget::Element,
 };
 
+use crate::hw::{hw_subscriptions, HardwareWalletMessage};
 use crate::{
     app::{
         cache::Cache,
@@ -410,6 +411,7 @@ pub struct SignAction {
     signed: HashSet<Fingerprint>,
     is_saved: bool,
     display_modal: bool,
+    upgrading: bool,
 }
 
 impl SignAction {
@@ -428,13 +430,15 @@ impl SignAction {
             signed,
             is_saved,
             display_modal: true,
+            upgrading: false,
         }
     }
 }
 
 impl Action for SignAction {
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        hw_subscriptions(&self.hws, Some(self.wallet.main_descriptor.is_taproot()))
+            .map(Message::HardwareWallets)
     }
 
     fn update(
@@ -512,7 +516,20 @@ impl Action for SignAction {
                 },
                 Err(e) => self.error = Some(e),
             },
-
+            Message::HardwareWallets(HardwareWalletMessage::LockModal(upgrading)) => {
+                self.upgrading = upgrading
+            }
+            Message::View(view::Message::UpgradeLedger(id, network)) => {
+                match self
+                    .hws
+                    .update(HardwareWalletMessage::UpgradeLedger(id, network))
+                {
+                    Ok(cmd) => return cmd.map(Message::HardwareWallets),
+                    Err(e) => {
+                        self.error = Some(e.into());
+                    }
+                }
+            }
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => {
                     return cmd.map(Message::HardwareWallets);
@@ -526,6 +543,15 @@ impl Action for SignAction {
         Command::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        let network = if self
+            .wallet
+            .main_descriptor
+            .all_xpubs_net_is(Network::Bitcoin)
+        {
+            Network::Bitcoin
+        } else {
+            Network::Testnet
+        };
         let content = toast::Manager::new(
             content,
             view::psbt::sign_action_toasts(self.error.as_ref(), &self.hws.list, &self.signing),
@@ -544,9 +570,15 @@ impl Action for SignAction {
                         .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
                     &self.signed,
                     &self.signing,
+                    self.upgrading,
+                    network,
                 ),
             )
-            .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+            .on_blur(if !self.upgrading {
+                Some(view::Message::Spend(view::SpendTxMessage::Cancel))
+            } else {
+                None
+            })
             .into()
         } else {
             content
