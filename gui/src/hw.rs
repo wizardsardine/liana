@@ -1,6 +1,8 @@
 use iced::Command;
+use ledger_manager::utils::InstallStep;
 use std::{
     collections::HashMap,
+    ffi::CStr,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -50,6 +52,10 @@ pub enum HardwareWallet {
         version: Option<Version>,
         registered: Option<bool>,
         alias: Option<String>,
+        upgrade_in_progress: bool,
+        upgrade_step: Option<InstallStep>,
+        upgrade_log: Vec<String>,
+        upgrade_testnet: bool,
     },
 }
 
@@ -81,10 +87,14 @@ impl HardwareWallet {
             version,
             registered: None,
             alias: aliases.and_then(|aliases| aliases.get(&fingerprint).cloned()),
+            upgrade_in_progress: false,
+            upgrade_step: None,
+            upgrade_log: Vec::new(),
+            upgrade_testnet: false,
         })
     }
 
-    fn id(&self) -> &String {
+    pub fn id(&self) -> &String {
         match self {
             Self::Locked { id, .. } => id,
             Self::Unsupported { id, .. } => id,
@@ -110,6 +120,82 @@ impl HardwareWallet {
 
     pub fn is_supported(&self) -> bool {
         matches!(self, Self::Supported { .. })
+    }
+
+    pub fn is_upgrade_in_progress(&self) -> bool {
+        if let Self::Supported {
+            upgrade_in_progress,
+            ..
+        } = self
+        {
+            *upgrade_in_progress
+        } else {
+            false
+        }
+    }
+
+    pub fn start_upgrade(&mut self, network: Network) {
+        if let Self::Supported {
+            upgrade_in_progress,
+            upgrade_step,
+            upgrade_testnet,
+            id,
+            ..
+        } = self
+        {
+            log::info!("HardwareWallet.start_upgrade({}, {})", id, network);
+            *upgrade_step = None;
+            *upgrade_in_progress = true;
+            *upgrade_testnet = network != Network::Bitcoin;
+        }
+    }
+
+    pub fn upgrade_ended(&mut self) {
+        if let Self::Supported {
+            upgrade_in_progress,
+            upgrade_step,
+            upgrade_log,
+            id,
+            ..
+        } = self
+        {
+            log::info!("HardwareWallet.upgrade_ended({})", id);
+            *upgrade_in_progress = false;
+            *upgrade_step = None;
+            *upgrade_log = Vec::new();
+        }
+    }
+
+    pub fn upgrade_failed(&mut self) {
+        if let Self::Supported {
+            upgrade_in_progress,
+            upgrade_step,
+            id,
+            ..
+        } = self
+        {
+            log::info!("HardwareWallet.upgrade_failed({})", id);
+            *upgrade_in_progress = false;
+            *upgrade_step = Some(InstallStep::Error("Failed to install app".into()));
+        }
+    }
+
+    pub fn push_log(&mut self, log: String) {
+        if let Self::Supported {
+            upgrade_log, id, ..
+        } = self
+        {
+            log::info!("HardwareWallet.push_log({}, {})", log, id);
+            upgrade_log.push(log);
+        }
+    }
+
+    pub fn logs(&self) -> Vec<String> {
+        if let Self::Supported { upgrade_log, .. } = self {
+            upgrade_log.clone()
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -155,6 +241,7 @@ pub struct HardwareWallets {
     pub aliases: HashMap<Fingerprint, String>,
     wallet: Option<Arc<Wallet>>,
     datadir_path: PathBuf,
+    refresh_index: u8,
 }
 
 impl std::fmt::Debug for HardwareWallets {
@@ -171,6 +258,7 @@ impl HardwareWallets {
             aliases: HashMap::new(),
             wallet: None,
             datadir_path,
+            refresh_index: 0,
         }
     }
 
@@ -255,6 +343,10 @@ impl HardwareWallets {
                                                         version: None,
                                                         registered: Some(registered),
                                                         alias: None,
+                                                        upgrade_in_progress: false,
+                                                        upgrade_log: Vec::new(),
+                                                        upgrade_step: None,
+                                                        upgrade_testnet: false,
                                                     })
                                                 } else {
                                                     Ok(HardwareWallet::Unsupported {
@@ -275,6 +367,10 @@ impl HardwareWallets {
                                                     version: None,
                                                     registered: Some(registered),
                                                     alias: None,
+                                                    upgrade_in_progress: false,
+                                                    upgrade_log: Vec::new(),
+                                                    upgrade_step: None,
+                                                    upgrade_testnet: false,
                                                 })
                                             }
                                         },
@@ -341,16 +437,25 @@ impl HardwareWallets {
         }
     }
 
-    pub fn refresh(&self) -> iced::Subscription<HardwareWalletMessage> {
+    pub fn reset_refresh(&mut self) {
+        self.refresh_index = self.refresh_index.wrapping_add(1);
+    }
+
+    pub fn refresh(&self, taproot: bool) -> iced::Subscription<HardwareWalletMessage> {
         iced::subscription::unfold(
-            format!("refresh-{}", self.network),
+            format!(
+                "refresh-{}-{}-{}",
+                self.network, self.refresh_index, taproot
+            ),
             State {
                 network: self.network,
                 keys_aliases: self.aliases.clone(),
                 wallet: self.wallet.clone(),
                 connected_supported_hws: Vec::new(),
+                need_upgrade_hws: Vec::new(),
                 api: None,
                 datadir_path: self.datadir_path.clone(),
+                taproot,
             },
             refresh,
         )
@@ -362,8 +467,10 @@ struct State {
     keys_aliases: HashMap<Fingerprint, String>,
     wallet: Option<Arc<Wallet>>,
     connected_supported_hws: Vec<String>,
+    need_upgrade_hws: Vec<String>,
     api: Option<ledger::HidApi>,
     datadir_path: PathBuf,
+    taproot: bool,
 }
 
 async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
@@ -518,6 +625,10 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                                 version,
                                 registered: Some(registered),
                                 alias: state.keys_aliases.get(&fingerprint).cloned(),
+                                upgrade_in_progress: false,
+                                upgrade_log: Vec::new(),
+                                upgrade_step: None,
+                                upgrade_testnet: false,
                             });
                         } else {
                             hws.push(HardwareWallet::Unsupported {
@@ -619,12 +730,7 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
         }
     }
     for detected in ledger::Ledger::<ledger::TransportHID>::enumerate(api) {
-        let id = format!(
-            "ledger-{:?}-{}-{}",
-            detected.path(),
-            detected.vendor_id(),
-            detected.product_id()
-        );
+        let id = ledger_id(detected.path(), detected.vendor_id(), detected.product_id());
         if state.connected_supported_hws.contains(&id) {
             still.push(id);
             continue;
@@ -659,6 +765,10 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
                             version,
                             registered: Some(registered),
                             alias: state.keys_aliases.get(&fingerprint).cloned(),
+                            upgrade_in_progress: false,
+                            upgrade_log: Vec::new(),
+                            upgrade_step: None,
+                            upgrade_testnet: false,
                         });
                     } else {
                         hws.push(HardwareWallet::Unsupported {
@@ -790,6 +900,10 @@ async fn handle_jade_device(
                             version,
                             registered: Some(registered),
                             alias,
+                            upgrade_in_progress: false,
+                            upgrade_log: Vec::new(),
+                            upgrade_step: None,
+                            upgrade_testnet: false,
                         })
                     } else {
                         Ok(HardwareWallet::Unsupported {
@@ -808,6 +922,10 @@ async fn handle_jade_device(
                         version,
                         registered: Some(false),
                         alias,
+                        upgrade_in_progress: false,
+                        upgrade_log: Vec::new(),
+                        upgrade_step: None,
+                        upgrade_testnet: false,
                     })
                 }
             }
@@ -823,6 +941,10 @@ impl<'a, T> AsRef<T> for AsRefWrap<'a, T> {
     fn as_ref(&self) -> &T {
         self.inner
     }
+}
+
+pub fn ledger_id(path: &CStr, vendor_id: u16, product_id: u16) -> String {
+    format!("ledger-{:?}-{}-{}", path, vendor_id, product_id,)
 }
 
 fn ledger_version_supported(version: Option<&Version>) -> bool {
@@ -881,4 +1003,14 @@ pub fn is_compatible_with_tapminiscript(
                     (None, None) => true,
                 }
         })
+}
+
+pub fn ledger_need_taproot_upgrade(device_kind: &DeviceKind, version: &Option<Version>) -> bool {
+    // if let (Some(version), DeviceKind::Ledger) = (version, device_kind) {
+    //     ledger_version_supported(Some(version))
+    //         && !is_compatible_with_tapminiscript(device_kind, Some(version))
+    // } else {
+    //     false
+    // }
+    true
 }

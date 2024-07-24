@@ -158,7 +158,7 @@ impl Installer {
             Message::ShareXpubs => {
                 self.steps = vec![
                     Welcome::default().into(),
-                    ShareXpubs::new(self.network, self.signer.clone()).into(),
+                    ShareXpubs::new(self.network, self.signer.clone(), false).into(),
                 ];
                 self.next()
             }

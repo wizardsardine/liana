@@ -19,12 +19,14 @@ use crate::{
         view,
         wallet::Wallet,
     },
+    daemon::{
+        model::{LabelItem, Labelled},
+        Daemon,
+    },
     hw::{HardwareWallet, HardwareWallets},
-};
-
-use crate::daemon::{
-    model::{LabelItem, Labelled},
-    Daemon,
+    ledger_upgrade::{
+        maybe_ledger_upgrade_subscription, maybe_start_upgrade, update_upgrade_state,
+    },
 };
 
 pub enum Modal {
@@ -152,6 +154,7 @@ impl State for ReceivePanel {
                         .derivation_indexes
                         .get(i)
                         .expect("Must be present"),
+                    self.wallet.main_descriptor.is_taproot(),
                 ));
                 Command::none()
             }
@@ -222,6 +225,7 @@ pub struct VerifyAddressModal {
     hws: HardwareWallets,
     address: Address,
     derivation_index: ChildNumber,
+    taproot: bool,
 }
 
 impl VerifyAddressModal {
@@ -231,6 +235,7 @@ impl VerifyAddressModal {
         network: Network,
         address: Address,
         derivation_index: ChildNumber,
+        taproot: bool,
     ) -> Self {
         Self {
             warning: None,
@@ -238,6 +243,7 @@ impl VerifyAddressModal {
             hws: HardwareWallets::new(data_dir, network).with_wallet(wallet),
             address,
             derivation_index,
+            taproot,
         }
     }
 }
@@ -254,7 +260,9 @@ impl VerifyAddressModal {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        let mut subs = maybe_ledger_upgrade_subscription(&self.hws);
+        subs.push(self.hws.refresh(self.taproot).map(Message::HardwareWallets));
+        Subscription::batch(subs)
     }
 
     fn update(
@@ -295,6 +303,14 @@ impl VerifyAddressModal {
                 } else {
                     Command::none()
                 }
+            }
+            Message::UpgradeLedger(id, network) => {
+                maybe_start_upgrade(id, &mut self.hws, network);
+                Command::none()
+            }
+            Message::Upgrade(msg) => {
+                update_upgrade_state(msg, &mut self.hws);
+                Command::none()
             }
             _ => Command::none(),
         }

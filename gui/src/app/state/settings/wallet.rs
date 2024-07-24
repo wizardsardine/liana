@@ -18,6 +18,9 @@ use crate::{
     },
     daemon::{Daemon, DaemonBackend},
     hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
+    ledger_upgrade::{
+        maybe_ledger_upgrade_subscription, maybe_start_upgrade, update_upgrade_state,
+    },
 };
 
 pub struct WalletSettingsState {
@@ -233,7 +236,13 @@ impl RegisterWalletModal {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        let mut subs = maybe_ledger_upgrade_subscription(&self.hws);
+        subs.push(
+            self.hws
+                .refresh(self.wallet.main_descriptor.is_taproot())
+                .map(Message::HardwareWallets),
+        );
+        Subscription::batch(subs)
     }
 
     fn update(
@@ -297,6 +306,14 @@ impl RegisterWalletModal {
                 } else {
                     Command::none()
                 }
+            }
+            Message::UpgradeLedger(id, network) => {
+                maybe_start_upgrade(id, &mut self.hws, network);
+                Command::none()
+            }
+            Message::Upgrade(msg) => {
+                update_upgrade_state(msg, &mut self.hws);
+                Command::none()
             }
             _ => Command::none(),
         }

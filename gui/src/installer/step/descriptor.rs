@@ -25,14 +25,17 @@ use liana_ui::{
 
 use async_hwi::{DeviceKind, Version};
 
-use crate::hw;
 use crate::{
     app::{settings::KeySetting, wallet::wallet_name},
+    hw,
     hw::{HardwareWallet, HardwareWallets},
     installer::{
         message::{self, Message},
         step::{Context, Step},
         view, Error,
+    },
+    ledger_upgrade::{
+        maybe_ledger_upgrade_subscription, maybe_start_upgrade, update_upgrade_state,
     },
     signer::Signer,
 };
@@ -989,13 +992,24 @@ impl DescriptorEditModal for EditXpubModal {
                     }
                 }
             },
+            Message::UpgradeLedger(id, network) => {
+                maybe_start_upgrade(id, hws, network);
+            }
+            Message::Upgrade(msg) => {
+                update_upgrade_state(msg, hws);
+            }
             _ => {}
         };
         Command::none()
     }
 
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        let mut subs = maybe_ledger_upgrade_subscription(hws);
+        subs.push(
+            hws.refresh(self.device_must_support_tapminiscript)
+                .map(Message::HardwareWallets),
+        );
+        Subscription::batch(subs)
     }
 
     fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
@@ -1023,6 +1037,7 @@ impl DescriptorEditModal for EditXpubModal {
                                 && self.form_xpub.valid
                                 && !self.form_xpub.value.is_empty(),
                             self.device_must_support_tapminiscript,
+                            self.network,
                         ))
                     }
                 })
@@ -1287,6 +1302,12 @@ impl Step for RegisterDescriptor {
             Message::UserActionDone(done) => {
                 self.done = done;
             }
+            Message::UpgradeLedger(id, network) => {
+                maybe_start_upgrade(id, hws, network);
+            }
+            Message::Upgrade(msg) => {
+                update_upgrade_state(msg, hws);
+            }
             _ => {}
         };
         Command::none()
@@ -1301,7 +1322,14 @@ impl Step for RegisterDescriptor {
         true
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        let mut subs = maybe_ledger_upgrade_subscription(hws);
+        if let Some(descriptor) = self.descriptor.as_ref() {
+            subs.push(
+                hws.refresh(descriptor.is_taproot())
+                    .map(Message::HardwareWallets),
+            )
+        }
+        Subscription::batch(subs)
     }
     fn load(&self) -> Command<Message> {
         Command::none()

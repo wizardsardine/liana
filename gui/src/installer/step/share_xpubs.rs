@@ -70,14 +70,16 @@ pub struct ShareXpubs {
     network: Network,
     hw_xpubs: Vec<HardwareWalletXpubs>,
     xpubs_signer: SignerXpubs,
+    taproot: bool,
 }
 
 impl ShareXpubs {
-    pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
+    pub fn new(network: Network, signer: Arc<Mutex<Signer>>, taproot: bool) -> Self {
         Self {
             network,
             hw_xpubs: Vec::new(),
             xpubs_signer: SignerXpubs::new(signer),
+            taproot,
         }
     }
 }
@@ -150,7 +152,7 @@ impl Step for ShareXpubs {
     }
 
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        hws.refresh(self.taproot).map(Message::HardwareWallets)
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {

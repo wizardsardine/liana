@@ -1,17 +1,25 @@
-use async_hwi::utils::extract_keys_and_template;
-use iced::widget::{
-    checkbox, container, pick_list, radio, scrollable, scrollable::Properties, slider, Button,
-    Space, TextInput,
+use async_hwi::{bitbox::api::btc::Fingerprint, utils::extract_keys_and_template, DeviceKind};
+use iced::{
+    alignment,
+    widget::{
+        checkbox, container, pick_list, progress_bar, radio, scrollable, scrollable::Properties,
+        slider, Button, Space, TextInput,
+    },
+    Alignment, Length,
 };
-use iced::{alignment, widget::progress_bar, Alignment, Length};
 
-use async_hwi::DeviceKind;
-use liana_ui::component::text;
+use liana::{
+    descriptors::LianaDescriptor,
+    miniscript::bitcoin::{self, Network},
+};
+use liana_ui::component::{
+    hw::{ledger_need_upgrade, ledger_upgrading},
+    text,
+};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::{collections::HashSet, str::FromStr};
 
-use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
 use liana_ui::{
     color,
     component::{
@@ -25,7 +33,10 @@ use liana_ui::{
 
 use crate::{
     bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
-    hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
+    hw::{
+        is_compatible_with_tapminiscript, ledger_need_taproot_upgrade, HardwareWallet,
+        UnsupportedReason,
+    },
     installer::{
         message::{self, Message},
         prompt,
@@ -646,6 +657,14 @@ pub fn register_descriptor<'a>(
     done: bool,
     created_desc: bool,
 ) -> Element<'a, Message> {
+    let network = if LianaDescriptor::from_str(&descriptor)
+        .expect("Descriptor should be valid")
+        .all_xpubs_net_is(Network::Bitcoin)
+    {
+        Network::Bitcoin
+    } else {
+        Network::Testnet
+    };
     let displayed_descriptor = if let Ok((template, keys)) =
         extract_keys_and_template::<String>(&descriptor)
     {
@@ -759,6 +778,7 @@ pub fn register_descriptor<'a>(
                                         .map(|fg| registered.contains(&fg))
                                         .unwrap_or(false),
                                     false,
+                                    network,
                                 ))
                             }),
                     )
@@ -1710,29 +1730,32 @@ pub fn hw_list_view(
     processing: bool,
     selected: bool,
     device_must_support_taproot: bool,
+    network: Network,
 ) -> Element<Message> {
+    let mut upgrade = false;
     let mut bttn = Button::new(match hw {
         HardwareWallet::Supported {
             kind,
             version,
             fingerprint,
             alias,
+            id,
             ..
         } => {
             if chosen && processing {
                 hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             } else if selected {
                 hw::selected_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
-            } else if device_must_support_taproot
-                && !is_compatible_with_tapminiscript(kind, version.as_ref())
-            {
-                hw::warning_hardware_wallet(
-                    kind,
-                    version.as_ref(),
-                    fingerprint,
-                    alias.as_ref(),
-                    "Device firmware version does not support taproot miniscript",
-                )
+            } else if device_must_support_taproot && ledger_need_taproot_upgrade(kind, version) {
+                upgrade = true;
+                match hw.is_upgrade_in_progress() {
+                    false => ledger_need_upgrade(
+                        kind,
+                        version.clone(),
+                        Message::UpgradeLedger(id.clone(), network),
+                    ),
+                    true => ledger_upgrading(kind, version.clone(), hw.logs()),
+                }
             } else {
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             }
@@ -1741,6 +1764,7 @@ pub fn hw_list_view(
             version,
             kind,
             reason,
+            id,
             ..
         } => match reason {
             UnsupportedReason::NotPartOfWallet(fg) => {
@@ -1749,15 +1773,29 @@ pub fn hw_list_view(
             UnsupportedReason::WrongNetwork => {
                 hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
             }
-            _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
+            _ => {
+                if ledger_need_taproot_upgrade(kind, version) {
+                    match hw.is_upgrade_in_progress() {
+                        false => ledger_need_upgrade(
+                            kind,
+                            version.clone(),
+                            Message::UpgradeLedger(id.clone(), network),
+                        ),
+                        true => ledger_upgrading(kind, version.clone(), hw.logs()),
+                    }
+                } else {
+                    hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
+                }
+            }
         },
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
     })
     .style(theme::Button::Border)
-    .width(Length::Fill);
-    if !processing && hw.is_supported() {
+    .width(Length::Fill)
+    .padding(1);
+    if !processing && hw.is_supported() && !upgrade {
         bttn = bttn.on_press(Message::Select(i));
     }
     Container::new(bttn)

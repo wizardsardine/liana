@@ -1,4 +1,7 @@
-use liana::miniscript::{bitcoin::bip32::Fingerprint, DescriptorPublicKey};
+use liana::miniscript::{
+    bitcoin::{bip32::Fingerprint, Network},
+    DescriptorPublicKey,
+};
 use std::path::PathBuf;
 
 use super::Error;
@@ -6,6 +9,7 @@ use crate::{
     bitcoind::{Bitcoind, ConfigField, RpcAuthType},
     download::Progress,
     hw::HardwareWalletMessage,
+    ledger_upgrade::UpgradeMessage,
 };
 use async_hwi::{DeviceKind, Version};
 
@@ -37,6 +41,8 @@ pub enum Message {
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
     MnemonicWord(usize, String),
     ImportMnemonic(bool),
+    UpgradeLedger(String, Network),
+    Upgrade(UpgradeMessage),
 }
 
 #[derive(Debug, Clone)]
