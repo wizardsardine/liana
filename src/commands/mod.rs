@@ -134,7 +134,7 @@ impl From<SpendCreationError> for CommandError {
 pub enum RbfErrorInfo {
     MissingFeerate,
     SuperfluousFeerate,
-    TooLowFeerate(u64),
+    TooLowFeerate(u64, u64),
     NotSignaling,
 }
 
@@ -147,7 +147,9 @@ impl fmt::Display for RbfErrorInfo {
             Self::SuperfluousFeerate => {
                 write!(f, "A feerate must not be provided if creating a cancel. We'll always use the smallest one which satisfies the RBF rules.")
             }
-            Self::TooLowFeerate(r) => write!(f, "Feerate too low: {}.", r),
+            Self::TooLowFeerate(r, m) => {
+                write!(f, "Feerate {} too low for minimum feerate {}.", r, m)
+            }
             Self::NotSignaling => write!(f, "Replacement candidate does not signal for RBF."),
         }
     }
@@ -823,6 +825,7 @@ impl DaemonControl {
         if feerate_vb < min_feerate_vb {
             return Err(CommandError::RbfError(RbfErrorInfo::TooLowFeerate(
                 feerate_vb,
+                min_feerate_vb,
             )));
         }
         // Get info about prev outputs to determine replacement outputs.
