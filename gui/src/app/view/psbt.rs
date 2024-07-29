@@ -978,9 +978,14 @@ fn change_view(output: &TxOut, network: Network) -> Element<Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .unwrap()
         .to_string();
-    Row::new()
+    Column::new()
         .width(Length::Fill)
         .spacing(5)
+        .push(
+            Row::new()
+                .push(Space::with_width(Length::Fill))
+                .push(amount(&output.value)),
+        )
         .push(
             Row::new()
                 .align_items(Alignment::Center)
@@ -999,7 +1004,6 @@ fn change_view(output: &TxOut, network: Network) -> Element<Message> {
                         ),
                 ),
         )
-        .push(amount(&output.value))
         .into()
 }
 
