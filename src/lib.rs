@@ -196,7 +196,9 @@ fn setup_sqlite(
     } else {
         None
     };
+
     let sqlite = SqliteDb::new(db_path, options, secp)?;
+    sqlite.maybe_apply_migrations()?;
     sqlite.sanity_check(config.bitcoin_config.network, &config.main_descriptor)?;
     log::info!("Database initialized and checked.");
 

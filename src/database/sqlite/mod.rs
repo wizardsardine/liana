@@ -140,6 +140,7 @@ pub struct SqliteDb {
 impl SqliteDb {
     /// Instanciate an SQLite database either from an existing database file or by creating a fresh
     /// one.
+    /// NOTE: don't forget to apply any migration with `maybe_apply_migration` if necessary.
     pub fn new(
         db_path: path::PathBuf,
         fresh_options: Option<FreshDbOptions>,
@@ -155,9 +156,13 @@ impl SqliteDb {
         }
 
         log::info!("Checking if the database needs upgrading.");
-        maybe_apply_migration(&db_path)?;
 
         Ok(SqliteDb { db_path })
+    }
+
+    /// If the database version is older than expected, migrate it to the current version.
+    pub fn maybe_apply_migrations(&self) -> Result<(), SqliteDbError> {
+        maybe_apply_migration(&self.db_path)
     }
 
     /// Get a new connection to the database.
@@ -959,7 +964,11 @@ CREATE TABLE labels (
         let db = SqliteDb::new(db_path.clone(), Some(options.clone()), &secp).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
             .unwrap();
+        let db = SqliteDb::new(db_path.clone(), None, &secp).unwrap();
+        db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
+            .unwrap();
         let db = SqliteDb::new(db_path, None, &secp).unwrap();
+        db.maybe_apply_migrations().unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
             .unwrap();
 
@@ -2231,10 +2240,7 @@ CREATE TABLE labels (
         create_fresh_db(&db_path, options, &secp).unwrap();
 
         {
-            // Don't use SqliteDb::new() in order not to apply migration.
-            let db = SqliteDb {
-                db_path: db_path.clone(),
-            };
+            let db = SqliteDb::new(db_path.clone(), None, &secp).unwrap();
             let mut conn = db.connection().unwrap();
             assert!(conn.db_version() == 3);
 
@@ -2423,6 +2429,7 @@ CREATE TABLE labels (
 
         // SqliteDb new is doing the migration.
         let db = SqliteDb::new(db_path, None, &secp).unwrap();
+        db.maybe_apply_migrations().unwrap();
 
         {
             let mut conn = db.connection().unwrap();
