@@ -4,6 +4,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     convert::TryInto,
     fmt,
+    time::Duration,
 };
 
 pub use bdk_coin_select::InsufficientFunds;
@@ -33,6 +34,10 @@ pub const MAX_FEE: bitcoin::Amount = bitcoin::Amount::ONE_BTC;
 
 /// Assume that paying more than 1000sat/vb in feerate is a bug.
 pub const MAX_FEERATE: u64 = 1_000;
+
+/// Do not set locktime if tip age in seconds is older than this.
+// See also https://github.com/bitcoin/bitcoin/blob/ecd23656db174adef61d3bd753d02698c3528192/src/wallet/spend.cpp#L906.
+pub const MAX_ANTI_FEE_SNIPING_TIP_AGE_SECS: u64 = 8 * 60 * 60; // 8 hours
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InsaneFeeInfo {
@@ -498,6 +503,40 @@ fn derived_desc(
     desc.derive(coin.deriv_index, secp)
 }
 
+/// Get value to use for transaction nLockTime in order to
+/// discourage fee sniping.
+///
+/// The approach follows that taken by Bitcoin Core:
+/// - most of the time, the value returned will be the current
+/// block height, but will randomly be up to 100 blocks earlier.
+/// - if the current tip is more than [`MAX_ANTI_FEE_SNIPING_TIP_AGE_SECS`]
+/// seconds old, a locktime value of 0 will be returned.
+pub fn anti_fee_sniping_locktime(
+    now: Duration,
+    tip_height: u32,
+    tip_time_secs: Option<u32>,
+) -> LockTime {
+    tip_time_secs
+        .map(|tip_time| now.as_secs().saturating_sub(tip_time.into()))
+        .filter(|tip_age| *tip_age <= MAX_ANTI_FEE_SNIPING_TIP_AGE_SECS)
+        .map(|_| {
+            // Randomly (approx 10% of cases) set locktime further back
+            // using current time as source of randomness.
+            let nanos = now.subsec_nanos();
+            // Note this condition will fail if nano precision is not available
+            // and so nothing will be subtracted.
+            let delta = if nanos % 10 == 1 {
+                (nanos % 1000) / 10 + 1 // a number in [1, 100]
+            } else {
+                0
+            };
+            let height = tip_height.saturating_sub(delta);
+            LockTime::from_height(height)
+                .expect("height is valid block height as it cannot be bigger than tip height")
+        })
+        .unwrap_or(LockTime::Blocks(Height::ZERO))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AddrInfo {
     pub index: bip32::ChildNumber,
@@ -590,6 +629,8 @@ pub struct CreateSpendRes {
 /// * `change_addr`: the address to use for a change output if we need to create one. Can be set to
 /// an external address (if combined with an empty list of `destinations` it's useful to sweep some
 /// or all coins of a wallet to an external address).
+/// * `locktime`: the locktime to use for the transaction.
+#[allow(clippy::too_many_arguments)]
 pub fn create_spend(
     main_descriptor: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
@@ -598,6 +639,7 @@ pub fn create_spend(
     candidate_coins: &[CandidateCoin],
     fees: SpendTxFees,
     change_addr: SpendOutputAddress,
+    locktime: LockTime,
 ) -> Result<CreateSpendRes, SpendCreationError> {
     // This method does quite a few things. In addition, we support different modes (coin control
     // vs automated coin selection, self-spend, sweep, etc..) which make the logic a bit more
@@ -626,7 +668,7 @@ pub fn create_spend(
     // Create transaction with no inputs and no outputs.
     let mut tx = bitcoin::Transaction {
         version: bitcoin::transaction::Version::TWO,
-        lock_time: LockTime::Blocks(Height::ZERO), // TODO: randomized anti fee sniping
+        lock_time: locktime,
         input: Vec::with_capacity(candidate_coins.iter().filter(|c| c.must_select).count()),
         output: Vec::with_capacity(destinations.len()),
     };
@@ -787,4 +829,123 @@ pub fn create_spend(
         has_change,
         warnings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::time::Duration;
+
+    use miniscript::bitcoin::absolute::{Height, LockTime};
+
+    #[test]
+    fn test_anti_fee_sniping_locktime() {
+        // If we have no tip time, locktime is 0.
+        assert_eq!(
+            anti_fee_sniping_locktime(Duration::from_secs(100), 123_456, None),
+            LockTime::Blocks(Height::ZERO)
+        );
+
+        // If tip time is too old, locktime is 0.
+        assert_eq!(
+            anti_fee_sniping_locktime(
+                Duration::from_secs(100_000),
+                123_456,
+                Some(100_000 - (8 * 60 * 60) - 1)
+            ),
+            LockTime::Blocks(Height::ZERO)
+        );
+
+        // If tip age is exactly the max threshold, we set locktime.
+        assert_eq!(
+            anti_fee_sniping_locktime(
+                Duration::from_secs(100_000),
+                123_456,
+                Some(100_000 - (8 * 60 * 60))
+            ),
+            LockTime::from_height(123_456).unwrap()
+        );
+
+        // If tip time is later than now, we set locktime depending on nanos.
+        // If nanos are 0, set to current height.
+        assert_eq!(
+            anti_fee_sniping_locktime(Duration::from_secs(50_000), 123_456, Some(100_000)),
+            LockTime::from_height(123_456).unwrap()
+        );
+
+        // We might set locktime earlier than current height.
+        assert_eq!(
+            anti_fee_sniping_locktime(
+                Duration::from_secs(50_000) + Duration::from_nanos(1),
+                123_456,
+                Some(100_000)
+            ),
+            LockTime::from_height(123_455).unwrap() // subtract 1
+        );
+
+        // If tip time is older than now, we also vary the locktime depending on current nanos.
+        // If nanos are truncated or 0, set locktime to current height.
+        assert_eq!(
+            anti_fee_sniping_locktime(Duration::from_secs(100), 123_456, Some(100)),
+            LockTime::from_height(123_456).unwrap() // subtract 1
+        );
+
+        assert_eq!(
+            anti_fee_sniping_locktime(
+                Duration::from_secs(100) + Duration::from_nanos(1),
+                123_456,
+                Some(100)
+            ),
+            LockTime::from_height(123_455).unwrap() // subtract 1
+        );
+
+        assert_eq!(
+            anti_fee_sniping_locktime(
+                Duration::from_secs(100) + Duration::from_nanos(10_000_041),
+                123_456,
+                Some(100)
+            ),
+            LockTime::from_height(123_451).unwrap() // subtract 5
+        );
+
+        // If nanos % 10 != 1, don't subtract anything.
+        assert_eq!(
+            anti_fee_sniping_locktime(
+                Duration::from_secs(100) + Duration::from_nanos(10_000_040),
+                123_456,
+                Some(100)
+            ),
+            LockTime::from_height(123_456).unwrap() // subtract 0
+        );
+
+        assert_eq!(
+            anti_fee_sniping_locktime(
+                Duration::from_secs(100) + Duration::from_nanos(100_000_891),
+                123_456,
+                Some(100)
+            ),
+            LockTime::from_height(123_366).unwrap() // subtract 90
+        );
+
+        // We would subtract 90, but current height is 56, so return locktime of 0.
+        assert_eq!(
+            anti_fee_sniping_locktime(
+                Duration::from_secs(100) + Duration::from_nanos(100_000_891),
+                56,
+                Some(100)
+            ),
+            LockTime::Blocks(Height::ZERO)
+        );
+
+        // If block height is 91, we can now subtract 90.
+        assert_eq!(
+            anti_fee_sniping_locktime(
+                Duration::from_secs(100) + Duration::from_nanos(100_000_891),
+                91,
+                Some(100)
+            ),
+            LockTime::from_height(1).unwrap() // subtract 90
+        );
+    }
 }
