@@ -337,7 +337,15 @@ impl DaemonHandle {
             log::info!("Created a new data directory at '{}'", data_dir.display());
         }
 
-        // Then set up the database
+        // Set up the connection to bitcoind (if using it) first as we may need it for the database
+        // migration when setting up SQLite below.
+        let bitcoind = if bitcoin.is_none() {
+            Some(setup_bitcoind(&config, &data_dir, fresh_data_dir)?)
+        } else {
+            None
+        };
+
+        // Then set up the database backend.
         let db = match db {
             Some(db) => sync::Arc::from(sync::Mutex::from(db)),
             None => sync::Arc::from(sync::Mutex::from(setup_sqlite(
@@ -348,14 +356,12 @@ impl DaemonHandle {
             )?)) as sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         };
 
-        // Now, set up the Bitcoin interface.
-        let bit = match bitcoin {
-            Some(bit) => sync::Arc::from(sync::Mutex::from(bit)),
-            None => sync::Arc::from(sync::Mutex::from(setup_bitcoind(
-                &config,
-                &data_dir,
-                fresh_data_dir,
-            )?)) as sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+        // Finally set up the Bitcoin backend.
+        let bit = match (bitcoin, bitcoind) {
+            (Some(bit), None) => sync::Arc::from(sync::Mutex::from(bit)),
+            (None, Some(bit)) => sync::Arc::from(sync::Mutex::from(bit))
+                as sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+            _ => unreachable!("Either bitcoind or bitcoin interface is always set."),
         };
 
         // If we are on a UNIX system and they told us to daemonize, do it now.
