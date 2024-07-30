@@ -72,11 +72,10 @@ fn render_amount<'a, T: 'a>(amount: String, size: u16) -> Row<'a, T> {
 
     let (before, after) = match split_at_first_non_zero(amount) {
         Some((b, a)) => (b, a),
-        None => (String::from(""), String::from("")),
+        None => (String::from("0.00 000 000"), String::from("")),
     };
 
     let row = Row::new()
-        .spacing(spacing)
         .push(text(before).size(size).style(color::GREY_3))
         .push(text(after).size(size).bold());
 
@@ -92,12 +91,8 @@ fn render_amount<'a, T: 'a>(amount: String, size: u16) -> Row<'a, T> {
 fn render_unconfirmed_amount<'a, T: 'a>(amount: String, size: u16) -> Row<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
 
-    let row = Row::new()
-        .spacing(spacing)
-        .push(text(amount).size(size).style(color::GREY_3));
-
     Row::with_children(vec![
-        row.into(),
+        text(amount).size(size).style(color::GREY_3).into(),
         text("BTC").size(size).style(color::GREY_3).into(),
     ])
     .spacing(spacing)
@@ -122,5 +117,9 @@ mod tests {
             "1 000.00 000 000",
             amount_as_string(bitcoin::Amount::from_btc(1000.0).unwrap())
         );
+        assert_eq!(
+            "0.00 012 340",
+            amount_as_string(bitcoin::Amount::from_btc(0.00012340).unwrap())
+        )
     }
 }
