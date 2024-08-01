@@ -986,6 +986,91 @@ CREATE TABLE labels (
 );
 ";
 
+    const V4_SCHEMA: &str = "
+CREATE TABLE version (
+    version INTEGER NOT NULL
+);
+
+/* About the Bitcoin network. */
+CREATE TABLE tip (
+    network TEXT NOT NULL,
+    blockheight INTEGER,
+    blockhash BLOB
+);
+
+/* This stores metadata about our wallet. We only support single wallet for
+ * now (and the foreseeable future).
+ *
+ * The 'timestamp' field is the creation date of the wallet. We guarantee to have seen all
+ * information related to our descriptor(s) that occured after this date.
+ * The optional 'rescan_timestamp' field is a the timestamp we need to rescan the chain
+ * for events related to our descriptor(s) from.
+ */
+CREATE TABLE wallets (
+    id INTEGER PRIMARY KEY NOT NULL,
+    timestamp INTEGER NOT NULL,
+    main_descriptor TEXT NOT NULL,
+    deposit_derivation_index INTEGER NOT NULL,
+    change_derivation_index INTEGER NOT NULL,
+    rescan_timestamp INTEGER
+);
+
+/* Our (U)TxOs.
+ *
+ * The 'spend_block_height' and 'spend_block.time' are only present if the spending
+ * transaction for this coin exists and was confirmed.
+ *
+ * The 'is_immature' field is for coinbase deposits that are not yet buried under 100
+ * blocks. Note coinbase deposits can't technically be unconfirmed but we keep them
+ * as such until they become mature.
+ */
+CREATE TABLE coins (
+    id INTEGER PRIMARY KEY NOT NULL,
+    wallet_id INTEGER NOT NULL,
+    blockheight INTEGER,
+    blocktime INTEGER,
+    txid BLOB NOT NULL,
+    vout INTEGER NOT NULL,
+    amount_sat INTEGER NOT NULL,
+    derivation_index INTEGER NOT NULL,
+    is_change BOOLEAN NOT NULL CHECK (is_change IN (0,1)),
+    spend_txid BLOB,
+    spend_block_height INTEGER,
+    spend_block_time INTEGER,
+    is_immature BOOLEAN NOT NULL CHECK (is_immature IN (0,1)),
+    UNIQUE (txid, vout),
+    FOREIGN KEY (wallet_id) REFERENCES wallets (id)
+        ON UPDATE RESTRICT
+        ON DELETE RESTRICT
+);
+
+/* A mapping from descriptor address to derivation index. Necessary until
+ * we can get the derivation index from the parent descriptor from bitcoind.
+ */
+CREATE TABLE addresses (
+    receive_address TEXT NOT NULL UNIQUE,
+    change_address TEXT NOT NULL UNIQUE,
+    derivation_index INTEGER NOT NULL UNIQUE
+);
+
+/* Transactions we created that spend some of our coins. */
+CREATE TABLE spend_transactions (
+    id INTEGER PRIMARY KEY NOT NULL,
+    psbt BLOB UNIQUE NOT NULL,
+    txid BLOB UNIQUE NOT NULL,
+    updated_at INTEGER
+);
+
+/* Labels applied on addresses (0), outpoints (1), txids (2) */
+CREATE TABLE labels (
+    id INTEGER PRIMARY KEY NOT NULL,
+    wallet_id INTEGER NOT NULL,
+    item_kind INTEGER NOT NULL CHECK (item_kind IN (0,1,2)),
+    item TEXT UNIQUE NOT NULL,
+    value TEXT NOT NULL
+);
+";
+
     fn psbt_from_str(psbt_str: &str) -> Psbt {
         Psbt::from_str(psbt_str).unwrap()
     }
@@ -2304,7 +2389,6 @@ CREATE TABLE labels (
 
         // Create a database with version 0, using the old schema.
         let tmp_dir = tmp_dir();
-        eprintln!("{}", tmp_dir.as_path().to_string_lossy());
         fs::create_dir_all(&tmp_dir).unwrap();
         let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v0.sqlite3")]
             .iter()
@@ -2618,6 +2702,161 @@ CREATE TABLE labels (
             assert!(conn.db_version() == 5);
             let coins_post = conn.coins(&[], &[]);
             assert_eq!(coins_pre, coins_post);
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn v4_to_v5_migration() {
+        let secp = secp256k1::Secp256k1::verification_only();
+
+        // Create a database with version 3, using the old schema.
+        let tmp_dir = tmp_dir();
+        fs::create_dir_all(&tmp_dir).unwrap();
+        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v4.sqlite3")]
+            .iter()
+            .collect();
+        let mut options = dummy_options();
+        options.schema = V4_SCHEMA;
+        options.version = 4;
+
+        // Create a hundred different transactions, from which originate two hundred
+        // pseudo-random coins.
+        let mut bitcoin_txs: Vec<_> = (0..100)
+            .map(|i| bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
+                input: Vec::new(),
+                output: Vec::new(),
+            })
+            .collect();
+        let spend_txs: Vec<_> = (0..10)
+            .map(|i| {
+                (
+                    bitcoin::Transaction {
+                        version: bitcoin::transaction::Version::TWO,
+                        lock_time: bitcoin::absolute::LockTime::from_height(1_234 + i).unwrap(),
+                        input: Vec::new(),
+                        output: Vec::new(),
+                    },
+                    if i % 2 == 0 {
+                        Some(BlockInfo {
+                            height: (i % 5) as i32 * 2_000,
+                            time: 1722488619 + (i % 5) * 84_999,
+                        })
+                    } else {
+                        None
+                    },
+                )
+            })
+            .collect();
+        let coins: Vec<Coin> = bitcoin_txs
+            .iter()
+            .chain(bitcoin_txs.iter()) // We do this to have coins which originate from the same tx.
+            .enumerate()
+            .map(|(i, tx)| Coin {
+                outpoint: bitcoin::OutPoint {
+                    txid: tx.txid(),
+                    vout: i as u32,
+                },
+                is_immature: (i % 10) == 0,
+                amount: bitcoin::Amount::from_sat(i as u64 * 3473),
+                derivation_index: bip32::ChildNumber::from_normal_idx(i as u32 * 100).unwrap(),
+                is_change: (i % 4) == 0,
+                block_info: if i & 2 == 0 {
+                    Some(BlockInfo {
+                        height: (i % 100) as i32 * 1_000,
+                        time: 1722408619 + (i % 100) as u32 * 42_000,
+                    })
+                } else {
+                    None
+                },
+                spend_txid: if i % 20 == 0 {
+                    Some(spend_txs[i / 20].0.txid())
+                } else {
+                    None
+                },
+                spend_block: if i % 20 == 0 {
+                    spend_txs[i / 20].1
+                } else {
+                    None
+                },
+            })
+            .collect();
+
+        {
+            let db = SqliteDb::new(db_path.clone(), Some(options), &secp).unwrap();
+            let mut conn = db.connection().unwrap();
+
+            // Insert all these coins into database.
+            conn.new_unspent_coins(&coins);
+
+            // Confirm those which are supposed to be.
+            let confirmed_coins: Vec<_> = coins
+                .iter()
+                .filter_map(|coin| {
+                    coin.block_info
+                        .map(|blk| (coin.outpoint, blk.height, blk.time))
+                })
+                .collect();
+            conn.confirm_coins(&confirmed_coins);
+
+            // Spend those which are supposed to be.
+            let spent_coins: Vec<_> = coins
+                .iter()
+                .filter_map(|coin| coin.spend_txid.map(|txid| (coin.outpoint, txid)))
+                .collect();
+            conn.spend_coins(&spent_coins);
+
+            // Mark the spend as confirmed for those which are supposed to be.
+            let confirmed_spent_coins: Vec<_> = coins
+                .iter()
+                .filter_map(|coin| {
+                    coin.spend_block.map(|blk| {
+                        (
+                            coin.outpoint,
+                            coin.spend_txid.expect("always set when spend block is"),
+                            blk.height,
+                            blk.time,
+                        )
+                    })
+                })
+                .collect();
+            conn.confirm_spend(&confirmed_spent_coins);
+        }
+
+        // Trying to migrate without specifying the transactions will fail.
+        assert!(maybe_apply_migration(&db_path, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("FOREIGN KEY constraint failed"));
+
+        // Trying to migrate without specifying ALL the transactions will fail. (Missing the spend
+        // tx here.)
+        assert!(maybe_apply_migration(&db_path, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("FOREIGN KEY constraint failed"));
+
+        // Migration with all txs will succeed.
+        bitcoin_txs.extend(spend_txs.iter().map(|(tx, _)| tx.clone()));
+        maybe_apply_migration(&db_path, &bitcoin_txs).unwrap();
+
+        // Make sure all the transactions are indeed in DB.
+        {
+            let db = SqliteDb::new(db_path.clone(), None, &secp).unwrap();
+            let mut conn = db.connection().unwrap();
+
+            let txids: Vec<_> = bitcoin_txs.iter().map(|tx| tx.txid()).collect();
+            let bitcoin_txs_in_db: HashSet<_> = conn
+                .list_wallet_transactions(&txids)
+                .into_iter()
+                .map(|tx| tx.transaction)
+                .collect();
+            let bitcoin_txs: HashSet<_> = bitcoin_txs.into_iter().collect();
+            assert_eq!(bitcoin_txs.len(), bitcoin_txs_in_db.len());
+            assert_eq!(bitcoin_txs, bitcoin_txs_in_db);
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
