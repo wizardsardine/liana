@@ -59,6 +59,12 @@ CREATE TABLE coins (
     UNIQUE (txid, vout),
     FOREIGN KEY (wallet_id) REFERENCES wallets (id)
         ON UPDATE RESTRICT
+        ON DELETE RESTRICT,
+    FOREIGN KEY (txid) REFERENCES transactions (txid)
+        ON UPDATE RESTRICT
+        ON DELETE RESTRICT,
+    FOREIGN KEY (spend_txid) REFERENCES transactions (txid)
+        ON UPDATE RESTRICT
         ON DELETE RESTRICT
 );
 
@@ -69,6 +75,13 @@ CREATE TABLE addresses (
     receive_address TEXT NOT NULL UNIQUE,
     change_address TEXT NOT NULL UNIQUE,
     derivation_index INTEGER NOT NULL UNIQUE
+);
+
+/* Transactions for all wallets. */
+CREATE TABLE transactions (
+    id INTEGER PRIMARY KEY NOT NULL,
+    txid BLOB UNIQUE NOT NULL,
+    tx BLOB UNIQUE NOT NULL
 );
 
 /* Transactions we created that spend some of our coins. */
@@ -343,6 +356,35 @@ impl TryFrom<&rusqlite::Row<'_>> for DbLabel {
             item_kind: item_kind.into(),
             item,
             value,
+        })
+    }
+}
+
+/// A transaction together with its block info.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DbWalletTransaction {
+    pub transaction: bitcoin::Transaction,
+    pub block_info: Option<DbBlockInfo>,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let transaction: Vec<u8> = row.get(0)?;
+        let transaction: bitcoin::Transaction =
+            bitcoin::consensus::deserialize(&transaction).expect("We only store valid txs");
+        let block_height: Option<i32> = row.get(1)?;
+        let block_time: Option<u32> = row.get(2)?;
+        assert_eq!(block_height.is_none(), block_time.is_none());
+        let block_info = block_height.map(|height| DbBlockInfo {
+            height,
+            time: block_time.expect("Must be there if height is"),
+        });
+
+        Ok(DbWalletTransaction {
+            transaction,
+            block_info,
         })
     }
 }

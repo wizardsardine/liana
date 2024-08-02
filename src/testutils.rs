@@ -138,6 +138,7 @@ struct DummyDbState {
     change_index: bip32::ChildNumber,
     curr_tip: Option<BlockChainTip>,
     coins: HashMap<bitcoin::OutPoint, Coin>,
+    txs: HashMap<bitcoin::Txid, bitcoin::Transaction>,
     spend_txs: HashMap<bitcoin::Txid, (Psbt, Option<u32>)>,
     timestamp: u32,
 }
@@ -169,6 +170,7 @@ impl DummyDatabase {
                 change_index: 0.into(),
                 curr_tip: None,
                 coins: HashMap::new(),
+                txs: HashMap::new(),
                 spend_txs: HashMap::new(),
                 timestamp: now,
             })),
@@ -436,6 +438,48 @@ impl DatabaseConnection for DummyDatabase {
         txids_and_time.sort_by(|(_, t1), (_, t2)| t2.cmp(t1));
         txids_and_time.truncate(limit as usize);
         txids_and_time.into_iter().map(|(txid, _)| txid).collect()
+    }
+
+    fn list_saved_txids(&mut self) -> Vec<bitcoin::Txid> {
+        self.db.read().unwrap().txs.keys().cloned().collect()
+    }
+
+    fn new_txs(&mut self, txs: &[bitcoin::Transaction]) {
+        for tx in txs {
+            self.db.write().unwrap().txs.insert(tx.txid(), tx.clone());
+        }
+    }
+
+    fn list_wallet_transactions(
+        &mut self,
+        txids: &[bitcoin::Txid],
+    ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)> {
+        let txs: HashMap<_, _> = self
+            .db
+            .read()
+            .unwrap()
+            .txs
+            .clone()
+            .into_iter()
+            .filter(|(txid, _tx)| txids.contains(txid))
+            .collect();
+        let coins = self.coins(&[], &[]);
+        let mut wallet_txs = Vec::with_capacity(txs.len());
+        for (txid, tx) in txs {
+            let first_block_info = coins.values().find_map(|c| {
+                if c.outpoint.txid == txid {
+                    Some(c.block_info)
+                } else if c.spend_txid == Some(txid) {
+                    Some(c.spend_block)
+                } else {
+                    None
+                }
+            });
+            if let Some(block_info) = first_block_info {
+                wallet_txs.push((tx, block_info.map(|b| b.height), block_info.map(|b| b.time)));
+            }
+        }
+        wallet_txs
     }
 }
 

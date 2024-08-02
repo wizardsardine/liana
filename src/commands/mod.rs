@@ -155,27 +155,33 @@ impl fmt::Display for RbfErrorInfo {
     }
 }
 
-/// A wallet transaction getter which fetches the transaction from our Bitcoin backend with a cache
+/// A wallet transaction getter which fetches the transaction from our database backend with a cache
 /// to avoid needless redundant calls. Note the cache holds an Option<> so we also avoid redundant
-/// calls when the txid isn't known by our Bitcoin backend.
-struct BitcoindTxGetter<'a> {
-    bitcoind: &'a sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+/// calls when the txid isn't known by our database backend.
+struct DbTxGetter<'a> {
+    db: &'a sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     cache: HashMap<bitcoin::Txid, Option<bitcoin::Transaction>>,
 }
 
-impl<'a> BitcoindTxGetter<'a> {
-    pub fn new(bitcoind: &'a sync::Arc<sync::Mutex<dyn BitcoinInterface>>) -> Self {
+impl<'a> DbTxGetter<'a> {
+    pub fn new(db: &'a sync::Arc<sync::Mutex<dyn DatabaseInterface>>) -> Self {
         Self {
-            bitcoind,
+            db,
             cache: HashMap::new(),
         }
     }
 }
 
-impl<'a> TxGetter for BitcoindTxGetter<'a> {
+impl<'a> TxGetter for DbTxGetter<'a> {
     fn get_tx(&mut self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
         if let hash_map::Entry::Vacant(entry) = self.cache.entry(*txid) {
-            entry.insert(self.bitcoind.wallet_transaction(txid).map(|wtx| wtx.0));
+            let tx = self
+                .db
+                .connection()
+                .list_wallet_transactions(&[*txid])
+                .pop()
+                .map(|(tx, _, _)| tx);
+            entry.insert(tx);
         }
         self.cache.get(txid).cloned().flatten()
     }
@@ -457,7 +463,7 @@ impl DaemonControl {
             return Err(CommandError::InvalidFeerate(feerate_vb));
         }
         let mut db_conn = self.db.connection();
-        let mut tx_getter = BitcoindTxGetter::new(&self.bitcoin);
+        let mut tx_getter = DbTxGetter::new(&self.db);
 
         // Prepare the destination addresses.
         let mut destinations_checked = Vec::with_capacity(destinations.len());
@@ -754,7 +760,7 @@ impl DaemonControl {
         feerate_vb: Option<u64>,
     ) -> Result<CreateSpendResult, CommandError> {
         let mut db_conn = self.db.connection();
-        let mut tx_getter = BitcoindTxGetter::new(&self.bitcoin);
+        let mut tx_getter = DbTxGetter::new(&self.db);
 
         if is_cancel && feerate_vb.is_some() {
             return Err(CommandError::RbfError(RbfErrorInfo::SuperfluousFeerate));
@@ -1015,39 +1021,19 @@ impl DaemonControl {
         limit: u64,
     ) -> ListTransactionsResult {
         let mut db_conn = self.db.connection();
+        // Note the result could in principle be retrieved in a single database query.
         let txids = db_conn.list_txids(start, end, limit);
-        let transactions = txids
-            .iter()
-            .filter_map(|txid| {
-                // TODO: batch those calls to the Bitcoin backend
-                // so it can in turn optimize its queries.
-                self.bitcoin
-                    .wallet_transaction(txid)
-                    .map(|(tx, block)| TransactionInfo {
-                        tx,
-                        height: block.map(|b| b.height),
-                        time: block.map(|b| b.time),
-                    })
-            })
-            .collect();
-        ListTransactionsResult { transactions }
+        self.list_transactions(&txids)
     }
 
     /// list_transactions retrieves the transactions with the given txids.
     pub fn list_transactions(&self, txids: &[bitcoin::Txid]) -> ListTransactionsResult {
-        let transactions = txids
-            .iter()
-            .filter_map(|txid| {
-                // TODO: batch those calls to the Bitcoin backend
-                // so it can in turn optimize its queries.
-                self.bitcoin
-                    .wallet_transaction(txid)
-                    .map(|(tx, block)| TransactionInfo {
-                        tx,
-                        height: block.map(|b| b.height),
-                        time: block.map(|b| b.time),
-                    })
-            })
+        let transactions = self
+            .db
+            .connection()
+            .list_wallet_transactions(txids)
+            .into_iter()
+            .map(|(tx, height, time)| TransactionInfo { tx, height, time })
             .collect();
         ListTransactionsResult { transactions }
     }
@@ -1068,7 +1054,7 @@ impl DaemonControl {
         if feerate_vb < 1 {
             return Err(CommandError::InvalidFeerate(feerate_vb));
         }
-        let mut tx_getter = BitcoindTxGetter::new(&self.bitcoin);
+        let mut tx_getter = DbTxGetter::new(&self.db);
         let mut db_conn = self.db.connection();
         let sweep_addr = self.spend_addr(&mut db_conn, self.validate_address(address)?);
 
@@ -1422,25 +1408,17 @@ mod tests {
 
     #[test]
     fn create_spend() {
-        let dummy_op = bitcoin::OutPoint::from_str(
-            "3753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:0",
-        )
-        .unwrap();
-        let mut dummy_bitcoind = DummyBitcoind::new();
-        dummy_bitcoind.txs.insert(
-            dummy_op.txid,
-            (
-                bitcoin::Transaction {
-                    version: TxVersion::TWO,
-                    lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
-                    input: vec![],
-                    output: vec![],
-                },
-                None,
-            ),
-        );
-        let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
+        let dummy_tx = bitcoin::Transaction {
+            version: TxVersion::TWO,
+            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
+            input: vec![],
+            output: vec![],
+        };
+        let dummy_op = bitcoin::OutPoint::new(dummy_tx.txid(), 0);
+        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.control();
+        let mut db_conn = control.db().lock().unwrap().connection();
+        db_conn.new_txs(&[dummy_tx]);
 
         // Arguments sanity checking
         let dummy_addr =
@@ -1471,7 +1449,6 @@ mod tests {
             control.create_spend(&destinations, &[dummy_op], 1, None),
             Err(CommandError::UnknownOutpoint(dummy_op))
         );
-        let mut db_conn = control.db().lock().unwrap().connection();
         db_conn.new_unspent_coins(&[Coin {
             outpoint: dummy_op,
             is_immature: false,
@@ -2305,8 +2282,8 @@ mod tests {
             },
         ]);
 
-        let mut btc = DummyBitcoind::new();
-        btc.txs.insert(
+        let mut txs_map = HashMap::new();
+        txs_map.insert(
             deposit1.txid(),
             (
                 deposit1.clone(),
@@ -2320,7 +2297,7 @@ mod tests {
                 }),
             ),
         );
-        btc.txs.insert(
+        txs_map.insert(
             deposit2.txid(),
             (
                 deposit2.clone(),
@@ -2334,7 +2311,7 @@ mod tests {
                 }),
             ),
         );
-        btc.txs.insert(
+        txs_map.insert(
             spend_tx.txid(),
             (
                 spend_tx.clone(),
@@ -2348,7 +2325,7 @@ mod tests {
                 }),
             ),
         );
-        btc.txs.insert(
+        txs_map.insert(
             deposit3.txid(),
             (
                 deposit3.clone(),
@@ -2363,11 +2340,15 @@ mod tests {
             ),
         );
 
-        let ms = DummyLiana::new(btc, db);
+        let ms = DummyLiana::new(DummyBitcoind::new(), db);
 
         let control = &ms.control();
+        let mut db_conn = control.db.connection();
+        let txs: Vec<_> = txs_map.values().map(|(tx, _)| tx.clone()).collect();
+        db_conn.new_txs(&txs);
 
-        let transactions = control.list_confirmed_transactions(0, 4, 10).transactions;
+        let mut transactions = control.list_confirmed_transactions(0, 4, 10).transactions;
+        transactions.sort_by(|tx1, tx2| tx2.height.cmp(&tx1.height));
         assert_eq!(transactions.len(), 4);
 
         assert_eq!(transactions[0].time, Some(4));
@@ -2382,7 +2363,8 @@ mod tests {
         assert_eq!(transactions[3].time, Some(1));
         assert_eq!(transactions[3].tx, deposit1);
 
-        let transactions = control.list_confirmed_transactions(2, 3, 10).transactions;
+        let mut transactions = control.list_confirmed_transactions(2, 3, 10).transactions;
+        transactions.sort_by(|tx1, tx2| tx2.height.cmp(&tx1.height));
         assert_eq!(transactions.len(), 2);
 
         assert_eq!(transactions[0].time, Some(3));
@@ -2451,8 +2433,8 @@ mod tests {
             }],
         };
 
-        let mut btc = DummyBitcoind::new();
-        btc.txs.insert(
+        let mut txs_map = HashMap::new();
+        txs_map.insert(
             tx1.txid(),
             (
                 tx1.clone(),
@@ -2466,7 +2448,7 @@ mod tests {
                 }),
             ),
         );
-        btc.txs.insert(
+        txs_map.insert(
             tx2.txid(),
             (
                 tx2.clone(),
@@ -2480,7 +2462,7 @@ mod tests {
                 }),
             ),
         );
-        btc.txs.insert(
+        txs_map.insert(
             tx3.txid(),
             (
                 tx3.clone(),
@@ -2495,9 +2477,31 @@ mod tests {
             ),
         );
 
-        let ms = DummyLiana::new(btc, DummyDatabase::new());
-
+        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.control();
+        let mut db_conn = control.db.connection();
+        let txs: Vec<_> = txs_map.values().map(|(tx, _)| tx.clone()).collect();
+        db_conn.new_txs(&txs);
+        // We need coins in the DB in order to get the block info for the transactions.
+        for (txid, (_tx, block)) in txs_map {
+            // Insert more than one coin per transaction to check that the command does not
+            // return duplicate transactions.
+            for vout in 0..4 {
+                db_conn.new_unspent_coins(&[Coin {
+                    outpoint: bitcoin::OutPoint::new(txid, vout),
+                    is_immature: false,
+                    block_info: block.map(|b| BlockInfo {
+                        height: b.height,
+                        time: b.time,
+                    }),
+                    amount: bitcoin::Amount::from_sat(100_000),
+                    derivation_index: bip32::ChildNumber::from(13),
+                    is_change: false,
+                    spend_txid: None,
+                    spend_block: None,
+                }]);
+            }
+        }
 
         let transactions = control.list_transactions(&[tx1.txid()]).transactions;
         assert_eq!(transactions.len(), 1);
