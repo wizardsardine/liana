@@ -2384,7 +2384,7 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v0_to_v2_migration() {
+    fn v0_to_v5_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 0, using the old schema.
@@ -2486,6 +2486,12 @@ CREATE TABLE labels (
         maybe_apply_migration(&db_path, &[]).unwrap();
         let db = SqliteDb::new(db_path, None, &secp).unwrap();
 
+        // The DB version has been updated.
+        {
+            let mut conn = db.connection().unwrap();
+            let version = conn.db_version();
+            assert_eq!(version, 5);
+        }
         // We should now be able to insert another PSBT, to query both, and the first PSBT must
         // have no associated timestamp.
         {
@@ -2528,6 +2534,22 @@ CREATE TABLE labels (
             let coins = conn.coins(&[], &[]);
             assert_eq!(coins.len(), 3);
             assert_eq!(coins.iter().filter(|c| !c.is_immature).count(), 2);
+        }
+
+        // We can insert labels.
+        {
+            let mut conn = db.connection().unwrap();
+
+            let txid_str = "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7";
+            let txid = LabelItem::from_str(txid_str, bitcoin::Network::Bitcoin).unwrap();
+            let mut txids_labels = HashMap::new();
+            txids_labels.insert(txid.clone(), Some("hello".to_string()));
+            conn.update_labels(&txids_labels);
+
+            let mut items = HashSet::new();
+            items.insert(txid);
+            let db_labels = conn.db_labels(&items);
+            assert_eq!(db_labels[0].value, "hello");
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
@@ -2857,44 +2879,6 @@ CREATE TABLE labels (
             let bitcoin_txs: HashSet<_> = bitcoin_txs.into_iter().collect();
             assert_eq!(bitcoin_txs.len(), bitcoin_txs_in_db.len());
             assert_eq!(bitcoin_txs, bitcoin_txs_in_db);
-        }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
-    }
-
-    #[test]
-    fn v0_to_v5_migration() {
-        let secp = secp256k1::Secp256k1::verification_only();
-
-        // Create a database with version 0, using the old schema.
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v0.sqlite3")]
-            .iter()
-            .collect();
-        let mut options = dummy_options();
-        options.schema = V0_SCHEMA;
-        options.version = 0;
-        create_fresh_db(&db_path, options, &secp).unwrap();
-
-        let db = SqliteDb::new(db_path, None, &secp).unwrap();
-        db.maybe_apply_migrations(&[]).unwrap();
-
-        {
-            let mut conn = db.connection().unwrap();
-            let version = conn.db_version();
-            assert_eq!(version, 5);
-
-            let txid_str = "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7";
-            let txid = LabelItem::from_str(txid_str, bitcoin::Network::Bitcoin).unwrap();
-            let mut txids_labels = HashMap::new();
-            txids_labels.insert(txid.clone(), Some("hello".to_string()));
-            conn.update_labels(&txids_labels);
-
-            let mut items = HashSet::new();
-            items.insert(txid);
-            let db_labels = conn.db_labels(&items);
-            assert_eq!(db_labels[0].value, "hello");
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
