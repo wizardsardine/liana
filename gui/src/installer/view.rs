@@ -33,10 +33,7 @@ use liana_ui::{
 
 use crate::{
     bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
-    hw::{
-        is_compatible_with_tapminiscript, ledger_need_taproot_upgrade, HardwareWallet,
-        UnsupportedReason,
-    },
+    hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
         message::{self, Message},
         prompt,
@@ -569,6 +566,10 @@ pub fn hardware_wallet_xpubs<'a>(
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
+        // We should never land there as we pass taproot = false to HardwareWallets.refresh()
+        // (when sharing an XPub we do not know if the to-be-constructed descriptor will
+        // be of taproot type)
+        HardwareWallet::NeedUpgrade { .. } => unreachable!(),
     })
     .style(theme::Button::Secondary)
     .width(Length::Fill);
@@ -777,7 +778,6 @@ pub fn register_descriptor<'a>(
                                     hw.fingerprint()
                                         .map(|fg| registered.contains(&fg))
                                         .unwrap_or(false),
-                                    false,
                                     network,
                                 ))
                             }),
@@ -1729,7 +1729,6 @@ pub fn hw_list_view(
     chosen: bool,
     processing: bool,
     selected: bool,
-    device_must_support_taproot: bool,
     network: Network,
 ) -> Element<Message> {
     let mut upgrade = false;
@@ -1739,23 +1738,12 @@ pub fn hw_list_view(
             version,
             fingerprint,
             alias,
-            id,
             ..
         } => {
             if chosen && processing {
                 hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             } else if selected {
                 hw::selected_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
-            } else if device_must_support_taproot && ledger_need_taproot_upgrade(kind, version) {
-                upgrade = true;
-                match hw.is_upgrade_in_progress() {
-                    false => ledger_need_upgrade(
-                        kind,
-                        version.clone(),
-                        Message::UpgradeLedger(id.clone(), network),
-                    ),
-                    true => ledger_upgrading(kind, version.clone(), hw.logs()),
-                }
             } else {
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             }
@@ -1764,7 +1752,6 @@ pub fn hw_list_view(
             version,
             kind,
             reason,
-            id,
             ..
         } => match reason {
             UnsupportedReason::NotPartOfWallet(fg) => {
@@ -1773,24 +1760,29 @@ pub fn hw_list_view(
             UnsupportedReason::WrongNetwork => {
                 hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
             }
-            _ => {
-                if ledger_need_taproot_upgrade(kind, version) {
-                    match hw.is_upgrade_in_progress() {
-                        false => ledger_need_upgrade(
-                            kind,
-                            version.clone(),
-                            Message::UpgradeLedger(id.clone(), network),
-                        ),
-                        true => ledger_upgrading(kind, version.clone(), hw.logs()),
-                    }
-                } else {
-                    hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref())
-                }
-            }
+            _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
         },
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
+        HardwareWallet::NeedUpgrade {
+            id,
+            kind,
+            version,
+            upgrade_in_progress,
+            upgrade_log,
+            ..
+        } => {
+            upgrade = true;
+            match upgrade_in_progress {
+                true => ledger_upgrading(kind, version.clone(), upgrade_log.clone()),
+                false => ledger_need_upgrade(
+                    kind,
+                    version.clone(),
+                    Message::UpgradeLedger(id.clone(), network),
+                ),
+            }
+        }
     })
     .style(theme::Button::Border)
     .width(Length::Fill)

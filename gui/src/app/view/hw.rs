@@ -61,6 +61,9 @@ pub fn hw_list_view(
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
+        HardwareWallet::NeedUpgrade { .. } => {
+            todo!()
+        }
     })
     .style(theme::Button::Border)
     .width(Length::Fill);
@@ -122,6 +125,9 @@ pub fn hw_list_view_for_registration(
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
+        HardwareWallet::NeedUpgrade { .. } => {
+            todo!()
+        }
     })
     .style(theme::Button::Border)
     .width(Length::Fill);
@@ -199,6 +205,9 @@ pub fn hw_list_view_verify_address(
             hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
             false,
         ),
+        HardwareWallet::NeedUpgrade { .. } => {
+            todo!()
+        }
     };
     let mut bttn = Button::new(content)
         .style(theme::Button::Border)

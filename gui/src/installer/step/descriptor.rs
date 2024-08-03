@@ -1036,7 +1036,6 @@ impl DescriptorEditModal for EditXpubModal {
                                 && hw.fingerprint() == chosen_signer
                                 && self.form_xpub.valid
                                 && !self.form_xpub.value.is_empty(),
-                            self.device_must_support_tapminiscript,
                             self.network,
                         ))
                     }

@@ -211,7 +211,7 @@ impl<T: From<UpgradeMessage>> UpgradeState<T> {
 fn connect(id: String) -> Option<TransportNativeHID> {
     if let Ok(api) = ledger_api() {
         let device = TransportNativeHID::list_ledgers(&api).find(|device| {
-            let dev_id = ledger_id(device.path(), device.vendor_id(), device.product_id());
+            let dev_id = ledger_id(device);
             dev_id == id
         })?;
         return TransportNativeHID::open_device(&api, device).ok();
@@ -241,7 +241,7 @@ pub fn maybe_ledger_upgrade_subscription<
     hws.list
         .iter()
         .filter_map(|hw| {
-            if let HardwareWallet::Supported {
+            if let HardwareWallet::NeedUpgrade {
                 upgrade_in_progress,
                 upgrade_testnet,
                 upgrade_step,
