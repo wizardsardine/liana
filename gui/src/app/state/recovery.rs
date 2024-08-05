@@ -247,7 +247,7 @@ fn recovery_paths(wallet: &Wallet, coins: &[Coin], blockheight: i32) -> Vec<Reco
                 .iter()
                 .filter(|coin| {
                     coin.spend_info.is_none()
-                        && remaining_sequence(coin, blockheight as u32, sequence) <= 1
+                        && remaining_sequence(coin, blockheight as u32, sequence, true) <= 1
                 })
                 .fold(
                     (0, Amount::from_sat(0)),
