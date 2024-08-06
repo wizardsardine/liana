@@ -204,7 +204,7 @@ impl BitcoinInterface for d::BitcoinD {
                         outpoint,
                         amount,
                         block_height,
-                        address,
+                        address: UTxOAddress::Address(address),
                         is_immature,
                     })
                 } else {
@@ -523,6 +523,14 @@ pub struct UTxO {
     pub outpoint: bitcoin::OutPoint,
     pub amount: bitcoin::Amount,
     pub block_height: Option<i32>,
-    pub address: bitcoin::Address<address::NetworkUnchecked>,
+    pub address: UTxOAddress,
     pub is_immature: bool,
+}
+
+/// Details about the UTXO address.
+#[derive(Debug, Clone)]
+pub enum UTxOAddress {
+    Address(bitcoin::Address<address::NetworkUnchecked>),
+    /// Derivation index and whether it is from the change descriptor.
+    DerivIndex(ChildNumber, bool),
 }
