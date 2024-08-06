@@ -149,10 +149,6 @@ fn update_coins(
         .chain(spending.iter().cloned())
         .collect();
     let (spent, expired_spending) = bit.spent_coins(spending_coins.as_slice());
-    let spent = spent
-        .into_iter()
-        .map(|(oupoint, txid, block)| (oupoint, txid, block.height, block.time))
-        .collect();
     log::debug!("Newly spent coins: {:?}", spent);
 
     UpdatedCoins {

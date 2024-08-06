@@ -15,6 +15,9 @@ use std::{fmt, sync};
 
 use miniscript::bitcoin::{self, address, bip32::ChildNumber};
 
+// A spent coin's outpoint together with its spend transaction's txid, height and time.
+type SpentCoin = (bitcoin::OutPoint, bitcoin::Txid, i32, u32);
+
 const COINBASE_MATURITY: i32 = 100;
 
 /// Information about a block
@@ -93,10 +96,7 @@ pub trait BitcoinInterface: Send {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> (
-        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
-        Vec<bitcoin::OutPoint>,
-    );
+    ) -> (Vec<SpentCoin>, Vec<bitcoin::OutPoint>);
 
     /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
     fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip>;
@@ -279,10 +279,7 @@ impl BitcoinInterface for d::BitcoinD {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> (
-        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
-        Vec<bitcoin::OutPoint>,
-    ) {
+    ) -> (Vec<SpentCoin>, Vec<bitcoin::OutPoint>) {
         // Spend coins to be returned.
         let mut spent = Vec::with_capacity(outpoints.len());
         // Coins whose spending transaction isn't in our local mempool anymore.
@@ -300,7 +297,7 @@ impl BitcoinInterface for d::BitcoinD {
 
             // If the transaction was confirmed, mark it as such.
             if let Some(block) = res.block {
-                spent.push((*op, *txid, block));
+                spent.push((*op, *txid, block.height, block.time));
                 continue;
             }
 
@@ -323,7 +320,7 @@ impl BitcoinInterface for d::BitcoinD {
                 })
             });
             if let Some((txid, block)) = conflict {
-                spent.push((*op, txid, block));
+                spent.push((*op, txid, block.height, block.time));
                 continue;
             }
 
@@ -463,10 +460,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> (
-        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
-        Vec<bitcoin::OutPoint>,
-    ) {
+    ) -> (Vec<SpentCoin>, Vec<bitcoin::OutPoint>) {
         self.lock().unwrap().spent_coins(outpoints)
     }
 
