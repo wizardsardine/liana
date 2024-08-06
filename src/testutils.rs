@@ -95,7 +95,7 @@ impl BitcoinInterface for DummyBitcoind {
         &self,
         _: &[(bitcoin::OutPoint, bitcoin::Txid)],
     ) -> (
-        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
+        Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)>,
         Vec<bitcoin::OutPoint>,
     ) {
         (Vec::new(), Vec::new())
