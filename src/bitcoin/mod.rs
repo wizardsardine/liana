@@ -13,7 +13,7 @@ pub use d::{MempoolEntry, SyncProgress};
 
 use std::{fmt, sync};
 
-use miniscript::bitcoin::{self, address};
+use miniscript::bitcoin::{self, address, bip32::ChildNumber};
 
 const COINBASE_MATURITY: i32 = 100;
 
@@ -57,6 +57,17 @@ pub trait BitcoinInterface: Send {
 
     /// Check whether this former tip is part of the current best chain.
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool;
+
+    /// Sync the wallet with the current best chain.
+    /// `receive_index` and `change_index` are the last derivation indices
+    /// that are expected to have been used by the wallet.
+    /// In case there has been a reorg, returns the common ancestor between
+    /// the wallet and the reorged chain.
+    fn sync_wallet(
+        &mut self,
+        receive_index: ChildNumber,
+        change_index: ChildNumber,
+    ) -> Result<Option<BlockChainTip>, String>;
 
     /// Get coins received since the specified tip.
     fn received_coins(
@@ -155,6 +166,15 @@ impl BitcoinInterface for d::BitcoinD {
         self.get_block_hash(tip.height)
             .map(|bh| bh == tip.hash)
             .unwrap_or(false)
+    }
+
+    // The watchonly wallet handles this for us.
+    fn sync_wallet(
+        &mut self,
+        _receive_index: ChildNumber,
+        _change_index: ChildNumber,
+    ) -> Result<Option<BlockChainTip>, String> {
+        Ok(None)
     }
 
     fn received_coins(
@@ -408,6 +428,16 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
         self.lock().unwrap().is_in_chain(tip)
+    }
+
+    fn sync_wallet(
+        &mut self,
+        receive_index: ChildNumber,
+        change_index: ChildNumber,
+    ) -> Result<Option<BlockChainTip>, String> {
+        self.lock()
+            .unwrap()
+            .sync_wallet(receive_index, change_index)
     }
 
     fn received_coins(
