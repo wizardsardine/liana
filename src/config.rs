@@ -91,6 +91,9 @@ pub enum BitcoinBackend {
     /// Settings specific to bitcoind as the Bitcoin interface.
     #[serde(rename = "bitcoind_config")]
     Bitcoind(BitcoindConfig),
+    /// Settings specific to Electrum as the Bitcoin interface.
+    #[serde(rename = "electrum_config")]
+    Electrum(ElectrumConfig),
 }
 
 /// RPC authentication options.
@@ -121,6 +124,15 @@ pub struct BitcoindConfig {
     pub rpc_auth: BitcoindRpcAuth,
     /// The IP:port bitcoind's RPC is listening on
     pub addr: SocketAddr,
+}
+
+/// Everything we need to know for talking to Electrum serenely.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ElectrumConfig {
+    /// The URL the Electrum's RPC is listening on.
+    /// Include "ssl://" for SSL. otherwise TCP will be assumed.
+    /// Can optionally prefix with "tcp://".
+    pub addr: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
