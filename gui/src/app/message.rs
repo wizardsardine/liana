@@ -14,6 +14,7 @@ use crate::{
     app::{cache::Cache, error::Error, view, wallet::Wallet},
     daemon::model::*,
     hw::HardwareWalletMessage,
+    ledger_upgrade::UpgradeMessage,
 };
 
 #[derive(Debug)]
@@ -44,4 +45,6 @@ pub enum Message {
     LabelsUpdated(Result<HashMap<String, Option<String>>, Error>),
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
+    UpgradeLedger(String, Network),
+    Upgrade(UpgradeMessage),
 }

@@ -4,6 +4,7 @@ use iced::{
         button, checkbox, container, pick_list, progress_bar, qr_code, radio, scrollable, slider,
         svg, text, text_input,
     },
+    Border,
 };
 
 use super::color;
@@ -292,6 +293,8 @@ pub enum Card {
     Invalid,
     Warning,
     Error,
+    HalfTop,
+    HalfBottom,
 }
 
 impl Card {
@@ -334,6 +337,27 @@ impl Card {
                 Card::Warning => container::Appearance {
                     background: Some(color::ORANGE.into()),
                     text_color: color::GREY_2.into(),
+                    border: iced::Border {
+                        radius: 5.0.into(),
+                        ..Border::default()
+                    },
+                    ..container::Appearance::default()
+                },
+                Card::HalfTop => container::Appearance {
+                    background: Some(color::GREY_2.into()),
+                    border: Border {
+                        radius: [30.0, 30.0, 0.0, 0.0].into(),
+                        ..Border::default()
+                    },
+                    ..container::Appearance::default()
+                },
+                Card::HalfBottom => container::Appearance {
+                    text_color: color::GREY_2.into(),
+                    background: Some(color::ORANGE.into()),
+                    border: Border {
+                        radius: [0.0, 0.0, 30.0, 30.0].into(),
+                        ..Border::default()
+                    },
                     ..container::Appearance::default()
                 },
             },
@@ -379,6 +403,28 @@ impl Card {
                 Card::Warning => container::Appearance {
                     background: Some(color::ORANGE.into()),
                     text_color: color::LIGHT_BLACK.into(),
+                    border: iced::Border {
+                        radius: 5.0.into(),
+                        ..Border::default()
+                    },
+                    ..container::Appearance::default()
+                },
+                Card::HalfTop => container::Appearance {
+                    background: Some(color::GREY_6.into()),
+                    border: iced::Border {
+                        color: color::GREY_5,
+                        width: 0.0,
+                        radius: [25.0, 25.0, 0.0, 0.0].into(),
+                    },
+                    ..container::Appearance::default()
+                },
+                Card::HalfBottom => container::Appearance {
+                    background: Some(color::ORANGE.into()),
+                    text_color: color::LIGHT_BLACK.into(),
+                    border: Border {
+                        radius: [0.0, 0.0, 25.0, 25.0].into(),
+                        ..Border::default()
+                    },
                     ..container::Appearance::default()
                 },
             },

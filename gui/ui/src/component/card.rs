@@ -1,4 +1,6 @@
-use crate::{color, component::text::text, icon, theme, widget::*};
+use iced::widget::text;
+
+use crate::{color, icon, theme, widget::*};
 
 pub fn simple<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
     Container::new(content)

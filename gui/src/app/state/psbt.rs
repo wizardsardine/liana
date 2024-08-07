@@ -32,6 +32,9 @@ use crate::{
         Daemon,
     },
     hw::{HardwareWallet, HardwareWallets},
+    ledger_upgrade::{
+        maybe_ledger_upgrade_subscription, maybe_start_upgrade, update_upgrade_state,
+    },
 };
 
 pub trait Action {
@@ -434,7 +437,13 @@ impl SignAction {
 
 impl Action for SignAction {
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        let mut subs = maybe_ledger_upgrade_subscription(&self.hws);
+        subs.push(
+            self.hws
+                .refresh(self.wallet.main_descriptor.is_taproot())
+                .map(Message::HardwareWallets),
+        );
+        Subscription::batch(subs)
     }
 
     fn update(
@@ -521,6 +530,12 @@ impl Action for SignAction {
                     self.error = Some(e.into());
                 }
             },
+            Message::UpgradeLedger(id, network) => {
+                maybe_start_upgrade(id, &mut self.hws, network);
+            }
+            Message::Upgrade(msg) => {
+                update_upgrade_state(msg, &mut self.hws);
+            }
             _ => {}
         };
         Command::none()
