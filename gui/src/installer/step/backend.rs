@@ -1,9 +1,12 @@
+use std::str::FromStr;
+
 use iced::Command;
 
-use liana::miniscript::bitcoin::Network;
+use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::Network};
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
+    daemon::DaemonError,
     hw::HardwareWallets,
     installer::{
         context::{self, Context, RemoteBackend},
@@ -31,7 +34,6 @@ pub enum ConnectionStep {
     Connected {
         email: String,
         remote_backend: context::RemoteBackend,
-        wallet: Option<api::Wallet>,
         remote_backend_is_selected: bool,
     },
 }
@@ -65,6 +67,9 @@ impl From<ChooseBackend> for Box<dyn Step> {
 }
 
 impl Step for ChooseBackend {
+    fn skip(&self, _ctx: &Context) -> bool {
+        self.network != Network::Bitcoin && self.network != Network::Signet
+    }
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         if matches!(
             message,
@@ -196,18 +201,17 @@ impl Step for ChooseBackend {
                 Message::SelectBackend(message::SelectBackend::Connected(res)) => {
                     self.processing = false;
                     match res {
-                        Ok((remote_backend, wallet)) => {
+                        Ok(remote_backend) => {
                             self.step = ConnectionStep::Connected {
                                 email: email.clone(),
                                 remote_backend,
-                                wallet,
                                 remote_backend_is_selected: false,
                             };
                         }
                         Err(e) => {
                             if let Error::Auth(AuthError { http_status, .. }) = e {
                                 if http_status == Some(403) {
-                                    self.auth_error = Some("Token is expired or is invalid")
+                                    self.auth_error = Some("Token has expired or is invalid")
                                 } else {
                                     self.connection_error = Some(e);
                                 }
@@ -278,10 +282,9 @@ impl Step for ChooseBackend {
                     self.connection_error.as_ref(),
                     self.auth_error,
                 ),
-                ConnectionStep::Connected { email, wallet, .. } => view::connection_step_connected(
+                ConnectionStep::Connected { email, .. } => view::connection_step_connected(
                     email,
                     self.processing,
-                    wallet.as_ref().map(|w| w.name.as_str()),
                     self.connection_error.as_ref(),
                     self.auth_error,
                 ),
@@ -294,14 +297,250 @@ pub async fn connect(
     auth: AuthClient,
     token: String,
     backend_api_url: String,
-) -> Result<(context::RemoteBackend, Option<api::Wallet>), Error> {
+) -> Result<context::RemoteBackend, Error> {
     let access = auth.verify_otp(token.trim_end()).await?;
     let client = BackendClient::connect(auth, backend_api_url, access.clone()).await?;
+    Ok(RemoteBackend::WithoutWallet(client))
+}
 
-    if !client.list_wallets().await?.is_empty() {
-        let (wallet_client, wallet) = client.connect_first().await?;
-        Ok((RemoteBackend::WithWallet(wallet_client), Some(wallet)))
-    } else {
-        Ok((RemoteBackend::WithoutWallet(client), None))
+pub struct ImportRemoteWallet {
+    network: Network,
+    invitation_token: form::Value<String>,
+    invitation: Option<api::WalletInvitation>,
+    imported_descriptor: form::Value<String>,
+    descriptor: Option<LianaDescriptor>,
+    error: Option<String>,
+    backend: Option<context::RemoteBackend>,
+    wallets: Vec<api::Wallet>,
+}
+
+impl ImportRemoteWallet {
+    pub fn new(network: Network) -> Self {
+        Self {
+            network,
+            invitation_token: form::Value::default(),
+            invitation: None,
+            imported_descriptor: form::Value::default(),
+            descriptor: None,
+            error: None,
+            backend: None,
+            wallets: Vec::new(),
+        }
+    }
+}
+
+impl Step for ImportRemoteWallet {
+    fn skip(&self, ctx: &Context) -> bool {
+        ctx.remote_backend.is_none()
+    }
+    fn load_context(&mut self, ctx: &Context) {
+        self.backend.clone_from(&ctx.remote_backend);
+    }
+    fn load(&self) -> Command<Message> {
+        let backend = self
+            .backend
+            .clone()
+            .expect("Must be one otherwise the step is skipped");
+        Command::perform(
+            async move {
+                let wallets = match backend {
+                    context::RemoteBackend::WithoutWallet(backend) => {
+                        backend.list_wallets().await?
+                    }
+                    context::RemoteBackend::WithWallet(backend) => {
+                        backend.inner_client().list_wallets().await?
+                    }
+                };
+
+                Ok(wallets)
+            },
+            |res| Message::ImportRemoteWallet(message::ImportRemoteWallet::RemoteWallets(res)),
+        )
+    }
+    // form value is set as valid each time it is edited.
+    // Verification of the values is happening when the user click on Next button.
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+        match message {
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptor(desc)) => {
+                self.imported_descriptor.value = desc;
+                if !self.imported_descriptor.value.is_empty() {
+                    if let Ok(desc) = LianaDescriptor::from_str(&self.imported_descriptor.value) {
+                        if self.network == Network::Bitcoin {
+                            self.imported_descriptor.valid = desc.all_xpubs_net_is(self.network);
+                        } else {
+                            self.imported_descriptor.valid =
+                                desc.all_xpubs_net_is(Network::Testnet);
+                        }
+                    } else {
+                        self.imported_descriptor.valid = false;
+                    }
+                } else {
+                    self.imported_descriptor.valid = false;
+                }
+            }
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ConfirmDescriptor) => {
+                if let Ok(desc) = LianaDescriptor::from_str(&self.imported_descriptor.value) {
+                    if self.network == Network::Bitcoin {
+                        self.imported_descriptor.valid = desc.all_xpubs_net_is(self.network);
+                    } else {
+                        self.imported_descriptor.valid = desc.all_xpubs_net_is(Network::Testnet);
+                    }
+                    if self.imported_descriptor.valid {
+                        let backend = self.backend.take();
+                        if let Some(context::RemoteBackend::WithWallet(backend)) = backend {
+                            self.backend =
+                                Some(context::RemoteBackend::WithoutWallet(backend.into_inner()));
+                        } else {
+                            self.backend = backend;
+                        }
+                        self.descriptor = Some(desc);
+                        return Command::perform(async {}, |_| Message::Next);
+                    }
+                } else {
+                    self.imported_descriptor.valid = false;
+                }
+            }
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::RemoteWallets(res)) => {
+                match res {
+                    Ok(wallets) => self.wallets = wallets,
+                    Err(e) => self.error = Some(e.to_string()),
+                }
+            }
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportInvitationToken(
+                token,
+            )) => {
+                self.invitation_token.value = token;
+            }
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::FetchInvitation) => {
+                let backend = self
+                    .backend
+                    .clone()
+                    .map(|b| match b {
+                        context::RemoteBackend::WithoutWallet(b) => b,
+                        context::RemoteBackend::WithWallet(b) => b.into_inner(),
+                    })
+                    .expect("Must be a remote backend at this point");
+                let token = self.invitation_token.value.clone();
+                self.error = None;
+                return Command::perform(
+                    async move {
+                        let invitation = backend.get_wallet_invitation(&token).await?;
+                        Ok(invitation)
+                    },
+                    |res| {
+                        Message::ImportRemoteWallet(message::ImportRemoteWallet::InvitationFetched(
+                            res,
+                        ))
+                    },
+                );
+            }
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::InvitationFetched(res)) => {
+                match res {
+                    Err(_) => self.invitation_token.valid = false,
+                    Ok(invitation) => self.invitation = Some(invitation),
+                }
+            }
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::AcceptInvitation) => {
+                let backend = self
+                    .backend
+                    .clone()
+                    .map(|b| match b {
+                        context::RemoteBackend::WithoutWallet(b) => b,
+                        context::RemoteBackend::WithWallet(b) => b.into_inner(),
+                    })
+                    .expect("Must be a remote backend at this point");
+                let invitation = self.invitation.clone().expect("Invitation was fetched");
+                self.error = None;
+                return Command::perform(
+                    async move {
+                        backend.accept_wallet_invitation(&invitation.id).await?;
+                        let wallets = backend.list_wallets().await?;
+                        wallets
+                            .into_iter()
+                            .find(|w| w.id == invitation.wallet_id)
+                            .ok_or(
+                                DaemonError::Unexpected(
+                                    "Wallet of accepted invitation not found".to_string(),
+                                )
+                                .into(),
+                            )
+                    },
+                    |res| {
+                        Message::ImportRemoteWallet(
+                            message::ImportRemoteWallet::InvitationAccepted(res),
+                        )
+                    },
+                );
+            }
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::InvitationAccepted(res)) => {
+                match res {
+                    Err(e) => self.error = Some(e.to_string()),
+                    Ok(wallet) => {
+                        self.invitation = None;
+                        self.invitation_token = form::Value::default();
+                        self.wallets.push(wallet);
+                    }
+                }
+            }
+            Message::Select(i) => {
+                if let Some(wallet) = self.wallets.get(i).cloned() {
+                    if let Some(backend) = self.backend.take() {
+                        self.backend = Some(match backend {
+                            context::RemoteBackend::WithoutWallet(backend) => {
+                                context::RemoteBackend::WithWallet(
+                                    backend.connect_wallet(wallet.clone()).0,
+                                )
+                            }
+                            context::RemoteBackend::WithWallet(backend) => {
+                                context::RemoteBackend::WithWallet(
+                                    backend.into_inner().connect_wallet(wallet.clone()).0,
+                                )
+                            }
+                        });
+                        // ensure that no descriptor is imported.
+                        self.imported_descriptor = form::Value::default();
+                        self.descriptor = Some(wallet.descriptor);
+                        return Command::perform(async {}, |_| Message::Next);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        Command::none()
+    }
+
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        // Set to true in order to force the registration process to be shown to user.
+        ctx.hw_is_used = true;
+        ctx.descriptor.clone_from(&self.descriptor);
+        ctx.remote_backend.clone_from(&self.backend);
+
+        true
+    }
+
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
+        view::import_wallet_or_descriptor(
+            progress,
+            email,
+            &self.invitation_token,
+            self.invitation
+                .as_ref()
+                .map(|invit| invit.wallet_name.as_str()),
+            &self.imported_descriptor,
+            self.error.as_ref(),
+            self.wallets.iter().map(|w| &w.name).collect(),
+        )
+    }
+}
+
+impl From<ImportRemoteWallet> for Box<dyn Step> {
+    fn from(s: ImportRemoteWallet) -> Box<dyn Step> {
+        Box::new(s)
     }
 }

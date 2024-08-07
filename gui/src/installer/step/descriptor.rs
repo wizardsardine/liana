@@ -1143,6 +1143,10 @@ impl ImportDescriptor {
 }
 
 impl Step for ImportDescriptor {
+    // ImportRemoteWallet is used instead
+    fn skip(&self, ctx: &Context) -> bool {
+        ctx.remote_backend.is_some()
+    }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {

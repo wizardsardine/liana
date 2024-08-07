@@ -119,6 +119,9 @@ pub trait Daemon: Debug {
         &self,
         labels: &HashMap<LabelItem, Option<String>>,
     ) -> Result<(), DaemonError>;
+    async fn send_wallet_invitation(&self, _email: &str) -> Result<(), DaemonError> {
+        Ok(())
+    }
 
     // List spend transactions, optionally filtered to the specified `txids`.
     // Set `txids` to `None` for no filter (passing an empty slice returns no transactions).

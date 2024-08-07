@@ -103,15 +103,19 @@ impl BackendClient {
     pub async fn connect_first(self) -> Result<(BackendWalletClient, api::Wallet), DaemonError> {
         let wallets = self.list_wallets().await?;
         let first = wallets.first().cloned().ok_or(DaemonError::NoAnswer)?;
-        Ok((
+        Ok(self.connect_wallet(first))
+    }
+
+    pub fn connect_wallet(self, wallet: api::Wallet) -> (BackendWalletClient, api::Wallet) {
+        (
             BackendWalletClient {
                 inner: self,
                 curve: secp256k1::Secp256k1::verification_only(),
-                wallet_uuid: first.id.clone(),
-                wallet_desc: first.descriptor.to_owned(),
+                wallet_uuid: wallet.id.clone(),
+                wallet_desc: wallet.descriptor.to_owned(),
             },
-            first,
-        ))
+            wallet,
+        )
     }
 
     async fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
@@ -170,7 +174,7 @@ impl BackendClient {
             .find(|w| w.id == wallet_uuid)
             .ok_or(DaemonError::Http(
                 Some(404),
-                "No wallet exists for this uui".to_string(),
+                "No wallet exists for this uuid".to_string(),
             ))?;
         let ledger_kinds = [
             async_hwi::DeviceKind::Ledger.to_string(),
@@ -248,6 +252,47 @@ impl BackendClient {
 
         Ok(())
     }
+
+    pub async fn get_wallet_invitation(
+        &self,
+        invitation_id: &str,
+    ) -> Result<api::WalletInvitation, DaemonError> {
+        let response = self
+            .request(
+                Method::GET,
+                &format!("{}/v1/invitations/{}", self.url, invitation_id),
+            )
+            .await
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(DaemonError::Http(
+                Some(response.status().into()),
+                response.text().await?,
+            ));
+        }
+
+        Ok(response.json().await?)
+    }
+
+    pub async fn accept_wallet_invitation(&self, invitation_id: &str) -> Result<(), DaemonError> {
+        let response = self
+            .request(
+                Method::POST,
+                &format!("{}/v1/invitations/{}/accept", self.url, invitation_id),
+            )
+            .await
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(DaemonError::Http(
+                Some(response.status().into()),
+                response.text().await?,
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -261,6 +306,10 @@ pub struct BackendWalletClient {
 impl BackendWalletClient {
     pub fn inner_client(&self) -> &BackendClient {
         &self.inner
+    }
+
+    pub fn into_inner(self) -> BackendClient {
+        self.inner
     }
 
     pub fn user_id(&self) -> &str {
@@ -1023,6 +1072,30 @@ impl Daemon for BackendWalletClient {
         self.inner
             .update_wallet_metadata(&self.wallet_uuid, fingerprint_aliases, hws)
             .await
+    }
+
+    async fn send_wallet_invitation(&self, email: &str) -> Result<(), DaemonError> {
+        let response = self
+            .inner
+            .request(
+                Method::POST,
+                &format!(
+                    "{}/v1/wallets/{}/invitations",
+                    self.inner.url, self.wallet_uuid
+                ),
+            )
+            .await
+            .json(&api::payload::CreateWalletInvitation { email })
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(DaemonError::Http(
+                Some(response.status().into()),
+                response.text().await?,
+            ));
+        }
+
+        Ok(())
     }
 }
 

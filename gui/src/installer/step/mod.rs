@@ -10,7 +10,7 @@ pub use bitcoind::{
 
 pub use descriptor::{BackupDescriptor, DefineDescriptor, ImportDescriptor, RegisterDescriptor};
 
-pub use backend::ChooseBackend;
+pub use backend::{ChooseBackend, ImportRemoteWallet};
 pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
 pub use share_xpubs::ShareXpubs;
 

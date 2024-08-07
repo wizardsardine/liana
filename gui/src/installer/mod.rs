@@ -40,8 +40,8 @@ use crate::{
 pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, DefineBitcoind, DefineDescriptor, Final,
-    ImportDescriptor, InternalBitcoindStep, RecoverMnemonic, RegisterDescriptor,
-    SelectBitcoindTypeStep, ShareXpubs, Step, Welcome,
+    ImportDescriptor, ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic,
+    RegisterDescriptor, SelectBitcoindTypeStep, ShareXpubs, Step, Welcome,
 };
 
 pub struct Installer {
@@ -188,6 +188,7 @@ impl Installer {
                 self.steps = vec![
                     Welcome::default().into(),
                     ChooseBackend::new(self.network).into(),
+                    ImportRemoteWallet::new(self.network).into(),
                     ImportDescriptor::new(self.network).into(),
                     RecoverMnemonic::default().into(),
                     RegisterDescriptor::new_import_wallet().into(),
