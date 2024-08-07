@@ -57,7 +57,6 @@ pub enum HardwareWallet {
     },
     NeedUpgrade {
         id: String,
-        device: Arc<dyn HWI + Sync + Send>,
         kind: DeviceKind,
         fingerprint: Fingerprint,
         version: Option<Version>,
@@ -297,13 +296,50 @@ impl HardwareWallets {
         &mut self,
         message: HardwareWalletMessage,
     ) -> Result<Command<HardwareWalletMessage>, async_hwi::Error> {
-        log::info!("HardwareWallets.update({:?})", message);
+        // log::info!("HardwareWallets.update({:?})", message);
+
+        fn upgrade_is_completed(device: &HardwareWallet) -> bool {
+            if let HardwareWallet::NeedUpgrade {
+                upgrade_step: Some(step),
+                ..
+            } = device
+            {
+                matches!(step, InstallStep::Completed)
+            } else {
+                false
+            }
+        }
+
+        // reset the refresh state if upgrade completed
+        if self.list.iter().any(upgrade_is_completed) {
+            self.reset_refresh();
+        }
+        // then remove the device w/ upgrade completed from the list
+        self.list.retain(|d| !upgrade_is_completed(d));
+
         match message {
             HardwareWalletMessage::Error(e) => Err(async_hwi::Error::Device(e)),
-            HardwareWalletMessage::List(ConnectedList { still, mut new }) => {
+            HardwareWalletMessage::List(ConnectedList { still, new }) => {
                 // remove disconnected
+                let hws_upgrading: Vec<_> = self
+                    .list
+                    .iter()
+                    .filter(|dev| matches!(dev, HardwareWallet::NeedUpgrade { .. }))
+                    .cloned()
+                    .collect();
                 self.list.retain(|hw| still.contains(hw.id()));
-                self.list.append(&mut new);
+                // Upgrading devices are not automaticaly removed
+                for n in hws_upgrading {
+                    if !self.list.iter().any(|d| *d.id() == *n.id()) {
+                        self.list.push(n);
+                    }
+                }
+                // avoid duplicates
+                for n in new {
+                    if !self.list.iter().any(|d| *d.id() == *n.id()) {
+                        self.list.push(n);
+                    }
+                }
                 let mut cmds = Vec::new();
                 for hw in &mut self.list {
                     match hw {
@@ -498,13 +534,13 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
         return (HardwareWalletMessage::Error(e.to_string()), state);
     };
 
-    log::info!(" --------------   refresh()");
-    log::info!("    state.hws{:?}", state.hws);
-    log::info!("    state.still{:?}", state.still);
-    log::info!("    state.hws_upgrade{:?}", state.hws_upgrade);
-    log::info!("    state.still_upgrade{:?}", state.still_upgrade);
-
-    log::info!("poll...");
+    // log::info!(" --------------   refresh()");
+    // log::info!("    state.hws{:?}", state.hws);
+    // log::info!("    state.still{:?}", state.still);
+    // log::info!("    state.hws_upgrade{:?}", state.hws_upgrade);
+    // log::info!("    state.still_upgrade{:?}", state.still_upgrade);
+    //
+    // log::info!("poll...");
     poll_specter_simulator(&mut state).await;
     poll_specter(&mut state).await;
     poll_jade(&mut state).await;
@@ -549,10 +585,10 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
         }
     }
 
-    log::info!("    state.hws{:?}", state.hws);
-    log::info!("    state.still{:?}", state.still);
-    log::info!("    state.hws_upgrade{:?}", state.hws_upgrade);
-    log::info!("    state.still_upgrade{:?}", state.still_upgrade);
+    // log::info!("    state.hws{:?}", state.hws);
+    // log::info!("    state.still{:?}", state.still);
+    // log::info!("    state.hws_upgrade{:?}", state.hws_upgrade);
+    // log::info!("    state.still_upgrade{:?}", state.still_upgrade);
     state.connected_supported_hws = state
         .still
         .iter()
@@ -563,17 +599,17 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
         }))
         .cloned()
         .collect();
-    log::info!(
-        "    state.connected_supported_hws{:?}",
-        state.connected_supported_hws
-    );
+    // log::info!(
+    //     "    state.connected_supported_hws{:?}",
+    //     state.connected_supported_hws
+    // );
     let mut new_upgrade = state
         .hws_upgrade
         .clone()
         .into_iter()
         .filter(|d| !state.still_upgrade.contains(d.id()))
         .collect();
-    log::info!("    new_upgrade{:?}", new_upgrade);
+    // log::info!("    new_upgrade{:?}", new_upgrade);
     state.hws.append(&mut new_upgrade);
     state.still.append(&mut state.still_upgrade);
     let msg = HardwareWalletMessage::List(ConnectedList {
@@ -855,7 +891,7 @@ pub async fn poll_ledger_simulator(state: &mut State) {
 pub async fn poll_ledger(state: &mut State, api: &HidApi) {
     for detected in ledger::Ledger::<ledger::TransportHID>::enumerate(api) {
         let id = ledger_id(detected);
-        log::info!("detected -> {}", id);
+        // log::info!("detected -> {}", id);
         if state.hws_upgrade.iter().any(|d| *d.id() == id) {
             state.still_upgrade.push(id.clone());
             continue;
@@ -899,7 +935,6 @@ pub async fn poll_ledger(state: &mut State, api: &HidApi) {
                         state.hws_upgrade.push(HardwareWallet::NeedUpgrade {
                             id,
                             kind: device.device_kind(),
-                            device: Arc::new(device),
                             fingerprint,
                             version,
                             upgrade_in_progress: false,

@@ -55,11 +55,11 @@ impl UpgradeMessage {
             }
             UpgradeMessage::Completed { .. } => {
                 hw.upgrade_ended();
-                // TODO: did refresh() will detect as Supported now?
             }
             UpgradeMessage::Error { msg, .. } => {
                 hw.push_log(msg);
                 hw.upgrade_failed();
+                // TODO: handle manual restart of upgrade
             }
             _ => {}
         }
@@ -114,24 +114,21 @@ impl<T: From<UpgradeMessage>> UpgradeState<T> {
     }
 
     fn start(&mut self) {
-        if let Some(api) = connect(self.id.clone()) {
-            let sender = self.sender.clone();
-            let testnet = self.testnet;
-            tokio::spawn(async move {
-                install_app(
-                    &api,
-                    |msg| {
-                        let _ = sender.send(msg);
-                    },
-                    testnet,
-                )
-            });
-            self.state = State::Running;
-        } else {
-            let _ = self
-                .sender
-                .send(InstallStep::Error("Fail to get ledger HID".into()));
-        }
+        let sender = self.sender.clone();
+        let testnet = self.testnet;
+        let id = self.id.clone();
+        tokio::spawn(async move {
+            install_app(
+                id,
+                connect,
+                |msg| {
+                    let _ = sender.send(msg);
+                },
+                testnet,
+                true,
+            )
+        });
+        self.state = State::Running;
     }
 
     fn update(&mut self, msg: InstallStep) -> T {
@@ -179,40 +176,11 @@ impl<T: From<UpgradeMessage>> UpgradeState<T> {
     }
 }
 
-// impl<T: From<UpgradeMessage> + Unpin + Debug> Stream for UpgradeState<T> {
-//     type Item = T;
-//
-//     fn poll_next(
-//         self: std::pin::Pin<&mut Self>,
-//         _cx: &mut std::task::Context<'_>,
-//     ) -> std::task::Poll<Option<Self::Item>> {
-//         let state = self.get_mut();
-//         if state.stop {
-//             Poll::Ready(None)
-//         } else {
-//             match state.receiver.try_recv() {
-//                 Ok(msg) => {
-//                     log::info!("{:?}", msg);
-//                     let ret = state.update(msg.clone());
-//                     Poll::Ready(Some(ret))
-//                 }
-//                 Err(TryRecvError::Empty) => Poll::Pending,
-//                 Err(TryRecvError::Disconnected) => {
-//                     log::info!("UpgradeState: Disconnected!");
-//                     let msg = InstallStep::Error("Disconnected".into());
-//                     let ret = state.update(msg);
-//                     Poll::Ready(Some(ret))
-//                 }
-//             }
-//         }
-//     }
-// }
-
-fn connect(id: String) -> Option<TransportNativeHID> {
+fn connect(id: &str) -> Option<TransportNativeHID> {
     if let Ok(api) = ledger_api() {
         let device = TransportNativeHID::list_ledgers(&api).find(|device| {
             let dev_id = ledger_id(device);
-            dev_id == id
+            dev_id == *id
         })?;
         return TransportNativeHID::open_device(&api, device).ok();
     }

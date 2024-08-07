@@ -2508,7 +2508,7 @@ dependencies = [
 [[package]]
 name = "ledger_manager"
 version = "0.1.0"
-source = "git+https://github.com/pythcoiner/ledger_installer.git?branch=liana#53477ee2077590c461e605350aa0d76494a162d9"
+source = "git+https://github.com/pythcoiner/ledger_installer.git?branch=liana#b2ac2013998704a2713d65e2633504aaa156864d"
 dependencies = [
  "form_urlencoded",
  "hex",
@@ -2525,7 +2525,7 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "6.0.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#1f8d17e414ae0caf7e84bd6a05f3a390943ff587"
+source = "git+https://github.com/wizardsardine/liana?branch=master#d2d9d11290dface9f54fb2844133d016165b334e"
 dependencies = [
  "backtrace",
  "bdk_coin_select",
@@ -3235,9 +3235,9 @@ dependencies = [
 
 [[package]]
 name = "object"
-version = "0.36.2"
+version = "0.36.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f203fa8daa7bb185f760ae12bd8e097f63d17041dcdcaf675ac54cdf863170e"
+checksum = "27b64972346851a39438c60b341ebc01bba47464ae329e55cf343eb93964efd9"
 dependencies = [
  "memchr",
 ]
@@ -4118,9 +4118,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.7.0"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "976295e77ce332211c0d24d92c0e83e50f5c5f046d11082cea19f3df13a3562d"
+checksum = "fc0a2ce646f8655401bb81e7927b812614bd5d91dbc968696be50603510fcaf0"
 
 [[package]]
 name = "rustls-webpki"
@@ -4771,15 +4771,15 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.11.0"
+version = "3.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8fcd239983515c23a32fb82099f97d0b11b8c72f654ed659363a95c3dad7a53"
+checksum = "04cbcdd0c794ebb0d4cf35e88edd2f7d2c4c3e9a5a6dab322839b321c6a87a64"
 dependencies = [
  "cfg-if",
  "fastrand",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
