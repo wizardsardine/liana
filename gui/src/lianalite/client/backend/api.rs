@@ -142,6 +142,21 @@ pub struct FingerprintAlias {
     pub alias: String,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WalletInvitationStatus {
+    Pending,
+    Accepted,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WalletInvitation {
+    pub id: String,
+    pub wallet_name: String,
+    pub wallet_id: String,
+    pub status: WalletInvitationStatus,
+}
+
 #[derive(Deserialize)]
 pub struct WalletLabels {
     pub labels: HashMap<String, String>,
@@ -318,6 +333,11 @@ pub mod payload {
         pub name: &'a str,
         #[serde(serialize_with = "ser_to_string")]
         pub descriptor: &'a LianaDescriptor,
+    }
+
+    #[derive(Serialize)]
+    pub struct CreateWalletInvitation<'a> {
+        pub email: &'a str,
     }
 
     #[derive(Serialize)]

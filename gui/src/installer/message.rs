@@ -30,6 +30,7 @@ pub enum Message {
     Installed(Result<PathBuf, Error>),
     CreateTaprootDescriptor(bool),
     SelectBackend(SelectBackend),
+    ImportRemoteWallet(ImportRemoteWallet),
     SelectBitcoindType(SelectBitcoindTypeMsg),
     InternalBitcoind(InternalBitcoindMsg),
     DefineBitcoind(DefineBitcoind),
@@ -53,7 +54,19 @@ pub enum SelectBackend {
     // Commands messages
     OTPRequested(Result<(AuthClient, String), Error>),
     OTPResent(Result<(), Error>),
-    Connected(Result<(context::RemoteBackend, Option<api::Wallet>), Error>),
+    Connected(Result<context::RemoteBackend, Error>),
+}
+
+#[derive(Debug, Clone)]
+pub enum ImportRemoteWallet {
+    RemoteWallets(Result<Vec<api::Wallet>, Error>),
+    ImportDescriptor(String),
+    ConfirmDescriptor,
+    ImportInvitationToken(String),
+    FetchInvitation,
+    InvitationFetched(Result<api::WalletInvitation, Error>),
+    AcceptInvitation,
+    InvitationAccepted(Result<api::Wallet, Error>),
 }
 
 #[derive(Debug, Clone)]
