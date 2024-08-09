@@ -64,6 +64,14 @@ impl BitcoinInterface for DummyBitcoind {
         true
     }
 
+    fn sync_wallet(
+        &mut self,
+        _receive_index: bip32::ChildNumber,
+        _change_index: bip32::ChildNumber,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
     fn received_coins(
         &self,
         _: &BlockChainTip,
@@ -87,7 +95,7 @@ impl BitcoinInterface for DummyBitcoind {
         &self,
         _: &[(bitcoin::OutPoint, bitcoin::Txid)],
     ) -> (
-        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
+        Vec<(bitcoin::OutPoint, bitcoin::Txid, i32, u32)>,
         Vec<bitcoin::OutPoint>,
     ) {
         (Vec::new(), Vec::new())
@@ -534,7 +542,7 @@ impl DummyLiana {
         let desc = descriptors::LianaDescriptor::new(policy);
         let config = Config {
             bitcoin_config,
-            bitcoind_config: None,
+            bitcoin_backend: None,
             data_dir: Some(data_dir),
             #[cfg(unix)]
             daemon: false,

@@ -1,5 +1,5 @@
 use crate::{
-    bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
+    bitcoin::{BitcoinInterface, BlockChainTip, UTxO, UTxOAddress},
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
 };
@@ -46,44 +46,53 @@ fn update_coins(
             ..
         } = utxo;
         // We can only really treat them if we know the derivation index that was used.
-        let address = match address.require_network(network) {
-            Ok(addr) => addr,
-            Err(e) => {
-                log::error!("Invalid network for address: {}", e);
-                continue;
-            }
-        };
-        if let Some((derivation_index, is_change)) = db_conn.derivation_index_by_address(&address) {
-            // First of if we are receiving coins that are beyond our next derivation index,
-            // adjust it.
-            if derivation_index > db_conn.receive_index() {
-                db_conn.set_receive_index(derivation_index, secp);
-            }
-            if derivation_index > db_conn.change_index() {
-                db_conn.set_change_index(derivation_index, secp);
-            }
-
-            // Now record this coin as a newly received one.
-            if !curr_coins.contains_key(&utxo.outpoint) {
-                let coin = Coin {
-                    outpoint,
-                    is_immature,
-                    amount,
-                    derivation_index,
-                    is_change,
-                    block_info: None,
-                    spend_txid: None,
-                    spend_block: None,
+        let (derivation_index, is_change) = match address {
+            UTxOAddress::Address(address) => {
+                let address = match address.require_network(network) {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        log::error!("Invalid network for address: {}", e);
+                        continue;
+                    }
                 };
-                received.push(coin);
+                if let Some((derivation_index, is_change)) =
+                    db_conn.derivation_index_by_address(&address)
+                {
+                    (derivation_index, is_change)
+                } else {
+                    // TODO: maybe we could try out something here? Like bruteforcing the next 200 indexes?
+                    log::error!(
+                        "Could not get derivation index for coin '{}' (address: '{}')",
+                        &utxo.outpoint,
+                        &address
+                    );
+                    continue;
+                }
             }
-        } else {
-            // TODO: maybe we could try out something here? Like bruteforcing the next 200 indexes?
-            log::error!(
-                "Could not get derivation index for coin '{}' (address: '{}')",
-                &utxo.outpoint,
-                &address
-            );
+            UTxOAddress::DerivIndex(index, is_change) => (index, is_change),
+        };
+        // First of if we are receiving coins that are beyond our next derivation index,
+        // adjust it.
+        if derivation_index > db_conn.receive_index() {
+            db_conn.set_receive_index(derivation_index, secp);
+        }
+        if derivation_index > db_conn.change_index() {
+            db_conn.set_change_index(derivation_index, secp);
+        }
+
+        // Now record this coin as a newly received one.
+        if !curr_coins.contains_key(&utxo.outpoint) {
+            let coin = Coin {
+                outpoint,
+                is_immature,
+                amount,
+                derivation_index,
+                is_change,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+            };
+            received.push(coin);
         }
     }
     log::debug!("Newly received coins: {:?}", received);
@@ -140,10 +149,6 @@ fn update_coins(
         .chain(spending.iter().cloned())
         .collect();
     let (spent, expired_spending) = bit.spent_coins(spending_coins.as_slice());
-    let spent = spent
-        .into_iter()
-        .map(|(oupoint, txid, block)| (oupoint, txid, block.height, block.time))
-        .collect();
     log::debug!("Newly spent coins: {:?}", spent);
 
     UpdatedCoins {
@@ -239,7 +244,7 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
 
 fn updates(
     db_conn: &mut Box<dyn DatabaseConnection>,
-    bit: &impl BitcoinInterface,
+    bit: &mut impl BitcoinInterface,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
@@ -257,6 +262,11 @@ fn updates(
         }
     };
 
+    let (receive_index, change_index) = (db_conn.receive_index(), db_conn.change_index());
+    if let Err(e) = bit.sync_wallet(receive_index, change_index) {
+        log::error!("Error syncing wallet: '{}'.", e);
+        return updates(db_conn, bit, descs, secp);
+    };
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
     // we may have unconfirmed transactions.
     let updated_coins = update_coins(bit, db_conn, &current_tip, descs, secp);
@@ -289,7 +299,7 @@ fn updates(
 // Check if there is any rescan of the backend ongoing or one that just finished.
 fn rescan_check(
     db_conn: &mut Box<dyn DatabaseConnection>,
-    bit: &impl BitcoinInterface,
+    bit: &mut impl BitcoinInterface,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
@@ -356,7 +366,7 @@ pub fn sync_poll_interval() -> time::Duration {
 
 /// Update our state from the Bitcoin backend.
 pub fn poll(
-    bit: &sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+    bit: &mut sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
     db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     descs: &[descriptors::SinglePathLianaDesc],

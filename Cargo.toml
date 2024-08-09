@@ -31,6 +31,10 @@ miniscript = { version = "11.0", features = ["serde", "compiler", "base64"] }
 # Coin selection algorithms for spend transaction creation.
 bdk_coin_select = "0.3"
 
+# For Electrum backend. This is the latest version with the same bitcoin version as
+# the miniscript dependency.
+bdk_electrum = { version = "0.14" }
+
 # Don't reinvent the wheel
 dirs = "5.0"
 

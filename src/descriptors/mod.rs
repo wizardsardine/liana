@@ -613,6 +613,13 @@ impl SinglePathLianaDesc {
                 ),
         )
     }
+
+    /// Reference to the underlying `Descriptor<descriptor::DescriptorPublicKey>`
+    pub fn as_descriptor_public_key(
+        &self,
+    ) -> &descriptor::Descriptor<descriptor::DescriptorPublicKey> {
+        &self.0
+    }
 }
 
 pub enum DescKeysOrigins {

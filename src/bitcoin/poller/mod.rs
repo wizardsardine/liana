@@ -56,7 +56,7 @@ impl Poller {
     /// Typically this would run for the whole duration of the program in a thread, and the main
     /// thread would set the `shutdown` atomic to `true` when shutting down.
     pub fn poll_forever(
-        &self,
+        &mut self,
         poll_interval: time::Duration,
         receiver: mpsc::Receiver<PollerMessage>,
     ) {
@@ -91,7 +91,7 @@ impl Poller {
                     // We've been asked to poll, don't wait any further and signal completion to
                     // the caller.
                     last_poll = Some(time::Instant::now());
-                    looper::poll(&self.bit, &self.db, &self.secp, &self.descs);
+                    looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
                     if let Err(e) = sender.send(()) {
                         log::error!("Error sending immediate poll completion signal: {}.", e);
                     }
@@ -122,7 +122,7 @@ impl Poller {
                 }
             }
 
-            looper::poll(&self.bit, &self.db, &self.secp, &self.descs);
+            looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
         }
     }
 }
