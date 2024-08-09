@@ -548,10 +548,12 @@ impl Step for DefineDescriptor {
         &'a self,
         hws: &'a HardwareWallets,
         progress: (usize, usize),
+        email: Option<&'a str>,
     ) -> Element<'a, Message> {
         let aliases = self.setup.keys_aliases();
         let content = view::define_descriptor(
             progress,
+            email,
             self.use_taproot,
             self.setup
                 .spending_keys
@@ -1141,6 +1143,10 @@ impl ImportDescriptor {
 }
 
 impl Step for ImportDescriptor {
+    // ImportRemoteWallet is used instead
+    fn skip(&self, ctx: &Context) -> bool {
+        ctx.remote_backend.is_some()
+    }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
@@ -1166,9 +1172,15 @@ impl Step for ImportDescriptor {
         }
     }
 
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
         view::import_descriptor(
             progress,
+            email,
             &self.imported_descriptor,
             self.wrong_network,
             self.error.as_ref(),
@@ -1310,10 +1322,12 @@ impl Step for RegisterDescriptor {
         &'a self,
         hws: &'a HardwareWallets,
         progress: (usize, usize),
+        email: Option<&'a str>,
     ) -> Element<'a, Message> {
         let desc = self.descriptor.as_ref().unwrap();
         view::register_descriptor(
             progress,
+            email,
             desc.to_string(),
             &hws.list,
             &self.registered,
@@ -1364,9 +1378,14 @@ impl Step for BackupDescriptor {
             self.done = false;
         }
     }
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
         let desc = self.descriptor.as_ref().unwrap();
-        view::backup_descriptor(progress, desc.to_string(), self.done)
+        view::backup_descriptor(progress, email, desc.to_string(), self.done)
     }
 }
 
@@ -1416,7 +1435,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_define_descriptor_use_hotkey() {
-        let mut ctx = Context::new(Network::Signet, PathBuf::from_str("/").unwrap());
+        let mut ctx = Context::new(Network::Signet, PathBuf::from_str("/").unwrap(), None);
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Bitcoin,
             Arc::new(Mutex::new(Signer::generate(Network::Bitcoin).unwrap())),
@@ -1498,7 +1517,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_define_descriptor_stores_if_hw_is_used() {
-        let mut ctx = Context::new(Network::Testnet, PathBuf::from_str("/").unwrap());
+        let mut ctx = Context::new(Network::Testnet, PathBuf::from_str("/").unwrap(), None);
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Testnet,
             Arc::new(Mutex::new(Signer::generate(Network::Testnet).unwrap())),

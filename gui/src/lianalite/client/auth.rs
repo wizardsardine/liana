@@ -39,6 +39,7 @@ pub struct AuthClient {
     http: reqwest::Client,
     url: String,
     api_public_key: String,
+    pub email: String,
 }
 
 #[derive(Debug, Clone)]
@@ -67,11 +68,12 @@ impl From<Error> for AuthError {
 }
 
 impl AuthClient {
-    pub fn new(url: String, api_public_key: String) -> Self {
+    pub fn new(url: String, api_public_key: String, email: String) -> Self {
         AuthClient {
             http: reqwest::Client::new(),
             url,
             api_public_key,
+            email,
         }
     }
 
@@ -85,11 +87,20 @@ impl AuthClient {
         req
     }
 
-    pub async fn sign_in_otp(&self, email: &str) -> Result<(), AuthError> {
+    /// the redirect_to is setup so the supabase html template has the information
+    /// that user is using the desktop to authenticate and will display the token
+    /// instead of the confirmation link button.
+    pub async fn sign_in_otp(&self) -> Result<(), AuthError> {
         let response: Response = self
-            .request(Method::POST, &format!("{}/auth/v1/otp", self.url))
+            .request(
+                Method::POST,
+                &format!(
+                    "{}/auth/v1/otp?redirect_to=https://desktop.lianalite.com",
+                    self.url
+                ),
+            )
             .json(&SignInOtp {
-                email,
+                email: &self.email,
                 create_user: true,
             })
             .send()
@@ -105,12 +116,12 @@ impl AuthClient {
         Ok(())
     }
 
-    pub async fn resend_otp(&self, email: &str) -> Result<Response, AuthError> {
+    pub async fn resend_otp(&self) -> Result<Response, AuthError> {
         let response: Response = self
             .request(Method::POST, &format!("{}/auth/v1/resend", self.url))
             .json(&ResendOtp {
-                email,
-                kind: "email",
+                email: &self.email,
+                kind: "signup",
             })
             .send()
             .await?;
@@ -123,18 +134,14 @@ impl AuthClient {
         Ok(response)
     }
 
-    pub async fn verify_otp(
-        &self,
-        email: &str,
-        token: &str,
-    ) -> Result<AccessTokenResponse, AuthError> {
+    pub async fn verify_otp(&self, token: &str) -> Result<AccessTokenResponse, AuthError> {
         let response: Response = self
             .http
             .post(&format!("{}/auth/v1/verify", self.url))
             .header("apikey", &self.api_public_key)
             .header("Content-Type", "application/json")
             .json(&VerifyOtp {
-                email,
+                email: &self.email,
                 token,
                 kind: "email",
             })

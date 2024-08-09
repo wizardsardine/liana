@@ -51,8 +51,13 @@ impl Step for BackupMnemonic {
             false
         }
     }
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
-        view::backup_mnemonic(progress, &self.words, self.done)
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
+        view::backup_mnemonic(progress, email, &self.words, self.done)
     }
 }
 
@@ -163,9 +168,15 @@ impl Step for RecoverMnemonic {
         ctx.recovered_signer = Some(Arc::new(signer));
         true
     }
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
         view::recover_mnemonic(
             progress,
+            email,
             &self.words,
             self.current,
             &self.suggestions,

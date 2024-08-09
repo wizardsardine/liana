@@ -1,11 +1,12 @@
 use liana::miniscript::{bitcoin::bip32::Fingerprint, DescriptorPublicKey};
 use std::path::PathBuf;
 
-use super::Error;
+use super::{context, Error};
 use crate::{
     bitcoind::{Bitcoind, ConfigField, RpcAuthType},
     download::Progress,
     hw::HardwareWalletMessage,
+    lianalite::client::{auth::AuthClient, backend::api},
 };
 use async_hwi::{DeviceKind, Version};
 
@@ -28,6 +29,8 @@ pub enum Message {
     UseHotSigner,
     Installed(Result<PathBuf, Error>),
     CreateTaprootDescriptor(bool),
+    SelectBackend(SelectBackend),
+    ImportRemoteWallet(ImportRemoteWallet),
     SelectBitcoindType(SelectBitcoindTypeMsg),
     InternalBitcoind(InternalBitcoindMsg),
     DefineBitcoind(DefineBitcoind),
@@ -37,6 +40,33 @@ pub enum Message {
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
     MnemonicWord(usize, String),
     ImportMnemonic(bool),
+}
+
+#[derive(Debug, Clone)]
+pub enum SelectBackend {
+    // view messages
+    RequestOTP,
+    EditEmail,
+    EmailEdited(String),
+    OTPEdited(String),
+    ContinueWithRemoteBackend,
+    ContinueWithLocalWallet,
+    // Commands messages
+    OTPRequested(Result<(AuthClient, String), Error>),
+    OTPResent(Result<(), Error>),
+    Connected(Result<context::RemoteBackend, Error>),
+}
+
+#[derive(Debug, Clone)]
+pub enum ImportRemoteWallet {
+    RemoteWallets(Result<Vec<api::Wallet>, Error>),
+    ImportDescriptor(String),
+    ConfirmDescriptor,
+    ImportInvitationToken(String),
+    FetchInvitation,
+    InvitationFetched(Result<api::WalletInvitation, Error>),
+    AcceptInvitation,
+    InvitationAccepted(Result<api::Wallet, Error>),
 }
 
 #[derive(Debug, Clone)]
