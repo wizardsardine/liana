@@ -68,11 +68,19 @@ pub enum SettingsMessage {
     EditBitcoindSettings,
     BitcoindSettings(SettingsEditMessage),
     RescanSettings(SettingsEditMessage),
+    EditRemoteBackendSettings,
+    RemoteBackendSettings(RemoteBackendSettingsMessage),
     EditWalletSettings,
     AboutSection,
     RegisterWallet,
     FingerprintAliasEdited(Fingerprint, String),
     Save,
+}
+
+#[derive(Debug, Clone)]
+pub enum RemoteBackendSettingsMessage {
+    EditInvitationEmail(String),
+    SendInvitation,
 }
 
 #[derive(Debug, Clone)]
