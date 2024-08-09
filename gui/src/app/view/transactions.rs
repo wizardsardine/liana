@@ -244,13 +244,17 @@ pub fn create_rbf_modal<'a>(
                         .push(Container::new(p1_bold("Feerate")).padding(10))
                         .spacing(10)
                         .push(
-                            form::Form::new_trimmed("", feerate, move |msg| {
-                                Message::CreateRbf(CreateRbfMessage::FeerateEdited(msg))
-                            })
-                            .warning(
-                                "Feerate must be greater than previous value and \
-                                less than or equal to 1000 sats/vbyte",
-                            )
+                            if replacement_txid.is_none() {
+                                form::Form::new_trimmed("", feerate, move |msg| {
+                                    Message::CreateRbf(CreateRbfMessage::FeerateEdited(msg))
+                                })
+                                .warning(
+                                    "Feerate must be greater than previous value and \
+                                    less than or equal to 1000 sats/vbyte",
+                                )
+                            } else {
+                                form::Form::new_disabled("", feerate)
+                            }
                             .size(P1_SIZE)
                             .padding(10),
                         )

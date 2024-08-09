@@ -45,6 +45,19 @@ where
         }
     }
 
+    /// Creates a new [`Form`] that have a disabled input.
+    ///
+    /// It expects:
+    /// - a placeholder
+    /// - the current value
+    pub fn new_disabled(placeholder: &str, value: &Value<String>) -> Self {
+        Self {
+            input: text_input::TextInput::new(placeholder, &value.value),
+            warning: None,
+            valid: value.valid,
+        }
+    }
+
     /// Creates a new [`Form`] that trims input values before applying the `on_change` function.
     ///
     /// It expects:
