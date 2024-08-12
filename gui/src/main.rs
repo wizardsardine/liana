@@ -313,6 +313,7 @@ impl Application for GUI {
                         backend_client,
                         wallet,
                         l.datadir.clone(),
+                        l.network,
                         config,
                     );
 
@@ -449,6 +450,7 @@ pub fn create_app_with_remote_backend(
     remote_backend: BackendWalletClient,
     wallet: api::Wallet,
     datadir: PathBuf,
+    network: bitcoin::Network,
     config: app::Config,
 ) -> (app::App, iced::Command<app::Message>) {
     let hws: Vec<HardwareWalletConfig> = wallet
@@ -485,7 +487,9 @@ pub fn create_app_with_remote_backend(
             Wallet::new(wallet.descriptor)
                 .with_name(wallet.name)
                 .with_key_aliases(aliases)
-                .with_hardware_wallets(hws),
+                .with_hardware_wallets(hws)
+                .load_hotsigners(&datadir, network)
+                .expect("Datadir should be conform"),
         ),
         config,
         Arc::new(remote_backend),
