@@ -258,17 +258,24 @@ impl Application for GUI {
                         self.log_level
                             .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                     );
-                    if app::settings::Settings::from_file(datadir_path.clone(), network).is_ok_and(
+                    if let Ok(settings) =
+                        app::settings::Settings::from_file(datadir_path.clone(), network)
+                    {
+                        if settings
+                            .wallets
+                            .first()
+                            .map(|w| w.remote_backend_auth.is_some())
+                            == Some(true)
                         {
-                            |s| {
-                                s.wallets.first().map(|w| w.remote_backend_auth.is_some())
-                                    == Some(true)
-                            }
-                        },
-                    ) {
-                        let (login, command) = login::LianaLiteLogin::new(datadir_path, network);
-                        self.state = State::Login(Box::new(login));
-                        command.map(|msg| Message::Login(Box::new(msg)))
+                            let (login, command) =
+                                login::LianaLiteLogin::new(datadir_path, network, settings);
+                            self.state = State::Login(Box::new(login));
+                            command.map(|msg| Message::Login(Box::new(msg)))
+                        } else {
+                            let (loader, command) = Loader::new(datadir_path, cfg, network, None);
+                            self.state = State::Loader(Box::new(loader));
+                            command.map(|msg| Message::Load(Box::new(msg)))
+                        }
                     } else {
                         let (loader, command) = Loader::new(datadir_path, cfg, network, None);
                         self.state = State::Loader(Box::new(loader));
@@ -325,7 +332,7 @@ impl Application for GUI {
                         == Some(true)
                     {
                         let (login, command) =
-                            login::LianaLiteLogin::new(i.datadir.clone(), i.network);
+                            login::LianaLiteLogin::new(i.datadir.clone(), i.network, settings);
                         self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {

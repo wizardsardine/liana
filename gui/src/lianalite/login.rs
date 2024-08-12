@@ -64,6 +64,7 @@ pub enum Message {
     View(ViewMessage),
     OTPRequested(Result<(AuthClient, String), Error>),
     OTPResent(Result<(), Error>),
+    // wallet_id and result of the connect command.
     Connected(Result<BackendState, Error>),
     // redirect to the installer with the remote backend connection.
     Install(Option<BackendClient>),
@@ -90,6 +91,8 @@ pub struct LianaLiteLogin {
     pub datadir: PathBuf,
     pub network: Network,
 
+    wallet_id: String,
+
     processing: bool,
     step: ConnectionStep,
 
@@ -113,43 +116,61 @@ pub enum ConnectionStep {
 }
 
 impl LianaLiteLogin {
-    pub fn new(datadir: PathBuf, network: Network) -> (Self, Command<Message>) {
-        (
-            Self {
-                network,
-                datadir: datadir.clone(),
-                step: ConnectionStep::CheckingAuthFile,
-                connection_error: None,
-                auth_error: None,
-                processing: true,
-            },
-            Command::perform(
-                async move {
-                    let auth_config = Settings::from_file(datadir.to_path_buf(), network)?
-                        .wallets
-                        .first()
-                        .cloned()
-                        .ok_or(SettingsError::NotFound)?
-                        .remote_backend_auth
-                        .ok_or(SettingsError::NotFound)?;
-                    let service_config = super::client::get_service_config(network)
-                        .await
-                        .map_err(|e| Error::Unexpected(e.to_string()))?;
-                    let client = AuthClient::new(
-                        service_config.auth_api_url,
-                        service_config.auth_api_public_key,
-                        auth_config.email,
-                    );
-                    connect_with_refresh_token(
-                        client,
-                        auth_config.refresh_token,
-                        service_config.backend_api_url,
-                    )
-                    .await
+    pub fn new(datadir: PathBuf, network: Network, settings: Settings) -> (Self, Command<Message>) {
+        match settings
+            .wallets
+            .first()
+            .cloned()
+            .and_then(|w| w.remote_backend_auth)
+            .ok_or(Error::Unexpected(
+                "Missing auth configuration in settings.json".to_string(),
+            )) {
+            Err(e) => (
+                Self {
+                    network,
+                    datadir: datadir.clone(),
+                    step: ConnectionStep::EnterEmail {
+                        email: form::Value::default(),
+                    },
+                    wallet_id: String::new(),
+                    connection_error: Some(e),
+                    auth_error: None,
+                    processing: true,
                 },
-                Message::Connected,
+                Command::none(),
             ),
-        )
+            Ok(auth_config) => (
+                Self {
+                    network,
+                    datadir: datadir.clone(),
+                    step: ConnectionStep::CheckingAuthFile,
+                    connection_error: None,
+                    wallet_id: auth_config.wallet_id.clone(),
+                    auth_error: None,
+                    processing: true,
+                },
+                Command::perform(
+                    async move {
+                        let service_config = super::client::get_service_config(network)
+                            .await
+                            .map_err(|e| Error::Unexpected(e.to_string()))?;
+                        let client = AuthClient::new(
+                            service_config.auth_api_url,
+                            service_config.auth_api_public_key,
+                            auth_config.email,
+                        );
+                        connect_with_refresh_token(
+                            client,
+                            auth_config.refresh_token,
+                            auth_config.wallet_id,
+                            service_config.backend_api_url,
+                        )
+                        .await
+                    },
+                    Message::Connected,
+                ),
+            ),
+        }
     }
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
@@ -285,8 +306,9 @@ impl LianaLiteLogin {
                         self.processing = true;
                         self.connection_error = None;
                         self.auth_error = None;
+                        let wallet_id = self.wallet_id.clone();
                         return Command::perform(
-                            async move { connect(client, otp, backend_api_url).await },
+                            async move { connect(client, otp, wallet_id, backend_api_url).await },
                             Message::Connected,
                         );
                     }
@@ -507,13 +529,23 @@ async fn update_wallet_auth_settings(
 pub async fn connect(
     auth: AuthClient,
     token: String,
+    wallet_id: String,
     backend_api_url: String,
 ) -> Result<BackendState, Error> {
     let access = auth.verify_otp(token.trim_end()).await?;
     let client = BackendClient::connect(auth, backend_api_url, access.clone()).await?;
 
-    if !client.list_wallets().await?.is_empty() {
-        let (wallet_client, wallet) = client.connect_first().await?;
+    let wallets = client.list_wallets().await?;
+    if wallets.is_empty() {
+        return Ok(BackendState::NoWallet(client));
+    }
+
+    if wallet_id.is_empty() {
+        let first = wallets.first().cloned().ok_or(DaemonError::NoAnswer)?;
+        let (wallet_client, wallet) = client.connect_wallet(first);
+        Ok(BackendState::WalletExists(wallet_client, wallet))
+    } else if let Some(wallet) = wallets.into_iter().find(|w| w.id == wallet_id) {
+        let (wallet_client, wallet) = client.connect_wallet(wallet);
         Ok(BackendState::WalletExists(wallet_client, wallet))
     } else {
         Ok(BackendState::NoWallet(client))
@@ -523,13 +555,19 @@ pub async fn connect(
 pub async fn connect_with_refresh_token(
     auth: AuthClient,
     refresh_token: String,
+    wallet_id: String,
     backend_api_url: String,
 ) -> Result<BackendState, Error> {
     let access = auth.refresh_token(&refresh_token).await?;
     let client = BackendClient::connect(auth, backend_api_url, access.clone()).await?;
 
-    if !client.list_wallets().await?.is_empty() {
-        let (wallet_client, wallet) = client.connect_first().await?;
+    if let Some(wallet) = client
+        .list_wallets()
+        .await?
+        .into_iter()
+        .find(|w| w.id == wallet_id)
+    {
+        let (wallet_client, wallet) = client.connect_wallet(wallet);
         Ok(BackendState::WalletExists(wallet_client, wallet))
     } else {
         Ok(BackendState::NoWallet(client))
