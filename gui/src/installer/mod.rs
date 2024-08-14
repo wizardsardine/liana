@@ -72,6 +72,10 @@ impl Installer {
         {
             self.current -= 1;
         }
+
+        if let Some(step) = self.steps.get(self.current) {
+            step.revert(&mut self.context)
+        }
     }
 
     pub fn new(

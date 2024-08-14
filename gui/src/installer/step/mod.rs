@@ -50,6 +50,7 @@ pub trait Step {
     fn apply(&mut self, _ctx: &mut Context) -> bool {
         true
     }
+    fn revert(&self, _ctx: &mut Context) {}
     fn stop(&self) {}
 }
 

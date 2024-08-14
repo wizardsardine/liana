@@ -260,6 +260,12 @@ impl Step for ChooseBackend {
         true
     }
 
+    /// If user clicks on previous to get back to the select backend, we revert the applied remote
+    /// backend on the context.
+    fn revert(&self, ctx: &mut Context) {
+        ctx.remote_backend = None;
+    }
+
     fn view<'a>(
         &'a self,
         _hws: &'a HardwareWallets,
