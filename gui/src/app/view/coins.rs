@@ -348,7 +348,7 @@ pub fn expire_message_units(sequence: u32) -> Vec<String> {
     let n_days = n_minutes / 1440;
 
     #[allow(clippy::nonminimal_bool)]
-    if n_days != 0 || n_months != 0 || n_days != 0 {
+    if n_years != 0 || n_months != 0 || n_days != 0 {
         [(n_years, "year"), (n_months, "month"), (n_days, "day")]
             .iter()
             .filter_map(|(n, u)| {
@@ -373,5 +373,22 @@ pub fn expire_message_units(sequence: u32) -> Vec<String> {
                 }
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_expire_message_units() {
+        let testcases = [
+            (61, vec!["10 hours".to_string(), "10 minutes".to_string()]),
+            (1112, vec!["7 days".to_string()]),
+            (52600, vec!["1 year".to_string()]),
+        ];
+
+        for (seq, result) in testcases {
+            assert_eq!(expire_message_units(seq), result);
+        }
     }
 }
