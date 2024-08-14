@@ -45,7 +45,7 @@ pub enum CommandError {
     UnknownOutpoint(bitcoin::OutPoint),
     AlreadySpent(bitcoin::OutPoint),
     ImmatureCoinbase(bitcoin::OutPoint),
-    Address(bitcoin::address::Error),
+    Address(bitcoin::address::ParseError),
     SpendCreation(SpendCreationError),
     InsufficientFunds(
         /* in value */ bitcoin::Amount,
@@ -81,7 +81,7 @@ impl fmt::Display for CommandError {
                 op
             ),
             Self::UnknownOutpoint(op) => write!(f, "Unknown outpoint '{}'.", op),
-            Self::Address(e) => write!(f, "Address error: {}", e),
+            Self::Address(e) => write!(f, "Address parsing: {}", e),
             Self::SpendCreation(e) => write!(f, "Creating spend: {}", e),
             Self::InsufficientFunds(in_val, out_val, feerate) => {
                 if let Some(out_val) = out_val {
@@ -598,7 +598,7 @@ impl DaemonControl {
         // If the transaction already exists in DB, merge the signatures for each input on a best
         // effort basis.
         // We work on the newly provided PSBT, in case its content was updated.
-        let txid = tx.txid();
+        let txid = tx.compute_txid();
         if let Some(db_psbt) = db_conn.spend_tx(&txid) {
             let db_tx = db_psbt.unsigned_tx;
             for i in 0..db_tx.input.len() {
@@ -679,7 +679,7 @@ impl DaemonControl {
             .into_iter()
             .filter_map(|(psbt, updated_at)| {
                 if let Some(set) = &txids_set {
-                    if !set.contains(&psbt.unsigned_tx.txid()) {
+                    if !set.contains(&psbt.unsigned_tx.compute_txid()) {
                         return None;
                     }
                 }
@@ -1414,7 +1414,7 @@ mod tests {
             input: vec![],
             output: vec![],
         };
-        let dummy_op = bitcoin::OutPoint::new(dummy_tx.txid(), 0);
+        let dummy_op = bitcoin::OutPoint::new(dummy_tx.compute_txid(), 0);
         let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
@@ -1482,7 +1482,7 @@ mod tests {
         assert!(warnings.is_empty());
         assert_eq!(
             tx.output[0].script_pubkey,
-            dummy_addr.payload().script_pubkey()
+            dummy_addr.assume_checked_ref().script_pubkey()
         );
         assert_eq!(tx.output[0].value.to_sat(), dummy_value);
 
@@ -1532,13 +1532,13 @@ mod tests {
 
         // If we ask to create an output for an address from another network, it will fail.
         let invalid_addr =
-            bitcoin::Address::new(bitcoin::Network::Testnet, dummy_addr.payload().clone());
+            bitcoin::Address::from_str("tb1qfufcrdyarcg5eph608c6l8vktrc9re6agu4se2").unwrap();
         let invalid_destinations: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
             [(invalid_addr, dummy_value)].iter().cloned().collect();
         assert!(matches!(
             control.create_spend(&invalid_destinations, &[dummy_op], 1, None),
             Err(CommandError::Address(
-                address::Error::NetworkValidation { .. }
+                address::ParseError::NetworkValidation { .. }
             ))
         ));
 
@@ -1559,7 +1559,7 @@ mod tests {
         assert_eq!(tx.output.len(), 1);
         assert_eq!(
             tx.output[0].script_pubkey,
-            dummy_addr.payload().script_pubkey()
+            dummy_addr.assume_checked_ref().script_pubkey()
         );
         assert_eq!(tx.output[0].value.to_sat(), 95_000);
         // change = 100_000 - 95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 = 4830
@@ -1775,7 +1775,7 @@ mod tests {
         assert_eq!(tx_auto.output.len(), 2);
         assert_eq!(
             tx_auto.output[0].script_pubkey,
-            dummy_addr.payload().script_pubkey()
+            dummy_addr.assume_checked_ref().script_pubkey()
         );
         assert_eq!(tx_auto.output[0].value, Amount::from_sat(80_000));
 
@@ -2015,7 +2015,7 @@ mod tests {
         } else {
             panic!("expect successful spend creation")
         };
-        let txid_a = psbt_a.unsigned_tx.txid();
+        let txid_a = psbt_a.unsigned_tx.compute_txid();
         let psbt_b = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(&destinations_b, &[dummy_op_b], 10, None)
             .unwrap()
@@ -2024,7 +2024,7 @@ mod tests {
         } else {
             panic!("expect successful spend creation")
         };
-        let txid_b = psbt_b.unsigned_tx.txid();
+        let txid_b = psbt_b.unsigned_tx.compute_txid();
         let psbt_c = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(&destinations_c, &[dummy_op_a, dummy_op_b], 100, None)
             .unwrap()
@@ -2033,7 +2033,7 @@ mod tests {
         } else {
             panic!("expect successful spend creation")
         };
-        let txid_c = psbt_c.unsigned_tx.txid();
+        let txid_c = psbt_c.unsigned_tx.compute_txid();
 
         // We can store and query them all
         control.update_spend(psbt_a.clone()).unwrap();
@@ -2101,7 +2101,7 @@ mod tests {
             inputs: vec![],
             outputs: vec![],
         };
-        let dummy_txid_a = dummy_psbt_a.unsigned_tx.txid();
+        let dummy_txid_a = dummy_psbt_a.unsigned_tx.compute_txid();
         dummy_bitcoind.txs.insert(dummy_txid_a, (dummy_tx_a, None));
         let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
         let control = &ms.control();
@@ -2207,7 +2207,7 @@ mod tests {
             input: vec![TxIn {
                 witness: Witness::new(),
                 previous_output: OutPoint {
-                    txid: deposit1.txid(),
+                    txid: deposit1.compute_txid(),
                     vout: 0,
                 },
                 script_sig: ScriptBuf::new(),
@@ -2232,21 +2232,21 @@ mod tests {
                 is_change: false,
                 is_immature: false,
                 outpoint: OutPoint {
-                    txid: deposit1.txid(),
+                    txid: deposit1.compute_txid(),
                     vout: 0,
                 },
                 block_info: Some(BlockInfo { height: 1, time: 1 }),
                 spend_block: Some(BlockInfo { height: 3, time: 3 }),
                 derivation_index: ChildNumber::from(0),
                 amount: bitcoin::Amount::from_sat(100_000_000),
-                spend_txid: Some(spend_tx.txid()),
+                spend_txid: Some(spend_tx.compute_txid()),
             },
             // Deposit 2
             Coin {
                 is_change: false,
                 is_immature: false,
                 outpoint: OutPoint {
-                    txid: deposit2.txid(),
+                    txid: deposit2.compute_txid(),
                     vout: 0,
                 },
                 block_info: Some(BlockInfo { height: 2, time: 2 }),
@@ -2259,7 +2259,7 @@ mod tests {
             Coin {
                 is_change: true,
                 is_immature: false,
-                outpoint: OutPoint::new(spend_tx.txid(), 1),
+                outpoint: OutPoint::new(spend_tx.compute_txid(), 1),
                 block_info: Some(BlockInfo { height: 3, time: 3 }),
                 spend_block: None,
                 derivation_index: ChildNumber::from(2),
@@ -2271,7 +2271,7 @@ mod tests {
                 is_change: false,
                 is_immature: false,
                 outpoint: OutPoint {
-                    txid: deposit3.txid(),
+                    txid: deposit3.compute_txid(),
                     vout: 0,
                 },
                 block_info: Some(BlockInfo { height: 4, time: 4 }),
@@ -2284,7 +2284,7 @@ mod tests {
 
         let mut txs_map = HashMap::new();
         txs_map.insert(
-            deposit1.txid(),
+            deposit1.compute_txid(),
             (
                 deposit1.clone(),
                 Some(Block {
@@ -2298,7 +2298,7 @@ mod tests {
             ),
         );
         txs_map.insert(
-            deposit2.txid(),
+            deposit2.compute_txid(),
             (
                 deposit2.clone(),
                 Some(Block {
@@ -2312,7 +2312,7 @@ mod tests {
             ),
         );
         txs_map.insert(
-            spend_tx.txid(),
+            spend_tx.compute_txid(),
             (
                 spend_tx.clone(),
                 Some(Block {
@@ -2326,7 +2326,7 @@ mod tests {
             ),
         );
         txs_map.insert(
-            deposit3.txid(),
+            deposit3.compute_txid(),
             (
                 deposit3.clone(),
                 Some(Block {
@@ -2435,7 +2435,7 @@ mod tests {
 
         let mut txs_map = HashMap::new();
         txs_map.insert(
-            tx1.txid(),
+            tx1.compute_txid(),
             (
                 tx1.clone(),
                 Some(Block {
@@ -2449,7 +2449,7 @@ mod tests {
             ),
         );
         txs_map.insert(
-            tx2.txid(),
+            tx2.compute_txid(),
             (
                 tx2.clone(),
                 Some(Block {
@@ -2463,7 +2463,7 @@ mod tests {
             ),
         );
         txs_map.insert(
-            tx3.txid(),
+            tx3.compute_txid(),
             (
                 tx3.clone(),
                 Some(Block {
@@ -2503,12 +2503,14 @@ mod tests {
             }
         }
 
-        let transactions = control.list_transactions(&[tx1.txid()]).transactions;
+        let transactions = control
+            .list_transactions(&[tx1.compute_txid()])
+            .transactions;
         assert_eq!(transactions.len(), 1);
         assert_eq!(transactions[0].tx, tx1);
 
         let transactions = control
-            .list_transactions(&[tx1.txid(), tx2.txid(), tx3.txid()])
+            .list_transactions(&[tx1.compute_txid(), tx2.compute_txid(), tx3.compute_txid()])
             .transactions;
         assert_eq!(transactions.len(), 3);
 

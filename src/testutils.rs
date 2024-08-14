@@ -355,7 +355,7 @@ impl DatabaseConnection for DummyDatabase {
     }
 
     fn store_spend(&mut self, psbt: &Psbt) {
-        let txid = psbt.unsigned_tx.txid();
+        let txid = psbt.unsigned_tx.compute_txid();
         self.db
             .write()
             .unwrap()
@@ -446,7 +446,11 @@ impl DatabaseConnection for DummyDatabase {
 
     fn new_txs(&mut self, txs: &[bitcoin::Transaction]) {
         for tx in txs {
-            self.db.write().unwrap().txs.insert(tx.txid(), tx.clone());
+            self.db
+                .write()
+                .unwrap()
+                .txs
+                .insert(tx.compute_txid(), tx.clone());
         }
     }
 
