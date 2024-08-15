@@ -589,7 +589,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     settings.window.icon = Some(image::liana_app_icon());
     settings.window.min_size = Some(Size {
         width: 1000.0,
-        height: 800.0,
+        height: 650.0,
     });
     settings.default_text_size = text::P1_SIZE.into();
     settings.default_font = liana_ui::font::REGULAR;
