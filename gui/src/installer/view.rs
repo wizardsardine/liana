@@ -89,7 +89,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                                 .align_items(Alignment::Center),
                                         )
                                         .padding(20)
-                                        .on_press(Message::CreateWallet)
+                                        .on_press(Message::CreateWallet),
                                     )
                                     .padding(20),
                                 )
@@ -110,7 +110,7 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                                 .align_items(Alignment::Center),
                                         )
                                         .padding(20)
-                                        .on_press(Message::ImportWallet)
+                                        .on_press(Message::ImportWallet),
                                     )
                                     .padding(20),
                                 ),
