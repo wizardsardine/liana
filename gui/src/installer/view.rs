@@ -74,45 +74,43 @@ pub fn welcome<'a>() -> Element<'a, Message> {
                                 .spacing(20)
                                 .push(
                                     Container::new(
-                                        Column::new()
-                                            .spacing(20)
-                                            .align_items(Alignment::Center)
-                                            .push(
-                                                image::create_new_wallet_icon()
-                                                    .width(Length::Fixed(100.0)),
-                                            )
-                                            .push(
-                                                p1_regular("Create a new wallet")
-                                                    .style(color::GREY_3),
-                                            )
-                                            .push(
-                                                button::secondary(None, "Select")
-                                                    .width(Length::Fixed(200.0))
-                                                    .on_press(Message::CreateWallet),
-                                            )
-                                            .align_items(Alignment::Center),
+                                        Button::new(
+                                            Column::new()
+                                                .spacing(20)
+                                                .align_items(Alignment::Center)
+                                                .push(
+                                                    image::create_new_wallet_icon()
+                                                        .width(Length::Fixed(100.0)),
+                                                )
+                                                .push(
+                                                    p1_regular("Create a new wallet")
+                                                        .style(color::GREY_3),
+                                                )
+                                                .align_items(Alignment::Center),
+                                        )
+                                        .padding(20)
+                                        .on_press(Message::CreateWallet)
                                     )
                                     .padding(20),
                                 )
                                 .push(
                                     Container::new(
-                                        Column::new()
-                                            .spacing(20)
-                                            .align_items(Alignment::Center)
-                                            .push(
-                                                image::restore_wallet_icon()
-                                                    .width(Length::Fixed(100.0)),
-                                            )
-                                            .push(
-                                                p1_regular("Add an existing wallet")
-                                                    .style(color::GREY_3),
-                                            )
-                                            .push(
-                                                button::secondary(None, "Select")
-                                                    .width(Length::Fixed(200.0))
-                                                    .on_press(Message::ImportWallet),
-                                            )
-                                            .align_items(Alignment::Center),
+                                        Button::new(
+                                            Column::new()
+                                                .spacing(20)
+                                                .align_items(Alignment::Center)
+                                                .push(
+                                                    image::restore_wallet_icon()
+                                                        .width(Length::Fixed(100.0)),
+                                                )
+                                                .push(
+                                                    p1_regular("Add an existing wallet")
+                                                        .style(color::GREY_3),
+                                                )
+                                                .align_items(Alignment::Center),
+                                        )
+                                        .padding(20)
+                                        .on_press(Message::ImportWallet)
                                     )
                                     .padding(20),
                                 ),
