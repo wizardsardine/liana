@@ -1,5 +1,5 @@
 use crate::{app::menu::Menu, bitcoind::RpcAuthType};
-use liana::miniscript::bitcoin::bip32::Fingerprint;
+use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -19,6 +19,7 @@ pub enum Message {
     SelectHardwareWallet(usize),
     CreateRbf(CreateRbfMessage),
     ShowQrCode(usize),
+    UpgradeLedger(String, Network),
 }
 
 #[derive(Debug, Clone)]

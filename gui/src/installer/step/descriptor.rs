@@ -25,9 +25,10 @@ use liana_ui::{
 
 use async_hwi::{DeviceKind, Version};
 
-use crate::hw;
+use crate::hw::hw_subscriptions;
 use crate::{
     app::{settings::KeySetting, wallet::wallet_name},
+    hw,
     hw::{HardwareWallet, HardwareWallets},
     installer::{
         message::{self, Message},
@@ -726,6 +727,7 @@ pub struct EditXpubModal {
     network: Network,
     error: Option<Error>,
     processing: bool,
+    upgrading: bool,
 
     form_name: form::Value<String>,
     form_xpub: form::Value<String>,
@@ -791,6 +793,7 @@ impl EditXpubModal {
             hot_signer_fingerprint,
             hot_signer,
             duplicate_master_fg: false,
+            upgrading: false,
         }
     }
     fn load(&self) -> Command<Message> {
@@ -800,7 +803,7 @@ impl EditXpubModal {
 
 impl DescriptorEditModal for EditXpubModal {
     fn processing(&self) -> bool {
-        self.processing
+        self.processing || self.upgrading
     }
 
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
@@ -989,17 +992,20 @@ impl DescriptorEditModal for EditXpubModal {
                     }
                 }
             },
+            Message::LockModal(upgrading) => self.upgrading = upgrading,
             _ => {}
         };
         Command::none()
     }
 
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        hw_subscriptions(hws, Some(self.device_must_support_tapminiscript))
+            .map(Message::HardwareWallets)
     }
 
     fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
         let chosen_signer = self.chosen_signer.as_ref().map(|s| s.0);
+        let upgrading = hws.list.iter().any(|hw| hw.is_upgrade_in_progress());
         view::edit_key_modal(
             self.network,
             hws.list
@@ -1022,7 +1028,8 @@ impl DescriptorEditModal for EditXpubModal {
                                 && hw.fingerprint() == chosen_signer
                                 && self.form_xpub.valid
                                 && !self.form_xpub.value.is_empty(),
-                            self.device_must_support_tapminiscript,
+                            self.network,
+                            upgrading,
                         ))
                     }
                 })
@@ -1195,6 +1202,7 @@ pub struct RegisterDescriptor {
     /// whether a signing device is used, to explicit this step is not required if the user isn't
     /// using a signing device.
     created_desc: bool,
+    upgrading: bool,
 }
 
 impl RegisterDescriptor {
@@ -1208,6 +1216,7 @@ impl RegisterDescriptor {
             registered: Default::default(),
             error: Default::default(),
             done: Default::default(),
+            upgrading: false,
         }
     }
 
@@ -1287,6 +1296,7 @@ impl Step for RegisterDescriptor {
             Message::UserActionDone(done) => {
                 self.done = done;
             }
+            Message::LockModal(upgrading) => self.upgrading = upgrading,
             _ => {}
         };
         Command::none()
@@ -1301,7 +1311,8 @@ impl Step for RegisterDescriptor {
         true
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        hw_subscriptions(hws, self.descriptor.as_ref().map(|d| d.is_taproot()))
+            .map(Message::HardwareWallets)
     }
     fn load(&self) -> Command<Message> {
         Command::none()
@@ -1322,6 +1333,7 @@ impl Step for RegisterDescriptor {
             self.chosen_hw,
             self.done,
             self.created_desc,
+            self.upgrading,
         )
     }
 }

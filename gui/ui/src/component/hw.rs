@@ -1,10 +1,14 @@
-use crate::{color, component::text, icon, image, theme, widget::*};
+use crate::{
+    color,
+    component::text::{self, caption, p1_regular, p2_regular},
+    icon, image, theme,
+    widget::*,
+};
 use iced::{
-    widget::{column, container, row, tooltip},
+    widget::{column, container, row, scrollable::Properties, tooltip, Space},
     Alignment, Length,
 };
-use std::borrow::Cow;
-use std::fmt::Display;
+use std::{borrow::Cow, fmt::Display};
 
 pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
     kind: K,
@@ -214,6 +218,89 @@ pub fn selected_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     .padding(10)
 }
 
+pub fn ledger_need_upgrade<'a, T: 'a + std::clone::Clone, K: Display, V: Display>(
+    kind: K,
+    version: Option<V>,
+    message: T,
+    upgrading: bool,
+    upgrade_failed: bool,
+) -> Container<'a, T> {
+    let message = if !upgrading && !upgrade_failed {
+        Some(message)
+    } else {
+        None
+    };
+    let device = Container::new(
+        Column::new().push(
+            Row::new()
+                .spacing(5)
+                .push(caption(kind.to_string()))
+                .push_maybe(version.map(|v| caption(v.to_string()))),
+        ),
+    )
+    .padding(15)
+    .style(theme::Container::Card(theme::Card::HalfTop))
+    .width(Length::Fill);
+
+    let banner = Container::new(
+        Row::new()
+            .push(p2_regular(if !upgrade_failed {
+                "Your Ledger's Bitcoin app is too old to be used in taproot descriptor."
+            } else {
+                "Upgrade your device firmware with Ledger Live."
+            }))
+            .push(Space::with_width(Length::Fill))
+            .push(
+                Button::new(" Upgrade ")
+                    .on_press_maybe(message)
+                    .style(theme::Button::Warning),
+            ),
+    )
+    .padding(15)
+    .style(theme::Container::Card(theme::Card::HalfBottom))
+    .width(Length::Fill);
+
+    Container::new(Column::new().push(device).push(banner))
+        .style(theme::Container::Card(theme::Card::Simple))
+}
+
+pub fn ledger_upgrading<'a, T: 'a + std::clone::Clone, K: Display, V: Display>(
+    kind: K,
+    version: Option<V>,
+    logs: Vec<String>,
+) -> Container<'a, T> {
+    let device = Container::new(
+        Column::new().push(
+            Row::new()
+                .spacing(5)
+                .push(caption(kind.to_string()))
+                .push_maybe(version.map(|v| caption(v.to_string()))),
+        ),
+    )
+    .padding(15)
+    .style(theme::Container::Card(theme::Card::HalfTop))
+    .width(Length::Fill);
+
+    let logs: Vec<_> = logs.into_iter().map(|msg| p2_regular(msg).into()).collect();
+
+    let banner = Container::new(
+        Column::new().push(p1_regular("Upgrading:")).push(
+            Scrollable::new(Column::with_children(logs))
+                .height(50)
+                .width(Length::Fill)
+                .direction(iced::widget::scrollable::Direction::Vertical(
+                    Properties::new().alignment(iced::widget::scrollable::Alignment::End),
+                )),
+        ),
+    )
+    .padding(15)
+    .style(theme::Container::Card(theme::Card::HalfBottom))
+    .width(Length::Fill);
+
+    Container::new(Column::new().push(device).push(banner))
+        .style(theme::Container::Card(theme::Card::Simple))
+}
+
 pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
@@ -313,7 +400,6 @@ pub fn wrong_network_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
         ])
         .align_items(Alignment::Center),
     )
-    .padding(10)
 }
 
 pub fn unsupported_hardware_wallet<'a, T: 'a, K: Display, V: Display>(

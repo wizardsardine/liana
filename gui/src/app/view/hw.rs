@@ -1,10 +1,15 @@
 use iced::Length;
 
-use liana_ui::{component::hw, theme, widget::*};
+use liana::miniscript::bitcoin::Network;
+use liana_ui::{
+    component::hw::{self, ledger_need_upgrade, ledger_upgrading},
+    theme,
+    widget::*,
+};
 
 use crate::{
     app::view::message::*,
-    hw::{HardwareWallet, UnsupportedReason},
+    hw::{ledger_version_supported, HardwareWallet, UnsupportedReason},
 };
 use async_hwi::DeviceKind;
 
@@ -13,6 +18,8 @@ pub fn hw_list_view(
     hw: &HardwareWallet,
     signed: bool,
     signing: bool,
+    upgrading: bool,
+    network: Network,
 ) -> Element<Message> {
     let mut bttn = Button::new(match hw {
         HardwareWallet::Supported {
@@ -61,9 +68,34 @@ pub fn hw_list_view(
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
+        HardwareWallet::NeedUpgrade {
+            id,
+            kind,
+            version,
+            upgrade_in_progress,
+            upgrade_log,
+            upgraded_version,
+            ..
+        } => {
+            match upgrade_in_progress {
+                true => ledger_upgrading(kind, version.clone(), upgrade_log.clone()),
+                false => ledger_need_upgrade(
+                    kind,
+                    version.clone(),
+                    Message::UpgradeLedger(id.clone(), network),
+                    upgrading,
+                    if upgraded_version.is_some() {
+                        !ledger_version_supported(upgraded_version.as_ref(), true)
+                    } else {
+                        false
+                    },
+                ),
+            }
+        }
     })
     .style(theme::Button::Border)
-    .width(Length::Fill);
+    .width(Length::Fill)
+    .padding(1);
     if !signing {
         if let HardwareWallet::Supported { registered, .. } = hw {
             if *registered != Some(false) {
@@ -83,7 +115,10 @@ pub fn hw_list_view_for_registration(
     chosen: bool,
     processing: bool,
     registered: bool,
+    upgrading: bool,
+    network: Network,
 ) -> Element<Message> {
+    let mut upgrade = false;
     let mut bttn = Button::new(match hw {
         HardwareWallet::Supported {
             kind,
@@ -122,10 +157,36 @@ pub fn hw_list_view_for_registration(
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
+        HardwareWallet::NeedUpgrade {
+            id,
+            kind,
+            version,
+            upgrade_in_progress,
+            upgrade_log,
+            upgraded_version,
+            ..
+        } => {
+            upgrade = true;
+            match upgrade_in_progress {
+                true => ledger_upgrading(kind, version.clone(), upgrade_log.clone()),
+                false => ledger_need_upgrade(
+                    kind,
+                    version.clone(),
+                    Message::UpgradeLedger(id.clone(), network),
+                    upgrading,
+                    if upgraded_version.is_some() {
+                        !ledger_version_supported(upgraded_version.as_ref(), true)
+                    } else {
+                        false
+                    },
+                ),
+            }
+        }
     })
     .style(theme::Button::Border)
-    .width(Length::Fill);
-    if !processing && hw.is_supported() {
+    .width(Length::Fill)
+    .padding(1);
+    if !processing && hw.is_supported() && !upgrade {
         bttn = bttn.on_press(Message::SelectHardwareWallet(i));
     }
     Container::new(bttn)
@@ -138,6 +199,8 @@ pub fn hw_list_view_verify_address(
     i: usize,
     hw: &HardwareWallet,
     chosen: bool,
+    upgrading: bool,
+    network: Network,
 ) -> Element<Message> {
     let (content, selectable) = match hw {
         HardwareWallet::Supported {
@@ -199,10 +262,36 @@ pub fn hw_list_view_verify_address(
             hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
             false,
         ),
+        HardwareWallet::NeedUpgrade {
+            id,
+            kind,
+            version,
+            upgrade_in_progress,
+            upgrade_log,
+            upgraded_version,
+            ..
+        } => (
+            match upgrade_in_progress {
+                true => ledger_upgrading(kind, version.clone(), upgrade_log.clone()),
+                false => ledger_need_upgrade(
+                    kind,
+                    version.clone(),
+                    Message::UpgradeLedger(id.clone(), network),
+                    upgrading,
+                    if upgraded_version.is_some() {
+                        !ledger_version_supported(upgraded_version.as_ref(), true)
+                    } else {
+                        false
+                    },
+                ),
+            },
+            false,
+        ),
     };
     let mut bttn = Button::new(content)
         .style(theme::Button::Border)
-        .width(Length::Fill);
+        .width(Length::Fill)
+        .padding(1);
     if selectable && hw.is_supported() {
         bttn = bttn.on_press(Message::SelectHardwareWallet(i));
     }

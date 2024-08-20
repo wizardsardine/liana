@@ -47,6 +47,7 @@ bitcoin_hashes = "0.12"
 reqwest = { version = "0.11", default-features=false, features = ["json", "rustls-tls"] }
 rust-ini = "0.19.0"
 
+ledger_manager = { git = "https://github.com/pythcoiner/ledger_installer.git", branch = "liana", ref = "afcc0e5db74488191b5d9b3f28eaad8717772c58"}
 
 [patch.crates-io]
 iced_style = { git = "https://github.com/edouardparis/iced", branch = "patch-0.12.3"}

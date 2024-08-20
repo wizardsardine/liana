@@ -1007,6 +1007,7 @@ fn change_view(output: &TxOut, network: Network) -> Element<Message> {
         .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn sign_action<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
@@ -1014,6 +1015,8 @@ pub fn sign_action<'a>(
     signer_alias: Option<&'a String>,
     signed: &HashSet<Fingerprint>,
     signing: &HashSet<Fingerprint>,
+    upgrading: bool,
+    network: Network,
 ) -> Element<'a, Message> {
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
@@ -1039,6 +1042,8 @@ pub fn sign_action<'a>(
                                     hw.fingerprint()
                                         .map(|f| signing.contains(&f))
                                         .unwrap_or(false),
+                                    upgrading,
+                                    network,
                                 ))
                             },
                         ))
@@ -1059,7 +1064,7 @@ pub fn sign_action<'a>(
                 .width(Length::Fill)
                 .align_items(Alignment::Center),
         ))
-        .width(Length::Fixed(500.0))
+        .width(Length::Fixed(600.0))
         .into()
 }
 
