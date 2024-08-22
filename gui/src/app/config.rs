@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::filter;
 
@@ -47,6 +49,26 @@ impl Config {
         Ok(config)
     }
 
+    pub fn to_file(&self, path: &Path) -> Result<(), ConfigError> {
+        let content = toml::to_string(&self)
+            .map_err(|e| ConfigError::WritingFile(format!("Failed to serialize config: {}", e)))?;
+
+        let mut config_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .map_err(|e| ConfigError::WritingFile(e.to_string()))?;
+
+        config_file.write_all(content.as_bytes()).map_err(|e| {
+            tracing::warn!("failed to write to file: {:?}", e);
+            ConfigError::WritingFile(e.to_string())
+        })?;
+
+        tracing::info!("Done writing gui configuration file");
+        Ok(())
+    }
+
     /// TODO: Deserialize directly in the struct.
     pub fn log_level(&self) -> Result<filter::LevelFilter, ConfigError> {
         if let Some(level) = &self.log_level {
@@ -72,6 +94,7 @@ pub enum ConfigError {
     InvalidField(&'static str, String),
     NotFound,
     ReadingFile(String),
+    WritingFile(String),
     Unexpected(String),
 }
 
@@ -83,6 +106,7 @@ impl std::fmt::Display for ConfigError {
                 write!(f, "Config field {} is invalid: {}", field, message)
             }
             Self::ReadingFile(e) => write!(f, "Error while reading file: {}", e),
+            Self::WritingFile(e) => write!(f, "Error while writing file: {}", e),
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
         }
     }

@@ -44,9 +44,9 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
                 Button::new(text("Settings").size(30).bold())
                     .style(theme::Button::Transparent)
                     .on_press(Message::Menu(Menu::Settings)))
-            .push_maybe(
+            .push(
                 if !is_remote_backend {
-                    Some(Container::new(
+                    Container::new(
                         Button::new(
                             Row::new()
                                 .push(badge::Badge::new(icon::bitcoin_icon()))
@@ -61,9 +61,24 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
                         .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings))
                     )
                     .width(Length::Fill)
-                    .style(theme::Container::Card(theme::Card::Simple)))
+                    .style(theme::Container::Card(theme::Card::Simple))
                 } else {
-                    None
+                    Container::new(
+                        Button::new(
+                            Row::new()
+                                .push(badge::Badge::new(icon::bitcoin_icon()))
+                                .push(text("Backend").bold())
+                                .padding(10)
+                                .spacing(20)
+                                .align_items(Alignment::Center)
+                                .width(Length::Fill),
+                        )
+                        .width(Length::Fill)
+                        .style(theme::Button::TransparentBorder)
+                        .on_press(Message::Settings(SettingsMessage::EditRemoteBackendSettings))
+                    )
+                    .width(Length::Fill)
+                    .style(theme::Container::Card(theme::Card::Simple))
                 }
             )
             .push(
@@ -204,6 +219,76 @@ pub fn about_section<'a>(
                                             .map(|version| text(format!("lianad v{}", version))),
                                     ),
                             ),
+                        ),
+                )
+                .width(Length::Fill),
+            ),
+    )
+}
+
+pub fn remote_backend_section<'a>(
+    cache: &'a Cache,
+    email_form: &form::Value<String>,
+    processing: bool,
+    success: bool,
+    warning: Option<&Error>,
+) -> Element<'a, Message> {
+    dashboard(
+        &Menu::Settings,
+        cache,
+        warning,
+        Column::new()
+            .spacing(20)
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(
+                        Button::new(text("Settings").size(30).bold())
+                            .style(theme::Button::Transparent)
+                            .on_press(Message::Menu(Menu::Settings)),
+                    )
+                    .push(icon::chevron_right().size(30))
+                    .push(
+                        Button::new(text("Backend").size(30).bold())
+                            .style(theme::Button::Transparent)
+                            .on_press(Message::Settings(SettingsMessage::AboutSection)),
+                    ),
+            )
+            .push(
+                card::simple(
+                    Column::new()
+                        .spacing(20)
+                        .push(text("Grant access to wallet to another user"))
+                        .push(
+                            form::Form::new_trimmed("User email", email_form, |email| {
+                                Message::Settings(SettingsMessage::RemoteBackendSettings(
+                                    RemoteBackendSettingsMessage::EditInvitationEmail(email),
+                                ))
+                            })
+                            .warning("Email is invalid")
+                            .size(P1_SIZE)
+                            .padding(10),
+                        )
+                        .push(
+                            Row::new()
+                                .push_maybe(if success {
+                                    Some(text("Invitation was sent").style(color::GREEN))
+                                } else {
+                                    None
+                                })
+                                .push(Space::with_width(Length::Fill))
+                                .push(button::primary(None, "Send invitation").on_press_maybe(
+                                    if !processing && email_form.valid {
+                                        Some(Message::Settings(
+                                            SettingsMessage::RemoteBackendSettings(
+                                                RemoteBackendSettingsMessage::SendInvitation,
+                                            ),
+                                        ))
+                                    } else {
+                                        None
+                                    },
+                                )),
                         ),
                 )
                 .width(Length::Fill),

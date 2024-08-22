@@ -1,3 +1,4 @@
+mod backend;
 mod bitcoind;
 mod descriptor;
 mod mnemonic;
@@ -9,6 +10,7 @@ pub use bitcoind::{
 
 pub use descriptor::{BackupDescriptor, DefineDescriptor, ImportDescriptor, RegisterDescriptor};
 
+pub use backend::{ChooseBackend, ImportRemoteWallet};
 pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
 pub use share_xpubs::ShareXpubs;
 
@@ -35,6 +37,7 @@ pub trait Step {
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
+        email: Option<&'a str>,
     ) -> Element<'a, Message>;
 
     fn load_context(&mut self, _ctx: &Context) {}
@@ -47,6 +50,7 @@ pub trait Step {
     fn apply(&mut self, _ctx: &mut Context) -> bool {
         true
     }
+    fn revert(&self, _ctx: &mut Context) {}
     fn stop(&self) {}
 }
 
@@ -54,7 +58,12 @@ pub trait Step {
 pub struct Welcome {}
 
 impl Step for Welcome {
-    fn view(&self, _hws: &HardwareWallets, _progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        _progress: (usize, usize),
+        _email: Option<&'a str>,
+    ) -> Element<Message> {
         view::welcome()
     }
 }
@@ -128,9 +137,15 @@ impl Step for Final {
         Command::none()
     }
 
-    fn view(&self, _hws: &HardwareWallets, progress: (usize, usize)) -> Element<Message> {
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        email: Option<&'a str>,
+    ) -> Element<Message> {
         view::install(
             progress,
+            email,
             self.generating,
             self.config_path.as_ref(),
             self.warning.as_ref(),

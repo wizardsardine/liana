@@ -142,6 +142,21 @@ pub struct FingerprintAlias {
     pub alias: String,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WalletInvitationStatus {
+    Pending,
+    Accepted,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WalletInvitation {
+    pub id: String,
+    pub wallet_name: String,
+    pub wallet_id: String,
+    pub status: WalletInvitationStatus,
+}
+
 #[derive(Deserialize)]
 pub struct WalletLabels {
     pub labels: HashMap<String, String>,
@@ -303,7 +318,7 @@ pub struct Address {
 }
 
 pub mod payload {
-    use liana::miniscript::bitcoin;
+    use liana::{descriptors::LianaDescriptor, miniscript::bitcoin};
     use serde::{Serialize, Serializer};
 
     pub fn ser_to_string<T: std::fmt::Display, S: Serializer>(
@@ -311,6 +326,18 @@ pub mod payload {
         s: S,
     ) -> Result<S::Ok, S::Error> {
         s.serialize_str(&field.to_string())
+    }
+
+    #[derive(Serialize)]
+    pub struct CreateWallet<'a> {
+        pub name: &'a str,
+        #[serde(serialize_with = "ser_to_string")]
+        pub descriptor: &'a LianaDescriptor,
+    }
+
+    #[derive(Serialize)]
+    pub struct CreateWalletInvitation<'a> {
+        pub email: &'a str,
     }
 
     #[derive(Serialize)]
