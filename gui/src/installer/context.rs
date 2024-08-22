@@ -10,7 +10,7 @@ use crate::{
 };
 use async_hwi::DeviceKind;
 use liana::{
-    config::{BitcoinConfig, BitcoindConfig},
+    config::{BitcoinBackend, BitcoinConfig},
     descriptors::LianaDescriptor,
     miniscript::bitcoin,
 };
@@ -48,7 +48,7 @@ impl RemoteBackend {
 #[derive(Clone)]
 pub struct Context {
     pub bitcoin_config: BitcoinConfig,
-    pub bitcoind_config: Option<BitcoindConfig>,
+    pub bitcoin_backend: Option<BitcoinBackend>,
     pub descriptor: Option<LianaDescriptor>,
     pub keys: Vec<KeySetting>,
     pub hws: Vec<(DeviceKind, bitcoin::bip32::Fingerprint, Option<[u8; 32]>)>,
@@ -77,7 +77,7 @@ impl Context {
             },
             hws: Vec::new(),
             keys: Vec::new(),
-            bitcoind_config: None,
+            bitcoin_backend: None,
             descriptor: None,
             data_dir,
             network,

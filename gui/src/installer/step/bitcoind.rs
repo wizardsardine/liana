@@ -9,7 +9,7 @@ use bitcoin_hashes::{sha256, Hash};
 use flate2::read::GzDecoder;
 use iced::{Command, Subscription};
 use liana::{
-    config::{BitcoindConfig, BitcoindRpcAuth},
+    config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth},
     miniscript::bitcoin::Network,
 };
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -320,7 +320,7 @@ impl Step for SelectBitcoindTypeStep {
     fn apply(&mut self, ctx: &mut Context) -> bool {
         if !self.use_external {
             if ctx.internal_bitcoind_config.is_none() {
-                ctx.bitcoind_config = None; // Ensures internal bitcoind can be restarted in case user has switched selection.
+                ctx.bitcoin_backend = None; // Ensures internal bitcoind can be restarted in case user has switched selection.
             }
         } else {
             ctx.internal_bitcoind_config = None;
@@ -481,7 +481,11 @@ impl Step for DefineBitcoind {
                 false
             }
             (Some(rpc_auth), Ok(addr)) => {
-                ctx.bitcoind_config = Some(BitcoindConfig { rpc_auth, addr });
+                ctx.bitcoin_backend =
+                    Some(liana::config::BitcoinBackend::Bitcoind(BitcoindConfig {
+                        rpc_auth,
+                        addr,
+                    }));
                 true
             }
         }
@@ -579,7 +583,7 @@ impl Step for InternalBitcoindStep {
         }
         if let Some(Ok(_)) = self.started {
             // This case can arise if a user switches from internal bitcoind to external and back to internal.
-            if ctx.bitcoind_config.is_none() {
+            if ctx.bitcoin_backend.is_none() {
                 self.started = None; // So that internal bitcoind will be restarted.
             }
         }
@@ -790,7 +794,10 @@ impl Step for InternalBitcoindStep {
     fn apply(&mut self, ctx: &mut Context) -> bool {
         // Any errors have been handled as part of `message::InternalBitcoindMsg::Start`
         if let Some(Ok(_)) = self.started {
-            ctx.bitcoind_config.clone_from(&self.bitcoind_config);
+            ctx.bitcoin_backend = self
+                .bitcoind_config
+                .as_ref()
+                .map(|bitcoind_config| BitcoinBackend::Bitcoind(bitcoind_config.clone()));
             ctx.internal_bitcoind_config
                 .clone_from(&self.internal_bitcoind_config);
             ctx.internal_bitcoind.clone_from(&self.internal_bitcoind);

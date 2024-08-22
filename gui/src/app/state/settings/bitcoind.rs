@@ -9,7 +9,7 @@ use iced::Command;
 use tracing::info;
 
 use liana::{
-    config::{BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config},
+    config::{BitcoinBackend, BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config},
     miniscript::bitcoin::Network,
 };
 
@@ -37,13 +37,22 @@ impl BitcoindSettingsState {
         daemon_is_external: bool,
         bitcoind_is_internal: bool,
     ) -> Self {
+        let bitcoind_config = if let Some(BitcoinBackend::Bitcoind(bitcoind_config)) =
+            config.clone().and_then(|c| c.bitcoin_backend)
+        {
+            Some(bitcoind_config)
+        } else {
+            None
+        };
         BitcoindSettingsState {
             warning: None,
             config_updated: false,
-            node_settings: config.map(|config| {
+            node_settings: bitcoind_config.map(|bitcoind_config| {
                 BitcoindSettings::new(
-                    config.bitcoin_config.clone(),
-                    config.bitcoind_config.unwrap(),
+                    config
+                        .expect("config must exist if bitcoind_config exists")
+                        .bitcoin_config,
+                    bitcoind_config,
                     daemon_is_external,
                     bitcoind_is_internal,
                 )
@@ -110,9 +119,10 @@ impl State for BitcoindSettingsState {
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let can_edit_bitcoind_settings = !self.rescan_settings.processing;
+        let can_edit_bitcoind_settings =
+            self.node_settings.is_some() && !self.rescan_settings.processing;
         let can_do_rescan = !self.rescan_settings.processing
-            && self.node_settings.as_ref().map(|settings| settings.edit) != Some(true);
+            && self.node_settings.as_ref().map(|settings| settings.edit) == Some(false);
         view::settings::bitcoind_settings(
             cache,
             self.warning.as_ref(),
@@ -274,10 +284,11 @@ impl BitcoindSettings {
 
                 if let (true, Some(rpc_auth)) = (self.addr.valid, rpc_auth) {
                     let mut daemon_config = daemon.config().cloned().unwrap();
-                    daemon_config.bitcoind_config = Some(liana::config::BitcoindConfig {
-                        rpc_auth,
-                        addr: new_addr.unwrap(),
-                    });
+                    daemon_config.bitcoin_backend =
+                        Some(liana::config::BitcoinBackend::Bitcoind(BitcoindConfig {
+                            rpc_auth,
+                            addr: new_addr.unwrap(),
+                        }));
                     self.processing = true;
                     return Command::perform(async move { daemon_config }, |cfg| {
                         Message::LoadDaemonConfig(Box::new(cfg))

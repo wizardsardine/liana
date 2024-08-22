@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 
 use liana::{
     commands::CoinStatus,
-    config::{Config, ConfigError},
+    config::{BitcoinBackend, Config, ConfigError},
     miniscript::bitcoin,
     StartupError,
 };
@@ -245,7 +245,7 @@ impl Loader {
             log::info!("Managed bitcoind stopped.");
         } else if self.waiting_daemon_bitcoind && self.gui_config.start_internal_bitcoind {
             if let Ok(config) = Config::from_file(self.gui_config.daemon_config_path.clone()) {
-                if let Some(bitcoind_config) = &config.bitcoind_config {
+                if let Some(BitcoinBackend::Bitcoind(bitcoind_config)) = &config.bitcoin_backend {
                     let mut retry = 0;
                     while !stop_bitcoind(bitcoind_config) && retry < 10 {
                         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -500,7 +500,7 @@ pub async fn start_bitcoind_and_daemon(
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
     let mut bitcoind: Option<Bitcoind> = None;
     if start_internal_bitcoind {
-        if let Some(bitcoind_config) = &config.bitcoind_config {
+        if let Some(BitcoinBackend::Bitcoind(bitcoind_config)) = &config.bitcoin_backend {
             // Check if bitcoind is already running before trying to start it.
             if liana::BitcoinD::new(bitcoind_config, "internal_bitcoind_start".to_string()).is_ok()
             {

@@ -689,7 +689,7 @@ pub fn extract_daemon_config(ctx: &Context) -> Config {
             .expect("Context must have a descriptor at this point"),
         data_dir: Some(ctx.data_dir.clone()),
         bitcoin_config: ctx.bitcoin_config.clone(),
-        bitcoind_config: ctx.bitcoind_config.clone(),
+        bitcoin_backend: ctx.bitcoin_backend.clone(),
     }
 }
 
