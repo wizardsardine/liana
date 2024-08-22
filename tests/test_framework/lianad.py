@@ -28,8 +28,7 @@ class Lianad(TailableProc):
         datadir,
         signer,
         multi_desc,
-        bitcoind_rpc_port,
-        bitcoind_cookie_path,
+        bitcoin_backend,
     ):
         TailableProc.__init__(self, datadir, verbose=VERBOSE)
 
@@ -55,10 +54,7 @@ class Lianad(TailableProc):
             f.write("[bitcoin_config]\n")
             f.write('network = "regtest"\n')
             f.write("poll_interval_secs = 1\n")
-
-            f.write("[bitcoind_config]\n")
-            f.write(f"cookie_path = '{bitcoind_cookie_path}'\n")
-            f.write(f"addr = '127.0.0.1:{bitcoind_rpc_port}'\n")
+        bitcoin_backend.append_to_lianad_conf(self.conf_file)
 
     def finalize_psbt(self, psbt):
         """Create a valid witness for all inputs in the PSBT.
