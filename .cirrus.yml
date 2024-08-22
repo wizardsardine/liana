@@ -17,24 +17,47 @@ task:
           - USE_MIN_BITCOIN_VERSION: 'TRUE'
           - USE_MIN_BITCOIN_VERSION: 'FALSE'
           - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: 'bitcoind'
+          - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: 'electrs'
+          - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'electrs'
     - name: 'RPC functional tests'
       env:
         TEST_GROUP: tests/test_rpc.py
         matrix:
           - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'bitcoind'
           - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: 'bitcoind'
+          - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'electrs'
+          - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: 'electrs'
     - name: 'Chain functional tests'
       env:
         TEST_GROUP: tests/test_chain.py
         matrix:
           - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'bitcoind'
           - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: 'bitcoind'
+          - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'electrs'
+          - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: 'electrs'
     - name: 'Spend functional tests'
       env:
         TEST_GROUP: tests/test_spend.py
         matrix:
           - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'bitcoind'
           - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: 'bitcoind'
+          - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'electrs'
+          - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: 'electrs'
 
   cargo_registry_cache:
     folders: $CARGO_HOME/registry
@@ -63,6 +86,7 @@ task:
   test_script: |
     set -xe
 
+    # We always need bitcoind, even when using a different backend.
     if [ "$USE_MIN_BITCOIN_VERSION" = "TRUE" ]; then
       # Download the minimum required bitcoind binary
       curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
@@ -76,6 +100,14 @@ task:
       echo "23e5ab226d9e01ffaadef5ffabe8868d0db23db952b90b0593652993680bb8ab bitcoin-26.0-x86_64-linux-gnu.tar.gz" | sha256sum -c
       tar -xzf bitcoin-26.0-x86_64-linux-gnu.tar.gz
       export BITCOIND_PATH=bitcoin-26.0/bin/bitcoind
+    fi
+
+    if [ "$BITCOIN_BACKEND_TYPE" = "electrs" ]; then
+      curl -OL https://github.com/RCasatta/electrsd/releases/download/electrs_releases/electrs_linux_v0.9.11.zip
+      echo "2b2f8aef35cd8e16e109b948a903d010aa472f6cdf2147d47e01fd95cd1785da electrs_linux_v0.9.11.zip" | sha256sum -c
+      unzip electrs_linux_v0.9.11.zip
+      chmod 754 electrs
+      export ELECTRS_PATH=$PWD/electrs
     fi
 
     # The misc tests have a backward compat test that need the path to a previous version of Liana.
