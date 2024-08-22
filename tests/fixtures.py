@@ -3,6 +3,7 @@ from bip32.utils import _pubkey_to_fingerprint
 from bip380.descriptors import Descriptor
 from concurrent import futures
 from test_framework.bitcoind import Bitcoind
+from test_framework.electrs import Electrs
 from test_framework.lianad import Lianad
 from test_framework.signer import SingleSigner, MultiSigner
 from test_framework.utils import (
@@ -126,6 +127,16 @@ def bitcoin_backend(directory, bitcoind):
     if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
         yield bitcoind
         bitcoind.cleanup()
+    elif BITCOIN_BACKEND_TYPE is BitcoinBackendType.Electrs:
+        electrs = Electrs(
+            electrs_dir=os.path.join(directory, "electrs"),
+            bitcoind_dir=bitcoind.bitcoin_dir,
+            bitcoind_rpcport=bitcoind.rpcport,
+            bitcoind_p2pport=bitcoind.p2pport,
+        )
+        electrs.startup()
+        yield electrs
+        electrs.cleanup()
     else:
         raise NotImplementedError
 

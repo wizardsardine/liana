@@ -7,6 +7,8 @@ from fixtures import *
 from test_framework.authproxy import JSONRPCException
 from test_framework.serializations import PSBT
 from test_framework.utils import (
+    BitcoinBackendType,
+    BITCOIN_BACKEND_TYPE,
     wait_for,
     RpcError,
     OLD_LIANAD_PATH,
@@ -260,6 +262,10 @@ def test_coinbase_deposit(lianad, bitcoind):
     OLD_LIANAD_PATH is None or USE_TAPROOT,
     reason="Need the old lianad binary to create the datadir.",
 )
+@pytest.mark.skipif(
+    BITCOIN_BACKEND_TYPE is not BitcoinBackendType.Bitcoind,
+    reason="Only bitcoind backend was available for older lianad versions.",
+)
 def test_migration(lianad_multisig, bitcoind):
     """Test we can start a newer lianad on a datadir created by an older lianad."""
     lianad = lianad_multisig
@@ -314,6 +320,10 @@ def bitcoind_wait_new_block(bitcoind):
 
 @pytest.mark.skipif(
     not IS_NOT_BITCOIND_24, reason="Need 'generateblock' with 'submit=False'"
+)
+@pytest.mark.skipif(
+    BITCOIN_BACKEND_TYPE is not BitcoinBackendType.Bitcoind,
+    reason="Tests the retry logic specific to the bitcoind backend.",
 )
 def test_retry_on_workqueue_exceeded(lianad, bitcoind, executor):
     """Make sure we retry requests to bitcoind if it is temporarily overloaded."""

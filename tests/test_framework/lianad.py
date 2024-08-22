@@ -5,6 +5,8 @@ import shutil
 from bip380.descriptors import Descriptor
 from bip380.miniscript import SatisfactionMaterial
 from test_framework.utils import (
+    BITCOIN_BACKEND_TYPE,
+    BitcoinBackendType,
     UnixDomainSocketRpc,
     TailableProc,
     VERBOSE,
@@ -43,6 +45,7 @@ class Lianad(TailableProc):
         self.cmd_line = [LIANAD_PATH, "--conf", f"{self.conf_file}"]
         socket_path = os.path.join(os.path.join(datadir, "regtest"), "lianad_rpc")
         self.rpc = UnixDomainSocketRpc(socket_path)
+        self.bitcoin_backend = bitcoin_backend
 
         with open(self.conf_file, "w") as f:
             f.write(f"data_dir = '{datadir}'\n")
@@ -103,8 +106,9 @@ class Lianad(TailableProc):
         self.stop()
         dir_path = os.path.join(self.datadir, "regtest")
         shutil.rmtree(dir_path)
-        wallet_path = os.path.join(dir_path, "lianad_watchonly_wallet")
-        bitcoind.node_rpc.unloadwallet(wallet_path)
+        if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+            wallet_path = os.path.join(dir_path, "lianad_watchonly_wallet")
+            bitcoind.node_rpc.unloadwallet(wallet_path)
         self.start()
         wait_for(
             lambda: self.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()

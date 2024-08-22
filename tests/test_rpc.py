@@ -686,11 +686,13 @@ def test_start_rescan(lianad, bitcoind):
     # descriptor.
     coins_before = sorted_coins()
     lianad.restart_fresh(bitcoind)
-    assert len(list_coins()) == 0
+    if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+        assert len(list_coins()) == 0
 
     # The wallet isn't aware what derivation indexes were used. Necessarily it'll start
     # from 0.
-    assert lianad.rpc.getnewaddress() == first_address
+    if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+        assert lianad.rpc.getnewaddress() == first_address
 
     # Once the rescan is done, we must have detected all previous transactions.
     lianad.rpc.startrescan(initial_timestamp)

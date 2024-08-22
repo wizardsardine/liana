@@ -238,7 +238,8 @@ def test_rescan_edge_cases(lianad, bitcoind):
     outpoints_before = set(c["outpoint"] for c in coins_before)
     bitcoind.generate_block(1)
     lianad.restart_fresh(bitcoind)
-    assert len(list_coins()) == 0
+    if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+        assert len(list_coins()) == 0
 
     # We can be stopped while we are rescanning
     lianad.rpc.startrescan(initial_tip["time"])
@@ -252,7 +253,8 @@ def test_rescan_edge_cases(lianad, bitcoind):
     bitcoind.generate_block(1)
     lianad.restart_fresh(bitcoind)
     wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
-    assert len(list_coins()) == 0
+    if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+        assert len(list_coins()) == 0
 
     # There can be a reorg when we start rescanning
     reorg_shift(initial_tip["height"], txs)
@@ -271,7 +273,8 @@ def test_rescan_edge_cases(lianad, bitcoind):
     lianad.restart_fresh(bitcoind)
     wait_synced()
     wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
-    assert len(list_coins()) == 0
+    if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+        assert len(list_coins()) == 0
 
     # We can be rescanning when a reorg happens
     lianad.rpc.startrescan(initial_tip["time"])
@@ -350,7 +353,8 @@ def test_rescan_and_recovery(lianad, bitcoind):
 
     # Clear lianad state
     lianad.restart_fresh(bitcoind)
-    assert len(lianad.rpc.listcoins()["coins"]) == 0
+    if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+        assert len(lianad.rpc.listcoins()["coins"]) == 0
 
     # Start rescan
     lianad.rpc.startrescan(initial_tip["time"])
