@@ -480,7 +480,7 @@ pub fn create_app_with_remote_backend(
             network: bitcoin::Network::Signet,
             coins: Vec::new(),
             rescan_progress: None,
-            datadir_path: default_datadir().unwrap(),
+            datadir_path: datadir.clone(),
             blockheight: wallet.tip_height.unwrap_or(0),
         },
         Arc::new(
