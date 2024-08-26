@@ -3,15 +3,23 @@ use iced::widget::{
     checkbox, container, pick_list, radio, scrollable, scrollable::Properties, slider, Button,
     Space, TextInput,
 };
-use iced::{alignment, widget::progress_bar, Alignment, Length};
+use iced::{
+    alignment,
+    widget::{progress_bar, tooltip as iced_tooltip},
+    Alignment, Length,
+};
 
 use async_hwi::DeviceKind;
 use liana_ui::component::text;
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::{collections::HashSet, str::FromStr};
 
-use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
+use liana::{
+    descriptors::{LianaDescriptor, LianaPolicy},
+    miniscript::bitcoin::{self, bip32::Fingerprint},
+};
 use liana_ui::{
     color,
     component::{
@@ -1007,12 +1015,13 @@ pub fn register_descriptor<'a>(
     )
 }
 
-pub fn backup_descriptor(
+pub fn backup_descriptor<'a>(
     progress: (usize, usize),
-    email: Option<&str>,
-    descriptor: String,
+    email: Option<&'a str>,
+    descriptor: &'a LianaDescriptor,
+    keys_aliases: &'a HashMap<Fingerprint, String>,
     done: bool,
-) -> Element<'_, Message> {
+) -> Element<'a, Message> {
     layout(
         progress,
         email,
@@ -1046,28 +1055,37 @@ pub fn backup_descriptor(
                     ))
                     .max_width(1000),
             )
-            .push(card::simple(
-                Column::new()
-                    .push(text("The descriptor:").small().bold())
-                    .push(
-                        scrollable(
-                            Column::new()
-                                .push(text(descriptor.to_owned()).small())
-                                .push(Space::with_height(Length::Fixed(5.0))),
+            .push(
+                card::simple(
+                    Column::new()
+                        .push(text("The descriptor:").small().bold())
+                        .push(
+                            scrollable(
+                                Column::new()
+                                    .push(text(descriptor.to_string()).small())
+                                    .push(Space::with_height(Length::Fixed(5.0))),
+                            )
+                            .direction(
+                                scrollable::Direction::Horizontal(
+                                    scrollable::Properties::new().width(5).scroller_width(5),
+                                ),
+                            ),
                         )
-                        .direction(scrollable::Direction::Horizontal(
-                            scrollable::Properties::new().width(5).scroller_width(5),
-                        )),
-                    )
-                    .push(
-                        Row::new().push(Column::new().width(Length::Fill)).push(
-                            button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                .on_press(Message::Clibpboard(descriptor)),
-                        ),
-                    )
-                    .spacing(10)
-                    .max_width(1000),
-            ))
+                        .push(
+                            Row::new().push(Column::new().width(Length::Fill)).push(
+                                button::secondary(Some(icon::clipboard_icon()), "Copy")
+                                    .on_press(Message::Clibpboard(descriptor.to_string())),
+                            ),
+                        )
+                        .spacing(10),
+                )
+                .max_width(1500),
+            )
+            .push(
+                card::simple(display_policy(descriptor.policy(), keys_aliases))
+                    .width(Length::Fill)
+                    .max_width(1500),
+            )
             .push(
                 checkbox("I have backed up my descriptor", done).on_toggle(Message::UserActionDone),
             )
@@ -1082,6 +1100,161 @@ pub fn backup_descriptor(
         true,
         Some(Message::Previous),
     )
+}
+
+fn display_policy(
+    policy: LianaPolicy,
+    keys_aliases: &HashMap<Fingerprint, String>,
+) -> Element<'_, Message> {
+    let (primary_threshold, primary_keys) = policy.primary_path().thresh_origins();
+    let recovery_paths = policy.recovery_paths();
+    let mut col = Column::new().push(
+        Row::new()
+            .spacing(5)
+            .push(
+                text(format!(
+                    "{} signature{}",
+                    primary_threshold,
+                    if primary_threshold > 1 { "s" } else { "" }
+                ))
+                .bold(),
+            )
+            .push(if primary_keys.len() > 1 {
+                text(format!("out of {} by", primary_keys.len()))
+            } else {
+                text("by")
+            })
+            .push(
+                primary_keys
+                    .keys()
+                    .enumerate()
+                    .fold(Row::new().spacing(5), |row, (i, k)| {
+                        let content = if let Some(alias) = keys_aliases.get(k) {
+                            Container::new(
+                                iced_tooltip::Tooltip::new(
+                                    text(alias).bold(),
+                                    text(k.to_string()),
+                                    iced_tooltip::Position::Bottom,
+                                )
+                                .style(theme::Container::Card(theme::Card::Simple)),
+                            )
+                        } else {
+                            Container::new(text(k.to_string()))
+                                .padding(10)
+                                .style(theme::Container::Pill(theme::Pill::Simple))
+                        };
+                        if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
+                            row.push(content)
+                        } else if i <= primary_keys.len() - 2 {
+                            row.push(content).push(text("and"))
+                        } else {
+                            row.push(content).push(text(","))
+                        }
+                    }),
+            )
+            .push(text("can always spend this wallet's funds (Primary path)")),
+    );
+    for (i, (sequence, recovery_path)) in recovery_paths.iter().enumerate() {
+        let (threshold, recovery_keys) = recovery_path.thresh_origins();
+        col = col.push(
+            Row::new()
+                .spacing(5)
+                .push(
+                    text(format!(
+                        "{} signature{}",
+                        threshold,
+                        if threshold > 1 { "s" } else { "" }
+                    ))
+                    .bold(),
+                )
+                .push(if recovery_keys.len() > 1 {
+                    text(format!("out of {} by", recovery_keys.len()))
+                } else {
+                    text("by")
+                })
+                .push(recovery_keys.keys().enumerate().fold(
+                    Row::new().spacing(5),
+                    |row, (i, k)| {
+                        let content = if let Some(alias) = keys_aliases.get(k) {
+                            Container::new(
+                                iced_tooltip::Tooltip::new(
+                                    text(alias).bold(),
+                                    text(k.to_string()),
+                                    iced_tooltip::Position::Bottom,
+                                )
+                                .style(theme::Container::Card(theme::Card::Simple)),
+                            )
+                        } else {
+                            Container::new(text(k.to_string()))
+                                .padding(10)
+                                .style(theme::Container::Pill(theme::Pill::Simple))
+                        };
+                        if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
+                            row.push(content)
+                        } else if i <= recovery_keys.len() - 2 {
+                            row.push(content).push(text("and"))
+                        } else {
+                            row.push(content).push(text(","))
+                        }
+                    },
+                ))
+                .push(text("can spend coins inactive for"))
+                .push(
+                    text(format!(
+                        "{} blocks (~{})",
+                        sequence,
+                        expire_message_units(*sequence as u32).join(",")
+                    ))
+                    .bold(),
+                )
+                .push(text(format!("(Recovery path #{})", i + 1))),
+        );
+    }
+    Column::new()
+        .spacing(10)
+        .push(text("The wallet policy:").bold())
+        .push(scrollable(col).direction(scrollable::Direction::Horizontal(
+            scrollable::Properties::new().width(5).scroller_width(5),
+        )))
+        .into()
+}
+
+/// returns y,m,d
+fn expire_message_units(sequence: u32) -> Vec<String> {
+    let mut n_minutes = sequence * 10;
+    let n_years = n_minutes / 525960;
+    n_minutes -= n_years * 525960;
+    let n_months = n_minutes / 43830;
+    n_minutes -= n_months * 43830;
+    let n_days = n_minutes / 1440;
+
+    #[allow(clippy::nonminimal_bool)]
+    if n_years != 0 || n_months != 0 || n_days != 0 {
+        [(n_years, "y"), (n_months, "m"), (n_days, "d")]
+            .iter()
+            .filter_map(|(n, u)| {
+                if *n != 0 {
+                    Some(format!("{}{}", n, u))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        n_minutes -= n_days * 1440;
+        let n_hours = n_minutes / 60;
+        n_minutes -= n_hours * 60;
+        [(n_hours, "h"), (n_minutes, "m")]
+            .iter()
+            .filter_map(|(n, u)| {
+                if *n != 0 {
+                    Some(format!("{}{}", n, u))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 pub fn help_backup<'a>() -> Element<'a, Message> {
