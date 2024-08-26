@@ -29,6 +29,12 @@ task:
         matrix:
           - USE_TAPROOT: 0
           - USE_TAPROOT: 1
+    - name: 'Spend functional tests'
+      env:
+        TEST_GROUP: tests/test_spend.py
+        matrix:
+          - USE_TAPROOT: 0
+          - USE_TAPROOT: 1
 
   cargo_registry_cache:
     folders: $CARGO_HOME/registry
