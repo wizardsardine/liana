@@ -13,6 +13,7 @@ pub mod spend;
 #[cfg(test)]
 mod testutils;
 
+pub use bdk_electrum::electrum_client;
 pub use bip39;
 use bitcoin::electrum;
 pub use miniscript;
