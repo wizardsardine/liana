@@ -41,7 +41,7 @@ use crate::{
     },
     node::{
         bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
-        NodeType,
+        electrum, NodeType,
     },
 };
 
@@ -1180,6 +1180,7 @@ pub fn define_bitcoin_node<'a>(
                     row.push(radio(
                         match node_type {
                             NodeType::Bitcoind => "Bitcoin Core",
+                            NodeType::Electrum => "Electrum",
                         },
                         node_type,
                         Some(selected_node_type),
@@ -1358,6 +1359,27 @@ pub fn define_bitcoind<'a>(
         .push(col_auth)
         .spacing(50)
         .into()
+}
+
+pub fn define_electrum<'a>(address: &form::Value<String>) -> Element<'a, Message> {
+    let col_address = Column::new()
+        .push(text("Address:").bold())
+        .push(
+            form::Form::new_trimmed("127.0.0.1:50001", address, |msg| {
+                Message::DefineNode(DefineNode::DefineElectrum(
+                    message::DefineElectrum::ConfigFieldEdited(electrum::ConfigField::Address, msg),
+                ))
+            })
+            .warning(
+                "Please enter correct address (including port), \
+                optionally prefixed with tcp:// or ssl://",
+            )
+            .size(text::P1_SIZE)
+            .padding(10),
+        )
+        .spacing(10);
+
+    Column::new().push(col_address).spacing(50).into()
 }
 
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {

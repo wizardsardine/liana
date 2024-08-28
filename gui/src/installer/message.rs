@@ -11,7 +11,7 @@ use crate::{
     lianalite::client::{auth::AuthClient, backend::api},
     node::{
         bitcoind::{Bitcoind, ConfigField, RpcAuthType},
-        NodeType,
+        electrum, NodeType,
     },
 };
 use async_hwi::{DeviceKind, Version};
@@ -78,9 +78,15 @@ pub enum DefineBitcoind {
 }
 
 #[derive(Debug, Clone)]
+pub enum DefineElectrum {
+    ConfigFieldEdited(electrum::ConfigField, String),
+}
+
+#[derive(Debug, Clone)]
 pub enum DefineNode {
     NodeTypeSelected(NodeType),
     DefineBitcoind(DefineBitcoind),
+    DefineElectrum(DefineElectrum),
     PingResult((NodeType, Result<(), Error>)),
     Ping,
 }

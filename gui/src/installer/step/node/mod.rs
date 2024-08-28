@@ -1,11 +1,15 @@
 pub mod bitcoind;
+pub mod electrum;
 
 use crate::{
     hw::HardwareWallets,
     installer::{
         context::Context,
         message::{self, Message},
-        step::{node::bitcoind::DefineBitcoind, Step},
+        step::{
+            node::{bitcoind::DefineBitcoind, electrum::DefineElectrum},
+            Step,
+        },
         view, Error,
     },
     node::NodeType,
@@ -17,54 +21,65 @@ use liana_ui::widget::Element;
 #[derive(Clone)]
 pub enum NodeDefinition {
     Bitcoind(DefineBitcoind),
+    Electrum(DefineElectrum),
 }
 
 impl NodeDefinition {
     fn new(node_type: NodeType) -> Self {
         match node_type {
             NodeType::Bitcoind => NodeDefinition::Bitcoind(DefineBitcoind::new()),
+            NodeType::Electrum => NodeDefinition::Electrum(DefineElectrum::new()),
         }
     }
 
     fn node_type(&self) -> NodeType {
         match self {
             NodeDefinition::Bitcoind(_) => NodeType::Bitcoind,
+            NodeDefinition::Electrum(_) => NodeType::Electrum,
         }
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
         match self {
             NodeDefinition::Bitcoind(def) => def.apply(ctx),
+            NodeDefinition::Electrum(def) => def.apply(ctx),
         }
     }
 
     fn can_try_ping(&self) -> bool {
         match self {
             NodeDefinition::Bitcoind(def) => def.can_try_ping(),
+            NodeDefinition::Electrum(def) => def.can_try_ping(),
         }
     }
 
     fn load_context(&mut self, ctx: &Context) {
         match self {
             NodeDefinition::Bitcoind(def) => def.load_context(ctx),
+            NodeDefinition::Electrum(_) => {
+                // noop for now
+            }
         }
     }
 
     fn update(&mut self, message: message::DefineNode) -> Command<Message> {
         match self {
             NodeDefinition::Bitcoind(def) => def.update(message),
+            NodeDefinition::Electrum(def) => def.update(message),
         }
     }
 
     fn view(&self) -> Element<Message> {
         match self {
             NodeDefinition::Bitcoind(def) => def.view(),
+            NodeDefinition::Electrum(def) => def.view(),
         }
     }
 
     fn ping(&self) -> Result<(), Error> {
         match self {
             NodeDefinition::Bitcoind(def) => def.ping(),
+            NodeDefinition::Electrum(def) => def.ping(),
         }
     }
 }
@@ -99,6 +114,7 @@ impl DefineNode {
         let available_node_types = [
             // This is the order in which the available node types will be shown to the user.
             NodeType::Bitcoind,
+            NodeType::Electrum,
         ];
         assert!(available_node_types.contains(&selected_node_type));
 
@@ -186,6 +202,9 @@ impl Step for DefineNode {
                 }
                 msg @ message::DefineNode::DefineBitcoind(_) => {
                     return self.update_node(NodeType::Bitcoind, msg);
+                }
+                msg @ message::DefineNode::DefineElectrum(_) => {
+                    return self.update_node(NodeType::Electrum, msg);
                 }
             }
         }
