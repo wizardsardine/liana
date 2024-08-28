@@ -1165,6 +1165,7 @@ pub fn define_bitcoin<'a>(
     rpc_auth_vals: &RpcAuthValues,
     selected_auth_type: &RpcAuthType,
     is_running: Option<&Result<(), Error>>,
+    can_try_ping: bool,
 ) -> Element<'a, Message> {
     let is_loopback = if let Some((ip, _port)) = address.value.clone().rsplit_once(':') {
         let (ipv4, ipv6) = (Ipv4Addr::from_str(ip), Ipv6Addr::from_str(ip));
@@ -1268,13 +1269,6 @@ pub fn define_bitcoin<'a>(
         })
         .spacing(10);
 
-    let check_connect_enable = if let RpcAuthType::UserPass = selected_auth_type {
-        address.valid
-            && !rpc_auth_vals.password.value.is_empty()
-            && !rpc_auth_vals.user.value.is_empty()
-    } else {
-        address.valid && !rpc_auth_vals.cookie_path.value.is_empty()
-    };
     layout(
         progress,
         None,
@@ -1310,7 +1304,7 @@ pub fn define_bitcoin<'a>(
                     .spacing(10)
                     .push(Container::new(
                         button::secondary(None, "Check connection")
-                            .on_press_maybe(if check_connect_enable {
+                            .on_press_maybe(if can_try_ping {
                                 Some(Message::DefineBitcoind(
                                     message::DefineBitcoind::PingBitcoind,
                                 ))

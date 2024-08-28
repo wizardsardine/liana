@@ -392,6 +392,16 @@ impl DefineBitcoind {
             |res| Message::DefineBitcoind(message::DefineBitcoind::PingBitcoindResult(res)),
         )
     }
+
+    pub fn can_try_ping(&self) -> bool {
+        if let RpcAuthType::UserPass = self.selected_auth_type {
+            self.address.valid
+                && !self.rpc_auth_vals.password.value.is_empty()
+                && !self.rpc_auth_vals.user.value.is_empty()
+        } else {
+            self.address.valid && !self.rpc_auth_vals.cookie_path.value.is_empty()
+        }
+    }
 }
 
 impl Step for DefineBitcoind {
@@ -503,6 +513,7 @@ impl Step for DefineBitcoind {
             &self.rpc_auth_vals,
             &self.selected_auth_type,
             self.is_running.as_ref(),
+            self.can_try_ping(),
         )
     }
 
