@@ -1252,7 +1252,7 @@ pub fn define_bitcoin_node<'a>(
     layout(
         progress,
         None,
-        "Set up connection to the Bitcoin full node",
+        "Set up connection to the Bitcoin node",
         col,
         true,
         Some(Message::Previous),
@@ -1405,14 +1405,20 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                             Column::new()
                                 .spacing(20)
                                 .width(Length::Fixed(300.0))
-                                .push(text("Manage your own Bitcoin node").bold()),
+                                .push(text("I already have a node").bold()),
                         )
                         .padding(20),
                     )
                     .push(
-                        Container::new(Column::new().spacing(20).width(Length::Fixed(300.0)).push(
-                            text("Have Liana manage and run a dedicated Bitcoin node").bold(),
-                        ))
+                        Container::new(
+                            Column::new().spacing(20).width(Length::Fixed(300.0)).push(
+                                text(
+                                    "I want Liana to automatically install \
+                                    a Bitcoin node on my device",
+                                )
+                                .bold(),
+                            ),
+                        )
                         .padding(20),
                     ),
             )
@@ -1427,13 +1433,9 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                 .width(Length::Fixed(300.0))
                                 .align_items(Alignment::Start)
                                 .push(text(
-                                    "Liana will connect to your \
-                                    existing instance of Bitcoin Core. \
-                                    You will have to make sure Bitcoin Core \
-                                    is running when you use Liana.\n\n\
-                                    (Use this if you already have a \
-                                    full node on your machine, \
-                                    and don't need a new instance)",
+                                    "Select this option if you already have \
+                                    a Bitcoin node running locally or remotely. \
+                                    Liana will connect to it.",
                                 )),
                         )
                         .padding(20),
@@ -1445,16 +1447,13 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                 .width(Length::Fixed(300.0))
                                 .align_items(Alignment::Start)
                                 .push(text(
-                                    "Liana will run its own instance \
-                                    of Bitcoin Core. This will use a pruned node, \
-                                    and perform the synchronization in the \
-                                    Liana folder.\n\n\
-                                    If you select this option, Bitcoin Core will \
-                                    be downloaded, installed and started \
-                                    on the next step.\n\n\
-                                    (Use this if you don't want to deal with \
-                                    Bitcoin Core yourself, \
-                                    or need a new, dedicated instance for Liana)",
+                                    "Liana will install a pruned node \
+                                    on your computer. You won't need to do anything \
+                                    except have some disk space available \
+                                    (~30GB required on mainnet) and \
+                                    wait for the initial synchronization with the \
+                                    network (it can take some days depending on \
+                                    your internet connection speed).",
                                 )),
                         )
                         .padding(20),
