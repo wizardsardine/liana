@@ -48,7 +48,8 @@ fn request<U: IntoUrl>(
     let req = http
         .request(method, url)
         .header("Authorization", format!("Bearer {}", access_token))
-        .header("Content-Type", "application/json");
+        .header("Content-Type", "application/json")
+        .header("Liana-Version", "0.1");
     tracing::debug!("Sending http request: {:?}", req);
     req
 }
