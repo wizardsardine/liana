@@ -1395,91 +1395,108 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
         progress,
         None,
         "Bitcoin node management",
-        Column::new().push(
-            Row::new()
-                .align_items(Alignment::Start)
-                .spacing(20)
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .push(text("Manage your own Bitcoin node").bold())
-                    )
-                    .padding(20),
-                )
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .push(text("Have Liana manage and run a dedicated Bitcoin node").bold())
-                    )
-                    .padding(20),
-                ),
-        )
-        .push(
-            Row::new()
-                .align_items(Alignment::Start)
-                .spacing(20)
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .align_items(Alignment::Start)
-                            .push(text("Liana will connect to your existing instance of Bitcoin Core. You will have to make sure Bitcoin Core is running when you use Liana.\n\n(Use this if you already have a full node on your machine, and don't need a new instance)"))
-                    )
-                    .padding(20),
-                )
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .align_items(Alignment::Start)
-                            .push(text("Liana will run its own instance of Bitcoin Core. This will use a pruned node, and perform the synchronization in the Liana folder.\n\nIf you select this option, Bitcoin Core will be downloaded, installed and started on the next step.\n\n(Use this if you don't want to deal with Bitcoin Core yourself, or need a new, dedicated instance for Liana)"))
-                    )
-                    .padding(20),
-                ),
-        )
-        .push(
-            Row::new()
-                .align_items(Alignment::End)
-                .spacing(20)
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .align_items(Alignment::Center)
-                            .push(
-                                button::primary(None, "Select")
+        Column::new()
+            .push(
+                Row::new()
+                    .align_items(Alignment::Start)
+                    .spacing(20)
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
                                 .width(Length::Fixed(300.0))
-                                    .on_press(Message::SelectBitcoindType(
-                                        message::SelectBitcoindTypeMsg::UseExternal(true),
-                                    )),
-                            )
+                                .push(text("Manage your own Bitcoin node").bold()),
+                        )
+                        .padding(20),
                     )
-                    .padding(20),
-                )
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .align_items(Alignment::Center)
-                            .push(
-                                button::primary(None, "Select")
-                                    .width(Length::Fixed(300.0))
-                                    .on_press(Message::SelectBitcoindType(
-                                        message::SelectBitcoindTypeMsg::UseExternal(false),
-                                    )),
-                            )
+                    .push(
+                        Container::new(Column::new().spacing(20).width(Length::Fixed(300.0)).push(
+                            text("Have Liana manage and run a dedicated Bitcoin node").bold(),
+                        ))
+                        .padding(20),
+                    ),
+            )
+            .push(
+                Row::new()
+                    .align_items(Alignment::Start)
+                    .spacing(20)
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(300.0))
+                                .align_items(Alignment::Start)
+                                .push(text(
+                                    "Liana will connect to your \
+                                    existing instance of Bitcoin Core. \
+                                    You will have to make sure Bitcoin Core \
+                                    is running when you use Liana.\n\n\
+                                    (Use this if you already have a \
+                                    full node on your machine, \
+                                    and don't need a new instance)",
+                                )),
+                        )
+                        .padding(20),
                     )
-                    .padding(20),
-                ),
-        ),
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(300.0))
+                                .align_items(Alignment::Start)
+                                .push(text(
+                                    "Liana will run its own instance \
+                                    of Bitcoin Core. This will use a pruned node, \
+                                    and perform the synchronization in the \
+                                    Liana folder.\n\n\
+                                    If you select this option, Bitcoin Core will \
+                                    be downloaded, installed and started \
+                                    on the next step.\n\n\
+                                    (Use this if you don't want to deal with \
+                                    Bitcoin Core yourself, \
+                                    or need a new, dedicated instance for Liana)",
+                                )),
+                        )
+                        .padding(20),
+                    ),
+            )
+            .push(
+                Row::new()
+                    .align_items(Alignment::End)
+                    .spacing(20)
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(300.0))
+                                .align_items(Alignment::Center)
+                                .push(
+                                    button::primary(None, "Select")
+                                        .width(Length::Fixed(300.0))
+                                        .on_press(Message::SelectBitcoindType(
+                                            message::SelectBitcoindTypeMsg::UseExternal(true),
+                                        )),
+                                ),
+                        )
+                        .padding(20),
+                    )
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(300.0))
+                                .align_items(Alignment::Center)
+                                .push(
+                                    button::primary(None, "Select")
+                                        .width(Length::Fixed(300.0))
+                                        .on_press(Message::SelectBitcoindType(
+                                            message::SelectBitcoindTypeMsg::UseExternal(false),
+                                        )),
+                                ),
+                        )
+                        .padding(20),
+                    ),
+            ),
         true,
         Some(Message::Previous),
     )
