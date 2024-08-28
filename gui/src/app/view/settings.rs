@@ -29,8 +29,8 @@ use crate::{
         menu::Menu,
         view::{hw, warning::warn},
     },
-    bitcoind::{RpcAuthType, RpcAuthValues},
     hw::HardwareWallet,
+    node::bitcoind::{RpcAuthType, RpcAuthValues},
 };
 
 pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {

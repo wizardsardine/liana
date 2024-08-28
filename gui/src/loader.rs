@@ -29,10 +29,10 @@ use crate::{
         config::Config as GUIConfig,
         wallet::{Wallet, WalletError},
     },
-    bitcoind::{
+    daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
+    node::bitcoind::{
         internal_bitcoind_debug_log_path, stop_bitcoind, Bitcoind, StartInternalBitcoindError,
     },
-    daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
 };
 
 const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. A full synchronisation typically take a few days, and is resource intensive. Once the initial synchronisation is done, the next ones will be much faster.";

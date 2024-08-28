@@ -6,10 +6,10 @@ use std::path::PathBuf;
 
 use super::{context, Error};
 use crate::{
-    bitcoind::{Bitcoind, ConfigField, RpcAuthType},
     download::Progress,
     hw::HardwareWalletMessage,
     lianalite::client::{auth::AuthClient, backend::api},
+    node::bitcoind::{Bitcoind, ConfigField, RpcAuthType},
 };
 use async_hwi::{DeviceKind, Version};
 

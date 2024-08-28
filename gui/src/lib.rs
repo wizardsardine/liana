@@ -1,5 +1,4 @@
 pub mod app;
-pub mod bitcoind;
 pub mod daemon;
 pub mod datadir;
 pub mod download;
@@ -9,6 +8,7 @@ pub mod launcher;
 pub mod lianalite;
 pub mod loader;
 pub mod logger;
+pub mod node;
 pub mod signer;
 pub mod utils;
 

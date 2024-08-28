@@ -1,4 +1,4 @@
-use crate::{app::menu::Menu, bitcoind::RpcAuthType};
+use crate::{app::menu::Menu, node::bitcoind::RpcAuthType};
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 
 #[derive(Debug, Clone)]

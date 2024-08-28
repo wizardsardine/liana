@@ -21,12 +21,6 @@ use jsonrpc::{client::Client, simple_http::SimpleHttpTransport};
 use liana_ui::{component::form, widget::*};
 
 use crate::{
-    bitcoind::{
-        self, bitcoind_network_dir, internal_bitcoind_datadir, internal_bitcoind_directory,
-        Bitcoind, ConfigField, InternalBitcoindConfig, InternalBitcoindConfigError,
-        InternalBitcoindNetworkConfig, RpcAuth, RpcAuthType, RpcAuthValues,
-        StartInternalBitcoindError, VERSION,
-    },
     download,
     hw::HardwareWallets,
     installer::{
@@ -34,6 +28,12 @@ use crate::{
         message::{self, Message},
         step::Step,
         view, Error,
+    },
+    node::bitcoind::{
+        self, bitcoind_network_dir, internal_bitcoind_datadir, internal_bitcoind_directory,
+        Bitcoind, ConfigField, InternalBitcoindConfig, InternalBitcoindConfigError,
+        InternalBitcoindNetworkConfig, RpcAuth, RpcAuthType, RpcAuthValues,
+        StartInternalBitcoindError, VERSION,
     },
 };
 
