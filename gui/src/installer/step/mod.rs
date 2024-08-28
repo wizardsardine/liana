@@ -1,10 +1,10 @@
 mod backend;
-mod bitcoind;
 mod descriptor;
 mod mnemonic;
+mod node;
 mod share_xpubs;
 
-pub use bitcoind::{
+pub use node::bitcoind::{
     DefineBitcoind, DownloadState, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep,
 };
 
