@@ -13,15 +13,62 @@ use crate::{
 use iced::Command;
 use liana_ui::widget::Element;
 
+#[derive(Clone)]
+pub enum NodeDefinition {
+    Bitcoind(DefineBitcoind),
+}
+
+impl NodeDefinition {
+    fn new() -> Self {
+        NodeDefinition::Bitcoind(DefineBitcoind::new())
+    }
+
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        match self {
+            NodeDefinition::Bitcoind(def) => def.apply(ctx),
+        }
+    }
+
+    fn can_try_ping(&self) -> bool {
+        match self {
+            NodeDefinition::Bitcoind(def) => def.can_try_ping(),
+        }
+    }
+
+    fn load_context(&mut self, ctx: &Context) {
+        match self {
+            NodeDefinition::Bitcoind(def) => def.load_context(ctx),
+        }
+    }
+
+    fn update(&mut self, message: message::DefineNode) -> Command<Message> {
+        match self {
+            NodeDefinition::Bitcoind(def) => def.update(message),
+        }
+    }
+
+    fn view(&self) -> Element<Message> {
+        match self {
+            NodeDefinition::Bitcoind(def) => def.view(),
+        }
+    }
+
+    fn ping(&self) -> Result<(), Error> {
+        match self {
+            NodeDefinition::Bitcoind(def) => def.ping(),
+        }
+    }
+}
+
 pub struct Node {
-    definition: DefineBitcoind,
+    definition: NodeDefinition,
     is_running: Option<Result<(), Error>>,
 }
 
 impl Node {
     fn new() -> Self {
         Node {
-            definition: DefineBitcoind::new(),
+            definition: NodeDefinition::new(),
             is_running: None,
         }
     }
