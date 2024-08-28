@@ -33,7 +33,7 @@ pub enum Message {
     ImportRemoteWallet(ImportRemoteWallet),
     SelectBitcoindType(SelectBitcoindTypeMsg),
     InternalBitcoind(InternalBitcoindMsg),
-    DefineBitcoind(DefineBitcoind),
+    DefineNode(DefineNode),
     DefineDescriptor(DefineDescriptor),
     ImportXpub(Fingerprint, Result<DescriptorPublicKey, Error>),
     HardwareWallets(HardwareWalletMessage),
@@ -72,8 +72,13 @@ pub enum ImportRemoteWallet {
 pub enum DefineBitcoind {
     ConfigFieldEdited(ConfigField, String),
     RpcAuthTypeSelected(RpcAuthType),
-    PingBitcoindResult(Result<(), Error>),
-    PingBitcoind,
+}
+
+#[derive(Debug, Clone)]
+pub enum DefineNode {
+    DefineBitcoind(DefineBitcoind),
+    PingResult(Result<(), Error>),
+    Ping,
 }
 
 #[derive(Debug, Clone)]

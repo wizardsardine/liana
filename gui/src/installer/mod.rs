@@ -39,7 +39,7 @@ use crate::{
 
 pub use message::Message;
 use step::{
-    BackupDescriptor, BackupMnemonic, ChooseBackend, DefineBitcoind, DefineDescriptor, Final,
+    BackupDescriptor, BackupMnemonic, ChooseBackend, DefineDescriptor, DefineNode, Final,
     ImportDescriptor, ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic,
     RegisterDescriptor, RemoteBackendLogin, SelectBitcoindTypeStep, ShareXpubs, Step,
 };
@@ -126,7 +126,7 @@ impl Installer {
                     RemoteBackendLogin::new(network).into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.data_dir).into(),
-                    DefineBitcoind::new().into(),
+                    DefineNode::default().into(),
                     Final::new().into(),
                 ],
                 UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
@@ -139,7 +139,7 @@ impl Installer {
                     RegisterDescriptor::new_import_wallet().into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.data_dir).into(),
-                    DefineBitcoind::new().into(),
+                    DefineNode::default().into(),
                     Final::new().into(),
                 ],
             },

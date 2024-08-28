@@ -4,8 +4,9 @@ mod mnemonic;
 mod node;
 mod share_xpubs;
 
-pub use node::bitcoind::{
-    DefineBitcoind, DownloadState, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep,
+pub use node::{
+    bitcoind::{DownloadState, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep},
+    DefineNode,
 };
 
 pub use descriptor::{BackupDescriptor, DefineDescriptor, ImportDescriptor, RegisterDescriptor};

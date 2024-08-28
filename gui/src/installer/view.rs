@@ -34,7 +34,7 @@ use liana_ui::{
 use crate::{
     hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
-        message::{self, Message},
+        message::{self, DefineBitcoind, DefineNode, Message},
         prompt,
         step::{DownloadState, InstallState},
         Error,
@@ -1159,13 +1159,73 @@ pub fn help_backup<'a>() -> Element<'a, Message> {
     text(prompt::BACKUP_DESCRIPTOR_HELP).small().into()
 }
 
-pub fn define_bitcoin<'a>(
+pub fn define_bitcoin_node<'a>(
     progress: (usize, usize),
+    node_view: Element<'a, Message>,
+    is_running: Option<&Result<(), Error>>,
+    can_try_ping: bool,
+) -> Element<'a, Message> {
+    let col = Column::new()
+        .push(node_view)
+        .push_maybe(if is_running.is_some() {
+            is_running.map(|res| {
+                if res.is_ok() {
+                    Container::new(
+                        Row::new()
+                            .spacing(10)
+                            .align_items(Alignment::Center)
+                            .push(icon::circle_check_icon().style(color::GREEN))
+                            .push(text("Connection checked").style(color::GREEN)),
+                    )
+                } else {
+                    Container::new(
+                        Row::new()
+                            .spacing(10)
+                            .align_items(Alignment::Center)
+                            .push(icon::circle_cross_icon().style(color::RED))
+                            .push(text("Connection failed").style(color::RED)),
+                    )
+                }
+            })
+        } else {
+            Some(Container::new(Space::with_height(Length::Fixed(25.0))))
+        })
+        .push(
+            Row::new()
+                .spacing(10)
+                .push(Container::new(
+                    button::secondary(None, "Check connection")
+                        .on_press_maybe(if can_try_ping {
+                            Some(Message::DefineNode(DefineNode::Ping))
+                        } else {
+                            None
+                        })
+                        .width(Length::Fixed(200.0)),
+                ))
+                .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
+                    button::primary(None, "Next")
+                        .on_press(Message::Next)
+                        .width(Length::Fixed(200.0))
+                } else {
+                    button::primary(None, "Next").width(Length::Fixed(200.0))
+                }),
+        )
+        .spacing(50);
+
+    layout(
+        progress,
+        None,
+        "Set up connection to the Bitcoin full node",
+        col,
+        true,
+        Some(Message::Previous),
+    )
+}
+
+pub fn define_bitcoind<'a>(
     address: &form::Value<String>,
     rpc_auth_vals: &RpcAuthValues,
     selected_auth_type: &RpcAuthType,
-    is_running: Option<&Result<(), Error>>,
-    can_try_ping: bool,
 ) -> Element<'a, Message> {
     let is_loopback = if let Some((ip, _port)) = address.value.clone().rsplit_once(':') {
         let (ipv4, ipv6) = (Ipv4Addr::from_str(ip), Ipv6Addr::from_str(ip));
@@ -1182,9 +1242,8 @@ pub fn define_bitcoin<'a>(
         .push(text("Address:").bold())
         .push(
             form::Form::new_trimmed("Address", address, |msg| {
-                Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
-                    ConfigField::Address,
-                    msg,
+                Message::DefineNode(DefineNode::DefineBitcoind(
+                    DefineBitcoind::ConfigFieldEdited(ConfigField::Address, msg),
                 ))
             })
             .warning("Please enter correct address")
@@ -1220,9 +1279,9 @@ pub fn define_bitcoin<'a>(
                             *auth_type,
                             Some(*selected_auth_type),
                             |new_selection| {
-                                Message::DefineBitcoind(
-                                    message::DefineBitcoind::RpcAuthTypeSelected(new_selection),
-                                )
+                                Message::DefineNode(DefineNode::DefineBitcoind(
+                                    DefineBitcoind::RpcAuthTypeSelected(new_selection),
+                                ))
                             },
                         ))
                         .spacing(30)
@@ -1233,9 +1292,8 @@ pub fn define_bitcoin<'a>(
         .push(match selected_auth_type {
             RpcAuthType::CookieFile => Row::new().push(
                 form::Form::new_trimmed("Cookie path", &rpc_auth_vals.cookie_path, |msg| {
-                    Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
-                        ConfigField::CookieFilePath,
-                        msg,
+                    Message::DefineNode(DefineNode::DefineBitcoind(
+                        DefineBitcoind::ConfigFieldEdited(ConfigField::CookieFilePath, msg),
                     ))
                 })
                 .warning("Please enter correct path")
@@ -1245,9 +1303,8 @@ pub fn define_bitcoin<'a>(
             RpcAuthType::UserPass => Row::new()
                 .push(
                     form::Form::new_trimmed("User", &rpc_auth_vals.user, |msg| {
-                        Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
-                            ConfigField::User,
-                            msg,
+                        Message::DefineNode(DefineNode::DefineBitcoind(
+                            DefineBitcoind::ConfigFieldEdited(ConfigField::User, msg),
                         ))
                     })
                     .warning("Please enter correct user")
@@ -1256,9 +1313,8 @@ pub fn define_bitcoin<'a>(
                 )
                 .push(
                     form::Form::new_trimmed("Password", &rpc_auth_vals.password, |msg| {
-                        Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
-                            ConfigField::Password,
-                            msg,
+                        Message::DefineNode(DefineNode::DefineBitcoind(
+                            DefineBitcoind::ConfigFieldEdited(ConfigField::Password, msg),
                         ))
                     })
                     .warning("Please enter correct password")
@@ -1269,62 +1325,11 @@ pub fn define_bitcoin<'a>(
         })
         .spacing(10);
 
-    layout(
-        progress,
-        None,
-        "Set up connection to the Bitcoin full node",
-        Column::new()
-            .push(col_address)
-            .push(col_auth)
-            .push_maybe(if is_running.is_some() {
-                is_running.map(|res| {
-                    if res.is_ok() {
-                        Container::new(
-                            Row::new()
-                                .spacing(10)
-                                .align_items(Alignment::Center)
-                                .push(icon::circle_check_icon().style(color::GREEN))
-                                .push(text("Connection checked").style(color::GREEN)),
-                        )
-                    } else {
-                        Container::new(
-                            Row::new()
-                                .spacing(10)
-                                .align_items(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(color::RED))
-                                .push(text("Connection failed").style(color::RED)),
-                        )
-                    }
-                })
-            } else {
-                Some(Container::new(Space::with_height(Length::Fixed(25.0))))
-            })
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(Container::new(
-                        button::secondary(None, "Check connection")
-                            .on_press_maybe(if can_try_ping {
-                                Some(Message::DefineBitcoind(
-                                    message::DefineBitcoind::PingBitcoind,
-                                ))
-                            } else {
-                                None
-                            })
-                            .width(Length::Fixed(200.0)),
-                    ))
-                    .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
-                        button::primary(None, "Next")
-                            .on_press(Message::Next)
-                            .width(Length::Fixed(200.0))
-                    } else {
-                        button::primary(None, "Next").width(Length::Fixed(200.0))
-                    }),
-            )
-            .spacing(50),
-        true,
-        Some(Message::Previous),
-    )
+    Column::new()
+        .push(col_address)
+        .push(col_auth)
+        .spacing(50)
+        .into()
 }
 
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
