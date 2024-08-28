@@ -87,6 +87,7 @@ impl NodeDefinition {
 pub struct Node {
     definition: NodeDefinition,
     is_running: Option<Result<(), Error>>,
+    waiting_for_ping_result: bool,
 }
 
 impl Node {
@@ -94,6 +95,7 @@ impl Node {
         Node {
             definition: NodeDefinition::new(node_type),
             is_running: None,
+            waiting_for_ping_result: false,
         }
     }
 }
@@ -152,22 +154,18 @@ impl DefineNode {
             .find(|node| node.definition.node_type() == node_type)
     }
 
-    fn ping_selected(&self) -> Command<Message> {
-        let selected = self.selected().definition.clone();
-        let node_type = selected.node_type();
-        Command::perform(async move { selected.ping() }, move |res| {
-            Message::DefineNode(message::DefineNode::PingResult((node_type, res)))
-        })
-    }
-
     fn update_node(
         &mut self,
         node_type: NodeType,
         message: message::DefineNode,
     ) -> Command<Message> {
         if let Some(node) = self.get_mut(node_type) {
-            node.is_running = None;
-            return node.definition.update(message);
+            // Don't make changes while waiting for a ping result so that we
+            // know which values the ping result applies to.
+            if !node.waiting_for_ping_result {
+                node.is_running = None;
+                return node.definition.update(message);
+            }
         }
         Command::none()
     }
@@ -192,12 +190,28 @@ impl Step for DefineNode {
                     self.selected_node_type = node_type;
                 }
                 message::DefineNode::Ping => {
-                    return self.ping_selected();
+                    let selected = self.selected_mut();
+                    // Make sure we don't send more than one ping request at a time
+                    // so that we know which values the result applies to.
+                    if !selected.waiting_for_ping_result {
+                        selected.waiting_for_ping_result = true;
+                        selected.is_running = None;
+                        let def = selected.definition.clone();
+                        let node_type = def.node_type();
+                        return Command::perform(async move { def.ping() }, move |res| {
+                            Message::DefineNode(message::DefineNode::PingResult((node_type, res)))
+                        });
+                    }
                 }
                 message::DefineNode::PingResult((node_type, res)) => {
                     // Result may not be for the selected node type.
                     if let Some(node) = self.get_mut(node_type) {
-                        node.is_running = Some(res);
+                        // Make sure we're expecting the ping result. Otherwise, the user may have changed values
+                        // and so the ping result may not apply to the current values.
+                        if node.waiting_for_ping_result {
+                            node.waiting_for_ping_result = false;
+                            node.is_running = Some(res);
+                        }
                     }
                 }
                 msg @ message::DefineNode::DefineBitcoind(_) => {
@@ -221,6 +235,7 @@ impl Step for DefineNode {
         progress: (usize, usize),
         _email: Option<&str>,
     ) -> Element<Message> {
+        // TODO: Make input fields read-only while waiting for a ping result.
         view::define_bitcoin_node(
             progress,
             self.nodes.iter().map(|node| node.definition.node_type()),
@@ -228,11 +243,8 @@ impl Step for DefineNode {
             self.selected().definition.view(),
             self.selected().is_running.as_ref(),
             self.selected().definition.can_try_ping(),
+            self.selected().waiting_for_ping_result,
         )
-    }
-
-    fn load(&self) -> Command<Message> {
-        self.ping_selected()
     }
 
     fn skip(&self, ctx: &Context) -> bool {

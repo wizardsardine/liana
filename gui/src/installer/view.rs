@@ -1169,6 +1169,7 @@ pub fn define_bitcoin_node<'a>(
     node_view: Element<'a, Message>,
     is_running: Option<&Result<(), Error>>,
     can_try_ping: bool,
+    waiting_for_ping_result: bool,
 ) -> Element<'a, Message> {
     let col = Column::new()
         .push(
@@ -1196,7 +1197,14 @@ pub fn define_bitcoin_node<'a>(
             ),
         )
         .push(node_view)
-        .push_maybe(if is_running.is_some() {
+        .push_maybe(if waiting_for_ping_result {
+            Some(Container::new(
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(text("Checking connection...")),
+            ))
+        } else if is_running.is_some() {
             is_running.map(|res| {
                 if res.is_ok() {
                     Container::new(
@@ -1224,7 +1232,7 @@ pub fn define_bitcoin_node<'a>(
                 .spacing(10)
                 .push(Container::new(
                     button::secondary(None, "Check connection")
-                        .on_press_maybe(if can_try_ping {
+                        .on_press_maybe(if can_try_ping && !waiting_for_ping_result {
                             Some(Message::DefineNode(DefineNode::Ping))
                         } else {
                             None
