@@ -9,7 +9,10 @@ use crate::{
     download::Progress,
     hw::HardwareWalletMessage,
     lianalite::client::{auth::AuthClient, backend::api},
-    node::bitcoind::{Bitcoind, ConfigField, RpcAuthType},
+    node::{
+        bitcoind::{Bitcoind, ConfigField, RpcAuthType},
+        NodeType,
+    },
 };
 use async_hwi::{DeviceKind, Version};
 
@@ -76,8 +79,9 @@ pub enum DefineBitcoind {
 
 #[derive(Debug, Clone)]
 pub enum DefineNode {
+    NodeTypeSelected(NodeType),
     DefineBitcoind(DefineBitcoind),
-    PingResult(Result<(), Error>),
+    PingResult((NodeType, Result<(), Error>)),
     Ping,
 }
 

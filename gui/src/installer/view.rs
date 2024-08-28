@@ -39,7 +39,10 @@ use crate::{
         step::{DownloadState, InstallState},
         Error,
     },
-    node::bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
+    node::{
+        bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
+        NodeType,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1161,11 +1164,36 @@ pub fn help_backup<'a>() -> Element<'a, Message> {
 
 pub fn define_bitcoin_node<'a>(
     progress: (usize, usize),
+    available_node_types: impl Iterator<Item = NodeType>,
+    selected_node_type: NodeType,
     node_view: Element<'a, Message>,
     is_running: Option<&Result<(), Error>>,
     can_try_ping: bool,
 ) -> Element<'a, Message> {
     let col = Column::new()
+        .push(
+            available_node_types.fold(
+                Row::new()
+                    .push(text("Node type:").small().bold())
+                    .spacing(10),
+                |row, node_type| {
+                    row.push(radio(
+                        match node_type {
+                            NodeType::Bitcoind => "Bitcoin Core",
+                        },
+                        node_type,
+                        Some(selected_node_type),
+                        |new_selection| {
+                            Message::DefineNode(message::DefineNode::NodeTypeSelected(
+                                new_selection,
+                            ))
+                        },
+                    ))
+                    .spacing(30)
+                    .align_items(Alignment::Center)
+                },
+            ),
+        )
         .push(node_view)
         .push_maybe(if is_running.is_some() {
             is_running.map(|res| {
