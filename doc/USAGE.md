@@ -77,13 +77,13 @@ fear not! This is just a one time cost. Also, the full node is pruned so it will
 
 Liana can be run as a headless server using the `lianad` program.
 
-As a Bitcoin wallet, Liana needs to be able to connect to the Bitcoin network. The software has been
-developed such as multiple ways to connect to the Bitcoin network may be available. However for now
-only the connection through `bitcoind` is implemented.
+As a Bitcoin wallet, Liana needs to be able to connect to the Bitcoin network,
+which is currently possible through the Bitcoin Core daemon (`bitcoind`) or an Electrum server.
 
-Therefore in order to use Liana you need to have the Bitcoin Core daemon (`bitcoind`) running on your machine for the
-desired network (mainnet, signet, testnet or regtest). The `bitcoind` installation may be pruned (note this may affect block chain
-rescans) up to the maximum (around 550MB of blocks).
+The chosen Bitcoin backend must be available while Liana is running.
+
+If using `bitcoind`, it must be running on your machine for the desired network (mainnet, signet, testnet or regtest)
+and may be pruned (note this may affect block chain rescans) up to the maximum (around 550MB of blocks).
 
 The minimum supported version of Bitcoin Core is `24.0.1` (if you want to use Taproot it's `26.0`).
 If you don't have Bitcoin Core installed on your machine yet, you can download it
