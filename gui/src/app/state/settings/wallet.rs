@@ -5,7 +5,10 @@ use std::sync::Arc;
 
 use iced::{Command, Subscription};
 
-use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
+use liana::{
+    descriptors::LianaDescriptor,
+    miniscript::bitcoin::{bip32::Fingerprint, Network},
+};
 
 use liana_ui::{
     component::{form, modal},
@@ -23,7 +26,7 @@ use crate::{
 pub struct WalletSettingsState {
     data_dir: PathBuf,
     warning: Option<Error>,
-    descriptor: String,
+    descriptor: LianaDescriptor,
     keys_aliases: Vec<(Fingerprint, form::Value<String>)>,
     wallet: Arc<Wallet>,
     modal: Option<RegisterWalletModal>,
@@ -35,7 +38,7 @@ impl WalletSettingsState {
     pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>) -> Self {
         WalletSettingsState {
             data_dir,
-            descriptor: wallet.main_descriptor.to_string(),
+            descriptor: wallet.main_descriptor.clone(),
             keys_aliases: Self::keys_aliases(&wallet),
             wallet,
             warning: None,
@@ -177,7 +180,7 @@ impl State for WalletSettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
     ) -> Command<Message> {
-        self.descriptor = wallet.main_descriptor.to_string();
+        self.descriptor = wallet.main_descriptor.clone();
         self.keys_aliases = Self::keys_aliases(&wallet);
         self.wallet = wallet;
         Command::perform(

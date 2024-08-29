@@ -1363,6 +1363,7 @@ impl From<RegisterDescriptor> for Box<dyn Step> {
 pub struct BackupDescriptor {
     done: bool,
     descriptor: Option<LianaDescriptor>,
+    key_aliases: HashMap<Fingerprint, String>,
 }
 
 impl Step for BackupDescriptor {
@@ -1377,6 +1378,12 @@ impl Step for BackupDescriptor {
             self.descriptor.clone_from(&ctx.descriptor);
             self.done = false;
         }
+        self.key_aliases = ctx
+            .keys
+            .iter()
+            .cloned()
+            .map(|k| (k.master_fingerprint, k.name))
+            .collect()
     }
     fn view<'a>(
         &'a self,
@@ -1384,8 +1391,13 @@ impl Step for BackupDescriptor {
         progress: (usize, usize),
         email: Option<&'a str>,
     ) -> Element<Message> {
-        let desc = self.descriptor.as_ref().unwrap();
-        view::backup_descriptor(progress, email, desc.to_string(), self.done)
+        view::backup_descriptor(
+            progress,
+            email,
+            self.descriptor.as_ref().expect("Must be a descriptor"),
+            &self.key_aliases,
+            self.done,
+        )
     }
 }
 

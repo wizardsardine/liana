@@ -3,12 +3,13 @@ use std::str::FromStr;
 
 use iced::{
     alignment,
-    widget::{radio, scrollable, Space},
+    widget::{radio, scrollable, tooltip as iced_tooltip, Space},
     Alignment, Length,
 };
 
 use liana::{
     config::BitcoindRpcAuth,
+    descriptors::{LianaDescriptor, LianaPolicy},
     miniscript::bitcoin::{bip32::Fingerprint, Network},
 };
 
@@ -685,8 +686,8 @@ fn is_ok_and<T, E>(res: &Result<T, E>, f: impl FnOnce(&T) -> bool) -> bool {
 pub fn wallet_settings<'a>(
     cache: &'a Cache,
     warning: Option<&Error>,
-    descriptor: &'a str,
-    keys_aliases: &[(Fingerprint, form::Value<String>)],
+    descriptor: &'a LianaDescriptor,
+    keys_aliases: &'a [(Fingerprint, form::Value<String>)],
     processing: bool,
     updated: bool,
 ) -> Element<'a, Message> {
@@ -712,86 +713,274 @@ pub fn wallet_settings<'a>(
                             .on_press(Message::Settings(SettingsMessage::EditWalletSettings)),
                     ),
             )
-            .push(card::simple(
-                Column::new()
-                    .push(text("Wallet descriptor:").bold())
-                    .push(
-                        scrollable(
-                            Column::new()
-                                .push(text(descriptor.to_owned()).small())
-                                .push(Space::with_height(Length::Fixed(5.0))),
-                        )
-                        .direction(scrollable::Direction::Horizontal(
-                            scrollable::Properties::new().width(5).scroller_width(5),
-                        )),
-                    )
-                    .push(
-                        Row::new()
-                            .spacing(10)
-                            .push(Column::new().width(Length::Fill))
-                            .push(
-                                button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                    .on_press(Message::Clipboard(descriptor.to_owned())),
+            .push(
+                card::simple(
+                    Column::new()
+                        .push(text("Wallet descriptor:").bold())
+                        .push(
+                            scrollable(
+                                Column::new()
+                                    .push(text(descriptor.to_string()).small())
+                                    .push(Space::with_height(Length::Fixed(5.0))),
                             )
-                            .push(
-                                button::primary(
-                                    Some(icon::chip_icon()),
-                                    "Register on hardware device",
-                                )
-                                .on_press(Message::Settings(SettingsMessage::RegisterWallet)),
+                            .direction(
+                                scrollable::Direction::Horizontal(
+                                    scrollable::Properties::new().width(5).scroller_width(5),
+                                ),
                             ),
-                    )
-                    .spacing(10),
-            ))
-            .push(card::simple(
-                Column::new()
-                    .push(text("Fingerprint aliases:").bold())
-                    .push(keys_aliases.iter().fold(
-                        Column::new().spacing(10),
-                        |col, (fingerprint, name)| {
-                            let fg = *fingerprint;
-                            col.push(
-                                Row::new()
-                                    .spacing(10)
-                                    .align_items(Alignment::Center)
-                                    .push(text(fg.to_string()).bold().width(Length::Fixed(100.0)))
-                                    .push(
-                                        form::Form::new("Alias", name, move |msg| {
-                                            Message::Settings(
-                                                SettingsMessage::FingerprintAliasEdited(fg, msg),
-                                            )
-                                        })
-                                        .warning("Please enter correct alias")
-                                        .size(P1_SIZE)
-                                        .padding(10),
-                                    ),
-                            )
-                        },
-                    ))
-                    .push(
-                        Row::new()
-                            .align_items(Alignment::Center)
-                            .push(Space::with_width(Length::Fill))
-                            .push_maybe(if updated {
-                                Some(
-                                    Row::new()
-                                        .align_items(Alignment::Center)
-                                        .push(icon::circle_check_icon().style(color::GREEN))
-                                        .push(text("Updated").style(color::GREEN)),
+                        )
+                        .push(
+                            Row::new()
+                                .spacing(10)
+                                .push(Column::new().width(Length::Fill))
+                                .push(
+                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
+                                        .on_press(Message::Clipboard(descriptor.to_string())),
                                 )
-                            } else {
-                                None
-                            })
-                            .push(if !processing {
-                                button::primary(None, "Update")
-                                    .on_press(Message::Settings(SettingsMessage::Save))
-                            } else {
-                                button::primary(None, "Updating")
-                            }),
-                    )
-                    .spacing(10),
-            )),
+                                .push(
+                                    button::primary(
+                                        Some(icon::chip_icon()),
+                                        "Register on hardware device",
+                                    )
+                                    .on_press(Message::Settings(SettingsMessage::RegisterWallet)),
+                                ),
+                        )
+                        .spacing(10),
+                )
+                .width(Length::Fill),
+            )
+            .push(
+                card::simple(display_policy(descriptor.policy(), keys_aliases)).width(Length::Fill),
+            )
+            .push(
+                card::simple(
+                    Column::new()
+                        .push(text("Fingerprint aliases:").bold())
+                        .push(keys_aliases.iter().fold(
+                            Column::new().spacing(10),
+                            |col, (fingerprint, name)| {
+                                let fg = *fingerprint;
+                                col.push(
+                                    Row::new()
+                                        .spacing(10)
+                                        .align_items(Alignment::Center)
+                                        .push(
+                                            text(fg.to_string()).bold().width(Length::Fixed(100.0)),
+                                        )
+                                        .push(
+                                            form::Form::new("Alias", name, move |msg| {
+                                                Message::Settings(
+                                                    SettingsMessage::FingerprintAliasEdited(
+                                                        fg, msg,
+                                                    ),
+                                                )
+                                            })
+                                            .warning("Please enter correct alias")
+                                            .size(P1_SIZE)
+                                            .padding(10),
+                                        ),
+                                )
+                            },
+                        ))
+                        .push(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .push(Space::with_width(Length::Fill))
+                                .push_maybe(if updated {
+                                    Some(
+                                        Row::new()
+                                            .align_items(Alignment::Center)
+                                            .push(icon::circle_check_icon().style(color::GREEN))
+                                            .push(text("Updated").style(color::GREEN)),
+                                    )
+                                } else {
+                                    None
+                                })
+                                .push(if !processing {
+                                    button::primary(None, "Update")
+                                        .on_press(Message::Settings(SettingsMessage::Save))
+                                } else {
+                                    button::primary(None, "Updating")
+                                }),
+                        )
+                        .spacing(10),
+                )
+                .width(Length::Fill),
+            ),
     )
+}
+
+fn display_policy(
+    policy: LianaPolicy,
+    keys_aliases: &[(Fingerprint, form::Value<String>)],
+) -> Element<'_, Message> {
+    let (primary_threshold, primary_keys) = policy.primary_path().thresh_origins();
+    let recovery_paths = policy.recovery_paths();
+
+    // The iteration over an HashMap keys can have a different order at each refresh
+    let mut primary_keys: Vec<Fingerprint> = primary_keys.into_keys().collect();
+    primary_keys.sort();
+
+    let mut col = Column::new().push(
+        Row::new()
+            .spacing(5)
+            .push(
+                text(format!(
+                    "{} signature{}",
+                    primary_threshold,
+                    if primary_threshold > 1 { "s" } else { "" }
+                ))
+                .bold(),
+            )
+            .push(if primary_keys.len() > 1 {
+                text(format!("out of {} by", primary_keys.len()))
+            } else {
+                text("by")
+            })
+            .push(
+                primary_keys
+                    .iter()
+                    .enumerate()
+                    .fold(Row::new().spacing(5), |row, (i, k)| {
+                        let content = if let Some(alias) = keys_aliases
+                            .iter()
+                            .find(|(fg, _)| fg == k)
+                            .map(|(_, f)| &f.value)
+                        {
+                            Container::new(
+                                iced_tooltip::Tooltip::new(
+                                    text(alias).bold(),
+                                    text(k.to_string()),
+                                    iced_tooltip::Position::Bottom,
+                                )
+                                .style(theme::Container::Card(theme::Card::Simple)),
+                            )
+                        } else {
+                            Container::new(text(k.to_string()))
+                                .padding(10)
+                                .style(theme::Container::Pill(theme::Pill::Simple))
+                        };
+                        if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
+                            row.push(content)
+                        } else if i <= primary_keys.len() - 2 {
+                            row.push(content).push(text("and"))
+                        } else {
+                            row.push(content).push(text(","))
+                        }
+                    }),
+            )
+            .push(text("can always spend this wallet's funds (Primary path)")),
+    );
+    for (i, (sequence, recovery_path)) in recovery_paths.iter().enumerate() {
+        let (threshold, recovery_keys) = recovery_path.thresh_origins();
+
+        // The iteration over an HashMap keys can have a different order at each refresh
+        let mut recovery_keys: Vec<Fingerprint> = recovery_keys.into_keys().collect();
+        recovery_keys.sort();
+
+        col = col.push(
+            Row::new()
+                .spacing(5)
+                .push(
+                    text(format!(
+                        "{} signature{}",
+                        threshold,
+                        if threshold > 1 { "s" } else { "" }
+                    ))
+                    .bold(),
+                )
+                .push(if recovery_keys.len() > 1 {
+                    text(format!("out of {} by", recovery_keys.len()))
+                } else {
+                    text("by")
+                })
+                .push(recovery_keys.iter().enumerate().fold(
+                    Row::new().spacing(5),
+                    |row, (i, k)| {
+                        let content = if let Some(alias) = keys_aliases
+                            .iter()
+                            .find(|(fg, _)| fg == k)
+                            .map(|(_, f)| &f.value)
+                        {
+                            Container::new(
+                                iced_tooltip::Tooltip::new(
+                                    text(alias).bold(),
+                                    text(k.to_string()),
+                                    iced_tooltip::Position::Bottom,
+                                )
+                                .style(theme::Container::Card(theme::Card::Simple)),
+                            )
+                        } else {
+                            Container::new(text(k.to_string()))
+                                .padding(10)
+                                .style(theme::Container::Pill(theme::Pill::Simple))
+                        };
+                        if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
+                            row.push(content)
+                        } else if i <= recovery_keys.len() - 2 {
+                            row.push(content).push(text("and"))
+                        } else {
+                            row.push(content).push(text(","))
+                        }
+                    },
+                ))
+                .push(text("can spend coins inactive for"))
+                .push(
+                    text(format!(
+                        "{} blocks (~{})",
+                        sequence,
+                        expire_message_units(*sequence as u32).join(",")
+                    ))
+                    .bold(),
+                )
+                .push(text(format!("(Recovery path #{})", i + 1))),
+        );
+    }
+    Column::new()
+        .spacing(10)
+        .push(text("The wallet policy:").bold())
+        .push(scrollable(col).direction(scrollable::Direction::Horizontal(
+            scrollable::Properties::new().width(5).scroller_width(5),
+        )))
+        .into()
+}
+
+/// returns y,m,d
+fn expire_message_units(sequence: u32) -> Vec<String> {
+    let mut n_minutes = sequence * 10;
+    let n_years = n_minutes / 525960;
+    n_minutes -= n_years * 525960;
+    let n_months = n_minutes / 43830;
+    n_minutes -= n_months * 43830;
+    let n_days = n_minutes / 1440;
+
+    #[allow(clippy::nonminimal_bool)]
+    if n_years != 0 || n_months != 0 || n_days != 0 {
+        [(n_years, "y"), (n_months, "m"), (n_days, "d")]
+            .iter()
+            .filter_map(|(n, u)| {
+                if *n != 0 {
+                    Some(format!("{}{}", n, u))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        n_minutes -= n_days * 1440;
+        let n_hours = n_minutes / 60;
+        n_minutes -= n_hours * 60;
+        [(n_hours, "h"), (n_minutes, "m")]
+            .iter()
+            .filter_map(|(n, u)| {
+                if *n != 0 {
+                    Some(format!("{}{}", n, u))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 pub fn register_wallet_modal<'a>(
