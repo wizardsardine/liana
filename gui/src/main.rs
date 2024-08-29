@@ -20,14 +20,8 @@ use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
 use liana_ui::{component::text, font, image, theme, widget::Element};
 
 use liana_gui::{
-    app::{
-        self,
-        cache::Cache,
-        config::{default_datadir, ConfigError},
-        wallet::Wallet,
-        App,
-    },
-    datadir::{self, create_directory},
+    app::{self, cache::Cache, config::default_datadir, wallet::Wallet, App},
+    datadir,
     hw::HardwareWalletConfig,
     installer::{self, Installer},
     launcher::{self, Launcher},
@@ -162,29 +156,9 @@ impl Application for GUI {
         cmds.push(Command::perform(ctrl_c(), |_| Message::CtrlC));
         let state = match config {
             Config::Launcher(datadir_path) => {
-                let launcher = Launcher::new(datadir_path);
+                let (launcher, command) = Launcher::new(datadir_path, None);
+                cmds.push(command.map(|msg| Message::Launch(Box::new(msg))));
                 State::Launcher(Box::new(launcher))
-            }
-            Config::Install(datadir_path, network) => {
-                if !datadir_path.exists() {
-                    // datadir is created right before launching the installer
-                    // so logs can go in <datadir_path>/installer.log
-                    if let Err(e) = create_directory(&datadir_path) {
-                        error!("Failed to create datadir: {}", e);
-                    } else {
-                        info!(
-                            "Created a fresh data directory at {}",
-                            &datadir_path.to_string_lossy()
-                        );
-                    }
-                }
-                logger.set_installer_mode(
-                    datadir_path.clone(),
-                    log_level.unwrap_or(LevelFilter::INFO),
-                );
-                let (install, command) = Installer::new(datadir_path, network, None);
-                cmds.push(command.map(|msg| Message::Install(Box::new(msg))));
-                State::Installer(Box::new(install))
             }
             Config::Run(datadir_path, cfg, network) => {
                 logger.set_running_mode(
@@ -229,7 +203,7 @@ impl Application for GUI {
                 }
             }
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
-                launcher::Message::Install(datadir_path, network) => {
+                launcher::Message::Install(datadir_path, network, init) => {
                     if !datadir_path.exists() {
                         // datadir is created right before launching the installer
                         // so logs can go in <datadir_path>/installer.log
@@ -247,7 +221,7 @@ impl Application for GUI {
                         self.log_level.unwrap_or(LevelFilter::INFO),
                     );
 
-                    let (install, command) = Installer::new(datadir_path, network, None);
+                    let (install, command) = Installer::new(datadir_path, network, None, init);
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
@@ -285,14 +259,18 @@ impl Application for GUI {
                 _ => l.update(*msg).map(|msg| Message::Launch(Box::new(msg))),
             },
             (State::Login(l), Message::Login(msg)) => match *msg {
-                login::Message::View(login::ViewMessage::BackToLauncher) => {
-                    let launcher = Launcher::new(l.datadir.clone());
+                login::Message::View(login::ViewMessage::BackToLauncher(network)) => {
+                    let (launcher, command) = Launcher::new(l.datadir.clone(), Some(network));
                     self.state = State::Launcher(Box::new(launcher));
-                    Command::none()
+                    command.map(|msg| Message::Launch(Box::new(msg)))
                 }
                 login::Message::Install(remote_backend) => {
-                    let (install, command) =
-                        Installer::new(l.datadir.clone(), l.network, remote_backend);
+                    let (install, command) = Installer::new(
+                        l.datadir.clone(),
+                        l.network,
+                        remote_backend,
+                        installer::UserFlow::CreateWallet,
+                    );
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
@@ -362,19 +340,20 @@ impl Application for GUI {
                         self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))
                     }
-                } else if let installer::Message::BackToLauncher = *msg {
-                    let launcher = Launcher::new(i.destination_path());
+                } else if let installer::Message::BackToLauncher(network) = *msg {
+                    let (launcher, command) = Launcher::new(i.destination_path(), Some(network));
                     self.state = State::Launcher(Box::new(launcher));
-                    Command::none()
+                    command.map(|msg| Message::Launch(Box::new(msg)))
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
                 }
             }
             (State::Loader(loader), Message::Load(msg)) => match *msg {
                 loader::Message::View(loader::ViewMessage::SwitchNetwork) => {
-                    self.state =
-                        State::Launcher(Box::new(Launcher::new(loader.datadir_path.clone())));
-                    Command::none()
+                    let (launcher, command) =
+                        Launcher::new(loader.datadir_path.clone(), Some(loader.network));
+                    self.state = State::Launcher(Box::new(launcher));
+                    command.map(|msg| Message::Launch(Box::new(msg)))
                 }
                 loader::Message::Synced(Ok((wallet, cache, daemon, bitcoind))) => {
                     let (app, command) = App::new(
@@ -501,7 +480,6 @@ pub fn create_app_with_remote_backend(
 pub enum Config {
     Run(PathBuf, app::Config, bitcoin::Network),
     Launcher(PathBuf),
-    Install(PathBuf, bitcoin::Network),
 }
 
 impl Config {
@@ -515,7 +493,6 @@ impl Config {
             path.push(app::config::DEFAULT_FILE_NAME);
             match app::Config::from_file(&path) {
                 Ok(cfg) => Ok(Config::Run(datadir_path, cfg, network)),
-                Err(ConfigError::NotFound) => Ok(Config::Install(datadir_path, network)),
                 Err(e) => Err(format!("Failed to read configuration file: {}", e).into()),
             }
         } else {

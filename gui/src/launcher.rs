@@ -2,61 +2,68 @@ use std::path::PathBuf;
 
 use iced::{
     alignment::Horizontal,
-    widget::{scrollable, tooltip},
+    widget::{pick_list, scrollable, Button, Space},
     Alignment, Command, Length, Subscription,
 };
 
 use liana::{config::ConfigError, miniscript::bitcoin::Network};
 use liana_ui::{
     color,
-    component::{badge, button, card, modal::Modal, notification, text::*},
+    component::{button, card, modal::Modal, network_banner, notification, text::*},
     icon, image, theme,
     widget::*,
 };
 
-use crate::app;
+use crate::{app, installer::UserFlow};
 
-fn wallet_name(network: &Network) -> String {
-    match network {
-        Network::Bitcoin => "Bitcoin Mainnet",
-        Network::Testnet => "Bitcoin Testnet",
-        Network::Signet => "Bitcoin Signet",
-        Network::Regtest => "Bitcoin Regtest",
-        _ => "Bitcoin unknown",
-    }
-    .to_string()
+const NETWORKS: [Network; 4] = [
+    Network::Bitcoin,
+    Network::Testnet,
+    Network::Signet,
+    Network::Regtest,
+];
+
+#[derive(Debug, Clone)]
+pub enum State {
+    Unchecked,
+    Wallet {
+        name: Option<String>,
+        email: Option<String>,
+        checksum: Option<String>,
+    },
+    NoWallet,
 }
 
 pub struct Launcher {
-    // true if installed
-    choices: Vec<(Network, bool)>,
+    state: State,
+    network: Network,
     datadir_path: PathBuf,
     error: Option<String>,
     delete_wallet_modal: Option<DeleteWalletModal>,
-    collapsed: bool,
 }
 
 impl Launcher {
-    pub fn new(datadir_path: PathBuf) -> Self {
-        Self {
-            choices: [
-                Network::Bitcoin,
-                Network::Testnet,
-                Network::Signet,
-                Network::Regtest,
-            ]
-            .iter()
-            .map(|net| (*net, datadir_path.join(net.to_string()).exists()))
-            .collect(),
-            datadir_path,
-            error: None,
-            delete_wallet_modal: None,
-            collapsed: false,
-        }
-    }
-
-    fn is_fresh_install(&self) -> bool {
-        !self.choices.iter().any(|(_, installed)| *installed)
+    pub fn new(datadir_path: PathBuf, network: Option<Network>) -> (Self, Command<Message>) {
+        let network = network.unwrap_or(
+            NETWORKS
+                .iter()
+                .find(|net| datadir_path.join(net.to_string()).exists())
+                .cloned()
+                .unwrap_or(Network::Bitcoin),
+        );
+        (
+            Self {
+                state: State::Unchecked,
+                network,
+                datadir_path: datadir_path.clone(),
+                error: None,
+                delete_wallet_modal: None,
+            },
+            Command::perform(
+                check_network_datadir(datadir_path.clone(), network),
+                Message::Checked,
+            ),
+        )
     }
 
     pub fn stop(&mut self) {}
@@ -67,22 +74,29 @@ impl Launcher {
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::View(ViewMessage::ShowUninstalledNetworks) => {
-                self.collapsed = true;
-                Command::none()
-            }
-            Message::View(ViewMessage::StartInstall(net)) => {
+            Message::View(ViewMessage::ImportWallet) => {
                 let datadir_path = self.datadir_path.clone();
-                Command::perform(async move { (datadir_path, net) }, |(d, n)| {
-                    Message::Install(d, n)
+                let network = self.network;
+                Command::perform(async move { (datadir_path, network) }, |(d, n)| {
+                    Message::Install(d, n, UserFlow::AddWallet)
                 })
             }
-            Message::View(ViewMessage::Check(network)) => Command::perform(
-                check_network_datadir(self.datadir_path.clone(), network),
-                Message::Checked,
-            ),
-            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal(network))) => {
-                let wallet_datadir = self.datadir_path.join(network.to_string());
+            Message::View(ViewMessage::CreateWallet) => {
+                let datadir_path = self.datadir_path.clone();
+                let network = self.network;
+                Command::perform(async move { (datadir_path, network) }, |(d, n)| {
+                    Message::Install(d, n, UserFlow::CreateWallet)
+                })
+            }
+            Message::View(ViewMessage::ShareXpubs) => {
+                let datadir_path = self.datadir_path.clone();
+                let network = self.network;
+                Command::perform(async move { (datadir_path, network) }, |(d, n)| {
+                    Message::Install(d, n, UserFlow::ShareXpubs)
+                })
+            }
+            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal)) => {
+                let wallet_datadir = self.datadir_path.join(self.network.to_string());
                 let config_path = wallet_datadir.join(app::config::DEFAULT_FILE_NAME);
                 let internal_bitcoind = if let Ok(cfg) = app::Config::from_file(&config_path) {
                     Some(cfg.start_internal_bitcoind)
@@ -90,18 +104,21 @@ impl Launcher {
                     None
                 };
                 self.delete_wallet_modal = Some(DeleteWalletModal::new(
-                    network,
+                    self.network,
                     wallet_datadir,
                     internal_bitcoind,
                 ));
                 Command::none()
             }
+            Message::View(ViewMessage::SelectNetwork(network)) => {
+                self.network = network;
+                Command::perform(
+                    check_network_datadir(self.datadir_path.clone(), self.network),
+                    Message::Checked,
+                )
+            }
             Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted)) => {
-                if let Some(modal) = &self.delete_wallet_modal {
-                    if let Some(choice) = self.choices.iter_mut().find(|c| c.0 == modal.network) {
-                        choice.1 = false;
-                    }
-                }
+                self.state = State::NoWallet;
                 Command::none()
             }
             Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::CloseModal)) => {
@@ -113,17 +130,26 @@ impl Launcher {
                     self.error = Some(e);
                     Command::none()
                 }
-                Ok(network) => {
+                Ok(state) => {
+                    self.state = state;
+                    Command::none()
+                }
+            },
+            Message::View(ViewMessage::Run) => {
+                if matches!(self.state, State::Wallet { .. }) {
                     let datadir_path = self.datadir_path.clone();
                     let mut path = self.datadir_path.clone();
-                    path.push(network.to_string());
+                    path.push(self.network.to_string());
                     path.push(app::config::DEFAULT_FILE_NAME);
                     let cfg = app::Config::from_file(&path).expect("Already checked");
+                    let network = self.network;
                     Command::perform(async move { (datadir_path.clone(), cfg, network) }, |m| {
                         Message::Run(m.0, m.1, m.2)
                     })
+                } else {
+                    Command::none()
                 }
-            },
+            }
             _ => {
                 if let Some(modal) = &mut self.delete_wallet_modal {
                     return modal.update(message);
@@ -137,225 +163,153 @@ impl Launcher {
         let content = Into::<Element<ViewMessage>>::into(scrollable(
             Column::new()
                 .push(
-                    Container::new(image::liana_brand_grey().width(Length::Fixed(200.0)))
+                    Row::new()
+                        .spacing(20)
+                        .push(
+                            Container::new(image::liana_brand_grey().width(Length::Fixed(200.0)))
+                                .width(Length::Fill),
+                        )
+                        .push(
+                            button::secondary(None, "Share Xpubs")
+                                .on_press(ViewMessage::ShareXpubs),
+                        )
+                        .push(
+                            pick_list(
+                                &NETWORKS[..],
+                                Some(self.network),
+                                ViewMessage::SelectNetwork,
+                            )
+                            .style(theme::PickList::Simple)
+                            .padding(10),
+                        )
+                        .align_items(Alignment::Center)
                         .padding(100),
                 )
                 .push(
                     Container::new(
                         Column::new()
+                            .align_items(Alignment::Center)
                             .spacing(30)
-                            .push(if !self.is_fresh_install() {
+                            .push(if matches!(self.state, State::Wallet { .. }) {
                                 text("Welcome back").size(50).bold()
                             } else {
                                 text("Welcome").size(50).bold()
                             })
                             .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
-                            .push(if self.is_fresh_install() {
-                                Column::new()
-                                    .spacing(10)
-                                    .push(
-                                        Button::new(
-                                            Row::new()
-                                                .spacing(20)
-                                                .align_items(Alignment::Center)
-                                                .push(
-                                                    badge::Badge::new(icon::bitcoin_icon())
-                                                        .style(theme::Badge::Bitcoin),
-                                                )
-                                                .push(text(format!(
-                                                    "Create wallet on {}",
-                                                    wallet_name(&Network::Bitcoin)
-                                                ))),
-                                        )
-                                        .on_press(ViewMessage::StartInstall(Network::Bitcoin))
-                                        .padding(10)
-                                        .width(Length::Fixed(400.0))
-                                        .style(theme::Button::Border),
-                                    )
-                                    .push(if !self.collapsed {
-                                        Column::new().push(
+                            .push(match &self.state {
+                                State::Unchecked => Column::new(),
+                                State::Wallet {
+                                    name,
+                                    email,
+                                    checksum,
+                                } => Column::new().push(
+                                    Row::new()
+                                        .align_items(Alignment::Center)
+                                        .spacing(20)
+                                        .push(
                                             Button::new(
-                                                Row::new()
-                                                    .spacing(20)
-                                                    .align_items(Alignment::Center)
-                                                    .push(badge::Badge::new(icon::plus_icon()))
-                                                    .push(text("Create wallet on another network")),
-                                            )
-                                            .on_press(ViewMessage::ShowUninstalledNetworks)
-                                            .padding(10)
-                                            .width(Length::Fixed(400.0))
-                                            .style(theme::Button::TransparentBorder),
-                                        )
-                                    } else {
-                                        self.choices
-                                            .iter()
-                                            .filter_map(|(net, installed)| {
-                                                if *installed || *net == Network::Bitcoin {
-                                                    None
-                                                } else {
-                                                    Some(net)
-                                                }
-                                            })
-                                            .fold(Column::new().spacing(10), |col, choice| {
-                                                col.push(
-                                                    Button::new(
-                                                        Row::new()
-                                                            .spacing(20)
-                                                            .align_items(Alignment::Center)
-                                                            .push(
-                                                                badge::Badge::new(
-                                                                    icon::bitcoin_icon(),
-                                                                )
-                                                                .style(theme::Badge::Standard),
-                                                            )
-                                                            .push(text(format!(
-                                                                "Create wallet on {}",
-                                                                wallet_name(choice)
-                                                            ))),
-                                                    )
-                                                    .on_press(ViewMessage::StartInstall(*choice))
-                                                    .padding(10)
-                                                    .width(Length::Fixed(400.0))
-                                                    .style(theme::Button::Border),
-                                                )
-                                            })
-                                    })
-                            } else {
-                                Column::new()
-                                    .spacing(10)
-                                    .push(
-                                        self.choices
-                                            .iter()
-                                            .filter_map(
-                                                |(net, installed)| {
-                                                    if *installed {
-                                                        Some(net)
-                                                    } else {
-                                                        None
-                                                    }
-                                                },
-                                            )
-                                            .fold(
                                                 Column::new()
-                                                    .spacing(10),
-                                                |col, choice| {
-                                                    col.push(
-                                                Row::new()
-                                                    .spacing(10)
-                                                    .push(
-                                                        Button::new(
-                                                            Row::new()
-                                                                .spacing(20)
-                                                                .align_items(Alignment::Center)
-                                                                .push(
-                                                                    badge::Badge::new(
-                                                                        icon::bitcoin_icon(),
-                                                                    )
-                                                                    .style(match choice {
-                                                                        Network::Bitcoin => {
-                                                                            theme::Badge::Bitcoin
-                                                                        }
-                                                                        _ => theme::Badge::Standard,
-                                                                    }),
-                                                                )
-                                                                .push(text(format!("Open wallet on {}", choice))),
-                                                        )
-                                                        .on_press(ViewMessage::Check(*choice))
-                                                        .padding(10)
-                                                        .width(Length::Fixed(400.0))
-                                                        .style(theme::Button::Border),
-                                                    )
-                                                    .push(tooltip::Tooltip::new(
-                                                        Button::new(icon::trash_icon())
-                                                            .on_press(ViewMessage::DeleteWallet(
-                                                                DeleteWalletMessage::ShowModal(
-                                                                    *choice,
-                                                                ),
-                                                            ))
-                                                            .style(
-                                                                theme::Button::SecondaryDestructive,
-                                                            ),
-                                                        "Delete wallet",
-                                                        tooltip::Position::Right,
-                                                    ))
-                                                    .align_items(Alignment::Center),
+                                                    .push(p1_bold(if let Some(name) = name {
+                                                        name
+                                                    } else {
+                                                        "Wallet"
+                                                    }))
+                                                    .push_maybe(checksum.as_ref().map(|checksum| {
+                                                        p1_regular(format!("Liana-{}", checksum))
+                                                            .style(color::GREY_3)
+                                                    }))
+                                                    .push_maybe(email.as_ref().map(|email| {
+                                                        Row::new()
+                                                            .push(Space::with_width(Length::Fill))
+                                                            .push(
+                                                                p1_regular(email)
+                                                                    .style(color::GREEN),
+                                                            )
+                                                    })),
                                             )
-                                                },
-                                            ),
-                                    )
+                                            .on_press(ViewMessage::Run)
+                                            .style(theme::Button::Border)
+                                            .padding(10)
+                                            .width(Length::Fill),
+                                        )
+                                        .push(
+                                            Button::new(icon::trash_icon())
+                                                .style(theme::Button::Secondary)
+                                                .padding(10)
+                                                .on_press(ViewMessage::DeleteWallet(
+                                                    DeleteWalletMessage::ShowModal,
+                                                )),
+                                        ),
+                                ),
+                                State::NoWallet => Column::new()
                                     .push(
-                                        if !self.collapsed
-                                            && self.choices.iter().any(|(_, installed)| !installed)
-                                        {
-                                            Column::new().push(
-                                                Button::new(
-                                                    Row::new()
+                                        Row::new()
+                                            .align_items(Alignment::End)
+                                            .spacing(20)
+                                            .push(
+                                                Container::new(
+                                                    Column::new()
                                                         .spacing(20)
                                                         .align_items(Alignment::Center)
-                                                        .push(badge::Badge::new(icon::plus_icon()))
-                                                        .push(text("Create a new wallet")),
+                                                        .push(
+                                                            image::create_new_wallet_icon()
+                                                                .width(Length::Fixed(100.0)),
+                                                        )
+                                                        .push(
+                                                            p1_regular("Create a new wallet")
+                                                                .style(color::GREY_3),
+                                                        )
+                                                        .push(
+                                                            button::secondary(None, "Select")
+                                                                .width(Length::Fixed(200.0))
+                                                                .on_press(
+                                                                    ViewMessage::CreateWallet,
+                                                                ),
+                                                        )
+                                                        .align_items(Alignment::Center),
                                                 )
-                                                .on_press(ViewMessage::ShowUninstalledNetworks)
-                                                .padding(10)
-                                                .width(Length::Fixed(400.0))
-                                                .style(theme::Button::TransparentBorder),
+                                                .padding(20),
                                             )
-                                        } else if self.collapsed {
-                                            self.choices
-                                                .iter()
-                                                .filter_map(|(net, installed)| {
-                                                    if *installed {
-                                                        None
-                                                    } else {
-                                                        Some(net)
-                                                    }
-                                                })
-                                                .fold(
+                                            .push(
+                                                Container::new(
                                                     Column::new()
-                                                        .spacing(10),
-                                                    |col, choice| {
-                                                        col.push(
-                                                    Button::new(
-                                                        Row::new()
-                                                            .spacing(20)
-                                                            .align_items(Alignment::Center)
-                                                            .push(
-                                                                badge::Badge::new(
-                                                                    icon::bitcoin_icon(),
-                                                                )
-                                                                .style(match choice {
-                                                                    Network::Bitcoin => {
-                                                                        theme::Badge::Bitcoin
-                                                                    }
-                                                                    _ => theme::Badge::Standard,
-                                                                }),
-                                                            )
-                                                            .push(text(format!("Create wallet on {}", wallet_name(choice)))),
-                                                    )
-                                                    .on_press(ViewMessage::StartInstall(*choice))
-                                                    .padding(10)
-                                                    .width(Length::Fixed(400.0))
-                                                    .style(theme::Button::Border),
+                                                        .spacing(20)
+                                                        .align_items(Alignment::Center)
+                                                        .push(
+                                                            image::restore_wallet_icon()
+                                                                .width(Length::Fixed(100.0)),
+                                                        )
+                                                        .push(
+                                                            p1_regular("Add an existing wallet")
+                                                                .style(color::GREY_3),
+                                                        )
+                                                        .push(
+                                                            button::secondary(None, "Select")
+                                                                .width(Length::Fixed(200.0))
+                                                                .on_press(
+                                                                    ViewMessage::ImportWallet,
+                                                                ),
+                                                        )
+                                                        .align_items(Alignment::Center),
                                                 )
-                                                    },
-                                                )
-                                        } else {
-                                            Column::new()
-                                        },
+                                                .padding(20),
+                                            ),
                                     )
-                            })
-                            .align_items(if self.is_fresh_install() {
-                                Alignment::Center
-                            } else {
-                                Alignment::Start
+                                    .align_items(Alignment::Center),
                             })
                             .max_width(500),
                     )
                     .width(Length::Fill)
                     .center_x(),
-                ),
+                )
+                .push(Space::with_height(Length::Fixed(100.0))),
         ))
         .map(Message::View);
+        let content = if self.network != Network::Bitcoin {
+            Column::with_children(vec![network_banner(self.network).into(), content]).into()
+        } else {
+            content
+        };
         if let Some(modal) = &self.delete_wallet_modal {
             Modal::new(Container::new(content).height(Length::Fill), modal.view())
                 .on_blur(Some(Message::View(ViewMessage::DeleteWallet(
@@ -371,22 +325,26 @@ impl Launcher {
 #[derive(Debug, Clone)]
 pub enum Message {
     View(ViewMessage),
-    Install(PathBuf, Network),
-    Checked(Result<Network, String>),
+    Install(PathBuf, Network, UserFlow),
+    Checked(Result<State, String>),
     Run(PathBuf, app::config::Config, Network),
 }
 
 #[derive(Debug, Clone)]
 pub enum ViewMessage {
+    ImportWallet,
+    CreateWallet,
+    ShareXpubs,
+    SelectNetwork(Network),
     StartInstall(Network),
-    ShowUninstalledNetworks,
-    Check(Network),
+    Check,
+    Run,
     DeleteWallet(DeleteWalletMessage),
 }
 
 #[derive(Debug, Clone)]
 pub enum DeleteWalletMessage {
-    ShowModal(Network),
+    ShowModal,
     CloseModal,
     Confirm,
     Deleted,
@@ -436,8 +394,8 @@ impl DeleteWalletModal {
         }
         // Use separate `Row`s for help text in order to have better spacing.
         let help_text_1 = format!(
-            "Are you sure you want to delete the wallet and all associated data for {}?",
-            wallet_name(&self.network)
+            "Are you sure you want to delete the configuration and all associated data for the network {}?",
+            &self.network
         );
         let help_text_2 = match self.internal_bitcoind {
             Some(true) => Some("(The Liana-managed Bitcoin node for this network will not be affected by this action.)"),
@@ -451,7 +409,7 @@ impl DeleteWalletModal {
                 Column::new()
                     .spacing(10)
                     .push(Container::new(
-                        h4_bold(format!("Delete wallet for {}", wallet_name(&self.network)))
+                        h4_bold(format!("Delete configuration for {}", &self.network))
                             .style(color::RED)
                             .width(Length::Fill),
                     ))
@@ -483,16 +441,24 @@ impl DeleteWalletModal {
     }
 }
 
-async fn check_network_datadir(mut path: PathBuf, network: Network) -> Result<Network, String> {
-    path.push(network.to_string());
-    path.push(app::config::DEFAULT_FILE_NAME);
+async fn check_network_datadir(path: PathBuf, network: Network) -> Result<State, String> {
+    let mut config_path = path.clone();
+    config_path.push(network.to_string());
+    config_path.push(app::config::DEFAULT_FILE_NAME);
 
-    let cfg = app::Config::from_file(&path).map_err(|_| {
-        format!(
-            "Failed to read GUI configuration file in the directory: {}",
-            path.to_string_lossy()
-        )
-    })?;
+    let cfg = match app::Config::from_file(&config_path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            if e == app::config::ConfigError::NotFound {
+                return Ok(State::NoWallet);
+            } else {
+                return Err(format!(
+                    "Failed to read GUI configuration file in the directory: {}",
+                    path.to_string_lossy()
+                ));
+            }
+        }
+    };
 
     if let Some(daemon_config_path) = cfg.daemon_config_path {
         liana::config::Config::from_file(Some(daemon_config_path.clone())).map_err(|e| match e {
@@ -525,5 +491,18 @@ async fn check_network_datadir(mut path: PathBuf, network: Network) -> Result<Ne
     })?;
     }
 
-    Ok(network)
+    if let Ok(settings) = app::settings::Settings::from_file(path, network) {
+        if let Some(wallet) = settings.wallets.first().cloned() {
+            return Ok(State::Wallet {
+                name: Some(wallet.name),
+                checksum: Some(wallet.descriptor_checksum),
+                email: wallet.remote_backend_auth.map(|auth| auth.email),
+            });
+        }
+    }
+    Ok(State::Wallet {
+        name: None,
+        checksum: None,
+        email: None,
+    })
 }
