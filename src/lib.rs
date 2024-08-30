@@ -509,9 +509,7 @@ impl DaemonHandle {
                 poller_handle,
                 ..
             } => {
-                poller_sender
-                    .send(poller::PollerMessage::Shutdown)
-                    .expect("The other end should never have hung up before this.");
+                poller_sender.send(poller::PollerMessage::Shutdown)?;
                 poller_handle.join().expect("Poller thread must not panic");
                 Ok(())
             }
@@ -522,9 +520,7 @@ impl DaemonHandle {
                 rpcserver_shutdown,
                 rpcserver_handle,
             } => {
-                poller_sender
-                    .send(poller::PollerMessage::Shutdown)
-                    .expect("The other end should never have hung up before this.");
+                poller_sender.send(poller::PollerMessage::Shutdown)?;
                 rpcserver_shutdown.store(true, sync::atomic::Ordering::Relaxed);
                 rpcserver_handle
                     .join()
