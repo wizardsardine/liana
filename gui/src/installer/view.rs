@@ -1225,7 +1225,7 @@ pub fn define_bitcoin_node<'a>(
                 }
             })
         } else {
-            Some(Container::new(Space::with_height(Length::Fixed(25.0))))
+            Some(Container::new(Space::with_height(Length::Fixed(21.0))))
         })
         .push(
             Row::new()
