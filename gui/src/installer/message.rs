@@ -1,4 +1,7 @@
-use liana::miniscript::{bitcoin::bip32::Fingerprint, DescriptorPublicKey};
+use liana::miniscript::{
+    bitcoin::{bip32::Fingerprint, Network},
+    DescriptorPublicKey,
+};
 use std::path::PathBuf;
 
 use super::{context, Error};
@@ -12,16 +15,13 @@ use async_hwi::{DeviceKind, Version};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    CreateWallet,
-    ShareXpubs,
-    ImportWallet,
     UserActionDone(bool),
     Exit(PathBuf, Option<Bitcoind>),
     Clibpboard(String),
     Next,
     Skip,
     Previous,
-    BackToLauncher,
+    BackToLauncher(Network),
     Install,
     Close,
     Reload,

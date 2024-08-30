@@ -54,26 +54,6 @@ pub trait Step {
     fn stop(&self) {}
 }
 
-#[derive(Default)]
-pub struct Welcome {}
-
-impl Step for Welcome {
-    fn view<'a>(
-        &'a self,
-        _hws: &'a HardwareWallets,
-        _progress: (usize, usize),
-        _email: Option<&'a str>,
-    ) -> Element<Message> {
-        view::welcome()
-    }
-}
-
-impl From<Welcome> for Box<dyn Step> {
-    fn from(s: Welcome) -> Box<dyn Step> {
-        Box::new(s)
-    }
-}
-
 pub struct Final {
     generating: bool,
     internal_bitcoind: Option<Bitcoind>,

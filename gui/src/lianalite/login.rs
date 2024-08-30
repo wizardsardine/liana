@@ -78,7 +78,7 @@ pub enum ViewMessage {
     EditEmail,
     EmailEdited(String),
     OTPEdited(String),
-    BackToLauncher,
+    BackToLauncher(Network),
 }
 
 #[derive(Debug, Clone)]
@@ -445,7 +445,7 @@ impl LianaLiteLogin {
                         Some(
                             button::secondary(Some(icon::previous_icon()), "Change network")
                                 .width(Length::Fixed(200.0))
-                                .on_press(ViewMessage::BackToLauncher),
+                                .on_press(ViewMessage::BackToLauncher(self.network)),
                         )
                     } else {
                         None

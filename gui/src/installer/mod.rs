@@ -41,8 +41,15 @@ pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, DefineBitcoind, DefineDescriptor, Final,
     ImportDescriptor, ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic,
-    RegisterDescriptor, SelectBitcoindTypeStep, ShareXpubs, Step, Welcome,
+    RegisterDescriptor, SelectBitcoindTypeStep, ShareXpubs, Step,
 };
+
+#[derive(Debug, Clone)]
+pub enum UserFlow {
+    CreateWallet,
+    AddWallet,
+    ShareXpubs,
+}
 
 pub struct Installer {
     pub network: bitcoin::Network,
@@ -58,9 +65,12 @@ pub struct Installer {
 }
 
 impl Installer {
-    fn previous(&mut self) {
+    fn previous(&mut self) -> Command<Message> {
+        let network = self.network;
         if self.current > 0 {
             self.current -= 1;
+        } else {
+            return Command::perform(async move { network }, Message::BackToLauncher);
         }
         // skip the previous step according to the current context.
         while self.current > 0
@@ -76,29 +86,61 @@ impl Installer {
         if let Some(step) = self.steps.get(self.current) {
             step.revert(&mut self.context)
         }
+        Command::none()
     }
 
     pub fn new(
         destination_path: PathBuf,
         network: bitcoin::Network,
         remote_backend: Option<BackendClient>,
+        user_flow: UserFlow,
     ) -> (Installer, Command<Message>) {
-        (
-            Installer {
-                network,
-                datadir: destination_path.clone(),
-                current: 0,
-                hws: HardwareWallets::new(destination_path.clone(), network),
-                steps: vec![Welcome::default().into()],
-                context: Context::new(
-                    network,
-                    destination_path,
-                    remote_backend.map(RemoteBackend::WithoutWallet),
-                ),
-                signer: Arc::new(Mutex::new(Signer::generate(network).unwrap())),
+        let signer = Arc::new(Mutex::new(Signer::generate(network).unwrap()));
+        let context = Context::new(
+            network,
+            destination_path.clone(),
+            remote_backend.map(RemoteBackend::WithoutWallet),
+        );
+        let mut installer = Installer {
+            network,
+            datadir: destination_path.clone(),
+            current: 0,
+            hws: HardwareWallets::new(destination_path.clone(), network),
+            steps: match user_flow {
+                UserFlow::CreateWallet => vec![
+                    DefineDescriptor::new(network, signer.clone()).into(),
+                    BackupMnemonic::new(signer.clone()).into(),
+                    BackupDescriptor::default().into(),
+                    RegisterDescriptor::new_create_wallet().into(),
+                    ChooseBackend::new(network).into(),
+                    SelectBitcoindTypeStep::new().into(),
+                    InternalBitcoindStep::new(&context.data_dir).into(),
+                    DefineBitcoind::new().into(),
+                    Final::new().into(),
+                ],
+                UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
+                UserFlow::AddWallet => vec![
+                    ChooseBackend::new(network).into(),
+                    ImportRemoteWallet::new(network).into(),
+                    ImportDescriptor::new(network).into(),
+                    RecoverMnemonic::default().into(),
+                    RegisterDescriptor::new_import_wallet().into(),
+                    SelectBitcoindTypeStep::new().into(),
+                    InternalBitcoindStep::new(&context.data_dir).into(),
+                    DefineBitcoind::new().into(),
+                    Final::new().into(),
+                ],
             },
-            Command::none(),
-        )
+            context,
+            signer,
+        };
+        let current_step = installer
+            .steps
+            .get_mut(installer.current)
+            .expect("There is always a step");
+        current_step.load_context(&installer.context);
+        let command = current_step.load();
+        (installer, command)
     }
 
     pub fn destination_path(&self) -> PathBuf {
@@ -106,14 +148,10 @@ impl Installer {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        if self.current > 0 {
-            self.steps
-                .get(self.current)
-                .expect("There is always a step")
-                .subscription(&self.hws)
-        } else {
-            Subscription::none()
-        }
+        self.steps
+            .get(self.current)
+            .expect("There is always a step")
+            .subscription(&self.hws)
     }
 
     pub fn stop(&mut self) {
@@ -166,44 +204,6 @@ impl Installer {
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::CreateWallet => {
-                self.steps = vec![
-                    Welcome::default().into(),
-                    DefineDescriptor::new(self.network, self.signer.clone()).into(),
-                    BackupMnemonic::new(self.signer.clone()).into(),
-                    BackupDescriptor::default().into(),
-                    RegisterDescriptor::new_create_wallet().into(),
-                    ChooseBackend::new(self.network).into(),
-                    SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&self.context.data_dir).into(),
-                    DefineBitcoind::new().into(),
-                    Final::new().into(),
-                ];
-                self.next()
-            }
-            Message::ShareXpubs => {
-                self.steps = vec![
-                    Welcome::default().into(),
-                    ShareXpubs::new(self.network, self.signer.clone()).into(),
-                ];
-                self.next()
-            }
-            Message::ImportWallet => {
-                self.steps = vec![
-                    Welcome::default().into(),
-                    ChooseBackend::new(self.network).into(),
-                    ImportRemoteWallet::new(self.network).into(),
-                    ImportDescriptor::new(self.network).into(),
-                    RecoverMnemonic::default().into(),
-                    RegisterDescriptor::new_import_wallet().into(),
-                    SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&self.context.data_dir).into(),
-                    DefineBitcoind::new().into(),
-                    Final::new().into(),
-                ];
-
-                self.next()
-            }
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
@@ -213,10 +213,7 @@ impl Installer {
             },
             Message::Clibpboard(s) => clipboard::write(s),
             Message::Next => self.next(),
-            Message::Previous => {
-                self.previous();
-                Command::none()
-            }
+            Message::Previous => self.previous(),
             Message::Install => {
                 let _cmd = self
                     .steps
