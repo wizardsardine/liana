@@ -71,6 +71,7 @@ impl BackendClient {
         auth_client: auth::AuthClient,
         url: String,
         credentials: auth::AccessTokenResponse,
+        network: Network,
     ) -> Result<Self, DaemonError> {
         let http = reqwest::Client::new();
         let response = request(
@@ -90,7 +91,7 @@ impl BackendClient {
         Ok(Self {
             auth: Arc::new(RwLock::new(credentials)),
             auth_client,
-            network: Network::Signet,
+            network,
             url,
             user_id,
             http,

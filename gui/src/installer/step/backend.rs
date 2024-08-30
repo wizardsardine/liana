@@ -190,8 +190,9 @@ impl Step for ChooseBackend {
                         self.processing = true;
                         self.connection_error = None;
                         self.auth_error = None;
+                        let network = self.network;
                         return Command::perform(
-                            async move { connect(client, otp, backend_api_url).await },
+                            async move { connect(client, otp, backend_api_url, network).await },
                             message::SelectBackend::Connected,
                         )
                         .map(Message::SelectBackend);
@@ -303,9 +304,10 @@ pub async fn connect(
     auth: AuthClient,
     token: String,
     backend_api_url: String,
+    network: Network,
 ) -> Result<context::RemoteBackend, Error> {
     let access = auth.verify_otp(token.trim_end()).await?;
-    let client = BackendClient::connect(auth, backend_api_url, access.clone()).await?;
+    let client = BackendClient::connect(auth, backend_api_url, access.clone(), network).await?;
     Ok(RemoteBackend::WithoutWallet(client))
 }
 

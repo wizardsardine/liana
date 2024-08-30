@@ -164,6 +164,7 @@ impl LianaLiteLogin {
                             auth_config.refresh_token,
                             auth_config.wallet_id,
                             service_config.backend_api_url,
+                            network,
                         )
                         .await
                     },
@@ -307,8 +308,11 @@ impl LianaLiteLogin {
                         self.connection_error = None;
                         self.auth_error = None;
                         let wallet_id = self.wallet_id.clone();
+                        let network = self.network;
                         return Command::perform(
-                            async move { connect(client, otp, wallet_id, backend_api_url).await },
+                            async move {
+                                connect(client, otp, wallet_id, backend_api_url, network).await
+                            },
                             Message::Connected,
                         );
                     }
@@ -531,9 +535,10 @@ pub async fn connect(
     token: String,
     wallet_id: String,
     backend_api_url: String,
+    network: Network,
 ) -> Result<BackendState, Error> {
     let access = auth.verify_otp(token.trim_end()).await?;
-    let client = BackendClient::connect(auth, backend_api_url, access.clone()).await?;
+    let client = BackendClient::connect(auth, backend_api_url, access.clone(), network).await?;
 
     let wallets = client.list_wallets().await?;
     if wallets.is_empty() {
@@ -557,9 +562,10 @@ pub async fn connect_with_refresh_token(
     refresh_token: String,
     wallet_id: String,
     backend_api_url: String,
+    network: Network,
 ) -> Result<BackendState, Error> {
     let access = auth.refresh_token(&refresh_token).await?;
-    let client = BackendClient::connect(auth, backend_api_url, access.clone()).await?;
+    let client = BackendClient::connect(auth, backend_api_url, access.clone(), network).await?;
 
     if let Some(wallet) = client
         .list_wallets()
