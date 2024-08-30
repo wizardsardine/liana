@@ -456,7 +456,7 @@ pub fn create_app_with_remote_backend(
         .collect();
     App::new(
         Cache {
-            network: bitcoin::Network::Signet,
+            network,
             coins: Vec::new(),
             rescan_progress: None,
             datadir_path: datadir.clone(),
