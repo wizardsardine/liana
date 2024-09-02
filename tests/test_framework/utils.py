@@ -335,24 +335,26 @@ class TailableProc(object):
 
     def stop(self, timeout=10):
         self.save_log()
-        self.proc.terminate()
+        if self.proc:
+            self.proc.terminate()
 
-        # Now give it some time to react to the signal
-        rc = self.proc.wait(timeout)
+            # Now give it some time to react to the signal
+            rc = self.proc.wait(timeout)
 
-        if rc is None:
-            self.proc.kill()
-            self.proc.wait()
+            if rc is None:
+                self.proc.kill()
+                self.proc.wait()
 
-        self.thread.join()
+            self.thread.join()
 
-        return self.proc.returncode
+            return self.proc.returncode
 
     def kill(self):
         """Kill process without giving it warning."""
-        self.proc.kill()
-        self.proc.wait()
-        self.thread.join()
+        if self.proc:
+            self.proc.kill()
+            self.proc.wait()
+            self.thread.join()
 
     def tail(self):
         """Tail the stdout of the process and remember it.
