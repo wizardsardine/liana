@@ -320,24 +320,26 @@ class TailableProc(object):
 
     def stop(self, timeout=10):
         self.save_log()
-        self.proc.terminate()
+        if self.proc:
+            self.proc.terminate()
 
-        # Now give it some time to react to the signal
-        rc = self.proc.wait(timeout)
+            # Now give it some time to react to the signal
+            rc = self.proc.wait(timeout)
 
-        if rc is None:
-            self.proc.kill()
-            self.proc.wait()
+            if rc is None:
+                self.proc.kill()
+                self.proc.wait()
 
-        self.thread.join()
+            self.thread.join()
 
-        return self.proc.returncode
+            return self.proc.returncode
 
     def kill(self):
         """Kill process without giving it warning."""
-        self.proc.kill()
-        self.proc.wait()
-        self.thread.join()
+        if self.proc:
+            self.proc.kill()
+            self.proc.wait()
+            self.thread.join()
 
     def tail(self):
         """Tail the stdout of the process and remember it.
@@ -346,21 +348,31 @@ class TailableProc(object):
         self.logs and signals that a new line was read so that it can
         be picked up by consumers.
         """
-        out = self.proc.stdout.readline
-        err = self.proc.stderr.readline
-        for line in itertools.chain(iter(out, ""), iter(err, "")):
-            if len(line) == 0:
-                break
-            if self.log_filter(line.decode("utf-8")):
-                continue
-            if self.verbose:
-                logging.debug(f"{self.prefix}: {line.decode().rstrip()}")
-            with self.logs_cond:
-                self.logs.append(str(line.rstrip()))
-                self.logs_cond.notifyAll()
+        if self.proc:
+            if self.proc.stdout:
+                out = self.proc.stdout.readline
+            else:
+                out = None
+            if self.proc.stderr:
+                err = self.proc.stderr.readline
+            else:
+                err = None
+            if out and err:
+                for line in itertools.chain(iter(out, ""), iter(err, "")):
+                    if len(line) == 0:
+                        break
+                    if self.log_filter(line.decode("utf-8")):
+                        continue
+                    if self.verbose:
+                        logging.debug(f"{self.prefix}: {line.decode().rstrip()}")
+                    with self.logs_cond:
+                        self.logs.append(str(line.rstrip()))
+                        self.logs_cond.notifyAll()
         self.running = False
-        self.proc.stdout.close()
-        self.proc.stderr.close()
+        if self.proc and self.proc.stdout:
+            self.proc.stdout.close()
+        if self.proc and self.proc.stderr:
+            self.proc.stderr.close()
 
     def is_in_log(self, regex, start=0):
         """Look for `regex` in the logs."""
