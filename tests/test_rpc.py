@@ -902,6 +902,9 @@ def test_create_recovery(lianad, bitcoind):
     bitcoind.generate_block(9, wait_for_mempool=txid)
 
     # Now we can create a recovery tx that sweeps the first 3 coins.
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
     res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 18)
     reco_psbt = PSBT.from_base64(res["psbt"])
 
