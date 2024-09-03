@@ -532,6 +532,173 @@ pub fn bitcoind<'a>(
     .into()
 }
 
+pub fn electrum_edit<'a>(
+    network: Network,
+    blockheight: i32,
+    addr: &form::Value<String>,
+    processing: bool,
+) -> Element<'a, SettingsEditMessage> {
+    let mut col = Column::new().spacing(20);
+    if blockheight != 0 {
+        col = col
+            .push(
+                Row::new()
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::network_icon()))
+                            .push(
+                                Column::new()
+                                    .push(text("Network:"))
+                                    .push(text(network.to_string()).bold()),
+                            )
+                            .spacing(10)
+                            .width(Length::FillPortion(1)),
+                    )
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::block_icon()))
+                            .push(
+                                Column::new()
+                                    .push(text("Block Height:"))
+                                    .push(text(blockheight.to_string()).bold()),
+                            )
+                            .spacing(10)
+                            .width(Length::FillPortion(1)),
+                    ),
+            )
+            .push(separation().width(Length::Fill));
+    }
+
+    col = col.push(
+        Column::new()
+            .push(text("Address:").bold().small())
+            .push(
+                form::Form::new_trimmed("127:0.0.1:50001", addr, |value| {
+                    SettingsEditMessage::FieldEdited("address", value)
+                })
+                .warning("Please enter a valid address")
+                .size(P1_SIZE)
+                .padding(5),
+            )
+            .spacing(5),
+    );
+
+    let mut cancel_button = button::transparent(None, " Cancel ").padding(5);
+    let mut confirm_button = button::primary(None, " Save ").padding(5);
+    if !processing {
+        cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
+        confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
+    }
+
+    card::simple(Container::new(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(badge::Badge::new(icon::bitcoin_icon()))
+                    .push(text("Electrum").bold())
+                    .padding(10)
+                    .spacing(20)
+                    .align_items(Alignment::Center)
+                    .width(Length::Fill),
+            )
+            .push(separation().width(Length::Fill))
+            .push(col)
+            .push(
+                Container::new(
+                    Row::new()
+                        .push(cancel_button)
+                        .push(confirm_button)
+                        .spacing(10)
+                        .align_items(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .align_x(alignment::Horizontal::Right),
+            )
+            .spacing(20),
+    ))
+    .width(Length::Fill)
+    .into()
+}
+
+pub fn electrum<'a>(
+    network: Network,
+    config: &liana::config::ElectrumConfig,
+    blockheight: i32,
+    is_running: Option<bool>,
+    can_edit: bool,
+) -> Element<'a, SettingsEditMessage> {
+    let mut col = Column::new().spacing(20);
+    if blockheight != 0 {
+        col = col
+            .push(
+                Row::new()
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::network_icon()))
+                            .push(
+                                Column::new()
+                                    .push(text("Network:"))
+                                    .push(text(network.to_string()).bold()),
+                            )
+                            .spacing(10)
+                            .width(Length::FillPortion(1)),
+                    )
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::block_icon()))
+                            .push(
+                                Column::new()
+                                    .push(text("Block Height:"))
+                                    .push(text(blockheight.to_string()).bold()),
+                            )
+                            .spacing(10)
+                            .width(Length::FillPortion(1)),
+                    ),
+            )
+            .push(separation().width(Length::Fill));
+    }
+
+    let rows = vec![("Address:", config.addr.to_string())];
+
+    let mut col_fields = Column::new();
+    for (k, v) in rows {
+        col_fields = col_fields.push(
+            Row::new()
+                .push(Container::new(text(k).bold().small()).width(Length::Fill))
+                .push(text(v).small()),
+        );
+    }
+
+    card::simple(Container::new(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::bitcoin_icon()))
+                            .push(text("Electrum").bold())
+                            .push(is_running_label(is_running))
+                            .spacing(20)
+                            .align_items(Alignment::Center)
+                            .width(Length::Fill),
+                    )
+                    .push(if can_edit {
+                        Button::new(icon::pencil_icon())
+                            .style(theme::Button::TransparentBorder)
+                            .on_press(SettingsEditMessage::Select)
+                    } else {
+                        Button::new(icon::pencil_icon()).style(theme::Button::TransparentBorder)
+                    })
+                    .align_items(Alignment::Center),
+            )
+            .push(separation().width(Length::Fill))
+            .push(col.push(col_fields))
+            .spacing(20),
+    ))
+    .width(Length::Fill)
+    .into()
+}
+
 pub fn is_running_label<'a, T: 'a>(is_running: Option<bool>) -> Container<'a, T> {
     if let Some(running) = is_running {
         if running {

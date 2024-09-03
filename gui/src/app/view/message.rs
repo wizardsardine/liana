@@ -67,6 +67,7 @@ pub enum SpendTxMessage {
 pub enum SettingsMessage {
     EditBitcoindSettings,
     BitcoindSettings(SettingsEditMessage),
+    ElectrumSettings(SettingsEditMessage),
     RescanSettings(SettingsEditMessage),
     EditRemoteBackendSettings,
     RemoteBackendSettings(RemoteBackendSettingsMessage),
