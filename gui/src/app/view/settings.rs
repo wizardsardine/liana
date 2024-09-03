@@ -51,7 +51,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
                         Button::new(
                             Row::new()
                                 .push(badge::Badge::new(icon::bitcoin_icon()))
-                                .push(text("Bitcoin Core").bold())
+                                .push(text("Node").bold())
                                 .padding(10)
                                 .spacing(20)
                                 .align_items(Alignment::Center)
@@ -161,7 +161,7 @@ pub fn bitcoind_settings<'a>(
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
-                        Button::new(text("Bitcoin Core").size(30).bold())
+                        Button::new(text("Node").size(30).bold())
                             .style(theme::Button::Transparent)
                             .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings)),
                     ),

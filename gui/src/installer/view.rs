@@ -527,11 +527,12 @@ pub fn import_descriptor<'a>(
         "Import the wallet",
         Column::new()
             .push(Column::new().spacing(20).push(col_descriptor).push(text(
-                "After creating the wallet, \
-                            you will need to perform a rescan of \
-                            the blockchain in order to see your \
-                            coins and past transactions. This can \
-                            be done in Settings > Bitcoin Core.",
+                "If you are using a Bitcoin Core node, \
+                you will need to perform a rescan of \
+                the blockchain after creating the wallet \
+                in order to see your coins and past \
+                transactions. This can be done in \
+                Settings > Node.",
             )))
             .push(
                 if imported_descriptor.value.is_empty() || !imported_descriptor.valid {
