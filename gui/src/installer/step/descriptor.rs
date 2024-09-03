@@ -1447,7 +1447,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_define_descriptor_use_hotkey() {
-        let mut ctx = Context::new(Network::Signet, PathBuf::from_str("/").unwrap(), None);
+        let mut ctx = Context::new(
+            Network::Signet,
+            PathBuf::from_str("/").unwrap(),
+            crate::installer::context::RemoteBackend::None,
+        );
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Bitcoin,
             Arc::new(Mutex::new(Signer::generate(Network::Bitcoin).unwrap())),
@@ -1529,7 +1533,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_define_descriptor_stores_if_hw_is_used() {
-        let mut ctx = Context::new(Network::Testnet, PathBuf::from_str("/").unwrap(), None);
+        let mut ctx = Context::new(
+            Network::Testnet,
+            PathBuf::from_str("/").unwrap(),
+            crate::installer::context::RemoteBackend::None,
+        );
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Testnet,
             Arc::new(Mutex::new(Signer::generate(Network::Testnet).unwrap())),
