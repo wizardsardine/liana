@@ -199,9 +199,7 @@ impl Launcher {
                             .push(match &self.state {
                                 State::Unchecked => Column::new(),
                                 State::Wallet {
-                                    name,
-                                    email,
-                                    checksum,
+                                    email, checksum, ..
                                 } => Column::new().push(
                                     Row::new()
                                         .align_items(Alignment::Center)
@@ -209,11 +207,16 @@ impl Launcher {
                                         .push(
                                             Button::new(
                                                 Column::new()
-                                                    .push(p1_bold(if let Some(name) = name {
-                                                        name
-                                                    } else {
-                                                        "Wallet"
-                                                    }))
+                                                    .push(p1_bold(format!(
+                                                        "My Liana {} wallet",
+                                                        match self.network {
+                                                            Network::Bitcoin => "Bitcoin",
+                                                            Network::Signet => "Signet",
+                                                            Network::Testnet => "Testnet",
+                                                            Network::Regtest => "Regtest",
+                                                            _ => "",
+                                                        }
+                                                    )))
                                                     .push_maybe(checksum.as_ref().map(|checksum| {
                                                         p1_regular(format!("Liana-{}", checksum))
                                                             .style(color::GREY_3)
