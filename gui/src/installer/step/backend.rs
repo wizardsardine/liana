@@ -21,6 +21,64 @@ use crate::{
     },
 };
 
+pub struct ChooseBackend {
+    network: Network,
+    remote_backend_is_selected: bool,
+}
+
+impl ChooseBackend {
+    pub fn new(network: Network) -> Self {
+        Self {
+            network,
+            remote_backend_is_selected: false,
+        }
+    }
+}
+
+impl From<ChooseBackend> for Box<dyn Step> {
+    fn from(s: ChooseBackend) -> Box<dyn Step> {
+        Box::new(s)
+    }
+}
+impl Step for ChooseBackend {
+    fn skip(&self, _ctx: &Context) -> bool {
+        self.network != Network::Bitcoin && self.network != Network::Signet
+    }
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+        if let Message::SelectBackend(message::SelectBackend::ContinueWithLocalWallet(
+            local_wallet,
+        )) = message
+        {
+            self.remote_backend_is_selected = !local_wallet;
+            Command::perform(async move {}, |_| Message::Next)
+        } else {
+            Command::none()
+        }
+    }
+
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        if !self.remote_backend_is_selected {
+            ctx.remote_backend = RemoteBackend::None;
+        }
+        true
+    }
+
+    /// If user clicks on previous to get back to the select backend, we revert the applied remote
+    /// backend on the context.
+    fn revert(&self, ctx: &mut Context) {
+        ctx.remote_backend = RemoteBackend::Undefined;
+    }
+
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        _email: Option<&'a str>,
+    ) -> Element<Message> {
+        view::choose_backend(progress)
+    }
+}
+
 pub enum ConnectionStep {
     EnterEmail {
         email: form::Value<String>,
@@ -34,11 +92,10 @@ pub enum ConnectionStep {
     Connected {
         email: String,
         remote_backend: context::RemoteBackend,
-        remote_backend_is_selected: bool,
     },
 }
 
-pub struct ChooseBackend {
+pub struct RemoteBackendLogin {
     network: Network,
     processing: bool,
     step: ConnectionStep,
@@ -46,7 +103,7 @@ pub struct ChooseBackend {
     auth_error: Option<&'static str>,
 }
 
-impl ChooseBackend {
+impl RemoteBackendLogin {
     pub fn new(network: Network) -> Self {
         Self {
             network,
@@ -60,30 +117,18 @@ impl ChooseBackend {
     }
 }
 
-impl From<ChooseBackend> for Box<dyn Step> {
-    fn from(s: ChooseBackend) -> Box<dyn Step> {
+impl From<RemoteBackendLogin> for Box<dyn Step> {
+    fn from(s: RemoteBackendLogin) -> Box<dyn Step> {
         Box::new(s)
     }
 }
 
-impl Step for ChooseBackend {
-    fn skip(&self, _ctx: &Context) -> bool {
-        self.network != Network::Bitcoin && self.network != Network::Signet
+impl Step for RemoteBackendLogin {
+    fn skip(&self, ctx: &Context) -> bool {
+        matches!(ctx.remote_backend, RemoteBackend::None)
+            || (self.network != Network::Bitcoin && self.network != Network::Signet)
     }
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
-        if matches!(
-            message,
-            Message::SelectBackend(message::SelectBackend::ContinueWithLocalWallet)
-        ) {
-            if let ConnectionStep::Connected {
-                remote_backend_is_selected,
-                ..
-            } = &mut self.step
-            {
-                *remote_backend_is_selected = false;
-            }
-            return Command::perform(async move {}, |_| Message::Next);
-        }
         match &mut self.step {
             ConnectionStep::EnterEmail { email } => match message {
                 Message::SelectBackend(message::SelectBackend::EmailEdited(value)) => {
@@ -206,7 +251,6 @@ impl Step for ChooseBackend {
                             self.step = ConnectionStep::Connected {
                                 email: email.clone(),
                                 remote_backend,
-                                remote_backend_is_selected: false,
                             };
                         }
                         Err(e) => {
@@ -224,38 +268,23 @@ impl Step for ChooseBackend {
                 }
                 _ => {}
             },
-            ConnectionStep::Connected {
-                remote_backend_is_selected,
-                ..
-            } => match message {
-                Message::SelectBackend(message::SelectBackend::EditEmail) => {
+            ConnectionStep::Connected { .. } => {
+                if let Message::SelectBackend(message::SelectBackend::EditEmail) = message {
                     self.step = ConnectionStep::EnterEmail {
                         email: form::Value::default(),
                     }
                 }
-                Message::SelectBackend(message::SelectBackend::ContinueWithRemoteBackend) => {
-                    *remote_backend_is_selected = true;
-                    return Command::perform(async move {}, |_| Message::Next);
-                }
-                _ => {}
-            },
+            }
         }
 
         Command::none()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
-        if let ConnectionStep::Connected {
-            remote_backend,
-            remote_backend_is_selected,
-            ..
-        } = &self.step
-        {
-            if *remote_backend_is_selected {
-                ctx.remote_backend = Some(remote_backend.clone());
-            }
+        if let ConnectionStep::Connected { remote_backend, .. } = &self.step {
+            ctx.remote_backend = remote_backend.clone();
         } else {
-            ctx.remote_backend = None;
+            ctx.remote_backend = RemoteBackend::None;
         }
 
         true
@@ -264,7 +293,7 @@ impl Step for ChooseBackend {
     /// If user clicks on previous to get back to the select backend, we revert the applied remote
     /// backend on the context.
     fn revert(&self, ctx: &mut Context) {
-        ctx.remote_backend = None;
+        ctx.remote_backend = RemoteBackend::Undefined;
     }
 
     fn view<'a>(
@@ -273,7 +302,7 @@ impl Step for ChooseBackend {
         progress: (usize, usize),
         _email: Option<&'a str>,
     ) -> Element<Message> {
-        view::choose_backend(
+        view::login(
             progress,
             match &self.step {
                 ConnectionStep::EnterEmail { email } => view::connection_step_enter_email(
@@ -318,7 +347,7 @@ pub struct ImportRemoteWallet {
     imported_descriptor: form::Value<String>,
     descriptor: Option<LianaDescriptor>,
     error: Option<String>,
-    backend: Option<context::RemoteBackend>,
+    backend: context::RemoteBackend,
     wallets: Vec<api::Wallet>,
 }
 
@@ -331,7 +360,7 @@ impl ImportRemoteWallet {
             imported_descriptor: form::Value::default(),
             descriptor: None,
             error: None,
-            backend: None,
+            backend: context::RemoteBackend::Undefined,
             wallets: Vec::new(),
         }
     }
@@ -339,16 +368,16 @@ impl ImportRemoteWallet {
 
 impl Step for ImportRemoteWallet {
     fn skip(&self, ctx: &Context) -> bool {
-        ctx.remote_backend.is_none()
+        matches!(
+            ctx.remote_backend,
+            RemoteBackend::Undefined | RemoteBackend::None
+        )
     }
     fn load_context(&mut self, ctx: &Context) {
-        self.backend.clone_from(&ctx.remote_backend);
+        self.backend = ctx.remote_backend.clone();
     }
     fn load(&self) -> Command<Message> {
-        let backend = self
-            .backend
-            .clone()
-            .expect("Must be one otherwise the step is skipped");
+        let backend = self.backend.clone();
         Command::perform(
             async move {
                 let wallets = match backend {
@@ -358,6 +387,7 @@ impl Step for ImportRemoteWallet {
                     context::RemoteBackend::WithWallet(backend) => {
                         backend.inner_client().list_wallets().await?
                     }
+                    _ => unreachable!("Step must be skipped otherwise"),
                 };
 
                 Ok(wallets)
@@ -394,12 +424,9 @@ impl Step for ImportRemoteWallet {
                         self.imported_descriptor.valid = desc.all_xpubs_net_is(Network::Testnet);
                     }
                     if self.imported_descriptor.valid {
-                        let backend = self.backend.take();
-                        if let Some(context::RemoteBackend::WithWallet(backend)) = backend {
+                        if let context::RemoteBackend::WithWallet(backend) = self.backend.clone() {
                             self.backend =
-                                Some(context::RemoteBackend::WithoutWallet(backend.into_inner()));
-                        } else {
-                            self.backend = backend;
+                                context::RemoteBackend::WithoutWallet(backend.into_inner());
                         }
                         self.descriptor = Some(desc);
                         return Command::perform(async {}, |_| Message::Next);
@@ -420,14 +447,11 @@ impl Step for ImportRemoteWallet {
                 self.invitation_token.value = token;
             }
             Message::ImportRemoteWallet(message::ImportRemoteWallet::FetchInvitation) => {
-                let backend = self
-                    .backend
-                    .clone()
-                    .map(|b| match b {
-                        context::RemoteBackend::WithoutWallet(b) => b,
-                        context::RemoteBackend::WithWallet(b) => b.into_inner(),
-                    })
-                    .expect("Must be a remote backend at this point");
+                let backend = match self.backend.clone() {
+                    context::RemoteBackend::WithoutWallet(b) => b,
+                    context::RemoteBackend::WithWallet(b) => b.into_inner(),
+                    _ => unreachable!("Must be a remote backend at this point"),
+                };
                 let token = self.invitation_token.value.clone();
                 self.error = None;
                 return Command::perform(
@@ -449,14 +473,11 @@ impl Step for ImportRemoteWallet {
                 }
             }
             Message::ImportRemoteWallet(message::ImportRemoteWallet::AcceptInvitation) => {
-                let backend = self
-                    .backend
-                    .clone()
-                    .map(|b| match b {
-                        context::RemoteBackend::WithoutWallet(b) => b,
-                        context::RemoteBackend::WithWallet(b) => b.into_inner(),
-                    })
-                    .expect("Must be a remote backend at this point");
+                let backend = match self.backend.clone() {
+                    context::RemoteBackend::WithoutWallet(b) => b,
+                    context::RemoteBackend::WithWallet(b) => b.into_inner(),
+                    _ => unreachable!("Must be a remote backend defined"),
+                };
                 let invitation = self.invitation.clone().expect("Invitation was fetched");
                 self.error = None;
                 return Command::perform(
@@ -492,24 +513,24 @@ impl Step for ImportRemoteWallet {
             }
             Message::Select(i) => {
                 if let Some(wallet) = self.wallets.get(i).cloned() {
-                    if let Some(backend) = self.backend.take() {
-                        self.backend = Some(match backend {
-                            context::RemoteBackend::WithoutWallet(backend) => {
-                                context::RemoteBackend::WithWallet(
-                                    backend.connect_wallet(wallet.clone()).0,
-                                )
-                            }
-                            context::RemoteBackend::WithWallet(backend) => {
-                                context::RemoteBackend::WithWallet(
-                                    backend.into_inner().connect_wallet(wallet.clone()).0,
-                                )
-                            }
-                        });
-                        // ensure that no descriptor is imported.
-                        self.imported_descriptor = form::Value::default();
-                        self.descriptor = Some(wallet.descriptor);
-                        return Command::perform(async {}, |_| Message::Next);
-                    }
+                    self.backend = match self.backend.clone() {
+                        context::RemoteBackend::WithoutWallet(backend) => {
+                            context::RemoteBackend::WithWallet(
+                                backend.connect_wallet(wallet.clone()).0,
+                            )
+                        }
+                        context::RemoteBackend::WithWallet(backend) => {
+                            context::RemoteBackend::WithWallet(
+                                backend.into_inner().connect_wallet(wallet.clone()).0,
+                            )
+                        }
+                        context::RemoteBackend::None => context::RemoteBackend::None,
+                        context::RemoteBackend::Undefined => context::RemoteBackend::Undefined,
+                    };
+                    // ensure that no descriptor is imported.
+                    self.imported_descriptor = form::Value::default();
+                    self.descriptor = Some(wallet.descriptor);
+                    return Command::perform(async {}, |_| Message::Next);
                 }
             }
             _ => {}

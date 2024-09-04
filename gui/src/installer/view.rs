@@ -299,7 +299,7 @@ pub fn import_wallet_or_descriptor<'a>(
 ) -> Element<'a, Message> {
     let mut col_wallets = Column::new()
         .spacing(20)
-        .push(h4_bold("Choose the wallet to import"));
+        .push(h4_bold("Load a previously used wallet"));
     let no_wallets = wallets.is_empty();
     for (i, wallet) in wallets.into_iter().enumerate() {
         col_wallets = col_wallets.push(
@@ -319,7 +319,7 @@ pub fn import_wallet_or_descriptor<'a>(
             Button::new(
                 Column::new()
                     .spacing(5)
-                    .push(h4_bold("Join a shared wallet").style(color::WHITE))
+                    .push(h4_bold("Load a shared wallet").style(color::WHITE))
                     .push(
                         text("If you received an invitation to join a shared wallet")
                             .style(color::GREY_3),
@@ -333,9 +333,9 @@ pub fn import_wallet_or_descriptor<'a>(
             Button::new(
                 Column::new()
                     .spacing(5)
-                    .push(h4_bold("Join a shared wallet").style(color::WHITE))
+                    .push(h4_bold("Load a shared wallet").style(color::WHITE))
                     .push(
-                        text("If you received an invitation to join a shared wallet")
+                        text("Type the invitation token you received by email")
                             .style(color::GREY_3),
                     ),
             )
@@ -413,11 +413,8 @@ pub fn import_wallet_or_descriptor<'a>(
             Button::new(
                 Column::new()
                     .spacing(5)
-                    .push(h4_bold("Import a wallet from descriptor").style(color::WHITE))
-                    .push(
-                        text("The remote backend will rescan the blockchain to find your coins")
-                            .style(color::GREY_3),
-                    ),
+                    .push(h4_bold("Load a wallet from descriptor").style(color::WHITE))
+                    .push(text("Creates a new wallet from the descriptor").style(color::GREY_3)),
             )
             .padding(15)
             .width(Length::Fill)
@@ -427,11 +424,8 @@ pub fn import_wallet_or_descriptor<'a>(
             Button::new(
                 Column::new()
                     .spacing(5)
-                    .push(h4_bold("Import a wallet from descriptor").style(color::WHITE))
-                    .push(
-                        text("The remote backend will rescan the blockchain to find your coins")
-                            .style(color::GREY_3),
-                    ),
+                    .push(h4_bold("Load a wallet from descriptor").style(color::WHITE))
+                    .push(text("Creates a new wallet from the descriptor").style(color::GREY_3)),
             )
             .padding(15)
             .width(Length::Fill)
@@ -2264,10 +2258,7 @@ pub fn recover_mnemonic<'a>(
     )
 }
 
-pub fn choose_backend(
-    progress: (usize, usize),
-    connection_step: Element<Message>,
-) -> Element<Message> {
+pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
     layout(
         progress,
         None,
@@ -2279,27 +2270,64 @@ pub fn choose_backend(
                     .push(
                         Column::new()
                             .spacing(20)
-                            .align_items(Alignment::Center)
                             .width(Length::FillPortion(1))
                             .push(image::liana_brand_grey().height(Length::Fixed(100.0)))
-                            .push(text::p2_medium(LIANA_DESC).style(color::GREY_3))
-                            .push(button::primary(None, "Install local wallet").on_press(
-                                Message::SelectBackend(
-                                    message::SelectBackend::ContinueWithLocalWallet,
-                                ),
-                            )),
+                            .push(text::p2_medium(LOCAL_WALLET_DESC).style(color::GREY_3)),
                     )
                     .push(
                         Column::new()
                             .spacing(20)
-                            .align_items(Alignment::Center)
                             .width(Length::FillPortion(1))
                             .push(image::wizardsardine().height(Length::Fixed(100.0)))
-                            .push(text::p2_medium(LIANALITE_DESC).style(color::GREY_3))
-                            .push(connection_step),
+                            .push(text::p2_medium(REMOTE_BACKEND_DESC).style(color::GREY_3)),
                     ),
             )
-            .spacing(50),
+            .push(
+                Row::new()
+                    .spacing(20)
+                    .push(
+                        Container::new(
+                            button::primary(None, "Select")
+                                .on_press(Message::SelectBackend(
+                                    message::SelectBackend::ContinueWithLocalWallet(true),
+                                ))
+                                .width(Length::Fixed(200.0)),
+                        )
+                        .width(Length::FillPortion(1)),
+                    )
+                    .push(
+                        Container::new(
+                            button::primary(None, "Select")
+                                .on_press(Message::SelectBackend(
+                                    message::SelectBackend::ContinueWithLocalWallet(false),
+                                ))
+                                .width(Length::Fixed(200.0)),
+                        )
+                        .width(Length::FillPortion(1)),
+                    ),
+            )
+            .spacing(20),
+        true,
+        Some(Message::Previous),
+    )
+}
+
+pub fn login(progress: (usize, usize), connection_step: Element<Message>) -> Element<Message> {
+    layout(
+        progress,
+        None,
+        "Login",
+        Container::new(
+            Column::new()
+                .spacing(50)
+                .max_width(700)
+                .align_items(Alignment::Center)
+                .width(Length::FillPortion(1))
+                .push(image::wizardsardine().height(Length::Fixed(100.0)))
+                .push(connection_step),
+        )
+        .width(Length::Fill)
+        .center_x(),
         true,
         Some(Message::Previous),
     )
@@ -2315,6 +2343,9 @@ pub fn connection_step_enter_email<'a>(
         .spacing(20)
         .push_maybe(connection_error.map(|e| text(e.to_string()).style(color::ORANGE)))
         .push_maybe(auth_error.map(|e| text(e.to_string()).style(color::ORANGE)))
+        .push(text(
+            "Enter the email you want to associate with the wallet:",
+        ))
         .push(
             form::Form::new_trimmed("email", email, |msg| {
                 Message::SelectBackend(message::SelectBackend::EmailEdited(msg))
@@ -2324,11 +2355,13 @@ pub fn connection_step_enter_email<'a>(
             .warning("Email is not valid"),
         )
         .push(
-            button::primary(None, "Next").on_press_maybe(if processing || !email.valid {
-                None
-            } else {
-                Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
-            }),
+            button::primary(None, "Next")
+                .on_press_maybe(if processing || !email.valid {
+                    None
+                } else {
+                    Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
+                })
+                .width(Length::Fixed(200.0)),
         )
         .into()
 }
@@ -2394,18 +2427,16 @@ pub fn connection_step_connected<'a>(
                     button::primary(None, "Continue").on_press_maybe(if processing {
                         None
                     } else {
-                        Some(Message::SelectBackend(
-                            message::SelectBackend::ContinueWithRemoteBackend,
-                        ))
+                        Some(Message::Next)
                     }),
                 ),
         ))
         .into()
 }
 
-pub const LIANALITE_DESC: &str = "Use the connection to the Bitcoin network provided by Wizardsardine. This removes the need for running a Bitcoin full node on your machine. It also provides synchronisation of your wallet data (labels, transactions, etc..) across your machines and participants in your wallet. We will also keep a backup of your wallet descriptor for you. This is the most convenient option but has privacy implications: your data would be stored on our servers (but never shared with a third party).";
+pub const REMOTE_BACKEND_DESC: &str = "Use a hosted service to talk to the Bitcoin network and store data. Wizardsardine runs the infrastructure, keeps a backup of your wallet descriptor, and allow for synchronization between multiple computers and participants.\n\nThis is a safer option for users who want Wizardsardine to keep a backup of your descriptor. Wizardsardine will be able to see the information of your wallet, associated to an email address. Privacy focused users should run their own infrastructure instead.";
 
-pub const LIANA_DESC: &str = "This option creates a wallet on your machine. The wallet will never access any of our servers, we would not even be able to know you use our wallet. This option requires a local Bitcoin full node. A full node is necessary to use Bitcoin in a sovereign way, but it is more accessible than it sounds. The Liana wallet can download and run one for you so you don't have to manage it yourself. It will never use more than a couple GB of disk space. The initial synchronisation of the node takes time and is computationally intensive, but past this point running a Bitcoin full node on your machine is seamless.";
+pub const LOCAL_WALLET_DESC: &str = "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet";
 
 fn layout<'a>(
     progress: (usize, usize),

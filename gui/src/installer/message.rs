@@ -49,8 +49,7 @@ pub enum SelectBackend {
     EditEmail,
     EmailEdited(String),
     OTPEdited(String),
-    ContinueWithRemoteBackend,
-    ContinueWithLocalWallet,
+    ContinueWithLocalWallet(bool),
     // Commands messages
     OTPRequested(Result<(AuthClient, String), Error>),
     OTPResent(Result<(), Error>),

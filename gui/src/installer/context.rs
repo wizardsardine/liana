@@ -17,6 +17,8 @@ use liana::{
 
 #[derive(Debug, Clone)]
 pub enum RemoteBackend {
+    Undefined,
+    None,
     // The installer will have to create a wallet from the created descriptor.
     WithoutWallet(BackendClient),
     // The installer will have to fetch the wallet and only install the missing configuration files.
@@ -24,11 +26,22 @@ pub enum RemoteBackend {
 }
 
 impl RemoteBackend {
-    pub fn user_email(&self) -> &str {
+    pub fn user_email(&self) -> Option<&str> {
         match self {
-            Self::WithWallet(b) => b.user_email(),
-            Self::WithoutWallet(b) => b.user_email(),
+            Self::WithWallet(b) => Some(b.user_email()),
+            Self::WithoutWallet(b) => Some(b.user_email()),
+            _ => None,
         }
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, RemoteBackend::None)
+    }
+    pub fn is_some(&self) -> bool {
+        matches!(
+            self,
+            RemoteBackend::WithoutWallet { .. } | RemoteBackend::WithWallet { .. }
+        )
     }
 }
 
@@ -48,14 +61,14 @@ pub struct Context {
     pub bitcoind_is_external: bool,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
-    pub remote_backend: Option<RemoteBackend>,
+    pub remote_backend: RemoteBackend,
 }
 
 impl Context {
     pub fn new(
         network: bitcoin::Network,
         data_dir: PathBuf,
-        remote_backend: Option<RemoteBackend>,
+        remote_backend: RemoteBackend,
     ) -> Self {
         Self {
             bitcoin_config: BitcoinConfig {

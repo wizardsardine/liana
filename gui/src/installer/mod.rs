@@ -41,7 +41,7 @@ pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, DefineBitcoind, DefineDescriptor, Final,
     ImportDescriptor, ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic,
-    RegisterDescriptor, SelectBitcoindTypeStep, ShareXpubs, Step,
+    RegisterDescriptor, RemoteBackendLogin, SelectBitcoindTypeStep, ShareXpubs, Step,
 };
 
 #[derive(Debug, Clone)]
@@ -73,14 +73,17 @@ impl Installer {
             return Command::perform(async move { network }, Message::BackToLauncher);
         }
         // skip the previous step according to the current context.
-        while self.current > 0
-            && self
-                .steps
-                .get(self.current)
-                .expect("There is always a step")
-                .skip(&self.context)
+        while self
+            .steps
+            .get(self.current)
+            .expect("There is always a step")
+            .skip(&self.context)
         {
-            self.current -= 1;
+            if self.current > 0 {
+                self.current -= 1;
+            } else {
+                return Command::perform(async move { network }, Message::BackToLauncher);
+            }
         }
 
         if let Some(step) = self.steps.get(self.current) {
@@ -99,7 +102,9 @@ impl Installer {
         let context = Context::new(
             network,
             destination_path.clone(),
-            remote_backend.map(RemoteBackend::WithoutWallet),
+            remote_backend
+                .map(RemoteBackend::WithoutWallet)
+                .unwrap_or(RemoteBackend::Undefined),
         );
         let mut installer = Installer {
             network,
@@ -113,6 +118,7 @@ impl Installer {
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::new_create_wallet().into(),
                     ChooseBackend::new(network).into(),
+                    RemoteBackendLogin::new(network).into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.data_dir).into(),
                     DefineBitcoind::new().into(),
@@ -121,6 +127,7 @@ impl Installer {
                 UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
                 UserFlow::AddWallet => vec![
                     ChooseBackend::new(network).into(),
+                    RemoteBackendLogin::new(network).into(),
                     ImportRemoteWallet::new(network).into(),
                     ImportDescriptor::new(network).into(),
                     RecoverMnemonic::default().into(),
@@ -134,6 +141,9 @@ impl Installer {
             context,
             signer,
         };
+        // skip the step according to the current context.
+        installer.skip_steps();
+
         let current_step = installer
             .steps
             .get_mut(installer.current)
@@ -167,6 +177,19 @@ impl Installer {
         self.context.internal_bitcoind = None;
     }
 
+    fn skip_steps(&mut self) {
+        while self
+            .steps
+            .get(self.current)
+            .expect("There is always a step")
+            .skip(&self.context)
+        {
+            if self.current < self.steps.len() - 1 {
+                self.current += 1;
+            }
+        }
+    }
+
     fn next(&mut self) -> Command<Message> {
         let current_step = self
             .steps
@@ -181,16 +204,8 @@ impl Installer {
                 return Command::none();
             }
             // skip the step according to the current context.
-            while self
-                .steps
-                .get(self.current)
-                .expect("There is always a step")
-                .skip(&self.context)
-            {
-                if self.current < self.steps.len() - 1 {
-                    self.current += 1;
-                }
-            }
+            self.skip_steps();
+
             // calculate new current_step.
             let current_step = self
                 .steps
@@ -221,7 +236,7 @@ impl Installer {
                     .expect("There is always a step")
                     .update(&mut self.hws, message);
                 match &self.context.remote_backend {
-                    Some(RemoteBackend::WithoutWallet(backend)) => Command::perform(
+                    RemoteBackend::WithoutWallet(backend) => Command::perform(
                         create_remote_wallet(
                             self.context.clone(),
                             self.signer.clone(),
@@ -229,14 +244,15 @@ impl Installer {
                         ),
                         Message::Installed,
                     ),
-                    Some(RemoteBackend::WithWallet(backend)) => Command::perform(
+                    RemoteBackend::WithWallet(backend) => Command::perform(
                         import_remote_wallet(self.context.clone(), backend.clone()),
                         Message::Installed,
                     ),
-                    None => Command::perform(
+                    RemoteBackend::None => Command::perform(
                         install_local_wallet(self.context.clone(), self.signer.clone()),
                         Message::Installed,
                     ),
+                    RemoteBackend::Undefined => unreachable!("Must be defined at this point"),
                 }
             }
             Message::Installed(Err(e)) => {
@@ -295,7 +311,7 @@ impl Installer {
             .view(
                 &self.hws,
                 self.progress(),
-                self.context.remote_backend.as_ref().map(|b| b.user_email()),
+                self.context.remote_backend.user_email(),
             );
 
         if self.network != Network::Bitcoin {
