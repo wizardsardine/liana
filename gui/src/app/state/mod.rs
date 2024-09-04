@@ -183,6 +183,13 @@ impl State for Home {
                 Err(e) => self.warning = Some(e),
                 Ok(events) => {
                     self.warning = None;
+                    self.events = events;
+                }
+            },
+            Message::HistoryTransactionsExtension(res) => match res {
+                Err(e) => self.warning = Some(e),
+                Ok(events) => {
+                    self.warning = None;
                     for event in events {
                         if !self.events.iter().any(|other| other.tx == event.tx) {
                             self.events.push(event);
@@ -259,7 +266,7 @@ impl State for Home {
                             }
                             Ok(events)
                         },
-                        Message::HistoryTransactions,
+                        Message::HistoryTransactionsExtension,
                     );
                 }
             }
