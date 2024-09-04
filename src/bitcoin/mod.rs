@@ -109,7 +109,7 @@ pub trait BitcoinInterface: Send {
     /// Trigger a rescan of the block chain for transactions related to this descriptor since
     /// the given date.
     fn start_rescan(
-        &self,
+        &mut self,
         desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String>;
@@ -367,7 +367,7 @@ impl BitcoinInterface for d::BitcoinD {
     }
 
     fn start_rescan(
-        &self,
+        &mut self,
         desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String> {
@@ -481,7 +481,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     }
 
     fn start_rescan(
-        &self,
+        &mut self,
         desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String> {

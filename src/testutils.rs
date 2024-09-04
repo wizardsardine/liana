@@ -109,7 +109,7 @@ impl BitcoinInterface for DummyBitcoind {
         todo!()
     }
 
-    fn start_rescan(&self, _: &descriptors::LianaDescriptor, _: u32) -> Result<(), String> {
+    fn start_rescan(&mut self, _: &descriptors::LianaDescriptor, _: u32) -> Result<(), String> {
         todo!()
     }
 

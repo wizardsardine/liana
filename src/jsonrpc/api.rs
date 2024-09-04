@@ -266,7 +266,7 @@ fn list_transactions(control: &DaemonControl, params: Params) -> Result<serde_js
     Ok(serde_json::json!(&control.list_transactions(&txids)))
 }
 
-fn start_rescan(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+fn start_rescan(control: &mut DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let timestamp: u32 = params
         .get(0, "timestamp")
         .ok_or_else(|| Error::invalid_params("Missing 'timestamp' parameter."))?
@@ -365,7 +365,7 @@ fn get_labels(control: &DaemonControl, params: Params) -> Result<serde_json::Val
 }
 
 /// Handle an incoming JSONRPC2 request.
-pub fn handle_request(control: &DaemonControl, req: Request) -> Result<Response, Error> {
+pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
         "broadcastspend" => {
             let params = req
