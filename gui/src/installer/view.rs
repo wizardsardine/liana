@@ -24,7 +24,7 @@ use liana_ui::{
     color,
     component::{
         button, card, collapse, form, hw, separation,
-        text::{h3, h4_bold, h5_regular, p1_regular, text, Text},
+        text::{h2, h3, h4_bold, h5_regular, p1_regular, text, Text},
         tooltip,
     },
     icon, image, theme,
@@ -2271,14 +2271,14 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                         Column::new()
                             .spacing(20)
                             .width(Length::FillPortion(1))
-                            .push(image::liana_brand_grey().height(Length::Fixed(100.0)))
+                            .push(h3("Use your own node"))
                             .push(text::p2_medium(LOCAL_WALLET_DESC).style(color::GREY_3)),
                     )
                     .push(
                         Column::new()
                             .spacing(20)
                             .width(Length::FillPortion(1))
-                            .push(image::wizardsardine().height(Length::Fixed(100.0)))
+                            .push(h3("Use Liana Connect"))
                             .push(text::p2_medium(REMOTE_BACKEND_DESC).style(color::GREY_3)),
                     ),
             )
@@ -2323,7 +2323,7 @@ pub fn login(progress: (usize, usize), connection_step: Element<Message>) -> Ele
                 .max_width(700)
                 .align_items(Alignment::Center)
                 .width(Length::FillPortion(1))
-                .push(image::wizardsardine().height(Length::Fixed(100.0)))
+                .push(h2("Liana Connect"))
                 .push(connection_step),
         )
         .width(Length::Fill)

@@ -6,7 +6,7 @@ use liana::miniscript::bitcoin::Network;
 use liana_ui::{
     color,
     component::{button, form, network_banner, notification, text::*},
-    icon, image,
+    icon,
     widget::*,
 };
 
@@ -380,7 +380,7 @@ impl LianaLiteLogin {
                             .align_items(Alignment::Center)
                             .spacing(20)
                             .width(Length::Fill)
-                            .push(image::wizardsardine().height(Length::Fixed(100.0)))
+                            .push(h2("Liana Connect"))
                             .push(
                                 Column::new()
                                     .max_width(500)
