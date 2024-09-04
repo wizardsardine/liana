@@ -303,7 +303,7 @@ class TailableProc(object):
             self.cmd_line,
             stdin=stdin,
             stdout=stdout if stdout else subprocess.PIPE,
-            stderr=stderr if stderr else subprocess.PIPE,
+            stderr=stderr if stderr else subprocess.STDOUT,
             env=self.env,
         )
         self.thread = threading.Thread(target=self.tail)
@@ -347,7 +347,7 @@ class TailableProc(object):
         be picked up by consumers.
         """
         out = self.proc.stdout.readline
-        err = self.proc.stderr.readline
+        err = self.proc.stderr.readline if self.proc.stderr else lambda: ""
         for line in itertools.chain(iter(out, ""), iter(err, "")):
             if len(line) == 0:
                 break
