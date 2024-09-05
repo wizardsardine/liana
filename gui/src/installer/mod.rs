@@ -102,9 +102,14 @@ impl Installer {
         let context = Context::new(
             network,
             destination_path.clone(),
-            remote_backend
-                .map(RemoteBackend::WithoutWallet)
-                .unwrap_or(RemoteBackend::Undefined),
+            remote_backend.map(RemoteBackend::WithoutWallet).unwrap_or(
+                if matches!(network, Network::Bitcoin | Network::Signet) {
+                    RemoteBackend::Undefined
+                } else {
+                    // The step for choosing the backend will be skipped.
+                    RemoteBackend::None
+                },
+            ),
         );
         let mut installer = Installer {
             network,
