@@ -72,6 +72,12 @@ class Bitcoind(BitcoinBackend):
             "rpcport": rpcport,
             "fallbackfee": Decimal(1000) / COIN,
             "rpcthreads": 32,
+            # bitcoind uses mocktime in some tests, which can lead to peers (e.g. electrs)
+            # being disconnected. To prevent this, we set `peertimeout` greater than
+            # the max value being mocked.
+            # See https://github.com/bitcoin/bitcoin/blob/fa05ee0517d58b600f0ccad4c02c0734a23707d6/src/net.cpp#L1961.
+            # h/t pythcoiner :)
+            "peertimeout": 2 * 24 * 60 * 60,  # 2 days
         }
         self.conf_file = os.path.join(bitcoin_dir, "bitcoin.conf")
         with open(self.conf_file, "w") as f:
