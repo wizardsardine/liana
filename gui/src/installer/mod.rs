@@ -278,6 +278,13 @@ impl Installer {
                     .expect("There is always a step")
                     .update(&mut self.hws, Message::Installed(Err(e)))
             }
+            Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::UseExternal(_)) => {
+                self.context.remote_backend = RemoteBackend::None;
+                self.steps
+                    .get_mut(self.current)
+                    .expect("There is always a step")
+                    .update(&mut self.hws, message)
+            }
             _ => self
                 .steps
                 .get_mut(self.current)
