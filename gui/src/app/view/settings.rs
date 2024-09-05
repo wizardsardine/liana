@@ -298,6 +298,7 @@ pub fn remote_backend_section<'a>(
 }
 
 pub fn bitcoind_edit<'a>(
+    is_configured_node_type: bool,
     network: Network,
     blockheight: i32,
     addr: &form::Value<String>,
@@ -306,7 +307,7 @@ pub fn bitcoind_edit<'a>(
     processing: bool,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
-    if blockheight != 0 {
+    if is_configured_node_type && blockheight != 0 {
         col = col
             .push(
                 Row::new()
@@ -444,6 +445,7 @@ pub fn bitcoind_edit<'a>(
 }
 
 pub fn bitcoind<'a>(
+    is_configured_node_type: bool,
     network: Network,
     config: &liana::config::BitcoindConfig,
     blockheight: i32,
@@ -451,7 +453,7 @@ pub fn bitcoind<'a>(
     can_edit: bool,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
-    if blockheight != 0 {
+    if is_configured_node_type && blockheight != 0 {
         col = col
             .push(
                 Row::new()
@@ -482,16 +484,18 @@ pub fn bitcoind<'a>(
     }
 
     let mut rows = vec![];
-    match &config.rpc_auth {
-        BitcoindRpcAuth::CookieFile(path) => {
-            rows.push(("Cookie file path:", path.to_str().unwrap().to_string()));
+    if is_configured_node_type {
+        match &config.rpc_auth {
+            BitcoindRpcAuth::CookieFile(path) => {
+                rows.push(("Cookie file path:", path.to_str().unwrap().to_string()));
+            }
+            BitcoindRpcAuth::UserPass(user, password) => {
+                rows.push(("User:", user.clone()));
+                rows.push(("Password:", password.clone()));
+            }
         }
-        BitcoindRpcAuth::UserPass(user, password) => {
-            rows.push(("User:", user.clone()));
-            rows.push(("Password:", password.clone()));
-        }
+        rows.push(("Socket address:", config.addr.to_string()));
     }
-    rows.push(("Socket address:", config.addr.to_string()));
 
     let mut col_fields = Column::new();
     for (k, v) in rows {
@@ -510,7 +514,11 @@ pub fn bitcoind<'a>(
                         Row::new()
                             .push(badge::Badge::new(icon::bitcoin_icon()))
                             .push(text("Bitcoin Core").bold())
-                            .push(is_running_label(is_running))
+                            .push_maybe(if is_configured_node_type {
+                                Some(is_running_label(is_running))
+                            } else {
+                                None
+                            })
                             .spacing(20)
                             .align_items(Alignment::Center)
                             .width(Length::Fill),
@@ -533,13 +541,14 @@ pub fn bitcoind<'a>(
 }
 
 pub fn electrum_edit<'a>(
+    is_configured_node_type: bool,
     network: Network,
     blockheight: i32,
     addr: &form::Value<String>,
     processing: bool,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
-    if blockheight != 0 {
+    if is_configured_node_type && blockheight != 0 {
         col = col
             .push(
                 Row::new()
@@ -621,6 +630,7 @@ pub fn electrum_edit<'a>(
 }
 
 pub fn electrum<'a>(
+    is_configured_node_type: bool,
     network: Network,
     config: &liana::config::ElectrumConfig,
     blockheight: i32,
@@ -628,7 +638,7 @@ pub fn electrum<'a>(
     can_edit: bool,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
-    if blockheight != 0 {
+    if is_configured_node_type && blockheight != 0 {
         col = col
             .push(
                 Row::new()
@@ -658,7 +668,11 @@ pub fn electrum<'a>(
             .push(separation().width(Length::Fill));
     }
 
-    let rows = vec![("Address:", config.addr.to_string())];
+    let rows = if is_configured_node_type {
+        vec![("Address:", config.addr.to_string())]
+    } else {
+        vec![]
+    };
 
     let mut col_fields = Column::new();
     for (k, v) in rows {
@@ -677,7 +691,11 @@ pub fn electrum<'a>(
                         Row::new()
                             .push(badge::Badge::new(icon::bitcoin_icon()))
                             .push(text("Electrum").bold())
-                            .push(is_running_label(is_running))
+                            .push_maybe(if is_configured_node_type {
+                                Some(is_running_label(is_running))
+                            } else {
+                                None
+                            })
                             .spacing(20)
                             .align_items(Alignment::Center)
                             .width(Length::Fill),
