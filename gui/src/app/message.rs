@@ -39,6 +39,7 @@ pub enum Message {
     Verified(Fingerprint, Result<(), Error>),
     StartRescan(Result<(), Error>),
     HardwareWallets(HardwareWalletMessage),
+    HistoryTransactionsExtension(Result<Vec<HistoryTransaction>, Error>),
     HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
     PendingTransactions(Result<Vec<HistoryTransaction>, Error>),
     LabelsUpdated(Result<HashMap<String, Option<String>>, Error>),
