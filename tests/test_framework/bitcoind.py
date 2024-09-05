@@ -68,7 +68,7 @@ class Bitcoind(BitcoinBackend):
             "-debugexclude=tor",
         ]
         bitcoind_conf = {
-            "port": self.p2pport,
+            "bind": f"127.0.0.1:{self.p2pport}",
             "rpcport": rpcport,
             "fallbackfee": Decimal(1000) / COIN,
             "rpcthreads": 32,

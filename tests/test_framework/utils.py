@@ -375,7 +375,8 @@ class TailableProc(object):
                 self.logs_cond.notifyAll()
         self.running = False
         self.proc.stdout.close()
-        self.proc.stderr.close()
+        if self.proc.stderr is not None:
+            self.proc.stderr.close()
 
     def is_in_log(self, regex, start=0):
         """Look for `regex` in the logs."""
