@@ -67,6 +67,7 @@ impl Logger {
                             && !metadata.target().starts_with("winit")
                             && !metadata.target().starts_with("mio")
                             && !metadata.target().starts_with("ledger_transport_hid")
+                            && !metadata.target().starts_with("cosmic_text")
                     })),
             )
             .init();
