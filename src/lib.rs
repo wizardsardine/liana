@@ -13,10 +13,15 @@ pub mod spend;
 #[cfg(test)]
 mod testutils;
 
+pub use bdk_electrum::electrum_client;
 pub use bip39;
+use bitcoin::electrum;
 pub use miniscript;
 
-pub use crate::bitcoin::d::{BitcoinD, BitcoindError, WalletError};
+pub use crate::bitcoin::{
+    d::{BitcoinD, BitcoindError, WalletError},
+    electrum::{Electrum, ElectrumError},
+};
 #[cfg(feature = "daemon")]
 use crate::jsonrpc::server::{rpcserver_loop, rpcserver_setup};
 use crate::{
@@ -34,7 +39,7 @@ use std::{
     thread,
 };
 
-use miniscript::bitcoin::secp256k1;
+use miniscript::bitcoin::{constants::ChainHash, hashes::Hash, secp256k1, BlockHash};
 
 #[cfg(not(test))]
 use std::panic;
@@ -92,9 +97,12 @@ pub enum StartupError {
     DefaultDataDirNotFound,
     DatadirCreation(path::PathBuf, io::Error),
     MissingBitcoindConfig,
+    MissingElectrumConfig,
+    MissingBitcoinBackendConfig,
     DbMigrateBitcoinTxs(&'static str),
     Database(SqliteDbError),
     Bitcoind(BitcoindError),
+    Electrum(ElectrumError),
     #[cfg(unix)]
     Daemonization(&'static str),
     #[cfg(windows)]
@@ -117,12 +125,21 @@ impl fmt::Display for StartupError {
                 f,
                 "Our Bitcoin interface is bitcoind but we have no 'bitcoind_config' entry in the configuration."
             ),
+            Self::MissingElectrumConfig => write!(
+                f,
+                "Our Bitcoin interface is Electrum but we have no 'electrum_config' entry in the configuration."
+            ),
+            Self::MissingBitcoinBackendConfig => write!(
+                f,
+                "No Bitcoin backend entry in the configuration."
+            ),
             Self::DbMigrateBitcoinTxs(msg) => write!(
                 f,
                 "Error when migrating Bitcoin transaction from Bitcoin backend to database: {}.", msg
             ),
             Self::Database(e) => write!(f, "Error initializing database: '{}'.", e),
             Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
+            Self::Electrum(e) => write!(f, "Error setting up Electrum interface: '{}'.", e),
             #[cfg(unix)]
             Self::Daemonization(e) => write!(f, "Error when daemonizing: '{}'.", e),
             #[cfg(windows)]
@@ -260,10 +277,10 @@ fn setup_bitcoind(
     #[cfg(target_os = "windows")]
     let wo_path_str = wo_path_str.replace("\\\\?\\", "").replace("\\\\?", "");
 
-    let bitcoind_config = config
-        .bitcoind_config
-        .as_ref()
-        .ok_or(StartupError::MissingBitcoindConfig)?;
+    let bitcoind_config = match config.bitcoin_backend.as_ref() {
+        Some(config::BitcoinBackend::Bitcoind(bitcoind_config)) => bitcoind_config,
+        _ => Err(StartupError::MissingBitcoindConfig)?,
+    };
     let bitcoind = BitcoinD::new(bitcoind_config, wo_path_str)?;
     bitcoind.node_sanity_checks(
         config.bitcoin_config.network,
@@ -285,6 +302,70 @@ fn setup_bitcoind(
     log::info!("Watchonly wallet loaded on bitcoind and sanity checked.");
 
     Ok(bitcoind)
+}
+
+// Create an Electrum interface from a client and BDK-based wallet, and do some sanity checks.
+// If all went well, returns the interface to Electrum.
+fn setup_electrum(
+    config: &Config,
+    db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+) -> Result<Electrum, StartupError> {
+    let electrum_config = match config.bitcoin_backend.as_ref() {
+        Some(config::BitcoinBackend::Electrum(electrum_config)) => electrum_config,
+        _ => Err(StartupError::MissingElectrumConfig)?,
+    };
+    // First create the client to communicate with the Electrum server.
+    let client = electrum::client::Client::new(electrum_config)
+        .map_err(|e| StartupError::Electrum(ElectrumError::Client(e)))?;
+    // Then create the BDK-based wallet and populate it with DB data.
+    let mut db_conn = db.connection();
+    let tip = db_conn.chain_tip();
+    let coins: Vec<_> = db_conn
+        .coins(&[], &[])
+        .into_values()
+        .map(|c| crate::bitcoin::Coin {
+            outpoint: c.outpoint,
+            amount: c.amount,
+            derivation_index: c.derivation_index,
+            is_change: c.is_change,
+            is_immature: c.is_immature,
+            block_info: c.block_info.map(|info| crate::bitcoin::BlockInfo {
+                height: info.height,
+                time: info.time,
+            }),
+            spend_txid: c.spend_txid,
+            spend_block: c.spend_block.map(|info| crate::bitcoin::BlockInfo {
+                height: info.height,
+                time: info.time,
+            }),
+        })
+        .collect();
+    let txids = db_conn.list_saved_txids();
+    // This will only return those txs referenced by our coins, which may not be all of `txids`.
+    let txs: Vec<_> = db_conn
+        .list_wallet_transactions(&txids)
+        .into_iter()
+        .map(|(tx, _, _)| tx)
+        .collect();
+    let (receive_index, change_index) = (db_conn.receive_index(), db_conn.change_index());
+    let genesis_hash = {
+        let chain_hash = ChainHash::using_genesis_block(config.bitcoin_config.network);
+        BlockHash::from_byte_array(*chain_hash.as_bytes())
+    };
+    let bdk_wallet = electrum::wallet::BdkWallet::new(
+        &config.main_descriptor,
+        genesis_hash,
+        tip,
+        &coins,
+        &txs,
+        receive_index,
+        change_index,
+    );
+    let electrum = Electrum::new(client, bdk_wallet).map_err(StartupError::Electrum)?;
+    electrum
+        .sanity_checks(&genesis_hash)
+        .map_err(StartupError::Electrum)?;
+    Ok(electrum)
 }
 
 #[derive(Clone)]
@@ -374,7 +455,11 @@ impl DaemonHandle {
         // Set up the connection to bitcoind (if using it) first as we may need it for the database
         // migration when setting up SQLite below.
         let bitcoind = if bitcoin.is_none() {
-            Some(setup_bitcoind(&config, &data_dir, fresh_data_dir)?)
+            if let Some(config::BitcoinBackend::Bitcoind(_)) = &config.bitcoin_backend {
+                Some(setup_bitcoind(&config, &data_dir, fresh_data_dir)?)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -392,11 +477,16 @@ impl DaemonHandle {
         };
 
         // Finally set up the Bitcoin backend.
-        let bit = match (bitcoin, bitcoind) {
-            (Some(bit), None) => sync::Arc::from(sync::Mutex::from(bit)),
-            (None, Some(bit)) => sync::Arc::from(sync::Mutex::from(bit))
+        let bit = match (bitcoin, &config.bitcoin_backend) {
+            (Some(bit), _) => sync::Arc::from(sync::Mutex::from(bit)),
+            (None, Some(config::BitcoinBackend::Bitcoind(..))) => sync::Arc::from(
+                sync::Mutex::from(bitcoind.expect("bitcoind must have been set already")),
+            )
                 as sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
-            _ => unreachable!("Either bitcoind or bitcoin interface is always set."),
+            (None, Some(config::BitcoinBackend::Electrum(..))) => {
+                sync::Arc::from(sync::Mutex::from(setup_electrum(&config, db.clone())?))
+            }
+            (None, None) => Err(StartupError::MissingBitcoinBackendConfig)?,
         };
 
         // If we are on a UNIX system and they told us to daemonize, do it now.
@@ -415,7 +505,7 @@ impl DaemonHandle {
 
         // Start the poller thread. Keep the thread handle to be able to check if it crashed. Store
         // an atomic to be able to stop it.
-        let bitcoin_poller =
+        let mut bitcoin_poller =
             poller::Poller::new(bit.clone(), db.clone(), config.main_descriptor.clone());
         let (poller_sender, poller_receiver) = mpsc::sync_channel(0);
         let poller_handle = thread::Builder::new()
@@ -764,7 +854,7 @@ mod tests {
         let change_desc = desc.change_descriptor().clone();
         let config = Config {
             bitcoin_config,
-            bitcoind_config: Some(bitcoind_config),
+            bitcoin_backend: Some(config::BitcoinBackend::Bitcoind(bitcoind_config)),
             data_dir: Some(data_dir),
             #[cfg(unix)]
             daemon: false,

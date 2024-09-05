@@ -5,6 +5,8 @@ import shutil
 from bip380.descriptors import Descriptor
 from bip380.miniscript import SatisfactionMaterial
 from test_framework.utils import (
+    BITCOIN_BACKEND_TYPE,
+    BitcoinBackendType,
     UnixDomainSocketRpc,
     TailableProc,
     VERBOSE,
@@ -28,8 +30,7 @@ class Lianad(TailableProc):
         datadir,
         signer,
         multi_desc,
-        bitcoind_rpc_port,
-        bitcoind_cookie_path,
+        bitcoin_backend,
     ):
         TailableProc.__init__(self, datadir, verbose=VERBOSE)
 
@@ -44,6 +45,7 @@ class Lianad(TailableProc):
         self.cmd_line = [LIANAD_PATH, "--conf", f"{self.conf_file}"]
         socket_path = os.path.join(os.path.join(datadir, "regtest"), "lianad_rpc")
         self.rpc = UnixDomainSocketRpc(socket_path)
+        self.bitcoin_backend = bitcoin_backend
 
         with open(self.conf_file, "w") as f:
             f.write(f"data_dir = '{datadir}'\n")
@@ -55,10 +57,7 @@ class Lianad(TailableProc):
             f.write("[bitcoin_config]\n")
             f.write('network = "regtest"\n')
             f.write("poll_interval_secs = 1\n")
-
-            f.write("[bitcoind_config]\n")
-            f.write(f"cookie_path = '{bitcoind_cookie_path}'\n")
-            f.write(f"addr = '127.0.0.1:{bitcoind_rpc_port}'\n")
+        bitcoin_backend.append_to_lianad_conf(self.conf_file)
 
     def finalize_psbt(self, psbt):
         """Create a valid witness for all inputs in the PSBT.
@@ -107,8 +106,9 @@ class Lianad(TailableProc):
         self.stop()
         dir_path = os.path.join(self.datadir, "regtest")
         shutil.rmtree(dir_path)
-        wallet_path = os.path.join(dir_path, "lianad_watchonly_wallet")
-        bitcoind.node_rpc.unloadwallet(wallet_path)
+        if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+            wallet_path = os.path.join(dir_path, "lianad_watchonly_wallet")
+            bitcoind.node_rpc.unloadwallet(wallet_path)
         self.start()
         wait_for(
             lambda: self.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()

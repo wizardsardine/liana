@@ -3,17 +3,21 @@
 //! Broadcast transactions, poll for new unspent coins, gather fee estimates.
 
 pub mod d;
+pub mod electrum;
 pub mod poller;
 
 use crate::{
     bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry},
     descriptors,
 };
-pub use d::{MempoolEntry, SyncProgress};
+pub use d::{MempoolEntry, MempoolEntryFees, SyncProgress};
 
 use std::{fmt, sync};
 
-use miniscript::bitcoin::{self, address};
+use miniscript::bitcoin::{self, address, bip32::ChildNumber};
+
+// A spent coin's outpoint together with its spend transaction's txid, height and time.
+type SpentCoin = (bitcoin::OutPoint, bitcoin::Txid, i32, u32);
 
 const COINBASE_MATURITY: i32 = 100;
 
@@ -58,6 +62,17 @@ pub trait BitcoinInterface: Send {
     /// Check whether this former tip is part of the current best chain.
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool;
 
+    /// Sync the wallet with the current best chain.
+    /// `receive_index` and `change_index` are the last derivation indices
+    /// that are expected to have been used by the wallet.
+    /// In case there has been a reorg, returns the common ancestor between
+    /// the wallet and the reorged chain.
+    fn sync_wallet(
+        &mut self,
+        receive_index: ChildNumber,
+        change_index: ChildNumber,
+    ) -> Result<Option<BlockChainTip>, String>;
+
     /// Get coins received since the specified tip.
     fn received_coins(
         &self,
@@ -84,10 +99,7 @@ pub trait BitcoinInterface: Send {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> (
-        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
-        Vec<bitcoin::OutPoint>,
-    );
+    ) -> (Vec<SpentCoin>, Vec<bitcoin::OutPoint>);
 
     /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
     fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip>;
@@ -98,7 +110,7 @@ pub trait BitcoinInterface: Send {
     /// Trigger a rescan of the block chain for transactions related to this descriptor since
     /// the given date.
     fn start_rescan(
-        &self,
+        &mut self,
         desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String>;
@@ -157,6 +169,15 @@ impl BitcoinInterface for d::BitcoinD {
             .unwrap_or(false)
     }
 
+    // The watchonly wallet handles this for us.
+    fn sync_wallet(
+        &mut self,
+        _receive_index: ChildNumber,
+        _change_index: ChildNumber,
+    ) -> Result<Option<BlockChainTip>, String> {
+        Ok(None)
+    }
+
     fn received_coins(
         &self,
         tip: &BlockChainTip,
@@ -184,7 +205,7 @@ impl BitcoinInterface for d::BitcoinD {
                         outpoint,
                         amount,
                         block_height,
-                        address,
+                        address: UTxOAddress::Address(address),
                         is_immature,
                     })
                 } else {
@@ -261,10 +282,7 @@ impl BitcoinInterface for d::BitcoinD {
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> (
-        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
-        Vec<bitcoin::OutPoint>,
-    ) {
+    ) -> (Vec<SpentCoin>, Vec<bitcoin::OutPoint>) {
         // Spend coins to be returned.
         let mut spent = Vec::with_capacity(outpoints.len());
         // Coins whose spending transaction isn't in our local mempool anymore.
@@ -282,7 +300,7 @@ impl BitcoinInterface for d::BitcoinD {
 
             // If the transaction was confirmed, mark it as such.
             if let Some(block) = res.block {
-                spent.push((*op, *txid, block));
+                spent.push((*op, *txid, block.height, block.time));
                 continue;
             }
 
@@ -305,7 +323,7 @@ impl BitcoinInterface for d::BitcoinD {
                 })
             });
             if let Some((txid, block)) = conflict {
-                spent.push((*op, txid, block));
+                spent.push((*op, txid, block.height, block.time));
                 continue;
             }
 
@@ -347,7 +365,7 @@ impl BitcoinInterface for d::BitcoinD {
     }
 
     fn start_rescan(
-        &self,
+        &mut self,
         desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String> {
@@ -388,6 +406,193 @@ impl BitcoinInterface for d::BitcoinD {
     }
 }
 
+impl BitcoinInterface for electrum::Electrum {
+    fn sync_wallet(
+        &mut self,
+        receive_index: ChildNumber,
+        change_index: ChildNumber,
+    ) -> Result<Option<BlockChainTip>, String> {
+        self.sync_wallet(receive_index, change_index)
+            .map_err(|e| e.to_string())
+    }
+
+    fn received_coins(
+        &self,
+        tip: &BlockChainTip,
+        _descs: &[descriptors::SinglePathLianaDesc],
+    ) -> Vec<UTxO> {
+        // Get those wallet coins that are either unconfirmed or have a confirmation height
+        // after tip. The poller will then discard any that had already been received.
+        self.wallet_coins(None)
+            .values()
+            .filter_map(|c| {
+                let height = c.block_info.map(|info| info.height);
+                if height.filter(|h| *h <= tip.height).is_some() {
+                    None
+                } else {
+                    Some(UTxO {
+                        outpoint: c.outpoint,
+                        block_height: height,
+                        amount: c.amount,
+                        address: UTxOAddress::DerivIndex(c.derivation_index, c.is_change),
+                        is_immature: c.is_immature,
+                    })
+                }
+            })
+            .collect()
+    }
+
+    fn confirmed_coins(
+        &self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> (Vec<(bitcoin::OutPoint, i32, u32)>, Vec<bitcoin::OutPoint>) {
+        let wallet_coins = &self.wallet_coins(Some(outpoints));
+        let mut confirmed = Vec::new();
+        let mut expired = Vec::new();
+        for op in outpoints {
+            if let Some(w_c) = wallet_coins.get(op) {
+                if let Some(block) = w_c.block_info {
+                    if w_c.is_immature {
+                        log::debug!(
+                            "Coin at '{}' comes from an immature coinbase transaction at \
+                            block height {}. Not marking it as confirmed for now.",
+                            op,
+                            block.height
+                        );
+                        continue;
+                    }
+                    confirmed.push((w_c.outpoint, block.height, block.time));
+                }
+            } else {
+                expired.push(*op);
+            }
+        }
+        (confirmed, expired)
+    }
+
+    fn spending_coins(
+        &self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
+        let wallet_coins = &self.wallet_coins(Some(outpoints));
+        outpoints
+            .iter()
+            .filter_map(|op| {
+                if let Some(w_c) = wallet_coins.get(op) {
+                    w_c.spend_txid.map(|txid| (w_c.outpoint, txid))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn spent_coins(
+        &self,
+        outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
+    ) -> (Vec<SpentCoin>, Vec<bitcoin::OutPoint>) {
+        let ops: Vec<_> = outpoints.iter().map(|(op, _)| op).copied().collect();
+        let wallet_coins = &self.wallet_coins(Some(&ops));
+        let mut spent = Vec::new();
+        let mut expired_spending = Vec::new();
+
+        for (op, spend_txid) in outpoints {
+            if let Some(w_c) = wallet_coins.get(op) {
+                if w_c.spend_txid != Some(*spend_txid) {
+                    expired_spending.push(*op);
+                }
+                if let Some(block) = w_c.spend_block {
+                    spent.push((*op, *spend_txid, block.height, block.time));
+                }
+            }
+        }
+        (spent, expired_spending)
+    }
+
+    fn genesis_block_timestamp(&self) -> u32 {
+        self.client()
+            .genesis_block_timestamp()
+            .expect("Genesis block timestamp must always be there")
+    }
+
+    fn genesis_block(&self) -> BlockChainTip {
+        self.client()
+            .genesis_block()
+            .expect("Genesis block must always be there")
+    }
+
+    fn chain_tip(&self) -> BlockChainTip {
+        // We want the wallet's local chain tip after syncing.
+        self.wallet_tip()
+    }
+
+    fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
+        // Return `false` if no block at same height as `tip`
+        // is in wallet's local chain.
+        self.is_in_wallet_chain(*tip).unwrap_or_default()
+    }
+
+    /// FIXME: make the Bitcoin backend interface higher level. See the comment in the poller next
+    /// to the `sync_wallet()` call.
+    fn common_ancestor(&self, _tip: &BlockChainTip) -> Option<BlockChainTip> {
+        unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Electrum backend.")
+    }
+
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
+        match self.client().broadcast_tx(tx) {
+            Ok(_txid) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn wallet_transaction(
+        &self,
+        txid: &bitcoin::Txid,
+    ) -> Option<(bitcoin::Transaction, Option<Block>)> {
+        self.wallet_transaction(txid)
+    }
+
+    fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry> {
+        self.client().mempool_entry(txid).ok()?
+    }
+
+    fn mempool_spenders(&self, outpoints: &[bitcoin::OutPoint]) -> Vec<MempoolEntry> {
+        self.client()
+            .mempool_spenders(outpoints)
+            .unwrap_or_default()
+    }
+
+    fn sync_progress(&self) -> SyncProgress {
+        // Always return 100% for now since the API is bitcoind-specific to mean "blocks/headers".
+        // But in the future it would be nice to inform the user about the progress of the sync
+        // if it takes a few dozen seconds.
+        let blocks = self.chain_tip().height as u64;
+        SyncProgress::new(1.0, blocks, blocks)
+    }
+
+    fn start_rescan(
+        &mut self,
+        _desc: &descriptors::LianaDescriptor,
+        _timestamp: u32,
+    ) -> Result<(), String> {
+        self.trigger_rescan();
+        Ok(())
+    }
+
+    fn rescan_progress(&self) -> Option<f64> {
+        // Until we sync we're at 0%. After the sync, we're at 100%.
+        self.is_rescanning().then_some(0.0)
+    }
+
+    fn block_before_date(&self, _timestamp: u32) -> Option<BlockChainTip> {
+        Some(self.genesis_block())
+    }
+
+    fn tip_time(&self) -> Option<u32> {
+        self.client().tip_time().ok()
+    }
+}
+
 // FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
 impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>> {
     fn genesis_block_timestamp(&self) -> u32 {
@@ -408,6 +613,16 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
         self.lock().unwrap().is_in_chain(tip)
+    }
+
+    fn sync_wallet(
+        &mut self,
+        receive_index: ChildNumber,
+        change_index: ChildNumber,
+    ) -> Result<Option<BlockChainTip>, String> {
+        self.lock()
+            .unwrap()
+            .sync_wallet(receive_index, change_index)
     }
 
     fn received_coins(
@@ -435,10 +650,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn spent_coins(
         &self,
         outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
-    ) -> (
-        Vec<(bitcoin::OutPoint, bitcoin::Txid, Block)>,
-        Vec<bitcoin::OutPoint>,
-    ) {
+    ) -> (Vec<SpentCoin>, Vec<bitcoin::OutPoint>) {
         self.lock().unwrap().spent_coins(outpoints)
     }
 
@@ -451,7 +663,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     }
 
     fn start_rescan(
-        &self,
+        &mut self,
         desc: &descriptors::LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), String> {
@@ -493,6 +705,32 @@ pub struct UTxO {
     pub outpoint: bitcoin::OutPoint,
     pub amount: bitcoin::Amount,
     pub block_height: Option<i32>,
-    pub address: bitcoin::Address<address::NetworkUnchecked>,
+    pub address: UTxOAddress,
     pub is_immature: bool,
+}
+
+/// Details about the UTXO address.
+#[derive(Debug, Clone)]
+pub enum UTxOAddress {
+    Address(bitcoin::Address<address::NetworkUnchecked>),
+    /// Derivation index and whether it is from the change descriptor.
+    DerivIndex(ChildNumber, bool),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BlockInfo {
+    pub height: i32,
+    pub time: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Coin {
+    pub outpoint: bitcoin::OutPoint,
+    pub amount: bitcoin::Amount,
+    pub derivation_index: ChildNumber,
+    pub is_change: bool,
+    pub is_immature: bool,
+    pub block_info: Option<BlockInfo>,
+    pub spend_txid: Option<bitcoin::Txid>,
+    pub spend_block: Option<BlockInfo>,
 }

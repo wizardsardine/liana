@@ -81,7 +81,7 @@ fn read_command(
 
 // Handle all messages from this connection.
 fn connection_handler(
-    control: DaemonControl,
+    mut control: DaemonControl,
     mut stream: net::UnixStream,
     shutdown: sync::Arc<atomic::AtomicBool>,
 ) -> Result<(), io::Error> {
@@ -106,7 +106,7 @@ fn connection_handler(
 
         log::trace!("JSONRPC request: {:?}", serde_json::to_string(&req));
         let response =
-            api::handle_request(&control, req).unwrap_or_else(|e| Response::error(req_id, e));
+            api::handle_request(&mut control, req).unwrap_or_else(|e| Response::error(req_id, e));
         log::trace!("JSONRPC response: {:?}", serde_json::to_string(&response));
         if let Err(e) = serde_json::to_writer(&stream, &response) {
             log::error!("Error writing response: '{}'", e);

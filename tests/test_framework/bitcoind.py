@@ -7,7 +7,14 @@ import time
 from decimal import Decimal
 from ephemeral_port_reserve import reserve
 from test_framework.authproxy import AuthServiceProxy
-from test_framework.utils import TailableProc, wait_for, TIMEOUT, BITCOIND_PATH, COIN
+from test_framework.utils import (
+    BitcoinBackend,
+    TailableProc,
+    wait_for,
+    TIMEOUT,
+    BITCOIND_PATH,
+    COIN,
+)
 
 
 class BitcoindRpcInterface:
@@ -35,7 +42,7 @@ class BitcoindRpcInterface:
         return f
 
 
-class Bitcoind(TailableProc):
+class Bitcoind(BitcoinBackend):
     def __init__(self, bitcoin_dir, rpcport=None):
         TailableProc.__init__(self, bitcoin_dir, verbose=False)
 
@@ -65,6 +72,12 @@ class Bitcoind(TailableProc):
             "rpcport": rpcport,
             "fallbackfee": Decimal(1000) / COIN,
             "rpcthreads": 32,
+            # bitcoind uses mocktime in some tests, which can lead to peers (e.g. electrs)
+            # being disconnected. To prevent this, we set `peertimeout` greater than
+            # the max value being mocked.
+            # See https://github.com/bitcoin/bitcoin/blob/fa05ee0517d58b600f0ccad4c02c0734a23707d6/src/net.cpp#L1961.
+            # h/t pythcoiner :)
+            "peertimeout": 2 * 24 * 60 * 60,  # 2 days
         }
         self.conf_file = os.path.join(bitcoin_dir, "bitcoin.conf")
         with open(self.conf_file, "w") as f:
@@ -275,3 +288,10 @@ class Bitcoind(TailableProc):
         except Exception:
             self.proc.kill()
         self.proc.wait()
+
+    def append_to_lianad_conf(self, conf_file):
+        cookie_path = os.path.join(self.bitcoin_dir, "regtest", ".cookie")
+        with open(conf_file, "a") as f:
+            f.write("[bitcoind_config]\n")
+            f.write(f"cookie_path = '{cookie_path}'\n")
+            f.write(f"addr = '127.0.0.1:{self.rpcport}'\n")

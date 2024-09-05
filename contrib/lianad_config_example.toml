@@ -29,12 +29,34 @@ main_descriptor = "wsh(or_d(pk([0dd8c6f0/48'/1'/0'/2']tpubDFMbZ7U5k5hEfsttnZTKMm
 network = "testnet"
 poll_interval_secs = 30
 
-# This section is specific to the bitcoind implementation of the Bitcoin backend. This is the only
-# implementation available for now.
+# This section depends on the Bitcoin backend being used.
+#
+# If using bitcoind, the section name is [bitcoind_config].
 # In order to be able to connect to bitcoind, it needs to know on what port it is listening and
 # how to authenticate, either by specifying the cookie location with "cookie_path" or otherwise
 # passing a colon-separated user and password with "auth".
+#
+# With cookie path:
+#
+# [bitcoind_config]
+# addr = "127.0.0.1:18332"
+# cookie_path = "/home/wizardsardine/.bitcoin/testnet3/.cookie"
+#
+# With user and password:
+#
+# [bitcoind_config]
+# addr = "127.0.0.1:18332"
+# auth = "my_user:my_password"
+#
+#
+# If using an Electrum server, the section name is [electrum_config].
+# In order to connect, it needs the address as a string, which can be
+# optionally prefixed with "ssl://" or "tcp://". If omitted, "tcp://"
+# will be assumed.
+# [electrum_config]
+# addr = "127.0.0.1:50001"
+#
+#
 [bitcoind_config]
 addr = "127.0.0.1:18332"
 cookie_path = "/home/wizardsardine/.bitcoin/testnet3/.cookie"
-# auth = "my_user:my_password"

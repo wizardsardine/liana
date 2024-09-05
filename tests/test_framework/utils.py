@@ -1,3 +1,5 @@
+import abc
+import enum
 import itertools
 import json
 import logging
@@ -20,8 +22,21 @@ DEFAULT_MS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "target/debug/lianad"
 )
 LIANAD_PATH = os.getenv("LIANAD_PATH", DEFAULT_MS_PATH)
+
+
+class BitcoinBackendType(str, enum.Enum):
+    Bitcoind = "bitcoind"
+    Electrs = "electrs"
+
+
+DEFAULT_BITCOIN_BACKEND_TYPE = "bitcoind"
+BITCOIN_BACKEND_TYPE = BitcoinBackendType(
+    os.getenv("BITCOIN_BACKEND_TYPE", DEFAULT_BITCOIN_BACKEND_TYPE)
+)
 DEFAULT_BITCOIND_PATH = "bitcoind"
 BITCOIND_PATH = os.getenv("BITCOIND_PATH", DEFAULT_BITCOIND_PATH)
+DEFAULT_ELECTRS_PATH = "electrs"
+ELECTRS_PATH = os.getenv("ELECTRS_PATH", DEFAULT_ELECTRS_PATH)
 OLD_LIANAD_PATH = os.getenv("OLD_LIANAD_PATH", None)
 IS_NOT_BITCOIND_24 = bool(int(os.getenv("IS_NOT_BITCOIND_24", True)))
 USE_TAPROOT = bool(
@@ -421,3 +436,12 @@ class TailableProc(object):
         Convenience wrapper for the common case of only seeking a single entry.
         """
         return self.wait_for_logs([regex], timeout)
+
+
+class BitcoinBackend(abc.ABC, TailableProc):
+    """All Bitcoin backends should derive from this class."""
+
+    @abc.abstractmethod
+    def append_to_lianad_conf(self, conf_file):
+        """Append backend config values to lianad config file."""
+        ...

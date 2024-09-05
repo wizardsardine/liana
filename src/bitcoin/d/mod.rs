@@ -1096,7 +1096,7 @@ impl BitcoinD {
     }
 
     pub fn start_rescan(
-        &self,
+        &mut self,
         desc: &LianaDescriptor,
         timestamp: u32,
     ) -> Result<(), BitcoindError> {

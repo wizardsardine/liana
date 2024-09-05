@@ -1,10 +1,10 @@
 use crate::{
-    bitcoin::{BitcoinInterface, BlockChainTip, UTxO},
+    bitcoin::{BitcoinInterface, BlockChainTip, UTxO, UTxOAddress},
     database::{Coin, DatabaseConnection, DatabaseInterface},
     descriptors,
 };
 
-use std::{collections::HashSet, sync, time};
+use std::{collections::HashSet, sync, thread, time};
 
 use miniscript::bitcoin::{self, secp256k1};
 
@@ -46,44 +46,53 @@ fn update_coins(
             ..
         } = utxo;
         // We can only really treat them if we know the derivation index that was used.
-        let address = match address.require_network(network) {
-            Ok(addr) => addr,
-            Err(e) => {
-                log::error!("Invalid network for address: {}", e);
-                continue;
-            }
-        };
-        if let Some((derivation_index, is_change)) = db_conn.derivation_index_by_address(&address) {
-            // First of if we are receiving coins that are beyond our next derivation index,
-            // adjust it.
-            if derivation_index > db_conn.receive_index() {
-                db_conn.set_receive_index(derivation_index, secp);
-            }
-            if derivation_index > db_conn.change_index() {
-                db_conn.set_change_index(derivation_index, secp);
-            }
-
-            // Now record this coin as a newly received one.
-            if !curr_coins.contains_key(&utxo.outpoint) {
-                let coin = Coin {
-                    outpoint,
-                    is_immature,
-                    amount,
-                    derivation_index,
-                    is_change,
-                    block_info: None,
-                    spend_txid: None,
-                    spend_block: None,
+        let (derivation_index, is_change) = match address {
+            UTxOAddress::Address(address) => {
+                let address = match address.require_network(network) {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        log::error!("Invalid network for address: {}", e);
+                        continue;
+                    }
                 };
-                received.push(coin);
+                if let Some((derivation_index, is_change)) =
+                    db_conn.derivation_index_by_address(&address)
+                {
+                    (derivation_index, is_change)
+                } else {
+                    // TODO: maybe we could try out something here? Like bruteforcing the next 200 indexes?
+                    log::error!(
+                        "Could not get derivation index for coin '{}' (address: '{}')",
+                        &utxo.outpoint,
+                        &address
+                    );
+                    continue;
+                }
             }
-        } else {
-            // TODO: maybe we could try out something here? Like bruteforcing the next 200 indexes?
-            log::error!(
-                "Could not get derivation index for coin '{}' (address: '{}')",
-                &utxo.outpoint,
-                &address
-            );
+            UTxOAddress::DerivIndex(index, is_change) => (index, is_change),
+        };
+        // First of if we are receiving coins that are beyond our next derivation index,
+        // adjust it.
+        if derivation_index > db_conn.receive_index() {
+            db_conn.set_receive_index(derivation_index, secp);
+        }
+        if derivation_index > db_conn.change_index() {
+            db_conn.set_change_index(derivation_index, secp);
+        }
+
+        // Now record this coin as a newly received one.
+        if !curr_coins.contains_key(&utxo.outpoint) {
+            let coin = Coin {
+                outpoint,
+                is_immature,
+                amount,
+                derivation_index,
+                is_change,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+            };
+            received.push(coin);
         }
     }
     log::debug!("Newly received coins: {:?}", received);
@@ -140,10 +149,6 @@ fn update_coins(
         .chain(spending.iter().cloned())
         .collect();
     let (spent, expired_spending) = bit.spent_coins(spending_coins.as_slice());
-    let spent = spent
-        .into_iter()
-        .map(|(oupoint, txid, block)| (oupoint, txid, block.height, block.time))
-        .collect();
     log::debug!("Newly spent coins: {:?}", spent);
 
     UpdatedCoins {
@@ -239,20 +244,44 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
 
 fn updates(
     db_conn: &mut Box<dyn DatabaseConnection>,
-    bit: &impl BitcoinInterface,
+    bit: &mut impl BitcoinInterface,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
-    // Check if there was a new block before updating ourselves.
+    // Check if there was a new block before we update our state.
+    //
+    // Some backends (such as Electrum) need to perform an explicit sync to provide updated data
+    // about the Bitcoin network. For those the common ancestor is immediately returned in case
+    // there was a reorg. For other backends (such as bitcoind) this function always return
+    // `Ok(None)`. We leverage this to query the next tip and poll for reorgs only in this case.
+    // FIXME: harmonize the Bitcoin backend interface, this intricacy is due to the introduction of
+    // an Electrum backend with the bitcoind-specific backend interface.
     let current_tip = db_conn.chain_tip().expect("Always set at first startup");
-    let latest_tip = match new_tip(bit, &current_tip) {
-        TipUpdate::Same => current_tip,
-        TipUpdate::Progress(new_tip) => new_tip,
-        TipUpdate::Reorged(new_tip) => {
+    let (receive_index, change_index) = (db_conn.receive_index(), db_conn.change_index());
+    let latest_tip = match bit.sync_wallet(receive_index, change_index) {
+        Ok(None) => {
+            match new_tip(bit, &current_tip) {
+                TipUpdate::Same => current_tip,
+                TipUpdate::Progress(new_tip) => new_tip,
+                TipUpdate::Reorged(new_tip) => {
+                    // The block chain was reorganized. Rollback our state down to the common ancestor
+                    // between our former chain and the new one, then restart fresh.
+                    db_conn.rollback_tip(&new_tip);
+                    log::info!("Tip was rolled back to '{}'.", new_tip);
+                    return updates(db_conn, bit, descs, secp);
+                }
+            }
+        }
+        Ok(Some(reorg_common_ancestor)) => {
             // The block chain was reorganized. Rollback our state down to the common ancestor
             // between our former chain and the new one, then restart fresh.
-            db_conn.rollback_tip(&new_tip);
-            log::info!("Tip was rolled back to '{}'.", new_tip);
+            db_conn.rollback_tip(&reorg_common_ancestor);
+            log::info!("Tip was rolled back to '{}'.", &reorg_common_ancestor);
+            return updates(db_conn, bit, descs, secp);
+        }
+        Err(e) => {
+            log::error!("Error syncing wallet: '{}'.", e);
+            thread::sleep(time::Duration::from_secs(2));
             return updates(db_conn, bit, descs, secp);
         }
     };
@@ -289,7 +318,7 @@ fn updates(
 // Check if there is any rescan of the backend ongoing or one that just finished.
 fn rescan_check(
     db_conn: &mut Box<dyn DatabaseConnection>,
-    bit: &impl BitcoinInterface,
+    bit: &mut impl BitcoinInterface,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
@@ -356,7 +385,7 @@ pub fn sync_poll_interval() -> time::Duration {
 
 /// Update our state from the Bitcoin backend.
 pub fn poll(
-    bit: &sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+    bit: &mut sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
     db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     descs: &[descriptors::SinglePathLianaDesc],

@@ -986,7 +986,7 @@ impl DaemonControl {
     /// Trigger a rescan of the block chain for transactions involving our main descriptor between
     /// the given date and the current tip.
     /// The date must be after the genesis block time and before the current tip blocktime.
-    pub fn start_rescan(&self, timestamp: u32) -> Result<(), CommandError> {
+    pub fn start_rescan(&mut self, timestamp: u32) -> Result<(), CommandError> {
         let mut db_conn = self.db.connection();
         let genesis_timestamp = self.bitcoin.genesis_block_timestamp();
 

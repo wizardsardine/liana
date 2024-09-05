@@ -3,9 +3,15 @@ from bip32.utils import _pubkey_to_fingerprint
 from bip380.descriptors import Descriptor
 from concurrent import futures
 from test_framework.bitcoind import Bitcoind
+from test_framework.electrs import Electrs
 from test_framework.lianad import Lianad
 from test_framework.signer import SingleSigner, MultiSigner
-from test_framework.utils import EXECUTOR_WORKERS, USE_TAPROOT
+from test_framework.utils import (
+    BITCOIN_BACKEND_TYPE,
+    EXECUTOR_WORKERS,
+    USE_TAPROOT,
+    BitcoinBackendType,
+)
 
 import hashlib
 import os
@@ -115,6 +121,26 @@ def bitcoind(directory):
     bitcoind.cleanup()
 
 
+@pytest.fixture
+def bitcoin_backend(directory, bitcoind):
+
+    if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+        yield bitcoind
+        bitcoind.cleanup()
+    elif BITCOIN_BACKEND_TYPE is BitcoinBackendType.Electrs:
+        electrs = Electrs(
+            electrs_dir=os.path.join(directory, "electrs"),
+            bitcoind_dir=bitcoind.bitcoin_dir,
+            bitcoind_rpcport=bitcoind.rpcport,
+            bitcoind_p2pport=bitcoind.p2pport,
+        )
+        electrs.startup()
+        yield electrs
+        electrs.cleanup()
+    else:
+        raise NotImplementedError
+
+
 def xpub_fingerprint(hd):
     return _pubkey_to_fingerprint(hd.pubkey).hex()
 
@@ -127,10 +153,9 @@ def single_key_desc(prim_fg, prim_xpub, reco_fg, reco_xpub, csv_value, is_taproo
 
 
 @pytest.fixture
-def lianad(bitcoind, directory):
+def lianad(bitcoin_backend, directory):
     datadir = os.path.join(directory, "lianad")
     os.makedirs(datadir, exist_ok=True)
-    bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
 
     signer = SingleSigner(is_taproot=USE_TAPROOT)
     (prim_fingerprint, primary_xpub), (reco_fingerprint, recovery_xpub) = (
@@ -155,8 +180,7 @@ def lianad(bitcoind, directory):
         datadir,
         signer,
         main_desc,
-        bitcoind.rpcport,
-        bitcoind_cookie,
+        bitcoin_backend,
     )
 
     try:
@@ -208,10 +232,9 @@ def multisig_desc(multi_signer, csv_value, is_taproot):
 
 
 @pytest.fixture
-def lianad_multisig(bitcoind, directory):
+def lianad_multisig(bitcoin_backend, directory):
     datadir = os.path.join(directory, "lianad")
     os.makedirs(datadir, exist_ok=True)
-    bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
 
     # A 3-of-4 that degrades into a 2-of-5 after 10 blocks
     csv_value = 10
@@ -224,8 +247,7 @@ def lianad_multisig(bitcoind, directory):
         datadir,
         signer,
         main_desc,
-        bitcoind.rpcport,
-        bitcoind_cookie,
+        bitcoin_backend,
     )
 
     try:
@@ -261,10 +283,9 @@ def multipath_desc(multi_signer, csv_values, is_taproot):
 
 
 @pytest.fixture
-def lianad_multipath(bitcoind, directory):
+def lianad_multipath(bitcoin_backend, directory):
     datadir = os.path.join(directory, "lianad")
     os.makedirs(datadir, exist_ok=True)
-    bitcoind_cookie = os.path.join(bitcoind.bitcoin_dir, "regtest", ".cookie")
 
     # A 3-of-4 that degrades into a 3-of-5 after 10 blocks and into a 1-of-10 after 20 blocks.
     csv_values = [10, 20]
@@ -279,8 +300,7 @@ def lianad_multipath(bitcoind, directory):
         datadir,
         signer,
         main_desc,
-        bitcoind.rpcport,
-        bitcoind_cookie,
+        bitcoin_backend,
     )
 
     try:

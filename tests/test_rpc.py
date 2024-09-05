@@ -686,11 +686,13 @@ def test_start_rescan(lianad, bitcoind):
     # descriptor.
     coins_before = sorted_coins()
     lianad.restart_fresh(bitcoind)
-    assert len(list_coins()) == 0
+    if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+        assert len(list_coins()) == 0
 
     # The wallet isn't aware what derivation indexes were used. Necessarily it'll start
     # from 0.
-    assert lianad.rpc.getnewaddress() == first_address
+    if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
+        assert lianad.rpc.getnewaddress() == first_address
 
     # Once the rescan is done, we must have detected all previous transactions.
     lianad.rpc.startrescan(initial_timestamp)
@@ -900,6 +902,9 @@ def test_create_recovery(lianad, bitcoind):
     bitcoind.generate_block(9, wait_for_mempool=txid)
 
     # Now we can create a recovery tx that sweeps the first 3 coins.
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
     res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 18)
     reco_psbt = PSBT.from_base64(res["psbt"])
 
@@ -1145,7 +1150,8 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     # feerate to set the min feerate, instead of 1 sat/vb of first
     # transaction:
     with pytest.raises(
-        RpcError, match=f"Feerate {int(rbf_1_feerate)} too low for minimum feerate 10."
+        RpcError,
+        match=f"Feerate {int(rbf_1_feerate)} too low for minimum feerate {int(rbf_1_feerate) + 1}.",
     ):
         lianad.rpc.rbfpsbt(first_txid, False, int(rbf_1_feerate))
     # Using 1 more for feerate works.
