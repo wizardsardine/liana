@@ -1,11 +1,12 @@
 mod backend;
-mod bitcoind;
 mod descriptor;
 mod mnemonic;
+mod node;
 mod share_xpubs;
 
-pub use bitcoind::{
-    DefineBitcoind, DownloadState, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep,
+pub use node::{
+    bitcoind::{DownloadState, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep},
+    DefineNode,
 };
 
 pub use descriptor::{BackupDescriptor, DefineDescriptor, ImportDescriptor, RegisterDescriptor};
@@ -21,9 +22,9 @@ use iced::{Command, Subscription};
 use liana_ui::widget::*;
 
 use crate::{
-    bitcoind::Bitcoind,
     hw::HardwareWallets,
     installer::{context::Context, message::Message, view},
+    node::bitcoind::Bitcoind,
 };
 
 pub trait Step {

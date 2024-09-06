@@ -29,8 +29,8 @@ use crate::{
         menu::Menu,
         view::{hw, warning::warn},
     },
-    bitcoind::{RpcAuthType, RpcAuthValues},
     hw::HardwareWallet,
+    node::bitcoind::{RpcAuthType, RpcAuthValues},
 };
 
 pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
@@ -51,7 +51,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
                         Button::new(
                             Row::new()
                                 .push(badge::Badge::new(icon::bitcoin_icon()))
-                                .push(text("Bitcoin Core").bold())
+                                .push(text("Node").bold())
                                 .padding(10)
                                 .spacing(20)
                                 .align_items(Alignment::Center)
@@ -161,7 +161,7 @@ pub fn bitcoind_settings<'a>(
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
-                        Button::new(text("Bitcoin Core").size(30).bold())
+                        Button::new(text("Node").size(30).bold())
                             .style(theme::Button::Transparent)
                             .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings)),
                     ),
@@ -298,6 +298,7 @@ pub fn remote_backend_section<'a>(
 }
 
 pub fn bitcoind_edit<'a>(
+    is_configured_node_type: bool,
     network: Network,
     blockheight: i32,
     addr: &form::Value<String>,
@@ -306,7 +307,7 @@ pub fn bitcoind_edit<'a>(
     processing: bool,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
-    if blockheight != 0 {
+    if is_configured_node_type && blockheight != 0 {
         col = col
             .push(
                 Row::new()
@@ -444,6 +445,7 @@ pub fn bitcoind_edit<'a>(
 }
 
 pub fn bitcoind<'a>(
+    is_configured_node_type: bool,
     network: Network,
     config: &liana::config::BitcoindConfig,
     blockheight: i32,
@@ -451,7 +453,7 @@ pub fn bitcoind<'a>(
     can_edit: bool,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
-    if blockheight != 0 {
+    if is_configured_node_type && blockheight != 0 {
         col = col
             .push(
                 Row::new()
@@ -482,16 +484,18 @@ pub fn bitcoind<'a>(
     }
 
     let mut rows = vec![];
-    match &config.rpc_auth {
-        BitcoindRpcAuth::CookieFile(path) => {
-            rows.push(("Cookie file path:", path.to_str().unwrap().to_string()));
+    if is_configured_node_type {
+        match &config.rpc_auth {
+            BitcoindRpcAuth::CookieFile(path) => {
+                rows.push(("Cookie file path:", path.to_str().unwrap().to_string()));
+            }
+            BitcoindRpcAuth::UserPass(user, password) => {
+                rows.push(("User:", user.clone()));
+                rows.push(("Password:", password.clone()));
+            }
         }
-        BitcoindRpcAuth::UserPass(user, password) => {
-            rows.push(("User:", user.clone()));
-            rows.push(("Password:", password.clone()));
-        }
+        rows.push(("Socket address:", config.addr.to_string()));
     }
-    rows.push(("Socket address:", config.addr.to_string()));
 
     let mut col_fields = Column::new();
     for (k, v) in rows {
@@ -510,7 +514,188 @@ pub fn bitcoind<'a>(
                         Row::new()
                             .push(badge::Badge::new(icon::bitcoin_icon()))
                             .push(text("Bitcoin Core").bold())
-                            .push(is_running_label(is_running))
+                            .push_maybe(if is_configured_node_type {
+                                Some(is_running_label(is_running))
+                            } else {
+                                None
+                            })
+                            .spacing(20)
+                            .align_items(Alignment::Center)
+                            .width(Length::Fill),
+                    )
+                    .push(if can_edit {
+                        Button::new(icon::pencil_icon())
+                            .style(theme::Button::TransparentBorder)
+                            .on_press(SettingsEditMessage::Select)
+                    } else {
+                        Button::new(icon::pencil_icon()).style(theme::Button::TransparentBorder)
+                    })
+                    .align_items(Alignment::Center),
+            )
+            .push(separation().width(Length::Fill))
+            .push(col.push(col_fields))
+            .spacing(20),
+    ))
+    .width(Length::Fill)
+    .into()
+}
+
+pub fn electrum_edit<'a>(
+    is_configured_node_type: bool,
+    network: Network,
+    blockheight: i32,
+    addr: &form::Value<String>,
+    processing: bool,
+) -> Element<'a, SettingsEditMessage> {
+    let mut col = Column::new().spacing(20);
+    if is_configured_node_type && blockheight != 0 {
+        col = col
+            .push(
+                Row::new()
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::network_icon()))
+                            .push(
+                                Column::new()
+                                    .push(text("Network:"))
+                                    .push(text(network.to_string()).bold()),
+                            )
+                            .spacing(10)
+                            .width(Length::FillPortion(1)),
+                    )
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::block_icon()))
+                            .push(
+                                Column::new()
+                                    .push(text("Block Height:"))
+                                    .push(text(blockheight.to_string()).bold()),
+                            )
+                            .spacing(10)
+                            .width(Length::FillPortion(1)),
+                    ),
+            )
+            .push(separation().width(Length::Fill));
+    }
+
+    col = col.push(
+        Column::new()
+            .push(text("Address:").bold().small())
+            .push(
+                form::Form::new_trimmed("127:0.0.1:50001", addr, |value| {
+                    SettingsEditMessage::FieldEdited("address", value)
+                })
+                .warning("Please enter a valid address")
+                .size(P1_SIZE)
+                .padding(5),
+            )
+            .spacing(5),
+    );
+
+    let mut cancel_button = button::transparent(None, " Cancel ").padding(5);
+    let mut confirm_button = button::primary(None, " Save ").padding(5);
+    if !processing {
+        cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
+        confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
+    }
+
+    card::simple(Container::new(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(badge::Badge::new(icon::bitcoin_icon()))
+                    .push(text("Electrum").bold())
+                    .padding(10)
+                    .spacing(20)
+                    .align_items(Alignment::Center)
+                    .width(Length::Fill),
+            )
+            .push(separation().width(Length::Fill))
+            .push(col)
+            .push(
+                Container::new(
+                    Row::new()
+                        .push(cancel_button)
+                        .push(confirm_button)
+                        .spacing(10)
+                        .align_items(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .align_x(alignment::Horizontal::Right),
+            )
+            .spacing(20),
+    ))
+    .width(Length::Fill)
+    .into()
+}
+
+pub fn electrum<'a>(
+    is_configured_node_type: bool,
+    network: Network,
+    config: &liana::config::ElectrumConfig,
+    blockheight: i32,
+    is_running: Option<bool>,
+    can_edit: bool,
+) -> Element<'a, SettingsEditMessage> {
+    let mut col = Column::new().spacing(20);
+    if is_configured_node_type && blockheight != 0 {
+        col = col
+            .push(
+                Row::new()
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::network_icon()))
+                            .push(
+                                Column::new()
+                                    .push(text("Network:"))
+                                    .push(text(network.to_string()).bold()),
+                            )
+                            .spacing(10)
+                            .width(Length::FillPortion(1)),
+                    )
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::block_icon()))
+                            .push(
+                                Column::new()
+                                    .push(text("Block Height:"))
+                                    .push(text(blockheight.to_string()).bold()),
+                            )
+                            .spacing(10)
+                            .width(Length::FillPortion(1)),
+                    ),
+            )
+            .push(separation().width(Length::Fill));
+    }
+
+    let rows = if is_configured_node_type {
+        vec![("Address:", config.addr.to_string())]
+    } else {
+        vec![]
+    };
+
+    let mut col_fields = Column::new();
+    for (k, v) in rows {
+        col_fields = col_fields.push(
+            Row::new()
+                .push(Container::new(text(k).bold().small()).width(Length::Fill))
+                .push(text(v).small()),
+        );
+    }
+
+    card::simple(Container::new(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(
+                        Row::new()
+                            .push(badge::Badge::new(icon::bitcoin_icon()))
+                            .push(text("Electrum").bold())
+                            .push_maybe(if is_configured_node_type {
+                                Some(is_running_label(is_running))
+                            } else {
+                                None
+                            })
                             .spacing(20)
                             .align_items(Alignment::Center)
                             .width(Length::Fill),

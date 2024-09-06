@@ -39,7 +39,7 @@ use crate::{
 
 pub use message::Message;
 use step::{
-    BackupDescriptor, BackupMnemonic, ChooseBackend, DefineBitcoind, DefineDescriptor, Final,
+    BackupDescriptor, BackupMnemonic, ChooseBackend, DefineDescriptor, DefineNode, Final,
     ImportDescriptor, ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic,
     RegisterDescriptor, RemoteBackendLogin, SelectBitcoindTypeStep, ShareXpubs, Step,
 };
@@ -126,7 +126,7 @@ impl Installer {
                     RemoteBackendLogin::new(network).into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.data_dir).into(),
-                    DefineBitcoind::new().into(),
+                    DefineNode::default().into(),
                     Final::new().into(),
                 ],
                 UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
@@ -139,7 +139,7 @@ impl Installer {
                     RegisterDescriptor::new_import_wallet().into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.data_dir).into(),
-                    DefineBitcoind::new().into(),
+                    DefineNode::default().into(),
                     Final::new().into(),
                 ],
             },
@@ -689,7 +689,7 @@ pub fn extract_daemon_config(ctx: &Context) -> Config {
             .expect("Context must have a descriptor at this point"),
         data_dir: Some(ctx.data_dir.clone()),
         bitcoin_config: ctx.bitcoin_config.clone(),
-        bitcoind_config: ctx.bitcoind_config.clone(),
+        bitcoin_backend: ctx.bitcoin_backend.clone(),
     }
 }
 
@@ -701,6 +701,7 @@ pub enum Error {
     Backend(Arc<DaemonError>),
     Settings(SettingsError),
     Bitcoind(String),
+    Electrum(String),
     CannotCreateDatadir(String),
     CannotCreateFile(String),
     CannotWriteToFile(String),
@@ -752,6 +753,7 @@ impl std::fmt::Display for Error {
             Self::Backend(e) => write!(f, "Remote backend error: {}", e),
             Self::Settings(e) => write!(f, "Settings file error: {}", e),
             Self::Bitcoind(e) => write!(f, "Failed to ping bitcoind: {}", e),
+            Self::Electrum(e) => write!(f, "Failed to ping Electrum: {}", e),
             Self::CannotCreateDatadir(e) => write!(f, "Failed to create datadir: {}", e),
             Self::CannotGetAvailablePort(e) => write!(f, "Failed to get available port: {}", e),
             Self::CannotWriteToFile(e) => write!(f, "Failed to write to file: {}", e),

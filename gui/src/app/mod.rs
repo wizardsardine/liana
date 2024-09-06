@@ -35,8 +35,8 @@ use state::{
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
-    bitcoind::Bitcoind,
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
+    node::bitcoind::Bitcoind,
 };
 
 use self::state::SettingsState;

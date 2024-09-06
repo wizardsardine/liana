@@ -32,13 +32,16 @@ use liana_ui::{
 };
 
 use crate::{
-    bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
     hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
-        message::{self, Message},
+        message::{self, DefineBitcoind, DefineNode, Message},
         prompt,
         step::{DownloadState, InstallState},
         Error,
+    },
+    node::{
+        bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
+        electrum, NodeType,
     },
 };
 
@@ -524,11 +527,12 @@ pub fn import_descriptor<'a>(
         "Import the wallet",
         Column::new()
             .push(Column::new().spacing(20).push(col_descriptor).push(text(
-                "After creating the wallet, \
-                            you will need to perform a rescan of \
-                            the blockchain in order to see your \
-                            coins and past transactions. This can \
-                            be done in Settings > Bitcoin Core.",
+                "If you are using a Bitcoin Core node, \
+                you will need to perform a rescan of \
+                the blockchain after creating the wallet \
+                in order to see your coins and past \
+                transactions. This can be done in \
+                Settings > Node.",
             )))
             .push(
                 if imported_descriptor.value.is_empty() || !imported_descriptor.valid {
@@ -1159,12 +1163,107 @@ pub fn help_backup<'a>() -> Element<'a, Message> {
     text(prompt::BACKUP_DESCRIPTOR_HELP).small().into()
 }
 
-pub fn define_bitcoin<'a>(
+pub fn define_bitcoin_node<'a>(
     progress: (usize, usize),
+    available_node_types: impl Iterator<Item = NodeType>,
+    selected_node_type: NodeType,
+    node_view: Element<'a, Message>,
+    is_running: Option<&Result<(), Error>>,
+    can_try_ping: bool,
+    waiting_for_ping_result: bool,
+) -> Element<'a, Message> {
+    let col = Column::new()
+        .push(
+            available_node_types.fold(
+                Row::new()
+                    .push(text("Node type:").small().bold())
+                    .spacing(10),
+                |row, node_type| {
+                    row.push(radio(
+                        match node_type {
+                            NodeType::Bitcoind => "Bitcoin Core",
+                            NodeType::Electrum => "Electrum",
+                        },
+                        node_type,
+                        Some(selected_node_type),
+                        |new_selection| {
+                            Message::DefineNode(message::DefineNode::NodeTypeSelected(
+                                new_selection,
+                            ))
+                        },
+                    ))
+                    .spacing(30)
+                    .align_items(Alignment::Center)
+                },
+            ),
+        )
+        .push(node_view)
+        .push_maybe(if waiting_for_ping_result {
+            Some(Container::new(
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(text("Checking connection...")),
+            ))
+        } else if is_running.is_some() {
+            is_running.map(|res| {
+                if res.is_ok() {
+                    Container::new(
+                        Row::new()
+                            .spacing(10)
+                            .align_items(Alignment::Center)
+                            .push(icon::circle_check_icon().style(color::GREEN))
+                            .push(text("Connection checked").style(color::GREEN)),
+                    )
+                } else {
+                    Container::new(
+                        Row::new()
+                            .spacing(10)
+                            .align_items(Alignment::Center)
+                            .push(icon::circle_cross_icon().style(color::RED))
+                            .push(text("Connection failed").style(color::RED)),
+                    )
+                }
+            })
+        } else {
+            Some(Container::new(Space::with_height(Length::Fixed(21.0))))
+        })
+        .push(
+            Row::new()
+                .spacing(10)
+                .push(Container::new(
+                    button::secondary(None, "Check connection")
+                        .on_press_maybe(if can_try_ping && !waiting_for_ping_result {
+                            Some(Message::DefineNode(DefineNode::Ping))
+                        } else {
+                            None
+                        })
+                        .width(Length::Fixed(200.0)),
+                ))
+                .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
+                    button::primary(None, "Next")
+                        .on_press(Message::Next)
+                        .width(Length::Fixed(200.0))
+                } else {
+                    button::primary(None, "Next").width(Length::Fixed(200.0))
+                }),
+        )
+        .spacing(50);
+
+    layout(
+        progress,
+        None,
+        "Set up connection to the Bitcoin node",
+        col,
+        true,
+        Some(Message::Previous),
+    )
+}
+
+pub fn define_bitcoind<'a>(
     address: &form::Value<String>,
     rpc_auth_vals: &RpcAuthValues,
     selected_auth_type: &RpcAuthType,
-    is_running: Option<&Result<(), Error>>,
 ) -> Element<'a, Message> {
     let is_loopback = if let Some((ip, _port)) = address.value.clone().rsplit_once(':') {
         let (ipv4, ipv6) = (Ipv4Addr::from_str(ip), Ipv6Addr::from_str(ip));
@@ -1181,9 +1280,8 @@ pub fn define_bitcoin<'a>(
         .push(text("Address:").bold())
         .push(
             form::Form::new_trimmed("Address", address, |msg| {
-                Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
-                    ConfigField::Address,
-                    msg,
+                Message::DefineNode(DefineNode::DefineBitcoind(
+                    DefineBitcoind::ConfigFieldEdited(ConfigField::Address, msg),
                 ))
             })
             .warning("Please enter correct address")
@@ -1219,9 +1317,9 @@ pub fn define_bitcoin<'a>(
                             *auth_type,
                             Some(*selected_auth_type),
                             |new_selection| {
-                                Message::DefineBitcoind(
-                                    message::DefineBitcoind::RpcAuthTypeSelected(new_selection),
-                                )
+                                Message::DefineNode(DefineNode::DefineBitcoind(
+                                    DefineBitcoind::RpcAuthTypeSelected(new_selection),
+                                ))
                             },
                         ))
                         .spacing(30)
@@ -1232,9 +1330,8 @@ pub fn define_bitcoin<'a>(
         .push(match selected_auth_type {
             RpcAuthType::CookieFile => Row::new().push(
                 form::Form::new_trimmed("Cookie path", &rpc_auth_vals.cookie_path, |msg| {
-                    Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
-                        ConfigField::CookieFilePath,
-                        msg,
+                    Message::DefineNode(DefineNode::DefineBitcoind(
+                        DefineBitcoind::ConfigFieldEdited(ConfigField::CookieFilePath, msg),
                     ))
                 })
                 .warning("Please enter correct path")
@@ -1244,9 +1341,8 @@ pub fn define_bitcoin<'a>(
             RpcAuthType::UserPass => Row::new()
                 .push(
                     form::Form::new_trimmed("User", &rpc_auth_vals.user, |msg| {
-                        Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
-                            ConfigField::User,
-                            msg,
+                        Message::DefineNode(DefineNode::DefineBitcoind(
+                            DefineBitcoind::ConfigFieldEdited(ConfigField::User, msg),
                         ))
                     })
                     .warning("Please enter correct user")
@@ -1255,9 +1351,8 @@ pub fn define_bitcoin<'a>(
                 )
                 .push(
                     form::Form::new_trimmed("Password", &rpc_auth_vals.password, |msg| {
-                        Message::DefineBitcoind(message::DefineBitcoind::ConfigFieldEdited(
-                            ConfigField::Password,
-                            msg,
+                        Message::DefineNode(DefineNode::DefineBitcoind(
+                            DefineBitcoind::ConfigFieldEdited(ConfigField::Password, msg),
                         ))
                     })
                     .warning("Please enter correct password")
@@ -1268,69 +1363,32 @@ pub fn define_bitcoin<'a>(
         })
         .spacing(10);
 
-    let check_connect_enable = if let RpcAuthType::UserPass = selected_auth_type {
-        address.valid
-            && !rpc_auth_vals.password.value.is_empty()
-            && !rpc_auth_vals.user.value.is_empty()
-    } else {
-        address.valid && !rpc_auth_vals.cookie_path.value.is_empty()
-    };
-    layout(
-        progress,
-        None,
-        "Set up connection to the Bitcoin full node",
-        Column::new()
-            .push(col_address)
-            .push(col_auth)
-            .push_maybe(if is_running.is_some() {
-                is_running.map(|res| {
-                    if res.is_ok() {
-                        Container::new(
-                            Row::new()
-                                .spacing(10)
-                                .align_items(Alignment::Center)
-                                .push(icon::circle_check_icon().style(color::GREEN))
-                                .push(text("Connection checked").style(color::GREEN)),
-                        )
-                    } else {
-                        Container::new(
-                            Row::new()
-                                .spacing(10)
-                                .align_items(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(color::RED))
-                                .push(text("Connection failed").style(color::RED)),
-                        )
-                    }
-                })
-            } else {
-                Some(Container::new(Space::with_height(Length::Fixed(25.0))))
+    Column::new()
+        .push(col_address)
+        .push(col_auth)
+        .spacing(50)
+        .into()
+}
+
+pub fn define_electrum<'a>(address: &form::Value<String>) -> Element<'a, Message> {
+    let col_address = Column::new()
+        .push(text("Address:").bold())
+        .push(
+            form::Form::new_trimmed("127.0.0.1:50001", address, |msg| {
+                Message::DefineNode(DefineNode::DefineElectrum(
+                    message::DefineElectrum::ConfigFieldEdited(electrum::ConfigField::Address, msg),
+                ))
             })
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(Container::new(
-                        button::secondary(None, "Check connection")
-                            .on_press_maybe(if check_connect_enable {
-                                Some(Message::DefineBitcoind(
-                                    message::DefineBitcoind::PingBitcoind,
-                                ))
-                            } else {
-                                None
-                            })
-                            .width(Length::Fixed(200.0)),
-                    ))
-                    .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
-                        button::primary(None, "Next")
-                            .on_press(Message::Next)
-                            .width(Length::Fixed(200.0))
-                    } else {
-                        button::primary(None, "Next").width(Length::Fixed(200.0))
-                    }),
+            .warning(
+                "Please enter correct address (including port), \
+                optionally prefixed with tcp:// or ssl://",
             )
-            .spacing(50),
-        true,
-        Some(Message::Previous),
-    )
+            .size(text::P1_SIZE)
+            .padding(10),
+        )
+        .spacing(10);
+
+    Column::new().push(col_address).spacing(50).into()
 }
 
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
@@ -1338,91 +1396,107 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
         progress,
         None,
         "Bitcoin node management",
-        Column::new().push(
-            Row::new()
-                .align_items(Alignment::Start)
-                .spacing(20)
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .push(text("Manage your own Bitcoin node").bold())
-                    )
-                    .padding(20),
-                )
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .push(text("Have Liana manage and run a dedicated Bitcoin node").bold())
-                    )
-                    .padding(20),
-                ),
-        )
-        .push(
-            Row::new()
-                .align_items(Alignment::Start)
-                .spacing(20)
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .align_items(Alignment::Start)
-                            .push(text("Liana will connect to your existing instance of Bitcoin Core. You will have to make sure Bitcoin Core is running when you use Liana.\n\n(Use this if you already have a full node on your machine, and don't need a new instance)"))
-                    )
-                    .padding(20),
-                )
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .align_items(Alignment::Start)
-                            .push(text("Liana will run its own instance of Bitcoin Core. This will use a pruned node, and perform the synchronization in the Liana folder.\n\nIf you select this option, Bitcoin Core will be downloaded, installed and started on the next step.\n\n(Use this if you don't want to deal with Bitcoin Core yourself, or need a new, dedicated instance for Liana)"))
-                    )
-                    .padding(20),
-                ),
-        )
-        .push(
-            Row::new()
-                .align_items(Alignment::End)
-                .spacing(20)
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .align_items(Alignment::Center)
-                            .push(
-                                button::primary(None, "Select")
+        Column::new()
+            .push(
+                Row::new()
+                    .align_items(Alignment::Start)
+                    .spacing(20)
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
                                 .width(Length::Fixed(300.0))
-                                    .on_press(Message::SelectBitcoindType(
-                                        message::SelectBitcoindTypeMsg::UseExternal(true),
-                                    )),
-                            )
+                                .push(text("I already have a node").bold()),
+                        )
+                        .padding(20),
                     )
-                    .padding(20),
-                )
-                .push(
-                    Container::new(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::Fixed(300.0))
-                            .align_items(Alignment::Center)
-                            .push(
-                                button::primary(None, "Select")
-                                    .width(Length::Fixed(300.0))
-                                    .on_press(Message::SelectBitcoindType(
-                                        message::SelectBitcoindTypeMsg::UseExternal(false),
-                                    )),
-                            )
+                    .push(
+                        Container::new(
+                            Column::new().spacing(20).width(Length::Fixed(300.0)).push(
+                                text(
+                                    "I want Liana to automatically install \
+                                    a Bitcoin node on my device",
+                                )
+                                .bold(),
+                            ),
+                        )
+                        .padding(20),
+                    ),
+            )
+            .push(
+                Row::new()
+                    .align_items(Alignment::Start)
+                    .spacing(20)
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(300.0))
+                                .align_items(Alignment::Start)
+                                .push(text(
+                                    "Select this option if you already have \
+                                    a Bitcoin node running locally or remotely. \
+                                    Liana will connect to it.",
+                                )),
+                        )
+                        .padding(20),
                     )
-                    .padding(20),
-                ),
-        ),
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(300.0))
+                                .align_items(Alignment::Start)
+                                .push(text(
+                                    "Liana will install a pruned node \
+                                    on your computer. You won't need to do anything \
+                                    except have some disk space available \
+                                    (~30GB required on mainnet) and \
+                                    wait for the initial synchronization with the \
+                                    network (it can take some days depending on \
+                                    your internet connection speed).",
+                                )),
+                        )
+                        .padding(20),
+                    ),
+            )
+            .push(
+                Row::new()
+                    .align_items(Alignment::End)
+                    .spacing(20)
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(300.0))
+                                .align_items(Alignment::Center)
+                                .push(
+                                    button::primary(None, "Select")
+                                        .width(Length::Fixed(300.0))
+                                        .on_press(Message::SelectBitcoindType(
+                                            message::SelectBitcoindTypeMsg::UseExternal(true),
+                                        )),
+                                ),
+                        )
+                        .padding(20),
+                    )
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(300.0))
+                                .align_items(Alignment::Center)
+                                .push(
+                                    button::primary(None, "Select")
+                                        .width(Length::Fixed(300.0))
+                                        .on_press(Message::SelectBitcoindType(
+                                            message::SelectBitcoindTypeMsg::UseExternal(false),
+                                        )),
+                                ),
+                        )
+                        .padding(20),
+                    ),
+            ),
         true,
         Some(Message::Previous),
     )
@@ -1436,7 +1510,7 @@ pub fn start_internal_bitcoind<'a>(
     download_state: Option<&DownloadState>,
     install_state: Option<&InstallState>,
 ) -> Element<'a, Message> {
-    let version = crate::bitcoind::VERSION;
+    let version = crate::node::bitcoind::VERSION;
     let mut next_button = button::primary(None, "Next").width(Length::Fixed(200.0));
     if let Some(Ok(_)) = started {
         next_button = next_button.on_press(Message::Next);

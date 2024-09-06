@@ -27,9 +27,9 @@ impl EmbeddedDaemon {
 
     pub async fn command<T, F>(&self, method: F) -> Result<T, DaemonError>
     where
-        F: FnOnce(&DaemonControl) -> Result<T, DaemonError>,
+        F: FnOnce(&mut DaemonControl) -> Result<T, DaemonError>,
     {
-        match self.handle.lock().await.as_ref() {
+        match self.handle.lock().await.as_mut() {
             Some(DaemonHandle::Controller { control, .. }) => method(control),
             None => Err(DaemonError::DaemonStopped),
         }

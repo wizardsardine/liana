@@ -1,5 +1,5 @@
 use std::convert::{From, TryInto};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -9,7 +9,9 @@ use iced::Command;
 use tracing::info;
 
 use liana::{
-    config::{BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config},
+    config::{
+        BitcoinBackend, BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config, ElectrumConfig,
+    },
     miniscript::bitcoin::Network,
 };
 
@@ -17,8 +19,11 @@ use liana_ui::{component::form, widget::Element};
 
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::settings::State, view},
-    bitcoind::{RpcAuthType, RpcAuthValues},
     daemon::Daemon,
+    node::{
+        bitcoind::{RpcAuthType, RpcAuthValues},
+        NodeType,
+    },
 };
 
 #[derive(Debug)]
@@ -27,6 +32,7 @@ pub struct BitcoindSettingsState {
     config_updated: bool,
 
     node_settings: Option<BitcoindSettings>,
+    electrum_settings: Option<ElectrumSettings>,
     rescan_settings: RescanSetting,
 }
 
@@ -37,15 +43,50 @@ impl BitcoindSettingsState {
         daemon_is_external: bool,
         bitcoind_is_internal: bool,
     ) -> Self {
+        let mut configured_node_type = None;
+        let (bitcoind_config, electrum_config) =
+            match config.clone().and_then(|c| c.bitcoin_backend) {
+                Some(BitcoinBackend::Bitcoind(bitcoind_config)) => {
+                    configured_node_type = Some(NodeType::Bitcoind);
+                    let dummy_electrum = ElectrumConfig {
+                        addr: String::default(),
+                    };
+                    (Some(bitcoind_config), Some(dummy_electrum))
+                }
+                Some(BitcoinBackend::Electrum(electrum_config)) => {
+                    configured_node_type = Some(NodeType::Electrum);
+                    // The dummy values will be ignored.
+                    let dummy_bitcoind = BitcoindConfig {
+                        addr: SocketAddr::V4(SocketAddrV4::from_str("127.0.0.1:10000").unwrap()),
+                        rpc_auth: BitcoindRpcAuth::CookieFile(PathBuf::from_str("").unwrap()),
+                    };
+                    (Some(dummy_bitcoind), Some(electrum_config))
+                }
+                _ => (None, None),
+            };
         BitcoindSettingsState {
             warning: None,
             config_updated: false,
-            node_settings: config.map(|config| {
+            node_settings: bitcoind_config.map(|bitcoind_config| {
                 BitcoindSettings::new(
-                    config.bitcoin_config.clone(),
-                    config.bitcoind_config.unwrap(),
+                    configured_node_type,
+                    config
+                        .clone()
+                        .expect("config must exist if bitcoind_config exists")
+                        .bitcoin_config,
+                    bitcoind_config,
                     daemon_is_external,
                     bitcoind_is_internal,
+                )
+            }),
+            electrum_settings: electrum_config.map(|electrum_config| {
+                ElectrumSettings::new(
+                    configured_node_type,
+                    config
+                        .expect("config must exist if electrum_config exists")
+                        .bitcoin_config,
+                    electrum_config,
+                    daemon_is_external,
                 )
             }),
             rescan_settings: RescanSetting::new(cache.rescan_progress),
@@ -66,6 +107,14 @@ impl State for BitcoindSettingsState {
                     self.config_updated = true;
                     self.warning = None;
                     if let Some(settings) = &mut self.node_settings {
+                        settings.edited(true);
+                        return Command::perform(async {}, |_| {
+                            Message::View(view::Message::Settings(
+                                view::SettingsMessage::EditBitcoindSettings,
+                            ))
+                        });
+                    }
+                    if let Some(settings) = &mut self.electrum_settings {
                         settings.edited(true);
                         return Command::perform(async {}, |_| {
                             Message::View(view::Message::Settings(
@@ -101,6 +150,13 @@ impl State for BitcoindSettingsState {
                     return settings.update(daemon, cache, msg);
                 }
             }
+            Message::View(view::Message::Settings(view::SettingsMessage::ElectrumSettings(
+                msg,
+            ))) => {
+                if let Some(settings) = &mut self.electrum_settings {
+                    return settings.update(daemon, cache, msg);
+                }
+            }
             Message::View(view::Message::Settings(view::SettingsMessage::RescanSettings(msg))) => {
                 return self.rescan_settings.update(daemon, cache, msg);
             }
@@ -110,9 +166,17 @@ impl State for BitcoindSettingsState {
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let can_edit_bitcoind_settings = !self.rescan_settings.processing;
-        let can_do_rescan = !self.rescan_settings.processing
-            && self.node_settings.as_ref().map(|settings| settings.edit) != Some(true);
+        let can_edit_bitcoind_settings =
+            self.node_settings.is_some() && !self.rescan_settings.processing;
+        let can_edit_electrum_settings =
+            self.electrum_settings.is_some() && !self.rescan_settings.processing;
+        let settings_edit = self.node_settings.as_ref().map(|settings| settings.edit) == Some(true)
+            || self
+                .electrum_settings
+                .as_ref()
+                .map(|settings| settings.edit)
+                == Some(true);
+        let can_do_rescan = !self.rescan_settings.processing && !settings_edit;
         view::settings::bitcoind_settings(
             cache,
             self.warning.as_ref(),
@@ -122,6 +186,13 @@ impl State for BitcoindSettingsState {
                         .view(cache, can_edit_bitcoind_settings)
                         .map(move |msg| {
                             view::Message::Settings(view::SettingsMessage::BitcoindSettings(msg))
+                        }),
+                    self.electrum_settings
+                        .as_ref()
+                        .expect("If we have bitcoind, we must also have electrum")
+                        .view(cache, can_edit_electrum_settings)
+                        .map(move |msg| {
+                            view::Message::Settings(view::SettingsMessage::ElectrumSettings(msg))
                         }),
                     self.rescan_settings
                         .view(cache, can_do_rescan)
@@ -149,6 +220,7 @@ impl From<BitcoindSettingsState> for Box<dyn State> {
 
 #[derive(Debug)]
 pub struct BitcoindSettings {
+    configured_node_type: Option<NodeType>,
     bitcoind_config: BitcoindConfig,
     bitcoin_config: BitcoinConfig,
     edit: bool,
@@ -162,6 +234,7 @@ pub struct BitcoindSettings {
 
 impl BitcoindSettings {
     fn new(
+        configured_node_type: Option<NodeType>,
         bitcoin_config: BitcoinConfig,
         bitcoind_config: BitcoindConfig,
         daemon_is_external: bool,
@@ -194,8 +267,13 @@ impl BitcoindSettings {
                 RpcAuthType::UserPass,
             ),
         };
-        let addr = bitcoind_config.addr.to_string();
+        let addr = if configured_node_type == Some(NodeType::Bitcoind) {
+            bitcoind_config.addr.to_string()
+        } else {
+            String::default()
+        };
         BitcoindSettings {
+            configured_node_type,
             daemon_is_external,
             bitcoind_is_internal,
             bitcoind_config,
@@ -274,10 +352,11 @@ impl BitcoindSettings {
 
                 if let (true, Some(rpc_auth)) = (self.addr.valid, rpc_auth) {
                     let mut daemon_config = daemon.config().cloned().unwrap();
-                    daemon_config.bitcoind_config = Some(liana::config::BitcoindConfig {
-                        rpc_auth,
-                        addr: new_addr.unwrap(),
-                    });
+                    daemon_config.bitcoin_backend =
+                        Some(liana::config::BitcoinBackend::Bitcoind(BitcoindConfig {
+                            rpc_auth,
+                            addr: new_addr.unwrap(),
+                        }));
                     self.processing = true;
                     return Command::perform(async move { daemon_config }, |cfg| {
                         Message::LoadDaemonConfig(Box::new(cfg))
@@ -289,8 +368,10 @@ impl BitcoindSettings {
     }
 
     fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
+        let is_configured_node_type = self.configured_node_type == Some(NodeType::Bitcoind);
         if self.edit {
             view::settings::bitcoind_edit(
+                is_configured_node_type,
                 self.bitcoin_config.network,
                 cache.blockheight,
                 &self.addr,
@@ -300,11 +381,117 @@ impl BitcoindSettings {
             )
         } else {
             view::settings::bitcoind(
+                is_configured_node_type,
                 self.bitcoin_config.network,
                 &self.bitcoind_config,
                 cache.blockheight,
                 Some(cache.blockheight != 0),
                 can_edit && !self.daemon_is_external && !self.bitcoind_is_internal,
+            )
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ElectrumSettings {
+    configured_node_type: Option<NodeType>,
+    electrum_config: ElectrumConfig,
+    bitcoin_config: BitcoinConfig,
+    edit: bool,
+    processing: bool,
+    addr: form::Value<String>,
+    daemon_is_external: bool,
+}
+
+impl ElectrumSettings {
+    fn new(
+        configured_node_type: Option<NodeType>,
+        bitcoin_config: BitcoinConfig,
+        electrum_config: ElectrumConfig,
+        daemon_is_external: bool,
+    ) -> ElectrumSettings {
+        let addr = electrum_config.addr.to_string();
+        ElectrumSettings {
+            configured_node_type,
+            daemon_is_external,
+            electrum_config,
+            bitcoin_config,
+            edit: false,
+            processing: false,
+            addr: form::Value {
+                valid: true,
+                value: addr,
+            },
+        }
+    }
+}
+
+impl ElectrumSettings {
+    fn edited(&mut self, success: bool) {
+        self.processing = false;
+        if success {
+            self.edit = false;
+        }
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        message: view::SettingsEditMessage,
+    ) -> Command<Message> {
+        match message {
+            view::SettingsEditMessage::Select => {
+                if !self.processing {
+                    self.edit = true;
+                }
+            }
+            view::SettingsEditMessage::Cancel => {
+                if !self.processing {
+                    self.edit = false;
+                }
+            }
+            view::SettingsEditMessage::FieldEdited(field, value) => {
+                if !self.processing && field == "address" {
+                    self.addr.value = value
+                }
+            }
+            view::SettingsEditMessage::Confirm => {
+                if self.addr.valid {
+                    let mut daemon_config = daemon.config().cloned().unwrap();
+                    daemon_config.bitcoin_backend =
+                        Some(liana::config::BitcoinBackend::Electrum(ElectrumConfig {
+                            addr: self.addr.value.clone(),
+                        }));
+                    self.processing = true;
+                    return Command::perform(async move { daemon_config }, |cfg| {
+                        Message::LoadDaemonConfig(Box::new(cfg))
+                    });
+                }
+            }
+            _ => {}
+        };
+        Command::none()
+    }
+
+    fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
+        let is_configured_node_type = self.configured_node_type == Some(NodeType::Electrum);
+        if self.edit {
+            view::settings::electrum_edit(
+                is_configured_node_type,
+                self.bitcoin_config.network,
+                cache.blockheight,
+                &self.addr,
+                self.processing,
+            )
+        } else {
+            view::settings::electrum(
+                is_configured_node_type,
+                self.bitcoin_config.network,
+                &self.electrum_config,
+                cache.blockheight,
+                Some(cache.blockheight != 0),
+                can_edit && !self.daemon_is_external,
             )
         }
     }

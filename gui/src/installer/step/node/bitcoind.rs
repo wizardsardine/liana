@@ -9,7 +9,7 @@ use bitcoin_hashes::{sha256, Hash};
 use flate2::read::GzDecoder;
 use iced::{Command, Subscription};
 use liana::{
-    config::{BitcoindConfig, BitcoindRpcAuth},
+    config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth},
     miniscript::bitcoin::Network,
 };
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -21,12 +21,6 @@ use jsonrpc::{client::Client, simple_http::SimpleHttpTransport};
 use liana_ui::{component::form, widget::*};
 
 use crate::{
-    bitcoind::{
-        self, bitcoind_network_dir, internal_bitcoind_datadir, internal_bitcoind_directory,
-        Bitcoind, ConfigField, InternalBitcoindConfig, InternalBitcoindConfigError,
-        InternalBitcoindNetworkConfig, RpcAuth, RpcAuthType, RpcAuthValues,
-        StartInternalBitcoindError, VERSION,
-    },
     download,
     hw::HardwareWallets,
     installer::{
@@ -34,6 +28,12 @@ use crate::{
         message::{self, Message},
         step::Step,
         view, Error,
+    },
+    node::bitcoind::{
+        self, bitcoind_network_dir, internal_bitcoind_datadir, internal_bitcoind_directory,
+        Bitcoind, ConfigField, InternalBitcoindConfig, InternalBitcoindConfigError,
+        InternalBitcoindNetworkConfig, RpcAuth, RpcAuthType, RpcAuthValues,
+        StartInternalBitcoindError, VERSION,
     },
 };
 
@@ -320,7 +320,7 @@ impl Step for SelectBitcoindTypeStep {
     fn apply(&mut self, ctx: &mut Context) -> bool {
         if !self.use_external {
             if ctx.internal_bitcoind_config.is_none() {
-                ctx.bitcoind_config = None; // Ensures internal bitcoind can be restarted in case user has switched selection.
+                ctx.bitcoin_backend = None; // Ensures internal bitcoind can be restarted in case user has switched selection.
             }
         } else {
             ctx.internal_bitcoind_config = None;
@@ -339,11 +339,11 @@ impl Step for SelectBitcoindTypeStep {
     }
 }
 
+#[derive(Clone)]
 pub struct DefineBitcoind {
     rpc_auth_vals: RpcAuthValues,
     selected_auth_type: RpcAuthType,
     address: form::Value<String>,
-    is_running: Option<Result<(), Error>>,
 
     // Internal cache to detect network change.
     network: Option<Network>,
@@ -355,47 +355,46 @@ impl DefineBitcoind {
             rpc_auth_vals: RpcAuthValues::default(),
             selected_auth_type: RpcAuthType::CookieFile,
             address: form::Value::default(),
-            is_running: None,
             network: None,
         }
     }
 
-    pub fn ping(&self) -> Command<Message> {
-        let address = self.address.value.to_owned();
-        let selected_auth_type = self.selected_auth_type;
+    pub fn ping(&self) -> Result<(), Error> {
         let rpc_auth_vals = self.rpc_auth_vals.clone();
-        Command::perform(
-            async move {
-                let builder = match selected_auth_type {
-                    RpcAuthType::CookieFile => {
-                        let cookie_path = rpc_auth_vals.cookie_path.value;
-                        let cookie = std::fs::read_to_string(cookie_path).map_err(|e| {
-                            Error::Bitcoind(format!("Failed to read cookie file: {}", e))
-                        })?;
-                        SimpleHttpTransport::builder().cookie_auth(cookie)
-                    }
-                    RpcAuthType::UserPass => {
-                        let user = rpc_auth_vals.user.value;
-                        let password = rpc_auth_vals.password.value;
-                        SimpleHttpTransport::builder().auth(user, Some(password))
-                    }
-                };
-                let client = Client::with_transport(
-                    builder
-                        .url(&address)?
-                        .timeout(std::time::Duration::from_secs(3))
-                        .build(),
-                );
-                client.send_request(client.build_request("echo", &[]))?;
-                Ok(())
-            },
-            |res| Message::DefineBitcoind(message::DefineBitcoind::PingBitcoindResult(res)),
-        )
+        let builder = match self.selected_auth_type {
+            RpcAuthType::CookieFile => {
+                let cookie_path = rpc_auth_vals.cookie_path.value;
+                let cookie = std::fs::read_to_string(cookie_path)
+                    .map_err(|e| Error::Bitcoind(format!("Failed to read cookie file: {}", e)))?;
+                SimpleHttpTransport::builder().cookie_auth(cookie)
+            }
+            RpcAuthType::UserPass => {
+                let user = rpc_auth_vals.user.value;
+                let password = rpc_auth_vals.password.value;
+                SimpleHttpTransport::builder().auth(user, Some(password))
+            }
+        };
+        let client = Client::with_transport(
+            builder
+                .url(&self.address.value.to_owned())?
+                .timeout(std::time::Duration::from_secs(3))
+                .build(),
+        );
+        client.send_request(client.build_request("echo", &[]))?;
+        Ok(())
     }
-}
 
-impl Step for DefineBitcoind {
-    fn load_context(&mut self, ctx: &Context) {
+    pub fn can_try_ping(&self) -> bool {
+        if let RpcAuthType::UserPass = self.selected_auth_type {
+            self.address.valid
+                && !self.rpc_auth_vals.password.value.is_empty()
+                && !self.rpc_auth_vals.user.value.is_empty()
+        } else {
+            self.address.valid && !self.rpc_auth_vals.cookie_path.value.is_empty()
+        }
+    }
+
+    pub fn load_context(&mut self, ctx: &Context) {
         if self.rpc_auth_vals.cookie_path.value.is_empty()
             // if network changed then the values must be reset to default.
             || self.network != Some(ctx.bitcoin_config.network)
@@ -412,17 +411,12 @@ impl Step for DefineBitcoind {
 
         self.network = Some(ctx.bitcoin_config.network);
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
-        if let Message::DefineBitcoind(msg) = message {
+
+    pub fn update(&mut self, message: message::DefineNode) -> Command<Message> {
+        if let message::DefineNode::DefineBitcoind(msg) = message {
             match msg {
-                message::DefineBitcoind::PingBitcoind => {
-                    self.is_running = None;
-                    return self.ping();
-                }
-                message::DefineBitcoind::PingBitcoindResult(res) => self.is_running = Some(res),
                 message::DefineBitcoind::ConfigFieldEdited(field, value) => match field {
                     ConfigField::Address => {
-                        self.is_running = None;
                         self.address.value.clone_from(&value);
                         self.address.valid = false;
                         if let Some((ip, port)) = value.rsplit_once(':') {
@@ -434,23 +428,19 @@ impl Step for DefineBitcoind {
                         }
                     }
                     ConfigField::CookieFilePath => {
-                        self.is_running = None;
                         self.rpc_auth_vals.cookie_path.value = value;
                         self.rpc_auth_vals.cookie_path.valid = true;
                     }
                     ConfigField::User => {
-                        self.is_running = None;
                         self.rpc_auth_vals.user.value = value;
                         self.rpc_auth_vals.user.valid = true;
                     }
                     ConfigField::Password => {
-                        self.is_running = None;
                         self.rpc_auth_vals.password.value = value;
                         self.rpc_auth_vals.password.valid = true;
                     }
                 },
                 message::DefineBitcoind::RpcAuthTypeSelected(auth_type) => {
-                    self.is_running = None;
                     self.selected_auth_type = auth_type;
                 }
             };
@@ -458,7 +448,7 @@ impl Step for DefineBitcoind {
         Command::none()
     }
 
-    fn apply(&mut self, ctx: &mut Context) -> bool {
+    pub fn apply(&mut self, ctx: &mut Context) -> bool {
         let addr = std::net::SocketAddr::from_str(&self.address.value);
         let rpc_auth = match self.selected_auth_type {
             RpcAuthType::CookieFile => {
@@ -481,45 +471,24 @@ impl Step for DefineBitcoind {
                 false
             }
             (Some(rpc_auth), Ok(addr)) => {
-                ctx.bitcoind_config = Some(BitcoindConfig { rpc_auth, addr });
+                ctx.bitcoin_backend =
+                    Some(liana::config::BitcoinBackend::Bitcoind(BitcoindConfig {
+                        rpc_auth,
+                        addr,
+                    }));
                 true
             }
         }
     }
 
-    fn view(
-        &self,
-        _hws: &HardwareWallets,
-        progress: (usize, usize),
-        _email: Option<&str>,
-    ) -> Element<Message> {
-        view::define_bitcoin(
-            progress,
-            &self.address,
-            &self.rpc_auth_vals,
-            &self.selected_auth_type,
-            self.is_running.as_ref(),
-        )
-    }
-
-    fn load(&self) -> Command<Message> {
-        self.ping()
-    }
-
-    fn skip(&self, ctx: &Context) -> bool {
-        !ctx.bitcoind_is_external || ctx.remote_backend.is_some()
+    pub fn view(&self) -> Element<Message> {
+        view::define_bitcoind(&self.address, &self.rpc_auth_vals, &self.selected_auth_type)
     }
 }
 
 impl Default for DefineBitcoind {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl From<DefineBitcoind> for Box<dyn Step> {
-    fn from(s: DefineBitcoind) -> Box<dyn Step> {
-        Box::new(s)
     }
 }
 
@@ -579,7 +548,7 @@ impl Step for InternalBitcoindStep {
         }
         if let Some(Ok(_)) = self.started {
             // This case can arise if a user switches from internal bitcoind to external and back to internal.
-            if ctx.bitcoind_config.is_none() {
+            if ctx.bitcoin_backend.is_none() {
                 self.started = None; // So that internal bitcoind will be restarted.
             }
         }
@@ -790,7 +759,10 @@ impl Step for InternalBitcoindStep {
     fn apply(&mut self, ctx: &mut Context) -> bool {
         // Any errors have been handled as part of `message::InternalBitcoindMsg::Start`
         if let Some(Ok(_)) = self.started {
-            ctx.bitcoind_config.clone_from(&self.bitcoind_config);
+            ctx.bitcoin_backend = self
+                .bitcoind_config
+                .as_ref()
+                .map(|bitcoind_config| BitcoinBackend::Bitcoind(bitcoind_config.clone()));
             ctx.internal_bitcoind_config
                 .clone_from(&self.internal_bitcoind_config);
             ctx.internal_bitcoind.clone_from(&self.internal_bitcoind);
