@@ -252,6 +252,7 @@ impl Step for RemoteBackendLogin {
                                 email: email.clone(),
                                 remote_backend,
                             };
+                            return Command::perform(async move {}, |_| Message::Next);
                         }
                         Err(e) => {
                             if let Error::Auth(AuthError { http_status, .. }) = e {
