@@ -55,6 +55,12 @@ pub struct Client(electrum_client::Client);
 impl Client {
     /// Create a new client and perform sanity checks.
     pub fn new(electrum_config: &config::ElectrumConfig) -> Result<Self, Error> {
+        // First use a dummy config to check connectivity (no retries, short timeout).
+        let dummy_config = Config::builder().retry(0).timeout(Some(3)).build();
+        bdk_electrum::electrum_client::Client::from_config(&electrum_config.addr, dummy_config)
+            .map_err(Error::Server)?;
+
+        // Now connection has been checked, create client with required retries and timeout.
         let config = Config::builder()
             .retry(RETRY_LIMIT)
             .timeout(Some(RPC_SOCKET_TIMEOUT))
