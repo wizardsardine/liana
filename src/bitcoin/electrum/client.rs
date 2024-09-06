@@ -57,7 +57,9 @@ impl Client {
     pub fn new(electrum_config: &config::ElectrumConfig) -> Result<Self, Error> {
         // First use a dummy config to check connectivity (no retries, short timeout).
         let dummy_config = Config::builder().retry(0).timeout(Some(3)).build();
+        // Try to ping the server.
         bdk_electrum::electrum_client::Client::from_config(&electrum_config.addr, dummy_config)
+            .and_then(|dummy_client| dummy_client.ping())
             .map_err(Error::Server)?;
 
         // Now connection has been checked, create client with required retries and timeout.
