@@ -2627,7 +2627,7 @@ dependencies = [
 [[package]]
 name = "liana"
 version = "6.0.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#6f7334738360a554d17875b364ccdf2120250315"
+source = "git+https://github.com/wizardsardine/liana?branch=master#c6e3053edf353bd9e234fab6942d02d72b99e196"
 dependencies = [
  "backtrace",
  "bdk_coin_select",
