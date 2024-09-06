@@ -2,7 +2,7 @@ import logging
 import os
 
 from ephemeral_port_reserve import reserve
-from test_framework.utils import BitcoinBackend, TailableProc, ELECTRS_PATH
+from test_framework.utils import BitcoinBackend, TailableProc, ELECTRS_PATH, TIMEOUT
 
 
 class Electrs(BitcoinBackend):
@@ -54,6 +54,7 @@ class Electrs(BitcoinBackend):
 
     def start(self):
         TailableProc.start(self)
+        self.wait_for_log("auto-compactions enabled", timeout=TIMEOUT)
         logging.info("Electrs started")
 
     def startup(self):
