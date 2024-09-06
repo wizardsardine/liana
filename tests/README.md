@@ -68,6 +68,13 @@ pytest -vvv --log-cli-level=DEBUG -k test_startup
 
 Note that we record all logs from daemons, and we start them with `log_level = "debug"`.
 
+#### Running tests in parallel
+
+In order to run tests in parallel, you can use `-n` arg:
+
+```
+pytest -n 8 tests/
+```
 ### Test lints
 
 Just use [`black`](https://github.com/psf/black).
