@@ -184,6 +184,7 @@ impl State for Home {
                 Ok(events) => {
                     self.warning = None;
                     self.events = events;
+                    self.events.sort_by(|a, b| b.time.cmp(&a.time));
                 }
             },
             Message::HistoryTransactionsExtension(res) => match res {
