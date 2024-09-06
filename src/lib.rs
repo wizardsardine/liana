@@ -361,7 +361,8 @@ fn setup_electrum(
         receive_index,
         change_index,
     );
-    let electrum = Electrum::new(client, bdk_wallet).map_err(StartupError::Electrum)?;
+    let full_scan = db_conn.rescan_timestamp().is_some();
+    let electrum = Electrum::new(client, bdk_wallet, full_scan).map_err(StartupError::Electrum)?;
     electrum
         .sanity_checks(&genesis_hash)
         .map_err(StartupError::Electrum)?;

@@ -55,12 +55,13 @@ impl Electrum {
     pub fn new(
         client: client::Client,
         bdk_wallet: wallet::BdkWallet,
+        full_scan: bool,
     ) -> Result<Self, ElectrumError> {
         Ok(Self {
             client,
             bdk_wallet,
             sync_count: 0,
-            full_scan: false, // by default, only perform full scan if wallet's local chain has height 0
+            full_scan,
         })
     }
 
