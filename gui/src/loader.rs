@@ -35,7 +35,7 @@ use crate::{
     },
 };
 
-const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. A full synchronisation typically take a few days, and is resource intensive. Once the initial synchronisation is done, the next ones will be much faster.";
+const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster.";
 const SYNCING_PROGRESS_2: &str = "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance.";
 const SYNCING_PROGRESS_3: &str = "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";
 
