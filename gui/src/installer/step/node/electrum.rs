@@ -69,8 +69,8 @@ impl DefineElectrum {
         false
     }
 
-    pub fn view(&self) -> Element<Message> {
-        view::define_electrum(&self.address)
+    pub fn view(&self, is_running: bool) -> Element<Message> {
+        view::define_electrum(&self.address, is_running)
     }
 
     pub fn ping(&self) -> Result<(), Error> {
@@ -82,5 +82,27 @@ impl DefineElectrum {
             .raw_call("server.ping", [])
             .map_err(|e| Error::Electrum(e.to_string()))?;
         Ok(())
+    }
+
+    pub fn is_ssl(&self) -> bool {
+        self.address.value.starts_with("ssl://")
+    }
+
+    pub fn force_ssl(mut self) -> Self {
+        if self.address.value.starts_with("tcp://") {
+            self.address.value = self.address.value.replacen("tcp://", "ssl://", 1);
+        } else if !self.address.value.starts_with("ssl://") {
+            self.address.value = format!("ssl://{}", self.address.value);
+        }
+        self
+    }
+
+    pub fn force_tcp(mut self) -> Self {
+        if self.address.value.starts_with("ssl://") {
+            self.address.value = self.address.value.replacen("ssl://", "tcp://", 1);
+        } else if !self.address.value.starts_with("tcp://") {
+            self.address.value = format!("tcp://{}", self.address.value);
+        }
+        self
     }
 }

@@ -1370,7 +1370,10 @@ pub fn define_bitcoind<'a>(
         .into()
 }
 
-pub fn define_electrum<'a>(address: &form::Value<String>) -> Element<'a, Message> {
+pub fn define_electrum<'a>(
+    address: &form::Value<String>,
+    is_running: bool,
+) -> Element<'a, Message> {
     let col_address = Column::new()
         .push(text("Address:").bold())
         .push(
@@ -1385,6 +1388,16 @@ pub fn define_electrum<'a>(address: &form::Value<String>) -> Element<'a, Message
             )
             .size(text::P1_SIZE)
             .padding(10),
+        )
+        .push_maybe(
+            if is_running && address.valid && !address.value.starts_with("ssl://") {
+                Some(
+                    text::caption("Warning, you're going to use a non SSL connection!")
+                        .style(color::ORANGE),
+                )
+            } else {
+                None
+            },
         )
         .spacing(10);
 
