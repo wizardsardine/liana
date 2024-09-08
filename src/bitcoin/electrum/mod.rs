@@ -212,7 +212,12 @@ impl Electrum {
                         None
                     } else {
                         log::info!("Block chain reorganization detected.");
-                        Some(self.bdk_wallet.find_block_at_or_before_height(height))
+                        // We can assume height is positive as genesis block will not have changed.
+                        Some(
+                            self.bdk_wallet
+                                .find_block_before_height(height)
+                                .expect("height of first change is greater than 0"),
+                        )
                     };
                 }
                 Some((_, None)) => continue,
