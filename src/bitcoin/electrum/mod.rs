@@ -201,28 +201,26 @@ impl Electrum {
         let changeset = self.bdk_wallet.apply_connected_chain_update(chain_update);
 
         let mut changes_iter = changeset.into_iter();
-        let reorg_common_ancestor = loop {
-            match changes_iter.next() {
-                Some((height, Some(_))) => {
-                    // `BlockHash` being `Some(_)` means a checkpoint at this height was added to the chain.
-                    // Since we iterate in ascending height order, we'll see the lowest block height first.
-                    // If the lowest height it adds is higher than our height before syncing, we're good.
-                    // Else if it's adding a block at height before syncing or lower, it's a reorg.
-                    break if height > local_chain_tip.height() {
-                        None
-                    } else {
-                        log::info!("Block chain reorganization detected.");
-                        // We can assume height is positive as genesis block will not have changed.
-                        Some(
-                            self.bdk_wallet
-                                .find_block_before_height(height)
-                                .expect("height of first change is greater than 0"),
-                        )
-                    };
-                }
-                Some((_, None)) => continue,
-                None => break None,
+        let reorg_common_ancestor = if let Some((height, _)) = changes_iter.next() {
+            // Either a new block has been added at this height or an existing block in our local
+            // chain has been invalidated.
+            // Since we iterate in ascending height order, we'll see the lowest block height first.
+            // If the lowest height is higher than our height before syncing, we're good.
+            // Else if it's adding/invalidating a block at height before syncing or lower,
+            // it's a reorg.
+            if height > local_chain_tip.height() {
+                None
+            } else {
+                log::info!("Block chain reorganization detected.");
+                // We can assume height is positive as genesis block will not have changed.
+                Some(
+                    self.bdk_wallet
+                        .find_block_before_height(height)
+                        .expect("height of first change is greater than 0"),
+                )
             }
+        } else {
+            None
         };
 
         // Unconfirmed transactions have their last seen as 0, so we override to the `sync_count`
