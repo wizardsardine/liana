@@ -199,9 +199,9 @@ dependencies = [
 
 [[package]]
 name = "async-hwi"
-version = "0.0.22"
+version = "0.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b3f27c4ed452a71a415e1198b2ef0b586ef270f3921b6ebbd558311d46806fd"
+checksum = "2f5e1703fc8cf217444fde8f3fdcf44382a1dec3afe5430620aa1b421c692b58"
 dependencies = [
  "async-trait",
  "bitbox-api",
@@ -212,8 +212,6 @@ dependencies = [
  "ledger-apdu",
  "ledger-transport-hidapi",
  "ledger_bitcoin_client",
- "prost 0.12.2",
- "prost-derive 0.12.2",
  "regex",
  "reqwest",
  "serde",
@@ -222,7 +220,6 @@ dependencies = [
  "serialport",
  "tokio",
  "tokio-serial",
- "zeroize",
 ]
 
 [[package]]
