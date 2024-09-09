@@ -198,6 +198,10 @@ impl HardwareWallets {
         self.aliases.insert(fg, new_alias);
     }
 
+    pub fn reset_watch_list(&mut self) {
+        self.list = Vec::new();
+    }
+
     pub fn load_aliases(&mut self, aliases: HashMap<Fingerprint, String>) {
         self.aliases = aliases;
     }

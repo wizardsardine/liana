@@ -66,6 +66,7 @@ pub struct Installer {
 
 impl Installer {
     fn previous(&mut self) -> Command<Message> {
+        self.hws.reset_watch_list();
         let network = self.network;
         if self.current > 0 {
             self.current -= 1;
@@ -196,6 +197,7 @@ impl Installer {
     }
 
     fn next(&mut self) -> Command<Message> {
+        self.hws.reset_watch_list();
         let current_step = self
             .steps
             .get_mut(self.current)
