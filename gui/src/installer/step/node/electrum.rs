@@ -14,16 +14,14 @@ use crate::{
     node::electrum::ConfigField,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DefineElectrum {
     address: form::Value<String>,
 }
 
 impl DefineElectrum {
     pub fn new() -> Self {
-        Self {
-            address: form::Value::default(),
-        }
+        Self::default()
     }
 
     pub fn can_try_ping(&self) -> bool {
