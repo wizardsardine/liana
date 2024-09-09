@@ -35,23 +35,9 @@ impl DefineElectrum {
             match msg {
                 message::DefineElectrum::ConfigFieldEdited(field, value) => match field {
                     ConfigField::Address => {
-                        let value_noprefix = if value.starts_with("ssl://") {
-                            value.replacen("ssl://", "", 1)
-                        } else {
-                            value.replacen("tcp://", "", 1)
-                        };
-                        let noprefix_parts: Vec<_> = value_noprefix.split(':').collect();
                         self.address.value.clone_from(&value); // save the value including any prefix
-                        self.address.valid = noprefix_parts.len() == 2
-                            && !noprefix_parts
-                                .first()
-                                .expect("there are two parts")
-                                .is_empty()
-                            && noprefix_parts
-                                .last()
-                                .expect("there are two parts")
-                                .parse::<u16>() // check it is a port
-                                .is_ok();
+                        self.address.valid =
+                            crate::node::electrum::is_electrum_address_valid(&value);
                     }
                 },
             };

@@ -453,7 +453,8 @@ impl ElectrumSettings {
             }
             view::SettingsEditMessage::FieldEdited(field, value) => {
                 if !self.processing && field == "address" {
-                    self.addr.value = value
+                    self.addr.valid = crate::node::electrum::is_electrum_address_valid(&value);
+                    self.addr.value = value;
                 }
             }
             view::SettingsEditMessage::Confirm => {
