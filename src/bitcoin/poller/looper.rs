@@ -275,8 +275,20 @@ fn updates(
         Ok(Some(reorg_common_ancestor)) => {
             // The block chain was reorganized. Rollback our state down to the common ancestor
             // between our former chain and the new one, then restart fresh.
-            db_conn.rollback_tip(&reorg_common_ancestor);
-            log::info!("Tip was rolled back to '{}'.", &reorg_common_ancestor);
+            // Make sure the common ancestor is not higher than the current DB tip, which could
+            // happen if a rescan has been detected and the DB tip rolled back accordingly.
+            if reorg_common_ancestor.height <= current_tip.height
+                // check hash in case height is the same
+                && reorg_common_ancestor.hash != current_tip.hash
+            {
+                db_conn.rollback_tip(&reorg_common_ancestor);
+                log::info!("Tip was rolled back to '{}'.", &reorg_common_ancestor);
+            } else {
+                log::info!(
+                    "Tip was already earlier than common ancestor '{}'.",
+                    &reorg_common_ancestor
+                );
+            }
             return updates(db_conn, bit, descs, secp);
         }
         Err(e) => {
