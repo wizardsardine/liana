@@ -295,17 +295,20 @@ impl BdkWallet {
         })
     }
 
-    /// Find the first block in the local chain whose height is less than or equal to this.
-    pub fn find_block_at_or_before_height(&self, height: u32) -> BlockChainTip {
+    /// Find the highest block in the local chain whose height is below `height`.
+    ///
+    /// As the local chain will always contain the genesis block, this returns
+    /// `None` only if `height` is 0.
+    pub fn find_block_before_height(&self, height: u32) -> Option<BlockChainTip> {
         for cp in self.local_chain.iter_checkpoints() {
-            if cp.height() <= height {
-                return BlockChainTip {
+            if cp.height() < height {
+                return Some(BlockChainTip {
                     height: height_i32_from_u32(cp.height()),
                     hash: cp.hash(),
-                };
+                });
             }
         }
-        unreachable!("There must be at least the genesis block.")
+        None
     }
 
     /// Apply an update to the local chain.
