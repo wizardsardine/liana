@@ -2508,7 +2508,7 @@ pub fn connection_step_connected<'a>(
         .into()
 }
 
-pub const REMOTE_BACKEND_DESC: &str = "Use a hosted service to talk to the Bitcoin network and store data. Wizardsardine runs the infrastructure, keeps a backup of your wallet descriptor, and allow for synchronization between multiple computers and participants.\n\nThis is a safer option for users who want Wizardsardine to keep a backup of your descriptor. Wizardsardine will be able to see the information of your wallet, associated to an email address. Privacy focused users should run their own infrastructure instead.";
+pub const REMOTE_BACKEND_DESC: &str = "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see the your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead.";
 
 pub const LOCAL_WALLET_DESC: &str = "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet";
 
