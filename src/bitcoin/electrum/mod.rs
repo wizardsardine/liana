@@ -135,7 +135,7 @@ impl Electrum {
         // We'll only need to calculate fees of mempool transactions and this will be done separately from our graph
         // so we don't need to fetch prev txouts. In any case, we'll already have these for our own transactions.
         const FETCH_PREV_TXOUTS: bool = false;
-        const STOP_GAP: usize = 50;
+        const STOP_GAP: usize = 200;
 
         let (chain_update, mut graph_update, keychain_update) = if !self.is_rescanning() {
             log::info!("Performing sync.");

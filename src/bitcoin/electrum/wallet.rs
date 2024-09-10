@@ -22,8 +22,8 @@ use crate::{
     descriptors::LianaDescriptor,
 };
 
-// TODO: Move and reuse `liana::database::sqlite::utils::LOOK_AHEAD_LIMIT`?
-const LOOK_AHEAD_LIMIT: u32 = 200;
+// We don't want to overload the server (each SPK is separate call).
+const LOOK_AHEAD_LIMIT: u32 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum KeychainType {
