@@ -6,6 +6,7 @@ use bdk_electrum::bdk_chain::{
     spk_client::{FullScanRequest, SyncRequest},
     ChainPosition,
 };
+use utils::tip_from_block_id;
 
 pub mod client;
 mod utils;
@@ -137,7 +138,8 @@ impl Electrum {
         const FETCH_PREV_TXOUTS: bool = false;
         const STOP_GAP: usize = 200;
 
-        let (chain_update, mut graph_update, keychain_update) = if !self.is_rescanning() {
+        let is_rescanning = self.is_rescanning();
+        let (chain_update, mut graph_update, keychain_update) = if !is_rescanning {
             log::info!("Performing sync.");
             let mut request = SyncRequest::from_chain_tip(local_chain_tip.clone())
                 .cache_graph_txs(self.bdk_wallet.graph());
@@ -198,29 +200,46 @@ impl Electrum {
         if let Some(keychain_update) = keychain_update {
             self.bdk_wallet.apply_keychain_update(keychain_update);
         }
-        let changeset = self.bdk_wallet.apply_connected_chain_update(chain_update);
 
-        let mut changes_iter = changeset.into_iter();
-        let reorg_common_ancestor = if let Some((height, _)) = changes_iter.next() {
-            // Either a new block has been added at this height or an existing block in our local
-            // chain has been invalidated.
-            // Since we iterate in ascending height order, we'll see the lowest block height first.
-            // If the lowest height is higher than our height before syncing, we're good.
-            // Else if it's adding/invalidating a block at height before syncing or lower,
-            // it's a reorg.
-            if height > local_chain_tip.height() {
-                None
+        let reorg_common_ancestor = if !is_rescanning {
+            let changeset = self.bdk_wallet.apply_connected_chain_update(chain_update);
+            let mut changes_iter = changeset.into_iter();
+            if let Some((height, _)) = changes_iter.next() {
+                // Either a new block has been added at this height or an existing block in our local
+                // chain has been invalidated.
+                // Since we iterate in ascending height order, we'll see the lowest block height first.
+                // If the lowest height is higher than our height before syncing, we're good.
+                // Else if it's adding/invalidating a block at height before syncing or lower,
+                // it's a reorg.
+                if height > local_chain_tip.height() {
+                    None
+                } else {
+                    log::info!("Block chain reorganization detected.");
+                    // We can assume height is positive as genesis block will not have changed.
+                    Some(
+                        self.bdk_wallet
+                            .find_block_before_height(height)
+                            .expect("height of first change is greater than 0"),
+                    )
+                }
             } else {
-                log::info!("Block chain reorganization detected.");
-                // We can assume height is positive as genesis block will not have changed.
-                Some(
-                    self.bdk_wallet
-                        .find_block_before_height(height)
-                        .expect("height of first change is greater than 0"),
-                )
+                None
             }
         } else {
-            None
+            // In case of a full scan, just replace our local chain with the new one.
+            self.bdk_wallet.replace_chain_from_tip(chain_update);
+            // In case our chain tip was previously positive, treat this full scan
+            // as a reorg with common ancestor being the genesis block.
+            if local_chain_tip.height() > 0 {
+                Some(tip_from_block_id(
+                    self.local_chain()
+                        .get(0)
+                        .expect("contains genesis")
+                        .block_id(),
+                ))
+            } else {
+                None
+            }
         };
 
         // Unconfirmed transactions have their last seen as 0, so we override to the `sync_count`

@@ -311,6 +311,12 @@ impl BdkWallet {
         None
     }
 
+    /// Replace the local chain with a new one from the given tip.
+    /// Panics if tip does not contain genesis block.
+    pub fn replace_chain_from_tip(&mut self, tip: CheckPoint) {
+        self.local_chain = LocalChain::from_tip(tip).expect("must contain genesis block");
+    }
+
     /// Apply an update to the local chain.
     /// Panics if update does not connect to the local chain.
     pub fn apply_connected_chain_update(&mut self, chain_update: CheckPoint) -> ChainChangeSet {
