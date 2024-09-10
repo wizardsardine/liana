@@ -1041,9 +1041,7 @@ fn display_policy(
                                 .style(theme::Container::Card(theme::Card::Simple)),
                             )
                         } else {
-                            Container::new(text(k.to_string()))
-                                .padding(10)
-                                .style(theme::Container::Pill(theme::Pill::Simple))
+                            Container::new(text(format!("[{}]", k)).bold())
                         };
                         if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
                             row.push(content)
@@ -1087,9 +1085,7 @@ fn display_policy(
                                 .style(theme::Container::Card(theme::Card::Simple)),
                             )
                         } else {
-                            Container::new(text(k.to_string()))
-                                .padding(10)
-                                .style(theme::Container::Pill(theme::Pill::Simple))
+                            Container::new(text(format!("[{}]", k)).bold())
                         };
                         if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
                             row.push(content)
