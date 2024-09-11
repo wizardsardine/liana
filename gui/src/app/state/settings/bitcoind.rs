@@ -1,5 +1,5 @@
 use std::convert::{From, TryInto};
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ pub struct BitcoindSettingsState {
     warning: Option<Error>,
     config_updated: bool,
 
-    node_settings: Option<BitcoindSettings>,
+    bitcoind_settings: Option<BitcoindSettings>,
     electrum_settings: Option<ElectrumSettings>,
     rescan_settings: RescanSetting,
 }
@@ -48,26 +48,18 @@ impl BitcoindSettingsState {
             match config.clone().and_then(|c| c.bitcoin_backend) {
                 Some(BitcoinBackend::Bitcoind(bitcoind_config)) => {
                     configured_node_type = Some(NodeType::Bitcoind);
-                    let dummy_electrum = ElectrumConfig {
-                        addr: String::default(),
-                    };
-                    (Some(bitcoind_config), Some(dummy_electrum))
+                    (Some(bitcoind_config), None)
                 }
                 Some(BitcoinBackend::Electrum(electrum_config)) => {
                     configured_node_type = Some(NodeType::Electrum);
-                    // The dummy values will be ignored.
-                    let dummy_bitcoind = BitcoindConfig {
-                        addr: SocketAddr::V4(SocketAddrV4::from_str("127.0.0.1:10000").unwrap()),
-                        rpc_auth: BitcoindRpcAuth::CookieFile(PathBuf::from_str("").unwrap()),
-                    };
-                    (Some(dummy_bitcoind), Some(electrum_config))
+                    (None, Some(electrum_config))
                 }
                 _ => (None, None),
             };
         BitcoindSettingsState {
             warning: None,
             config_updated: false,
-            node_settings: bitcoind_config.map(|bitcoind_config| {
+            bitcoind_settings: bitcoind_config.map(|bitcoind_config| {
                 BitcoindSettings::new(
                     configured_node_type,
                     config
@@ -106,7 +98,7 @@ impl State for BitcoindSettingsState {
                 Ok(()) => {
                     self.config_updated = true;
                     self.warning = None;
-                    if let Some(settings) = &mut self.node_settings {
+                    if let Some(settings) = &mut self.bitcoind_settings {
                         settings.edited(true);
                         return Command::perform(async {}, |_| {
                             Message::View(view::Message::Settings(
@@ -126,7 +118,7 @@ impl State for BitcoindSettingsState {
                 Err(e) => {
                     self.config_updated = false;
                     self.warning = Some(e);
-                    if let Some(settings) = &mut self.node_settings {
+                    if let Some(settings) = &mut self.bitcoind_settings {
                         settings.edited(false);
                     }
                     if let Some(settings) = &mut self.electrum_settings {
@@ -149,7 +141,7 @@ impl State for BitcoindSettingsState {
             Message::View(view::Message::Settings(view::SettingsMessage::BitcoindSettings(
                 msg,
             ))) => {
-                if let Some(settings) = &mut self.node_settings {
+                if let Some(settings) = &mut self.bitcoind_settings {
                     return settings.update(daemon, cache, msg);
                 }
             }
@@ -170,10 +162,14 @@ impl State for BitcoindSettingsState {
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let can_edit_bitcoind_settings =
-            self.node_settings.is_some() && !self.rescan_settings.processing;
+            self.bitcoind_settings.is_some() && !self.rescan_settings.processing;
         let can_edit_electrum_settings =
             self.electrum_settings.is_some() && !self.rescan_settings.processing;
-        let settings_edit = self.node_settings.as_ref().map(|settings| settings.edit) == Some(true)
+        let settings_edit = self
+            .bitcoind_settings
+            .as_ref()
+            .map(|settings| settings.edit)
+            == Some(true)
             || self
                 .electrum_settings
                 .as_ref()
@@ -183,26 +179,26 @@ impl State for BitcoindSettingsState {
         view::settings::bitcoind_settings(
             cache,
             self.warning.as_ref(),
-            if let Some(settings) = &self.node_settings {
-                vec![
-                    settings
-                        .view(cache, can_edit_bitcoind_settings)
-                        .map(move |msg| {
+            if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {
+                let mut setting_panels = Vec::new();
+                if let Some(settings) = self.bitcoind_settings.as_ref() {
+                    setting_panels.push(settings.view(cache, can_edit_bitcoind_settings).map(
+                        move |msg| {
                             view::Message::Settings(view::SettingsMessage::BitcoindSettings(msg))
-                        }),
-                    self.electrum_settings
-                        .as_ref()
-                        .expect("If we have bitcoind, we must also have electrum")
-                        .view(cache, can_edit_electrum_settings)
-                        .map(move |msg| {
+                        },
+                    ))
+                }
+                if let Some(settings) = self.electrum_settings.as_ref() {
+                    setting_panels.push(settings.view(cache, can_edit_electrum_settings).map(
+                        move |msg| {
                             view::Message::Settings(view::SettingsMessage::ElectrumSettings(msg))
-                        }),
-                    self.rescan_settings
-                        .view(cache, can_do_rescan)
-                        .map(move |msg| {
-                            view::Message::Settings(view::SettingsMessage::RescanSettings(msg))
-                        }),
-                ]
+                        },
+                    ))
+                }
+                setting_panels.push(self.rescan_settings.view(cache, can_do_rescan).map(
+                    move |msg| view::Message::Settings(view::SettingsMessage::RescanSettings(msg)),
+                ));
+                setting_panels
             } else {
                 vec![self
                     .rescan_settings
