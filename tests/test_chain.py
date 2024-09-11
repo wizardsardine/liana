@@ -208,7 +208,7 @@ def test_rescan_edge_cases(lianad, bitcoind):
         """Remine the chain from given height, shifting the txs by one block."""
         delta = bitcoind.rpc.getblockcount() - height + 1
         assert delta > 2
-        h = bitcoind.rpc.getblockhash(initial_tip["height"])
+        h = bitcoind.rpc.getblockhash(height)
         bitcoind.rpc.invalidateblock(h)
         bitcoind.generate_block(1)
         for tx in txs:
