@@ -8,7 +8,7 @@ task:
     EXECUTOR_WORKERS: 3
     VERBOSE: 0
     LOG_LEVEL: debug
-    TIMEOUT: 300
+    TIMEOUT: 120
   matrix:
     - name: 'Misc functional tests'
       env:
