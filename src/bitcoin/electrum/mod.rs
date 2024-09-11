@@ -191,6 +191,9 @@ impl Electrum {
             chain_update.height()
         );
 
+        log::debug!("Full local chain: {:?}", self.local_chain());
+        log::debug!("Full chain update: {:?}", chain_update);
+
         // Increment the sync count and apply changes.
         self.sync_count = self.sync_count.checked_add(1).expect("must fit");
         if let Some(keychain_update) = keychain_update {
