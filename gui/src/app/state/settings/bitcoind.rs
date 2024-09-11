@@ -129,6 +129,9 @@ impl State for BitcoindSettingsState {
                     if let Some(settings) = &mut self.node_settings {
                         settings.edited(false);
                     }
+                    if let Some(settings) = &mut self.electrum_settings {
+                        settings.edited(false);
+                    }
                 }
             },
             Message::Info(res) => match res {
