@@ -284,11 +284,17 @@ pub struct Psbt {
 pub enum DraftPsbtResult {
     Success(DraftPsbt),
     InsufficientFunds(InsufficientFundsInfo),
+    Error(DraftPsbtError),
 }
 
 #[derive(Clone, Deserialize)]
 pub struct InsufficientFundsInfo {
     pub missing: u64,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct DraftPsbtError {
+    pub error: String,
 }
 
 #[derive(Clone, Deserialize)]

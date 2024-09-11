@@ -753,6 +753,9 @@ impl Daemon for BackendWalletClient {
             api::DraftPsbtResult::InsufficientFunds(api::InsufficientFundsInfo { missing }) => {
                 Ok(CreateSpendResult::InsufficientFunds { missing })
             }
+            api::DraftPsbtResult::Error(api::DraftPsbtError { error }) => {
+                Err(DaemonError::Unexpected(error))
+            }
         }
     }
 
@@ -789,6 +792,9 @@ impl Daemon for BackendWalletClient {
             }),
             api::DraftPsbtResult::InsufficientFunds(api::InsufficientFundsInfo { missing }) => {
                 Ok(CreateSpendResult::InsufficientFunds { missing })
+            }
+            api::DraftPsbtResult::Error(api::DraftPsbtError { error }) => {
+                Err(DaemonError::Unexpected(error))
             }
         }
     }
