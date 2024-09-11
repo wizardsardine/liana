@@ -162,9 +162,7 @@ impl Electrum {
         } else {
             log::info!("Performing full scan.");
             // Either local_chain has height 0 or we want to trigger a full scan.
-            // In both cases, the scan should be from the genesis block.
-            let genesis_block = local_chain_tip.get(0).expect("must contain genesis block");
-            let mut request = FullScanRequest::from_chain_tip(genesis_block)
+            let mut request = FullScanRequest::from_chain_tip(local_chain_tip.clone())
                 .cache_graph_txs(self.bdk_wallet.graph());
 
             for (k, spks) in self.bdk_wallet.index().all_unbounded_spk_iters() {
