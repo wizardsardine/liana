@@ -87,7 +87,7 @@ and may be pruned (note this may affect block chain rescans) up to the maximum (
 
 The minimum supported version of Bitcoin Core is `24.0.1` (if you want to use Taproot it's `26.0`).
 If you don't have Bitcoin Core installed on your machine yet, you can download it
-[there](https://bitcoincore.org/en/download/).
+[here](https://bitcoincore.org/en/download/).
 
 You can use the `liana-cli` program to send commands to it. It will need the path to the same
 configuration as the daemon. You can find a full documentation of the JSONRPC API exposed by
