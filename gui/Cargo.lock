@@ -2623,8 +2623,8 @@ dependencies = [
 
 [[package]]
 name = "liana"
-version = "6.0.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#4dd0fd369265f49284e4a9a1c83fe27cdda55b9a"
+version = "7.0.0"
+source = "git+https://github.com/wizardsardine/liana?branch=master#18950c219a9233e584fabb1f5b168e17fa450902"
 dependencies = [
  "backtrace",
  "bdk_coin_select",
@@ -2645,7 +2645,7 @@ dependencies = [
 
 [[package]]
 name = "liana_gui"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "async-hwi",
  "async-trait",
@@ -4257,7 +4257,7 @@ version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f622567e3b4b38154fb8190bcf6b160d7a4301d70595a49195b48c116007a27"
 dependencies = [
- "bitcoin_hashes 0.13.0",
+ "bitcoin_hashes 0.12.0",
  "secp256k1-sys",
  "serde",
 ]
