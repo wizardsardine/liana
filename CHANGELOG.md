@@ -1,5 +1,57 @@
 # Liana daemon and GUI release notes
 
+## 7.0
+
+This release introduces support for Liana Connect as an optional backend for the Liana GUI
+and Electrum server as an optional node interface for the Liana daemon.
+
+### Breaking changes
+
+Running Liana v7 on an existing installation will migrate its database.
+Once migrated the database won't be compatible with previous versions of Liana.
+This means you won't be able to open with Liana v6 (or below) any wallet opened or created with Liana v7.
+
+### Features
+
+#### Liana daemon / library
+
+- Transactions are now created with fee sniping protection.
+- You can now remotely connect to your node using Electrum, as an alternative to running Bitcoin Core locally.
+
+
+#### Liana GUI
+
+- The user does not have to select a network at start up anymore, the launcher looks for an installed
+  network in the following order: `mainnet`, `testnet`, `signet`, `regtest`.
+- The launcher reads the `settings.json` file and provides information about the installed wallet or
+  provides the user with a choice to create or add a wallet.
+- When creating or adding a wallet for the selected network, user has the choice to use his local
+  node or an Electrum server or the Liana Connect service as a backend for the Liana GUI.
+- User can share his hardware wallets xpubs by clicking on "Share xpubs" from the launcher.
+- Wallet policy description was added to the installer and in the wallet settings.
+- If using the Wizardsardine servers as remote backend, a user can provide access to a wallet to
+  an other user by sending him an invitation with the invitee email in the wallet settings.
+- Coldcard and Specter DIY can now be used with taproot descriptors.
+- We now display the software version in the title bar.
+- A `--help` flag was added to display a help menu about the available flags.
+- The Bitcoin Core node version to install for managed local nodes was upgraded to 27.1.
+
+### Fixes
+
+#### Liana daemon / library
+
+- We now check the change multipath is not hardened when importing a descriptor (or creating a `LianaDescriptor` struct).
+- We add the minimum feerate requested in the error message of the create spend command.
+
+#### Liana GUI
+
+- The rendering of amounts superior to thousands now includes space.
+- We detect if the descriptor changed before displaying registration status in the installer.
+- We fixed some display issues with overlapping text, notably in the transaction panel.
+- On reload, new labels are correctly loaded in existing transaction list in the home panel.
+- In order to handle flaky connection, the whole hardware wallet list is reset at each step
+  of the install process.
+
 ## 6.0
 
 This release introduces support for the Jade signing device, a number of usability improvements as
