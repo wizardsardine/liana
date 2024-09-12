@@ -15,7 +15,7 @@ replace-with = "vendored_sources"
 
 [source."https://github.com/wizardsardine/liana"]
 git = "https://github.com/wizardsardine/liana"
-branch = "master"
+branch = "7.x"
 replace-with = "vendored_sources"
 
 [source."https://github.com/edouardparis/iced"]
