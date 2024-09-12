@@ -1494,7 +1494,7 @@ mod tests {
 
         // Transaction is 1 in (P2WSH satisfaction), 2 outs. At 1sat/vb, it's 161 sats fees.
         // At 2sats/vb, it's twice that.
-        assert_eq!(tx.output[1].value.to_sat(), 89_839);
+        assert_eq!(tx.output[1].value.to_sat(), 89_829);
         let psbt = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(&destinations, &[dummy_op], 2, None)
             .unwrap()
@@ -1562,18 +1562,18 @@ mod tests {
             dummy_addr.payload().script_pubkey()
         );
         assert_eq!(tx.output[0].value.to_sat(), 95_000);
-        // change = 100_000 - 95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 = 4830
+        // change = 100_000 - 95_000 - /* fee without change */ 128 - /* extra fee for change output */ 43 = 4829
         assert_eq!(
             warnings,
             vec![
                 "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. \
-                Instead of creating a change of 4839 sats, it was added to the \
+                Instead of creating a change of 4829 sats, it was added to the \
                 transaction fee. Select a larger input to avoid this from happening."
             ]
         );
 
         // Increase the target value by the change amount and the warning will disappear.
-        *destinations.get_mut(&dummy_addr).unwrap() = 95_000 + 4_839;
+        *destinations.get_mut(&dummy_addr).unwrap() = 95_000 + 4_829;
         let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -1588,7 +1588,7 @@ mod tests {
 
         // Now increase target also by the extra fee that was paying for change and we can still create the spend.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 + 4_830 + /* fee for change output */ 43;
+            95_000 + 4_829 + /* fee for change output */ 43;
         let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -1603,7 +1603,7 @@ mod tests {
 
         // Now increase the target by 1 more sat and we will have insufficient funds.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 + 4_839 + /* fee for change output */ 43 + 1;
+            95_000 + 4_829 + /* fee for change output */ 43 + 1;
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 1, None),
             Ok(CreateSpendResult::InsufficientFunds { missing: 1 }),
@@ -1611,7 +1611,7 @@ mod tests {
 
         // Now decrease the target so that the lost change is just 1 sat.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            100_000 - /* fee without change */ 118 - /* extra fee for change output */ 43 - 1;
+            100_000 - /* fee without change */ 128 - /* extra fee for change output */ 43 - 1;
         let warnings = if let CreateSpendResult::Success { warnings, .. } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -1632,7 +1632,7 @@ mod tests {
 
         // Now decrease the target value so that we have enough for a change output.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 - /* fee without change */ 118 - /* extra fee for change output */ 43;
+            95_000 - /* fee without change */ 128 - /* extra fee for change output */ 43;
         let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -1648,7 +1648,7 @@ mod tests {
 
         // Now increase the target by 1 and we'll get a warning again, this time for 1 less than the dust threshold.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 - /* fee without change */ 118 - /* extra fee for change output */ 43 + 1;
+            95_000 - /* fee without change */ 128 - /* extra fee for change output */ 43 + 1;
         let warnings = if let CreateSpendResult::Success { warnings, .. } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
