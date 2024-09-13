@@ -24,9 +24,9 @@ simulator](https://github.com/cryptoadvance/specter-diy/blob/master/docs/simulat
 Here is a list of the system dependencies: the tools and libraries you need to have installed on
 your system to follow the guide if you are running a Linux that isn't Debian- or Arch- based.
 
-- GUI requirements, see the link to projects below to search for the name of your distribution's packages.  
-    - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/) 
-    - [Libudev](https://www.freedesktop.org/software/systemd/man/libudev.html) 
+- GUI requirements, see the link to projects below to search for the name of your distribution's packages.
+    - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/)
+    - [Libudev](https://www.freedesktop.org/software/systemd/man/libudev.html)
 - Running binaries requires GLIBC >= 2.33 (Ubuntu >= 22.04 or Debian >= 12)
 
 We'll use basic tools which should already be present on your system, such as:
@@ -39,7 +39,7 @@ To verify binaries you will also need:
 ### Throwaway folder
 
 You can follow the guide from any folder of your choice. We recommend creating a new dedicated folder you
-can wipe easily after testing. 
+can wipe easily after testing.
 
 If you are using a Linux terminal:
 ```
@@ -57,7 +57,11 @@ running a too old glibc. In this case you may have to build from source. See the
 about this in the README](../README.md#a-note-on-linux-binaries-and-glibc-version).
 
 For every file available on the website, there is an accompanying `.asc` file with the same
-name on our [Github release page](https://github.com/wizardsardine/liana/releases). This is a GPG signature made with Antoine Poinsot's key:
+name on our [Github release page](https://github.com/wizardsardine/liana/releases).
+
+if Liana version is inferior to v7:
+
+This is a GPG signature made with Antoine Poinsot's key:
 `590B7292695AFFA5B672CBB2E13FC145CD3F4304`. This key is available elsewhere for cross-checking, such
 as on [his Twitter profile](https://twitter.com/darosior) or his [personal
 website](http://download.darosior.ninja/antoine_poinsot_0xE13FC145CD3F4304.txt). It is recommended
@@ -72,8 +76,28 @@ GPG should tell you the signature is valid for Antoine's key.
 If GPG told you that Antoine key has expired, you should refresh it.
 Example for Linux (replace the signature name with the one corresponding to your download):
 ```
-gpg --keyserver hkps://keys.openpgp.org --refresh-keys E13FC145CD3F4304      
+gpg --keyserver hkps://keys.openpgp.org --refresh-keys E13FC145CD3F4304
 ```
+
+if Liana version is superior or equal to v7:
+
+This is a GPG signature made with Edouard Paris key:
+`5B63F3B97699C7EEF3B040B19B7F629A53E77B83`. This key is available elsewhere for cross-checking, such
+as on  his [personal website](https://edouard.paris/keys/5B63F3B97699C7EEF3B040B19B7F629A53E77B83.asc).
+It is recommended you verify your download against this key.
+Example for Linux (replace the signature name with the one corresponding to your download):
+```
+gpg --keyserver hkps://keys.openpgp.org --receive 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
+gpg --verify liana_7.0-1_amd64.deb.asc
+```
+GPG should tell you the signature is valid for Edouard's key.
+
+If GPG told you that Edouard key has expired, you should refresh it.
+Example for Linux (replace the signature name with the one corresponding to your download):
+```
+gpg --keyserver hkps://keys.openpgp.org --refresh-keys 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
+```
+
 
 If all is good, you can run Liana!
 
@@ -125,7 +149,7 @@ my own configuration, but it depends on what you configured previously). Then yo
 
 Keep in mind that signet coins have no value!
 
-Signet is a network, so you can send coins to other people on signet, receive from them, etc. Feel free to explore Liana! 
+Signet is a network, so you can send coins to other people on signet, receive from them, etc. Feel free to explore Liana!
 
 
 ## Cleanup
@@ -149,7 +173,7 @@ rm -rf ~/.liana/signet
 ```
 
 
-## Tips & Tricks 
+## Tips & Tricks
 
 ### Simulating multiple wallets
 
