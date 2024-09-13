@@ -10,13 +10,12 @@ The recommended installation method for regular users is to download [an executa
 from our website](https://wizardsardine.com/liana/). If you prefer to build the project from source,
 see [`BUILD.md`](BUILD.md) instead.
 
-We recommend you verify the software you downloaded against a PGP signature made by Antoine Poinsot
-using his key `590B7292695AFFA5B672CBB2E13FC145CD3F4304`. For now the PGP signatures for the
+We recommend you verify the software you downloaded against a PGP signature made by Edouard Paris
+using his key `5B63F3B97699C7EEF3B040B19B7F629A53E77B83`. For now the PGP signatures for the
 binaries downloaded on our website are only available on the [Github release
 page](https://github.com/wizardsardine/liana/releases). Find the `.asc` file in the list
-corresponding to the binary you downloaded. Antoine's key is available elsewhere for cross-checking,
-such as on [his Twitter profile](https://twitter.com/darosior) or [Bitcoin Core's like of builder
-keys](https://github.com/bitcoin-core/guix.sigs/blob/main/builder-keys/darosior.gpg).
+corresponding to the binary you downloaded. Edouard's key is available elsewhere for cross-checking,
+such as on [his personal website](https://edouard.paris).
 
 For Arch users, a `liana-bin` is also available at the [AUR](https://aur.archlinux.org/). You can
 install it using your favourite wrapper (eg `paru -S liana-bin` or `yay -S liana-bin`), or manually:
