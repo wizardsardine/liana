@@ -253,7 +253,9 @@ pub fn remote_backend_section<'a>(
                     .push(
                         Button::new(text("Backend").size(30).bold())
                             .style(theme::Button::Transparent)
-                            .on_press(Message::Settings(SettingsMessage::AboutSection)),
+                            .on_press(Message::Settings(
+                                SettingsMessage::EditRemoteBackendSettings,
+                            )),
                     ),
             )
             .push(
