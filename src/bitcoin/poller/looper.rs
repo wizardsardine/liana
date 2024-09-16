@@ -169,14 +169,10 @@ fn add_txs_to_db(
 ) {
     let curr_txids: HashSet<_> = db_conn.list_saved_txids().into_iter().collect();
     let mut new_txids = HashSet::new();
-    // First get all newly received coins that have not expired.
-    new_txids.extend(updated_coins.received.iter().filter_map(|c| {
-        if !updated_coins.expired.contains(&c.outpoint) {
-            Some(c.outpoint.txid)
-        } else {
-            None
-        }
-    }));
+    // Get the transaction for all newly received coins. Note we also query it if the coins
+    // expired, as it's possible for coin to not be in DB already (and therefore not have its
+    // deposit transaction stored there), to be marked as expired *and* newly received. In this
+    new_txids.extend(updated_coins.received.iter().map(|c| c.outpoint.txid));
 
     // Add spend txid for new & existing coins.
     new_txids.extend(updated_coins.spending.iter().map(|(_, txid)| txid));
