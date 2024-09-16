@@ -30,7 +30,10 @@ use crate::{
         view::{hw, warning::warn},
     },
     hw::HardwareWallet,
-    node::bitcoind::{RpcAuthType, RpcAuthValues},
+    node::{
+        bitcoind::{RpcAuthType, RpcAuthValues},
+        electrum,
+    },
 };
 
 pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
@@ -591,6 +594,7 @@ pub fn electrum_edit<'a>(
                 .size(P1_SIZE)
                 .padding(5),
             )
+            .push(text(electrum::ADDRESS_NOTES).size(P2_SIZE))
             .spacing(5),
     );
 
