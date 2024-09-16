@@ -5,7 +5,7 @@ use crate::{
     hw::HardwareWallets,
     installer::{
         context::Context,
-        message::{self, Message},
+        message::{self, Message, PingType},
         step::{
             node::{bitcoind::DefineBitcoind, electrum::DefineElectrum},
             Step,
@@ -69,10 +69,10 @@ impl NodeDefinition {
         }
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self, is_running: bool) -> Element<Message> {
         match self {
             NodeDefinition::Bitcoind(def) => def.view(),
-            NodeDefinition::Electrum(def) => def.view(),
+            NodeDefinition::Electrum(def) => def.view(is_running),
         }
     }
 
@@ -88,6 +88,9 @@ pub struct Node {
     definition: NodeDefinition,
     is_running: Option<Result<(), Error>>,
     waiting_for_ping_result: bool,
+    ssl_ping_result: Option<Result<(), Error>>,
+    tcp_ping_result: Option<Result<(), Error>>,
+    original_ssl: bool,
 }
 
 impl Node {
@@ -96,6 +99,17 @@ impl Node {
             definition: NodeDefinition::new(node_type),
             is_running: None,
             waiting_for_ping_result: false,
+            ssl_ping_result: None,
+            tcp_ping_result: None,
+            original_ssl: false,
+        }
+    }
+
+    fn is_ssl(&self) -> bool {
+        if let NodeDefinition::Electrum(def) = &self.definition {
+            def.is_ssl()
+        } else {
+            false
         }
     }
 }
@@ -198,19 +212,91 @@ impl Step for DefineNode {
                         selected.is_running = None;
                         let def = selected.definition.clone();
                         let node_type = def.node_type();
-                        return Command::perform(async move { def.ping() }, move |res| {
-                            Message::DefineNode(message::DefineNode::PingResult((node_type, res)))
-                        });
+                        match node_type {
+                            NodeType::Bitcoind => {
+                                return Command::perform(async move { def.ping() }, move |res| {
+                                    Message::DefineNode(message::DefineNode::PingResult((
+                                        PingType::Bitcoind,
+                                        res,
+                                    )))
+                                });
+                            }
+                            // In order to handle user forgetting to specify address prefix, we
+                            // ping both w/ tcp & ssl and update w/ correct value (prefix added if
+                            // missing). Note: we always display a warning if the address is not
+                            // ssl in order to not silently switch to tcp if the user intend
+                            // connect to a ssl server & the server is misconfigured.
+                            NodeType::Electrum => {
+                                selected.tcp_ping_result = None;
+                                selected.ssl_ping_result = None;
+                                selected.original_ssl = selected.is_ssl();
+
+                                let mut batch = Vec::new();
+                                if let NodeDefinition::Electrum(def) = def {
+                                    let ssl = def.clone().force_ssl();
+                                    let tcp = def.force_tcp();
+                                    let ssl_cmd =
+                                        Command::perform(async move { ssl.ping() }, move |res| {
+                                            Message::DefineNode(message::DefineNode::PingResult((
+                                                PingType::ElectrumSsl,
+                                                res,
+                                            )))
+                                        });
+                                    let tcp_cmd =
+                                        Command::perform(async move { tcp.ping() }, move |res| {
+                                            Message::DefineNode(message::DefineNode::PingResult((
+                                                PingType::ElectrumTcp,
+                                                res,
+                                            )))
+                                        });
+                                    batch.push(ssl_cmd);
+                                    batch.push(tcp_cmd);
+                                }
+                                return Command::batch(batch);
+                            }
+                        }
                     }
                 }
-                message::DefineNode::PingResult((node_type, res)) => {
+                message::DefineNode::PingResult((ping_type, res)) => {
                     // Result may not be for the selected node type.
-                    if let Some(node) = self.get_mut(node_type) {
+                    if let Some(node) = self.get_mut(ping_type.node_type()) {
                         // Make sure we're expecting the ping result. Otherwise, the user may have changed values
                         // and so the ping result may not apply to the current values.
                         if node.waiting_for_ping_result {
-                            node.waiting_for_ping_result = false;
-                            node.is_running = Some(res);
+                            match ping_type {
+                                PingType::Bitcoind => {
+                                    node.waiting_for_ping_result = false;
+                                    node.is_running = Some(res);
+                                }
+                                ping_type => {
+                                    if let PingType::ElectrumTcp = ping_type {
+                                        node.tcp_ping_result = Some(res);
+                                    } else {
+                                        node.ssl_ping_result = Some(res);
+                                    }
+                                    // we wait receiving both ping before decide using tcp or
+                                    // ssl
+                                    if let (Some(ssl), Some(tcp)) =
+                                        (&node.ssl_ping_result, &node.tcp_ping_result)
+                                    {
+                                        node.waiting_for_ping_result = false;
+                                        if let NodeDefinition::Electrum(def) = &mut node.definition
+                                        {
+                                            if ssl.is_ok() {
+                                                *def = def.clone().force_ssl();
+                                            } else if tcp.is_ok() {
+                                                *def = def.clone().force_tcp();
+                                            }
+                                        }
+
+                                        node.is_running = if node.original_ssl || ssl.is_ok() {
+                                            node.ssl_ping_result.clone()
+                                        } else {
+                                            node.tcp_ping_result.clone()
+                                        };
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -240,7 +326,13 @@ impl Step for DefineNode {
             progress,
             self.nodes.iter().map(|node| node.definition.node_type()),
             self.selected_node_type,
-            self.selected().definition.view(),
+            self.selected()
+                .definition
+                .view(if let Some(r) = self.selected().is_running.as_ref() {
+                    r.is_ok()
+                } else {
+                    false
+                }),
             self.selected().is_running.as_ref(),
             self.selected().definition.can_try_ping(),
             self.selected().waiting_for_ping_result,

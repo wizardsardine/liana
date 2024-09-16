@@ -87,8 +87,25 @@ pub enum DefineNode {
     NodeTypeSelected(NodeType),
     DefineBitcoind(DefineBitcoind),
     DefineElectrum(DefineElectrum),
-    PingResult((NodeType, Result<(), Error>)),
+    PingResult((PingType, Result<(), Error>)),
     Ping,
+}
+
+#[derive(Debug, Clone)]
+pub enum PingType {
+    Bitcoind,
+    ElectrumTcp,
+    ElectrumSsl,
+}
+
+impl PingType {
+    pub fn node_type(&self) -> NodeType {
+        match &self {
+            PingType::Bitcoind => NodeType::Bitcoind,
+            PingType::ElectrumTcp => NodeType::Electrum,
+            PingType::ElectrumSsl => NodeType::Electrum,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
