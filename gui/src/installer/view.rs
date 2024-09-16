@@ -1382,6 +1382,7 @@ pub fn define_electrum<'a>(address: &form::Value<String>) -> Element<'a, Message
             .size(text::P1_SIZE)
             .padding(10),
         )
+        .push(text(electrum::ADDRESS_NOTES).size(text::P2_SIZE))
         .spacing(10);
 
     Column::new().push(col_address).spacing(50).into()

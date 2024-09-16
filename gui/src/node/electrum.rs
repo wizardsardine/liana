@@ -5,6 +5,10 @@ pub enum ConfigField {
     Address,
 }
 
+pub const ADDRESS_NOTES: &str = "Note: include \"ssl://\" as a prefix \
+    for SSL connections. Be aware that self-signed \
+    SSL certificates are currently not supported.";
+
 impl fmt::Display for ConfigField {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
