@@ -681,6 +681,13 @@ pub fn hardware_wallet_xpubs<'a>(
             UnsupportedReason::WrongNetwork => {
                 hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
             }
+            UnsupportedReason::Version {
+                minimal_supported_version,
+            } => hw::unsupported_version_hardware_wallet(
+                &kind.to_string(),
+                version.as_ref(),
+                minimal_supported_version,
+            ),
             _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
         },
         HardwareWallet::Locked {
@@ -2120,6 +2127,13 @@ pub fn hw_list_view(
             UnsupportedReason::WrongNetwork => {
                 hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
             }
+            UnsupportedReason::Version {
+                minimal_supported_version,
+            } => hw::unsupported_version_hardware_wallet(
+                &kind.to_string(),
+                version.as_ref(),
+                minimal_supported_version,
+            ),
             _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
         },
         HardwareWallet::Locked {
