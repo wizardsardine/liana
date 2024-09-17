@@ -348,6 +348,37 @@ pub fn unsupported_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
     .padding(10)
 }
 
+pub fn unsupported_version_hardware_wallet<'a, T: 'a, K: Display, V: Display, S: Display>(
+    kind: K,
+    version: Option<V>,
+    requested_version: S,
+) -> Container<'a, T> {
+    container(
+        row(vec![
+            column(vec![
+                text::p1_bold("Unsupported firmware version").into(),
+                text::p1_regular(format!("Install version {} or later", requested_version)).into(),
+                Row::new()
+                    .spacing(5)
+                    .push(text::caption(kind.to_string()))
+                    .push_maybe(version.map(|v| text::caption(v.to_string())))
+                    .into(),
+            ])
+            .width(Length::Fill)
+            .into(),
+            tooltip::Tooltip::new(
+                icon::warning_icon(),
+                "Please upgrade firmware",
+                tooltip::Position::Bottom,
+            )
+            .style(theme::Container::Card(theme::Card::Simple))
+            .into(),
+        ])
+        .align_items(Alignment::Center),
+    )
+    .padding(10)
+}
+
 pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>>>,
