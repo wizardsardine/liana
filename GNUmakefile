@@ -111,7 +111,7 @@ help: ## 	help
 .PHONY: docs tests
 doc: docs
 docs: ## 	docs
-	cargo doc --all-features --no-deps
+	cargo doc --all-features --no-deps --document-private-items
 test: tests
 tests: ## 	tests
 ## tests
