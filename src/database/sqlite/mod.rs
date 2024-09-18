@@ -5,7 +5,7 @@
 //! > no single database connection is used simultaneously in two or more threads.
 //!
 //! We leverage SQLite's `unlock_notify` feature to synchronize writes accross connection. More
-//! about it at https://sqlite.org/unlock_notify.html.
+//! about it at <https://sqlite.org/unlock_notify.html>.
 
 pub mod schema;
 mod utils;
