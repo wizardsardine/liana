@@ -37,7 +37,7 @@ pub enum ReqId {
     Str(String),
 }
 
-/// A JSONRPC2 request. See https://www.jsonrpc.org/specification#request_object.
+/// A JSONRPC2 request. See <https://www.jsonrpc.org/specification#request_object>.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -54,7 +54,7 @@ pub struct Request {
 /// A failure to broadcast a transaction to the P2P network.
 const BROADCAST_ERROR: i64 = 1_000;
 
-/// JSONRPC2 error codes. See https://www.jsonrpc.org/specification#error_object.
+/// JSONRPC2 error codes. See <https://www.jsonrpc.org/specification#error_object>.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ErrorCode {
     /// The method does not exist / is not available.
@@ -108,7 +108,7 @@ impl Serialize for ErrorCode {
     }
 }
 
-/// JSONRPC2 error response. See https://www.jsonrpc.org/specification#error_object.
+/// JSONRPC2 error response. See <https://www.jsonrpc.org/specification#error_object>.
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Error {
@@ -179,7 +179,7 @@ impl From<commands::CommandError> for Error {
     }
 }
 
-/// JSONRPC2 response. See https://www.jsonrpc.org/specification#response_object.
+/// JSONRPC2 response. See <https://www.jsonrpc.org/specification#response_object>.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Response {
