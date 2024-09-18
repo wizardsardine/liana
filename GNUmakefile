@@ -120,7 +120,7 @@ tests: ## 	tests
 	mkdir -p $(HOME)/.liana
 	cargo test -- --nocapture
 
-##	install rustup sequence
+rustup: ## 	install rustup sequence
 	$(shell echo which rustup) || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y --no-modify-path --default-toolchain stable --profile default #& . "$(HOME)/.cargo/env"
 
 report:## 	print make variables
