@@ -133,6 +133,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbTip {
 
 /// A row in the "wallets" table.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct DbWallet {
     pub id: i64,
     pub timestamp: u32,
