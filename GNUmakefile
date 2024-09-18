@@ -108,7 +108,7 @@ help: ## 	help
 
 -include Makefile
 
-.PHONY: docs tests
+.PHONY: doc tests
 doc: docs
 docs: ## 	docs
 	cargo doc --all-features --no-deps --document-private-items
@@ -119,6 +119,18 @@ tests: ## 	tests
 ## for bin in $$(ls target/debug/liana*); do ./$${bin/.d} --conf $(CONF) 2>/dev/null; done
 	mkdir -p $(HOME)/.liana
 	cargo test -- --nocapture
+.PHONY: docs-gui tests-gui
+doc-gui: docs-gui
+docs-gui: ## 	docs
+	cargo doc --manifest-path ./gui/ui/Cargo.toml --all-features --no-deps --document-private-items
+	cargo doc --manifest-path ./gui/Cargo.toml --all-features --no-deps --document-private-items
+test-gui: tests-gui
+tests-gui: ## 	tests-gui
+	mkdir -p $(HOME)/.liana
+	cargo test -- --nocapture
+	cargo test --manifest-path ./gui/ui/Cargo.toml -- --nocapture
+	cargo test --manifest-path ./gui/Cargo.toml -- --nocapture
+
 
 rustup: ## 	install rustup sequence
 	$(shell echo which rustup) || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y --no-modify-path --default-toolchain stable --profile default #& . "$(HOME)/.cargo/env"
