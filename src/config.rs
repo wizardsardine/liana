@@ -221,11 +221,16 @@ impl std::error::Error for ConfigError {}
 
 /// Get the absolute path to the liana configuration folder.
 ///
-/// It's a "liana/<network>/" directory in the XDG standard configuration directory for
-/// all OSes but Linux-based ones, for which it's `~/.liana/<network>/`.
+/// It is a `liana/<network>/` directory in the XDG standard configuration directory for
+///
+/// all OSes except Linux-based ones, for which it is `~/.liana/<network>/` .
+///
 /// There is only one config file at `liana/config.toml`, which specifies the network.
-/// Rationale: we want to have the database, RPC socket, etc.. in the same folder as the
-/// configuration file but for Linux the XDG specifoes a data directory (`~/.local/share/`)
+///
+/// **Rationale:** We want to have the database, RPC socket, etc.. in the same folder as the
+///
+/// configuration file but for Linux the XDG specifies a data directory (`~/.local/share/`)
+///
 /// different from the configuration one (`~/.config/`).
 pub fn config_folder_path() -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
