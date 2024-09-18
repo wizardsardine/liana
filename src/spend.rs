@@ -429,7 +429,7 @@ fn select_coins_for_spend(
         i if i >= 100 => 10_000,
         _ => 100_000,
     };
-    #[cfg(debug)]
+    #[cfg(debug_assertions)]
     let bnb_rounds = bnb_rounds / 1_000;
     if let Err(e) = selector.run_bnb(lowest_fee_change_cond, bnb_rounds) {
         log::debug!(
@@ -570,7 +570,7 @@ pub trait TxGetter {
 
 /// Specify the fee requirements for a transaction. In both cases set a target feerate in satoshi
 /// per virtual byte. For RBF also set a minimum fee in satoshis for this transaction. See
-/// https://github.com/bitcoin/bitcoin/blob/master/doc/policy/mempool-replacements.md for more
+/// <https://github.com/bitcoin/bitcoin/blob/master/doc/policy/mempool-replacements.md> for more
 /// information about how it should be set.
 pub enum SpendTxFees {
     /// The target feerate in sats/vb for this transaction.
