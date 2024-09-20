@@ -21,8 +21,9 @@ use liana_ui::widget::*;
 
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet};
 
+use crate::daemon::model::events_from_tx;
 use crate::daemon::{
-    model::{remaining_sequence, Coin, HistoryTransaction, Labelled},
+    model::{remaining_sequence, Coin, HistoryEvent, HistoryTransaction, Labelled},
     Daemon,
 };
 pub use coins::CoinsPanel;
@@ -71,7 +72,7 @@ pub struct Home {
     remaining_sequence: Option<u32>,
     expiring_coins: Vec<OutPoint>,
     pending_events: Vec<HistoryTransaction>,
-    events: Vec<HistoryTransaction>,
+    events: Vec<HistoryEvent>,
     selected_event: Option<(usize, usize)>,
     labels_edited: LabelsEdited,
     warning: Option<Error>,
@@ -109,11 +110,7 @@ impl Home {
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some((i, output_index)) = self.selected_event {
-            let event = if i < self.pending_events.len() {
-                &self.pending_events[i]
-            } else {
-                &self.events[i - self.pending_events.len()]
-            };
+            let event = &self.pending_events[i];
             view::home::payment_view(
                 cache,
                 event,
@@ -179,12 +176,11 @@ impl State for Home {
                     }
                 }
             },
-            Message::HistoryTransactions(res) => match res {
+            Message::HistoryEvents(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(events) => {
                     self.warning = None;
                     self.events = events;
-                    self.events.sort_by(|a, b| b.time.cmp(&a.time));
                 }
             },
             Message::HistoryTransactionsExtension(res) => match res {
@@ -192,9 +188,9 @@ impl State for Home {
                 Ok(events) => {
                     self.warning = None;
                     for event in events {
-                        if !self.events.iter().any(|other| other.tx == event.tx) {
-                            self.events.push(event);
-                        }
+                        // if !self.events.iter().any(|other| other.tx == event.tx) {
+                        // self.events.push(event);
+                        // }
                     }
                     self.events.sort_by(|a, b| b.time.cmp(&a.time));
                 }
@@ -212,8 +208,7 @@ impl State for Home {
                     message,
                     self.pending_events
                         .iter_mut()
-                        .map(|tx| tx as &mut dyn Labelled)
-                        .chain(self.events.iter_mut().map(|tx| tx as &mut dyn Labelled)),
+                        .map(|tx| tx as &mut dyn Labelled), // .chain(self.events.iter_mut().map(|tx| tx as &mut dyn Labelled)),
                 ) {
                     Ok(cmd) => {
                         return cmd;
@@ -238,34 +233,34 @@ impl State for Home {
                     let last_event_date = last.time.unwrap();
                     return Command::perform(
                         async move {
-                            let mut limit = view::home::HISTORY_EVENT_PAGE_SIZE;
-                            let mut events = daemon
-                                .list_history_txs(0_u32, last_event_date, limit)
-                                .await?;
-
-                            // because gethistory cursor is inclusive and use blocktime
-                            // multiple events can occur in the same block.
-                            // If there is more event in the same block that the
-                            // HISTORY_EVENT_PAGE_SIZE they can not be retrieved by changing
-                            // the cursor value (blocktime) but by increasing the limit.
+                            // let mut limit = view::home::HISTORY_EVENT_PAGE_SIZE;
+                            // let mut events = daemon
+                            //     .list_history_txs(0_u32, last_event_date.to_utc(), limit)
+                            //     .await?;
                             //
-                            // 1. Check if the events retrieved have all the same blocktime
-                            let blocktime = if let Some(event) = events.first() {
-                                event.time
-                            } else {
-                                return Ok(events);
-                            };
-
-                            // 2. Retrieve a larger batch of event with the same cursor but
-                            //    a larger limit.
-                            while !events.iter().any(|evt| evt.time != blocktime)
-                                && events.len() as u64 == limit
-                            {
-                                // increments of the equivalent of one page more.
-                                limit += view::home::HISTORY_EVENT_PAGE_SIZE;
-                                events = daemon.list_history_txs(0, last_event_date, limit).await?;
-                            }
-                            Ok(events)
+                            // // because gethistory cursor is inclusive and use blocktime
+                            // // multiple events can occur in the same block.
+                            // // If there is more event in the same block that the
+                            // // HISTORY_EVENT_PAGE_SIZE they can not be retrieved by changing
+                            // // the cursor value (blocktime) but by increasing the limit.
+                            // //
+                            // // 1. Check if the events retrieved have all the same blocktime
+                            // let blocktime = if let Some(event) = events.first() {
+                            //     event.time
+                            // } else {
+                            //     return Ok(events);
+                            // };
+                            //
+                            // // 2. Retrieve a larger batch of event with the same cursor but
+                            // //    a larger limit.
+                            // while !events.iter().any(|evt| evt.time != blocktime)
+                            //     && events.len() as u64 == limit
+                            // {
+                            //     // increments of the equivalent of one page more.
+                            //     limit += view::home::HISTORY_EVENT_PAGE_SIZE;
+                            //     events = daemon.list_history_txs(0, last_event_date, limit).await?;
+                            // }
+                            Ok(Vec::new())
                         },
                         Message::HistoryTransactionsExtension,
                     );
@@ -299,12 +294,13 @@ impl State for Home {
             ),
             Command::perform(
                 async move {
-                    daemon1
-                        .list_history_txs(0, now, view::home::HISTORY_EVENT_PAGE_SIZE)
-                        .await
-                        .map_err(|e| e.into())
+                    let events = daemon1
+                        .list_history_events(0, now, view::home::HISTORY_EVENT_PAGE_SIZE)
+                        .await?;
+
+                    Ok(events)
                 },
-                Message::HistoryTransactions,
+                Message::HistoryEvents,
             ),
             Command::perform(
                 async move {

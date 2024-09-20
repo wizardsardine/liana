@@ -269,6 +269,60 @@ impl Labelled for SpendTx {
 }
 
 #[derive(Debug, Clone)]
+pub struct HistoryEvent {
+    pub label: Option<String>,
+    pub address_label: Option<String>,
+    pub amount: Amount,
+    pub outpoint: OutPoint,
+    pub time: Option<chrono::DateTime<chrono::Utc>>,
+    pub kind: HistoryEventKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum HistoryEventKind {
+    Outgoing,
+    Incoming,
+}
+
+pub fn events_from_tx(history_tx: HistoryTransaction) -> Vec<HistoryEvent> {
+    let time = history_tx
+        .time
+        .map(|t| chrono::DateTime::<chrono::Utc>::from_timestamp(t as i64, 0).unwrap());
+    history_tx
+        .tx
+        .output
+        .iter()
+        .enumerate()
+        .fold(Vec::new(), |mut array, (output_index, output)| {
+            if history_tx.is_external() && !history_tx.change_indexes.contains(&output_index) {
+                return array;
+            }
+            let outpoint = OutPoint {
+                txid: history_tx.tx.txid(),
+                vout: output_index as u32,
+            };
+            let label = history_tx.labels.get(&outpoint.to_string()).cloned();
+            let address_label = Address::from_script(&output.script_pubkey, history_tx.network)
+                .ok()
+                .and_then(|addr| history_tx.labels.get(&addr.to_string()))
+                .cloned();
+            array.push(HistoryEvent {
+                label,
+                address_label,
+                outpoint,
+                time,
+                amount: output.value,
+                kind: if history_tx.is_external() {
+                    HistoryEventKind::Incoming
+                } else {
+                    HistoryEventKind::Outgoing
+                },
+            });
+            array
+        })
+}
+
+#[derive(Debug, Clone)]
 pub struct HistoryTransaction {
     pub network: Network,
     pub labels: HashMap<String, String>,

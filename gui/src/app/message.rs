@@ -41,6 +41,7 @@ pub enum Message {
     HardwareWallets(HardwareWalletMessage),
     HistoryTransactionsExtension(Result<Vec<HistoryTransaction>, Error>),
     HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
+    HistoryEvents(Result<Vec<HistoryEvent>, Error>),
     PendingTransactions(Result<Vec<HistoryTransaction>, Error>),
     LabelsUpdated(Result<HashMap<String, Option<String>>, Error>),
     BroadcastModal(Result<HashSet<Txid>, Error>),

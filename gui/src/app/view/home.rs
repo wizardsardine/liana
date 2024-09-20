@@ -18,7 +18,7 @@ use crate::{
         menu::Menu,
         view::{coins, dashboard, label, message::Message},
     },
-    daemon::model::{HistoryTransaction, TransactionKind},
+    daemon::model::{self, HistoryEvent, HistoryEventKind, HistoryTransaction, TransactionKind},
 };
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
@@ -29,7 +29,7 @@ pub fn home_view<'a>(
     remaining_sequence: &Option<u32>,
     expiring_coins: &[bitcoin::OutPoint],
     pending_events: &'a [HistoryTransaction],
-    events: &'a [HistoryTransaction],
+    events: &'a [HistoryEvent],
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
@@ -99,26 +99,24 @@ pub fn home_view<'a>(
             Column::new()
                 .spacing(10)
                 .push(h4_bold("Last payments"))
-                .push(pending_events.iter().enumerate().fold(
-                    Column::new().spacing(10),
-                    |col, (i, event)| {
-                        if !event.is_send_to_self() {
-                            col.push(event_list_view(i, event))
-                        } else {
-                            col
-                        }
-                    },
-                ))
-                .push(events.iter().enumerate().fold(
-                    Column::new().spacing(10),
-                    |col, (i, event)| {
-                        if !event.is_send_to_self() {
+                // .push(pending_events.iter().enumerate().fold(
+                //     Column::new().spacing(10),
+                //     |col, (i, event)| {
+                //         if !event.is_send_to_self() {
+                //             col.push(event_list_view(i, event))
+                //         } else {
+                //             col
+                //         }
+                //     },
+                // ))
+                .push(
+                    events
+                        .iter()
+                        .enumerate()
+                        .fold(Column::new().spacing(10), |col, (i, event)| {
                             col.push(event_list_view(i + pending_events.len(), event))
-                        } else {
-                            col
-                        }
-                    },
-                ))
+                        }),
+                )
                 .push_maybe(
                     if events.len() % HISTORY_EVENT_PAGE_SIZE as usize == 0 && !events.is_empty() {
                         Some(
@@ -145,62 +143,25 @@ pub fn home_view<'a>(
         .into()
 }
 
-fn event_list_view(i: usize, event: &HistoryTransaction) -> Column<'_, Message> {
-    event.tx.output.iter().enumerate().fold(
-        Column::new().spacing(10),
-        |col, (output_index, output)| {
-            let label = if let Some(label) = event.labels.get(
-                &bitcoin::OutPoint {
-                    txid: event.tx.txid(),
-                    vout: output_index as u32,
-                }
-                .to_string(),
-            ) {
-                Some(p1_regular(label))
-            } else if let Ok(addr) =
-                bitcoin::Address::from_script(&output.script_pubkey, event.network)
-            {
-                event.labels.get(&addr.to_string()).map(|label| {
-                    p1_regular(format!("address label: {}", label)).style(color::GREY_3)
-                })
-            } else {
-                None
-            };
-            if event.is_external() {
-                if !event.change_indexes.contains(&output_index) {
-                    col
-                } else if let Some(t) = event.time {
-                    col.push(event::confirmed_incoming_event(
-                        label,
-                        DateTime::<Utc>::from_timestamp(t as i64, 0).unwrap(),
-                        &output.value,
-                        Message::SelectSub(i, output_index),
-                    ))
-                } else {
-                    col.push(event::unconfirmed_incoming_event(
-                        label,
-                        &output.value,
-                        Message::SelectSub(i, output_index),
-                    ))
-                }
-            } else if event.change_indexes.contains(&output_index) {
-                col
-            } else if let Some(t) = event.time {
-                col.push(event::confirmed_outgoing_event(
-                    label,
-                    DateTime::<Utc>::from_timestamp(t as i64, 0).unwrap(),
-                    &output.value,
-                    Message::SelectSub(i, output_index),
-                ))
-            } else {
-                col.push(event::unconfirmed_outgoing_event(
-                    label,
-                    &output.value,
-                    Message::SelectSub(i, output_index),
-                ))
-            }
-        },
-    )
+fn event_list_view(i: usize, event: &HistoryEvent) -> Container<'_, Message> {
+    let label = if let Some(label) = &event.label {
+        Some(p1_regular(label))
+    } else if let Some(label) = &event.address_label {
+        Some(p1_regular(format!("address label: {}", label)).style(color::GREY_3))
+    } else {
+        None
+    };
+    if event.kind == HistoryEventKind::Incoming {
+        if let Some(t) = event.time {
+            event::confirmed_incoming_event(label, t, &event.amount, Message::SelectSub(i, 0))
+        } else {
+            event::unconfirmed_incoming_event(label, &event.amount, Message::SelectSub(i, 0))
+        }
+    } else if let Some(t) = event.time {
+        event::confirmed_outgoing_event(label, t, &event.amount, Message::SelectSub(i, 0))
+    } else {
+        event::unconfirmed_outgoing_event(label, &event.amount, Message::SelectSub(i, 0))
+    }
 }
 
 pub fn payment_view<'a>(

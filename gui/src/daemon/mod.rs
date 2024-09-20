@@ -252,6 +252,24 @@ pub trait Daemon: Debug {
         self.txs_to_historytxs(txs).await
     }
 
+    /// returns a sorted list of events.
+    async fn list_history_events(
+        &self,
+        start: u32,
+        end: u32,
+        limit: u64,
+    ) -> Result<Vec<model::HistoryEvent>, DaemonError> {
+        let mut txs = self.list_history_txs(start, end, limit).await?;
+        txs.sort_by(|a, b| b.time.cmp(&a.time));
+        let events = txs.into_iter().fold(Vec::new(), |mut array, tx| {
+            let mut events = model::events_from_tx(tx);
+            array.append(&mut events);
+            array
+        });
+
+        Ok(events)
+    }
+
     async fn get_history_txs(
         &self,
         txids: &[Txid],

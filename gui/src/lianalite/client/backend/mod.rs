@@ -1002,6 +1002,26 @@ impl Daemon for BackendWalletClient {
         Ok(res)
     }
 
+    async fn list_history_events(
+        &self,
+        _start: u32,
+        end: u32,
+        limit: u64,
+    ) -> Result<Vec<HistoryEvent>, DaemonError> {
+        let events = self
+            .list_wallet_txs(Some(end), Some(limit))
+            .await?
+            .transactions
+            .into_iter()
+            .map(|tx| history_tx_from_api(tx, self.inner.network))
+            .fold(Vec::new(), |mut array, tx| {
+                let mut events = events_from_tx(tx);
+                array.append(&mut events);
+                array
+            });
+        Ok(events)
+    }
+
     async fn get_history_txs(
         &self,
         txids: &[Txid],
@@ -1018,6 +1038,7 @@ impl Daemon for BackendWalletClient {
             .collect();
         Ok(res)
     }
+
     async fn list_pending_txs(&self) -> Result<Vec<HistoryTransaction>, DaemonError> {
         let res = self
             .list_wallet_txs(None, None)
@@ -1105,6 +1126,56 @@ impl Daemon for BackendWalletClient {
 
         Ok(())
     }
+}
+
+fn history_event_from_api(value: api::Transaction, network: Network) -> HistoryTransaction {
+    let mut labels = HashMap::<String, Option<String>>::new();
+    let mut coins = Vec::new();
+    for input in &value.inputs {
+        labels.insert(
+            format!("{}:{}", input.txid, input.vout),
+            input.label.clone(),
+        );
+        if input.kind == UTXOKind::Deposit || input.kind == UTXOKind::Change {
+            if let Some(c) = &input.coin {
+                coins.push(ListCoinsEntry {
+                    address: c.address.clone(),
+                    amount: c.amount,
+                    derivation_index: c.derivation_index,
+                    outpoint: c.outpoint,
+                    block_height: c.block_height,
+                    is_immature: c.is_immature,
+                    is_change: c.is_change_address,
+                    spend_info: c.spend_info.clone().map(|info| LCSpendInfo {
+                        txid: info.txid,
+                        height: info.height,
+                    }),
+                });
+            }
+        }
+    }
+    let mut changes_indexes = Vec::new();
+    let txid = value.raw.txid().to_string();
+    for (index, output) in value.outputs.iter().enumerate() {
+        labels.insert(format!("{}:{}", txid, index), output.label.clone());
+        if let Some(address) = &output.address {
+            labels.insert(address.to_string(), output.address_label.clone());
+        }
+        if output.kind == UTXOKind::Deposit || output.kind == UTXOKind::Change {
+            changes_indexes.push(index);
+        }
+    }
+    labels.insert(txid, value.label);
+    let mut tx = HistoryTransaction::new(
+        value.raw,
+        value.block_height,
+        value.confirmed_at.map(|t| t as u32),
+        coins,
+        changes_indexes,
+        network,
+    );
+    tx.load_labels(&labels);
+    tx
 }
 
 fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTransaction {
