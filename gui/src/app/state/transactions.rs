@@ -16,6 +16,8 @@ use liana_ui::{
     widget::*,
 };
 
+pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
+
 use crate::{
     app::{
         cache::Cache,
@@ -41,6 +43,7 @@ pub struct TransactionsPanel {
     selected_tx: Option<HistoryTransaction>,
     warning: Option<Error>,
     create_rbf_modal: Option<CreateRbfModal>,
+    is_last_page: bool,
 }
 
 impl TransactionsPanel {
@@ -53,6 +56,7 @@ impl TransactionsPanel {
             labels_edited: LabelsEdited::default(),
             warning: None,
             create_rbf_modal: None,
+            is_last_page: false,
         }
     }
 
@@ -83,6 +87,7 @@ impl State for TransactionsPanel {
                 &self.pending_txs,
                 &self.txs,
                 self.warning.as_ref(),
+                self.is_last_page,
             )
         }
     }
@@ -98,6 +103,16 @@ impl State for TransactionsPanel {
                 Err(e) => self.warning = Some(e),
                 Ok(txs) => {
                     self.warning = None;
+                    self.txs = txs;
+                    self.is_last_page = (self.txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.txs.sort_by(|a, b| b.time.cmp(&a.time));
+                }
+            },
+            Message::HistoryTransactionsExtension(res) => match res {
+                Err(e) => self.warning = Some(e),
+                Ok(txs) => {
+                    self.warning = None;
+                    self.is_last_page = (txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                     for tx in txs {
                         if let Some(t) = self.txs.iter_mut().find(|other| other.tx == tx.tx) {
                             t.labels = tx.labels;
@@ -204,7 +219,7 @@ impl State for TransactionsPanel {
                     let last_tx_date = last.time.unwrap();
                     return Command::perform(
                         async move {
-                            let mut limit = view::home::HISTORY_EVENT_PAGE_SIZE;
+                            let mut limit = HISTORY_EVENT_PAGE_SIZE;
                             let mut txs =
                                 daemon.list_history_txs(0_u32, last_tx_date, limit).await?;
 
@@ -227,12 +242,12 @@ impl State for TransactionsPanel {
                                 && txs.len() as u64 == limit
                             {
                                 // increments of the equivalent of one page more.
-                                limit += view::home::HISTORY_EVENT_PAGE_SIZE;
+                                limit += HISTORY_EVENT_PAGE_SIZE;
                                 txs = daemon.list_history_txs(0, last_tx_date, limit).await?;
                             }
                             Ok(txs)
                         },
-                        Message::HistoryTransactions,
+                        Message::HistoryTransactionsExtension,
                     );
                 }
             }
@@ -267,7 +282,7 @@ impl State for TransactionsPanel {
             Command::perform(
                 async move {
                     daemon1
-                        .list_history_txs(0, now, view::home::HISTORY_EVENT_PAGE_SIZE)
+                        .list_history_txs(0, now, HISTORY_EVENT_PAGE_SIZE)
                         .await
                         .map_err(|e| e.into())
                 },

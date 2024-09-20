@@ -21,6 +21,8 @@ use liana_ui::widget::*;
 
 use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet};
 
+pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
+
 use crate::daemon::{
     model::{remaining_sequence, Coin, HistoryTransaction, Labelled},
     Daemon,
@@ -72,6 +74,7 @@ pub struct Home {
     expiring_coins: Vec<OutPoint>,
     pending_events: Vec<HistoryTransaction>,
     events: Vec<HistoryTransaction>,
+    is_last_page: bool,
     selected_event: Option<(usize, usize)>,
     labels_edited: LabelsEdited,
     warning: Option<Error>,
@@ -102,6 +105,7 @@ impl Home {
             pending_events: Vec::new(),
             labels_edited: LabelsEdited::default(),
             warning: None,
+            is_last_page: false,
         }
     }
 }
@@ -133,6 +137,7 @@ impl State for Home {
                     &self.expiring_coins,
                     &self.pending_events,
                     &self.events,
+                    self.is_last_page,
                 ),
             )
         }
@@ -185,12 +190,14 @@ impl State for Home {
                     self.warning = None;
                     self.events = events;
                     self.events.sort_by(|a, b| b.time.cmp(&a.time));
+                    self.is_last_page = (self.events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                 }
             },
             Message::HistoryTransactionsExtension(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(events) => {
                     self.warning = None;
+                    self.is_last_page = (events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                     for event in events {
                         if !self.events.iter().any(|other| other.tx == event.tx) {
                             self.events.push(event);
@@ -238,7 +245,7 @@ impl State for Home {
                     let last_event_date = last.time.unwrap();
                     return Command::perform(
                         async move {
-                            let mut limit = view::home::HISTORY_EVENT_PAGE_SIZE;
+                            let mut limit = HISTORY_EVENT_PAGE_SIZE;
                             let mut events = daemon
                                 .list_history_txs(0_u32, last_event_date, limit)
                                 .await?;
@@ -262,7 +269,7 @@ impl State for Home {
                                 && events.len() as u64 == limit
                             {
                                 // increments of the equivalent of one page more.
-                                limit += view::home::HISTORY_EVENT_PAGE_SIZE;
+                                limit += HISTORY_EVENT_PAGE_SIZE;
                                 events = daemon.list_history_txs(0, last_event_date, limit).await?;
                             }
                             Ok(events)
@@ -300,7 +307,7 @@ impl State for Home {
             Command::perform(
                 async move {
                     daemon1
-                        .list_history_txs(0, now, view::home::HISTORY_EVENT_PAGE_SIZE)
+                        .list_history_txs(0, now, HISTORY_EVENT_PAGE_SIZE)
                         .await
                         .map_err(|e| e.into())
                 },

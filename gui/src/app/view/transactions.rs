@@ -20,13 +20,12 @@ use crate::{
     daemon::model::{HistoryTransaction, Txid},
 };
 
-pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
-
 pub fn transactions_view<'a>(
     cache: &'a Cache,
     pending_txs: &'a [HistoryTransaction],
     txs: &'a [HistoryTransaction],
     warning: Option<&'a Error>,
+    is_last_page: bool,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::Transactions,
@@ -56,27 +55,25 @@ pub fn transactions_view<'a>(
                                 col.push(tx_list_view(i + pending_txs.len(), tx))
                             }),
                     )
-                    .push_maybe(
-                        if txs.len() % HISTORY_EVENT_PAGE_SIZE as usize == 0 && !txs.is_empty() {
-                            Some(
-                                Container::new(
-                                    Button::new(
-                                        text("See more")
-                                            .width(Length::Fill)
-                                            .horizontal_alignment(alignment::Horizontal::Center),
-                                    )
-                                    .width(Length::Fill)
-                                    .padding(15)
-                                    .style(theme::Button::TransparentBorder)
-                                    .on_press(Message::Next),
+                    .push_maybe(if !is_last_page && !txs.is_empty() {
+                        Some(
+                            Container::new(
+                                Button::new(
+                                    text("See more")
+                                        .width(Length::Fill)
+                                        .horizontal_alignment(alignment::Horizontal::Center),
                                 )
                                 .width(Length::Fill)
-                                .style(theme::Container::Card(theme::Card::Simple)),
+                                .padding(15)
+                                .style(theme::Button::TransparentBorder)
+                                .on_press(Message::Next),
                             )
-                        } else {
-                            None
-                        },
-                    ),
+                            .width(Length::Fill)
+                            .style(theme::Container::Card(theme::Card::Simple)),
+                        )
+                    } else {
+                        None
+                    }),
             )
             .align_items(Alignment::Center)
             .spacing(30),
