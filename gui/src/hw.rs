@@ -24,6 +24,7 @@ pub enum UnsupportedReason {
     Method(&'static str),
     NotPartOfWallet(Fingerprint),
     WrongNetwork,
+    AppIsNotOpen,
 }
 
 // Todo drop the Clone, to remove the Mutex on HardwareWallet::Locked
@@ -488,61 +489,24 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
     }
 
     match ledger::LedgerSimulator::try_connect().await {
-        Ok(mut device) => {
+        Ok(device) => {
             let id = "ledger-simulator".to_string();
             if state.connected_supported_hws.contains(&id) {
                 still.push(id);
             } else {
-                match device.get_master_fingerprint().await {
-                    Ok(fingerprint) => {
-                        let version = device.get_version().await.ok();
-                        if ledger_version_supported(version.as_ref()) {
-                            let mut registered = false;
-                            if let Some(w) = &state.wallet {
-                                if let Some(cfg) = w
-                                    .hardware_wallets
-                                    .iter()
-                                    .find(|cfg| cfg.fingerprint == fingerprint)
-                                {
-                                    device = device
-                                        .with_wallet(
-                                            &w.name,
-                                            &w.main_descriptor.to_string(),
-                                            Some(cfg.token()),
-                                        )
-                                        .expect("Configuration must be correct");
-                                    registered = true;
-                                }
-                            }
-                            hws.push(HardwareWallet::Supported {
-                                id,
-                                kind: device.device_kind(),
-                                fingerprint,
-                                device: Arc::new(device),
-                                version,
-                                registered: Some(registered),
-                                alias: state.keys_aliases.get(&fingerprint).cloned(),
-                            });
-                        } else {
-                            hws.push(HardwareWallet::Unsupported {
-                                id,
-                                kind: device.device_kind(),
-                                version,
-                                reason: UnsupportedReason::Version {
-                                    minimal_supported_version: "2.1.0",
-                                },
-                            });
-                        }
+                match handle_ledger_device(
+                    id,
+                    device,
+                    state.wallet.as_ref().map(|w| w.as_ref()),
+                    &state.keys_aliases,
+                )
+                .await
+                {
+                    Ok(hw) => {
+                        hws.push(hw);
                     }
-                    Err(_) => {
-                        hws.push(HardwareWallet::Unsupported {
-                            id,
-                            kind: device.device_kind(),
-                            version: None,
-                            reason: UnsupportedReason::Version {
-                                minimal_supported_version: "2.1.0",
-                            },
-                        });
+                    Err(e) => {
+                        warn!("{:?}", e);
                     }
                 }
             }
@@ -659,57 +623,21 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
             still.push(id);
             continue;
         }
+
         match ledger::Ledger::<ledger::TransportHID>::connect(api, detected) {
-            Ok(mut device) => match device.get_master_fingerprint().await {
-                Ok(fingerprint) => {
-                    let version = device.get_version().await.ok();
-                    if ledger_version_supported(version.as_ref()) {
-                        let mut registered = false;
-                        if let Some(w) = &state.wallet {
-                            if let Some(cfg) = w
-                                .hardware_wallets
-                                .iter()
-                                .find(|cfg| cfg.fingerprint == fingerprint)
-                            {
-                                device = device
-                                    .with_wallet(
-                                        &w.name,
-                                        &w.main_descriptor.to_string(),
-                                        Some(cfg.token()),
-                                    )
-                                    .expect("Configuration must be correct");
-                                registered = true;
-                            }
-                        }
-                        hws.push(HardwareWallet::Supported {
-                            id,
-                            kind: device.device_kind(),
-                            fingerprint,
-                            device: Arc::new(device),
-                            version,
-                            registered: Some(registered),
-                            alias: state.keys_aliases.get(&fingerprint).cloned(),
-                        });
-                    } else {
-                        hws.push(HardwareWallet::Unsupported {
-                            id,
-                            kind: device.device_kind(),
-                            version,
-                            reason: UnsupportedReason::Version {
-                                minimal_supported_version: "2.1.0",
-                            },
-                        });
-                    }
+            Ok(device) => match handle_ledger_device(
+                id,
+                device,
+                state.wallet.as_ref().map(|w| w.as_ref()),
+                &state.keys_aliases,
+            )
+            .await
+            {
+                Ok(hw) => {
+                    hws.push(hw);
                 }
-                Err(_) => {
-                    hws.push(HardwareWallet::Unsupported {
-                        id,
-                        kind: device.device_kind(),
-                        version: None,
-                        reason: UnsupportedReason::Version {
-                            minimal_supported_version: "2.1.0",
-                        },
-                    });
+                Err(e) => {
+                    warn!("{:?}", e);
                 }
             },
             Err(HWIError::DeviceNotFound) => {}
@@ -755,6 +683,60 @@ async fn refresh(mut state: State) -> (HardwareWalletMessage, State) {
         HardwareWalletMessage::List(ConnectedList { new: hws, still }),
         state,
     )
+}
+
+async fn handle_ledger_device<'a, T: async_hwi::ledger::Transport + Sync + Send + 'static>(
+    id: String,
+    mut device: ledger::Ledger<T>,
+    wallet: Option<&'a Wallet>,
+    keys_aliases: &'a HashMap<Fingerprint, String>,
+) -> Result<HardwareWallet, HWIError> {
+    match (
+        device.get_master_fingerprint().await,
+        device.get_version().await,
+    ) {
+        (Ok(fingerprint), Ok(version)) => {
+            if ledger_version_supported(&version) {
+                let mut registered = false;
+                if let Some(w) = &wallet {
+                    if let Some(cfg) = w
+                        .hardware_wallets
+                        .iter()
+                        .find(|cfg| cfg.fingerprint == fingerprint)
+                    {
+                        device = device
+                            .with_wallet(&w.name, &w.main_descriptor.to_string(), Some(cfg.token()))
+                            .expect("Configuration must be correct");
+                        registered = true;
+                    }
+                }
+                Ok(HardwareWallet::Supported {
+                    id,
+                    kind: device.device_kind(),
+                    fingerprint,
+                    device: Arc::new(device),
+                    version: Some(version),
+                    registered: Some(registered),
+                    alias: keys_aliases.get(&fingerprint).cloned(),
+                })
+            } else {
+                Ok(HardwareWallet::Unsupported {
+                    id,
+                    kind: device.device_kind(),
+                    version: Some(version),
+                    reason: UnsupportedReason::Version {
+                        minimal_supported_version: "2.1.0",
+                    },
+                })
+            }
+        }
+        (_, _) => Ok(HardwareWallet::Unsupported {
+            id,
+            kind: device.device_kind(),
+            version: None,
+            reason: UnsupportedReason::AppIsNotOpen,
+        }),
+    }
 }
 
 async fn handle_jade_device(
@@ -855,16 +837,12 @@ impl<'a, T> AsRef<T> for AsRefWrap<'a, T> {
     }
 }
 
-fn ledger_version_supported(version: Option<&Version>) -> bool {
-    if let Some(version) = version {
-        if version.major >= 2 {
-            if version.major == 2 {
-                version.minor >= 1
-            } else {
-                true
-            }
+fn ledger_version_supported(version: &Version) -> bool {
+    if version.major >= 2 {
+        if version.major == 2 {
+            version.minor >= 1
         } else {
-            false
+            true
         }
     } else {
         false
