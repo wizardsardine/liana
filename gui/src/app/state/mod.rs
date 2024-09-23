@@ -75,6 +75,7 @@ pub struct Home {
     pending_events: Vec<HistoryTransaction>,
     events: Vec<HistoryTransaction>,
     is_last_page: bool,
+    processing: bool,
     selected_event: Option<(usize, usize)>,
     labels_edited: LabelsEdited,
     warning: Option<Error>,
@@ -106,6 +107,7 @@ impl Home {
             labels_edited: LabelsEdited::default(),
             warning: None,
             is_last_page: false,
+            processing: false,
         }
     }
 }
@@ -138,6 +140,7 @@ impl State for Home {
                     &self.pending_events,
                     &self.events,
                     self.is_last_page,
+                    self.processing,
                 ),
             )
         }
@@ -196,6 +199,7 @@ impl State for Home {
             Message::HistoryTransactionsExtension(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(events) => {
+                    self.processing = false;
                     self.warning = None;
                     self.is_last_page = (events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                     for event in events {
@@ -243,6 +247,7 @@ impl State for Home {
                 if let Some(last) = self.events.last() {
                     let daemon = daemon.clone();
                     let last_event_date = last.time.unwrap();
+                    self.processing = true;
                     return Command::perform(
                         async move {
                             let mut limit = HISTORY_EVENT_PAGE_SIZE;

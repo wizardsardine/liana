@@ -44,6 +44,7 @@ pub struct TransactionsPanel {
     warning: Option<Error>,
     create_rbf_modal: Option<CreateRbfModal>,
     is_last_page: bool,
+    processing: bool,
 }
 
 impl TransactionsPanel {
@@ -57,6 +58,7 @@ impl TransactionsPanel {
             warning: None,
             create_rbf_modal: None,
             is_last_page: false,
+            processing: false,
         }
     }
 
@@ -88,6 +90,7 @@ impl State for TransactionsPanel {
                 &self.txs,
                 self.warning.as_ref(),
                 self.is_last_page,
+                self.processing,
             )
         }
     }
@@ -111,6 +114,7 @@ impl State for TransactionsPanel {
             Message::HistoryTransactionsExtension(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(txs) => {
+                    self.processing = false;
                     self.warning = None;
                     self.is_last_page = (txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                     for tx in txs {
@@ -217,6 +221,7 @@ impl State for TransactionsPanel {
                 if let Some(last) = self.txs.last() {
                     let daemon = daemon.clone();
                     let last_tx_date = last.time.unwrap();
+                    self.processing = true;
                     return Command::perform(
                         async move {
                             let mut limit = HISTORY_EVENT_PAGE_SIZE;

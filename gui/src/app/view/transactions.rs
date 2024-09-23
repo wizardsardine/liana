@@ -26,6 +26,7 @@ pub fn transactions_view<'a>(
     txs: &'a [HistoryTransaction],
     warning: Option<&'a Error>,
     is_last_page: bool,
+    processing: bool,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::Transactions,
@@ -59,14 +60,22 @@ pub fn transactions_view<'a>(
                         Some(
                             Container::new(
                                 Button::new(
-                                    text("See more")
-                                        .width(Length::Fill)
-                                        .horizontal_alignment(alignment::Horizontal::Center),
+                                    text(if processing {
+                                        "Fetching ..."
+                                    } else {
+                                        "See more"
+                                    })
+                                    .width(Length::Fill)
+                                    .horizontal_alignment(alignment::Horizontal::Center),
                                 )
                                 .width(Length::Fill)
                                 .padding(15)
                                 .style(theme::Button::TransparentBorder)
-                                .on_press(Message::Next),
+                                .on_press_maybe(if !processing {
+                                    Some(Message::Next)
+                                } else {
+                                    None
+                                }),
                             )
                             .width(Length::Fill)
                             .style(theme::Container::Card(theme::Card::Simple)),

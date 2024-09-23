@@ -21,6 +21,7 @@ use crate::{
     daemon::model::{HistoryTransaction, TransactionKind},
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn home_view<'a>(
     balance: &'a bitcoin::Amount,
     unconfirmed_balance: &'a bitcoin::Amount,
@@ -29,6 +30,7 @@ pub fn home_view<'a>(
     pending_events: &'a [HistoryTransaction],
     events: &'a [HistoryTransaction],
     is_last_page: bool,
+    processing: bool,
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
@@ -122,14 +124,22 @@ pub fn home_view<'a>(
                     Some(
                         Container::new(
                             Button::new(
-                                text("See more")
-                                    .width(Length::Fill)
-                                    .horizontal_alignment(alignment::Horizontal::Center),
+                                text(if processing {
+                                    "Fetching ..."
+                                } else {
+                                    "See more"
+                                })
+                                .width(Length::Fill)
+                                .horizontal_alignment(alignment::Horizontal::Center),
                             )
                             .width(Length::Fill)
                             .padding(15)
                             .style(theme::Button::TransparentBorder)
-                            .on_press(Message::Next),
+                            .on_press_maybe(if !processing {
+                                Some(Message::Next)
+                            } else {
+                                None
+                            }),
                         )
                         .width(Length::Fill)
                         .style(theme::Container::Card(theme::Card::Simple)),
