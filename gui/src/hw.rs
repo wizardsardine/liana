@@ -873,7 +873,7 @@ fn ledger_version_supported(version: Option<&Version>) -> bool {
 
 // Kind and minimal version of devices supporting tapminiscript.
 // We cannot use a lazy_static HashMap yet, because DeviceKind does not implement Hash.
-const DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT: [(DeviceKind, Option<Version>); 4] = [
+const DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT: [(DeviceKind, Option<Version>); 5] = [
     (
         DeviceKind::Ledger,
         Some(Version {
@@ -893,6 +893,11 @@ const DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT: [(DeviceKind, Option<Version>); 4] 
             patch: 3,
             prerelease: None,
         }),
+    ),
+    (
+        DeviceKind::BitBox02,
+        // TODO: change for the real firmware release version
+        None,
     ),
 ];
 
