@@ -769,10 +769,14 @@ pub fn rescan<'a>(
                     } else {
                         None
                     })
-                    .spacing(20)
+                    .spacing(5)
                     .align_items(Alignment::Center)
                     .width(Length::Fill),
             )
+            .push(text("Rescan the local blockchain for any missing wallet transaction and rebuild the correct wallet balance")
+                    .width(Length::Fill)
+                    .size(20)
+                    .style(color::GREY_3))
             .push(separation().width(Length::Fill))
             .push(if let Some(p) = scan_progress {
                 Container::new(
@@ -842,7 +846,8 @@ pub fn rescan<'a>(
                                     })
                                     && is_ok_and(&u32::from_str(&day.value), |&v| v > 0 && v <= 31))
                             {
-                                Row::new().push(Column::new().width(Length::Fill)).push(
+                                Row::new().push(Column::new().width(Length::Fill))
+                                .push(
                                     button::primary(None, "Start rescan")
                                         .on_press(SettingsEditMessage::Confirm)
                                         .width(Length::Shrink),
@@ -853,7 +858,11 @@ pub fn rescan<'a>(
                                         .width(Length::Shrink),
                                 )
                             } else {
-                                Row::new().push(Column::new().width(Length::Fill)).push(
+                                Row::new()
+                                .push(text("Rescan date cannot be earlier than wallet creation date or pruned date (if applies)").width(Length::Fill)
+                                .size(15)
+                                .style(color::GREY_3))
+                                .push(Column::new().width(Length::Fill)).push(
                                     button::primary(None, "Start rescan").width(Length::Shrink),
                                 )
                             },
