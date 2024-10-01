@@ -31,7 +31,7 @@ use crate::{
     signer::Signer,
 };
 
-use key::{check_key_network, new_multixkey_from_xpub, EditXpubModal, Key};
+use key::{new_multixkey_from_xpub, EditXpubModal, Key};
 
 pub trait DescriptorEditModal {
     fn processing(&self) -> bool {
@@ -46,19 +46,28 @@ pub trait DescriptorEditModal {
     }
 }
 
-pub struct RecoveryPath {
+pub struct Path {
     keys: Vec<Option<Fingerprint>>,
     threshold: usize,
-    sequence: u16,
+    sequence: Option<u16>,
     duplicate_sequence: bool,
 }
 
-impl RecoveryPath {
-    pub fn new() -> Self {
+impl Path {
+    pub fn new_primary_path() -> Self {
         Self {
             keys: vec![None],
             threshold: 1,
-            sequence: u16::MAX,
+            sequence: None,
+            duplicate_sequence: false,
+        }
+    }
+
+    pub fn new_recovery_path() -> Self {
+        Self {
+            keys: vec![None],
+            threshold: 1,
+            sequence: Some(u16::MAX),
             duplicate_sequence: false,
         }
     }
@@ -73,57 +82,92 @@ impl RecoveryPath {
         duplicate_name: &HashSet<Fingerprint>,
         incompatible_with_tapminiscript: &HashSet<Fingerprint>,
     ) -> Element<message::DefinePath> {
-        view::recovery_path_view(
-            self.sequence,
-            self.duplicate_sequence,
-            self.threshold,
-            self.keys
-                .iter()
-                .enumerate()
-                .map(|(i, key)| {
-                    if let Some(key) = key {
-                        view::defined_descriptor_key(
-                            aliases.get(key).unwrap().to_string(),
-                            duplicate_name.contains(key),
-                            incompatible_with_tapminiscript.contains(key),
-                        )
-                    } else {
-                        view::undefined_descriptor_key()
-                    }
-                    .map(move |msg| message::DefinePath::Key(i, msg))
-                })
-                .collect(),
-        )
+        if let Some(sequence) = self.sequence {
+            view::editor::recovery_path_view(
+                sequence,
+                self.duplicate_sequence,
+                self.threshold,
+                self.keys
+                    .iter()
+                    .enumerate()
+                    .map(|(i, key)| {
+                        if let Some(key) = key {
+                            view::editor::defined_descriptor_key(
+                                aliases.get(key).unwrap().to_string(),
+                                duplicate_name.contains(key),
+                                incompatible_with_tapminiscript.contains(key),
+                            )
+                        } else {
+                            view::editor::undefined_descriptor_key()
+                        }
+                        .map(move |msg| message::DefinePath::Key(i, msg))
+                    })
+                    .collect(),
+            )
+        } else {
+            view::editor::primary_path_view(
+                self.threshold,
+                self.keys
+                    .iter()
+                    .enumerate()
+                    .map(|(i, key)| {
+                        if let Some(key) = key {
+                            view::editor::defined_descriptor_key(
+                                aliases.get(key).unwrap().to_string(),
+                                duplicate_name.contains(key),
+                                incompatible_with_tapminiscript.contains(key),
+                            )
+                        } else {
+                            view::editor::undefined_descriptor_key()
+                        }
+                        .map(move |msg| message::DefinePath::Key(i, msg))
+                    })
+                    .collect(),
+            )
+        }
     }
 }
 
-struct Setup {
+pub struct DefineDescriptor {
+    network: Network,
+    use_taproot: bool,
+
+    modal: Option<Box<dyn DescriptorEditModal>>,
+    signer: Arc<Mutex<Signer>>,
+    signer_fingerprint: Fingerprint,
+
     keys: Vec<Key>,
     duplicate_name: HashSet<Fingerprint>,
     incompatible_with_tapminiscript: HashSet<Fingerprint>,
-    spending_keys: Vec<Option<Fingerprint>>,
-    spending_threshold: usize,
-    recovery_paths: Vec<RecoveryPath>,
+    paths: Vec<Path>,
+
+    error: Option<String>,
 }
 
-impl Setup {
-    fn new() -> Self {
+impl DefineDescriptor {
+    pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
+        let signer_fingerprint = signer.lock().unwrap().fingerprint();
         Self {
+            network,
+            use_taproot: false,
+            modal: None,
+            signer_fingerprint,
+
+            signer,
+            error: None,
             keys: Vec::new(),
             duplicate_name: HashSet::new(),
             incompatible_with_tapminiscript: HashSet::new(),
-            spending_keys: vec![None],
-            spending_threshold: 1,
-            recovery_paths: vec![RecoveryPath::new()],
+            paths: vec![Path::new_primary_path(), Path::new_recovery_path()],
         }
     }
 
-    fn valid(&self) -> bool {
-        !self.spending_keys.is_empty()
-            && !self.spending_keys.iter().any(|k| k.is_none())
-            && !self.recovery_paths.iter().any(|path| !path.valid())
-            && self.duplicate_name.is_empty()
-            && self.incompatible_with_tapminiscript.is_empty()
+    fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
+        let mut map = HashMap::new();
+        for key in &self.keys {
+            map.insert(key.key.master_fingerprint(), key.name.clone());
+        }
+        map
     }
 
     // Mark as duplicate every defined key that have the same name but not the same fingerprint.
@@ -140,17 +184,21 @@ impl Setup {
         }
 
         let mut all_sequence = HashSet::new();
-        let mut duplicate_sequence = HashSet::new();
-        for path in &mut self.recovery_paths {
-            if all_sequence.contains(&path.sequence) {
-                duplicate_sequence.insert(path.sequence);
-            } else {
-                all_sequence.insert(path.sequence);
+        let mut duplicate_sequences = HashSet::new();
+        for path in &mut self.paths {
+            if let Some(sequence) = path.sequence {
+                if all_sequence.contains(&sequence) {
+                    duplicate_sequences.insert(sequence);
+                } else {
+                    all_sequence.insert(sequence);
+                }
             }
         }
 
-        for path in &mut self.recovery_paths {
-            path.duplicate_sequence = duplicate_sequence.contains(&path.sequence);
+        for path in &mut self.paths {
+            if let Some(sequence) = path.sequence {
+                path.duplicate_sequence = duplicate_sequences.contains(&sequence);
+            }
         }
     }
 
@@ -160,9 +208,9 @@ impl Setup {
             for key in &self.keys {
                 // check if key is used by a path
                 if !self
-                    .spending_keys
+                    .paths
                     .iter()
-                    .chain(self.recovery_paths.iter().flat_map(|path| &path.keys))
+                    .flat_map(|path| &path.keys)
                     .any(|k| *k == Some(key.fingerprint))
                 {
                     continue;
@@ -181,54 +229,17 @@ impl Setup {
         }
     }
 
-    fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
-        let mut map = HashMap::new();
-        for key in &self.keys {
-            map.insert(key.key.master_fingerprint(), key.name.clone());
-        }
-        map
-    }
-}
-
-pub struct DefineDescriptor {
-    setup: Setup,
-
-    network: Network,
-    use_taproot: bool,
-
-    modal: Option<Box<dyn DescriptorEditModal>>,
-    signer: Arc<Mutex<Signer>>,
-    signer_fingerprint: Fingerprint,
-
-    error: Option<String>,
-}
-
-impl DefineDescriptor {
-    pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
-        let signer_fingerprint = signer.lock().unwrap().fingerprint();
-        Self {
-            network,
-            use_taproot: false,
-            setup: Setup::new(),
-            modal: None,
-            signer_fingerprint,
-            signer,
-            error: None,
-        }
-    }
-
     fn valid(&self) -> bool {
-        self.setup.valid()
-    }
-    fn setup_mut(&mut self) -> &mut Setup {
-        &mut self.setup
+        !self.paths.iter().any(|path| !path.valid())
+            && self.duplicate_name.is_empty()
+            && self.incompatible_with_tapminiscript.is_empty()
+            && self.paths.len() >= 2
     }
 
     fn check_setup(&mut self) {
-        self.setup_mut().check_for_duplicate();
+        self.check_for_duplicate();
         let use_taproot = self.use_taproot;
-        self.setup_mut()
-            .check_for_tapminiscript_support(use_taproot);
+        self.check_for_tapminiscript_support(use_taproot);
     }
 }
 
@@ -246,110 +257,30 @@ impl Step for DefineDescriptor {
                 self.check_setup();
             }
             Message::DefineDescriptor(message::DefineDescriptor::AddRecoveryPath) => {
-                self.setup_mut().recovery_paths.push(RecoveryPath::new());
+                self.paths.push(Path::new_recovery_path());
             }
-            Message::DefineDescriptor(message::DefineDescriptor::PrimaryPath(msg)) => match msg {
+            Message::DefineDescriptor(message::DefineDescriptor::Path(i, msg)) => match msg {
                 message::DefinePath::ThresholdEdited(value) => {
-                    self.setup_mut().spending_threshold = value;
-                }
-                message::DefinePath::AddKey => {
-                    self.setup_mut().spending_keys.push(None);
-                    self.setup_mut().spending_threshold += 1;
-                }
-                message::DefinePath::Key(i, msg) => match msg {
-                    message::DefineKey::Clipboard(key) => {
-                        return Command::perform(async move { key }, Message::Clibpboard);
-                    }
-                    message::DefineKey::Edited(name, imported_key, kind, version) => {
-                        let fingerprint = imported_key.master_fingerprint();
-                        let is_hot_signer = self.signer_fingerprint == fingerprint;
-                        hws.set_alias(fingerprint, name.clone());
-                        if let Some(key) = self
-                            .setup_mut()
-                            .keys
-                            .iter_mut()
-                            .find(|k| k.fingerprint == fingerprint)
-                        {
-                            key.name = name;
-                        } else {
-                            self.setup_mut().keys.push(Key {
-                                is_hot_signer,
-                                fingerprint,
-                                name,
-                                key: imported_key,
-                                device_kind: kind,
-                                device_version: version,
-                            });
-                        }
-
-                        self.setup_mut().spending_keys[i] = Some(fingerprint);
-
-                        self.modal = None;
-                        self.check_setup();
-                    }
-                    message::DefineKey::Edit => {
-                        let use_taproot = self.use_taproot;
-                        let network = self.network;
-                        let setup = self.setup_mut();
-                        let modal = EditXpubModal::new(
-                            use_taproot,
-                            HashSet::from_iter(setup.spending_keys.iter().filter_map(|key| {
-                                if key.is_some() && key != &setup.spending_keys[i] {
-                                    *key
-                                } else {
-                                    None
-                                }
-                            })),
-                            self.setup_mut().spending_keys[i],
-                            None,
-                            i,
-                            network,
-                            self.signer.clone(),
-                            self.signer_fingerprint,
-                            self.setup_mut()
-                                .keys
-                                .iter()
-                                .filter(|k| check_key_network(&k.key, network))
-                                .cloned()
-                                .collect(),
-                        );
-                        let cmd = modal.load();
-                        self.modal = Some(Box::new(modal));
-                        return cmd;
-                    }
-                    message::DefineKey::Delete => {
-                        self.setup_mut().spending_keys.remove(i);
-                        if self.setup_mut().spending_threshold
-                            > self.setup_mut().spending_keys.len()
-                        {
-                            self.setup_mut().spending_threshold -= 1;
-                        }
-                        self.check_setup();
-                    }
-                },
-                _ => {}
-            },
-            Message::DefineDescriptor(message::DefineDescriptor::RecoveryPath(i, msg)) => match msg
-            {
-                message::DefinePath::ThresholdEdited(value) => {
-                    if let Some(path) = self.setup_mut().recovery_paths.get_mut(i) {
+                    if let Some(path) = self.paths.get_mut(i) {
                         path.threshold = value;
                     }
                 }
                 message::DefinePath::SequenceEdited(seq) => {
                     self.modal = None;
-                    if let Some(path) = self.setup_mut().recovery_paths.get_mut(i) {
-                        path.sequence = seq;
+                    if let Some(path) = self.paths.get_mut(i) {
+                        path.sequence = Some(seq);
                     }
-                    self.setup_mut().check_for_duplicate();
+                    self.check_for_duplicate();
                 }
                 message::DefinePath::EditSequence => {
-                    if let Some(path) = self.setup_mut().recovery_paths.get(i) {
-                        self.modal = Some(Box::new(EditSequenceModal::new(i, path.sequence)));
+                    if let Some(path) = self.paths.get(i) {
+                        if let Some(sequence) = path.sequence {
+                            self.modal = Some(Box::new(EditSequenceModal::new(i, sequence)));
+                        }
                     }
                 }
                 message::DefinePath::AddKey => {
-                    if let Some(path) = self.setup_mut().recovery_paths.get_mut(i) {
+                    if let Some(path) = self.paths.get_mut(i) {
                         path.keys.push(None);
                         path.threshold += 1;
                     }
@@ -362,18 +293,15 @@ impl Step for DefineDescriptor {
                         let fingerprint = imported_key.master_fingerprint();
                         let is_hot_signer = self.signer_fingerprint == fingerprint;
                         hws.set_alias(fingerprint, name.clone());
-                        if let Some(key) = self
-                            .setup_mut()
-                            .keys
-                            .iter_mut()
-                            .find(|k| k.fingerprint == fingerprint)
+                        if let Some(key) =
+                            self.keys.iter_mut().find(|k| k.fingerprint == fingerprint)
                         {
                             key.name = name;
                             key.is_hot_signer = is_hot_signer;
                             key.device_kind = kind;
                             key.device_version = version;
                         } else {
-                            self.setup_mut().keys.push(Key {
+                            self.keys.push(Key {
                                 fingerprint,
                                 is_hot_signer,
                                 name,
@@ -383,52 +311,49 @@ impl Step for DefineDescriptor {
                             });
                         }
 
-                        self.setup_mut().recovery_paths[i].keys[j] = Some(fingerprint);
+                        self.paths[i].keys[j] = Some(fingerprint);
 
                         self.modal = None;
                         self.check_setup();
                     }
                     message::DefineKey::Edit => {
                         let use_taproot = self.use_taproot;
-                        let setup = self.setup_mut();
+                        let path = &self.paths[i];
                         let modal = EditXpubModal::new(
                             use_taproot,
-                            HashSet::from_iter(setup.recovery_paths[i].keys.iter().filter_map(
-                                |key| {
-                                    if key.is_some() && key != &setup.recovery_paths[i].keys[j] {
-                                        *key
-                                    } else {
-                                        None
-                                    }
-                                },
-                            )),
-                            setup.recovery_paths[i].keys[j],
-                            Some(i),
+                            HashSet::from_iter(path.keys.iter().filter_map(|key| {
+                                if key.is_some() && key != &path.keys[j] {
+                                    *key
+                                } else {
+                                    None
+                                }
+                            })),
+                            path.keys[j],
+                            i,
                             j,
                             self.network,
                             self.signer.clone(),
                             self.signer_fingerprint,
-                            self.setup.keys.clone(),
+                            self.keys.clone(),
                         );
                         let cmd = modal.load();
                         self.modal = Some(Box::new(modal));
                         return cmd;
                     }
                     message::DefineKey::Delete => {
-                        if let Some(path) = self.setup_mut().recovery_paths.get_mut(i) {
+                        if let Some(path) = self.paths.get_mut(i) {
                             path.keys.remove(j);
                             if path.threshold > path.keys.len() {
                                 path.threshold -= 1;
                             }
                         }
                         if self
-                            .setup_mut()
-                            .recovery_paths
+                            .paths
                             .get(i)
                             .map(|path| path.keys.is_empty())
                             .unwrap_or(false)
                         {
-                            self.setup_mut().recovery_paths.remove(i);
+                            self.paths.remove(i);
                         }
                         self.check_setup();
                     }
@@ -452,15 +377,18 @@ impl Step for DefineDescriptor {
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
+        if self.paths.len() < 2 {
+            return false;
+        }
+
         ctx.bitcoin_config.network = self.network;
         ctx.keys = Vec::new();
         let mut hw_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
         let mut key_derivation_index = HashMap::<Fingerprint, usize>::new();
-        for spending_key in self.setup.spending_keys.iter().clone() {
+        for spending_key in self.paths[0].keys.iter().clone() {
             let fingerprint = spending_key.expect("Must be present at this step");
             let key = self
-                .setup
                 .keys
                 .iter()
                 .find(|key| key.key.master_fingerprint() == fingerprint)
@@ -486,12 +414,11 @@ impl Step for DefineDescriptor {
 
         let mut recovery_paths = BTreeMap::new();
 
-        for path in &self.setup.recovery_paths {
+        for path in &self.paths[1..] {
             let mut recovery_keys: Vec<DescriptorPublicKey> = Vec::new();
             for recovery_key in path.keys.iter().clone() {
                 let fingerprint = recovery_key.expect("Must be present at this step");
                 let key = self
-                    .setup
                     .keys
                     .iter()
                     .find(|key| key.key.master_fingerprint() == fingerprint)
@@ -522,7 +449,11 @@ impl Step for DefineDescriptor {
                 PathInfo::Multi(path.threshold, recovery_keys)
             };
 
-            recovery_paths.insert(path.sequence, recovery_keys);
+            recovery_paths.insert(
+                path.sequence
+                    .expect("Must be a recovery path with a sequence"),
+                recovery_keys,
+            );
         }
 
         if spending_keys.is_empty() {
@@ -532,7 +463,7 @@ impl Step for DefineDescriptor {
         let spending_keys = if spending_keys.len() == 1 {
             PathInfo::Single(spending_keys[0].clone())
         } else {
-            PathInfo::Multi(self.setup.spending_threshold, spending_keys)
+            PathInfo::Multi(self.paths[0].threshold, spending_keys)
         };
 
         let policy = match if self.use_taproot {
@@ -558,45 +489,22 @@ impl Step for DefineDescriptor {
         progress: (usize, usize),
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
-        let aliases = self.setup.keys_aliases();
-        let content = view::define_descriptor(
+        let aliases = self.keys_aliases();
+        let content = view::editor::define_descriptor(
             progress,
             email,
             self.use_taproot,
-            self.setup
-                .spending_keys
-                .iter()
-                .enumerate()
-                .map(|(i, key)| {
-                    if let Some(key) = key {
-                        view::defined_descriptor_key(
-                            aliases.get(key).unwrap().to_string(),
-                            self.setup.duplicate_name.contains(key),
-                            self.setup.incompatible_with_tapminiscript.contains(key),
-                        )
-                    } else {
-                        view::undefined_descriptor_key()
-                    }
-                    .map(move |msg| {
-                        Message::DefineDescriptor(message::DefineDescriptor::PrimaryPath(
-                            message::DefinePath::Key(i, msg),
-                        ))
-                    })
-                })
-                .collect(),
-            self.setup.spending_threshold,
-            self.setup
-                .recovery_paths
+            self.paths
                 .iter()
                 .enumerate()
                 .map(|(i, path)| {
                     path.view(
                         &aliases,
-                        &self.setup.duplicate_name,
-                        &self.setup.incompatible_with_tapminiscript,
+                        &self.duplicate_name,
+                        &self.incompatible_with_tapminiscript,
                     )
                     .map(move |msg| {
-                        Message::DefineDescriptor(message::DefineDescriptor::RecoveryPath(i, msg))
+                        Message::DefineDescriptor(message::DefineDescriptor::Path(i, msg))
                     })
                 })
                 .collect(),
@@ -663,7 +571,7 @@ impl DescriptorEditModal for EditSequenceModal {
                             return Command::perform(
                                 async move { (path_index, sequence) },
                                 |(path_index, sequence)| {
-                                    message::DefineDescriptor::RecoveryPath(
+                                    message::DefineDescriptor::Path(
                                         path_index,
                                         message::DefinePath::SequenceEdited(sequence),
                                     )
@@ -679,7 +587,7 @@ impl DescriptorEditModal for EditSequenceModal {
     }
 
     fn view(&self, _hws: &HardwareWallets) -> Element<Message> {
-        view::edit_sequence_modal(&self.sequence)
+        view::editor::edit_sequence_modal(&self.sequence)
     }
 }
 
@@ -735,12 +643,10 @@ mod tests {
 
         // Edit primary key
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::PrimaryPath(message::DefinePath::Key(
-                    0,
-                    message::DefineKey::Edit,
-                )),
-            ))
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
+                0,
+                message::DefinePath::Key(0, message::DefineKey::Edit),
+            )))
             .await;
         sandbox.check(|step| assert!(step.modal.is_some()));
         sandbox.update(Message::UseHotSigner).await;
@@ -760,22 +666,18 @@ mod tests {
 
         // Edit sequence
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::RecoveryPath(
-                    0,
-                    message::DefinePath::SequenceEdited(1000),
-                ),
-            ))
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
+                1,
+                message::DefinePath::SequenceEdited(1000),
+            )))
             .await;
 
         // Edit recovery key
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::RecoveryPath(
-                    0,
-                    message::DefinePath::Key(0, message::DefineKey::Edit),
-                ),
-            ))
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
+                1,
+                message::DefinePath::Key(0, message::DefineKey::Edit),
+            )))
             .await;
         sandbox.check(|step| assert!(step.modal.is_some()));
         sandbox.update(Message::DefineDescriptor(
@@ -832,19 +734,18 @@ mod tests {
 
         // Use Specter device for primary key
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::PrimaryPath(specter_key.clone()),
-            ))
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
+                0,
+                specter_key.clone(),
+            )))
             .await;
 
         // Edit recovery key
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::RecoveryPath(
-                    0,
-                    message::DefinePath::Key(0, message::DefineKey::Edit),
-                ),
-            ))
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
+                1,
+                message::DefinePath::Key(0, message::DefineKey::Edit),
+            )))
             .await;
         sandbox.check(|step| assert!(step.modal.is_some()));
         sandbox.update(Message::DefineDescriptor(
@@ -872,12 +773,10 @@ mod tests {
 
         // Now edit primary key to use hot signer instead of Specter device
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::PrimaryPath(message::DefinePath::Key(
-                    0,
-                    message::DefineKey::Edit,
-                )),
-            ))
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
+                0,
+                message::DefinePath::Key(0, message::DefineKey::Edit),
+            )))
             .await;
         sandbox.check(|step| assert!(step.modal.is_some()));
         sandbox.update(Message::UseHotSigner).await;
@@ -901,9 +800,10 @@ mod tests {
 
         // Now edit the recovery key to use Specter device
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::RecoveryPath(0, specter_key.clone()),
-            ))
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
+                1,
+                specter_key.clone(),
+            )))
             .await;
         sandbox.check(|step| {
             assert!((step).apply(&mut ctx));
