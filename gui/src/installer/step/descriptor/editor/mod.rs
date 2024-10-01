@@ -198,17 +198,20 @@ pub struct DefineDescriptor {
 
     modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Mutex<Signer>>,
+    signer_fingerprint: Fingerprint,
 
     error: Option<String>,
 }
 
 impl DefineDescriptor {
     pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
+        let signer_fingerprint = signer.lock().unwrap().fingerprint();
         Self {
             network,
             use_taproot: false,
             setup: Setup::new(),
             modal: None,
+            signer_fingerprint,
             signer,
             error: None,
         }
@@ -259,6 +262,7 @@ impl Step for DefineDescriptor {
                     }
                     message::DefineKey::Edited(name, imported_key, kind, version) => {
                         let fingerprint = imported_key.master_fingerprint();
+                        let is_hot_signer = self.signer_fingerprint == fingerprint;
                         hws.set_alias(fingerprint, name.clone());
                         if let Some(key) = self
                             .setup_mut()
@@ -269,6 +273,7 @@ impl Step for DefineDescriptor {
                             key.name = name;
                         } else {
                             self.setup_mut().keys.push(Key {
+                                is_hot_signer,
                                 fingerprint,
                                 name,
                                 key: imported_key,
@@ -300,6 +305,7 @@ impl Step for DefineDescriptor {
                             i,
                             network,
                             self.signer.clone(),
+                            self.signer_fingerprint,
                             self.setup_mut()
                                 .keys
                                 .iter()
@@ -354,6 +360,7 @@ impl Step for DefineDescriptor {
                     }
                     message::DefineKey::Edited(name, imported_key, kind, version) => {
                         let fingerprint = imported_key.master_fingerprint();
+                        let is_hot_signer = self.signer_fingerprint == fingerprint;
                         hws.set_alias(fingerprint, name.clone());
                         if let Some(key) = self
                             .setup_mut()
@@ -362,9 +369,13 @@ impl Step for DefineDescriptor {
                             .find(|k| k.fingerprint == fingerprint)
                         {
                             key.name = name;
+                            key.is_hot_signer = is_hot_signer;
+                            key.device_kind = kind;
+                            key.device_version = version;
                         } else {
                             self.setup_mut().keys.push(Key {
                                 fingerprint,
+                                is_hot_signer,
                                 name,
                                 key: imported_key,
                                 device_kind: kind,
@@ -396,6 +407,7 @@ impl Step for DefineDescriptor {
                             j,
                             self.network,
                             self.signer.clone(),
+                            self.signer_fingerprint,
                             self.setup.keys.clone(),
                         );
                         let cmd = modal.load();
