@@ -73,8 +73,7 @@ pub fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
 
 pub struct EditXpubModal {
     device_must_support_tapminiscript: bool,
-    /// None if path is primary path
-    path_index: Option<usize>,
+    path_index: usize,
     key_index: usize,
     network: Network,
     error: Option<Error>,
@@ -99,7 +98,7 @@ impl EditXpubModal {
         device_must_support_tapminiscript: bool,
         other_path_keys: HashSet<Fingerprint>,
         key: Option<Fingerprint>,
-        path_index: Option<usize>,
+        path_index: usize,
         key_index: usize,
         network: Network,
         hot_signer: Arc<Mutex<Signer>>,
@@ -292,30 +291,13 @@ impl super::DescriptorEditModal for EditXpubModal {
                             };
                         if self.other_path_keys.contains(&key.master_fingerprint()) {
                             self.duplicate_master_fg = true;
-                        } else if let Some(path_index) = self.path_index {
+                        } else {
+                            let path_index = self.path_index;
                             return Command::perform(
                                 async move { (path_index, key_index, key) },
                                 move |(path_index, key_index, key)| {
-                                    message::DefineDescriptor::RecoveryPath(
+                                    message::DefineDescriptor::Path(
                                         path_index,
-                                        message::DefinePath::Key(
-                                            key_index,
-                                            message::DefineKey::Edited(
-                                                name,
-                                                key,
-                                                device_kind,
-                                                device_version,
-                                            ),
-                                        ),
-                                    )
-                                },
-                            )
-                            .map(Message::DefineDescriptor);
-                        } else {
-                            return Command::perform(
-                                async move { (key_index, key) },
-                                move |(key_index, key)| {
-                                    message::DefineDescriptor::PrimaryPath(
                                         message::DefinePath::Key(
                                             key_index,
                                             message::DefineKey::Edited(
@@ -354,7 +336,7 @@ impl super::DescriptorEditModal for EditXpubModal {
 
     fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
         let chosen_signer = self.chosen_signer.as_ref().map(|s| s.0);
-        view::edit_key_modal(
+        view::editor::edit_key_modal(
             self.network,
             hws.list
                 .iter()
