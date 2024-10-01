@@ -44,6 +44,7 @@ pub fn new_multixkey_from_xpub(
 #[derive(Clone)]
 pub struct Key {
     pub device_kind: Option<DeviceKind>,
+    pub is_hot_signer: bool,
     pub device_version: Option<Version>,
     pub name: String,
     pub fingerprint: Fingerprint,
@@ -102,9 +103,9 @@ impl EditXpubModal {
         key_index: usize,
         network: Network,
         hot_signer: Arc<Mutex<Signer>>,
+        hot_signer_fingerprint: Fingerprint,
         keys: Vec<Key>,
     ) -> Self {
-        let hot_signer_fingerprint = hot_signer.lock().unwrap().fingerprint();
         Self {
             device_must_support_tapminiscript,
             other_path_keys,
