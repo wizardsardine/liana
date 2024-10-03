@@ -1,4 +1,5 @@
 pub mod key;
+pub mod template;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::iter::FromIterator;
