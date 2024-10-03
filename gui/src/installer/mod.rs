@@ -39,8 +39,8 @@ use crate::{
 
 pub use message::Message;
 use step::{
-    BackupDescriptor, BackupMnemonic, ChooseBackend, DefineDescriptor, DefineNode, Final,
-    ImportDescriptor, ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic,
+    BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, DefineDescriptor,
+    DefineNode, Final, ImportDescriptor, ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic,
     RegisterDescriptor, RemoteBackendLogin, SelectBitcoindTypeStep, ShareXpubs, Step,
 };
 
@@ -119,6 +119,7 @@ impl Installer {
             hws: HardwareWallets::new(destination_path.clone(), network),
             steps: match user_flow {
                 UserFlow::CreateWallet => vec![
+                    ChooseDescriptorTemplate::default().into(),
                     DefineDescriptor::new(network, signer.clone()).into(),
                     BackupMnemonic::new(signer.clone()).into(),
                     BackupDescriptor::default().into(),

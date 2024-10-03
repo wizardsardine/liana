@@ -45,10 +45,17 @@ impl RemoteBackend {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum DescriptorTemplate {
+    SimpleInheritance,
+    Custom,
+}
+
 #[derive(Clone)]
 pub struct Context {
     pub bitcoin_config: BitcoinConfig,
     pub bitcoin_backend: Option<BitcoinBackend>,
+    pub descriptor_template: DescriptorTemplate,
     pub descriptor: Option<LianaDescriptor>,
     pub keys: Vec<KeySetting>,
     pub hws: Vec<(DeviceKind, bitcoin::bip32::Fingerprint, Option<[u8; 32]>)>,
@@ -71,6 +78,7 @@ impl Context {
         remote_backend: RemoteBackend,
     ) -> Self {
         Self {
+            descriptor_template: DescriptorTemplate::Custom,
             bitcoin_config: BitcoinConfig {
                 network,
                 poll_interval_secs: Duration::from_secs(30),

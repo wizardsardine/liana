@@ -1,3 +1,5 @@
+pub mod template;
+
 use iced::widget::{
     container, pick_list, scrollable, scrollable::Properties, slider, Button, Space,
 };
