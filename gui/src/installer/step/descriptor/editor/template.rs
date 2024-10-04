@@ -53,3 +53,40 @@ impl Step for ChooseDescriptorTemplate {
         view::editor::template::choose_descriptor_template(progress)
     }
 }
+
+pub struct DescriptorTemplateDescription {
+    template: DescriptorTemplate,
+}
+
+impl Default for DescriptorTemplateDescription {
+    fn default() -> Self {
+        Self {
+            template: DescriptorTemplate::Custom,
+        }
+    }
+}
+
+impl From<DescriptorTemplateDescription> for Box<dyn Step> {
+    fn from(s: DescriptorTemplateDescription) -> Box<dyn Step> {
+        Box::new(s)
+    }
+}
+
+impl Step for DescriptorTemplateDescription {
+    fn load_context(&mut self, ctx: &Context) {
+        self.template = ctx.descriptor_template;
+    }
+
+    fn skip(&self, ctx: &Context) -> bool {
+        ctx.descriptor_template == DescriptorTemplate::Custom
+    }
+
+    fn view<'a>(
+        &'a self,
+        _hws: &'a HardwareWallets,
+        progress: (usize, usize),
+        _email: Option<&'a str>,
+    ) -> Element<Message> {
+        view::editor::template::inheritance::inheritance_template_description(progress)
+    }
+}
