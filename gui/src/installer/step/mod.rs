@@ -10,8 +10,9 @@ pub use node::{
 };
 
 pub use descriptor::{
-    editor::template::ChooseDescriptorTemplate, editor::DefineDescriptor, BackupDescriptor,
-    ImportDescriptor, RegisterDescriptor,
+    editor::template::{ChooseDescriptorTemplate, DescriptorTemplateDescription},
+    editor::DefineDescriptor,
+    BackupDescriptor, ImportDescriptor, RegisterDescriptor,
 };
 
 pub use backend::{ChooseBackend, ImportRemoteWallet, RemoteBackendLogin};

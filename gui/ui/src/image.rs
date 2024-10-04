@@ -59,3 +59,11 @@ pub fn key_mark_icon() -> Svg {
     let h = Handle::from_memory(KEY_MARK_ICON.to_vec());
     Svg::new(h)
 }
+
+const INHERITANCE_TEMPLATE_DESC: &[u8] =
+    include_bytes!("../static/images/inheritance_template_description.svg");
+
+pub fn inheritance_template_description() -> Svg {
+    let h = Handle::from_memory(INHERITANCE_TEMPLATE_DESC.to_vec());
+    Svg::new(h)
+}

@@ -1,3 +1,5 @@
+pub mod inheritance;
+
 use iced::{alignment, Alignment, Length};
 
 use liana_ui::{
@@ -18,6 +20,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
         None,
         "Choose Wallet Type",
         Column::new()
+            .max_width(800.0)
             .align_items(Alignment::Start)
             .push(Container::new(
                 p1_regular("What do you want your wallet for? Also consider this depends on the amount of funds you have, the more funds, higher the security should be. Not sure about the wallet type? We can help you.")
