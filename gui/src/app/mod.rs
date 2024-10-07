@@ -63,7 +63,7 @@ impl Panels {
     ) -> Panels {
         Self {
             current: Menu::Home,
-            home: Home::new(wallet.clone(), &cache.coins),
+            home: Home::new(wallet.clone(), &cache.coins, cache.blockheight),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
@@ -279,7 +279,24 @@ impl App {
             }
             Message::UpdateCache(res) => {
                 match res {
-                    Ok(cache) => self.cache = cache,
+                    Ok(cache) => {
+                        self.cache.clone_from(&cache);
+                        let current = &self.panels.current;
+                        let daemon = self.daemon.clone();
+                        // These are the panels to update with the cache.
+                        let mut panels = [(&mut self.panels.home, Menu::Home)];
+                        let commands: Vec<_> = panels
+                            .iter_mut()
+                            .map(|(panel, menu)| {
+                                panel.update(
+                                    daemon.clone(),
+                                    &cache,
+                                    Message::UpdatePanelCache(current == menu, Ok(cache.clone())),
+                                )
+                            })
+                            .collect();
+                        return Command::batch(commands);
+                    }
                     Err(e) => tracing::error!("Failed to update cache: {}", e),
                 }
                 Command::none()
