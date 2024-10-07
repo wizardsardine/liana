@@ -3,7 +3,7 @@ pub use bitcoin::Amount;
 use crate::{color, component::text::*, widget::*};
 
 pub fn amount<'a, T: 'a>(a: &Amount) -> Row<'a, T> {
-    render_amount(amount_as_string(*a), P1_SIZE)
+    amount_with_size(a, P1_SIZE)
 }
 
 pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
