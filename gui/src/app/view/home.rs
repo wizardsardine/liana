@@ -1,12 +1,16 @@
 use chrono::{DateTime, Local, Utc};
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration, vec};
 
-use iced::{alignment, widget::Space, Alignment, Length};
+use iced::{
+    alignment,
+    widget::{Container, Row, Space},
+    Alignment, Length,
+};
 
 use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
-    component::{amount::*, button, card, event, form, text::*},
+    component::{amount::*, button, card, event, form, spinner, text::*},
     icon, theme,
     widget::*,
 };
@@ -31,13 +35,41 @@ pub fn home_view<'a>(
     events: &'a [HistoryTransaction],
     is_last_page: bool,
     processing: bool,
+    wallet_is_syncing: bool,
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
         .push(
             Column::new()
-                .push(amount_with_size(balance, H1_SIZE))
-                .push_maybe(if unconfirmed_balance.to_sat() != 0 {
+                .push(if !wallet_is_syncing {
+                    amount_with_size(balance, H1_SIZE)
+                } else {
+                    Row::new().push(spinner::Carousel::new(
+                        Duration::from_millis(1000),
+                        vec![
+                            amount_with_size(balance, H1_SIZE),
+                            amount_with_size_and_colors(
+                                balance,
+                                H1_SIZE,
+                                color::GREY_4,
+                                Some(color::GREY_2),
+                            ),
+                        ],
+                    ))
+                })
+                .push_maybe(if wallet_is_syncing {
+                    Some(Row::new().push(text("Syncing").style(color::GREY_2)).push(
+                        spinner::typing_text_carousel(
+                            "...",
+                            true,
+                            Duration::from_millis(2000),
+                            |content| text(content).style(color::GREY_2),
+                        ),
+                    ))
+                } else {
+                    None
+                })
+                .push_maybe(if unconfirmed_balance.to_sat() != 0 && !wallet_is_syncing {
                     Some(
                         Row::new()
                             .spacing(10)

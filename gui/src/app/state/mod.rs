@@ -148,6 +148,7 @@ impl State for Home {
                     &self.events,
                     self.is_last_page,
                     self.processing,
+                    self.wallet_is_syncing(),
                 ),
             )
         }
