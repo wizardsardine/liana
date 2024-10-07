@@ -20,7 +20,7 @@ use liana_ui::{
     widget::Element,
 };
 
-use crate::hw;
+use crate::installer::context::DescriptorTemplate;
 use crate::{
     app::settings::KeySetting,
     hw::HardwareWallets,
@@ -50,7 +50,8 @@ pub trait DescriptorEditModal {
 pub struct Path {
     keys: Vec<Option<Fingerprint>>,
     threshold: usize,
-    sequence: Option<u16>,
+    // sequence is 0 if it is a primary path.
+    sequence: u16,
     duplicate_sequence: bool,
 }
 
@@ -59,7 +60,7 @@ impl Path {
         Self {
             keys: vec![None],
             threshold: 1,
-            sequence: None,
+            sequence: 0,
             duplicate_sequence: false,
         }
     }
@@ -68,64 +69,13 @@ impl Path {
         Self {
             keys: vec![None],
             threshold: 1,
-            sequence: Some(u16::MAX),
+            sequence: u16::MAX,
             duplicate_sequence: false,
         }
     }
 
     fn valid(&self) -> bool {
         !self.keys.is_empty() && !self.keys.iter().any(|k| k.is_none()) && !self.duplicate_sequence
-    }
-
-    fn view(
-        &self,
-        aliases: &HashMap<Fingerprint, String>,
-        duplicate_name: &HashSet<Fingerprint>,
-        incompatible_with_tapminiscript: &HashSet<Fingerprint>,
-    ) -> Element<message::DefinePath> {
-        if let Some(sequence) = self.sequence {
-            view::editor::recovery_path_view(
-                sequence,
-                self.duplicate_sequence,
-                self.threshold,
-                self.keys
-                    .iter()
-                    .enumerate()
-                    .map(|(i, key)| {
-                        if let Some(key) = key {
-                            view::editor::defined_descriptor_key(
-                                aliases.get(key).unwrap().to_string(),
-                                duplicate_name.contains(key),
-                                incompatible_with_tapminiscript.contains(key),
-                            )
-                        } else {
-                            view::editor::undefined_descriptor_key()
-                        }
-                        .map(move |msg| message::DefinePath::Key(i, msg))
-                    })
-                    .collect(),
-            )
-        } else {
-            view::editor::primary_path_view(
-                self.threshold,
-                self.keys
-                    .iter()
-                    .enumerate()
-                    .map(|(i, key)| {
-                        if let Some(key) = key {
-                            view::editor::defined_descriptor_key(
-                                aliases.get(key).unwrap().to_string(),
-                                duplicate_name.contains(key),
-                                incompatible_with_tapminiscript.contains(key),
-                            )
-                        } else {
-                            view::editor::undefined_descriptor_key()
-                        }
-                        .map(move |msg| message::DefinePath::Key(i, msg))
-                    })
-                    .collect(),
-            )
-        }
     }
 }
 
@@ -137,10 +87,9 @@ pub struct DefineDescriptor {
     signer: Arc<Mutex<Signer>>,
     signer_fingerprint: Fingerprint,
 
-    keys: Vec<Key>,
-    duplicate_name: HashSet<Fingerprint>,
-    incompatible_with_tapminiscript: HashSet<Fingerprint>,
+    keys: HashMap<Fingerprint, Key>,
     paths: Vec<Path>,
+    descriptor_template: DescriptorTemplate,
 
     error: Option<String>,
 }
@@ -156,95 +105,78 @@ impl DefineDescriptor {
 
             signer,
             error: None,
-            keys: Vec::new(),
-            duplicate_name: HashSet::new(),
-            incompatible_with_tapminiscript: HashSet::new(),
-            paths: vec![Path::new_primary_path(), Path::new_recovery_path()],
+            keys: HashMap::new(),
+            descriptor_template: DescriptorTemplate::default(),
+            paths: Vec::new(),
         }
     }
 
-    fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
-        let mut map = HashMap::new();
-        for key in &self.keys {
-            map.insert(key.key.master_fingerprint(), key.name.clone());
-        }
-        map
-    }
-
-    // Mark as duplicate every defined key that have the same name but not the same fingerprint.
-    // And every undefined_key that have a same name than an other key.
-    fn check_for_duplicate(&mut self) {
-        self.duplicate_name = HashSet::new();
-        for a in &self.keys {
-            for b in &self.keys {
-                if a.name == b.name && a.fingerprint != b.fingerprint {
-                    self.duplicate_name.insert(a.fingerprint);
-                    self.duplicate_name.insert(b.fingerprint);
+    fn path_keys<'a>(&'a self, p: &Path) -> Vec<Option<&'a Key>> {
+        p.keys
+            .iter()
+            .map(|f| {
+                if let Some(f) = f {
+                    self.keys.get(f)
+                } else {
+                    None
                 }
-            }
-        }
+            })
+            .collect()
+    }
 
+    fn check_for_duplicate(&mut self) {
         let mut all_sequence = HashSet::new();
         let mut duplicate_sequences = HashSet::new();
         for path in &mut self.paths {
-            if let Some(sequence) = path.sequence {
-                if all_sequence.contains(&sequence) {
-                    duplicate_sequences.insert(sequence);
-                } else {
-                    all_sequence.insert(sequence);
-                }
+            if all_sequence.contains(&path.sequence) {
+                duplicate_sequences.insert(path.sequence);
+            } else {
+                all_sequence.insert(path.sequence);
             }
         }
 
         for path in &mut self.paths {
-            if let Some(sequence) = path.sequence {
-                path.duplicate_sequence = duplicate_sequences.contains(&sequence);
-            }
-        }
-    }
-
-    fn check_for_tapminiscript_support(&mut self, must_support_taproot: bool) {
-        self.incompatible_with_tapminiscript = HashSet::new();
-        if must_support_taproot {
-            for key in &self.keys {
-                // check if key is used by a path
-                if !self
-                    .paths
-                    .iter()
-                    .flat_map(|path| &path.keys)
-                    .any(|k| *k == Some(key.fingerprint))
-                {
-                    continue;
-                }
-
-                // device_kind is none only for HotSigner which is compatible.
-                if let Some(device_kind) = key.device_kind.as_ref() {
-                    if !hw::is_compatible_with_tapminiscript(
-                        device_kind,
-                        key.device_version.as_ref(),
-                    ) {
-                        self.incompatible_with_tapminiscript.insert(key.fingerprint);
-                    }
-                }
-            }
+            path.duplicate_sequence = duplicate_sequences.contains(&path.sequence);
         }
     }
 
     fn valid(&self) -> bool {
-        !self.paths.iter().any(|path| !path.valid())
-            && self.duplicate_name.is_empty()
-            && self.incompatible_with_tapminiscript.is_empty()
-            && self.paths.len() >= 2
+        !self.paths.iter().any(|path| {
+            !path.valid()
+                || (self.use_taproot
+                    && path.keys.iter().any(|k| {
+                        if let Some(k) = k.and_then(|k| self.keys.get(&k)) {
+                            !k.is_compatible_taproot
+                        } else {
+                            false
+                        }
+                    }))
+        }) && self.paths.len() >= 2
     }
 
     fn check_setup(&mut self) {
         self.check_for_duplicate();
-        let use_taproot = self.use_taproot;
-        self.check_for_tapminiscript_support(use_taproot);
+    }
+
+    fn load_template(&mut self, template: DescriptorTemplate) {
+        if self.descriptor_template != template || self.paths.is_empty() {
+            match template {
+                DescriptorTemplate::SimpleInheritance => {
+                    self.paths = vec![Path::new_primary_path(), Path::new_recovery_path()];
+                }
+                DescriptorTemplate::Custom => {
+                    self.paths = vec![Path::new_primary_path(), Path::new_recovery_path()];
+                }
+            }
+        }
+        self.descriptor_template = template;
     }
 }
 
 impl Step for DefineDescriptor {
+    fn load_context(&mut self, ctx: &Context) {
+        self.load_template(ctx.descriptor_template)
+    }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
@@ -257,29 +189,40 @@ impl Step for DefineDescriptor {
                 self.use_taproot = use_taproot;
                 self.check_setup();
             }
+            Message::DefineDescriptor(message::DefineDescriptor::ChangeTemplate(template)) => {
+                self.descriptor_template = template;
+            }
             Message::DefineDescriptor(message::DefineDescriptor::AddRecoveryPath) => {
                 self.paths.push(Path::new_recovery_path());
             }
             Message::DefineDescriptor(message::DefineDescriptor::Path(i, msg)) => match msg {
-                message::DefinePath::ThresholdEdited(value) => {
-                    if let Some(path) = self.paths.get_mut(i) {
-                        path.threshold = value;
-                    }
-                }
                 message::DefinePath::SequenceEdited(seq) => {
                     self.modal = None;
                     if let Some(path) = self.paths.get_mut(i) {
-                        path.sequence = Some(seq);
+                        path.sequence = seq;
                     }
                     self.check_for_duplicate();
                 }
-                message::DefinePath::EditSequence => {
-                    if let Some(path) = self.paths.get(i) {
-                        if let Some(sequence) = path.sequence {
-                            self.modal = Some(Box::new(EditSequenceModal::new(i, sequence)));
-                        }
+                message::DefinePath::ThresholdEdited(t) => {
+                    self.modal = None;
+                    if let Some(path) = self.paths.get_mut(i) {
+                        path.threshold = t;
                     }
                 }
+                message::DefinePath::EditSequence => {
+                    if let Some(path) = self.paths.get(i) {
+                        self.modal = Some(Box::new(EditSequenceModal::new(i, path.sequence)));
+                    }
+                }
+                message::DefinePath::EditThreshold => {
+                    if let Some(path) = self.paths.get(i) {
+                        self.modal = Some(Box::new(EditThresholdModal::new(
+                            i,
+                            (path.threshold, path.keys.len()),
+                        )));
+                    }
+                }
+
                 message::DefinePath::AddKey => {
                     if let Some(path) = self.paths.get_mut(i) {
                         path.keys.push(None);
@@ -290,30 +233,10 @@ impl Step for DefineDescriptor {
                     message::DefineKey::Clipboard(key) => {
                         return Command::perform(async move { key }, Message::Clibpboard);
                     }
-                    message::DefineKey::Edited(name, imported_key, kind, version) => {
-                        let fingerprint = imported_key.master_fingerprint();
-                        let is_hot_signer = self.signer_fingerprint == fingerprint;
-                        hws.set_alias(fingerprint, name.clone());
-                        if let Some(key) =
-                            self.keys.iter_mut().find(|k| k.fingerprint == fingerprint)
-                        {
-                            key.name = name;
-                            key.is_hot_signer = is_hot_signer;
-                            key.device_kind = kind;
-                            key.device_version = version;
-                        } else {
-                            self.keys.push(Key {
-                                fingerprint,
-                                is_hot_signer,
-                                name,
-                                key: imported_key,
-                                device_kind: kind,
-                                device_version: version,
-                            });
-                        }
-
-                        self.paths[i].keys[j] = Some(fingerprint);
-
+                    message::DefineKey::Edited(key) => {
+                        hws.set_alias(key.fingerprint, key.name.clone());
+                        self.paths[i].keys[j] = Some(key.fingerprint);
+                        self.keys.insert(key.fingerprint, key);
                         self.modal = None;
                         self.check_setup();
                     }
@@ -329,13 +252,13 @@ impl Step for DefineDescriptor {
                                     None
                                 }
                             })),
-                            path.keys[j],
+                            path.keys[j].and_then(|f| self.keys.get(&f)).cloned(),
                             i,
                             j,
                             self.network,
                             self.signer.clone(),
                             self.signer_fingerprint,
-                            self.keys.clone(),
+                            self.keys.values().cloned().collect(),
                         );
                         let cmd = modal.load();
                         self.modal = Some(Box::new(modal));
@@ -348,11 +271,13 @@ impl Step for DefineDescriptor {
                                 path.threshold -= 1;
                             }
                         }
-                        if self
-                            .paths
-                            .get(i)
-                            .map(|path| path.keys.is_empty())
-                            .unwrap_or(false)
+                        // Only delete recovery paths.
+                        if i > 0
+                            && self
+                                .paths
+                                .get(i)
+                                .map(|path| path.keys.is_empty())
+                                .unwrap_or(false)
                         {
                             self.paths.remove(i);
                         }
@@ -391,8 +316,7 @@ impl Step for DefineDescriptor {
             let fingerprint = spending_key.expect("Must be present at this step");
             let key = self
                 .keys
-                .iter()
-                .find(|key| key.key.master_fingerprint() == fingerprint)
+                .get(&fingerprint)
                 .expect("Must be present at this step");
             if let DescriptorPublicKey::XPub(xpub) = &key.key {
                 if let Some((master_fingerprint, _)) = xpub.origin {
@@ -421,8 +345,7 @@ impl Step for DefineDescriptor {
                 let fingerprint = recovery_key.expect("Must be present at this step");
                 let key = self
                     .keys
-                    .iter()
-                    .find(|key| key.key.master_fingerprint() == fingerprint)
+                    .get(&fingerprint)
                     .expect("Must be present at this step");
                 if let DescriptorPublicKey::XPub(xpub) = &key.key {
                     if let Some((master_fingerprint, _)) = xpub.origin {
@@ -450,11 +373,7 @@ impl Step for DefineDescriptor {
                 PathInfo::Multi(path.threshold, recovery_keys)
             };
 
-            recovery_paths.insert(
-                path.sequence
-                    .expect("Must be a recovery path with a sequence"),
-                recovery_keys,
-            );
+            recovery_paths.insert(path.sequence, recovery_keys);
         }
 
         if spending_keys.is_empty() {
@@ -488,30 +407,43 @@ impl Step for DefineDescriptor {
         &'a self,
         hws: &'a HardwareWallets,
         progress: (usize, usize),
-        email: Option<&'a str>,
+        _email: Option<&'a str>,
     ) -> Element<'a, Message> {
-        let aliases = self.keys_aliases();
-        let content = view::editor::define_descriptor(
-            progress,
-            email,
-            self.use_taproot,
-            self.paths
-                .iter()
-                .enumerate()
-                .map(|(i, path)| {
-                    path.view(
-                        &aliases,
-                        &self.duplicate_name,
-                        &self.incompatible_with_tapminiscript,
-                    )
-                    .map(move |msg| {
-                        Message::DefineDescriptor(message::DefineDescriptor::Path(i, msg))
-                    })
-                })
-                .collect(),
-            self.valid(),
-            self.error.as_ref(),
-        );
+        let content = match self.descriptor_template {
+            DescriptorTemplate::SimpleInheritance => {
+                view::editor::template::inheritance::inheritance_template(
+                    progress,
+                    self.use_taproot,
+                    self.paths[0].keys[0]
+                        .as_ref()
+                        .and_then(|f| self.keys.get(f)),
+                    self.paths[1].keys[0]
+                        .as_ref()
+                        .and_then(|f| self.keys.get(f)),
+                    self.paths[1].sequence,
+                    self.valid(),
+                )
+            }
+            DescriptorTemplate::Custom => view::editor::template::custom::custom_template(
+                progress,
+                self.use_taproot,
+                view::editor::template::custom::Path {
+                    keys: self.path_keys(&self.paths[0]),
+                    sequence: self.paths[0].sequence,
+                    duplicate_sequence: self.paths[0].duplicate_sequence,
+                    threshold: self.paths[0].threshold,
+                },
+                &mut self.paths[1..]
+                    .iter()
+                    .map(|p| view::editor::template::custom::Path {
+                        sequence: p.sequence,
+                        duplicate_sequence: p.duplicate_sequence,
+                        threshold: p.threshold,
+                        keys: self.path_keys(p),
+                    }),
+                self.valid(),
+            ),
+        };
         if let Some(modal) = &self.modal {
             Modal::new(content, modal.view(hws))
                 .on_blur(if modal.processing() {
@@ -555,9 +487,11 @@ impl DescriptorEditModal for EditSequenceModal {
     }
 
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
-        if let Message::DefineDescriptor(message::DefineDescriptor::SequenceModal(msg)) = message {
+        if let Message::DefineDescriptor(message::DefineDescriptor::ThresholdSequenceModal(msg)) =
+            message
+        {
             match msg {
-                message::SequenceModal::SequenceEdited(seq) => {
+                message::ThresholdSequenceModal::SequenceEdited(seq) => {
                     if let Ok(s) = u16::from_str(&seq) {
                         self.sequence.valid = s != 0
                     } else {
@@ -565,7 +499,7 @@ impl DescriptorEditModal for EditSequenceModal {
                     }
                     self.sequence.value = seq;
                 }
-                message::SequenceModal::ConfirmSequence => {
+                message::ThresholdSequenceModal::Confirm => {
                     if self.sequence.valid {
                         if let Ok(sequence) = u16::from_str(&self.sequence.value) {
                             let path_index = self.path_index;
@@ -582,6 +516,7 @@ impl DescriptorEditModal for EditSequenceModal {
                         }
                     }
                 }
+                _ => {}
             }
         }
         Command::none()
@@ -589,6 +524,60 @@ impl DescriptorEditModal for EditSequenceModal {
 
     fn view(&self, _hws: &HardwareWallets) -> Element<Message> {
         view::editor::edit_sequence_modal(&self.sequence)
+    }
+}
+
+pub struct EditThresholdModal {
+    threshold: (usize, usize),
+    path_index: usize,
+}
+
+impl EditThresholdModal {
+    pub fn new(path_index: usize, threshold: (usize, usize)) -> Self {
+        Self {
+            threshold,
+            path_index,
+        }
+    }
+}
+
+impl DescriptorEditModal for EditThresholdModal {
+    fn processing(&self) -> bool {
+        false
+    }
+
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+        if let Message::DefineDescriptor(message::DefineDescriptor::ThresholdSequenceModal(msg)) =
+            message
+        {
+            match msg {
+                message::ThresholdSequenceModal::ThresholdEdited(threshold) => {
+                    if threshold <= self.threshold.1 {
+                        self.threshold.0 = threshold;
+                    }
+                }
+                message::ThresholdSequenceModal::Confirm => {
+                    let path_index = self.path_index;
+                    let threshold = self.threshold.0;
+                    return Command::perform(
+                        async move { (path_index, threshold) },
+                        |(path_index, threshold)| {
+                            message::DefineDescriptor::Path(
+                                path_index,
+                                message::DefinePath::ThresholdEdited(threshold),
+                            )
+                        },
+                    )
+                    .map(Message::DefineDescriptor);
+                }
+                _ => {}
+            }
+        }
+        Command::none()
+    }
+
+    fn view(&self, _hws: &HardwareWallets) -> Element<Message> {
+        view::editor::edit_threshold_modal(self.threshold)
     }
 }
 
@@ -638,9 +627,10 @@ mod tests {
             crate::installer::context::RemoteBackend::None,
         );
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
-            Network::Bitcoin,
+            Network::Signet,
             Arc::new(Mutex::new(Signer::generate(Network::Bitcoin).unwrap())),
         ));
+        sandbox.load(&ctx).await;
 
         // Edit primary key
         sandbox
@@ -723,14 +713,18 @@ mod tests {
         ));
         sandbox.load(&ctx).await;
 
+        let key = DescriptorPublicKey::from_str("[4df3f0e3/84'/0'/0']tpubDDRs9DnRUiJc4hq92PSJKhfzQBgHJUrDo7T2i48smsDfLsQcm3Vh7JhuGqJv8zozVkNFin8YPgpmn2NWNmpRaE3GW2pSxbmAzYf2juy7LeW").unwrap();
         let specter_key = message::DefinePath::Key(
             0,
-            message::DefineKey::Edited(
-                "My Specter key".to_string(),
-                DescriptorPublicKey::from_str("[4df3f0e3/84'/0'/0']tpubDDRs9DnRUiJc4hq92PSJKhfzQBgHJUrDo7T2i48smsDfLsQcm3Vh7JhuGqJv8zozVkNFin8YPgpmn2NWNmpRaE3GW2pSxbmAzYf2juy7LeW").unwrap(),
-                Some(async_hwi::DeviceKind::Specter),
-                None,
-            ),
+            message::DefineKey::Edited(Key {
+                name: "My Specter key".to_string(),
+                fingerprint: key.master_fingerprint(),
+                key,
+                device_kind: Some(async_hwi::DeviceKind::Specter),
+                device_version: None,
+                is_compatible_taproot: false,
+                is_hot_signer: false,
+            }),
         );
 
         // Use Specter device for primary key

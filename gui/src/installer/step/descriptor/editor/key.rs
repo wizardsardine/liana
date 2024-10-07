@@ -17,7 +17,7 @@ use liana_ui::{component::form, widget::Element};
 use async_hwi::{DeviceKind, Version};
 
 use crate::{
-    hw::{HardwareWallet, HardwareWallets},
+    hw::{is_compatible_with_tapminiscript, HardwareWallet, HardwareWallets},
     installer::{
         message::{self, Message},
         view, Error,
@@ -41,7 +41,7 @@ pub fn new_multixkey_from_xpub(
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Key {
     pub device_kind: Option<DeviceKind>,
     pub is_hot_signer: bool,
@@ -49,6 +49,7 @@ pub struct Key {
     pub name: String,
     pub fingerprint: Fingerprint,
     pub key: DescriptorPublicKey,
+    pub is_compatible_taproot: bool,
 }
 
 pub fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
@@ -81,7 +82,7 @@ pub struct EditXpubModal {
 
     form_name: form::Value<String>,
     form_xpub: form::Value<String>,
-    edit_name: bool,
+    manually_imported_xpub: bool,
 
     other_path_keys: HashSet<Fingerprint>,
     duplicate_master_fg: bool,
@@ -89,7 +90,7 @@ pub struct EditXpubModal {
     keys: Vec<Key>,
     hot_signer: Arc<Mutex<Signer>>,
     hot_signer_fingerprint: Fingerprint,
-    chosen_signer: Option<(Fingerprint, Option<DeviceKind>, Option<Version>)>,
+    chosen_signer: Option<Key>,
 }
 
 impl EditXpubModal {
@@ -97,7 +98,7 @@ impl EditXpubModal {
     pub fn new(
         device_must_support_tapminiscript: bool,
         other_path_keys: HashSet<Fingerprint>,
-        key: Option<Fingerprint>,
+        key: Option<Key>,
         path_index: usize,
         key_index: usize,
         network: Network,
@@ -105,41 +106,34 @@ impl EditXpubModal {
         hot_signer_fingerprint: Fingerprint,
         keys: Vec<Key>,
     ) -> Self {
+        // The xpub is manually imported if the key is neither from a device or the hot signer.
+        let manually_imported_xpub = key
+            .as_ref()
+            .map(|k| !k.is_hot_signer && k.device_kind.is_none())
+            .unwrap_or(false);
         Self {
             device_must_support_tapminiscript,
             other_path_keys,
             form_name: form::Value {
                 valid: true,
-                value: key
-                    .map(|fg| {
-                        keys.iter()
-                            .find(|k| k.fingerprint == fg)
-                            .expect("must be stored")
-                            .name
-                            .clone()
-                    })
-                    .unwrap_or_default(),
+                value: key.as_ref().map(|k| k.name.clone()).unwrap_or_default(),
             },
             form_xpub: form::Value {
                 valid: true,
-                value: key
-                    .map(|fg| {
-                        keys.iter()
-                            .find(|k| k.fingerprint == fg)
-                            .expect("must be stored")
-                            .key
-                            .to_string()
-                    })
-                    .unwrap_or_default(),
+                value: if manually_imported_xpub {
+                    key.as_ref().map(|k| k.key.to_string()).unwrap_or_default()
+                } else {
+                    String::new()
+                },
             },
+            manually_imported_xpub,
             keys,
             path_index,
             key_index,
             processing: false,
             error: None,
             network,
-            edit_name: false,
-            chosen_signer: key.map(|k| (k, None, None)),
+            chosen_signer: key,
             hot_signer_fingerprint,
             hot_signer,
             duplicate_master_fg: false,
@@ -171,13 +165,41 @@ impl super::DescriptorEditModal for EditXpubModal {
                     ..
                 }) = hws.list.get(i)
                 {
-                    self.chosen_signer = Some((*fingerprint, Some(*kind), version.clone()));
                     self.processing = true;
+                    self.manually_imported_xpub = false;
+                    let device_version = version.clone();
+                    let fingerprint = *fingerprint;
+                    let device_kind = *kind;
+                    let network = self.network;
                     return Command::perform(
-                        get_extended_pubkey(device.clone(), *fingerprint, self.network),
-                        |res| {
+                        get_extended_pubkey(device.clone(), fingerprint, self.network),
+                        move |res| {
                             Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
-                                message::ImportKeyModal::HWXpubImported(res),
+                                message::ImportKeyModal::FetchedKey(match res {
+                                    Err(e) => Err(e),
+                                    Ok(key) => {
+                                        if check_key_network(&key, network) {
+                                            Ok(Key {
+                                                is_hot_signer: false,
+                                                fingerprint,
+                                                name: "".to_string(),
+                                                key,
+                                                is_compatible_taproot:
+                                                    is_compatible_with_tapminiscript(
+                                                        &device_kind,
+                                                        device_version.as_ref(),
+                                                    ),
+                                                device_kind: Some(device_kind),
+                                                device_version,
+                                            })
+                                        } else {
+                                            Err(Error::Unexpected(
+                                                "Fetched key does not have the correct network"
+                                                    .to_string(),
+                                            ))
+                                        }
+                                    }
+                                }),
                             ))
                         },
                     );
@@ -187,24 +209,10 @@ impl super::DescriptorEditModal for EditXpubModal {
                 return self.load();
             }
             Message::UseHotSigner => {
+                self.manually_imported_xpub = false;
                 let fingerprint = self.hot_signer.lock().unwrap().fingerprint();
-                self.chosen_signer = Some((fingerprint, None, None));
-                self.form_xpub.valid = true;
-                if let Some(alias) = self
-                    .keys
-                    .iter()
-                    .find(|key| key.fingerprint == fingerprint)
-                    .map(|k| k.name.clone())
-                {
-                    self.form_name.valid = true;
-                    self.form_name.value = alias;
-                    self.edit_name = false;
-                } else {
-                    self.edit_name = true;
-                    self.form_name.value = String::new();
-                }
                 let derivation_path = default_derivation_path(self.network);
-                self.form_xpub.value = format!(
+                let key_str = format!(
                     "[{}{}]{}",
                     fingerprint,
                     derivation_path.to_string().trim_start_matches('m'),
@@ -213,27 +221,36 @@ impl super::DescriptorEditModal for EditXpubModal {
                         .unwrap()
                         .get_extended_pubkey(&derivation_path)
                 );
+                self.chosen_signer = Some(Key {
+                    is_hot_signer: true,
+                    fingerprint,
+                    name: "".to_string(),
+                    key: DescriptorPublicKey::from_str(&key_str).unwrap(),
+                    is_compatible_taproot: true,
+                    device_kind: None,
+                    device_version: None,
+                });
+                self.form_name.value = self
+                    .keys
+                    .iter()
+                    .find_map(|k| {
+                        if k.fingerprint == fingerprint {
+                            Some(k.name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+                self.form_name.valid = true;
             }
             Message::DefineDescriptor(message::DefineDescriptor::KeyModal(msg)) => match msg {
-                message::ImportKeyModal::HWXpubImported(res) => {
+                message::ImportKeyModal::FetchedKey(res) => {
                     self.processing = false;
                     match res {
                         Ok(key) => {
-                            if let Some(alias) = self
-                                .keys
-                                .iter()
-                                .find(|k| k.fingerprint == key.master_fingerprint())
-                                .map(|k| k.name.clone())
-                            {
-                                self.form_name.valid = true;
-                                self.form_name.value = alias;
-                                self.edit_name = false;
-                            } else {
-                                self.edit_name = true;
-                                self.form_name.value = String::new();
-                            }
-                            self.form_xpub.valid = check_key_network(&key, self.network);
-                            self.form_xpub.value = key.to_string();
+                            self.form_name.valid = true;
+                            self.form_name.value.clone_from(&key.name);
+                            self.chosen_signer = Some(key);
                         }
                         Err(e) => {
                             self.chosen_signer = None;
@@ -241,11 +258,16 @@ impl super::DescriptorEditModal for EditXpubModal {
                         }
                     }
                 }
-                message::ImportKeyModal::EditName => {
-                    self.edit_name = true;
+                message::ImportKeyModal::ManuallyImportXpub => {
+                    self.chosen_signer = None;
+                    self.manually_imported_xpub = true;
+                    self.form_xpub = form::Value::default();
                 }
                 message::ImportKeyModal::NameEdited(name) => {
-                    self.form_name.valid = true;
+                    self.form_name.valid = !self.keys.iter().any(|k| {
+                        Some(&k.fingerprint) != self.chosen_signer.as_ref().map(|s| &s.fingerprint)
+                            && name == k.name
+                    });
                     self.form_name.value = name;
                 }
                 message::ImportKeyModal::XPubEdited(s) => {
@@ -259,17 +281,18 @@ impl super::DescriptorEditModal for EditXpubModal {
                             } else {
                                 key.xkey.network == Network::Testnet
                             };
-                            if let Some(alias) = self
-                                .keys
-                                .iter()
-                                .find(|k| k.fingerprint == fingerprint)
-                                .map(|k| k.name.clone())
-                            {
+                            if self.form_xpub.valid {
+                                self.chosen_signer = Some(Key {
+                                    is_hot_signer: false,
+                                    fingerprint,
+                                    name: "".to_string(),
+                                    key: DescriptorPublicKey::XPub(key),
+                                    is_compatible_taproot: true,
+                                    device_kind: None,
+                                    device_version: None,
+                                });
+                                self.form_name.value = "".to_string();
                                 self.form_name.valid = true;
-                                self.form_name.value = alias;
-                                self.edit_name = false;
-                            } else {
-                                self.edit_name = true;
                             }
                         } else {
                             self.form_xpub.valid = false;
@@ -280,16 +303,10 @@ impl super::DescriptorEditModal for EditXpubModal {
                     self.form_xpub.value = s;
                 }
                 message::ImportKeyModal::ConfirmXpub => {
-                    if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
+                    if let Some(mut key) = self.chosen_signer.clone() {
                         let key_index = self.key_index;
-                        let name = self.form_name.value.clone();
-                        let (device_kind, device_version) =
-                            if let Some((_, kind, version)) = &self.chosen_signer {
-                                (*kind, version.clone())
-                            } else {
-                                (None, None)
-                            };
-                        if self.other_path_keys.contains(&key.master_fingerprint()) {
+                        key.name.clone_from(&self.form_name.value);
+                        if self.other_path_keys.contains(&key.fingerprint) {
                             self.duplicate_master_fg = true;
                         } else {
                             let path_index = self.path_index;
@@ -300,12 +317,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                                         path_index,
                                         message::DefinePath::Key(
                                             key_index,
-                                            message::DefineKey::Edited(
-                                                name,
-                                                key,
-                                                device_kind,
-                                                device_version,
-                                            ),
+                                            message::DefineKey::Edited(key),
                                         ),
                                     )
                                 },
@@ -316,10 +328,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                 }
                 message::ImportKeyModal::SelectKey(i) => {
                     if let Some(key) = self.keys.get(i) {
-                        self.chosen_signer =
-                            Some((key.fingerprint, key.device_kind, key.device_version.clone()));
-                        self.form_xpub.value = key.key.to_string();
-                        self.form_xpub.valid = true;
+                        self.chosen_signer = Some(key.clone());
                         self.form_name.value.clone_from(&key.name);
                         self.form_name.valid = true;
                     }
@@ -335,8 +344,13 @@ impl super::DescriptorEditModal for EditXpubModal {
     }
 
     fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
-        let chosen_signer = self.chosen_signer.as_ref().map(|s| s.0);
+        let chosen_signer = self.chosen_signer.as_ref().map(|s| s.fingerprint);
         view::editor::edit_key_modal(
+            if self.path_index > 0 {
+                "Set your key"
+            } else {
+                "Set your primary key"
+            },
             self.network,
             hws.list
                 .iter()
@@ -354,10 +368,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                             hw,
                             hw.fingerprint() == chosen_signer,
                             self.processing,
-                            !self.processing
-                                && hw.fingerprint() == chosen_signer
-                                && self.form_xpub.valid
-                                && !self.form_xpub.value.is_empty(),
+                            hw.fingerprint() == chosen_signer,
                             self.device_must_support_tapminiscript,
                         ))
                     }
@@ -383,7 +394,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                 })
                 .collect(),
             self.error.as_ref(),
-            self.chosen_signer.as_ref().map(|s| s.0),
+            self.chosen_signer.as_ref().map(|s| s.fingerprint),
             &self.hot_signer_fingerprint,
             self.keys.iter().find_map(|k| {
                 if k.fingerprint == self.hot_signer_fingerprint {
@@ -392,9 +403,9 @@ impl super::DescriptorEditModal for EditXpubModal {
                     None
                 }
             }),
-            &self.form_xpub,
             &self.form_name,
-            self.edit_name,
+            &self.form_xpub,
+            self.manually_imported_xpub,
             self.duplicate_master_fg,
         )
     }

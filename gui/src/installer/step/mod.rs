@@ -1,5 +1,6 @@
+pub mod descriptor;
+
 mod backend;
-mod descriptor;
 mod mnemonic;
 mod node;
 mod share_xpubs;

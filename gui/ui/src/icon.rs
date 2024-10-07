@@ -115,6 +115,14 @@ pub fn previous_icon() -> Text<'static> {
     bootstrap_icon('\u{F284}')
 }
 
+pub fn check_icon() -> Text<'static> {
+    bootstrap_icon('\u{F633}')
+}
+
+pub fn round_key_icon() -> Text<'static> {
+    bootstrap_icon('\u{F44E}')
+}
+
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
 fn iconex_icon(unicode: char) -> Text<'static> {

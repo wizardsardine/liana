@@ -1,3 +1,4 @@
+pub mod custom;
 pub mod inheritance;
 
 use iced::{alignment, Alignment, Length};
@@ -18,13 +19,13 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
     layout(
         progress,
         None,
-        "Choose Wallet Type",
+        "Choose wallet type",
         Column::new()
             .max_width(800.0)
             .align_items(Alignment::Start)
             .push(Container::new(
-                p1_regular("What do you want your wallet for? Also consider this depends on the amount of funds you have, the more funds, higher the security should be. Not sure about the wallet type? We can help you.")
-                .style(color::GREY_3)
+                p1_regular("What do you want your wallet for? This depends on the amount of funds you have, the more funds, the higher the security should be. Not sure about the wallet type? We can help you.")
+                .style(color::GREY_2)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(
@@ -35,7 +36,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                             Column::new()
                                 .align_items(Alignment::Start)
                                 .push(h3("Simple inheritance"))
-                                .push(p2_regular("Two keys required, one for yourself to spend and another for your heir.").style(color::GREY_3))
+                                .push(p2_regular("Two keys required, one for yourself to spend and another for your heir.").style(color::GREY_2))
                                 .width(Length::Fill)
                         )
                         .push(button::secondary(None, "Select").on_press(
@@ -54,12 +55,12 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                             Column::new()
                                 .align_items(Alignment::Start)
                                 .push(h3("Custom (choose your own)"))
-                                .push(p2_regular("Create a custom set up that fits all your need").style(color::GREY_3))
+                                .push(p2_regular("Create a custom setup that fits all your needs").style(color::GREY_2))
                                 .width(Length::Fill)
                         )
                         .push(button::secondary(None, "Select").on_press(
                             Message::SelectDescriptorTemplate(
-                                context::DescriptorTemplate::Custom,
+                                context::DescriptorTemplate::Custom ,
                             ),
                         )),
                 )

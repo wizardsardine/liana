@@ -1268,10 +1268,6 @@ pub fn start_internal_bitcoind<'a>(
     install_state: Option<&InstallState>,
 ) -> Element<'a, Message> {
     let version = crate::node::bitcoind::VERSION;
-    let mut next_button = button::secondary(None, "Next").width(Length::Fixed(200.0));
-    if let Some(Ok(_)) = started {
-        next_button = next_button.on_press(Message::Next);
-    };
     layout(
         progress,
         None,
@@ -1364,11 +1360,7 @@ pub fn start_internal_bitcoind<'a>(
                 }
             })
             .spacing(50)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(Row::new().spacing(10).push(next_button)),
-            )
+            .push(Row::new())
             .push_maybe(error.map(|e| card::invalid(text(e)))),
         true,
         Some(message::Message::InternalBitcoind(
@@ -1415,6 +1407,57 @@ pub fn install<'a>(
     )
 }
 
+pub fn defined_threshold<'a>(
+    color: iced::Color,
+    fixed: bool,
+    threshold: (usize, usize),
+) -> Element<'a, message::DefinePath> {
+    if !fixed && threshold.1 > 1 {
+        Button::new(
+            Row::new()
+                .spacing(10)
+                .push((0..threshold.1).fold(Row::new(), |row, i| {
+                    if i < threshold.0 {
+                        row.push(icon::round_key_icon().style(color))
+                    } else {
+                        row.push(icon::round_key_icon())
+                    }
+                }))
+                .push(text(format!(
+                    "{} out of {} key{}",
+                    threshold.0,
+                    threshold.1,
+                    if threshold.0 > 1 { "s" } else { "" },
+                )))
+                .push(icon::pencil_icon()),
+        )
+        .padding(10)
+        .on_press(message::DefinePath::EditThreshold)
+        .style(theme::Button::Secondary)
+        .into()
+    } else {
+        card::simple(
+            Row::new()
+                .spacing(10)
+                .push((0..threshold.1).fold(Row::new(), |row, i| {
+                    if i < threshold.0 {
+                        row.push(icon::round_key_icon().style(color))
+                    } else {
+                        row.push(icon::round_key_icon())
+                    }
+                }))
+                .push(text(format!(
+                    "{} out of {} key{}",
+                    threshold.0,
+                    threshold.1,
+                    if threshold.0 > 1 { "s" } else { "" },
+                ))),
+        )
+        .padding(10)
+        .into()
+    }
+}
+
 pub fn defined_sequence<'a>(
     sequence: u16,
     duplicate_sequence: bool,
@@ -1423,53 +1466,66 @@ pub fn defined_sequence<'a>(
     Container::new(
         Column::new()
             .spacing(5)
+            .push(if sequence != 0 {
+                Row::new().align_items(Alignment::Center).push(
+                    Container::new(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .spacing(5)
+                            .push(
+                                text::p1_regular("Available after inactivity of ~")
+                                    .style(color::GREY_2),
+                            )
+                            .push(
+                                Button::new(
+                                    Row::new()
+                                        .padding(5)
+                                        .spacing(5)
+                                        .align_items(Alignment::Center)
+                                        .push(text(
+                                            [
+                                                (n_years, "y"),
+                                                (n_months, "m"),
+                                                (n_days, "d"),
+                                                (n_hours, "h"),
+                                                (n_minutes, "mn"),
+                                            ]
+                                            .iter()
+                                            .filter_map(|(n, unit)| {
+                                                if *n > 0 {
+                                                    Some(format!("{}{}", n, unit))
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect::<Vec<String>>()
+                                            .join(" "),
+                                        ))
+                                        .push(icon::pencil_icon()),
+                                )
+                                .style(theme::Button::Secondary)
+                                .on_press(message::DefinePath::EditSequence),
+                            ),
+                    )
+                    .width(Length::Fill)
+                    .padding(5)
+                    .align_y(alignment::Vertical::Center),
+                )
+            } else {
+                Row::new()
+                    .push(p1_regular("Able to move the funds at any time.").style(color::GREY_2))
+                    .padding(5)
+            })
             .push_maybe(if duplicate_sequence {
                 Some(
-                    text("No two recovery paths may become available at the very same date.")
+                    text("No two recovery options may become available at the very same date.")
                         .small()
                         .style(color::RED),
                 )
             } else {
                 None
             })
-            .push(
-                Row::new()
-                    .align_items(Alignment::Center)
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(5)
-                                .push(text(format!("Available after {} blocks", sequence)).bold())
-                                .push(
-                                    [
-                                        (n_years, "y"),
-                                        (n_months, "m"),
-                                        (n_days, "d"),
-                                        (n_hours, "h"),
-                                        (n_minutes, "mn"),
-                                    ]
-                                    .iter()
-                                    .fold(
-                                        Row::new().spacing(5),
-                                        |row, (n, unit)| {
-                                            row.push_maybe(if *n > 0 {
-                                                Some(text(format!("{}{}", n, unit,)))
-                                            } else {
-                                                None
-                                            })
-                                        },
-                                    ),
-                                ),
-                        )
-                        .padding(5)
-                        .align_y(alignment::Vertical::Center),
-                    )
-                    .push(
-                        button::secondary(Some(icon::pencil_icon()), "Edit")
-                            .on_press(message::DefinePath::EditSequence),
-                    )
-                    .spacing(15),
-            ),
+            .spacing(15),
     )
     .padding(5)
     .into()

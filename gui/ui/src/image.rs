@@ -67,3 +67,11 @@ pub fn inheritance_template_description() -> Svg {
     let h = Handle::from_memory(INHERITANCE_TEMPLATE_DESC.to_vec());
     Svg::new(h)
 }
+
+const CUSTOM_TEMPLATE_DESC: &[u8] =
+    include_bytes!("../static/images/custom_template_description.svg");
+
+pub fn custom_template_description() -> Svg {
+    let h = Handle::from_memory(CUSTOM_TEMPLATE_DESC.to_vec());
+    Svg::new(h)
+}
