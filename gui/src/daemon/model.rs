@@ -17,7 +17,11 @@ pub use liana::{
 
 pub type Coin = ListCoinsEntry;
 
-pub fn remaining_sequence(coin: &Coin, blockheight: u32, timelock: u16) -> u32 {
+pub fn remaining_sequence(coin: &Coin, blockheight: u32, mut timelock: u16, recovery: bool) -> u32 {
+    // `createrecovery` command does not consider unconfirmed coins
+    if timelock == 1 && recovery {
+        timelock += 1;
+    }
     if let Some(coin_blockheight) = coin.block_height {
         if blockheight > coin_blockheight as u32 + timelock as u32 {
             0

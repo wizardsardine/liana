@@ -96,10 +96,14 @@ pub fn recovery<'a>(
                 Container::new(
                     Column::new()
                         .spacing(20)
-                        .push(text(format!(
-                            "{} recovery paths will be available at the next block, select one:",
-                            recovery_paths.len()
-                        )))
+                        .push(text(if recovery_paths.len() == 1 {
+                            "1 recovery path is available, please select:".to_string()
+                        } else {
+                            format!(
+                                "{} recovery paths are available, select one:",
+                                recovery_paths.len()
+                            )
+                        }))
                         .push(Column::with_children(recovery_paths).spacing(20)),
                 )
                 .style(theme::Container::Card(theme::Card::Simple))
@@ -190,7 +194,7 @@ pub fn recovery_path_view<'a>(
                         .push(text(format!(
                             "{} coin{} totalling",
                             number_of_coins,
-                            if number_of_coins > 0 { "s" } else { "" }
+                            if number_of_coins > 1 { "s" } else { "" }
                         )))
                         .push(amount(&total_amount)),
                 )

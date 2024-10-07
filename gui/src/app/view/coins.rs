@@ -119,7 +119,8 @@ fn coin_list_view<'a>(
                                 } else if coin.block_height.is_none() {
                                     badge::unconfirmed()
                                 } else {
-                                    let seq = remaining_sequence(coin, blockheight, timelock);
+                                    let seq =
+                                        remaining_sequence(coin, blockheight, timelock, false);
                                     coin_sequence_label(seq, timelock as u32)
                                 })
                                 .spacing(10)
