@@ -63,7 +63,7 @@ impl Panels {
     ) -> Panels {
         Self {
             current: Menu::Home,
-            home: Home::new(wallet.clone(), &cache.coins),
+            home: Home::new(wallet.clone(), &cache.coins, cache.blockheight),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
@@ -279,7 +279,14 @@ impl App {
             }
             Message::UpdateCache(res) => {
                 match res {
-                    Ok(cache) => self.cache = cache,
+                    Ok(cache) => {
+                        self.cache.clone_from(&cache);
+                        return self.panels.current_mut().update(
+                            self.daemon.clone(),
+                            &self.cache,
+                            Message::UpdateCache(Ok(cache)),
+                        );
+                    }
                     Err(e) => tracing::error!("Failed to update cache: {}", e),
                 }
                 Command::none()

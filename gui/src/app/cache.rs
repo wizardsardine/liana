@@ -2,7 +2,7 @@ use crate::daemon::model::Coin;
 use liana::miniscript::bitcoin::Network;
 use std::path::PathBuf;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Cache {
     pub datadir_path: PathBuf,
     pub network: Network,
