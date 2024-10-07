@@ -9,7 +9,11 @@ pub use node::{
     DefineNode,
 };
 
-pub use descriptor::{BackupDescriptor, DefineDescriptor, ImportDescriptor, RegisterDescriptor};
+pub use descriptor::{
+    editor::template::{ChooseDescriptorTemplate, DescriptorTemplateDescription},
+    editor::DefineDescriptor,
+    BackupDescriptor, ImportDescriptor, RegisterDescriptor,
+};
 
 pub use backend::{ChooseBackend, ImportRemoteWallet, RemoteBackendLogin};
 pub use mnemonic::{BackupMnemonic, RecoverMnemonic};

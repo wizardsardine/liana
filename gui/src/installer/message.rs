@@ -32,6 +32,7 @@ pub enum Message {
     UseHotSigner,
     Installed(Result<PathBuf, Error>),
     CreateTaprootDescriptor(bool),
+    SelectDescriptorTemplate(context::DescriptorTemplate),
     SelectBackend(SelectBackend),
     ImportRemoteWallet(ImportRemoteWallet),
     SelectBitcoindType(SelectBitcoindTypeMsg),
@@ -110,8 +111,7 @@ pub enum InternalBitcoindMsg {
 #[derive(Debug, Clone)]
 pub enum DefineDescriptor {
     ImportDescriptor(String),
-    PrimaryPath(DefinePath),
-    RecoveryPath(usize, DefinePath),
+    Path(usize, DefinePath),
     AddRecoveryPath,
     KeyModal(ImportKeyModal),
     SequenceModal(SequenceModal),
