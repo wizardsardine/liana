@@ -17,7 +17,7 @@ use liana_ui::{component::form, widget::Element};
 use async_hwi::{DeviceKind, Version};
 
 use crate::{
-    hw::{HardwareWallet, HardwareWallets},
+    hw::{is_compatible_with_tapminiscript, HardwareWallet, HardwareWallets},
     installer::{
         message::{self, Message},
         view, Error,
@@ -41,7 +41,7 @@ pub fn new_multixkey_from_xpub(
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Key {
     pub device_kind: Option<DeviceKind>,
     pub is_hot_signer: bool,
@@ -49,6 +49,7 @@ pub struct Key {
     pub name: String,
     pub fingerprint: Fingerprint,
     pub key: DescriptorPublicKey,
+    pub is_compatible_taproot: bool,
 }
 
 pub fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
@@ -283,29 +284,42 @@ impl super::DescriptorEditModal for EditXpubModal {
                     if let Ok(key) = DescriptorPublicKey::from_str(&self.form_xpub.value) {
                         let key_index = self.key_index;
                         let name = self.form_name.value.clone();
+                        let fingerprint = key.master_fingerprint();
+                        let is_hot_signer = self.hot_signer_fingerprint == fingerprint;
                         let (device_kind, device_version) =
                             if let Some((_, kind, version)) = &self.chosen_signer {
                                 (*kind, version.clone())
                             } else {
                                 (None, None)
                             };
-                        if self.other_path_keys.contains(&key.master_fingerprint()) {
+                        if self.other_path_keys.contains(&fingerprint) {
                             self.duplicate_master_fg = true;
                         } else {
                             let path_index = self.path_index;
                             return Command::perform(
-                                async move { (path_index, key_index, key) },
-                                move |(path_index, key_index, key)| {
+                                async move { (path_index, key_index, key, fingerprint, is_hot_signer) },
+                                move |(path_index, key_index, key, fingerprint, is_hot_signer)| {
                                     message::DefineDescriptor::Path(
                                         path_index,
                                         message::DefinePath::Key(
                                             key_index,
-                                            message::DefineKey::Edited(
+                                            message::DefineKey::Edited(Key {
+                                                is_hot_signer,
+                                                fingerprint,
                                                 name,
                                                 key,
+                                                is_compatible_taproot: device_kind
+                                                    .as_ref()
+                                                    .map(|kind| {
+                                                        is_compatible_with_tapminiscript(
+                                                            kind,
+                                                            device_version.as_ref(),
+                                                        )
+                                                    })
+                                                    .unwrap_or(true),
                                                 device_kind,
                                                 device_version,
-                                            ),
+                                            }),
                                         ),
                                     )
                                 },

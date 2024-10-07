@@ -45,10 +45,13 @@ impl RemoteBackend {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum DescriptorTemplate {
+    #[default]
     SimpleInheritance,
-    Custom,
+    Custom {
+        page: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -78,7 +81,7 @@ impl Context {
         remote_backend: RemoteBackend,
     ) -> Self {
         Self {
-            descriptor_template: DescriptorTemplate::Custom,
+            descriptor_template: DescriptorTemplate::default(),
             bitcoin_config: BitcoinConfig {
                 network,
                 poll_interval_secs: Duration::from_secs(30),

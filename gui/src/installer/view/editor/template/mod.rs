@@ -1,3 +1,4 @@
+pub mod custom;
 pub mod inheritance;
 
 use iced::{alignment, Alignment, Length};
@@ -59,7 +60,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                         )
                         .push(button::secondary(None, "Select").on_press(
                             Message::SelectDescriptorTemplate(
-                                context::DescriptorTemplate::Custom,
+                                context::DescriptorTemplate::Custom{page: 0} ,
                             ),
                         )),
                 )
