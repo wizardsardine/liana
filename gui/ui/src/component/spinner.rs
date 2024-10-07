@@ -155,3 +155,31 @@ where
         Element::new(carousel)
     }
 }
+
+/// Create a `Carousel` that types out the given `content` one character
+/// at a time.
+///
+/// If `show_empty` is `true`, the text will begin with an empty string.
+///
+/// `interval` is how long to wait before the next character appears.
+///
+/// `text_builder` is used to build each `Text` element with the required
+/// style etc.
+pub fn typing_text_carousel<'a, Message, Theme>(
+    content: &'a str,
+    show_empty: bool,
+    interval: Duration,
+    text_builder: impl Fn(&'a str) -> iced::widget::Text<'a, Theme, Renderer>,
+) -> Carousel<'a, Message, Theme>
+where
+    Theme: 'a + iced::widget::text::StyleSheet,
+{
+    let mut children = Vec::new();
+    if show_empty {
+        children.push(text_builder(""));
+    }
+    for end_char in 0..content.chars().count() {
+        children.push(text_builder(&content[0..=end_char]));
+    }
+    Carousel::new(interval, children)
+}
