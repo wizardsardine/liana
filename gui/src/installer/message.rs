@@ -8,13 +8,13 @@ use super::{context, Error};
 use crate::{
     download::Progress,
     hw::HardwareWalletMessage,
+    installer::step::descriptor::editor::key::Key,
     lianalite::client::{auth::AuthClient, backend::api},
     node::{
         bitcoind::{Bitcoind, ConfigField, RpcAuthType},
         electrum, NodeType,
     },
 };
-use async_hwi::{DeviceKind, Version};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -108,13 +108,15 @@ pub enum InternalBitcoindMsg {
     Start,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum DefineDescriptor {
     ImportDescriptor(String),
     Path(usize, DefinePath),
     AddRecoveryPath,
     KeyModal(ImportKeyModal),
-    SequenceModal(SequenceModal),
+    ThresholdSequenceModal(ThresholdSequenceModal),
+    TemplatePage(usize),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -125,6 +127,7 @@ pub enum DefinePath {
     ThresholdEdited(usize),
     SequenceEdited(u16),
     EditSequence,
+    EditThreshold,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -133,12 +136,7 @@ pub enum DefineKey {
     Delete,
     Edit,
     Clipboard(String),
-    Edited(
-        String,
-        DescriptorPublicKey,
-        Option<DeviceKind>,
-        Option<Version>,
-    ),
+    Edited(Key),
 }
 
 #[derive(Debug, Clone)]
@@ -152,7 +150,8 @@ pub enum ImportKeyModal {
 }
 
 #[derive(Debug, Clone)]
-pub enum SequenceModal {
+pub enum ThresholdSequenceModal {
+    ThresholdEdited(usize),
     SequenceEdited(String),
-    ConfirmSequence,
+    Confirm,
 }

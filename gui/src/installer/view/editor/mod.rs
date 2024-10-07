@@ -1,31 +1,31 @@
 pub mod template;
 
-use iced::widget::{
-    container, pick_list, scrollable, scrollable::Properties, slider, Button, Space,
-};
-use iced::{alignment, Alignment, Length};
+use iced::widget::{container, pick_list, slider, Button, Space};
+use iced::{Alignment, Length};
 
-use liana_ui::component::text;
+use liana_ui::component::text::{self, p1_bold, p2_regular, H3_SIZE};
 use std::str::FromStr;
 
 use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
 use liana_ui::{
     color,
     component::{
-        button, card, collapse, form, hw, separation,
+        button, card, form, hw, separation,
         text::{p1_regular, text, Text},
         tooltip,
     },
-    icon, image, theme,
+    icon, theme,
     widget::*,
 };
 
 use crate::installer::{
     message::{self, Message},
     prompt,
-    view::{defined_sequence, layout},
+    view::defined_sequence,
     Error,
 };
+
+use super::defined_threshold;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DescriptorKind {
@@ -81,296 +81,133 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
     .into()
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn define_descriptor<'a>(
-    progress: (usize, usize),
-    email: Option<&'a str>,
-    use_taproot: bool,
-    paths: Vec<Element<'a, Message>>,
-    valid: bool,
-    error: Option<&String>,
-) -> Element<'a, Message> {
-    layout(
-        progress,
-        email,
-        "Create the wallet",
+pub fn path(
+    title: Option<String>,
+    sequence: u16,
+    duplicate_sequence: bool,
+    threshold: usize,
+    keys: Vec<Element<message::DefinePath>>,
+    fixed: bool,
+) -> Element<message::DefinePath> {
+    let keys_len = keys.len();
+    Container::new(
         Column::new()
-            .push(collapse::Collapse::new(
-                || {
-                    Button::new(
-                        Row::new()
-                            .align_items(Alignment::Center)
-                            .spacing(10)
-                            .push(text("Advanced settings").small().bold())
-                            .push(icon::collapse_icon()),
-                    )
-                    .style(theme::Button::Transparent)
-                },
-                || {
-                    Button::new(
-                        Row::new()
-                            .align_items(Alignment::Center)
-                            .spacing(10)
-                            .push(text("Advanced settings").small().bold())
-                            .push(icon::collapsed_icon()),
-                    )
-                    .style(theme::Button::Transparent)
-                },
-                move || define_descriptor_advanced_settings(use_taproot),
-            ))
+            .spacing(10)
+            .push_maybe(title.map(p1_bold))
+            .push(defined_sequence(sequence, duplicate_sequence))
+            .push(
+                Column::new()
+                    .spacing(5)
+                    .align_items(Alignment::Center)
+                    .push(Column::with_children(keys).spacing(5))
+                    .push_maybe(if fixed {
+                        None
+                    } else {
+                        Some(
+                            Row::new().push(
+                                button::secondary(Some(icon::plus_icon()), "Add key")
+                                    .width(Length::Fill)
+                                    .on_press(message::DefinePath::AddKey),
+                            ),
+                        )
+                    }),
+            )
+            .push_maybe(if !fixed && keys_len > 1 {
+                Some(defined_threshold((threshold, keys_len)))
+            } else {
+                None
+            }),
+    )
+    .padding(10)
+    .style(theme::Container::Card(theme::Card::Border))
+    .into()
+}
+
+pub fn defined_key<'a>(
+    alias: &'a str,
+    color: iced::Color,
+    title: &'static str,
+    desc: &'static str,
+    warning: Option<&'static str>,
+    fixed: bool,
+) -> Element<'a, message::DefineKey> {
+    card::simple(
+        Row::new()
+            .spacing(10)
+            .width(Length::Fill)
+            .align_items(Alignment::Center)
+            .push(icon::round_key_icon().size(H3_SIZE).style(color))
             .push(
                 Column::new()
                     .width(Length::Fill)
+                    .spacing(5)
                     .push(
-                        Column::new()
-                            .spacing(25)
-                            .push(Column::with_children(paths).spacing(10))
-                            .push(tooltip(prompt::DEFINE_DESCRIPTOR_RECOVERY_PATH_TOOLTIP)),
-                    )
-                    .spacing(25),
-            )
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(
-                        button::secondary(Some(icon::plus_icon()), "Add a recovery path")
-                            .on_press(Message::DefineDescriptor(
-                                message::DefineDescriptor::AddRecoveryPath,
-                            ))
-                            .width(Length::Fixed(200.0)),
-                    )
-                    .push(if !valid {
-                        button::primary(None, "Next").width(Length::Fixed(200.0))
-                    } else {
-                        button::primary(None, "Next")
-                            .width(Length::Fixed(200.0))
-                            .on_press(Message::Next)
-                    }),
-            )
-            .push_maybe(error.map(|e| card::error("Failed to create descriptor", e.to_string())))
-            .push(Space::with_height(Length::Fixed(20.0)))
-            .spacing(50),
-        false,
-        Some(Message::Previous),
-    )
-}
-
-pub fn primary_path_view(
-    primary_threshold: usize,
-    primary_keys: Vec<Element<message::DefinePath>>,
-) -> Element<message::DefinePath> {
-    Container::new(
-        Column::new().push(
-            Row::new()
-                .align_items(Alignment::Center)
-                .push_maybe(if primary_keys.len() > 1 {
-                    Some(threshsold_input::threshsold_input(
-                        primary_threshold,
-                        primary_keys.len(),
-                        message::DefinePath::ThresholdEdited,
-                    ))
-                } else {
-                    None
-                })
-                .push(
-                    scrollable(
                         Row::new()
-                            .spacing(5)
-                            .align_items(Alignment::Center)
-                            .push(Row::with_children(primary_keys).spacing(5))
-                            .push(
-                                Button::new(
-                                    Container::new(icon::plus_icon().size(50))
-                                        .width(Length::Fixed(150.0))
-                                        .height(Length::Fixed(150.0))
-                                        .align_y(alignment::Vertical::Center)
-                                        .align_x(alignment::Horizontal::Center),
-                                )
-                                .width(Length::Fixed(150.0))
-                                .height(Length::Fixed(150.0))
-                                .style(theme::Button::TransparentBorder)
-                                .on_press(message::DefinePath::AddKey),
-                            )
-                            .padding(5),
+                            .spacing(10)
+                            .push(p1_regular(title).style(color::GREY_3))
+                            .push(p1_bold(alias)),
                     )
-                    .direction(scrollable::Direction::Horizontal(
-                        Properties::new().width(3).scroller_width(3),
-                    )),
-                ),
-        ),
-    )
-    .padding(5)
-    .style(theme::Container::Card(theme::Card::Border))
-    .into()
-}
-
-pub fn recovery_path_view(
-    sequence: u16,
-    duplicate_sequence: bool,
-    recovery_threshold: usize,
-    recovery_keys: Vec<Element<message::DefinePath>>,
-) -> Element<message::DefinePath> {
-    Container::new(
-        Column::new()
-            .push(defined_sequence(sequence, duplicate_sequence))
-            .push(
-                Row::new()
-                    .align_items(Alignment::Center)
-                    .push_maybe(if recovery_keys.len() > 1 {
-                        Some(threshsold_input::threshsold_input(
-                            recovery_threshold,
-                            recovery_keys.len(),
-                            message::DefinePath::ThresholdEdited,
-                        ))
-                    } else {
-                        None
-                    })
-                    .push(
-                        scrollable(
-                            Row::new()
-                                .spacing(5)
-                                .align_items(Alignment::Center)
-                                .push(Row::with_children(recovery_keys).spacing(5))
-                                .push(
-                                    Button::new(
-                                        Container::new(icon::plus_icon().size(50))
-                                            .width(Length::Fixed(150.0))
-                                            .height(Length::Fixed(150.0))
-                                            .align_y(alignment::Vertical::Center)
-                                            .align_x(alignment::Horizontal::Center),
-                                    )
-                                    .width(Length::Fixed(150.0))
-                                    .height(Length::Fixed(150.0))
-                                    .style(theme::Button::TransparentBorder)
-                                    .on_press(message::DefinePath::AddKey),
-                                )
-                                .padding(5),
-                        )
-                        .direction(scrollable::Direction::Horizontal(
-                            Properties::new().width(3).scroller_width(3),
-                        )),
-                    ),
-            ),
-    )
-    .padding(5)
-    .style(theme::Container::Card(theme::Card::Border))
-    .into()
-}
-
-pub fn undefined_descriptor_key<'a>() -> Element<'a, message::DefineKey> {
-    card::simple(
-        Column::new()
-            .width(Length::Fill)
-            .align_items(Alignment::Center)
-            .push(
-                Row::new()
-                    .align_items(Alignment::Center)
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        Button::new(icon::cross_icon())
-                            .style(theme::Button::Transparent)
-                            .on_press(message::DefineKey::Delete),
-                    ),
+                    .push(p2_regular(desc).style(color::GREY_3))
+                    .push_maybe(warning.map(|w| p2_regular(w).style(color::RED))),
             )
+            .push_maybe(if warning.is_none() {
+                Some(icon::check_icon().style(color::GREEN))
+            } else {
+                None
+            })
             .push(
-                Container::new(
-                    Column::new()
-                        .spacing(15)
-                        .align_items(Alignment::Center)
-                        .push(image::key_mark_icon().width(Length::Fixed(30.0))),
-                )
-                .height(Length::Fill)
-                .align_y(alignment::Vertical::Center),
-            )
-            .push(
-                button::secondary(Some(icon::pencil_icon()), "Set")
+                button::secondary(Some(icon::pencil_icon()), "Edit")
                     .on_press(message::DefineKey::Edit),
             )
-            .push(Space::with_height(Length::Fixed(5.0))),
+            .push_maybe(if fixed {
+                None
+            } else {
+                Some(
+                    Button::new(icon::trash_icon())
+                        .style(theme::Button::Secondary)
+                        .padding(5)
+                        .on_press(message::DefineKey::Delete),
+                )
+            }),
     )
-    .padding(5)
-    .height(Length::Fixed(150.0))
-    .width(Length::Fixed(150.0))
     .into()
 }
 
-pub fn defined_descriptor_key<'a>(
-    name: String,
-    duplicate_name: bool,
-    incompatible_with_tapminiscript: bool,
+pub fn undefined_key<'a>(
+    color: iced::Color,
+    title: &'static str,
+    desc: &'static str,
+    fixed: bool,
 ) -> Element<'a, message::DefineKey> {
-    let col = Column::new()
-        .width(Length::Fill)
-        .align_items(Alignment::Center)
-        .push(
-            Row::new()
-                .align_items(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
-                .push(
-                    Button::new(icon::cross_icon())
-                        .style(theme::Button::Transparent)
-                        .on_press(message::DefineKey::Delete),
-                ),
-        )
-        .push(
-            Container::new(
+    card::simple(
+        Row::new()
+            .spacing(10)
+            .width(Length::Fill)
+            .align_items(Alignment::Center)
+            .push(icon::round_key_icon().size(H3_SIZE).style(color))
+            .push(
                 Column::new()
-                    .spacing(10)
-                    .align_items(Alignment::Center)
-                    .push(
-                        scrollable(
-                            Column::new()
-                                .push(text(name).bold())
-                                .push(Space::with_height(Length::Fixed(5.0))),
-                        )
-                        .direction(scrollable::Direction::Horizontal(
-                            Properties::new().width(5).scroller_width(5),
-                        )),
-                    )
-                    .push(image::success_mark_icon().width(Length::Fixed(50.0)))
-                    .push(Space::with_width(Length::Fixed(1.0))),
-            )
-            .height(Length::Fill)
-            .align_y(alignment::Vertical::Center),
-        )
-        .push(
-            button::secondary(Some(icon::pencil_icon()), "Edit").on_press(message::DefineKey::Edit),
-        )
-        .push(Space::with_height(Length::Fixed(5.0)));
-
-    if duplicate_name {
-        Column::new()
-            .align_items(Alignment::Center)
-            .push(
-                card::invalid(col)
-                    .padding(5)
-                    .height(Length::Fixed(150.0))
-                    .width(Length::Fixed(150.0)),
-            )
-            .push(text("Duplicate name").small().style(color::RED))
-            .into()
-    } else if incompatible_with_tapminiscript {
-        Column::new()
-            .align_items(Alignment::Center)
-            .push(
-                card::invalid(col)
-                    .padding(5)
-                    .height(Length::Fixed(150.0))
-                    .width(Length::Fixed(150.0)),
+                    .width(Length::Fill)
+                    .spacing(5)
+                    .push(p1_bold(title))
+                    .push(p2_regular(desc).style(color::GREY_3)),
             )
             .push(
-                text("Taproot is not supported\nby this key device")
-                    .small()
-                    .style(color::RED),
+                button::primary(Some(icon::pencil_icon()), "Set")
+                    .on_press(message::DefineKey::Edit),
             )
-            .into()
-    } else {
-        card::simple(col)
-            .padding(5)
-            .height(Length::Fixed(150.0))
-            .width(Length::Fixed(150.0))
-            .into()
-    }
+            .push_maybe(if fixed {
+                None
+            } else {
+                Some(
+                    Button::new(icon::trash_icon())
+                        .style(theme::Button::Secondary)
+                        .padding(5)
+                        .on_press(message::DefineKey::Delete),
+                )
+            }),
+    )
+    .into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -547,15 +384,17 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
         .width(Length::Fill)
         .spacing(20)
         .align_items(Alignment::Center)
-        .push(text("Activate recovery path after:"))
+        .push(text("Keys can move the funds after inactivity of:"))
         .push(
             Row::new()
                 .push(
                     Container::new(
                         form::Form::new_trimmed("ex: 1000", sequence, |v| {
-                            Message::DefineDescriptor(message::DefineDescriptor::SequenceModal(
-                                message::SequenceModal::SequenceEdited(v),
-                            ))
+                            Message::DefineDescriptor(
+                                message::DefineDescriptor::ThresholdSequenceModal(
+                                    message::ThresholdSequenceModal::SequenceEdited(v),
+                                ),
+                            )
                         })
                         .warning("Sequence must be superior to 0 and inferior to 65535"),
                     )
@@ -592,9 +431,11 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                 .push(
                     Container::new(
                         slider(1..=u16::MAX, sequence, |v| {
-                            Message::DefineDescriptor(message::DefineDescriptor::SequenceModal(
-                                message::SequenceModal::SequenceEdited(v.to_string()),
-                            ))
+                            Message::DefineDescriptor(
+                                message::DefineDescriptor::ThresholdSequenceModal(
+                                    message::ThresholdSequenceModal::SequenceEdited(v.to_string()),
+                                ),
+                            )
                         })
                         .step(144_u16), // 144 blocks per day
                     )
@@ -606,12 +447,43 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
     card::simple(col.push(if sequence.valid {
         button::primary(None, "Apply")
             .on_press(Message::DefineDescriptor(
-                message::DefineDescriptor::SequenceModal(message::SequenceModal::ConfirmSequence),
+                message::DefineDescriptor::ThresholdSequenceModal(
+                    message::ThresholdSequenceModal::Confirm,
+                ),
             ))
             .width(Length::Fixed(200.0))
     } else {
         button::primary(None, "Apply").width(Length::Fixed(200.0))
     }))
+    .width(Length::Fixed(800.0))
+    .into()
+}
+
+pub fn edit_threshold_modal<'a>(threshold: (usize, usize)) -> Element<'a, Message> {
+    card::simple(
+        Column::new()
+            .width(Length::Fill)
+            .spacing(20)
+            .align_items(Alignment::Center)
+            .push(threshsold_input::threshsold_input(
+                threshold.0,
+                threshold.1,
+                |v| {
+                    Message::DefineDescriptor(message::DefineDescriptor::ThresholdSequenceModal(
+                        message::ThresholdSequenceModal::ThresholdEdited(v),
+                    ))
+                },
+            ))
+            .push(
+                button::primary(None, "Apply")
+                    .on_press(Message::DefineDescriptor(
+                        message::DefineDescriptor::ThresholdSequenceModal(
+                            message::ThresholdSequenceModal::Confirm,
+                        ),
+                    ))
+                    .width(Length::Fixed(200.0)),
+            ),
+    )
     .width(Length::Fixed(800.0))
     .into()
 }

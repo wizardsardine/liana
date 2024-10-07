@@ -12,16 +12,9 @@ use crate::{
     },
 };
 
+#[derive(Default)]
 pub struct ChooseDescriptorTemplate {
     template: DescriptorTemplate,
-}
-
-impl Default for ChooseDescriptorTemplate {
-    fn default() -> Self {
-        Self {
-            template: DescriptorTemplate::Custom,
-        }
-    }
 }
 
 impl From<ChooseDescriptorTemplate> for Box<dyn Step> {
@@ -54,16 +47,9 @@ impl Step for ChooseDescriptorTemplate {
     }
 }
 
+#[derive(Default)]
 pub struct DescriptorTemplateDescription {
     template: DescriptorTemplate,
-}
-
-impl Default for DescriptorTemplateDescription {
-    fn default() -> Self {
-        Self {
-            template: DescriptorTemplate::Custom,
-        }
-    }
 }
 
 impl From<DescriptorTemplateDescription> for Box<dyn Step> {
@@ -77,16 +63,19 @@ impl Step for DescriptorTemplateDescription {
         self.template = ctx.descriptor_template;
     }
 
-    fn skip(&self, ctx: &Context) -> bool {
-        ctx.descriptor_template == DescriptorTemplate::Custom
-    }
-
     fn view<'a>(
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         _email: Option<&'a str>,
     ) -> Element<Message> {
-        view::editor::template::inheritance::inheritance_template_description(progress)
+        match self.template {
+            DescriptorTemplate::SimpleInheritance => {
+                view::editor::template::inheritance::inheritance_template_description(progress)
+            }
+            DescriptorTemplate::Custom { .. } => {
+                view::editor::template::custom::custom_template_description(progress)
+            }
+        }
     }
 }
