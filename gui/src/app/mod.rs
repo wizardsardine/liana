@@ -221,12 +221,16 @@ impl App {
         Subscription::batch(vec![
             time::every(Duration::from_secs(
                 // LianaLite has no rescan feature, the cache refresh loop is only
-                // to fetch the new block height tip which is only used to warn user
-                // about recovery availability.
-                if self.daemon.backend() == DaemonBackend::RemoteBackend {
+                // to fetch the new block height tip, which for a synced wallet
+                // (height > 0) is only used to warn user about recovery availability.
+                if self.daemon.backend() == DaemonBackend::RemoteBackend
+                    && self.cache.blockheight > 0
+                {
                     120
                 // For the rescan feature, we set a higher frequency of cache refresh
                 // to give to user an up-to-date view of the rescan progress.
+                // For a remote backend, we refresh cache more often while height is 0
+                // to detect sooner that syncing has finished.
                 } else {
                     10
                 },
