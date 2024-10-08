@@ -1,13 +1,33 @@
 pub use bitcoin::Amount;
+use iced::Color;
 
 use crate::{color, component::text::*, widget::*};
 
+/// Amount with default size and colors.
 pub fn amount<'a, T: 'a>(a: &Amount) -> Row<'a, T> {
-    render_amount(amount_as_string(*a), P1_SIZE)
+    amount_with_size(a, P1_SIZE)
 }
 
+/// Amount with default colors.
 pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
-    render_amount(amount_as_string(*a), size)
+    amount_with_size_and_colors(a, size, color::GREY_3, None)
+}
+
+/// Amount with the given size and colors.
+///
+/// `color_before` is the color to use before the first non-zero
+/// value in `a`.
+///
+/// `color_after` is the color to use from the first non-zero
+/// value in `a` onwards. If `None`, the default theme value
+/// will be used.
+pub fn amount_with_size_and_colors<'a, T: 'a>(
+    a: &Amount,
+    size: u16,
+    color_before: Color,
+    color_after: Option<Color>,
+) -> Row<'a, T> {
+    render_amount(amount_as_string(*a), size, color_before, color_after)
 }
 
 pub fn unconfirmed_amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
@@ -67,7 +87,12 @@ fn split_at_first_non_zero(s: String) -> Option<(String, String)> {
 
 // Build the rendering elements for displaying a Bitcoin amount.
 // The text should be bolded beginning where the BTC amount is non-zero.
-fn render_amount<'a, T: 'a>(amount: String, size: u16) -> Row<'a, T> {
+fn render_amount<'a, T: 'a>(
+    amount: String,
+    size: u16,
+    color_before: Color,
+    color_after: Option<Color>,
+) -> Row<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
 
     let (before, after) = match split_at_first_non_zero(amount) {
@@ -75,13 +100,17 @@ fn render_amount<'a, T: 'a>(amount: String, size: u16) -> Row<'a, T> {
         None => (String::from("0.00 000 000"), String::from("")),
     };
 
+    let mut child_after = text(after).size(size).bold();
+    if let Some(color_after) = color_after {
+        child_after = child_after.style(color_after);
+    }
     let row = Row::new()
-        .push(text(before).size(size).style(color::GREY_3))
-        .push(text(after).size(size).bold());
+        .push(text(before).size(size).style(color_before))
+        .push(child_after);
 
     Row::with_children(vec![
         row.into(),
-        text("BTC").size(size).style(color::GREY_3).into(),
+        text("BTC").size(size).style(color_before).into(),
     ])
     .spacing(spacing)
     .align_items(iced::Alignment::Center)

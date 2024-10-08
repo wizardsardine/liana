@@ -8,6 +8,7 @@ pub mod form;
 pub mod hw;
 pub mod modal;
 pub mod notification;
+pub mod spinner;
 pub mod text;
 pub mod toast;
 pub mod tooltip;
