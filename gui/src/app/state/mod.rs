@@ -23,9 +23,12 @@ use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wall
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
-use crate::daemon::{
-    model::{remaining_sequence, Coin, HistoryTransaction, Labelled},
-    Daemon,
+use crate::{
+    daemon::{
+        model::{remaining_sequence, Coin, HistoryTransaction, Labelled},
+        Daemon,
+    },
+    node::NodeType,
 };
 pub use coins::CoinsPanel;
 use label::LabelsEdited;
@@ -69,6 +72,9 @@ pub fn redirect(menu: Menu) -> Command<Message> {
 pub struct Home {
     wallet: Arc<Wallet>,
     blockheight: i32,
+    last_poll: Option<u64>,
+    last_poll_at_startup: Option<u64>,
+    node_type: Option<NodeType>,
     balance: Amount,
     unconfirmed_balance: Amount,
     remaining_sequence: Option<u32>,
@@ -83,7 +89,13 @@ pub struct Home {
 }
 
 impl Home {
-    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: i32) -> Self {
+    pub fn new(
+        wallet: Arc<Wallet>,
+        coins: &[Coin],
+        blockheight: i32,
+        last_poll: Option<u64>,
+        node_type: Option<NodeType>,
+    ) -> Self {
         let (balance, unconfirmed_balance) = coins.iter().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
             |(balance, unconfirmed_balance), coin| {
@@ -100,6 +112,9 @@ impl Home {
         Self {
             wallet,
             blockheight,
+            last_poll,
+            last_poll_at_startup: last_poll,
+            node_type,
             balance,
             unconfirmed_balance,
             remaining_sequence: None,
@@ -115,7 +130,16 @@ impl Home {
     }
 
     fn wallet_is_syncing(&self) -> bool {
-        self.blockheight <= 0
+        if self.node_type.is_some() {
+            // Once the first poll has completed, the wallet will be synced
+            // with the blockchain of the local node.
+            self.last_poll <= self.last_poll_at_startup
+        } else {
+            // If no node type, treat as remote backend:
+            // The wallet is always synced except before the first scan
+            // after creation.
+            self.blockheight <= 0
+        }
     }
 }
 
@@ -149,6 +173,7 @@ impl State for Home {
                     self.is_last_page,
                     self.processing,
                     self.wallet_is_syncing(),
+                    self.blockheight,
                 ),
             )
         }
@@ -227,6 +252,7 @@ impl State for Home {
             },
             Message::UpdatePanelCache(is_current, Ok(cache)) => {
                 let wallet_was_syncing = self.wallet_is_syncing();
+                self.last_poll = cache.last_poll_timestamp;
                 self.blockheight = cache.blockheight;
                 // If this is the current panel, reload it if wallet is no longer syncing.
                 if is_current && wallet_was_syncing && !self.wallet_is_syncing() {
