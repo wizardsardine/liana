@@ -324,6 +324,7 @@ impl DaemonControl {
             },
             rescan_progress,
             timestamp: db_conn.timestamp(),
+            last_poll_timestamp: db_conn.last_poll_timestamp(),
         }
     }
 
@@ -1127,6 +1128,8 @@ pub struct GetInfoResult {
     pub rescan_progress: Option<f64>,
     /// Timestamp at wallet creation date
     pub timestamp: u32,
+    /// Timestamp of last poll, if any.
+    pub last_poll_timestamp: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

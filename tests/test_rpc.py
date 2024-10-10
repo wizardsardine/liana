@@ -31,6 +31,11 @@ def test_getinfo(lianad):
     assert res["sync"] == 1.0
     assert "main" in res["descriptors"]
     assert res["rescan_progress"] is None
+    last_poll_timestamp = res["last_poll_timestamp"]
+    assert last_poll_timestamp is not None
+    time.sleep(lianad.poll_interval_secs + 1)
+    res = lianad.rpc.getinfo()
+    assert res["last_poll_timestamp"] > last_poll_timestamp
 
 
 def test_getaddress(lianad):
