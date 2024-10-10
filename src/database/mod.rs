@@ -81,6 +81,14 @@ pub trait DatabaseConnection {
     /// Mark the rescan as complete.
     fn complete_rescan(&mut self);
 
+    /// Get the timestamp at which the last poll of the blockchain completed, if any,
+    /// as the number of seconds since the UNIX epoch.
+    fn last_poll_timestamp(&mut self) -> Option<u32>;
+
+    /// Set the timestamp at which the last poll of the blockchain completed,
+    /// where `timestamp` should be given as the number of seconds since the UNIX epoch.
+    fn set_last_poll(&mut self, timestamp: u32);
+
     /// Get the derivation index for this address, as well as whether this address is change.
     fn derivation_index_by_address(
         &mut self,
@@ -218,6 +226,15 @@ impl DatabaseConnection for SqliteConn {
 
     fn complete_rescan(&mut self) {
         self.complete_wallet_rescan()
+    }
+
+    fn last_poll_timestamp(&mut self) -> Option<u32> {
+        self.db_wallet().last_poll_timestamp
+    }
+
+    fn set_last_poll(&mut self, timestamp: u32) {
+        self.set_wallet_last_poll_timestamp(timestamp)
+            .expect("database must be available")
     }
 
     fn coins(

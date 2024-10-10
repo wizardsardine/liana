@@ -149,6 +149,7 @@ struct DummyDbState {
     txs: HashMap<bitcoin::Txid, bitcoin::Transaction>,
     spend_txs: HashMap<bitcoin::Txid, (Psbt, Option<u32>)>,
     timestamp: u32,
+    last_poll_timestamp: Option<u32>,
 }
 
 pub struct DummyDatabase {
@@ -181,6 +182,7 @@ impl DummyDatabase {
                 txs: HashMap::new(),
                 spend_txs: HashMap::new(),
                 timestamp: now,
+                last_poll_timestamp: None,
             })),
         }
     }
@@ -409,6 +411,14 @@ impl DatabaseConnection for DummyDatabase {
 
     fn complete_rescan(&mut self) {
         todo!()
+    }
+
+    fn last_poll_timestamp(&mut self) -> Option<u32> {
+        self.db.read().unwrap().last_poll_timestamp
+    }
+
+    fn set_last_poll(&mut self, timestamp: u32) {
+        self.db.write().unwrap().last_poll_timestamp = Some(timestamp);
     }
 
     fn update_labels(&mut self, _items: &HashMap<LabelItem, Option<String>>) {
