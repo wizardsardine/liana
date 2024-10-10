@@ -281,6 +281,7 @@ impl App {
                             network: info.network,
                             blockheight: info.block_height,
                             rescan_progress: info.rescan_progress,
+                            last_poll_timestamp: info.last_poll_timestamp,
                         })
                     },
                     Message::UpdateCache,
