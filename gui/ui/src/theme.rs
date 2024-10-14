@@ -547,7 +547,7 @@ impl pick_list::StyleSheet for Theme {
         pick_list::Appearance {
             placeholder_color: color::GREY_6,
             handle_color: color::GREY_7,
-            background: color::TRANSPARENT.into(),
+            background: color::GREY_6.into(),
             border: iced::Border {
                 color: color::GREY_7,
                 width: 1.0,
@@ -561,7 +561,7 @@ impl pick_list::StyleSheet for Theme {
         pick_list::Appearance {
             placeholder_color: color::GREY_6,
             handle_color: color::GREEN,
-            background: color::TRANSPARENT.into(),
+            background: color::GREY_6.into(),
             border: iced::Border {
                 color: color::GREEN,
                 width: 1.0,
@@ -642,7 +642,7 @@ impl button::StyleSheet for Theme {
                 Button::Secondary | Button::SecondaryDestructive | Button::Border => {
                     button::Appearance {
                         shadow_offset: iced::Vector::default(),
-                        background: Some(iced::Color::TRANSPARENT.into()),
+                        background: Some(color::GREY_6.into()),
                         text_color: color::GREY_2,
                         border: iced::Border {
                             color: color::GREY_7,
@@ -654,7 +654,7 @@ impl button::StyleSheet for Theme {
                 }
                 Button::Destructive => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: Some(iced::Color::TRANSPARENT.into()),
+                    background: Some(color::GREY_6.into()),
                     text_color: color::RED,
                     border: iced::Border {
                         color: color::RED,
@@ -733,7 +733,7 @@ impl button::StyleSheet for Theme {
                 },
                 Button::Secondary => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: Some(iced::Color::TRANSPARENT.into()),
+                    background: Some(color::GREY_6.into()),
                     text_color: color::GREEN,
                     border: iced::Border {
                         color: color::GREEN,
@@ -766,7 +766,7 @@ impl button::StyleSheet for Theme {
                 },
                 Button::TransparentBorder | Button::Border => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: Some(iced::Color::TRANSPARENT.into()),
+                    background: Some(color::GREY_6.into()),
                     text_color: color::WHITE,
                     border: iced::Border {
                         color: color::GREEN,
@@ -787,6 +787,19 @@ impl button::StyleSheet for Theme {
                     ..button::Appearance::default()
                 },
             },
+        }
+    }
+    fn disabled(&self, style: &Self::Style) -> button::Appearance {
+        let active = self.active(style);
+
+        button::Appearance {
+            shadow_offset: iced::Vector::default(),
+            background: Some(color::TRANSPARENT.into()),
+            text_color: iced::Color {
+                a: active.text_color.a * 0.5,
+                ..active.text_color
+            },
+            ..active
         }
     }
 }
