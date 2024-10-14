@@ -647,10 +647,10 @@ impl button::StyleSheet for Theme {
             Theme::Dark => match style {
                 Button::Primary => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: Some(iced::Color::TRANSPARENT.into()),
-                    text_color: color::GREY_2,
+                    background: Some(color::GREEN.into()),
+                    text_color: color::LIGHT_BLACK,
                     border: iced::Border {
-                        color: color::GREY_7,
+                        color: color::GREEN,
                         width: 1.0,
                         radius: 25.0.into(),
                     },
@@ -750,11 +750,11 @@ impl button::StyleSheet for Theme {
                 },
                 Button::Secondary => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: Some(color::GREEN.into()),
-                    text_color: color::LIGHT_BLACK,
+                    background: Some(iced::Color::TRANSPARENT.into()),
+                    text_color: color::GREEN,
                     border: iced::Border {
-                        color: color::TRANSPARENT,
-                        width: 0.0,
+                        color: color::GREEN,
+                        width: 1.0,
                         radius: 25.0.into(),
                     },
                     ..button::Appearance::default()
