@@ -454,7 +454,7 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                                 .on_press(ViewMessage::SwitchNetwork),
                         )
                         .push(
-                            button::primary(None, "Retry")
+                            button::secondary(None, "Retry")
                                 .width(Length::Fixed(200.0))
                                 .on_press(ViewMessage::Retry),
                         ),

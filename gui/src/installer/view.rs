@@ -223,9 +223,9 @@ pub fn define_descriptor<'a>(
                             .width(Length::Fixed(200.0)),
                     )
                     .push(if !valid {
-                        button::primary(None, "Next").width(Length::Fixed(200.0))
+                        button::secondary(None, "Next").width(Length::Fixed(200.0))
                     } else {
-                        button::primary(None, "Next")
+                        button::secondary(None, "Next")
                             .width(Length::Fixed(200.0))
                             .on_press(Message::Next)
                     }),
@@ -359,7 +359,7 @@ pub fn import_wallet_or_descriptor<'a>(
                         )
                         .push(
                             Row::new().push(Space::with_width(Length::Fill)).push(
-                                button::primary(None, "Accept")
+                                button::secondary(None, "Accept")
                                     .width(Length::Fixed(200.0))
                                     .on_press(Message::ImportRemoteWallet(
                                         message::ImportRemoteWallet::AcceptInvitation,
@@ -392,7 +392,7 @@ pub fn import_wallet_or_descriptor<'a>(
                             )
                             .push(
                                 Row::new().push(Space::with_width(Length::Fill)).push(
-                                    button::primary(None, "Next")
+                                    button::secondary(None, "Next")
                                         .width(Length::Fixed(200.0))
                                         .on_press_maybe(if !invitation.value.is_empty() {
                                             Some(Message::ImportRemoteWallet(
@@ -462,7 +462,7 @@ pub fn import_wallet_or_descriptor<'a>(
                         )
                         .push(
                             Row::new().push(Space::with_width(Length::Fill)).push(
-                                button::primary(None, "Next")
+                                button::secondary(None, "Next")
                                     .width(Length::Fixed(200.0))
                                     .on_press_maybe(
                                         if imported_descriptor.value.is_empty()
@@ -536,9 +536,9 @@ pub fn import_descriptor<'a>(
             )))
             .push(
                 if imported_descriptor.value.is_empty() || !imported_descriptor.valid {
-                    button::primary(None, "Next").width(Length::Fixed(200.0))
+                    button::secondary(None, "Next").width(Length::Fixed(200.0))
                 } else {
-                    button::primary(None, "Next")
+                    button::secondary(None, "Next")
                         .width(Length::Fixed(200.0))
                         .on_press(Message::Next)
                 },
@@ -908,11 +908,11 @@ pub fn register_descriptor<'a>(
                 done,
             ).on_toggle(Message::UserActionDone)))
             .push(if !created_desc || (done && !processing) {
-                button::primary(None, "Next")
+                button::secondary(None, "Next")
                     .on_press(Message::Next)
                     .width(Length::Fixed(200.0))
             } else {
-                button::primary(None, "Next").width(Length::Fixed(200.0))
+                button::secondary(None, "Next").width(Length::Fixed(200.0))
             })
             .spacing(50),
         true,
@@ -999,11 +999,11 @@ pub fn backup_descriptor<'a>(
                 checkbox("I have backed up my descriptor", done).on_toggle(Message::UserActionDone),
             )
             .push(if done {
-                button::primary(None, "Next")
+                button::secondary(None, "Next")
                     .on_press(Message::Next)
                     .width(Length::Fixed(200.0))
             } else {
-                button::primary(None, "Next").width(Length::Fixed(200.0))
+                button::secondary(None, "Next").width(Length::Fixed(200.0))
             })
             .spacing(50),
         true,
@@ -1244,11 +1244,11 @@ pub fn define_bitcoin_node<'a>(
                         .width(Length::Fixed(200.0)),
                 ))
                 .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
-                    button::primary(None, "Next")
+                    button::secondary(None, "Next")
                         .on_press(Message::Next)
                         .width(Length::Fixed(200.0))
                 } else {
-                    button::primary(None, "Next").width(Length::Fixed(200.0))
+                    button::secondary(None, "Next").width(Length::Fixed(200.0))
                 }),
         )
         .spacing(50);
@@ -1475,7 +1475,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                 .width(Length::Fixed(300.0))
                                 .align_items(Alignment::Center)
                                 .push(
-                                    button::primary(None, "Select")
+                                    button::secondary(None, "Select")
                                         .width(Length::Fixed(300.0))
                                         .on_press(Message::SelectBitcoindType(
                                             message::SelectBitcoindTypeMsg::UseExternal(true),
@@ -1491,7 +1491,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                 .width(Length::Fixed(300.0))
                                 .align_items(Alignment::Center)
                                 .push(
-                                    button::primary(None, "Select")
+                                    button::secondary(None, "Select")
                                         .width(Length::Fixed(300.0))
                                         .on_press(Message::SelectBitcoindType(
                                             message::SelectBitcoindTypeMsg::UseExternal(false),
@@ -1515,7 +1515,7 @@ pub fn start_internal_bitcoind<'a>(
     install_state: Option<&InstallState>,
 ) -> Element<'a, Message> {
     let version = crate::node::bitcoind::VERSION;
-    let mut next_button = button::primary(None, "Next").width(Length::Fixed(200.0));
+    let mut next_button = button::secondary(None, "Next").width(Length::Fixed(200.0));
     if let Some(Ok(_)) = started {
         next_button = next_button.on_press(Message::Next);
     };
@@ -1975,7 +1975,7 @@ pub fn edit_key_modal<'a>(
                 .push(
                     if form_xpub.valid && !form_xpub.value.is_empty() && !form_name.value.is_empty() && !duplicate_master_fg
                     {
-                        button::primary(None, "Apply")
+                        button::secondary(None, "Apply")
                             .on_press(Message::DefineDescriptor(
                                 message::DefineDescriptor::KeyModal(
                                     message::ImportKeyModal::ConfirmXpub,
@@ -1983,7 +1983,7 @@ pub fn edit_key_modal<'a>(
                             ))
                             .width(Length::Fixed(200.0))
                     } else {
-                        button::primary(None, "Apply").width(Length::Fixed(100.0))
+                        button::secondary(None, "Apply").width(Length::Fixed(100.0))
                     },
                 )
                 .align_items(Alignment::Center),
@@ -2069,13 +2069,13 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
     }
 
     card::simple(col.push(if sequence.valid {
-        button::primary(None, "Apply")
+        button::secondary(None, "Apply")
             .on_press(Message::DefineDescriptor(
                 message::DefineDescriptor::SequenceModal(message::SequenceModal::ConfirmSequence),
             ))
             .width(Length::Fixed(200.0))
     } else {
-        button::primary(None, "Apply").width(Length::Fixed(200.0))
+        button::secondary(None, "Apply").width(Length::Fixed(200.0))
     }))
     .width(Length::Fixed(800.0))
     .into()
@@ -2226,11 +2226,11 @@ pub fn backup_mnemonic<'a>(
             )
             .push(checkbox("I have backed up my mnemonic", done).on_toggle(Message::UserActionDone))
             .push(if done {
-                button::primary(None, "Next")
+                button::secondary(None, "Next")
                     .on_press(Message::Next)
                     .width(Length::Fixed(200.0))
             } else {
-                button::primary(None, "Next").width(Length::Fixed(200.0))
+                button::secondary(None, "Next").width(Length::Fixed(200.0))
             })
             .spacing(50),
         true,
@@ -2315,7 +2315,7 @@ pub fn recover_mnemonic<'a>(
                             .width(Length::Fixed(200.0)),
                     )
                     .push(
-                        button::primary(None, "Skip")
+                        button::secondary(None, "Skip")
                             .on_press(Message::Skip)
                             .width(Length::Fixed(200.0)),
                     )
@@ -2329,9 +2329,9 @@ pub fn recover_mnemonic<'a>(
                     )
                     .push(
                         if words.iter().any(|(_, valid)| !valid) || error.is_some() {
-                            button::primary(None, "Next").width(Length::Fixed(200.0))
+                            button::secondary(None, "Next").width(Length::Fixed(200.0))
                         } else {
-                            button::primary(None, "Next")
+                            button::secondary(None, "Next")
                                 .on_press(Message::Next)
                                 .width(Length::Fixed(200.0))
                         },
@@ -2372,7 +2372,7 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                     .spacing(20)
                     .push(
                         Container::new(
-                            button::primary(None, "Select")
+                            button::secondary(None, "Select")
                                 .on_press(Message::SelectBackend(
                                     message::SelectBackend::ContinueWithLocalWallet(true),
                                 ))
@@ -2382,7 +2382,7 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                     )
                     .push(
                         Container::new(
-                            button::primary(None, "Select")
+                            button::secondary(None, "Select")
                                 .on_press(Message::SelectBackend(
                                     message::SelectBackend::ContinueWithLocalWallet(false),
                                 ))
@@ -2440,7 +2440,7 @@ pub fn connection_step_enter_email<'a>(
             .warning("Email is not valid"),
         )
         .push(
-            button::primary(None, "Next")
+            button::secondary(None, "Next")
                 .on_press_maybe(if processing || !email.valid {
                     None
                 } else {
@@ -2476,11 +2476,11 @@ pub fn connection_step_enter_otp<'a>(
             Row::new()
                 .spacing(10)
                 .push(
-                    button::primary(Some(icon::previous_icon()), "Change Email")
+                    button::secondary(Some(icon::previous_icon()), "Change Email")
                         .on_press(Message::SelectBackend(message::SelectBackend::EditEmail)),
                 )
                 .push(
-                    button::primary(None, "Resend token").on_press_maybe(if processing {
+                    button::secondary(None, "Resend token").on_press_maybe(if processing {
                         None
                     } else {
                         Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
@@ -2505,11 +2505,11 @@ pub fn connection_step_connected<'a>(
             Row::new()
                 .spacing(10)
                 .push(
-                    button::primary(Some(icon::previous_icon()), "Change Email")
+                    button::secondary(Some(icon::previous_icon()), "Change Email")
                         .on_press(Message::SelectBackend(message::SelectBackend::EditEmail)),
                 )
                 .push(
-                    button::primary(None, "Continue").on_press_maybe(if processing {
+                    button::secondary(None, "Continue").on_press_maybe(if processing {
                         None
                     } else {
                         Some(Message::Next)

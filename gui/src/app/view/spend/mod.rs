@@ -290,7 +290,7 @@ pub fn create_spend_tx<'a>(
                     .align_items(Alignment::Center)
                     .push(Space::with_width(Length::Fill))
                     .push(
-                        button::primary(None, "Clear")
+                        button::secondary(None, "Clear")
                             .on_press(Message::CreateSpend(CreateSpendMessage::Clear))
                             .width(Length::Fixed(100.0)),
                     )
@@ -299,11 +299,11 @@ pub fn create_spend_tx<'a>(
                             && !duplicate
                             && (is_self_send || Some(&Amount::from_sat(0)) == amount_left)
                         {
-                            button::primary(None, "Next")
+                            button::secondary(None, "Next")
                                 .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
                                 .width(Length::Fixed(100.0))
                         } else {
-                            button::primary(None, "Next").width(Length::Fixed(100.0))
+                            button::secondary(None, "Next").width(Length::Fixed(100.0))
                         },
                     ),
             )

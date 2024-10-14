@@ -35,12 +35,12 @@ pub fn import_psbt_view<'a>(
                 )
                 .push(Row::new().push(Space::with_width(Length::Fill)).push(
                     if imported.valid && !imported.value.is_empty() && !processing {
-                        button::primary(None, "Import")
+                        button::secondary(None, "Import")
                             .on_press(Message::ImportSpend(ImportSpendMessage::Confirm))
                     } else if processing {
-                        button::primary(None, "Processing...")
+                        button::secondary(None, "Processing...")
                     } else {
-                        button::primary(None, "Import")
+                        button::secondary(None, "Import")
                     },
                 )),
         ))
@@ -70,7 +70,7 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
                         .on_press(Message::ImportSpend(ImportSpendMessage::Import)),
                 )
                 .push(
-                    button::primary(Some(icon::plus_icon()), "New")
+                    button::secondary(Some(icon::plus_icon()), "New")
                         .on_press(Message::Menu(Menu::CreateSpendTx)),
                 ),
         )

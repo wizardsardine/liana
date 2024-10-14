@@ -226,7 +226,7 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
                         Column::new().width(Length::Fill)
                     })
                     .align_items(iced::Alignment::Center)
-                    .push(button::primary(Some(cross_icon()), "Close").on_press(Message::Close)),
+                    .push(button::secondary(Some(cross_icon()), "Close").on_press(Message::Close)),
             )
             .padding(10)
             .style(theme::Container::Background),

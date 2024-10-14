@@ -388,7 +388,7 @@ impl DeleteWalletModal {
         Command::none()
     }
     fn view(&self) -> Element<Message> {
-        let mut confirm_button = button::primary(None, "Delete wallet")
+        let mut confirm_button = button::secondary(None, "Delete wallet")
             .width(Length::Fixed(200.0))
             .style(theme::Button::Destructive);
         if self.warning.is_none() {

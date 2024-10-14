@@ -20,7 +20,7 @@ pub fn label_editable(
                     iced::widget::Text::new(label)
                         .size(size)
                         .shaping(Shaping::Advanced),
-                    button::primary(Some(icon::pencil_icon()), "Edit").on_press(
+                    button::secondary(Some(icon::pencil_icon()), "Edit").on_press(
                         view::Message::Label(
                             labelled,
                             view::message::LabelMessage::Edited(label.to_string())
@@ -34,7 +34,7 @@ pub fn label_editable(
         }
     }
     Container::new(
-        button::primary(Some(icon::pencil_icon()), "Add label").on_press(view::Message::Label(
+        button::secondary(Some(icon::pencil_icon()), "Add label").on_press(view::Message::Label(
             labelled,
             view::message::LabelMessage::Edited(String::default()),
         )),
@@ -54,11 +54,11 @@ pub fn label_editing(
                 .size(size)
                 .padding(10),
             if label.valid {
-                button::primary(None, "Save").on_press(view::message::LabelMessage::Confirm)
+                button::secondary(None, "Save").on_press(view::message::LabelMessage::Confirm)
             } else {
-                button::primary(None, "Save")
+                button::secondary(None, "Save")
             },
-            button::primary(None, "Cancel").on_press(view::message::LabelMessage::Cancel)
+            button::secondary(None, "Cancel").on_press(view::message::LabelMessage::Cancel)
         )
         .spacing(5)
         .align_items(Alignment::Center),
