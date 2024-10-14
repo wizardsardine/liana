@@ -450,7 +450,7 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                     Row::new()
                         .spacing(10)
                         .push(
-                            button::border(None, "Use another Bitcoin network")
+                            button::secondary(None, "Use another Bitcoin network")
                                 .on_press(ViewMessage::SwitchNetwork),
                         )
                         .push(

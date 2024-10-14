@@ -1127,7 +1127,7 @@ pub fn update_spend_view<'a>(
                     Row::new()
                         .push(text("PSBT:").bold().width(Length::Fill))
                         .push(
-                            button::border(Some(icon::clipboard_icon()), "Copy")
+                            button::secondary(Some(icon::clipboard_icon()), "Copy")
                                 .on_press(Message::Clipboard(psbt)),
                         )
                         .align_items(Alignment::Center),
