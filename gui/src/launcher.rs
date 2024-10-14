@@ -179,7 +179,7 @@ impl Launcher {
                                 Some(self.network),
                                 ViewMessage::SelectNetwork,
                             )
-                            .style(theme::PickList::Simple)
+                            .style(theme::PickList::default())
                             .padding(10),
                         )
                         .align_items(Alignment::Center)

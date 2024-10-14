@@ -538,54 +538,37 @@ impl scrollable::StyleSheet for Theme {
 #[derive(Default, Clone)]
 pub enum PickList {
     #[default]
-    Simple,
-    Invalid,
     Secondary,
 }
 impl pick_list::StyleSheet for Theme {
     type Style = PickList;
 
-    fn active(&self, style: &Self::Style) -> pick_list::Appearance {
-        match style {
-            PickList::Simple => pick_list::Appearance {
-                placeholder_color: color::GREY_6,
-                handle_color: color::GREY_6,
-                background: color::GREEN.into(),
-                border: iced::Border {
-                    color: color::GREY_7,
-                    width: 1.0,
-                    radius: 25.0.into(),
-                },
-                text_color: iced::Color::BLACK,
+    fn active(&self, _style: &Self::Style) -> pick_list::Appearance {
+        pick_list::Appearance {
+            placeholder_color: color::GREY_6,
+            handle_color: color::GREY_7,
+            background: color::TRANSPARENT.into(),
+            border: iced::Border {
+                color: color::GREY_7,
+                width: 1.0,
+                radius: 25.0.into(),
             },
-            PickList::Invalid => pick_list::Appearance {
-                placeholder_color: color::GREY_6,
-                handle_color: color::GREY_6,
-                background: color::GREY_6.into(),
-                border: iced::Border {
-                    color: color::RED,
-                    width: 1.0,
-                    radius: 25.0.into(),
-                },
-                text_color: color::RED,
-            },
-            PickList::Secondary => pick_list::Appearance {
-                placeholder_color: color::GREY_6,
-                handle_color: color::GREY_6,
-                background: color::GREY_6.into(),
-                border: iced::Border {
-                    color: color::GREY_7,
-                    width: 1.0,
-                    radius: 25.0.into(),
-                },
-                text_color: color::GREY_2,
-            },
+            text_color: color::GREY_2,
         }
     }
 
-    fn hovered(&self, style: &Self::Style) -> pick_list::Appearance {
-        let active = self.active(style);
-        pick_list::Appearance { ..active }
+    fn hovered(&self, _style: &Self::Style) -> pick_list::Appearance {
+        pick_list::Appearance {
+            placeholder_color: color::GREY_6,
+            handle_color: color::GREEN,
+            background: color::TRANSPARENT.into(),
+            border: iced::Border {
+                color: color::GREEN,
+                width: 1.0,
+                radius: 25.0.into(),
+            },
+            text_color: color::GREEN,
+        }
     }
 }
 
