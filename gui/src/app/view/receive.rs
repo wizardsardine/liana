@@ -45,7 +45,7 @@ pub fn receive<'a>(
                 .align_items(Alignment::Center)
                 .push(Container::new(h3("Receive")).width(Length::Fill))
                 .push(
-                    button::primary(Some(icon::plus_icon()), "Generate address")
+                    button::secondary(Some(icon::plus_icon()), "Generate address")
                         .on_press(Message::Next),
                 ),
         )
@@ -112,12 +112,15 @@ pub fn receive<'a>(
                                     .push(
                                         Row::new()
                                             .push(
-                                                button::primary(None, "Verify on hardware device")
-                                                    .on_press(Message::Select(i)),
+                                                button::secondary(
+                                                    None,
+                                                    "Verify on hardware device",
+                                                )
+                                                .on_press(Message::Select(i)),
                                             )
                                             .push(Space::with_width(Length::Fill))
                                             .push(
-                                                button::primary(None, "Show QR Code")
+                                                button::secondary(None, "Show QR Code")
                                                     .on_press(Message::ShowQrCode(i)),
                                             ),
                                     )

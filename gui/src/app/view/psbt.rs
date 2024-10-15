@@ -126,8 +126,9 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
                 .push(text("Save this transaction"))
                 .push(
                     Row::new()
-                        .push(Column::new().width(Length::Fill))
-                        .push(button::alert(None, "Ignore").on_press(Message::Close))
+                        .spacing(10)
+                        .push(Space::with_width(Length::Fill))
+                        .push(button::secondary(None, "Ignore").on_press(Message::Close))
                         .push(
                             button::primary(None, "Save")
                                 .on_press(Message::Spend(SpendTxMessage::Confirm)),
@@ -213,7 +214,7 @@ pub fn broadcast_action<'a>(
                 })
                 .push(
                     Row::new().push(Column::new().width(Length::Fill)).push(
-                        button::primary(None, "Broadcast")
+                        button::secondary(None, "Broadcast")
                             .on_press(Message::Spend(SpendTxMessage::Confirm)),
                     ),
                 ),
@@ -234,7 +235,7 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
                 .spacing(20)
                 .align_items(Alignment::Center)
                 .push(text("Successfully deleted this transaction."))
-                .push(button::primary(None, "Go back to PSBTs").on_press(Message::Close)),
+                .push(button::secondary(None, "Go back to PSBTs").on_press(Message::Close)),
         )
         .align_x(iced::alignment::Horizontal::Center)
         .width(Length::Fixed(400.0))
@@ -379,13 +380,13 @@ pub fn spend_overview_view<'a>(
                     .push(Space::with_width(Length::Fill))
                     .push_maybe(if tx.path_ready().is_none() {
                         Some(
-                            button::primary(None, "Sign")
+                            button::secondary(None, "Sign")
                                 .on_press(Message::Spend(SpendTxMessage::Sign))
                                 .width(Length::Fixed(150.0)),
                         )
                     } else {
                         Some(
-                            button::primary(None, "Broadcast")
+                            button::secondary(None, "Broadcast")
                                 .on_press(Message::Spend(SpendTxMessage::Broadcast))
                                 .width(Length::Fixed(150.0)),
                         )
@@ -1127,7 +1128,7 @@ pub fn update_spend_view<'a>(
                     Row::new()
                         .push(text("PSBT:").bold().width(Length::Fill))
                         .push(
-                            button::border(Some(icon::clipboard_icon()), "Copy")
+                            button::secondary(Some(icon::clipboard_icon()), "Copy")
                                 .on_press(Message::Clipboard(psbt)),
                         )
                         .align_items(Alignment::Center),
@@ -1147,12 +1148,12 @@ pub fn update_spend_view<'a>(
                         )
                         .push(Row::new().push(Space::with_width(Length::Fill)).push(
                             if updated.valid && !updated.value.is_empty() && !processing {
-                                button::primary(None, "Update")
+                                button::secondary(None, "Update")
                                     .on_press(Message::ImportSpend(ImportSpendMessage::Confirm))
                             } else if processing {
-                                button::primary(None, "Processing...")
+                                button::secondary(None, "Processing...")
                             } else {
-                                button::primary(None, "Update")
+                                button::secondary(None, "Update")
                             },
                         )),
                 ),

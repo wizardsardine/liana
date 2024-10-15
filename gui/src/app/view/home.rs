@@ -87,9 +87,10 @@ pub fn home_view<'a>(
                             .width(Length::Fill),
                         )
                         .push(
-                            button::primary(Some(icon::arrow_repeat()), "Refresh coins").on_press(
-                                Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned())),
-                            ),
+                            button::secondary(Some(icon::arrow_repeat()), "Refresh coins")
+                                .on_press(Message::Menu(Menu::RefreshCoins(
+                                    expiring_coins.to_owned(),
+                                ))),
                         ),
                 )
                 .padding(25)
@@ -322,7 +323,7 @@ pub fn payment_view<'a>(
                     .spacing(5),
             ))
             .push(
-                button::primary(None, "See transaction details")
+                button::secondary(None, "See transaction details")
                     .on_press(Message::Menu(Menu::TransactionPreSelected(tx.tx.txid()))),
             )
             .spacing(20),

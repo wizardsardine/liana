@@ -401,7 +401,7 @@ impl LianaLiteLogin {
                                                 .padding(10)
                                                 .warning("Email is not valid"),
                                             )
-                                            .push(button::primary(None, "Next").on_press_maybe(
+                                            .push(button::secondary(None, "Next").on_press_maybe(
                                                 if self.processing {
                                                     None
                                                 } else {
@@ -427,14 +427,14 @@ impl LianaLiteLogin {
                                                 Row::new()
                                                     .spacing(10)
                                                     .push(
-                                                        button::primary(
+                                                        button::secondary(
                                                             Some(icon::previous_icon()),
                                                             "Change email",
                                                         )
                                                         .on_press(ViewMessage::EditEmail),
                                                     )
                                                     .push(
-                                                        button::primary(None, "Resend token")
+                                                        button::secondary(None, "Resend token")
                                                             .on_press_maybe(if self.processing {
                                                                 None
                                                             } else {

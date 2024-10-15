@@ -538,54 +538,37 @@ impl scrollable::StyleSheet for Theme {
 #[derive(Default, Clone)]
 pub enum PickList {
     #[default]
-    Simple,
-    Invalid,
     Secondary,
 }
 impl pick_list::StyleSheet for Theme {
     type Style = PickList;
 
-    fn active(&self, style: &Self::Style) -> pick_list::Appearance {
-        match style {
-            PickList::Simple => pick_list::Appearance {
-                placeholder_color: color::GREY_6,
-                handle_color: color::GREY_6,
-                background: color::GREEN.into(),
-                border: iced::Border {
-                    color: color::GREY_7,
-                    width: 1.0,
-                    radius: 25.0.into(),
-                },
-                text_color: iced::Color::BLACK,
+    fn active(&self, _style: &Self::Style) -> pick_list::Appearance {
+        pick_list::Appearance {
+            placeholder_color: color::GREY_6,
+            handle_color: color::GREY_7,
+            background: color::GREY_6.into(),
+            border: iced::Border {
+                color: color::GREY_7,
+                width: 1.0,
+                radius: 25.0.into(),
             },
-            PickList::Invalid => pick_list::Appearance {
-                placeholder_color: color::GREY_6,
-                handle_color: color::GREY_6,
-                background: color::GREY_6.into(),
-                border: iced::Border {
-                    color: color::RED,
-                    width: 1.0,
-                    radius: 25.0.into(),
-                },
-                text_color: color::RED,
-            },
-            PickList::Secondary => pick_list::Appearance {
-                placeholder_color: color::GREY_6,
-                handle_color: color::GREY_6,
-                background: color::GREY_6.into(),
-                border: iced::Border {
-                    color: color::GREY_7,
-                    width: 1.0,
-                    radius: 25.0.into(),
-                },
-                text_color: color::GREY_2,
-            },
+            text_color: color::GREY_2,
         }
     }
 
-    fn hovered(&self, style: &Self::Style) -> pick_list::Appearance {
-        let active = self.active(style);
-        pick_list::Appearance { ..active }
+    fn hovered(&self, _style: &Self::Style) -> pick_list::Appearance {
+        pick_list::Appearance {
+            placeholder_color: color::GREY_6,
+            handle_color: color::GREEN,
+            background: color::GREY_6.into(),
+            border: iced::Border {
+                color: color::GREEN,
+                width: 1.0,
+                radius: 25.0.into(),
+            },
+            text_color: color::GREEN,
+        }
     }
 }
 
@@ -647,10 +630,10 @@ impl button::StyleSheet for Theme {
             Theme::Dark => match style {
                 Button::Primary => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: Some(iced::Color::TRANSPARENT.into()),
-                    text_color: color::GREY_2,
+                    background: Some(color::GREEN.into()),
+                    text_color: color::LIGHT_BLACK,
                     border: iced::Border {
-                        color: color::GREY_7,
+                        color: color::GREEN,
                         width: 1.0,
                         radius: 25.0.into(),
                     },
@@ -659,7 +642,7 @@ impl button::StyleSheet for Theme {
                 Button::Secondary | Button::SecondaryDestructive | Button::Border => {
                     button::Appearance {
                         shadow_offset: iced::Vector::default(),
-                        background: Some(iced::Color::TRANSPARENT.into()),
+                        background: Some(color::GREY_6.into()),
                         text_color: color::GREY_2,
                         border: iced::Border {
                             color: color::GREY_7,
@@ -671,7 +654,7 @@ impl button::StyleSheet for Theme {
                 }
                 Button::Destructive => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: Some(iced::Color::TRANSPARENT.into()),
+                    background: Some(color::GREY_6.into()),
                     text_color: color::RED,
                     border: iced::Border {
                         color: color::RED,
@@ -750,11 +733,11 @@ impl button::StyleSheet for Theme {
                 },
                 Button::Secondary => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: Some(color::GREEN.into()),
-                    text_color: color::LIGHT_BLACK,
+                    background: Some(color::GREY_6.into()),
+                    text_color: color::GREEN,
                     border: iced::Border {
-                        color: color::TRANSPARENT,
-                        width: 0.0,
+                        color: color::GREEN,
+                        width: 1.0,
                         radius: 25.0.into(),
                     },
                     ..button::Appearance::default()
@@ -783,7 +766,7 @@ impl button::StyleSheet for Theme {
                 },
                 Button::TransparentBorder | Button::Border => button::Appearance {
                     shadow_offset: iced::Vector::default(),
-                    background: Some(iced::Color::TRANSPARENT.into()),
+                    background: Some(color::GREY_6.into()),
                     text_color: color::WHITE,
                     border: iced::Border {
                         color: color::GREEN,
@@ -804,6 +787,19 @@ impl button::StyleSheet for Theme {
                     ..button::Appearance::default()
                 },
             },
+        }
+    }
+    fn disabled(&self, style: &Self::Style) -> button::Appearance {
+        let active = self.active(style);
+
+        button::Appearance {
+            shadow_offset: iced::Vector::default(),
+            background: Some(color::TRANSPARENT.into()),
+            text_color: iced::Color {
+                a: active.text_color.a * 0.5,
+                ..active.text_color
+            },
+            ..active
         }
     }
 }

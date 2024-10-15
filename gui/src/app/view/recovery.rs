@@ -118,11 +118,11 @@ pub fn recovery<'a>(
                                 && !address.value.is_empty()
                                 && selected_path.is_some()
                             {
-                                button::primary(None, "Next")
+                                button::secondary(None, "Next")
                                     .on_press(Message::Next)
                                     .width(Length::Fixed(200.0))
                             } else {
-                                button::primary(None, "Next").width(Length::Fixed(200.0))
+                                button::secondary(None, "Next").width(Length::Fixed(200.0))
                             },
                         )
                         .spacing(20)

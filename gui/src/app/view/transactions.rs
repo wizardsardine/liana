@@ -174,7 +174,7 @@ pub fn create_rbf_modal<'a>(
     replacement_txid: Option<Txid>,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let mut confirm_button = button::primary(None, "Confirm").width(Length::Fixed(200.0));
+    let mut confirm_button = button::secondary(None, "Confirm").width(Length::Fixed(200.0));
     if feerate.valid || is_cancel {
         confirm_button =
             confirm_button.on_press(Message::CreateRbf(super::CreateRbfMessage::Confirm));
@@ -280,7 +280,7 @@ pub fn create_rbf_modal<'a>(
             }))
             .push_maybe(replacement_txid.map(|id| {
                 Row::new().push(
-                    button::primary(None, "Go to replacement")
+                    button::secondary(None, "Go to replacement")
                         .width(Length::Fixed(200.0))
                         .on_press(Message::Menu(Menu::PsbtPreSelected(id))),
                 )
@@ -360,13 +360,13 @@ pub fn tx_view<'a>(
                 Some(
                     Row::new()
                         .push(
-                            button::primary(None, "Bump fee")
+                            button::secondary(None, "Bump fee")
                                 .width(Length::Fixed(200.0))
                                 .on_press(Message::CreateRbf(super::CreateRbfMessage::New(false))),
                         )
                         .push(
                             tooltip::Tooltip::new(
-                                button::primary(None, "Cancel transaction")
+                                button::secondary(None, "Cancel transaction")
                                 .width(Length::Fixed(200.0))
                                 .on_press(Message::CreateRbf(super::CreateRbfMessage::New(true))),
                                 "Best effort attempt at double spending an unconfirmed outgoing transaction",

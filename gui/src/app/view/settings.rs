@@ -284,7 +284,7 @@ pub fn remote_backend_section<'a>(
                                     None
                                 })
                                 .push(Space::with_width(Length::Fill))
-                                .push(button::primary(None, "Send invitation").on_press_maybe(
+                                .push(button::secondary(None, "Send invitation").on_press_maybe(
                                     if !processing && email_form.valid {
                                         Some(Message::Settings(
                                             SettingsMessage::RemoteBackendSettings(
@@ -413,7 +413,7 @@ pub fn bitcoind_edit<'a>(
         );
 
     let mut cancel_button = button::transparent(None, " Cancel ").padding(5);
-    let mut confirm_button = button::primary(None, " Save ").padding(5);
+    let mut confirm_button = button::secondary(None, " Save ").padding(5);
     if !processing {
         cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
         confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
@@ -599,7 +599,7 @@ pub fn electrum_edit<'a>(
     );
 
     let mut cancel_button = button::transparent(None, " Cancel ").padding(5);
-    let mut confirm_button = button::primary(None, " Save ").padding(5);
+    let mut confirm_button = button::secondary(None, " Save ").padding(5);
     if !processing {
         cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
         confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
@@ -843,18 +843,18 @@ pub fn rescan<'a>(
                                     && is_ok_and(&u32::from_str(&day.value), |&v| v > 0 && v <= 31))
                             {
                                 Row::new().push(Column::new().width(Length::Fill)).push(
-                                    button::primary(None, "Start rescan")
+                                    button::secondary(None, "Start rescan")
                                         .on_press(SettingsEditMessage::Confirm)
                                         .width(Length::Shrink),
                                 )
                             } else if processing {
                                 Row::new().push(Column::new().width(Length::Fill)).push(
-                                    button::primary(None, "Starting rescan...")
+                                    button::secondary(None, "Starting rescan...")
                                         .width(Length::Shrink),
                                 )
                             } else {
                                 Row::new().push(Column::new().width(Length::Fill)).push(
-                                    button::primary(None, "Start rescan").width(Length::Shrink),
+                                    button::secondary(None, "Start rescan").width(Length::Shrink),
                                 )
                             },
                         ),
@@ -929,7 +929,7 @@ pub fn wallet_settings<'a>(
                                         .on_press(Message::Clipboard(descriptor.to_string())),
                                 )
                                 .push(
-                                    button::primary(
+                                    button::secondary(
                                         Some(icon::chip_icon()),
                                         "Register on hardware device",
                                     )
@@ -988,10 +988,10 @@ pub fn wallet_settings<'a>(
                                     None
                                 })
                                 .push(if !processing {
-                                    button::primary(None, "Update")
+                                    button::secondary(None, "Update")
                                         .on_press(Message::Settings(SettingsMessage::Save))
                                 } else {
-                                    button::primary(None, "Updating")
+                                    button::secondary(None, "Updating")
                                 }),
                         )
                         .spacing(10),

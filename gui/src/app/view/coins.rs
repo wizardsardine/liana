@@ -279,7 +279,7 @@ fn coin_list_view<'a>(
                         } else {
                             Column::new().push(
                                 Row::new().push(Space::with_width(Length::Fill)).push(
-                                    button::primary(Some(icon::arrow_repeat()), "Refresh coin")
+                                    button::secondary(Some(icon::arrow_repeat()), "Refresh coin")
                                         .on_press(Message::Menu(Menu::RefreshCoins(vec![
                                             coin.outpoint,
                                         ]))),
