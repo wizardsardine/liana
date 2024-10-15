@@ -126,10 +126,11 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
                 .push(text("Save this transaction"))
                 .push(
                     Row::new()
-                        .push(Column::new().width(Length::Fill))
-                        .push(button::alert(None, "Ignore").on_press(Message::Close))
+                        .spacing(10)
+                        .push(Space::with_width(Length::Fill))
+                        .push(button::secondary(None, "Ignore").on_press(Message::Close))
                         .push(
-                            button::secondary(None, "Save")
+                            button::primary(None, "Save")
                                 .on_press(Message::Spend(SpendTxMessage::Confirm)),
                         ),
                 ),
