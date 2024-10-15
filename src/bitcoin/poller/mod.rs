@@ -89,9 +89,28 @@ impl Poller {
                 }
                 Ok(PollerMessage::PollNow(sender)) => {
                     // We've been asked to poll, don't wait any further and signal completion to
-                    // the caller.
+                    // the caller, unless the block chain is still syncing.
+                    // Polling while the block chain is syncing could lead to poller restarts
+                    // if the height increases before completion, and in any case this is consistent
+                    // with regular poller behaviour.
+                    if !synced {
+                        let progress = self.bit.sync_progress();
+                        log::info!(
+                            "Block chain synchronization progress: {:.2}% ({} blocks / {} headers)",
+                            progress.rounded_up_progress() * 100.0,
+                            progress.blocks,
+                            progress.headers
+                        );
+                        synced = progress.is_complete();
+                    }
+                    // Update `last_poll` even if we don't poll now so that we don't attempt another
+                    // poll too soon.
                     last_poll = Some(time::Instant::now());
-                    looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
+                    if synced {
+                        looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
+                    } else {
+                        log::warn!("Skipped poll as block chain is still synchronizing.");
+                    }
                     if let Err(e) = sender.send(()) {
                         log::error!("Error sending immediate poll completion signal: {}.", e);
                     }
