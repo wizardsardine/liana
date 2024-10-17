@@ -39,6 +39,14 @@ const SYNCING_PROGRESS_2: &str = "Bitcoin Core is synchronising the blockchain. 
 const SYNCING_PROGRESS_3: &str = "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";
 
 type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
+type StartedResult = Result<
+    (
+        Arc<dyn Daemon + Sync + Send>,
+        Option<Bitcoind>,
+        GetInfoResult,
+    ),
+    Error,
+>;
 
 pub struct Loader {
     pub datadir_path: PathBuf,
@@ -78,8 +86,8 @@ pub enum Message {
             Error,
         >,
     ),
-    Started(Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error>),
-    Loaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
+    Started(StartedResult),
+    Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),
     BitcoindLog(Option<String>),
     Failure(DaemonError),
     None,
@@ -110,18 +118,44 @@ impl Loader {
         )
     }
 
-    fn on_load(&mut self, res: Result<Arc<dyn Daemon + Sync + Send>, Error>) -> Command<Message> {
+    fn maybe_skip_syncing(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        info: GetInfoResult,
+    ) -> Command<Message> {
+        // If the wallet was previously synced (blockheight > 0), load the
+        // application directly.
+        if info.block_height > 0 {
+            return Command::perform(
+                load_application(
+                    daemon,
+                    info,
+                    self.datadir_path.clone(),
+                    self.network,
+                    self.internal_bitcoind.clone(),
+                ),
+                Message::Synced,
+            );
+        }
+        // Otherwise, show the sync progress on the loading screen.
+        self.step = Step::Syncing {
+            daemon: daemon.clone(),
+            progress: 0.0,
+            bitcoind_logs: String::new(),
+        };
+        Command::perform(sync(daemon, false), Message::Syncing)
+    }
+
+    fn on_load(
+        &mut self,
+        res: Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>,
+    ) -> Command<Message> {
         match res {
-            Ok(daemon) => {
-                self.step = Step::Syncing {
-                    daemon: daemon.clone(),
-                    progress: 0.0,
-                    bitcoind_logs: String::new(),
-                };
+            Ok((daemon, info)) => {
                 if self.gui_config.start_internal_bitcoind {
                     warn!("Lianad is external, gui will not start internal bitcoind");
                 }
-                return Command::perform(sync(daemon, false), Message::Syncing);
+                return self.maybe_skip_syncing(daemon, info);
             }
             Err(e) => match e {
                 Error::Config(_) => {
@@ -164,24 +198,16 @@ impl Loader {
         Command::none()
     }
 
-    fn on_start(
-        &mut self,
-        res: Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error>,
-    ) -> Command<Message> {
+    fn on_start(&mut self, res: StartedResult) -> Command<Message> {
         match res {
-            Ok((daemon, bitcoind)) => {
+            Ok((daemon, bitcoind, info)) => {
                 // bitcoind may have been already started and given to the loader
                 // We should not override with None the loader bitcoind field
                 if let Some(bitcoind) = bitcoind {
                     self.internal_bitcoind = Some(bitcoind);
                 }
                 self.waiting_daemon_bitcoind = false;
-                self.step = Step::Syncing {
-                    daemon: daemon.clone(),
-                    progress: 0.0,
-                    bitcoind_logs: String::new(),
-                };
-                Command::perform(sync(daemon, false), Message::Syncing)
+                self.maybe_skip_syncing(daemon, info)
             }
             Err(e) => {
                 self.step = Step::Error(Box::new(e));
@@ -481,15 +507,17 @@ pub fn cover<'a, T: 'a + Clone, C: Into<Element<'a, T>>>(
         .into()
 }
 
-async fn connect(socket_path: PathBuf) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
+async fn connect(
+    socket_path: PathBuf,
+) -> Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error> {
     let client = client::jsonrpc::JsonRPCClient::new(socket_path);
     let daemon = Lianad::new(client);
 
     debug!("Searching for external daemon");
-    daemon.get_info().await?;
+    let info = daemon.get_info().await?;
     info!("Connected to external daemon");
 
-    Ok(Arc::new(daemon))
+    Ok((Arc::new(daemon), info))
 }
 
 // Daemon can start only if a config path is given.
@@ -497,7 +525,7 @@ pub async fn start_bitcoind_and_daemon(
     config_path: PathBuf,
     liana_datadir_path: PathBuf,
     start_internal_bitcoind: bool,
-) -> Result<(Arc<dyn Daemon + Sync + Send>, Option<Bitcoind>), Error> {
+) -> StartedResult {
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
     let mut bitcoind: Option<Bitcoind> = None;
     if start_internal_bitcoind {
@@ -523,8 +551,9 @@ pub async fn start_bitcoind_and_daemon(
     debug!("starting liana daemon");
 
     let daemon = EmbeddedDaemon::start(config)?;
+    let info = daemon.get_info().await?;
 
-    Ok((Arc::new(daemon), bitcoind))
+    Ok((Arc::new(daemon), bitcoind, info))
 }
 
 async fn sync(
