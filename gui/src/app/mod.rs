@@ -63,7 +63,7 @@ impl Panels {
     ) -> Panels {
         Self {
             current: Menu::Home,
-            home: Home::new(wallet.clone(), &cache.coins),
+            home: Home::new(wallet.clone(), &cache.coins, cache.blockheight),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
@@ -221,12 +221,16 @@ impl App {
         Subscription::batch(vec![
             time::every(Duration::from_secs(
                 // LianaLite has no rescan feature, the cache refresh loop is only
-                // to fetch the new block height tip which is only used to warn user
-                // about recovery availability.
-                if self.daemon.backend() == DaemonBackend::RemoteBackend {
+                // to fetch the new block height tip, which for a synced wallet
+                // (height > 0) is only used to warn user about recovery availability.
+                if self.daemon.backend() == DaemonBackend::RemoteBackend
+                    && self.cache.blockheight > 0
+                {
                     120
                 // For the rescan feature, we set a higher frequency of cache refresh
                 // to give to user an up-to-date view of the rescan progress.
+                // For a remote backend, we refresh cache more often while height is 0
+                // to detect sooner that syncing has finished.
                 } else {
                     10
                 },
@@ -279,7 +283,24 @@ impl App {
             }
             Message::UpdateCache(res) => {
                 match res {
-                    Ok(cache) => self.cache = cache,
+                    Ok(cache) => {
+                        self.cache.clone_from(&cache);
+                        let current = &self.panels.current;
+                        let daemon = self.daemon.clone();
+                        // These are the panels to update with the cache.
+                        let mut panels = [(&mut self.panels.home, Menu::Home)];
+                        let commands: Vec<_> = panels
+                            .iter_mut()
+                            .map(|(panel, menu)| {
+                                panel.update(
+                                    daemon.clone(),
+                                    &cache,
+                                    Message::UpdatePanelCache(current == menu, Ok(cache.clone())),
+                                )
+                            })
+                            .collect();
+                        return Command::batch(commands);
+                    }
                     Err(e) => tracing::error!("Failed to update cache: {}", e),
                 }
                 Command::none()

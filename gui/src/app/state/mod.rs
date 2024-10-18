@@ -68,6 +68,7 @@ pub fn redirect(menu: Menu) -> Command<Message> {
 
 pub struct Home {
     wallet: Arc<Wallet>,
+    blockheight: i32,
     balance: Amount,
     unconfirmed_balance: Amount,
     remaining_sequence: Option<u32>,
@@ -82,7 +83,7 @@ pub struct Home {
 }
 
 impl Home {
-    pub fn new(wallet: Arc<Wallet>, coins: &[Coin]) -> Self {
+    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: i32) -> Self {
         let (balance, unconfirmed_balance) = coins.iter().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
             |(balance, unconfirmed_balance), coin| {
@@ -95,8 +96,10 @@ impl Home {
                 }
             },
         );
+
         Self {
             wallet,
+            blockheight,
             balance,
             unconfirmed_balance,
             remaining_sequence: None,
@@ -109,6 +112,10 @@ impl Home {
             is_last_page: false,
             processing: false,
         }
+    }
+
+    fn wallet_is_syncing(&self) -> bool {
+        self.blockheight <= 0
     }
 }
 
@@ -141,6 +148,7 @@ impl State for Home {
                     &self.events,
                     self.is_last_page,
                     self.processing,
+                    self.wallet_is_syncing(),
                 ),
             )
         }
@@ -217,6 +225,14 @@ impl State for Home {
                     self.pending_events = events;
                 }
             },
+            Message::UpdatePanelCache(is_current, Ok(cache)) => {
+                let wallet_was_syncing = self.wallet_is_syncing();
+                self.blockheight = cache.blockheight;
+                // If this is the current panel, reload it if wallet is no longer syncing.
+                if is_current && wallet_was_syncing && !self.wallet_is_syncing() {
+                    return self.reload(daemon, self.wallet.clone());
+                }
+            }
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
                     daemon,
@@ -293,6 +309,10 @@ impl State for Home {
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
     ) -> Command<Message> {
+        // Wait for wallet to finish syncing before reloading data.
+        if self.wallet_is_syncing() {
+            return Command::none();
+        }
         self.selected_event = None;
         self.wallet = wallet;
         let daemon1 = daemon.clone();

@@ -20,6 +20,7 @@ use crate::{
 pub enum Message {
     Tick,
     UpdateCache(Result<Cache, Error>),
+    UpdatePanelCache(/* is current panel */ bool, Result<Cache, Error>),
     View(view::Message),
     LoadDaemonConfig(Box<DaemonConfig>),
     DaemonConfigLoaded(Result<(), Error>),
