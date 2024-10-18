@@ -63,7 +63,12 @@ impl Panels {
     ) -> Panels {
         Self {
             current: Menu::Home,
-            home: Home::new(wallet.clone(), &cache.coins, cache.blockheight),
+            home: Home::new(
+                wallet.clone(),
+                &cache.coins,
+                cache.blockheight,
+                daemon_backend.clone(),
+            ),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
