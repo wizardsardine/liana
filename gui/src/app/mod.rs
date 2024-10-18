@@ -59,11 +59,18 @@ impl Panels {
         wallet: Arc<Wallet>,
         data_dir: PathBuf,
         daemon_backend: DaemonBackend,
+        daemon_config: Option<&DaemonConfig>,
         internal_bitcoind: Option<&Bitcoind>,
     ) -> Panels {
         Self {
             current: Menu::Home,
-            home: Home::new(wallet.clone(), &cache.coins, cache.blockheight),
+            home: Home::new(
+                wallet.clone(),
+                &cache.coins,
+                cache.blockheight,
+                daemon_backend.clone(),
+                daemon_config,
+            ),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
@@ -141,6 +148,7 @@ impl App {
             wallet.clone(),
             data_dir,
             daemon.backend(),
+            daemon.config(),
             internal_bitcoind.as_ref(),
         );
         let cmd = panels.home.reload(daemon.clone(), wallet.clone());
