@@ -19,6 +19,7 @@ use iced::{clipboard, time, Command, Subscription};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
+use liana::config::BitcoinBackend;
 pub use liana::{commands::CoinStatus, config::Config as DaemonConfig, miniscript::bitcoin};
 use liana_ui::{
     component::network_banner,
@@ -36,7 +37,7 @@ use state::{
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
-    node::bitcoind::Bitcoind,
+    node::{bitcoind::Bitcoind, NodeType},
 };
 
 use self::state::SettingsState;
@@ -60,10 +61,11 @@ impl Panels {
         data_dir: PathBuf,
         daemon_backend: DaemonBackend,
         internal_bitcoind: Option<&Bitcoind>,
+        node_type: Option<NodeType>,
     ) -> Panels {
         Self {
             current: Menu::Home,
-            home: Home::new(wallet.clone(), &cache.coins, cache.blockheight),
+            home: Home::new(wallet.clone(), &cache.coins, cache.blockheight, node_type),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
@@ -136,12 +138,21 @@ impl App {
         data_dir: PathBuf,
         internal_bitcoind: Option<Bitcoind>,
     ) -> (App, Command<Message>) {
+        let node_type = match daemon
+            .config()
+            .and_then(|config| config.bitcoin_backend.as_ref())
+        {
+            Some(BitcoinBackend::Bitcoind(_)) => Some(NodeType::Bitcoind),
+            Some(BitcoinBackend::Electrum(_)) => Some(NodeType::Electrum),
+            None => None,
+        };
         let mut panels = Panels::new(
             &cache,
             wallet.clone(),
             data_dir,
             daemon.backend(),
             internal_bitcoind.as_ref(),
+            node_type,
         );
         let cmd = panels.home.reload(daemon.clone(), wallet.clone());
         (
