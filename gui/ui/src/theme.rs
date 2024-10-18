@@ -790,8 +790,11 @@ impl button::StyleSheet for Theme {
         }
     }
     fn disabled(&self, style: &Self::Style) -> button::Appearance {
-        let active = self.active(style);
-
+        let active = if let Button::Primary = style {
+            self.active(&Button::Secondary)
+        } else {
+            self.active(style)
+        };
         button::Appearance {
             shadow_offset: iced::Vector::default(),
             background: Some(color::TRANSPARENT.into()),
