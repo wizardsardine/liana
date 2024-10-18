@@ -23,9 +23,12 @@ use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wall
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
-use crate::daemon::{
-    model::{remaining_sequence, Coin, HistoryTransaction, Labelled},
-    Daemon,
+use crate::{
+    daemon::{
+        model::{remaining_sequence, Coin, HistoryTransaction, Labelled},
+        Daemon,
+    },
+    node::NodeType,
 };
 pub use coins::CoinsPanel;
 use label::LabelsEdited;
@@ -69,6 +72,7 @@ pub fn redirect(menu: Menu) -> Command<Message> {
 pub struct Home {
     wallet: Arc<Wallet>,
     blockheight: i32,
+    node_type: Option<NodeType>,
     balance: Amount,
     unconfirmed_balance: Amount,
     remaining_sequence: Option<u32>,
@@ -83,7 +87,12 @@ pub struct Home {
 }
 
 impl Home {
-    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: i32) -> Self {
+    pub fn new(
+        wallet: Arc<Wallet>,
+        coins: &[Coin],
+        blockheight: i32,
+        node_type: Option<NodeType>,
+    ) -> Self {
         let (balance, unconfirmed_balance) = coins.iter().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
             |(balance, unconfirmed_balance), coin| {
@@ -100,6 +109,7 @@ impl Home {
         Self {
             wallet,
             blockheight,
+            node_type,
             balance,
             unconfirmed_balance,
             remaining_sequence: None,
@@ -115,7 +125,16 @@ impl Home {
     }
 
     fn wallet_is_syncing(&self) -> bool {
-        self.blockheight <= 0
+        if self.node_type == Some(NodeType::Bitcoind) {
+            // If user imported descriptor and is using a local bitcoind,
+            // a rescan will need to be performed in order to see
+            // past transactions and so the syncing status could be
+            // misleading as it could suggest the rescan is being
+            // performed.
+            false
+        } else {
+            self.blockheight <= 0
+        }
     }
 }
 
