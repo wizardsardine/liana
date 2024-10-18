@@ -125,6 +125,7 @@ pub fn custom_template_primary(
                                     color::GREEN,
                                     "Primary key",
                                     "Use this key to sign your normal day to day transactions",
+                                    true,
                                     false,
                                 )
                             }
@@ -200,6 +201,7 @@ pub fn custom_template_recovery<'a>(
                                             color::ORANGE,
                                             "Recovery key",
                                             "A key that can be used after a certain amount of time",
+                                            true,
                                             false,
                                         )
                                     }

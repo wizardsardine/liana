@@ -114,6 +114,7 @@ pub fn inheritance_template<'a>(
                             "Primary key",
                             "Use this key to sign your normal day to day transactions",
                             true,
+                            true,
                         )
                     }
                     .map(|msg| message::DefinePath::Key(0, msg))],
@@ -145,6 +146,7 @@ pub fn inheritance_template<'a>(
                             color::WHITE,
                             "Inheritance key",
                             "A key to be used by your love ones in case something happens to you",
+                            primary_key.is_some(),
                             true,
                         )
                     }

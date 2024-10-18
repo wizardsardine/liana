@@ -177,6 +177,7 @@ pub fn undefined_key<'a>(
     color: iced::Color,
     title: &'static str,
     desc: &'static str,
+    active: bool,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
     card::simple(
@@ -192,10 +193,14 @@ pub fn undefined_key<'a>(
                     .push(p1_bold(title))
                     .push(p2_regular(desc).style(color::GREY_3)),
             )
-            .push(
-                button::primary(Some(icon::pencil_icon()), "Set")
-                    .on_press(message::DefineKey::Edit),
-            )
+            .push_maybe(if active {
+                Some(
+                    button::primary(Some(icon::pencil_icon()), "Set")
+                        .on_press(message::DefineKey::Edit),
+                )
+            } else {
+                None
+            })
             .push_maybe(if fixed {
                 None
             } else {
