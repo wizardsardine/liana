@@ -294,6 +294,19 @@ fn migrate_v4_to_v5(
     Ok(())
 }
 
+fn migrate_v5_to_v6(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError> {
+    db_exec(conn, |tx| {
+        tx.execute(
+            "ALTER TABLE wallets ADD COLUMN last_poll_timestamp INTEGER",
+            rusqlite::params![],
+        )?;
+        tx.execute("UPDATE version SET version = 6", rusqlite::params![])?;
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
 /// Check the database version and if necessary apply the migrations to upgrade it to the current
 /// one. The `bitcoin_txs` parameter is here for the migration from versions 4 and earlier, which
 /// did not store the Bitcoin transactions in database, to versions 5 and later, which do. For a
@@ -341,6 +354,11 @@ pub fn maybe_apply_migration(
                 );
                 migrate_v4_to_v5(&mut conn, bitcoin_txs)?;
                 log::warn!("Migration from database version 4 to version 5 successful.");
+            }
+            5 => {
+                log::warn!("Upgrading database from version 5 to version 6.");
+                migrate_v5_to_v6(&mut conn)?;
+                log::warn!("Migration from database version 5 to version 6 successful.");
             }
             _ => return Err(SqliteDbError::UnsupportedVersion(version)),
         }

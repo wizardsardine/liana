@@ -30,7 +30,8 @@ CREATE TABLE wallets (
     main_descriptor TEXT NOT NULL,
     deposit_derivation_index INTEGER NOT NULL,
     change_derivation_index INTEGER NOT NULL,
-    rescan_timestamp INTEGER
+    rescan_timestamp INTEGER,
+    last_poll_timestamp INTEGER
 );
 
 /* Our (U)TxOs.
@@ -140,6 +141,7 @@ pub struct DbWallet {
     pub deposit_derivation_index: bip32::ChildNumber,
     pub change_derivation_index: bip32::ChildNumber,
     pub rescan_timestamp: Option<u32>,
+    pub last_poll_timestamp: Option<u32>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
@@ -159,6 +161,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
         let change_derivation_index = bip32::ChildNumber::from(der_idx);
 
         let rescan_timestamp = row.get(5)?;
+        let last_poll_timestamp = row.get(6)?;
 
         Ok(DbWallet {
             id,
@@ -167,6 +170,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWallet {
             deposit_derivation_index,
             change_derivation_index,
             rescan_timestamp,
+            last_poll_timestamp,
         })
     }
 }

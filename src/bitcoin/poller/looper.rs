@@ -401,4 +401,9 @@ pub fn poll(
     let mut db_conn = db.connection();
     updates(&mut db_conn, bit, descs, secp);
     rescan_check(&mut db_conn, bit, descs, secp);
+    let now = time::SystemTime::now()
+        .duration_since(time::UNIX_EPOCH)
+        .expect("current system time must be later than epoch")
+        .as_secs();
+    db_conn.set_last_poll(now);
 }
