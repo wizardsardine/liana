@@ -461,6 +461,7 @@ pub fn create_app_with_remote_backend(
             rescan_progress: None,
             datadir_path: datadir.clone(),
             blockheight: wallet.tip_height.unwrap_or(0),
+            last_poll_timestamp: None, // We ignore this field for remote backend.
         },
         Arc::new(
             Wallet::new(wallet.descriptor)
