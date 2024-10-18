@@ -75,10 +75,20 @@ fn wallet_is_syncing(
     last_poll: Option<u64>,
     blockheight: i32,
 ) -> bool {
-    if let Some(_node_type) = node_type {
-        // Once the first poll has completed, the wallet will be synced
-        // with the blockchain of the local node.
-        last_poll <= last_poll_at_startup
+    if let Some(node_type) = node_type {
+        if node_type == NodeType::Bitcoind && blockheight <= 0 {
+            // If blockheight <= 0, then this is a newly created wallet.
+            // If user imported descriptor and is using a local bitcoind,
+            // a rescan will need to be performed in order to see
+            // past transactions and so the syncing status could be
+            // misleading as it could suggest the rescan is being
+            // performed.
+            false
+        } else {
+            // Once the first poll has completed, the wallet will be synced
+            // with the blockchain of the local node.
+            last_poll <= last_poll_at_startup
+        }
     } else {
         // If no node type, treat as remote backend:
         // The wallet is always synced except before the first scan
