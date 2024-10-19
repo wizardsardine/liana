@@ -15,17 +15,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use iced::{Command, Subscription};
 use liana::{
     commands::CoinStatus,
+    config::BitcoinBackend,
     miniscript::bitcoin::{Amount, OutPoint},
 };
 use liana_ui::widget::*;
 
-use super::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet};
+use super::{
+    cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet, DaemonConfig,
+};
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
 use crate::daemon::{
     model::{remaining_sequence, Coin, HistoryTransaction, Labelled},
-    Daemon,
+    Daemon, DaemonBackend,
 };
 pub use coins::CoinsPanel;
 use label::LabelsEdited;
@@ -66,9 +69,54 @@ pub fn redirect(menu: Menu) -> Command<Message> {
     })
 }
 
+fn wallet_is_syncing(
+    daemon_backend: DaemonBackend,
+    daemon_config: Option<&DaemonConfig>,
+    blockheight: i32,
+    last_poll: Option<u64>,
+    last_poll_at_startup: Option<u64>,
+    sync_progress: f64,
+) -> bool {
+    let wallet_is_syncing = if daemon_backend == DaemonBackend::RemoteBackend {
+        // The wallet is always synced except before the first scan
+        // after creation.
+        blockheight <= 0
+    } else {
+        match daemon_config.and_then(|config| config.bitcoin_backend.as_ref()) {
+            // daemon_config will be None for external daemon, in which case we don't
+            // know the node type and so treat it the same as bitcoind.
+            // If blockheight <= 0, then this is a newly created wallet.
+            // If user imported descriptor and is using a local bitcoind, a rescan
+            // will need to be performed in order to see past transactions and so the
+            // syncing status could be misleading as it could suggest the rescan is
+            // being performed.
+            Some(BitcoinBackend::Bitcoind(_)) | None if blockheight <= 0 => false,
+            // For an existing wallet with any local node type, the first poll
+            // completing means the wallet has caught up with the tip.
+            // For a new wallet with a non-bitcoind local node, the first poll
+            // completing also means that the initial rescan has completed.
+            bitcoin_backend => {
+                if bitcoin_backend.is_none() && last_poll_at_startup.is_none() {
+                    // If external daemon, we cannot be sure it will return last poll
+                    // as it depends on the version, so assume it won't unless the
+                    // last poll at startup is set.
+                    false
+                } else {
+                    last_poll <= last_poll_at_startup
+                }
+            }
+        }
+    };
+    // For now, we don't distinguish between the wallet syncing and
+    // the blockchain syncing.
+    wallet_is_syncing || (sync_progress - 1.0_f64).abs() >= f64::EPSILON
+}
+
 pub struct Home {
     wallet: Arc<Wallet>,
+    wallet_is_syncing: bool,
     blockheight: i32,
+    last_poll_at_startup: Option<u64>,
     balance: Amount,
     unconfirmed_balance: Amount,
     remaining_sequence: Option<u32>,
@@ -83,7 +131,15 @@ pub struct Home {
 }
 
 impl Home {
-    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: i32) -> Self {
+    pub fn new(
+        wallet: Arc<Wallet>,
+        coins: &[Coin],
+        blockheight: i32,
+        last_poll: Option<u64>,
+        sync_progress: f64,
+        daemon_backend: DaemonBackend,
+        daemon_config: Option<&DaemonConfig>,
+    ) -> Self {
         let (balance, unconfirmed_balance) = coins.iter().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
             |(balance, unconfirmed_balance), coin| {
@@ -97,8 +153,19 @@ impl Home {
             },
         );
 
+        let wallet_is_syncing = wallet_is_syncing(
+            daemon_backend,
+            daemon_config,
+            blockheight,
+            last_poll,
+            last_poll,
+            sync_progress,
+        );
+
         Self {
             wallet,
+            wallet_is_syncing,
+            last_poll_at_startup: last_poll,
             blockheight,
             balance,
             unconfirmed_balance,
@@ -114,8 +181,21 @@ impl Home {
         }
     }
 
-    fn wallet_is_syncing(&self) -> bool {
-        self.blockheight <= 0
+    fn wallet_is_syncing(
+        &self,
+        daemon_backend: DaemonBackend,
+        daemon_config: Option<&DaemonConfig>,
+        last_poll: Option<u64>,
+        sync_progress: f64,
+    ) -> bool {
+        wallet_is_syncing(
+            daemon_backend,
+            daemon_config,
+            self.blockheight,
+            last_poll,
+            self.last_poll_at_startup,
+            sync_progress,
+        )
     }
 }
 
@@ -148,7 +228,8 @@ impl State for Home {
                     &self.events,
                     self.is_last_page,
                     self.processing,
-                    self.wallet_is_syncing(),
+                    self.wallet_is_syncing,
+                    self.blockheight,
                 ),
             )
         }
@@ -226,10 +307,16 @@ impl State for Home {
                 }
             },
             Message::UpdatePanelCache(is_current, Ok(cache)) => {
-                let wallet_was_syncing = self.wallet_is_syncing();
+                let wallet_was_syncing = self.wallet_is_syncing;
                 self.blockheight = cache.blockheight;
+                self.wallet_is_syncing = self.wallet_is_syncing(
+                    daemon.backend(),
+                    daemon.config(),
+                    cache.last_poll_timestamp,
+                    cache.sync_progress,
+                );
                 // If this is the current panel, reload it if wallet is no longer syncing.
-                if is_current && wallet_was_syncing && !self.wallet_is_syncing() {
+                if is_current && wallet_was_syncing && !self.wallet_is_syncing {
                     return self.reload(daemon, self.wallet.clone());
                 }
             }
@@ -310,7 +397,7 @@ impl State for Home {
         wallet: Arc<Wallet>,
     ) -> Command<Message> {
         // Wait for wallet to finish syncing before reloading data.
-        if self.wallet_is_syncing() {
+        if self.wallet_is_syncing {
             return Command::none();
         }
         self.selected_event = None;
