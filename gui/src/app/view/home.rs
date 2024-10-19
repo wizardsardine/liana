@@ -36,6 +36,7 @@ pub fn home_view<'a>(
     is_last_page: bool,
     processing: bool,
     wallet_is_syncing: bool,
+    blockheight: i32,
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
@@ -58,14 +59,23 @@ pub fn home_view<'a>(
                     ))
                 })
                 .push_maybe(if wallet_is_syncing {
-                    Some(Row::new().push(text("Syncing").style(color::GREY_2)).push(
-                        spinner::typing_text_carousel(
-                            "...",
-                            true,
-                            Duration::from_millis(2000),
-                            |content| text(content).style(color::GREY_2),
-                        ),
-                    ))
+                    Some(
+                        Row::new()
+                            .push(
+                                text(if blockheight <= 0 {
+                                    "Syncing"
+                                } else {
+                                    "Checking for new transactions"
+                                })
+                                .style(color::GREY_2),
+                            )
+                            .push(spinner::typing_text_carousel(
+                                "...",
+                                true,
+                                Duration::from_millis(2000),
+                                |content| text(content).style(color::GREY_2),
+                            )),
+                    )
                 } else {
                     None
                 })
