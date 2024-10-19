@@ -69,6 +69,7 @@ impl Panels {
                 &cache.coins,
                 cache.blockheight,
                 cache.last_poll_timestamp,
+                cache.sync_progress,
                 daemon_backend.clone(),
                 daemon_config,
             ),

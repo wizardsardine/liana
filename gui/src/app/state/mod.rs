@@ -75,8 +75,9 @@ fn wallet_is_syncing(
     blockheight: i32,
     last_poll: Option<u64>,
     last_poll_at_startup: Option<u64>,
+    sync_progress: f64,
 ) -> bool {
-    if daemon_backend == DaemonBackend::RemoteBackend {
+    let wallet_is_syncing = if daemon_backend == DaemonBackend::RemoteBackend {
         // The wallet is always synced except before the first scan
         // after creation.
         blockheight <= 0
@@ -105,7 +106,10 @@ fn wallet_is_syncing(
                 }
             }
         }
-    }
+    };
+    // For now, we don't distinguish between the wallet syncing and
+    // the blockchain syncing.
+    wallet_is_syncing || (sync_progress - 1.0_f64).abs() >= f64::EPSILON
 }
 
 pub struct Home {
@@ -132,6 +136,7 @@ impl Home {
         coins: &[Coin],
         blockheight: i32,
         last_poll: Option<u64>,
+        sync_progress: f64,
         daemon_backend: DaemonBackend,
         daemon_config: Option<&DaemonConfig>,
     ) -> Self {
@@ -154,6 +159,7 @@ impl Home {
             blockheight,
             last_poll,
             last_poll,
+            sync_progress,
         );
 
         Self {
@@ -180,6 +186,7 @@ impl Home {
         daemon_backend: DaemonBackend,
         daemon_config: Option<&DaemonConfig>,
         last_poll: Option<u64>,
+        sync_progress: f64,
     ) -> bool {
         wallet_is_syncing(
             daemon_backend,
@@ -187,6 +194,7 @@ impl Home {
             self.blockheight,
             last_poll,
             self.last_poll_at_startup,
+            sync_progress,
         )
     }
 }
@@ -305,6 +313,7 @@ impl State for Home {
                     daemon.backend(),
                     daemon.config(),
                     cache.last_poll_timestamp,
+                    cache.sync_progress,
                 );
                 // If this is the current panel, reload it if wallet is no longer syncing.
                 if is_current && wallet_was_syncing && !self.wallet_is_syncing {
