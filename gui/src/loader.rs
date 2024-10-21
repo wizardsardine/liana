@@ -22,7 +22,6 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::daemon::DaemonBackend;
 use crate::{
     app::{
         cache::Cache,
@@ -227,7 +226,7 @@ impl Loader {
     pub fn stop(&mut self) {
         info!("Close requested");
         if let Step::Syncing { daemon, .. } = &mut self.step {
-            if daemon.backend() == DaemonBackend::EmbeddedLianad {
+            if daemon.backend().is_embedded() {
                 info!("Stopping internal daemon...");
                 if let Err(e) = Handle::current().block_on(async { daemon.stop().await }) {
                     warn!("Internal daemon failed to stop: {}", e);

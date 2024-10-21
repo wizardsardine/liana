@@ -20,7 +20,7 @@ use liana::{
     StartupError,
 };
 
-use crate::hw::HardwareWalletConfig;
+use crate::{hw::HardwareWalletConfig, node};
 
 #[derive(Debug)]
 pub enum DaemonError {
@@ -62,9 +62,15 @@ impl std::fmt::Display for DaemonError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DaemonBackend {
-    EmbeddedLianad,
+    EmbeddedLianad(Option<node::NodeType>),
     ExternalLianad,
     RemoteBackend,
+}
+
+impl DaemonBackend {
+    pub fn is_embedded(&self) -> bool {
+        matches!(self, DaemonBackend::EmbeddedLianad(_))
+    }
 }
 
 #[async_trait]

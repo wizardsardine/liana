@@ -242,7 +242,7 @@ impl App {
 
     pub fn stop(&mut self) {
         info!("Close requested");
-        if self.daemon.backend() == DaemonBackend::EmbeddedLianad {
+        if self.daemon.backend().is_embedded() {
             if let Err(e) = Handle::current().block_on(async { self.daemon.stop().await }) {
                 error!("{}", e);
             } else {
