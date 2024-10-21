@@ -20,7 +20,7 @@ use std::{
     sync,
 };
 
-use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1};
+use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1, Transaction};
 
 pub trait DatabaseInterface: Send {
     fn connection(&self) -> Box<dyn DatabaseConnection>;
@@ -158,6 +158,9 @@ pub trait DatabaseConnection {
         &mut self,
         txids: &[bitcoin::Txid],
     ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)>;
+
+    /// Get a transaction by txid
+    fn get_transaction(&mut self, txid: &bitcoin::Txid) -> Option<Transaction>;
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -331,6 +334,10 @@ impl DatabaseConnection for SqliteConn {
         self.new_txs(txs)
     }
 
+    fn get_transaction(&mut self, txid: &bitcoin::Txid) -> Option<Transaction> {
+        self.get_transaction(txid).map(|tx| tx.transaction)
+    }
+
     fn list_wallet_transactions(
         &mut self,
         txids: &[bitcoin::Txid],
@@ -371,6 +378,7 @@ pub struct Coin {
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub is_change: bool,
+    pub from_self: Option<bool>,
     pub spend_txid: Option<bitcoin::Txid>,
     pub spend_block: Option<BlockInfo>,
 }
@@ -384,6 +392,7 @@ impl std::convert::From<DbCoin> for Coin {
             amount,
             derivation_index,
             is_change,
+            from_self,
             spend_txid,
             spend_block,
             ..
@@ -395,6 +404,7 @@ impl std::convert::From<DbCoin> for Coin {
             amount,
             derivation_index,
             is_change,
+            from_self,
             spend_txid,
             spend_block: spend_block.map(BlockInfo::from),
         }
@@ -444,6 +454,15 @@ impl CoinStatus {
             CoinStatus::Spending => "spending",
             CoinStatus::Spent => "spent",
         }
+    }
+
+    pub fn all() -> Vec<CoinStatus> {
+        vec![
+            CoinStatus::Unconfirmed,
+            CoinStatus::Confirmed,
+            CoinStatus::Spending,
+            CoinStatus::Spent,
+        ]
     }
 }
 

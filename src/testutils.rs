@@ -489,6 +489,10 @@ impl DatabaseConnection for DummyDatabase {
         }
         wallet_txs
     }
+
+    fn get_transaction(&mut self, txid: &bitcoin::Txid) -> Option<Transaction> {
+        self.db.read().unwrap().txs.get(txid).cloned()
+    }
 }
 
 pub struct DummyLiana {
