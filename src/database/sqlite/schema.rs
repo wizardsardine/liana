@@ -56,6 +56,7 @@ CREATE TABLE coins (
     spend_block_height INTEGER,
     spend_block_time INTEGER,
     is_immature BOOLEAN NOT NULL CHECK (is_immature IN (0,1)),
+    from_self BOOLEAN,
     UNIQUE (txid, vout),
     FOREIGN KEY (wallet_id) REFERENCES wallets (id)
         ON UPDATE RESTRICT
@@ -188,6 +189,7 @@ pub struct DbCoin {
     pub amount: bitcoin::Amount,
     pub derivation_index: bip32::ChildNumber,
     pub is_change: bool,
+    pub from_self: Option<bool>,
     pub spend_txid: Option<bitcoin::Txid>,
     pub spend_block: Option<DbBlockInfo>,
 }
@@ -229,6 +231,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         });
 
         let is_immature: bool = row.get(12)?;
+        let from_self: Option<bool> = row.get(13)?;
 
         Ok(DbCoin {
             id,
@@ -239,6 +242,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             amount,
             derivation_index,
             is_change,
+            from_self,
             spend_txid,
             spend_block,
         })
@@ -386,5 +390,22 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
             transaction,
             block_info,
         })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DbTransaction {
+    pub transaction: bitcoin::Transaction,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbTransaction {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let transaction: Vec<u8> = row.get(0)?;
+        let transaction: bitcoin::Transaction =
+            bitcoin::consensus::deserialize(&transaction).expect("We only store valid txs");
+
+        Ok(DbTransaction { transaction })
     }
 }
