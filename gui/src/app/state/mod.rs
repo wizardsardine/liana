@@ -180,6 +180,8 @@ impl State for Home {
                                 } else {
                                     self.remaining_sequence = Some(seq);
                                 }
+                            } else if let Some(true) = coin.from_self {
+                                self.balance += coin.amount;
                             } else {
                                 self.unconfirmed_balance += coin.amount;
                             }
