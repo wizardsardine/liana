@@ -62,7 +62,7 @@ impl State for SettingsState {
                     BitcoindSettingsState::new(
                         daemon.config().cloned(),
                         cache,
-                        daemon.backend() != DaemonBackend::EmbeddedLianad,
+                        !daemon.backend().is_embedded(),
                         self.internal_bitcoind,
                     )
                     .into(),

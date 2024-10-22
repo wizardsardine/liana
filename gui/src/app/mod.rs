@@ -63,7 +63,12 @@ impl Panels {
     ) -> Panels {
         Self {
             current: Menu::Home,
-            home: Home::new(wallet.clone(), &cache.coins, cache.blockheight),
+            home: Home::new(
+                wallet.clone(),
+                &cache.coins,
+                cache.blockheight,
+                daemon_backend.clone(),
+            ),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
@@ -242,7 +247,7 @@ impl App {
 
     pub fn stop(&mut self) {
         info!("Close requested");
-        if self.daemon.backend() == DaemonBackend::EmbeddedLianad {
+        if self.daemon.backend().is_embedded() {
             if let Err(e) = Handle::current().block_on(async { self.daemon.stop().await }) {
                 error!("{}", e);
             } else {
