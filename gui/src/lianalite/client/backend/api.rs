@@ -201,6 +201,7 @@ pub struct Coin {
     pub spend_info: Option<CoinSpendInfo>,
     pub is_immature: bool,
     pub is_change_address: bool,
+    pub from_self: Option<bool>,
 }
 
 #[derive(Clone, Deserialize)]
