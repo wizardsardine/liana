@@ -3,7 +3,9 @@ pub mod template;
 use iced::widget::{container, pick_list, slider, Button, Space};
 use iced::{Alignment, Length};
 
-use liana_ui::component::text::{self, p1_bold, p2_regular, H3_SIZE};
+use liana::miniscript::bitcoin::Network;
+use liana_ui::component::text::{self, h3, p1_bold, p2_regular, H3_SIZE};
+use liana_ui::image;
 use std::str::FromStr;
 
 use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
@@ -217,6 +219,7 @@ pub fn undefined_key<'a>(
 
 #[allow(clippy::too_many_arguments)]
 pub fn edit_key_modal<'a>(
+    title: &'a str,
     network: bitcoin::Network,
     hws: Vec<Element<'a, Message>>,
     keys: Vec<Element<'a, Message>>,
@@ -224,22 +227,24 @@ pub fn edit_key_modal<'a>(
     chosen_signer: Option<Fingerprint>,
     hot_signer_fingerprint: &Fingerprint,
     signer_alias: Option<&'a String>,
-    form_xpub: &form::Value<String>,
     form_name: &'a form::Value<String>,
-    edit_name: bool,
+    form_xpub: &form::Value<String>,
+    manually_imported_xpub: bool,
     duplicate_master_fg: bool,
 ) -> Element<'a, Message> {
     Column::new()
+        .padding(25)
         .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
-        .push(card::simple(
+        .push(card::modal(
             Column::new()
                 .spacing(25)
+                .push(Row::new()
+                    .push(Space::with_width(Length::Fill))
+                    .push(button::transparent(Some(icon::cross_icon()), "").on_press(Message::Close)))
                 .push(
                     Column::new()
-                        .push(
-                            Container::new(text("Select a signing device:").bold())
-                                .width(Length::Fill),
-                        )
+                        .push(h3(title))
+                        .push(p1_regular("Select the signing device for your key"))
                         .spacing(10)
                         .push(
                             Column::with_children(hws).spacing(10)
@@ -257,90 +262,79 @@ pub fn edit_key_modal<'a>(
                             .on_press(Message::UseHotSigner)
                             .style(theme::Button::Border),
                         )
+                        .push(if manually_imported_xpub {
+                                card::simple(Column::new()
+                                    .spacing(10)
+                                    .push(
+                                        Row::new()
+                                            .align_items(Alignment::Center)
+                                            .push(p1_regular("Enter an extended public key:").width(Length::Fill))
+                                            .push(image::success_mark_icon().width(Length::Fixed(50.0)))
+                                    )
+                                    .push(
+                                        Row::new()
+                                            .push(
+                                                form::Form::new_trimmed(
+                                                    &example_xpub(network),
+                                                    form_xpub, |msg| {
+                                                        Message::DefineDescriptor(
+                                                            message::DefineDescriptor::KeyModal(
+                                                                message::ImportKeyModal::XPubEdited(msg),),)
+                                                    })
+                                                    .warning(if network == bitcoin::Network::Bitcoin {
+                                                        "Please enter correct xpub with origin and without appended derivation path"
+                                                    } else {
+                                                        "Please enter correct tpub with origin and without appended derivation path"
+                                                    })
+                                                    .size(text::P1_SIZE)
+                                                    .padding(10),
+                                            )
+                                            .spacing(10)
+                                    ))
+                                    } else {
+                                    Container::new(
+                                            Button::new(
+                                            Row::new()
+                                                .align_items(Alignment::Center)
+                                                .spacing(10)
+                                                .push(icon::import_icon())
+                                                .push(p1_regular("Enter an extended public key"))
+                                            )
+                                            .padding(20)
+                                            .width(Length::Fill)
+                                            .on_press(Message::DefineDescriptor(
+                                                    message::DefineDescriptor::KeyModal(message::ImportKeyModal::ManuallyImportXpub)
+                                            ))
+                                            .style(theme::Button::Secondary),
+                                    )
+                                }
+                        )
                         .width(Length::Fill),
                 )
-                .push(
-                    Column::new()
-                        .spacing(5)
-                        .push(text("Or enter an extended public key:").bold())
-                        .push(
-                            Row::new()
-                                .push(
-                                    form::Form::new_trimmed(
-                                        &format!(
-                                            "[aabbccdd/42'/0']{}pub6DAkq8LWw91WGgUGnkR5Sbzjev5JCsXaTVZQ9MwsPV4BkNFKygtJ8GHodfDVx1udR723nT7JASqGPpKvz7zQ25pUTW6zVEBdiWoaC4aUqik",
-                                            if network == bitcoin::Network::Bitcoin {
-                                                "x"
-                                             } else {
-                                                 "t"
-                                             }
-                                        ),
-                                         form_xpub, |msg| {
-                                             Message::DefineDescriptor(
-                                                 message::DefineDescriptor::KeyModal(
-                                                     message::ImportKeyModal::XPubEdited(msg),),)
-                                         })
-                                    .warning(if network == bitcoin::Network::Bitcoin {
-                                        "Please enter correct xpub with origin and without appended derivation path"
-                                    } else {
-                                        "Please enter correct tpub with origin and without appended derivation path"
-                                    })
-                    .size(text::P1_SIZE)
-                                    .padding(10),
-                                )
-                                .spacing(10)
-                        ),
-                )
-                .push(
-                    if !edit_name && !form_xpub.value.is_empty() && form_xpub.valid {
-                        Column::new().push(
-                            Row::new()
-                                .push(
-                                    Column::new()
-                                        .spacing(5)
-                                        .width(Length::Fill)
-                                        .push(
-                                            Row::new()
-                                                .spacing(5)
-                                                .push(text("Fingerprint alias:").bold())
-                                                .push(tooltip(
-                                                    prompt::DEFINE_DESCRIPTOR_FINGERPRINT_TOOLTIP,
-                                                )),
-                                        )
-                                        .push(text(&form_name.value)),
-                                )
-                                .push(
-                                    button::secondary(Some(icon::pencil_icon()), "Edit").on_press(
-                                        Message::DefineDescriptor(
-                                            message::DefineDescriptor::KeyModal(
-                                                message::ImportKeyModal::EditName,
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                        )
-                    } else if !form_xpub.value.is_empty() && form_xpub.valid {
-                        Column::new()
-                            .spacing(5)
+                .push_maybe(
+                    if chosen_signer.is_some() {
+                        Some(card::simple(Column::new()
+                            .spacing(10)
                             .push(
                                 Row::new()
                                     .spacing(5)
-                                    .push(text("Fingerprint alias:").bold())
+                                    .push(text("Key name:").bold())
                                     .push(tooltip(prompt::DEFINE_DESCRIPTOR_FINGERPRINT_TOOLTIP)),
                             )
+                            .push(p1_regular("Give this key a friendly name. It helps you identify it later").style(color::GREY_3))
                             .push(
-                                form::Form::new("Alias", form_name, |msg| {
+                                form::Form::new("Name", form_name, |msg| {
                                     Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
                                         message::ImportKeyModal::NameEdited(msg),
                                     ))
                                 })
-                                .warning("Please enter correct alias")
+                                .warning("Two different keys cannot have the same name")
+                                .padding(10)
                                 .size(text::P1_SIZE)
-                                .padding(10),
-                            )
+                            )))
                     } else {
-                        Column::new()
-                    },
+                        None
+                    }
                 )
                 .push_maybe(
                     if duplicate_master_fg {
@@ -350,23 +344,28 @@ pub fn edit_key_modal<'a>(
                     }
                 )
                 .push(
-                    if form_xpub.valid && !form_xpub.value.is_empty() && !form_name.value.is_empty() && !duplicate_master_fg
-                    {
-                        button::primary(None, "Apply")
-                            .on_press(Message::DefineDescriptor(
+                    button::primary(None, "Apply")
+                        .on_press_maybe(if !duplicate_master_fg
+                            && (!manually_imported_xpub || form_xpub.valid)
+                            && !form_name.value.is_empty() && form_name.valid {
+                            Some(Message::DefineDescriptor(
                                 message::DefineDescriptor::KeyModal(
                                     message::ImportKeyModal::ConfirmXpub,
                                 ),
                             ))
-                            .width(Length::Fixed(200.0))
-                    } else {
-                        button::primary(None, "Apply").width(Length::Fixed(100.0))
-                    },
+                        } else {None})
+                        .width(Length::Fixed(200.0))
                 )
                 .align_items(Alignment::Center),
         ))
-        .width(Length::Fixed(600.0))
+        .width(Length::Fixed(800.0))
         .into()
+}
+
+fn example_xpub(network: Network) -> String {
+    format!("[aabbccdd/42'/0']{}pub6DAkq8LWw91WGgUGnkR5Sbzjev5JCsXaTVZQ9MwsPV4BkNFKygtJ8GHodfDVx1udR723nT7JASqGPpKvz7zQ25pUTW6zVEBdiWoaC4aUqik",
+        if network == bitcoin::Network::Bitcoin { "x" } else { "t" }
+    )
 }
 
 /// returns y,m,d,h,m
@@ -449,7 +448,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
         }
     }
 
-    card::simple(col.push(if sequence.valid {
+    card::modal(col.push(if sequence.valid {
         button::primary(None, "Apply")
             .on_press(Message::DefineDescriptor(
                 message::DefineDescriptor::ThresholdSequenceModal(
@@ -465,7 +464,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
 }
 
 pub fn edit_threshold_modal<'a>(threshold: (usize, usize)) -> Element<'a, Message> {
-    card::simple(
+    card::modal(
         Column::new()
             .width(Length::Fill)
             .spacing(20)

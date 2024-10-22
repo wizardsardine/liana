@@ -288,6 +288,7 @@ impl Notification {
 pub enum Card {
     #[default]
     Simple,
+    Modal,
     Border,
     Invalid,
     Warning,
@@ -302,10 +303,14 @@ impl Card {
                     background: Some(color::GREY_2.into()),
                     ..container::Appearance::default()
                 },
+                Card::Modal => container::Appearance {
+                    background: Some(color::GREY_2.into()),
+                    ..container::Appearance::default()
+                },
                 Card::Border => container::Appearance {
                     background: Some(iced::Color::TRANSPARENT.into()),
                     border: iced::Border {
-                        color: color::GREY_2,
+                        color: color::GREY_7,
                         width: 1.0,
                         radius: 10.0.into(),
                     },
@@ -347,10 +352,19 @@ impl Card {
                     },
                     ..container::Appearance::default()
                 },
+                Card::Modal => container::Appearance {
+                    background: Some(color::LIGHT_BLACK.into()),
+                    border: iced::Border {
+                        color: color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 25.0.into(),
+                    },
+                    ..container::Appearance::default()
+                },
                 Card::Border => container::Appearance {
                     background: Some(iced::Color::TRANSPARENT.into()),
                     border: iced::Border {
-                        color: color::GREY_5,
+                        color: color::GREY_7,
                         width: 1.0,
                         radius: 25.0.into(),
                     },

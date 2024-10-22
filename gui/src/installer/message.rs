@@ -141,10 +141,10 @@ pub enum DefineKey {
 
 #[derive(Debug, Clone)]
 pub enum ImportKeyModal {
-    HWXpubImported(Result<DescriptorPublicKey, Error>),
+    FetchedKey(Result<Key, Error>),
     XPubEdited(String),
-    EditName,
     NameEdited(String),
+    ManuallyImportXpub,
     ConfirmXpub,
     SelectKey(usize),
 }

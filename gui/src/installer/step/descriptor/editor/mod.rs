@@ -141,7 +141,17 @@ impl DefineDescriptor {
     }
 
     fn valid(&self) -> bool {
-        !self.paths.iter().any(|path| !path.valid()) && self.paths.len() >= 2
+        !self.paths.iter().any(|path| {
+            !path.valid()
+                || (self.use_taproot
+                    && path.keys.iter().any(|k| {
+                        if let Some(k) = k.and_then(|k| self.keys.get(&k)) {
+                            !k.is_compatible_taproot
+                        } else {
+                            false
+                        }
+                    }))
+        }) && self.paths.len() >= 2
     }
 
     fn check_setup(&mut self) {
@@ -244,7 +254,7 @@ impl Step for DefineDescriptor {
                                     None
                                 }
                             })),
-                            path.keys[j],
+                            path.keys[j].and_then(|f| self.keys.get(&f)).cloned(),
                             i,
                             j,
                             self.network,
