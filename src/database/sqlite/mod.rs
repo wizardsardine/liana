@@ -43,6 +43,8 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
+use self::schema::DbTransaction;
+
 const DB_VERSION: i64 = 5;
 
 /// Last database version for which Bitcoin transactions were not stored in database. In practice
@@ -447,8 +449,8 @@ impl SqliteConn {
             for coin in coins {
                 let deriv_index: u32 = coin.derivation_index.into();
                 db_tx.execute(
-                    "INSERT INTO coins (wallet_id, txid, vout, amount_sat, derivation_index, is_change, is_immature) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT INTO coins (wallet_id, txid, vout, amount_sat, derivation_index, is_change, is_immature, from_self) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     rusqlite::params![
                         WALLET_ID,
                         coin.outpoint.txid[..].to_vec(),
@@ -457,6 +459,7 @@ impl SqliteConn {
                         deriv_index,
                         coin.is_change,
                         coin.is_immature,
+                        coin.from_self,
                     ],
                 )?;
             }
@@ -727,6 +730,23 @@ impl SqliteConn {
             Ok(())
         })
         .expect("Database must be available")
+    }
+
+    pub fn get_transaction(&mut self, txid: &bitcoin::Txid) -> Option<DbTransaction> {
+        let query = format!(
+            "SELECT t.tx FROM transactions t WHERE t.txid = x'{}'",
+            FrontwardHexTxid(*txid)
+        );
+        let txs: Vec<DbTransaction> =
+            db_query(&mut self.conn, &query, rusqlite::params![], |row| {
+                row.try_into()
+            })
+            .expect("Db must not fail");
+        if !txs.is_empty() {
+            Some(txs[0].to_owned())
+        } else {
+            None
+        }
     }
 
     pub fn list_wallet_transactions(
@@ -1241,6 +1261,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(10000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 spend_txid: None,
                 spend_block: None,
             };
@@ -1287,6 +1308,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(1111),
                 derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
                 is_change: true,
+                from_self: Some(true),
                 spend_txid: None,
                 spend_block: None,
             };
@@ -1418,6 +1440,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(30000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(4103).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 spend_txid: None,
                 spend_block: None,
             };
@@ -1429,6 +1452,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(40000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(4104).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 spend_txid: None,
                 spend_block: None,
             };
@@ -1541,6 +1565,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(98765),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 spend_txid: None,
                 spend_block: None,
             };
@@ -1583,6 +1608,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(1111),
                 derivation_index: bip32::ChildNumber::from_normal_idx(103).unwrap(),
                 is_change: true,
+                from_self: Some(true),
                 spend_txid: None,
                 spend_block: None,
             };
@@ -1706,6 +1732,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(424242),
                 derivation_index: bip32::ChildNumber::from_normal_idx(4103).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 spend_txid: None,
                 spend_block: None,
             };
@@ -1877,6 +1904,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                     is_change: false,
+                    from_self: Some(false),
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -1890,6 +1918,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
                     is_change: false,
+                    from_self: Some(false),
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -1903,6 +1932,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
                     is_change: false,
+                    from_self: Some(false),
                     spend_txid: Some(txs.get(3).unwrap().txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_199,
@@ -1919,6 +1949,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
                     is_change: false,
+                    from_self: Some(false),
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -1932,6 +1963,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
                     is_change: false,
+                    from_self: Some(false),
                     spend_txid: Some(txs.get(6).unwrap().txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_105,
@@ -2080,6 +2112,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                     is_change: false,
+                    from_self: Some(false),
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -2093,6 +2126,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
                     is_change: false,
+                    from_self: Some(false),
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -2106,6 +2140,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
                     is_change: false,
+                    from_self: Some(false),
                     spend_txid: Some(txs.get(3).unwrap().txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_199,
@@ -2122,6 +2157,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
                     is_change: false,
+                    from_self: Some(false),
                     spend_txid: None,
                     spend_block: None,
                 },
@@ -2135,6 +2171,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
                     is_change: false,
+                    from_self: Some(false),
                     spend_txid: Some(txs.get(6).unwrap().txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_105,
@@ -2250,6 +2287,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(i as u64 * 3473),
                     derivation_index: bip32::ChildNumber::from_normal_idx(i as u32 * 100).unwrap(),
                     is_change: (i % 4) == 0,
+                    from_self: Some((i % 4) == 0),
                     block_info: if i & 2 == 0 {
                         Some(BlockInfo {
                             height: (i % 100) as i32 * 1_000,
@@ -2528,6 +2566,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(98765),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 spend_txid: None,
                 spend_block: None,
             }]);
@@ -2595,6 +2634,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(1231001),
                 derivation_index: bip32::ChildNumber::from_normal_idx(101).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 block_info: None,
                 spend_txid: None,
                 spend_block: None,
@@ -2605,6 +2645,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(23145),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 block_info: None,
                 spend_txid: None,
                 spend_block: None,
@@ -2615,6 +2656,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(354764),
                 derivation_index: bip32::ChildNumber::from_normal_idx(3401).unwrap(),
                 is_change: true,
+                from_self: Some(true),
                 block_info: None,
                 spend_txid: None,
                 spend_block: None,
@@ -2625,6 +2667,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(23200),
                 derivation_index: bip32::ChildNumber::from_normal_idx(4793235).unwrap(),
                 is_change: true,
+                from_self: Some(true),
                 block_info: None,
                 spend_txid: None,
                 spend_block: None,
@@ -2635,6 +2678,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(675000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(3).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 block_info: None,
                 spend_txid: None,
                 spend_block: None,
@@ -2645,6 +2689,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(4564347),
                 derivation_index: bip32::ChildNumber::from_normal_idx(453).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 block_info: None,
                 spend_txid: None,
                 spend_block: None,
@@ -2655,6 +2700,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(731453),
                 derivation_index: bip32::ChildNumber::from_normal_idx(98).unwrap(),
                 is_change: false,
+                from_self: Some(false),
                 block_info: None,
                 spend_txid: None,
                 spend_block: None,
@@ -2786,6 +2832,7 @@ CREATE TABLE labels (
                 amount: bitcoin::Amount::from_sat(i as u64 * 3473),
                 derivation_index: bip32::ChildNumber::from_normal_idx(i as u32 * 100).unwrap(),
                 is_change: (i % 4) == 0,
+                from_self: Some((i % 4) == 0),
                 block_info: if i & 2 == 0 {
                     Some(BlockInfo {
                         height: (i % 100) as i32 * 1_000,
