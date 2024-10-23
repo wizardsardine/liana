@@ -128,7 +128,7 @@ impl LianaLiteLogin {
             Err(e) => (
                 Self {
                     network,
-                    datadir: datadir.clone(),
+                    datadir,
                     step: ConnectionStep::EnterEmail {
                         email: form::Value::default(),
                     },
@@ -142,7 +142,7 @@ impl LianaLiteLogin {
             Ok(auth_config) => (
                 Self {
                     network,
-                    datadir: datadir.clone(),
+                    datadir,
                     step: ConnectionStep::CheckingAuthFile,
                     connection_error: None,
                     wallet_id: auth_config.wallet_id.clone(),
