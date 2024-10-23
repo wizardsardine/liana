@@ -637,7 +637,7 @@ mod tests {
             crate::installer::context::RemoteBackend::None,
         );
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
-            Network::Bitcoin,
+            Network::Signet,
             Arc::new(Mutex::new(Signer::generate(Network::Bitcoin).unwrap())),
         ));
         sandbox.load(&ctx).await;
