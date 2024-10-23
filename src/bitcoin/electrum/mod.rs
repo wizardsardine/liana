@@ -138,7 +138,7 @@ impl Electrum {
         const STOP_GAP: usize = 200;
 
         let (chain_update, mut graph_update, keychain_update) = if !self.is_rescanning() {
-            log::info!("Performing sync.");
+            log::debug!("Performing sync.");
             let mut request = SyncRequest::from_chain_tip(local_chain_tip.clone())
                 .cache_graph_txs(self.bdk_wallet.graph());
 
@@ -157,7 +157,7 @@ impl Electrum {
                 .client
                 .sync_with_confirmation_time_height_anchor(request, FETCH_PREV_TXOUTS)
                 .map_err(ElectrumError::Client)?;
-            log::info!("Sync complete.");
+            log::debug!("Sync complete.");
             (sync_result.chain_update, sync_result.graph_update, None)
         } else {
             log::info!("Performing full scan.");
