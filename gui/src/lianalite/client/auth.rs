@@ -116,22 +116,13 @@ impl AuthClient {
         Ok(())
     }
 
-    pub async fn resend_otp(&self) -> Result<Response, AuthError> {
-        let response: Response = self
-            .request(Method::POST, &format!("{}/auth/v1/resend", self.url))
-            .json(&ResendOtp {
-                email: &self.email,
-                kind: "signup",
-            })
-            .send()
-            .await?;
-        if !response.status().is_success() {
-            return Err(AuthError {
-                http_status: Some(response.status().into()),
-                error: response.text().await?,
-            });
-        }
-        Ok(response)
+    /// Resend method has to trigger a signInWithOTP method instead of using the resend endpoint.
+    /// The resend endpoint is used to resend an existing signup confirmation email, email change email, SMS OTP phone signup)
+    /// or phone change OTP. This method will only resend an email or phone OTP to the user if there was an initial signup,
+    /// email change or phone change request being made.
+    /// If we want to resend a passwordless sign-in OTP or Magic Link, we have to use the signInWithOtp() method again.
+    pub async fn resend_otp(&self) -> Result<(), AuthError> {
+        self.sign_in_otp().await
     }
 
     pub async fn verify_otp(&self, token: &str) -> Result<AccessTokenResponse, AuthError> {
