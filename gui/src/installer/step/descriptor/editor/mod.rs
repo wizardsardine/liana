@@ -273,11 +273,13 @@ impl Step for DefineDescriptor {
                                 path.threshold -= 1;
                             }
                         }
-                        if self
-                            .paths
-                            .get(i)
-                            .map(|path| path.keys.is_empty())
-                            .unwrap_or(false)
+                        // Only delete recovery paths.
+                        if i > 0
+                            && self
+                                .paths
+                                .get(i)
+                                .map(|path| path.keys.is_empty())
+                                .unwrap_or(false)
                         {
                             self.paths.remove(i);
                         }
