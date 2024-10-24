@@ -380,6 +380,7 @@ pub async fn load_application(
         network: info.network,
         blockheight: info.block_height,
         coins,
+        last_poll_timestamp: info.last_poll_timestamp,
         ..Default::default()
     };
 
