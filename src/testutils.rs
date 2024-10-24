@@ -1,7 +1,9 @@
 use crate::{
     bitcoin::{BitcoinInterface, Block, BlockChainTip, MempoolEntry, SyncProgress, UTxO},
     config::{BitcoinConfig, Config},
-    database::{BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem},
+    database::{
+        BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem, Wallet,
+    },
     descriptors, DaemonControl, DaemonHandle,
 };
 
@@ -149,6 +151,8 @@ struct DummyDbState {
     txs: HashMap<bitcoin::Txid, bitcoin::Transaction>,
     spend_txs: HashMap<bitcoin::Txid, (Psbt, Option<u32>)>,
     timestamp: u32,
+    rescan_timestamp: Option<u32>,
+    last_poll_timestamp: Option<u32>,
 }
 
 pub struct DummyDatabase {
@@ -181,6 +185,8 @@ impl DummyDatabase {
                 txs: HashMap::new(),
                 spend_txs: HashMap::new(),
                 timestamp: now,
+                rescan_timestamp: None,
+                last_poll_timestamp: None,
             })),
         }
     }
@@ -199,6 +205,17 @@ impl DatabaseConnection for DummyDatabase {
 
     fn chain_tip(&mut self) -> Option<BlockChainTip> {
         self.db.read().unwrap().curr_tip
+    }
+
+    fn wallet(&mut self) -> Wallet {
+        let db_wallet = self.db.read().unwrap();
+        Wallet {
+            timestamp: db_wallet.timestamp,
+            receive_index: db_wallet.deposit_index,
+            change_index: db_wallet.change_index,
+            rescan_timestamp: db_wallet.rescan_timestamp,
+            last_poll_timestamp: db_wallet.last_poll_timestamp,
+        }
     }
 
     fn timestamp(&mut self) -> u32 {
@@ -400,7 +417,7 @@ impl DatabaseConnection for DummyDatabase {
     }
 
     fn rescan_timestamp(&mut self) -> Option<u32> {
-        None
+        self.db.read().unwrap().rescan_timestamp
     }
 
     fn set_rescan(&mut self, _: u32) {
@@ -409,6 +426,14 @@ impl DatabaseConnection for DummyDatabase {
 
     fn complete_rescan(&mut self) {
         todo!()
+    }
+
+    fn last_poll_timestamp(&mut self) -> Option<u32> {
+        self.db.read().unwrap().last_poll_timestamp
+    }
+
+    fn set_last_poll(&mut self, timestamp: u32) {
+        self.db.write().unwrap().last_poll_timestamp = Some(timestamp);
     }
 
     fn update_labels(&mut self, _items: &HashMap<LabelItem, Option<String>>) {

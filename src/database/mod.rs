@@ -22,6 +22,23 @@ use std::{
 
 use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1};
 
+/// Information about the wallet.
+///
+/// All timestamps are the number of seconds since the UNIX epoch.
+#[derive(Clone, Debug)]
+pub struct Wallet {
+    /// Timestamp at wallet creation time.
+    pub timestamp: u32,
+    /// Derivation index for the next receiving address.
+    pub receive_index: bip32::ChildNumber,
+    /// Derivation index for the next change address.
+    pub change_index: bip32::ChildNumber,
+    /// Timestamp to start rescanning from, if any.
+    pub rescan_timestamp: Option<u32>,
+    /// Timestamp at which the last poll of the blockchain completed, if any,
+    pub last_poll_timestamp: Option<u32>,
+}
+
 pub trait DatabaseInterface: Send {
     fn connection(&self) -> Box<dyn DatabaseConnection>;
 }
@@ -45,6 +62,9 @@ pub trait DatabaseConnection {
 
     /// The network we are operating on.
     fn network(&mut self) -> bitcoin::Network;
+
+    /// Get the `Wallet`.
+    fn wallet(&mut self) -> Wallet;
 
     /// The timestamp at wallet creation time
     fn timestamp(&mut self) -> u32;
@@ -80,6 +100,14 @@ pub trait DatabaseConnection {
 
     /// Mark the rescan as complete.
     fn complete_rescan(&mut self);
+
+    /// Get the timestamp at which the last poll of the blockchain completed, if any,
+    /// as the number of seconds since the UNIX epoch.
+    fn last_poll_timestamp(&mut self) -> Option<u32>;
+
+    /// Set the timestamp at which the last poll of the blockchain completed,
+    /// where `timestamp` should be given as the number of seconds since the UNIX epoch.
+    fn set_last_poll(&mut self, timestamp: u32);
 
     /// Get the derivation index for this address, as well as whether this address is change.
     fn derivation_index_by_address(
@@ -176,8 +204,19 @@ impl DatabaseConnection for SqliteConn {
         self.db_tip().network
     }
 
+    fn wallet(&mut self) -> Wallet {
+        let db_wallet = self.db_wallet();
+        Wallet {
+            timestamp: db_wallet.timestamp,
+            receive_index: db_wallet.deposit_derivation_index,
+            change_index: db_wallet.change_derivation_index,
+            rescan_timestamp: db_wallet.rescan_timestamp,
+            last_poll_timestamp: db_wallet.last_poll_timestamp,
+        }
+    }
+
     fn timestamp(&mut self) -> u32 {
-        self.db_wallet().timestamp
+        self.wallet().timestamp
     }
 
     fn update_tip(&mut self, tip: &BlockChainTip) {
@@ -185,7 +224,7 @@ impl DatabaseConnection for SqliteConn {
     }
 
     fn receive_index(&mut self) -> bip32::ChildNumber {
-        self.db_wallet().deposit_derivation_index
+        self.wallet().receive_index
     }
 
     fn set_receive_index(
@@ -197,7 +236,7 @@ impl DatabaseConnection for SqliteConn {
     }
 
     fn change_index(&mut self) -> bip32::ChildNumber {
-        self.db_wallet().change_derivation_index
+        self.wallet().change_index
     }
 
     fn set_change_index(
@@ -209,7 +248,7 @@ impl DatabaseConnection for SqliteConn {
     }
 
     fn rescan_timestamp(&mut self) -> Option<u32> {
-        self.db_wallet().rescan_timestamp
+        self.wallet().rescan_timestamp
     }
 
     fn set_rescan(&mut self, timestamp: u32) {
@@ -218,6 +257,15 @@ impl DatabaseConnection for SqliteConn {
 
     fn complete_rescan(&mut self) {
         self.complete_wallet_rescan()
+    }
+
+    fn last_poll_timestamp(&mut self) -> Option<u32> {
+        self.wallet().last_poll_timestamp
+    }
+
+    fn set_last_poll(&mut self, timestamp: u32) {
+        self.set_wallet_last_poll_timestamp(timestamp)
+            .expect("database must be available")
     }
 
     fn coins(

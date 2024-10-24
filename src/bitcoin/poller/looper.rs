@@ -4,7 +4,7 @@ use crate::{
     descriptors,
 };
 
-use std::{collections::HashSet, sync, thread, time};
+use std::{collections::HashSet, convert::TryInto, sync, thread, time};
 
 use miniscript::bitcoin::{self, secp256k1};
 
@@ -401,4 +401,11 @@ pub fn poll(
     let mut db_conn = db.connection();
     updates(&mut db_conn, bit, descs, secp);
     rescan_check(&mut db_conn, bit, descs, secp);
+    let now: u32 = time::SystemTime::now()
+        .duration_since(time::UNIX_EPOCH)
+        .expect("current system time must be later than epoch")
+        .as_secs()
+        .try_into()
+        .expect("system clock year is earlier than 2106");
+    db_conn.set_last_poll(now);
 }

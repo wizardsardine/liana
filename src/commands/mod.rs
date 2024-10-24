@@ -309,10 +309,10 @@ impl DaemonControl {
     /// Get information about the current state of the daemon
     pub fn get_info(&self) -> GetInfoResult {
         let mut db_conn = self.db.connection();
-
         let block_height = db_conn.chain_tip().map(|tip| tip.height).unwrap_or(0);
-        let rescan_progress = db_conn
-            .rescan_timestamp()
+        let wallet = db_conn.wallet();
+        let rescan_progress = wallet
+            .rescan_timestamp
             .map(|_| self.bitcoin.rescan_progress().unwrap_or(1.0));
         GetInfoResult {
             version: VERSION.to_string(),
@@ -323,7 +323,8 @@ impl DaemonControl {
                 main: self.config.main_descriptor.clone(),
             },
             rescan_progress,
-            timestamp: db_conn.timestamp(),
+            timestamp: wallet.timestamp,
+            last_poll_timestamp: wallet.last_poll_timestamp,
         }
     }
 
@@ -1127,6 +1128,8 @@ pub struct GetInfoResult {
     pub rescan_progress: Option<f64>,
     /// Timestamp at wallet creation date
     pub timestamp: u32,
+    /// Timestamp of last poll, if any.
+    pub last_poll_timestamp: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
