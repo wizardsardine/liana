@@ -30,7 +30,7 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
             .push(h3("Custom wallet"))
             .max_width(800.0)
             .push(Container::new(
-                p1_regular("Through this setup you can choose how many keys you want to use. For security reasons, we suggest you to use  Hardware Wallets to store them.")
+                p1_regular("Through this setup you can choose how many keys you want to use. For security reasons, we suggest you use Hardware Wallets to store them.")
                 .style(color::GREY_3)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
@@ -41,7 +41,7 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::custom_template_description().width(Length::Fill))
             .push(Container::new(
-                p1_regular("The Primary set of Keys will always be able to spend. Your Recovery set(s) of Keys will activate only after a defined time of inactivity of the wallet’s, allowing for secure recovery and advanced spending policies. You can define more than one set of Recovery Keys activating at different times.")
+                p1_regular("The Primary set of Keys will always be able to spend. Your Recovery set(s) of Keys will activate only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies. You can define more than one set of Recovery Keys activating at different times.")
                 .style(color::GREY_3)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
@@ -112,7 +112,7 @@ pub fn custom_template_primary(
                                     &key.name,
                                     color::GREEN,
                                     "Primary key",
-                                    "Use this key to sign your normal day to day transactions",
+                                    "Use this key to sign your normal day-to-day transactions",
                                     if use_taproot && !key.is_compatible_taproot {
                                         Some("Key is not compatible with taproot")
                                     } else {
@@ -124,7 +124,7 @@ pub fn custom_template_primary(
                                 undefined_key(
                                     color::GREEN,
                                     "Primary key",
-                                    "Use this key to sign your normal day to day transactions",
+                                    "Use this key to sign your normal day-to-day transactions",
                                     true,
                                     false,
                                 )
@@ -190,7 +190,7 @@ pub fn custom_template_recovery<'a>(
                                             "Recovery key",
                                             "A key that can be used after a certain amount of time",
                                             if use_taproot && !key.is_compatible_taproot {
-                                                Some("Key is not compatible with taproot")
+                                                Some("Key is not compatible with Taproot")
                                             } else {
                                                 None
                                             },

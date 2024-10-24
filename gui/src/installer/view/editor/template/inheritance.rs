@@ -29,12 +29,7 @@ pub fn inheritance_template_description(progress: (usize, usize)) -> Element<'st
             .push(h3("Inheritance wallet"))
             .max_width(800.0)
             .push(Container::new(
-                p1_regular("In this current setup you will need 2 Keys for your wallet. For security reasons, we suggest you to use 2 Hardware Wallets to store them.")
-                .style(color::GREY_3)
-                .horizontal_alignment(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(Container::new(
-                p1_regular("For this Inheritance wallet you will need 2 Keys: Your Primary Key and an Inheritance Key to be given to a chosen relative.")
+                p1_regular("For this Inheritance wallet you will need 2 Keys: Your Primary Key and an Inheritance Key to be given to a chosen heir. For security reasons, we suggest you to use 2 Hardware Wallets to store them.")
                 .style(color::GREY_3)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
@@ -100,9 +95,9 @@ pub fn inheritance_template<'a>(
                             &key.name,
                             color::GREEN,
                             "Primary key",
-                            "Use this key to sign your normal day to day transactions",
+                            "Use this key to sign your day-to-day transactions",
                             if use_taproot && !key.is_compatible_taproot {
-                                Some("Key is not compatible with taproot")
+                                Some("Key is not compatible with Taproot")
                             } else {
                                 None
                             },
@@ -112,7 +107,7 @@ pub fn inheritance_template<'a>(
                         undefined_key(
                             color::GREEN,
                             "Primary key",
-                            "Use this key to sign your normal day to day transactions",
+                            "Use this key to sign your day-to-day transactions",
                             true,
                             true,
                         )
@@ -133,7 +128,7 @@ pub fn inheritance_template<'a>(
                             &key.name,
                             color::WHITE,
                             "Inheritance key",
-                            "A key to be used by your love ones in case something happens to you",
+                            "A key to be used by your loved ones in case something happens to you",
                             if use_taproot && !key.is_compatible_taproot {
                                 Some("Key is not compatible with taproot")
                             } else {
@@ -145,7 +140,7 @@ pub fn inheritance_template<'a>(
                         undefined_key(
                             color::WHITE,
                             "Inheritance key",
-                            "A key to be used by your love ones in case something happens to you",
+                            "A key to be used by your loved ones in case something happens to you",
                             primary_key.is_some(),
                             true,
                         )

@@ -1492,7 +1492,7 @@ pub fn defined_sequence<'a>(
             })
             .push_maybe(if duplicate_sequence {
                 Some(
-                    text("No two recovery paths may become available at the very same date.")
+                    text("No two recovery options may become available at the very same date.")
                         .small()
                         .style(color::RED),
                 )

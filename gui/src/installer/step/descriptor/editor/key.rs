@@ -248,6 +248,8 @@ impl super::DescriptorEditModal for EditXpubModal {
                     self.processing = false;
                     match res {
                         Ok(key) => {
+                            self.form_name.valid = true;
+                            self.form_name.value.clone_from(&key.name);
                             self.chosen_signer = Some(key);
                         }
                         Err(e) => {
@@ -289,6 +291,8 @@ impl super::DescriptorEditModal for EditXpubModal {
                                     device_kind: None,
                                     device_version: None,
                                 });
+                                self.form_name.value = "".to_string();
+                                self.form_name.valid = true;
                             }
                         } else {
                             self.form_xpub.valid = false;
