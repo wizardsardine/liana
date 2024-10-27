@@ -502,7 +502,18 @@ impl BitcoinInterface for electrum::Electrum {
                     expired_spending.push(*op);
                 }
                 if let Some(block) = w_c.spend_block {
-                    spent.push((*op, *spend_txid, block.height, block.time));
+                    if let Some(w_spend_txid) = w_c.spend_txid {
+                        spent.push((*op, w_spend_txid, block.height, block.time));
+                    } else {
+                        log::error!(
+                            "Coin at {} has spend_block {:?} \
+                            without any spend_txid. It previously \
+                            had spend_txid {}",
+                            op,
+                            block,
+                            spend_txid,
+                        );
+                    }
                 }
             }
         }

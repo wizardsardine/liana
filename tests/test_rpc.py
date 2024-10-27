@@ -1231,6 +1231,62 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
         )
     )
 
+    # Now we test that if a tx is replaced externally to Liana and
+    # immediately confirmed, the spend_txid of the now-spent coin
+    # is set to the replacement txid.
+    # The replacement has to be done externally so that Liana doesn't
+    # see it until it is confirmed.
+    # Currently, this can only be done for non-Taproot as we need to
+    # finalize the tx outside of Liana (see comment in
+    # utils.sign_and_broadcast).
+    if USE_TAPROOT:
+        return
+
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 100_000,
+    }
+    second_res = lianad.rpc.createspend(destinations, [], 1)
+    second_psbt = PSBT.from_base64(second_res["psbt"])
+    second_psbt = lianad.signer.sign_psbt(second_psbt)
+    lianad.rpc.updatespend(second_psbt.to_base64())
+    second_txid = second_psbt.tx.txid().hex()
+    # Get the coins spent by this tx.
+    second_outpoints = [
+        f"{i.prevout.hash:064x}:{i.prevout.n}" for i in second_psbt.tx.vin
+    ]
+    lianad.rpc.broadcastspend(second_txid)
+    # Wait for this spend to be detected.
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == second_txid
+            for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
+        )
+    )
+    # Now replace this tx and immediately mine a block while
+    # Liana is stopped so that there is no chance Liana will
+    # poll in between and see the unconfirmed tx.
+    second_rbf = lianad.rpc.rbfpsbt(second_txid, False, 2)
+    second_rbf_psbt = PSBT.from_base64(second_rbf["psbt"])
+    # The following is the same as utils.sign_and_broadcast except
+    # we also stop and start lianad when broadcasting.
+    second_rbf_psbt = lianad.signer.sign_psbt(second_rbf_psbt, False)
+    second_rbf_psbt = lianad.finalize_psbt(second_rbf_psbt)
+    second_rbf_tx = second_rbf_psbt.tx.serialize_with_witness().hex()
+    second_rbf_txid = second_rbf_psbt.tx.txid().hex()
+    # Broadcast externally to Liana while lianad is stopped.
+    lianad.stop()
+    bitcoind.rpc.sendrawtransaction(second_rbf_tx)
+    bitcoind.generate_block(1, wait_for_mempool=second_rbf_txid)
+    lianad.start()
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None
+            and c["spend_info"]["height"] is not None
+            and c["spend_info"]["txid"] == second_rbf_txid
+            for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
+        )
+    )
+
 
 def test_rbfpsbt_insufficient_funds(lianad, bitcoind):
     """Trying to increase the fee too much returns the missing funds amount."""
