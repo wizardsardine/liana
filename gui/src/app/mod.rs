@@ -282,6 +282,7 @@ impl App {
                             network: info.network,
                             blockheight: info.block_height,
                             rescan_progress: info.rescan_progress,
+                            sync_progress: info.sync,
                             last_poll_timestamp: info.last_poll_timestamp,
                         })
                     },

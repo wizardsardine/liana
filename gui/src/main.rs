@@ -459,6 +459,7 @@ pub fn create_app_with_remote_backend(
             network,
             coins: Vec::new(),
             rescan_progress: None,
+            sync_progress: 1.0, // Remote backend is always synced
             datadir_path: datadir.clone(),
             blockheight: wallet.tip_height.unwrap_or(0),
             last_poll_timestamp: None, // We ignore this field for remote backend.
