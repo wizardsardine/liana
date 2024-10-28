@@ -67,6 +67,7 @@ impl Panels {
                 wallet.clone(),
                 &cache.coins,
                 cache.blockheight,
+                cache.sync_progress,
                 cache.last_poll_timestamp,
                 daemon_backend.clone(),
             ),

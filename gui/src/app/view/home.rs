@@ -62,11 +62,14 @@ pub fn home_view<'a>(
                     Some(
                         Row::new()
                             .push(
-                                text(if *sync_status == SyncStatus::WalletFullScan {
-                                    "Syncing"
-                                } else {
-                                    "Checking for new transactions"
-                                })
+                                match sync_status {
+                                    SyncStatus::BlockchainSync(progress) => text(format!(
+                                        "Syncing blockchain ({:.1}%)",
+                                        100.0 * *progress
+                                    )),
+                                    SyncStatus::WalletFullScan => text("Syncing"),
+                                    _ => text("Checking for new transactions"),
+                                }
                                 .style(color::GREY_2),
                             )
                             .push(spinner::typing_text_carousel(

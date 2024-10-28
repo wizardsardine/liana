@@ -79,10 +79,13 @@ pub fn redirect(menu: Menu) -> Command<Message> {
 fn sync_status(
     daemon_backend: DaemonBackend,
     blockheight: i32,
+    sync_progress: f64,
     last_poll: Option<u32>,
     last_poll_at_startup: Option<u32>,
 ) -> SyncStatus {
-    if blockheight <= 0 {
+    if sync_progress < 1.0 {
+        return SyncStatus::BlockchainSync(sync_progress);
+    } else if blockheight <= 0 {
         // If blockheight <= 0, then this is a newly created wallet.
         // If user imported descriptor and is using a local bitcoind, a rescan
         // will need to be performed in order to see past transactions and so the
@@ -134,6 +137,7 @@ impl Home {
         wallet: Arc<Wallet>,
         coins: &[Coin],
         blockheight: i32,
+        sync_progress: f64,
         last_poll: Option<u32>,
         daemon_backend: DaemonBackend,
     ) -> Self {
@@ -150,7 +154,13 @@ impl Home {
             },
         );
 
-        let sync_status = sync_status(daemon_backend, blockheight, last_poll, last_poll);
+        let sync_status = sync_status(
+            daemon_backend,
+            blockheight,
+            sync_progress,
+            last_poll,
+            last_poll,
+        );
 
         Self {
             wallet,
@@ -174,11 +184,13 @@ impl Home {
         &self,
         daemon_backend: DaemonBackend,
         blockheight: i32,
+        sync_progress: f64,
         last_poll: Option<u32>,
     ) -> SyncStatus {
         sync_status(
             daemon_backend,
             blockheight,
+            sync_progress,
             last_poll,
             self.last_poll_at_startup,
         )
@@ -296,6 +308,7 @@ impl State for Home {
                 self.sync_status = self.sync_status(
                     daemon.backend(),
                     cache.blockheight,
+                    cache.sync_progress,
                     cache.last_poll_timestamp,
                 );
                 // If this is the current panel, reload it if wallet is no longer syncing.

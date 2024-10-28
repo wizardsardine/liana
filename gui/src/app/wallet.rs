@@ -197,6 +197,8 @@ pub enum SyncStatus {
     WalletFullScan,
     /// Wallet is syncing with latest transactions.
     LatestWalletSync,
+    /// Blockchain is syncing with given progress between 0.0 and 1.0.
+    BlockchainSync(f64),
 }
 
 impl SyncStatus {
