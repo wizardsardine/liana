@@ -21,6 +21,7 @@ use crate::{
         error::Error,
         menu::Menu,
         view::{coins, dashboard, label, message::Message},
+        wallet::SyncStatus,
     },
     daemon::model::{HistoryTransaction, TransactionKind},
 };
@@ -35,14 +36,13 @@ pub fn home_view<'a>(
     events: &'a [HistoryTransaction],
     is_last_page: bool,
     processing: bool,
-    wallet_is_syncing: bool,
-    blockheight: i32,
+    sync_status: &SyncStatus,
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
         .push(
             Column::new()
-                .push(if !wallet_is_syncing {
+                .push(if sync_status.is_synced() {
                     amount_with_size(balance, H1_SIZE)
                 } else {
                     Row::new().push(spinner::Carousel::new(
@@ -58,15 +58,18 @@ pub fn home_view<'a>(
                         ],
                     ))
                 })
-                .push_maybe(if wallet_is_syncing {
+                .push_maybe(if !sync_status.is_synced() {
                     Some(
                         Row::new()
                             .push(
-                                text(if blockheight <= 0 {
-                                    "Syncing"
-                                } else {
-                                    "Checking for new transactions"
-                                })
+                                match sync_status {
+                                    SyncStatus::BlockchainSync(progress) => text(format!(
+                                        "Syncing blockchain ({:.1}%)",
+                                        100.0 * *progress
+                                    )),
+                                    SyncStatus::WalletFullScan => text("Syncing"),
+                                    _ => text("Checking for new transactions"),
+                                }
                                 .style(color::GREY_2),
                             )
                             .push(spinner::typing_text_carousel(
@@ -79,17 +82,19 @@ pub fn home_view<'a>(
                 } else {
                     None
                 })
-                .push_maybe(if unconfirmed_balance.to_sat() != 0 && !wallet_is_syncing {
-                    Some(
-                        Row::new()
-                            .spacing(10)
-                            .push(text("+").size(H3_SIZE).style(color::GREY_3))
-                            .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
-                            .push(text("unconfirmed").size(H3_SIZE).style(color::GREY_3)),
-                    )
-                } else {
-                    None
-                }),
+                .push_maybe(
+                    if unconfirmed_balance.to_sat() != 0 && sync_status.is_synced() {
+                        Some(
+                            Row::new()
+                                .spacing(10)
+                                .push(text("+").size(H3_SIZE).style(color::GREY_3))
+                                .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
+                                .push(text("unconfirmed").size(H3_SIZE).style(color::GREY_3)),
+                        )
+                    } else {
+                        None
+                    },
+                ),
         )
         .push_maybe(if expiring_coins.is_empty() {
             remaining_sequence.map(|sequence| {

@@ -9,6 +9,7 @@ pub struct Cache {
     pub blockheight: i32,
     pub coins: Vec<Coin>,
     pub rescan_progress: Option<f64>,
+    pub sync_progress: f64,
     pub last_poll_timestamp: Option<u32>,
 }
 
@@ -21,6 +22,7 @@ impl std::default::Default for Cache {
             blockheight: 0,
             coins: Vec::new(),
             rescan_progress: None,
+            sync_progress: 1.0,
             last_poll_timestamp: None,
         }
     }
