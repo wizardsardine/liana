@@ -4,7 +4,7 @@ use liana_ui::{
     color,
     component::{
         button, collapse,
-        text::{h3, p1_regular, text, Text},
+        text::{h3, p1_regular, text, Text, H3_SIZE},
     },
     icon, image, theme,
     widget::*,
@@ -30,16 +30,32 @@ pub fn inheritance_template_description(progress: (usize, usize)) -> Element<'st
             .push(h3("Inheritance wallet"))
             .max_width(800.0)
             .push(Container::new(
-                p1_regular("For this Inheritance wallet you will need 2 Keys: Your Primary Key and an Inheritance Key to be given to a chosen heir. For security reasons, we suggest you use 2 Hardware Wallets to store them.")
+                p1_regular("For this Inheritance wallet you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use 2 Hardware Wallets to store them.")
+                .style(color::GREY_2)
+                .horizontal_alignment(alignment::Horizontal::Left)
+            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
+            .push(Row::new()
+                .spacing(30)
+                .push(
+                    Row::new()
+                    .align_items(Alignment::Center)
+                    .spacing(10)
+                    .push(icon::round_key_icon().size(H3_SIZE).style(color::GREEN))
+                    .push(p1_regular("Primary key").bold())
+                ).push(
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .spacing(10)
+                        .push(icon::round_key_icon().size(H3_SIZE).style(color::WHITE))
+                        .push(p1_regular("Inheritance key").bold())
+            ))
+            .push(Container::new(
+                p1_regular("You will always be able to spend using your Primary Key.
+After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds. Give it to your heir(s) in order to be able to collect their inheritance.")
                 .style(color::GREY_2)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::inheritance_template_description().width(Length::Fill))
-            .push(Container::new(
-                p1_regular("Your relative’s Inheritance Key will become active only if you don’t move the coins in your wallet for the defined period of time, enabling him/her to recover your funds while not being able to access them before that.")
-                .style(color::GREY_2)
-                .horizontal_alignment(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Select").width(Length::Fixed(200.0)).on_press(Message::Next)))
             .spacing(20),
         true,
