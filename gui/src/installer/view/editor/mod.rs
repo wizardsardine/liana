@@ -6,6 +6,7 @@ use iced::{Alignment, Length};
 use liana::miniscript::bitcoin::Network;
 use liana_ui::component::text::{self, h3, p1_bold, p2_regular, H3_SIZE};
 use liana_ui::image;
+use std::borrow::Cow;
 use std::str::FromStr;
 
 use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
@@ -130,7 +131,7 @@ pub fn path(
 pub fn defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
-    title: &'static str,
+    title: impl Into<Cow<'a, str>>,
     warning: Option<&'static str>,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
@@ -177,7 +178,7 @@ pub fn defined_key<'a>(
 
 pub fn undefined_key<'a>(
     color: iced::Color,
-    title: &'static str,
+    title: impl Into<Cow<'a, str>>,
     active: bool,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {

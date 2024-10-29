@@ -50,6 +50,7 @@ pub enum DescriptorTemplate {
     #[default]
     SimpleInheritance,
     Custom,
+    MultisigSecurity,
 }
 
 #[derive(Clone)]

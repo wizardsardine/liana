@@ -75,3 +75,11 @@ pub fn custom_template_description() -> Svg {
     let h = Handle::from_memory(CUSTOM_TEMPLATE_DESC.to_vec());
     Svg::new(h)
 }
+
+const MULTISIG_SECURITY_TEMPLATE_DESC: &[u8] =
+    include_bytes!("../static/images/multisig_security_template.svg");
+
+pub fn multisig_security_template_description() -> Svg {
+    let h = Handle::from_memory(MULTISIG_SECURITY_TEMPLATE_DESC.to_vec());
+    Svg::new(h)
+}

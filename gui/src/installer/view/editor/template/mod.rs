@@ -1,5 +1,6 @@
 pub mod custom;
 pub mod inheritance;
+pub mod multisig_security_wallet;
 
 use iced::{alignment, Alignment, Length};
 
@@ -42,6 +43,25 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                         .push(button::secondary(None, "Select").on_press(
                             Message::SelectDescriptorTemplate(
                                 context::DescriptorTemplate::SimpleInheritance,
+                            ),
+                        )),
+                )
+                .width(Length::Fill),
+            )
+            .push(
+                card::simple(
+                    Row::new()
+                        .align_items(Alignment::Center)
+                        .push(
+                            Column::new()
+                                .align_items(Alignment::Start)
+                                .push(h3("Multisig security wallet"))
+                                .push(p2_regular("A secure scheme requiring stricter multiparty signature and recovery.").style(color::GREY_2))
+                                .width(Length::Fill)
+                        )
+                        .push(button::secondary(None, "Select").on_press(
+                            Message::SelectDescriptorTemplate(
+                                context::DescriptorTemplate::MultisigSecurity,
                             ),
                         )),
                 )
