@@ -13,7 +13,7 @@ use crate::{
     installer::{
         message::Message,
         step::{
-            descriptor::{default_derivation_path, get_extended_pubkey},
+            descriptor::editor::key::{default_derivation_path, get_extended_pubkey},
             Context, Step,
         },
         view, Error,

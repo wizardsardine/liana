@@ -1,5 +1,11 @@
 use crate::{color, component::text::text, icon, theme, widget::*};
 
+pub fn modal<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
+    Container::new(content)
+        .padding(15)
+        .style(theme::Container::Card(theme::Card::Modal))
+}
+
 pub fn simple<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
     Container::new(content)
         .padding(15)
