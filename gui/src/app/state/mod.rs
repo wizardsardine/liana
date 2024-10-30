@@ -80,7 +80,6 @@ pub struct Home {
     unconfirmed_balance: Amount,
     remaining_sequence: Option<u32>,
     expiring_coins: Vec<OutPoint>,
-    pending_events: Vec<HistoryTransaction>,
     events: Vec<HistoryTransaction>,
     is_last_page: bool,
     processing: bool,
@@ -113,7 +112,6 @@ impl Home {
             expiring_coins: Vec::new(),
             selected_event: None,
             events: Vec::new(),
-            pending_events: Vec::new(),
             labels_edited: LabelsEdited::default(),
             warning: None,
             is_last_page: false,
@@ -125,14 +123,9 @@ impl Home {
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some((i, output_index)) = self.selected_event {
-            let event = if i < self.pending_events.len() {
-                &self.pending_events[i]
-            } else {
-                &self.events[i - self.pending_events.len()]
-            };
             view::home::payment_view(
                 cache,
-                event,
+                &self.events[i],
                 output_index,
                 self.labels_edited.cache(),
                 self.warning.as_ref(),
@@ -147,7 +140,6 @@ impl State for Home {
                     &self.unconfirmed_balance,
                     &self.remaining_sequence,
                     &self.expiring_coins,
-                    &self.pending_events,
                     &self.events,
                     self.is_last_page,
                     self.processing,
@@ -203,7 +195,6 @@ impl State for Home {
                 Ok(events) => {
                     self.warning = None;
                     self.events = events;
-                    self.events.sort_by(|a, b| b.time.cmp(&a.time));
                     self.is_last_page = (self.events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                 }
             },
@@ -213,19 +204,25 @@ impl State for Home {
                     self.processing = false;
                     self.warning = None;
                     self.is_last_page = (events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
-                    for event in events {
-                        if !self.events.iter().any(|other| other.tx == event.tx) {
-                            self.events.push(event);
+                    if let Some(event) = events.first() {
+                        if let Some(position) = self
+                            .events
+                            .iter()
+                            .position(|event2| event2.txid == event.txid)
+                        {
+                            let len = self.events.len();
+                            for event in events {
+                                if !self.events[position..len]
+                                    .iter()
+                                    .any(|event2| event2.txid == event.txid)
+                                {
+                                    self.events.push(event);
+                                }
+                            }
+                        } else {
+                            self.events.extend(events);
                         }
                     }
-                    self.events.sort_by(|a, b| b.time.cmp(&a.time));
-                }
-            },
-            Message::PendingTransactions(res) => match res {
-                Err(e) => self.warning = Some(e),
-                Ok(events) => {
-                    self.warning = None;
-                    self.pending_events = events;
                 }
             },
             Message::UpdatePanelCache(is_current, Ok(cache)) => {
@@ -246,10 +243,7 @@ impl State for Home {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    self.pending_events
-                        .iter_mut()
-                        .map(|tx| tx as &mut dyn Labelled)
-                        .chain(self.events.iter_mut().map(|tx| tx as &mut dyn Labelled)),
+                    self.events.iter_mut().map(|tx| tx as &mut dyn Labelled),
                 ) {
                     Ok(cmd) => {
                         return cmd;
@@ -302,6 +296,7 @@ impl State for Home {
                                 limit += HISTORY_EVENT_PAGE_SIZE;
                                 events = daemon.list_history_txs(0, last_event_date, limit).await?;
                             }
+                            events.sort_by(|a, b| b.time.cmp(&a.time));
                             Ok(events)
                         },
                         Message::HistoryTransactionsExtension,
@@ -324,9 +319,7 @@ impl State for Home {
         }
         self.selected_event = None;
         self.wallet = wallet;
-        let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
-        let daemon3 = daemon.clone();
         let now: u32 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -335,15 +328,15 @@ impl State for Home {
             .unwrap();
         Command::batch(vec![
             Command::perform(
-                async move { daemon3.list_pending_txs().await.map_err(|e| e.into()) },
-                Message::PendingTransactions,
-            ),
-            Command::perform(
                 async move {
-                    daemon1
+                    let mut txs = daemon
                         .list_history_txs(0, now, HISTORY_EVENT_PAGE_SIZE)
-                        .await
-                        .map_err(|e| e.into())
+                        .await?;
+                    txs.sort_by(|a, b| b.time.cmp(&a.time));
+
+                    let mut pending_txs = daemon.list_pending_txs().await?;
+                    pending_txs.extend(txs);
+                    Ok(pending_txs)
                 },
                 Message::HistoryTransactions,
             ),

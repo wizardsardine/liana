@@ -275,6 +275,7 @@ pub struct HistoryTransaction {
     pub coins: HashMap<OutPoint, Coin>,
     pub change_indexes: Vec<usize>,
     pub tx: Transaction,
+    pub txid: Txid,
     pub outgoing_amount: Amount,
     pub incoming_amount: Amount,
     pub fee_amount: Option<Amount>,
@@ -355,6 +356,7 @@ impl HistoryTransaction {
         Self {
             labels: HashMap::new(),
             kind,
+            txid: tx.txid(),
             tx,
             coins: coins_map,
             change_indexes,
