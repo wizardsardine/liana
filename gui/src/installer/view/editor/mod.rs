@@ -128,6 +128,39 @@ pub fn path(
     .into()
 }
 
+pub fn uneditable_defined_key<'a>(
+    alias: &'a str,
+    color: iced::Color,
+    title: impl Into<Cow<'a, str>>,
+    warning: Option<&'static str>,
+) -> Element<'a, message::DefineKey> {
+    card::simple(
+        Row::new()
+            .spacing(10)
+            .width(Length::Fill)
+            .align_items(Alignment::Center)
+            .push(icon::round_key_icon().size(H3_SIZE).style(color))
+            .push(
+                Column::new()
+                    .width(Length::Fill)
+                    .spacing(5)
+                    .push(
+                        Row::new()
+                            .spacing(10)
+                            .push(p1_regular(title).style(color::GREY_2))
+                            .push(p1_bold(alias)),
+                    )
+                    .push_maybe(warning.map(|w| p2_regular(w).style(color::RED))),
+            )
+            .push_maybe(if warning.is_none() {
+                Some(icon::check_icon().style(color::GREEN))
+            } else {
+                None
+            }),
+    )
+    .into()
+}
+
 pub fn defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
