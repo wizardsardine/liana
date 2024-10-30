@@ -74,6 +74,23 @@ impl Path {
         }
     }
 
+    pub fn with_n_keys(mut self, n: usize) -> Self {
+        self.keys = Vec::new();
+        for _i in 0..n {
+            self.keys.push(None);
+        }
+        self
+    }
+
+    pub fn with_threshold(mut self, t: usize) -> Self {
+        self.threshold = if t > self.keys.len() {
+            self.keys.len()
+        } else {
+            t
+        };
+        self
+    }
+
     fn valid(&self) -> bool {
         !self.keys.is_empty() && !self.keys.iter().any(|k| k.is_none()) && !self.duplicate_sequence
     }
@@ -164,6 +181,12 @@ impl DefineDescriptor {
                 DescriptorTemplate::SimpleInheritance => {
                     self.paths = vec![Path::new_primary_path(), Path::new_recovery_path()];
                 }
+                DescriptorTemplate::MultisigSecurity => {
+                    self.paths = vec![
+                        Path::new_primary_path().with_n_keys(2).with_threshold(2),
+                        Path::new_recovery_path().with_n_keys(3).with_threshold(2),
+                    ];
+                }
                 DescriptorTemplate::Custom => {
                     self.paths = vec![Path::new_primary_path(), Path::new_recovery_path()];
                 }
@@ -194,6 +217,46 @@ impl Step for DefineDescriptor {
             }
             Message::DefineDescriptor(message::DefineDescriptor::AddRecoveryPath) => {
                 self.paths.push(Path::new_recovery_path());
+            }
+            Message::DefineDescriptor(message::DefineDescriptor::KeysEdited(coordinate, key)) => {
+                hws.set_alias(key.fingerprint, key.name.clone());
+                for (i, j) in coordinate {
+                    self.paths[i].keys[j] = Some(key.fingerprint);
+                }
+                self.keys.insert(key.fingerprint, key);
+                self.modal = None;
+                self.check_setup();
+            }
+            Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(coordinate)) => {
+                let use_taproot = self.use_taproot;
+                let mut set = HashSet::<Fingerprint>::new();
+                let key = coordinate
+                    .first()
+                    .and_then(|(i, j)| self.paths[*i].keys[*j])
+                    .and_then(|f| self.keys.get(&f))
+                    .cloned();
+                for (i, j) in &coordinate {
+                    set.extend(self.paths[*i].keys.iter().filter_map(|key| {
+                        if key.is_some() && key != &self.paths[*i].keys[*j] {
+                            *key
+                        } else {
+                            None
+                        }
+                    }));
+                }
+                let modal = EditXpubModal::new(
+                    use_taproot,
+                    set,
+                    key,
+                    coordinate,
+                    self.network,
+                    self.signer.clone(),
+                    self.signer_fingerprint,
+                    self.keys.values().cloned().collect(),
+                );
+                let cmd = modal.load();
+                self.modal = Some(Box::new(modal));
+                return cmd;
             }
             Message::DefineDescriptor(message::DefineDescriptor::Path(i, msg)) => match msg {
                 message::DefinePath::SequenceEdited(seq) => {
@@ -233,13 +296,7 @@ impl Step for DefineDescriptor {
                     message::DefineKey::Clipboard(key) => {
                         return Command::perform(async move { key }, Message::Clibpboard);
                     }
-                    message::DefineKey::Edited(key) => {
-                        hws.set_alias(key.fingerprint, key.name.clone());
-                        self.paths[i].keys[j] = Some(key.fingerprint);
-                        self.keys.insert(key.fingerprint, key);
-                        self.modal = None;
-                        self.check_setup();
-                    }
+
                     message::DefineKey::Edit => {
                         let use_taproot = self.use_taproot;
                         let path = &self.paths[i];
@@ -253,8 +310,7 @@ impl Step for DefineDescriptor {
                                 }
                             })),
                             path.keys[j].and_then(|f| self.keys.get(&f)).cloned(),
-                            i,
-                            j,
+                            vec![(i, j)],
                             self.network,
                             self.signer.clone(),
                             self.signer_fingerprint,
@@ -421,6 +477,17 @@ impl Step for DefineDescriptor {
                         .as_ref()
                         .and_then(|f| self.keys.get(f)),
                     self.paths[1].sequence,
+                    self.valid(),
+                )
+            }
+            DescriptorTemplate::MultisigSecurity => {
+                view::editor::template::multisig_security_wallet::multisig_security_template(
+                    progress,
+                    self.use_taproot,
+                    self.path_keys(&self.paths[0]),
+                    self.path_keys(&self.paths[1]),
+                    self.paths[1].sequence,
+                    self.paths[1].threshold,
                     self.valid(),
                 )
             }
@@ -714,25 +781,21 @@ mod tests {
         sandbox.load(&ctx).await;
 
         let key = DescriptorPublicKey::from_str("[4df3f0e3/84'/0'/0']tpubDDRs9DnRUiJc4hq92PSJKhfzQBgHJUrDo7T2i48smsDfLsQcm3Vh7JhuGqJv8zozVkNFin8YPgpmn2NWNmpRaE3GW2pSxbmAzYf2juy7LeW").unwrap();
-        let specter_key = message::DefinePath::Key(
-            0,
-            message::DefineKey::Edited(Key {
-                name: "My Specter key".to_string(),
-                fingerprint: key.master_fingerprint(),
-                key,
-                device_kind: Some(async_hwi::DeviceKind::Specter),
-                device_version: None,
-                is_compatible_taproot: false,
-                is_hot_signer: false,
-            }),
-        );
+        let specter_key = Key {
+            name: "My Specter key".to_string(),
+            fingerprint: key.master_fingerprint(),
+            key,
+            device_kind: Some(async_hwi::DeviceKind::Specter),
+            device_version: None,
+            is_compatible_taproot: false,
+            is_hot_signer: false,
+        };
 
         // Use Specter device for primary key
         sandbox
-            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
-                0,
-                specter_key.clone(),
-            )))
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::KeysEdited(vec![(0, 0)], specter_key.clone()),
+            ))
             .await;
 
         // Edit recovery key
@@ -795,10 +858,9 @@ mod tests {
 
         // Now edit the recovery key to use Specter device
         sandbox
-            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
-                1,
-                specter_key.clone(),
-            )))
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::KeysEdited(vec![(1, 0)], specter_key.clone()),
+            ))
             .await;
         sandbox.check(|step| {
             assert!((step).apply(&mut ctx));

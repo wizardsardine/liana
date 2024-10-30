@@ -113,6 +113,8 @@ pub enum InternalBitcoindMsg {
 pub enum DefineDescriptor {
     ChangeTemplate(context::DescriptorTemplate),
     ImportDescriptor(String),
+    KeysEdited(Vec<(usize, usize)>, Key),
+    KeysEdit(Vec<(usize, usize)>),
     Path(usize, DefinePath),
     AddRecoveryPath,
     KeyModal(ImportKeyModal),
@@ -136,7 +138,6 @@ pub enum DefineKey {
     Delete,
     Edit,
     Clipboard(String),
-    Edited(Key),
 }
 
 #[derive(Debug, Clone)]

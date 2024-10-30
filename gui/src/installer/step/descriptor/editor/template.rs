@@ -73,7 +73,10 @@ impl Step for DescriptorTemplateDescription {
             DescriptorTemplate::SimpleInheritance => {
                 view::editor::template::inheritance::inheritance_template_description(progress)
             }
-            DescriptorTemplate::Custom { .. } => {
+            DescriptorTemplate::MultisigSecurity => {
+                view::editor::template::multisig_security_wallet::multisig_security_template_description(progress)
+            }
+            DescriptorTemplate::Custom => {
                 view::editor::template::custom::custom_template_description(progress)
             }
         }
