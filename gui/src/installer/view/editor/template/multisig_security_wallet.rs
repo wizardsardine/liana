@@ -15,7 +15,10 @@ use crate::installer::{
     message::{self, Message},
     step::descriptor::editor::key::Key,
     view::{
-        editor::{define_descriptor_advanced_settings, defined_key, path, undefined_key},
+        editor::{
+            define_descriptor_advanced_settings, defined_key, path, undefined_key,
+            uneditable_defined_key,
+        },
         layout,
     },
 };
@@ -168,21 +171,30 @@ pub fn multisig_security_template<'a>(
                         .enumerate()
                         .map(|(j, recovery_key)| {
                             if let Some(key) = recovery_key {
-                                defined_key(
-                                    &key.name,
-                                    if j < 2 { color::GREEN } else { color::ORANGE },
-                                    if j < 2 {
-                                        format!("Primary key #{}", j + 1)
-                                    } else {
-                                        "Recovery key".to_string()
-                                    },
-                                    if use_taproot && !key.is_compatible_taproot {
-                                        Some("Key is not compatible with Taproot")
-                                    } else {
-                                        None
-                                    },
-                                    true,
-                                )
+                                if j < 2 {
+                                    uneditable_defined_key(
+                                        &key.name,
+                                        color::GREEN,
+                                        format!("Primary key #{}", j + 1),
+                                        if use_taproot && !key.is_compatible_taproot {
+                                            Some("Key is not compatible with Taproot")
+                                        } else {
+                                            None
+                                        },
+                                    )
+                                } else {
+                                    defined_key(
+                                        &key.name,
+                                        color::ORANGE,
+                                        "Recovery key".to_string(),
+                                        if use_taproot && !key.is_compatible_taproot {
+                                            Some("Key is not compatible with Taproot")
+                                        } else {
+                                            None
+                                        },
+                                        true,
+                                    )
+                                }
                             } else {
                                 undefined_key(
                                     if j < 2 { color::GREEN } else { color::ORANGE },
