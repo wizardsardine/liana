@@ -617,6 +617,12 @@ async fn sign_psbt(
                 psbt_in
                     .partial_sigs
                     .append(&mut pruned_psbt_in.partial_sigs);
+                if let Some(tap_key_sig) = pruned_psbt_in.tap_key_sig {
+                    psbt_in.tap_key_sig = Some(tap_key_sig);
+                }
+                psbt_in
+                    .tap_script_sigs
+                    .append(&mut pruned_psbt_in.tap_script_sigs);
             } else {
                 log::error!(
                     "Not all PSBT inputs are present in the pruned psbt. Pruned psbt: '{}'.",
