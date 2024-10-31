@@ -1,6 +1,6 @@
 pub mod template;
 
-use iced::widget::{container, pick_list, slider, Button, Space};
+use iced::widget::{container, pick_list, scrollable, slider, Button, Space};
 use iced::{Alignment, Length};
 
 use liana::miniscript::bitcoin::Network;
@@ -264,7 +264,7 @@ pub fn edit_key_modal<'a>(
     manually_imported_xpub: bool,
     duplicate_master_fg: bool,
 ) -> Element<'a, Message> {
-    Column::new()
+    let content = Column::new()
         .padding(25)
         .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
         .push(card::modal(
@@ -390,8 +390,8 @@ pub fn edit_key_modal<'a>(
                 )
                 .align_items(Alignment::Center),
         ))
-        .width(Length::Fixed(800.0))
-        .into()
+        .width(Length::Fixed(800.0));
+    scrollable(content).into()
 }
 
 fn example_xpub(network: Network) -> String {
