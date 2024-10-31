@@ -32,6 +32,7 @@ use state::{
     CoinsPanel, CreateSpendPanel, Home, PsbtsPanel, ReceivePanel, RecoveryPanel, State,
     TransactionsPanel,
 };
+use wallet::{sync_status, SyncStatus};
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
@@ -227,19 +228,35 @@ impl App {
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
             time::every(Duration::from_secs(
-                // LianaLite has no rescan feature, the cache refresh loop is only
-                // to fetch the new block height tip, which for a synced wallet
-                // (height > 0) is only used to warn user about recovery availability.
-                if self.daemon.backend() == DaemonBackend::RemoteBackend
-                    && self.cache.blockheight > 0
-                {
-                    120
-                // For the rescan feature, we set a higher frequency of cache refresh
-                // to give to user an up-to-date view of the rescan progress.
-                // For a remote backend, we refresh cache more often while height is 0
-                // to detect sooner that syncing has finished.
-                } else {
-                    10
+                // Note that for now we pass `None` for `last_poll_at_startup`,
+                // which means the `LatestWalletSync` status will not be returned
+                // unless the last poll is also `None`.
+                // TODO: Store last poll at startup and use it here.
+                match sync_status(
+                    self.daemon.backend(),
+                    self.cache.blockheight,
+                    self.cache.sync_progress,
+                    self.cache.last_poll_timestamp,
+                    None,
+                ) {
+                    SyncStatus::BlockchainSync(_) => 5, // Only applies to local backends
+                    SyncStatus::WalletFullScan
+                        if self.daemon.backend() == DaemonBackend::RemoteBackend =>
+                    {
+                        10
+                    } // If remote backend, don't ping too often
+                    SyncStatus::WalletFullScan | SyncStatus::LatestWalletSync => 3,
+                    SyncStatus::Synced => {
+                        if self.daemon.backend() == DaemonBackend::RemoteBackend {
+                            // Remote backend has no rescan feature. For a synced wallet,
+                            // cache refresh is only used to warn user about recovery availability.
+                            120
+                        } else {
+                            // For the rescan feature, we refresh more often in order
+                            // to give user an up-to-date view of the rescan progress.
+                            10
+                        }
+                    }
                 },
             ))
             .map(|_| Message::Tick),
