@@ -67,6 +67,7 @@ pub fn multisig_security_template_description(
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::multisig_security_template_description().width(Length::Fill))
             .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Select").width(Length::Fixed(200.0)).on_press(Message::Next)))
+            .push(Space::with_height(50.0))
             .spacing(20),
         true,
         Some(Message::Previous),

@@ -758,6 +758,7 @@ pub fn backup_descriptor<'a>(
             } else {
                 button::secondary(None, "Next").width(Length::Fixed(200.0))
             })
+            .push(Space::with_height(20.0))
             .spacing(50),
         true,
         Some(Message::Previous),
@@ -1682,6 +1683,7 @@ pub fn backup_mnemonic<'a>(
             } else {
                 button::secondary(None, "Next").width(Length::Fixed(200.0))
             })
+            .push(Space::with_height(20.0))
             .spacing(50),
         true,
         Some(Message::Previous),
