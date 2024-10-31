@@ -24,26 +24,26 @@ RUN apt update && apt satisfy -y \
                     "curl (>=7.74, <=7.74)"
 
 # Download the cargo binary and compiled stdlib from the distributed releases to make sure to build with
-# the very same toolchain. We use 1.70.0 because it is unfortunately the MSRV of the GUI.
-RUN curl -O "https://static.rust-lang.org/dist/rust-1.70.0-x86_64-unknown-linux-gnu.tar.gz" && \
-    echo "8499c0b034dd881cd9a880c44021632422a28dc23d7a81ca0a97b04652245982 rust-1.70.0-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c && \
-    tar -xzf rust-1.70.0-x86_64-unknown-linux-gnu.tar.gz && \
-    curl -O "https://static.rust-lang.org/dist/rust-1.70.0-x86_64-apple-darwin.tar.gz" && \
-    echo "e5819fdbfc7f1a4d5d82cb4c3b7662250748450b45a585433bfb75648bc45547 rust-1.70.0-x86_64-apple-darwin.tar.gz" | sha256sum -c  && \
-    tar -xzf rust-1.70.0-x86_64-apple-darwin.tar.gz && \
+# the very same toolchain. We use 1.71.1 because it is unfortunately the MSRV of the GUI.
+RUN curl -O "https://static.rust-lang.org/dist/rust-1.71.1-x86_64-unknown-linux-gnu.tar.gz" && \
+    echo "34778d1cda674990dfc0537bc600066046ae9cb5d65a07809f7e7da31d4689c4 rust-1.71.1-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c && \
+    tar -xzf rust-1.71.1-x86_64-unknown-linux-gnu.tar.gz && \
+    curl -O "https://static.rust-lang.org/dist/rust-1.71.1-x86_64-apple-darwin.tar.gz" && \
+    echo "916056603da88336aba68bbeab49711cc8fdb9cfb46a49b04850c0c09761f58c rust-1.71.1-x86_64-apple-darwin.tar.gz" | sha256sum -c  && \
+    tar -xzf rust-1.71.1-x86_64-apple-darwin.tar.gz && \
     rm -r *.tar.gz
 
 # NOTE: we were previously caching dependencies here (through `cargo vendor`). It's a tradeoff between the image size
 # and not needing internet access when running the image to build the software.
 
 # For some reason, we can't just set the RUSTFLAGS environment variable to add `-L` for compiling dependencies.
-# This doesn't work: RUSTFLAGS="-L/liana/rust-1.70.0-x86_64-apple-darwin/rust-std-x86_64-apple-darwin/lib/rustlib/x86_64-apple-darwin/lib/"
+# This doesn't work: RUSTFLAGS="-L/liana/rust-1.71.1-x86_64-apple-darwin/rust-std-x86_64-apple-darwin/lib/rustlib/x86_64-apple-darwin/lib/"
 # As a workaround, we use a wrapped `rustc` binary that always links against the macOS stdlib we just downloaded.
 # Some issues that seem to be related:
 # https://github.com/rust-lang/rust/issues/40717
 # https://github.com/rust-lang/rust/issues/48409
 RUN echo "#!/bin/sh" > rustc_wrapper.sh && \
-    echo "/liana/rust-1.70.0-x86_64-unknown-linux-gnu/rustc/bin/rustc \"\$@\" -L/liana/rust-1.70.0-x86_64-apple-darwin/rust-std-x86_64-apple-darwin/lib/rustlib/x86_64-apple-darwin/lib/ -L/liana/rust-1.70.0-x86_64-unknown-linux-gnu/rust-std-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/" >> rustc_wrapper.sh && \
+    echo "/liana/rust-1.71.1-x86_64-unknown-linux-gnu/rustc/bin/rustc \"\$@\" -L/liana/rust-1.71.1-x86_64-apple-darwin/rust-std-x86_64-apple-darwin/lib/rustlib/x86_64-apple-darwin/lib/ -L/liana/rust-1.71.1-x86_64-unknown-linux-gnu/rust-std-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/" >> rustc_wrapper.sh && \
     chmod +x rustc_wrapper.sh
 ENV RUSTC="/liana/rustc_wrapper.sh"
 
