@@ -29,21 +29,16 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
             .push(h3("Build your own"))
             .max_width(800.0)
             .push(Container::new(
-                p1_regular("Through this setup you can choose how many keys you want to use. For security reasons, we suggest you use Hardware Wallets to store them.")
+                p1_regular("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.")
                 .style(color::GREY_2)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(Container::new(
-                p1_regular("For this Custom wallet you will need to define your Primary and Recovery Sets of Keys.")
+                p1_regular("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.")
                 .style(color::GREY_2)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::custom_template_description().width(Length::Fill))
-            .push(Container::new(
-                p1_regular("The Primary set of Keys will always be able to spend. Your Recovery set(s) of Keys will activate only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies. You can define more than one set of Recovery Keys activating at different times.")
-                .style(color::GREY_2)
-                .horizontal_alignment(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
             .push(Space::with_height(50.0))
             .spacing(20),
