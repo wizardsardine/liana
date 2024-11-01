@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::{app::settings, hw::HardwareWalletConfig, signer::Signer};
+use crate::{
+    app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
+};
 
 use liana::{miniscript::bitcoin, signer::HotSigner};
 
@@ -205,4 +207,51 @@ impl SyncStatus {
     pub fn is_synced(&self) -> bool {
         self == &SyncStatus::Synced
     }
+}
+
+/// Get the [`SyncStatus`].
+///
+/// The `last_poll_at_startup` is the timestamp of the last poll
+/// of the blockchain when the application was first loaded, while
+/// `last_poll` refers to the most recent poll.
+///
+/// `sync_progress` is the blockchain synchronization progress as
+/// a number between `0.0` and `1.0`.
+pub fn sync_status(
+    daemon_backend: DaemonBackend,
+    blockheight: i32,
+    sync_progress: f64,
+    last_poll: Option<u32>,
+    last_poll_at_startup: Option<u32>,
+) -> SyncStatus {
+    if sync_progress < 1.0 {
+        return SyncStatus::BlockchainSync(sync_progress);
+    } else if blockheight <= 0 {
+        // If blockheight <= 0, then this is a newly created wallet.
+        // If user imported descriptor and is using a local bitcoind, a rescan
+        // will need to be performed in order to see past transactions and so the
+        // syncing status could be misleading as it could suggest the rescan is
+        // being performed.
+        // For external daemon or if we otherwise don't know the node type,
+        // treat it the same as bitcoind to be sure we don't mislead the user.
+        if daemon_backend == DaemonBackend::RemoteBackend
+            || daemon_backend == DaemonBackend::EmbeddedLianad(Some(NodeType::Electrum))
+        {
+            return SyncStatus::WalletFullScan;
+        }
+    }
+    // For an existing wallet with any local node type, if the first poll has
+    // not completed, then the wallet has not yet caught up with the tip.
+    // An existing wallet with remote backend remains synced so we can ignore it.
+    // If external daemon, we cannot be sure it will return last poll as it
+    // depends on the version, so assume it won't unless the last poll at
+    // startup is set.
+    // TODO: should we check the daemon version at GUI startup?
+    else if last_poll <= last_poll_at_startup
+        && (daemon_backend.is_embedded()
+            || (daemon_backend == DaemonBackend::ExternalLianad && last_poll_at_startup.is_some()))
+    {
+        return SyncStatus::LatestWalletSync;
+    }
+    SyncStatus::Synced
 }
