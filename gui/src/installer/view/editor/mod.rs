@@ -271,11 +271,13 @@ pub fn edit_key_modal<'a>(
             Column::new()
                 .spacing(25)
                 .push(Row::new()
+                    .push(h3(title))
                     .push(Space::with_width(Length::Fill))
-                    .push(button::transparent(Some(icon::cross_icon()), "").on_press(Message::Close)))
+                    .push(button::transparent(Some(icon::cross_icon().size(40)), "").on_press(Message::Close))
+                    .align_items(Alignment::Center)
+                )
                 .push(
                     Column::new()
-                        .push(h3(title))
                         .push(p1_regular("Select the signing device for your key"))
                         .spacing(10)
                         .push(
