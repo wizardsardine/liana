@@ -231,16 +231,12 @@ impl App {
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
             time::every(Duration::from_secs(
-                // Note that for now we pass `None` for `last_poll_at_startup`,
-                // which means the `LatestWalletSync` status will not be returned
-                // unless the last poll is also `None`.
-                // TODO: Store last poll at startup and use it here.
                 match sync_status(
                     self.daemon.backend(),
                     self.cache.blockheight,
                     self.cache.sync_progress,
                     self.cache.last_poll_timestamp,
-                    None,
+                    self.cache.last_poll_at_startup,
                 ) {
                     SyncStatus::BlockchainSync(_) => 5, // Only applies to local backends
                     SyncStatus::WalletFullScan
