@@ -67,10 +67,13 @@ impl Panels {
             home: Home::new(
                 wallet.clone(),
                 &cache.coins,
-                cache.blockheight,
-                cache.sync_progress,
-                cache.last_poll_timestamp,
-                daemon_backend.clone(),
+                sync_status(
+                    daemon_backend.clone(),
+                    cache.blockheight,
+                    cache.sync_progress,
+                    cache.last_poll_timestamp,
+                    cache.last_poll_at_startup,
+                ),
             ),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
