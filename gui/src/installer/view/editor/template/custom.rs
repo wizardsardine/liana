@@ -12,7 +12,6 @@ use liana_ui::{
 
 use crate::installer::{
     message::{self, Message},
-    prompt,
     step::descriptor::editor::key::Key,
     view::{
         editor::{define_descriptor_advanced_settings, defined_key, path, undefined_key},
@@ -97,7 +96,6 @@ pub fn custom_template<'a>(
                 },
                 move || define_descriptor_advanced_settings(use_taproot),
             ))
-            .push(p1_regular(prompt::DEFINE_DESCRIPTOR_PRIMARY_PATH_TOOLTIP).style(color::GREY_2))
             .push(
                 path(
                     color::GREEN,
@@ -137,7 +135,6 @@ pub fn custom_template<'a>(
                 )
                 .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg))),
             )
-            .push(p1_regular(prompt::DEFINE_DESCRIPTOR_RECOVERY_PATH_TOOLTIP).style(color::GREY_2))
             .push(recovery_paths.into_iter().enumerate().fold(
                 Column::new().spacing(20),
                 |col, (i, p)| {
