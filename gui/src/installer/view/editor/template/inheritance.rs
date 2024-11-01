@@ -27,7 +27,7 @@ pub fn inheritance_template_description(progress: (usize, usize)) -> Element<'st
         "Introduction",
         Column::new()
             .align_items(Alignment::Start)
-            .push(h3("Inheritance wallet"))
+            .push(h3("Simple inheritance wallet"))
             .max_width(800.0)
             .push(Container::new(
                 p1_regular("For this Inheritance wallet you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use 2 Hardware Wallets to store them.")

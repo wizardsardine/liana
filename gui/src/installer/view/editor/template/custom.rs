@@ -27,7 +27,7 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
         "Introduction",
         Column::new()
             .align_items(Alignment::Start)
-            .push(h3("Custom wallet"))
+            .push(h3("Build your own"))
             .max_width(800.0)
             .push(Container::new(
                 p1_regular("Through this setup you can choose how many keys you want to use. For security reasons, we suggest you use Hardware Wallets to store them.")

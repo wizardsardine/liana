@@ -32,7 +32,7 @@ pub fn multisig_security_template_description(
         "Introduction",
         Column::new()
             .align_items(Alignment::Start)
-            .push(h3("Multisig security wallet"))
+            .push(h3("Expanding multisig wallet"))
             .max_width(800.0)
             .push(Container::new(
                 p1_regular("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use 3 Hardware Wallets to store them.")
