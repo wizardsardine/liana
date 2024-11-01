@@ -259,7 +259,7 @@ impl Launcher {
                                                                 .width(Length::Fixed(100.0)),
                                                         )
                                                         .push(
-                                                            p1_regular("Create a new wallet")
+                                                            p1_regular("Create a new Liana wallet")
                                                                 .style(color::GREY_3),
                                                         )
                                                         .push(
@@ -283,8 +283,10 @@ impl Launcher {
                                                                 .width(Length::Fixed(100.0)),
                                                         )
                                                         .push(
-                                                            p1_regular("Add an existing wallet")
-                                                                .style(color::GREY_3),
+                                                            p1_regular(
+                                                                "Add an existing Liana wallet",
+                                                            )
+                                                            .style(color::GREY_3),
                                                         )
                                                         .push(
                                                             button::secondary(None, "Select")
