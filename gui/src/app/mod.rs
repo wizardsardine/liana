@@ -284,6 +284,7 @@ impl App {
                 let daemon = self.daemon.clone();
                 let datadir_path = self.cache.datadir_path.clone();
                 let network = self.cache.network;
+                let last_poll_at_startup = self.cache.last_poll_at_startup;
                 Command::perform(
                     async move {
                         // we check every 10 second if the daemon poller is alive
@@ -302,6 +303,7 @@ impl App {
                             rescan_progress: info.rescan_progress,
                             sync_progress: info.sync,
                             last_poll_timestamp: info.last_poll_timestamp,
+                            last_poll_at_startup, // doesn't change
                         })
                     },
                     Message::UpdateCache,

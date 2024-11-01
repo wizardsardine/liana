@@ -407,7 +407,9 @@ pub async fn load_application(
         blockheight: info.block_height,
         coins,
         sync_progress: info.sync,
+        // Both last poll fields start with the same value.
         last_poll_timestamp: info.last_poll_timestamp,
+        last_poll_at_startup: info.last_poll_timestamp,
         ..Default::default()
     };
 
