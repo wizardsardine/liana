@@ -1,6 +1,6 @@
 pub mod template;
 
-use iced::widget::{container, pick_list, slider, Button, Space};
+use iced::widget::{container, pick_list, scrollable, slider, Button, Space};
 use iced::{Alignment, Length};
 
 use liana::miniscript::bitcoin::Network;
@@ -264,6 +264,75 @@ pub fn edit_key_modal<'a>(
     manually_imported_xpub: bool,
     duplicate_master_fg: bool,
 ) -> Element<'a, Message> {
+    let key_len = hws.len() + keys.len();
+    let key_column = Column::new()
+        .spacing(10)
+        .push(Column::with_children(hws).spacing(10))
+        .push(Column::with_children(keys).spacing(10))
+        .push(
+            Button::new(if Some(*hot_signer_fingerprint) == chosen_signer {
+                hw::selected_hot_signer(hot_signer_fingerprint, signer_alias)
+            } else {
+                hw::unselected_hot_signer(hot_signer_fingerprint, signer_alias)
+            })
+            .width(Length::Fill)
+            .on_press(Message::UseHotSigner)
+            .style(theme::Button::Border),
+        )
+        .push(if manually_imported_xpub {
+                card::simple(Column::new()
+                    .spacing(10)
+                    .push(
+                        Row::new()
+                            .align_items(Alignment::Center)
+                            .push(p1_regular("Enter an extended public key:").width(Length::Fill))
+                            .push(image::success_mark_icon().width(Length::Fixed(50.0)))
+                    )
+                    .push(
+                        Row::new()
+                            .push(
+                                form::Form::new_trimmed(
+                                    &example_xpub(network),
+                                    form_xpub, |msg| {
+                                        Message::DefineDescriptor(
+                                            message::DefineDescriptor::KeyModal(
+                                                message::ImportKeyModal::XPubEdited(msg),),)
+                                    })
+                                    .warning(if network == bitcoin::Network::Bitcoin {
+                                        "Please enter correct xpub with origin and without appended derivation path"
+                                    } else {
+                                        "Please enter correct tpub with origin and without appended derivation path"
+                                    })
+                                    .size(text::P1_SIZE)
+                                    .padding(10),
+                            )
+                            .spacing(10)
+                    ))
+                    } else {
+                    Container::new(
+                            Button::new(
+                            Row::new()
+                                .align_items(Alignment::Center)
+                                .spacing(10)
+                                .push(icon::import_icon())
+                                .push(p1_regular("Enter an extended public key"))
+                            )
+                            .padding(20)
+                            .width(Length::Fill)
+                            .on_press(Message::DefineDescriptor(
+                                    message::DefineDescriptor::KeyModal(message::ImportKeyModal::ManuallyImportXpub)
+                            ))
+                            .style(theme::Button::Secondary),
+                    )
+                }
+        )
+            .padding(15)
+    ;
+    let scroll = scrollable(key_column).height(if key_len > 1 {
+        Length::Fill
+    } else {
+        Length::Shrink
+    });
     Column::new()
         .padding(25)
         .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
@@ -278,69 +347,7 @@ pub fn edit_key_modal<'a>(
                         .push(h3(title))
                         .push(p1_regular("Select the signing device for your key"))
                         .spacing(10)
-                        .push(
-                            Column::with_children(hws).spacing(10)
-                        )
-                        .push(
-                            Column::with_children(keys).spacing(10)
-                        )
-                        .push(
-                            Button::new(if Some(*hot_signer_fingerprint) == chosen_signer {
-                                hw::selected_hot_signer(hot_signer_fingerprint, signer_alias)
-                            } else {
-                                hw::unselected_hot_signer(hot_signer_fingerprint, signer_alias)
-                            })
-                            .width(Length::Fill)
-                            .on_press(Message::UseHotSigner)
-                            .style(theme::Button::Border),
-                        )
-                        .push(if manually_imported_xpub {
-                                card::simple(Column::new()
-                                    .spacing(10)
-                                    .push(
-                                        Row::new()
-                                            .align_items(Alignment::Center)
-                                            .push(p1_regular("Enter an extended public key:").width(Length::Fill))
-                                            .push(image::success_mark_icon().width(Length::Fixed(50.0)))
-                                    )
-                                    .push(
-                                        Row::new()
-                                            .push(
-                                                form::Form::new_trimmed(
-                                                    &example_xpub(network),
-                                                    form_xpub, |msg| {
-                                                        Message::DefineDescriptor(
-                                                            message::DefineDescriptor::KeyModal(
-                                                                message::ImportKeyModal::XPubEdited(msg),),)
-                                                    })
-                                                    .warning(if network == bitcoin::Network::Bitcoin {
-                                                        "Please enter correct xpub with origin and without appended derivation path"
-                                                    } else {
-                                                        "Please enter correct tpub with origin and without appended derivation path"
-                                                    })
-                                                    .size(text::P1_SIZE)
-                                                    .padding(10),
-                                            )
-                                            .spacing(10)
-                                    ))
-                                    } else {
-                                    Container::new(
-                                            Button::new(
-                                            Row::new()
-                                                .align_items(Alignment::Center)
-                                                .spacing(10)
-                                                .push(icon::import_icon())
-                                                .push(p1_regular("Enter an extended public key"))
-                                            )
-                                            .padding(20)
-                                            .width(Length::Fill)
-                                            .on_press(Message::DefineDescriptor(
-                                                    message::DefineDescriptor::KeyModal(message::ImportKeyModal::ManuallyImportXpub)
-                                            ))
-                                            .style(theme::Button::Secondary),
-                                    )
-                                }
-                        )
+                        .push(scroll)
                         .width(Length::Fill),
                 )
                 .push_maybe(
