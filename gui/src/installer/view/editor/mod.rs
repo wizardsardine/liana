@@ -97,7 +97,7 @@ pub fn path(
     Container::new(
         Column::new()
             .spacing(10)
-            .push_maybe(title.map(p1_bold))
+            .push_maybe(title.map(|t| Row::new().push(Space::with_width(10)).push(p1_bold(t))))
             .push(defined_sequence(sequence, duplicate_sequence))
             .push(
                 Column::new()
