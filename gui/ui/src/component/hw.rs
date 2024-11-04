@@ -190,26 +190,31 @@ pub fn selected_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     version: Option<V>,
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>>>,
+    warning: Option<&'static str>,
 ) -> Container<'a, T> {
     container(
-        row(vec![
-            column(vec![
-                Row::new()
-                    .spacing(5)
-                    .push_maybe(alias.map(|a| text::p1_bold(a)))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
-                    .into(),
-                Row::new()
-                    .spacing(5)
-                    .push(text::caption(kind.to_string()))
-                    .push_maybe(version.map(|v| text::caption(v.to_string())))
-                    .into(),
-            ])
-            .width(Length::Fill)
-            .into(),
-            image::success_mark_icon().width(Length::Fixed(50.0)).into(),
-        ])
-        .align_items(Alignment::Center),
+        Row::new()
+            .push(
+                column(vec![
+                    Row::new()
+                        .spacing(5)
+                        .push_maybe(alias.map(|a| text::p1_bold(a)))
+                        .push(text::p1_regular(format!("#{}", fingerprint)))
+                        .into(),
+                    Row::new()
+                        .spacing(5)
+                        .push(text::caption(kind.to_string()))
+                        .push_maybe(version.map(|v| text::caption(v.to_string())))
+                        .into(),
+                ])
+                .width(Length::Fill),
+            )
+            .push_maybe(warning.map(|w| {
+                tooltip::Tooltip::new(icon::warning_icon(), w, tooltip::Position::Bottom)
+                    .style(theme::Container::Card(theme::Card::Simple))
+            }))
+            .push(image::success_mark_icon().width(Length::Fixed(50.0)))
+            .align_items(Alignment::Center),
     )
     .padding(10)
 }
