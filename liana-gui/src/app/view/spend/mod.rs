@@ -8,7 +8,7 @@ use iced::{
 
 use liana::{
     descriptors::LianaPolicy,
-    miniscript::bitcoin::{bip32::Fingerprint, Amount, Network},
+    miniscript::bitcoin::{bip32::Fingerprint, Amount, Denomination, Network},
 };
 
 use liana_ui::{
@@ -379,14 +379,14 @@ pub fn recipient_view<'a>(
                             .width(Length::Fixed(110.0)),
                     )
                     .push_maybe(if is_max_selected {
+                        let amount_txt = Amount::from_str_in(&amount.value, Denomination::Bitcoin)
+                            .ok()
+                            .map(amount_as_string)
+                            .unwrap_or(amount.value.clone());
                         Some(
-                            Container::new(
-                                text(amount.value.clone())
-                                    .size(P1_SIZE)
-                                    .style(color::GREY_2),
-                            )
-                            .padding(10)
-                            .width(Length::Fill),
+                            Container::new(text(amount_txt).size(P1_SIZE).style(color::GREY_2))
+                                .padding(10)
+                                .width(Length::Fill),
                         )
                     } else {
                         None
