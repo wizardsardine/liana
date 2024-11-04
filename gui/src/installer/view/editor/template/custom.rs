@@ -115,7 +115,7 @@ pub fn custom_template<'a>(
                                     color::GREEN,
                                     "Primary key",
                                     if use_taproot && !key.is_compatible_taproot {
-                                        Some("Key is not compatible with taproot")
+                                        Some("This device does not support Taproot")
                                     } else {
                                         None
                                     },
@@ -157,7 +157,7 @@ pub fn custom_template<'a>(
                                             color::ORANGE,
                                             "Recovery key",
                                             if use_taproot && !key.is_compatible_taproot {
-                                                Some("Key is not compatible with Taproot")
+                                                Some("This device does not support Taproot")
                                             } else {
                                                 None
                                             },
