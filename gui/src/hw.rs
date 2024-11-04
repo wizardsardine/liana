@@ -246,6 +246,7 @@ impl HardwareWallets {
                                             let fingerprint =
                                                 bitbox2.get_master_fingerprint().await?;
                                             let mut registered = false;
+                                            let version = bitbox2.get_version().await.ok();
                                             if let Some(wallet) = &wallet {
                                                 let desc = wallet.main_descriptor.to_string();
                                                 bitbox2 = bitbox2.with_policy(&desc)?;
@@ -257,7 +258,7 @@ impl HardwareWallets {
                                                         kind: DeviceKind::BitBox02,
                                                         fingerprint,
                                                         device: bitbox2.into(),
-                                                        version: None,
+                                                        version,
                                                         registered: Some(registered),
                                                         alias: None,
                                                     })
@@ -265,7 +266,7 @@ impl HardwareWallets {
                                                     Ok(HardwareWallet::Unsupported {
                                                         id: id.clone(),
                                                         kind: DeviceKind::BitBox02,
-                                                        version: None,
+                                                        version,
                                                         reason: UnsupportedReason::NotPartOfWallet(
                                                             fingerprint,
                                                         ),
@@ -277,7 +278,7 @@ impl HardwareWallets {
                                                     kind: DeviceKind::BitBox02,
                                                     fingerprint,
                                                     device: bitbox2.into(),
-                                                    version: None,
+                                                    version,
                                                     registered: Some(registered),
                                                     alias: None,
                                                 })
@@ -851,7 +852,7 @@ fn ledger_version_supported(version: &Version) -> bool {
 
 // Kind and minimal version of devices supporting tapminiscript.
 // We cannot use a lazy_static HashMap yet, because DeviceKind does not implement Hash.
-const DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT: [(DeviceKind, Option<Version>); 4] = [
+const DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT: [(DeviceKind, Option<Version>); 5] = [
     (
         DeviceKind::Ledger,
         Some(Version {
@@ -869,6 +870,15 @@ const DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT: [(DeviceKind, Option<Version>); 4] 
             major: 6,
             minor: 3,
             patch: 3,
+            prerelease: None,
+        }),
+    ),
+    (
+        DeviceKind::BitBox02,
+        Some(Version {
+            major: 9,
+            minor: 21,
+            patch: 0,
             prerelease: None,
         }),
     ),
