@@ -1360,7 +1360,17 @@ pub fn start_internal_bitcoind<'a>(
                 }
             })
             .spacing(50)
-            .push(Row::new())
+            .push(
+                Row::new().push(
+                    button::secondary(None, "Next")
+                        .width(Length::Fixed(200.0))
+                        .on_press_maybe(if let Some(Ok(_)) = started {
+                            Some(Message::Next)
+                        } else {
+                            None
+                        }),
+                ),
+            )
             .push_maybe(error.map(|e| card::invalid(text(e)))),
         true,
         Some(message::Message::InternalBitcoind(
