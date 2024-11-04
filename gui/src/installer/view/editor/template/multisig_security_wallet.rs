@@ -130,7 +130,7 @@ pub fn multisig_security_template<'a>(
                                     color::GREEN,
                                     format!("Primary key #{}", i + 1),
                                     if use_taproot && !key.is_compatible_taproot {
-                                        Some("Key is not compatible with taproot")
+                                        Some("This device does not support Taproot")
                                     } else {
                                         None
                                     },
@@ -178,7 +178,7 @@ pub fn multisig_security_template<'a>(
                                         color::GREEN,
                                         format!("Primary key #{}", j + 1),
                                         if use_taproot && !key.is_compatible_taproot {
-                                            Some("Key is not compatible with Taproot")
+                                            Some("This device does not support Taproot")
                                         } else {
                                             None
                                         },
@@ -189,7 +189,7 @@ pub fn multisig_security_template<'a>(
                                         color::ORANGE,
                                         "Recovery key".to_string(),
                                         if use_taproot && !key.is_compatible_taproot {
-                                            Some("Key is not compatible with Taproot")
+                                            Some("This device does not support Taproot")
                                         } else {
                                             None
                                         },
