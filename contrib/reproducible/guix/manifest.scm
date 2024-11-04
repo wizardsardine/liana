@@ -1,7 +1,8 @@
 (use-modules
   (gnu packages llvm)
   (gnu packages rust)
-  (guix packages))
+  (guix packages)
+  (guix utils))
 
 ;; Stolen from Bitcoin Core. Some patches are needed to bootstrap a newer rustc.
 (define-syntax-rule (search-our-patches file-name ...)
@@ -128,6 +129,45 @@ FILE-NAME found in ./patches relative to the current file."
         ;; for a precompiled library.
         (patches (search-our-patches "rust-1.70-fix-rustix-build.patch")))))))
 
+(define rust-1.71
+  (let ((base-rust
+          (rust-bootstrapped-package
+           rust-1.70 "1.71.1" "0bj79syjap1kgpg9pc0r4jxc0zkxwm6phjf3digsfafms580vabg")))
+    (package
+      (inherit base-rust)
+      (source
+       (origin
+         (inherit (package-source base-rust))
+         (snippet
+          '(begin
+             (for-each delete-file-recursively
+                       '("src/llvm-project"
+                         "vendor/openssl-src/openssl"
+                         "vendor/tikv-jemalloc-sys/jemalloc"))
+             ;; Adjust rustix to always build with cc.
+             (substitute* '("Cargo.lock"
+                            "src/tools/cargo/Cargo.lock")
+               (("\"errno\",") "\"cc\",\n \"errno\","))
+             ;; Add a dependency on the the 'cc' feature of rustix.
+             (substitute* '("vendor/is-terminal/Cargo.toml"
+                            "vendor/is-terminal-0.4.6/Cargo.toml")
+               (("\"termios\"") "\"termios\", \"cc\""))
+             ;; Also remove the bundled (mostly Windows) libraries.
+             (for-each delete-file
+                       (find-files "vendor" "\\.(a|dll|exe|lib)$"))))))
+      (arguments
+       (substitute-keyword-arguments (package-arguments base-rust)
+         ((#:phases phases)
+          `(modify-phases ,phases
+             (replace 'patch-cargo-checksums
+               (lambda _
+                 (substitute* (cons* "Cargo.lock"
+                                     "src/bootstrap/Cargo.lock"
+                                     (find-files "src/tools" "Cargo.lock"))
+                   (("(checksum = )\".*\"" all name)
+                    (string-append name "\"" ,%cargo-reference-hash "\"")))
+                 (generate-all-checksums "vendor"))))))))))
+
 ;; END of the newer rustc versions copied over from the current Guix master.
 
 (let ((is_gui (getenv "IS_GUI")))
@@ -153,4 +193,4 @@ FILE-NAME found in ./patches relative to the current file."
       ;; resort to backporting the newer rustc releases here. Also have proper Guix packages
       ;; for the two projects.
       (packages->manifest
-        `(,rust-1.70)))))
+        `(,rust-1.71)))))

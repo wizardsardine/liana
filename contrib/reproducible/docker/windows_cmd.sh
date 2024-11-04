@@ -8,7 +8,7 @@ set -xe
 
 # Build the GUI for Windows. The Windows Portable Execution (PE) format contains some timestamps.
 # Instruct ld to set them to 0.
-alias cargo="/liana/rust-1.70.0-x86_64-unknown-linux-gnu/cargo/bin/cargo"
+alias cargo="/liana/rust-1.71.1-x86_64-unknown-linux-gnu/cargo/bin/cargo"
 RUSTFLAGS="-Clink-arg=-Wl,--no-insert-timestamp" \
     cargo rustc \
         --release \

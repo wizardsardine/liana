@@ -12,7 +12,7 @@ community).  See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the currently minim
 supported by `lianad`.
 
 To build the GUI too, you'll unfortunately need a more recent Rust version. The minimum version
-supported by the GUI at the moment is `1.70`. You will most likely have to [manually download
+supported by the GUI at the moment is `1.71.1`. You will most likely have to [manually download
 it](#by-manually-downloading-the-latest-stable-version) or [use `rustup`](#through-rustup) to
 install more recent compilers.
 
@@ -50,11 +50,11 @@ And then you can download the archive corresponding to your system and CPU archi
 signature and use the `cargo` binary from this archive to build Liana. Here is an example for
 `amd64`:
 ```
-$ curl -O https://static.rust-lang.org/dist/rust-1.70.0-x86_64-unknown-linux-gnu.tar.gz
-$ curl -O https://static.rust-lang.org/dist/rust-1.70.0-x86_64-unknown-linux-gnu.tar.gz.asc
-$ gpg --verify rust-1.70.0-x86_64-unknown-linux-gnu.tar.gz.asc
-$ tar -xzf rust-1.70.0-x86_64-unknown-linux-gnu.tar.gz
-$ ./rust-1.70.0-x86_64-unknown-linux-gnu/cargo/bin/cargo build --release
+$ curl -O https://static.rust-lang.org/dist/rust-1.71.1-x86_64-unknown-linux-gnu.tar.gz
+$ curl -O https://static.rust-lang.org/dist/rust-1.71.1-x86_64-unknown-linux-gnu.tar.gz.asc
+$ gpg --verify rust-1.71.1-x86_64-unknown-linux-gnu.tar.gz.asc
+$ tar -xzf rust-1.71.1-x86_64-unknown-linux-gnu.tar.gz
+$ ./rust-1.71.1-x86_64-unknown-linux-gnu/cargo/bin/cargo build --release
 ```
 
 ### Through `rustup`
