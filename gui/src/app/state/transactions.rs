@@ -239,7 +239,7 @@ impl State for TransactionsPanel {
                                 limit += HISTORY_EVENT_PAGE_SIZE;
                                 txs = daemon.list_history_txs(0, last_tx_date, limit).await?;
                             }
-                            txs.sort_by(|a, b| b.time.cmp(&a.time));
+                            txs.sort_by(|a, b| a.compare(b));
                             Ok(txs)
                         },
                         Message::HistoryTransactionsExtension,
@@ -272,7 +272,7 @@ impl State for TransactionsPanel {
                 let mut txs = daemon
                     .list_history_txs(0, now, HISTORY_EVENT_PAGE_SIZE)
                     .await?;
-                txs.sort_by(|a, b| b.time.cmp(&a.time));
+                txs.sort_by(|a, b| a.compare(b));
 
                 let mut pending_txs = daemon.list_pending_txs().await?;
                 pending_txs.extend(txs);

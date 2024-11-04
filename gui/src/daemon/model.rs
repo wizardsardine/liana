@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use liana::descriptors::LianaDescriptor;
@@ -366,6 +367,18 @@ impl HistoryTransaction {
             height,
             time,
             network,
+        }
+    }
+
+    pub fn compare(&self, other: &Self) -> Ordering {
+        match (&self.time, &other.time) {
+            // `None` values come first
+            (None, Some(_)) => Ordering::Less,
+            (Some(_), None) => Ordering::Greater,
+            // Both are `None`, so we consider them equal
+            (None, None) => self.txid.cmp(&other.txid),
+            // Both are `Some`, compare by descending time, then by txid
+            (Some(time1), Some(time2)) => time2.cmp(time1).then_with(|| self.txid.cmp(&other.txid)),
         }
     }
 
