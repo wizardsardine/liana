@@ -265,6 +265,12 @@ pub fn edit_key_modal<'a>(
     duplicate_master_fg: bool,
 ) -> Element<'a, Message> {
     let key_len = hws.len() + keys.len();
+    let scrollable_enable = match (chosen_signer.is_some(), manually_imported_xpub, key_len) {
+        (true, _, _) => true,
+        (_, true, l) => l > 0,
+        (false, _, 0) => false,
+        _ => false,
+    };
     let key_column = Column::new()
         .spacing(10)
         .push(Column::with_children(hws).spacing(10))
@@ -328,7 +334,7 @@ pub fn edit_key_modal<'a>(
         )
             .padding(15)
     ;
-    let scroll = scrollable(key_column).height(if key_len > 1 {
+    let scroll = scrollable(key_column).height(if scrollable_enable {
         Length::Fill
     } else {
         Length::Shrink
