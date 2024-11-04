@@ -27,10 +27,10 @@ pub fn inheritance_template_description(progress: (usize, usize)) -> Element<'st
         "Introduction",
         Column::new()
             .align_items(Alignment::Start)
-            .push(h3("Inheritance wallet"))
+            .push(h3("Simple inheritance wallet"))
             .max_width(800.0)
             .push(Container::new(
-                p1_regular("For this Inheritance wallet you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use 2 Hardware Wallets to store them.")
+                p1_regular("For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key.")
                 .style(color::GREY_2)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
@@ -51,12 +51,12 @@ pub fn inheritance_template_description(progress: (usize, usize)) -> Element<'st
             ))
             .push(Container::new(
                 p1_regular("You will always be able to spend using your Primary Key.
-After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds. Give it to your heir(s) in order to be able to collect their inheritance.")
+After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds.")
                 .style(color::GREY_2)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::inheritance_template_description().width(Length::Fill))
-            .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Select").width(Length::Fixed(200.0)).on_press(Message::Next)))
+            .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
             .push(Space::with_height(50.0))
             .spacing(20),
         true,

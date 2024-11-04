@@ -32,10 +32,10 @@ pub fn multisig_security_template_description(
         "Introduction",
         Column::new()
             .align_items(Alignment::Start)
-            .push(h3("Multisig security wallet"))
+            .push(h3("Expanding multisig wallet"))
             .max_width(800.0)
             .push(Container::new(
-                p1_regular("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use 3 Hardware Wallets to store them.")
+                p1_regular("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.")
                 .style(color::GREY_2)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
@@ -61,12 +61,12 @@ pub fn multisig_security_template_description(
                         .push(p1_regular("Recovery key").bold())
             ))
             .push(Container::new(
-                p1_regular("The Primary Keys will compose a 2-of-2 multisig which will be your always-active spending policy. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):")
+                p1_regular("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):")
                 .style(color::GREY_2)
                 .horizontal_alignment(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::multisig_security_template_description().width(Length::Fill))
-            .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Select").width(Length::Fixed(200.0)).on_press(Message::Next)))
+            .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
             .push(Space::with_height(50.0))
             .spacing(20),
         true,
