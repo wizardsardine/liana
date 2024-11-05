@@ -32,7 +32,6 @@ pub fn home_view<'a>(
     unconfirmed_balance: &'a bitcoin::Amount,
     remaining_sequence: &Option<u32>,
     expiring_coins: &[bitcoin::OutPoint],
-    pending_events: &'a [HistoryTransaction],
     events: &'a [HistoryTransaction],
     is_last_page: bool,
     processing: bool,
@@ -148,21 +147,11 @@ pub fn home_view<'a>(
             Column::new()
                 .spacing(10)
                 .push(h4_bold("Last payments"))
-                .push(pending_events.iter().enumerate().fold(
-                    Column::new().spacing(10),
-                    |col, (i, event)| {
-                        if !event.is_send_to_self() {
-                            col.push(event_list_view(i, event))
-                        } else {
-                            col
-                        }
-                    },
-                ))
                 .push(events.iter().enumerate().fold(
                     Column::new().spacing(10),
                     |col, (i, event)| {
                         if !event.is_send_to_self() {
-                            col.push(event_list_view(i + pending_events.len(), event))
+                            col.push(event_list_view(i, event))
                         } else {
                             col
                         }

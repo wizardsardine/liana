@@ -37,7 +37,6 @@ use crate::daemon::{
 
 pub struct TransactionsPanel {
     wallet: Arc<Wallet>,
-    pending_txs: Vec<HistoryTransaction>,
     txs: Vec<HistoryTransaction>,
     labels_edited: LabelsEdited,
     selected_tx: Option<HistoryTransaction>,
@@ -53,7 +52,6 @@ impl TransactionsPanel {
             wallet,
             selected_tx: None,
             txs: Vec::new(),
-            pending_txs: Vec::new(),
             labels_edited: LabelsEdited::default(),
             warning: None,
             create_rbf_modal: None,
@@ -86,7 +84,6 @@ impl State for TransactionsPanel {
         } else {
             view::transactions::transactions_view(
                 cache,
-                &self.pending_txs,
                 &self.txs,
                 self.warning.as_ref(),
                 self.is_last_page,
@@ -108,7 +105,6 @@ impl State for TransactionsPanel {
                     self.warning = None;
                     self.txs = txs;
                     self.is_last_page = (self.txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
-                    self.txs.sort_by(|a, b| b.time.cmp(&a.time));
                 }
             },
             Message::HistoryTransactionsExtension(res) => match res {
@@ -117,21 +113,22 @@ impl State for TransactionsPanel {
                     self.processing = false;
                     self.warning = None;
                     self.is_last_page = (txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
-                    for tx in txs {
-                        if let Some(t) = self.txs.iter_mut().find(|other| other.tx == tx.tx) {
-                            t.labels = tx.labels;
+                    if let Some(tx) = txs.first() {
+                        if let Some(position) = self.txs.iter().position(|tx2| tx2.txid == tx.txid)
+                        {
+                            let len = self.txs.len();
+                            for tx in txs {
+                                if !self.txs[position..len]
+                                    .iter()
+                                    .any(|tx2| tx2.txid == tx.txid)
+                                {
+                                    self.txs.push(tx);
+                                }
+                            }
                         } else {
-                            self.txs.push(tx);
+                            self.txs.extend(txs);
                         }
                     }
-                    self.txs.sort_by(|a, b| b.time.cmp(&a.time));
-                }
-            },
-            Message::PendingTransactions(res) => match res {
-                Err(e) => self.warning = Some(e),
-                Ok(txs) => {
-                    self.warning = None;
-                    self.pending_txs = txs;
                 }
             },
             Message::RbfModal(tx, is_cancel, res) => match res {
@@ -147,11 +144,7 @@ impl State for TransactionsPanel {
                 return self.reload(daemon, self.wallet.clone());
             }
             Message::View(view::Message::Select(i)) => {
-                self.selected_tx = if i < self.pending_txs.len() {
-                    self.pending_txs.get(i).cloned()
-                } else {
-                    self.txs.get(i - self.pending_txs.len()).cloned()
-                };
+                self.selected_tx = self.txs.get(i).cloned();
                 // Clear modal if it's for a different tx.
                 if let Some(modal) = &self.create_rbf_modal {
                     if Some(modal.tx.tx.txid())
@@ -199,15 +192,11 @@ impl State for TransactionsPanel {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    self.pending_txs
-                        .iter_mut()
-                        .map(|tx| tx as &mut dyn Labelled)
-                        .chain(self.txs.iter_mut().map(|tx| tx as &mut dyn Labelled))
-                        .chain(
-                            self.selected_tx
-                                .iter_mut()
-                                .map(|tx| tx as &mut dyn Labelled),
-                        ),
+                    self.txs.iter_mut().map(|tx| tx as &mut dyn Labelled).chain(
+                        self.selected_tx
+                            .iter_mut()
+                            .map(|tx| tx as &mut dyn Labelled),
+                    ),
                 ) {
                     Ok(cmd) => {
                         return cmd;
@@ -250,6 +239,7 @@ impl State for TransactionsPanel {
                                 limit += HISTORY_EVENT_PAGE_SIZE;
                                 txs = daemon.list_history_txs(0, last_tx_date, limit).await?;
                             }
+                            txs.sort_by(|a, b| a.compare(b));
                             Ok(txs)
                         },
                         Message::HistoryTransactionsExtension,
@@ -271,29 +261,25 @@ impl State for TransactionsPanel {
         _wallet: Arc<Wallet>,
     ) -> Command<Message> {
         self.selected_tx = None;
-        let daemon1 = daemon.clone();
-        let daemon2 = daemon.clone();
         let now: u32 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs()
             .try_into()
             .unwrap();
-        Command::batch(vec![
-            Command::perform(
-                async move { daemon2.list_pending_txs().await.map_err(|e| e.into()) },
-                Message::PendingTransactions,
-            ),
-            Command::perform(
-                async move {
-                    daemon1
-                        .list_history_txs(0, now, HISTORY_EVENT_PAGE_SIZE)
-                        .await
-                        .map_err(|e| e.into())
-                },
-                Message::HistoryTransactions,
-            ),
-        ])
+        Command::batch(vec![Command::perform(
+            async move {
+                let mut txs = daemon
+                    .list_history_txs(0, now, HISTORY_EVENT_PAGE_SIZE)
+                    .await?;
+                txs.sort_by(|a, b| a.compare(b));
+
+                let mut pending_txs = daemon.list_pending_txs().await?;
+                pending_txs.extend(txs);
+                Ok(pending_txs)
+            },
+            Message::HistoryTransactions,
+        )])
     }
 }
 
