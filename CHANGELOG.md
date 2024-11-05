@@ -1,5 +1,57 @@
 # Liana daemon and GUI release notes
 
+## 8.0
+
+This release introduces support for Taproot descriptors on Bitbox02 devices and
+a new install process including set-up templates and examples.
+The way the wallet displays its syncing state was reworked.
+
+### Breaking changes
+
+Running Liana v8 on an existing installation will migrate its database.
+Once migrated the database won't be compatible with previous versions of Liana.
+This means you won't be able to open with Liana v7 (or below) any wallet opened or created with Liana v8.
+
+The new Minimum Supported Rust Version of the GUI software is now 1.71.1. This change was necessary to include
+the new Bitbox02 rust client version.
+
+### Features
+
+#### Liana daemon / library
+
+A new field `last_poll_timestamp` was added to the wallet table in order to track the last time the wallet
+was updated by the poller.
+
+#### Liana GUI
+
+- The new Bitcoind 28.0 version is now downloaded by the GUI.
+- Bitbox02 devices can now be part of a Taproot descriptor set-up if their firmware version is greater than or equal to 9.21.0.
+- The install process now includes examples of setups with fixed templates and explanatory descriptions to guide the user.
+- UI/UX of the GUI buttons was reworked to have a clear distinction between a primary and a secondary button.
+- The way the wallet displays its syncing state was reworked to follow these expected outcomes:
+
+| ****Backend type****                | ****Wallet type****                                 | ****Expected outcome****                                                                                                             |
+| ----------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+|   Liana Connect                     |   Creating a new wallet / Adding an existing wallet |   Show “Syncing…” with balance blinking until the first poll (we check the wallet height becomes positive)                           |
+|   Liana Connect                     |   Loading a wallet already present in datadir       |   No syncing behavior expected                                                                                                       |
+|   Local bitcoind (managed or not)   |   Creating a new wallet / Adding an existing wallet |   IBD progress bar (if needed). No syncing behavior expected.                                                                        |
+|   Local bitcoind (managed or not)   |   Loading a wallet already present in datadir       |   No blockchain syncing progress bar, jump directly to the wallet.  Show "Syncing blockchain (X%) until blockchain synced. After that, show "Checking for new transactions..." until the first poll.   |
+|   Electrum                          |   Creating a new wallet / Adding an existing wallet |   Show “Syncing…” with balance blinking until the first poll                                                                         |
+|   Electrum                          |   Loading a wallet already present in datadir       |   Show "Syncing blockchain (X%) until blockchain synced. After that, show "Checking for new transactions..." until the first poll.   |
+|   External daemon                   |   Creating a new wallet / Adding an existing wallet |   IBD progress bar (if needed). No syncing behavior expected                                                                         |
+|   External daemon                   |   Loading a wallet already present in datadir       |   If last poll timestamp was already set once, will show "Checking for new transactions..."                                          |
+
+
+### Fixes
+
+#### Liana daemon / library
+
+#### Liana GUI
+
+- Hardware wallets with the app not open had a confusing warning message about outdated version.
+- Button for the pagination of past transactions was sometimes missing because of a wrong calculation of the page size.
+- Resend authentication token request did not work for already created account.
+
 ## 7.0
 
 This release introduces support for Liana Connect as an optional backend for the Liana GUI
