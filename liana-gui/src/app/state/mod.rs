@@ -313,8 +313,11 @@ impl State for Home {
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
     ) -> Command<Message> {
-        // Wait for wallet to finish syncing before reloading data.
-        if !self.sync_status.is_synced() {
+        // If the wallet is syncing, we expect it to finish soon and so better to wait for
+        // updated data before reloading. Besides, if the wallet is syncing, the DB may be
+        // locked if the poller is running and we wouldn't be able to reload data until
+        // syncing completes anyway.
+        if self.sync_status.wallet_is_syncing() {
             return Command::none();
         }
         self.selected_event = None;
