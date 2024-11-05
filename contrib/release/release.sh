@@ -47,7 +47,7 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
     cp "$BUILD_DIR/release/lianad" "$BUILD_DIR/release/liana-cli" "$BUILD_DIR/gui/release/liana-gui" ../README.md ./package/usr/bin/
     DIRNAME="liana_$VERSION-1_amd64"
     mv ./package "$DIRNAME"
-    dpkg-deb --build "$DIRNAME"
+    dpkg-deb -Zxz --build "$DIRNAME"
     mv "$DIRNAME.deb" "$RELEASE_DIR"
 )
 
