@@ -1558,11 +1558,19 @@ pub fn hw_list_view(
             alias,
             ..
         } => {
+            let not_tapminiscript = device_must_support_taproot
+                && !is_compatible_with_tapminiscript(kind, version.as_ref());
             if chosen && processing {
                 hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
-            } else if device_must_support_taproot
-                && !is_compatible_with_tapminiscript(kind, version.as_ref())
-            {
+            } else if selected {
+                hw::selected_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref(), {
+                    if not_tapminiscript {
+                        Some("Device firmware version does not support taproot miniscript")
+                    } else {
+                        None
+                    }
+                })
+            } else if not_tapminiscript {
                 hw::warning_hardware_wallet(
                     kind,
                     version.as_ref(),
@@ -1570,8 +1578,6 @@ pub fn hw_list_view(
                     alias.as_ref(),
                     "Device firmware version does not support taproot miniscript",
                 )
-            } else if selected {
-                hw::selected_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             } else {
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             }
@@ -1627,6 +1633,13 @@ pub fn key_list_view<'a>(
             version,
             fingerprint,
             Some(name),
+            if device_must_support_taproot
+                && kind.map(|kind| is_compatible_with_tapminiscript(kind, version)) == Some(false)
+            {
+                Some("Device firmware version does not support taproot miniscript")
+            } else {
+                None
+            },
         )
     } else if device_must_support_taproot
         && kind.map(|kind| is_compatible_with_tapminiscript(kind, version)) == Some(false)
