@@ -20,8 +20,7 @@ supported for use in Taproot descriptors starting with version 2.2.1.
 ## [BitBox02](https://github.com/digitalbitbox/bitbox02-firmware)
 
 Version 9.15.0 of the firmware is supported for use in P2WSH descriptors.
-
-Support for use in Taproot descriptors is not yet available in the firmware.
+Version 9.21.0 of the firmware is supported for use in Taproot descriptors.
 
 ## [Coldcard](https://github.com/Coldcard/firmware)
 
