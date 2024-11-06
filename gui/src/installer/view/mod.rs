@@ -770,6 +770,9 @@ fn display_policy(
     keys_aliases: &HashMap<Fingerprint, String>,
 ) -> Element<'_, Message> {
     let (primary_threshold, primary_keys) = policy.primary_path().thresh_origins();
+    // The iteration over an HashMap keys can have a different order at each refresh
+    let mut primary_keys: Vec<Fingerprint> = primary_keys.into_keys().collect();
+    primary_keys.sort();
     let recovery_paths = policy.recovery_paths();
     let mut col = Column::new().push(
         Row::new()
@@ -789,7 +792,7 @@ fn display_policy(
             })
             .push(
                 primary_keys
-                    .keys()
+                    .iter()
                     .enumerate()
                     .fold(Row::new().spacing(5), |row, (i, k)| {
                         let content = if let Some(alias) = keys_aliases.get(k) {
@@ -817,6 +820,9 @@ fn display_policy(
     );
     for (i, (sequence, recovery_path)) in recovery_paths.iter().enumerate() {
         let (threshold, recovery_keys) = recovery_path.thresh_origins();
+        // The iteration over an HashMap keys can have a different order at each refresh
+        let mut recovery_keys: Vec<Fingerprint> = recovery_keys.into_keys().collect();
+        recovery_keys.sort();
         col = col.push(
             Row::new()
                 .spacing(5)
@@ -833,7 +839,7 @@ fn display_policy(
                 } else {
                     text("by")
                 })
-                .push(recovery_keys.keys().enumerate().fold(
+                .push(recovery_keys.iter().enumerate().fold(
                     Row::new().spacing(5),
                     |row, (i, k)| {
                         let content = if let Some(alias) = keys_aliases.get(k) {
