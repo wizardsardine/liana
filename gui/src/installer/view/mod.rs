@@ -1438,7 +1438,7 @@ pub fn defined_threshold<'a>(
                     "{} out of {} key{}",
                     threshold.0,
                     threshold.1,
-                    if threshold.0 > 1 { "s" } else { "" },
+                    if threshold.1 > 1 { "s" } else { "" },
                 )))
                 .push(icon::pencil_icon()),
         )
@@ -1461,7 +1461,7 @@ pub fn defined_threshold<'a>(
                     "{} out of {} key{}",
                     threshold.0,
                     threshold.1,
-                    if threshold.0 > 1 { "s" } else { "" },
+                    if threshold.1 > 1 { "s" } else { "" },
                 ))),
         )
         .padding(10)
