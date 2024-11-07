@@ -60,6 +60,7 @@ pub fn import_wallet_or_descriptor<'a>(
     for (i, wallet) in wallets.into_iter().enumerate() {
         col_wallets = col_wallets.push(
             Button::new(h5_regular(wallet).width(Length::Fill))
+                .style(theme::Button::Secondary)
                 .padding(10)
                 .on_press(Message::Select(i)),
         );
