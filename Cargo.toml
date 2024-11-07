@@ -1,7 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-  "liana",
-  "liana-gui",
-  "liana-ui",
+    "fuzz",
+    "liana",
+    "liana-gui",
+    "liana-ui",
 ]
+default-members = ["liana", "liana-gui", "liana-ui"]
+
+[patch.crates-io]
+iced_style = { git = "https://github.com/edouardparis/iced", branch = "patch-0.12.3"}
+iced_winit = { git = "https://github.com/edouardparis/iced", branch = "patch-0.12.3"}
+iced_futures = { git = "https://github.com/edouardparis/iced", branch = "patch-0.12.3"}

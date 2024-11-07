@@ -156,7 +156,7 @@ impl HotSigner {
 
     /// The BIP39 mnemonics from which the master key of this signer is derived.
     pub fn words(&self) -> [&'static str; 12] {
-        let words: Vec<&'static str> = self.mnemonic.word_iter().collect();
+        let words: Vec<&'static str> = self.mnemonic.words().collect();
         words.try_into().expect("Always 12 words")
     }
 

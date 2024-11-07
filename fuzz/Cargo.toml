@@ -14,7 +14,7 @@ secp256k1 = { version = "0.28", features = ["global-context-less-secure"] }
 
 
 [dependencies.liana]
-path = ".."
+path = "../liana"
 
 [[bin]]
 name = "descriptor_parse"

@@ -83,12 +83,12 @@ build  deps  examples  incremental  liana-cli  liana-cli.d  lianad  lianad.d  li
 
 To build the whole wallet including the GUI, you'll need to install its [build and runtime
 dependencies](https://github.com/wizardsardine/liana/tree/master/gui#dependencies) first. Then run
-the same command as above within the [`gui/`](../gui/) folder present at the root of the repository:
+the same command as above within the [`gui/`](../liana-gui/) folder present at the root of the repository:
 ```
-$ cd gui/
+$ cd liana-gui/
 $ cargo build --release
 ```
-The `liana-gui` binary will be in the `target/` folder:
+The `liana-gui` binary will be in the root `target/` folder:
 ```
 $ ls target/release/
 build  deps  examples  incremental  liana-gui  liana-gui.d  libliana_gui.d  libliana_gui.rlib
