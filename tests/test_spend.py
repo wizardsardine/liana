@@ -136,7 +136,7 @@ def test_coin_marked_spent(lianad, bitcoind):
     res = lianad.rpc.createspend(destinations, [outpoint], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
-    change_amount = 848 if USE_TAPROOT else 829
+    change_amount = 858 if USE_TAPROOT else 839
     assert len(psbt.o) == 1
     assert len(res["warnings"]) == 1
     assert (
@@ -155,7 +155,7 @@ def test_coin_marked_spent(lianad, bitcoind):
     res = lianad.rpc.createspend(destinations, [outpoint_3], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
-    change_amount = 836 if USE_TAPROOT else 817
+    change_amount = 846 if USE_TAPROOT else 827
     assert len(psbt.o) == 1
     assert len(res["warnings"]) == 1
     assert (
@@ -623,10 +623,6 @@ def test_tr_multisig_2_of_2_feerate_is_met(feerate, lianad_multisig_2_of_2, bitc
     spend_weight = res["weight"]
     assert spend_weight == 646
 
-    # Due to https://github.com/wizardsardine/liana/pull/1323 we currently
-    # add 10 sats if feerate is 1.
-    extra = 10 if feerate == 1 else 0
-
     # Note that due to https://github.com/wizardsardine/liana/issues/1132
     # we do not round up vbytes before multiplying by feerate.
-    assert spend_fee == math.ceil((646.0 / 4.0) * feerate) + extra
+    assert spend_fee == math.ceil((646.0 / 4.0) * feerate)

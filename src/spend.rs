@@ -12,7 +12,6 @@ use bdk_coin_select::{
     metrics::LowestFee, Candidate, ChangePolicy, CoinSelector, DrainWeights, FeeRate, Replace,
     Target, TargetFee, TargetOutputs, TXIN_BASE_WEIGHT,
 };
-use log::info;
 use miniscript::bitcoin::{
     self,
     absolute::{Height, LockTime},
@@ -385,21 +384,9 @@ fn select_coins_for_spend(
         long_term_feerate,
     );
 
-    // FIXME: This is a quick change to avoid going below the min relay fee:
-    // If the required feerate is 1 sat/vb and this is not a replacement tx,
-    // use the replaced_fee parameter to ensure we pay at least 10 sats more
-    // than the size of the tx.
-    // E.g. if vsize = 186, the fee will be pay >= 196 sats.
-    let replaced_fee_modified = if replaced_fee.is_none() && feerate_vb_u32 == 1 {
-        info!("setting replaced fee to 10");
-        Some(10)
-    } else {
-        replaced_fee
-    };
-
     // Finally, run the coin selection algorithm. We use an opportunistic BnB and if it couldn't
     // find any solution we fall back to selecting coins by descending value.
-    let replace = replaced_fee_modified.map(Replace::new);
+    let replace = replaced_fee.map(Replace::new);
     let target_fee = TargetFee {
         rate: feerate,
         replace,
