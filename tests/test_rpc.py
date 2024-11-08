@@ -24,7 +24,7 @@ from test_framework.utils import (
 def test_getinfo(lianad):
     res = lianad.rpc.getinfo()
     assert "timestamp" in res.keys()
-    assert res["version"] == "8.0.0-rc1"
+    assert res["version"] == "8.0.0"
     assert res["network"] == "regtest"
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == 101)
     res = lianad.rpc.getinfo()
