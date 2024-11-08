@@ -1,3 +1,5 @@
+import math
+
 from fixtures import *
 from test_framework.serializations import PSBT, uint256_from_str
 from test_framework.utils import (
@@ -583,3 +585,48 @@ def test_sweep(lianad, bitcoind):
         c["amount"] for c in lianad.rpc.listcoins(["unconfirmed", "confirmed"])["coins"]
     )
     assert balance == int((0.2 + 0.1 + 0.3) * COIN)
+
+
+@pytest.mark.parametrize("feerate", [1, 2])
+@pytest.mark.skipif(not USE_TAPROOT, reason="This tests a Taproot-specific bug.")
+def test_tr_multisig_2_of_2_feerate_is_met(feerate, lianad_multisig_2_of_2, bitcoind):
+    """
+    A regression test for https://github.com/wizardsardine/liana/issues/1371.
+
+    Test that a 2-of-2 Taproot primary path spend pays a high enough fee for
+    the target feerate.
+
+    See https://mempool.space/signet/tx/a63c4a69be71fcba0e16f742a2697401fbc47ad7dff10a790b8f961004aa0ab4
+    for an example of such a transaction.
+    """
+    # Get a coin.
+    deposit_txid = bitcoind.rpc.sendtoaddress(
+        lianad_multisig_2_of_2.rpc.getnewaddress()["address"], 0.001
+    )
+    bitcoind.generate_block(1, wait_for_mempool=deposit_txid)
+    wait_for(
+        lambda: len(lianad_multisig_2_of_2.rpc.listcoins(["confirmed"])["coins"]) == 1
+    )
+    coin = lianad_multisig_2_of_2.rpc.listcoins(["confirmed"])["coins"][0]
+
+    # Refresh the coin at the given feerate.
+    res = lianad_multisig_2_of_2.rpc.createspend({}, [coin["outpoint"]], feerate)
+    spend_psbt = PSBT.from_base64(res["psbt"])
+    signed_psbt = lianad_multisig_2_of_2.signer.sign_psbt(spend_psbt, [0, 1])
+    lianad_multisig_2_of_2.rpc.updatespend(signed_psbt.to_base64())
+    spend_txid = signed_psbt.tx.txid().hex()
+    lianad_multisig_2_of_2.rpc.broadcastspend(spend_txid)
+
+    # Check the tx fee and weight in mempool are as expected.
+    res = bitcoind.rpc.getmempoolentry(spend_txid)
+    spend_fee = res["fees"]["base"] * COIN
+    spend_weight = res["weight"]
+    assert spend_weight == 646
+
+    # Due to https://github.com/wizardsardine/liana/pull/1323 we currently
+    # add 10 sats if feerate is 1.
+    extra = 10 if feerate == 1 else 0
+
+    # Note that due to https://github.com/wizardsardine/liana/issues/1132
+    # we do not round up vbytes before multiplying by feerate.
+    assert spend_fee == math.ceil((646.0 / 4.0) * feerate) + extra
