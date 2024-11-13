@@ -92,7 +92,7 @@ pub fn pencil_icon() -> Text<'static> {
 }
 
 pub fn collapse_icon() -> Text<'static> {
-    bootstrap_icon('\u{F284}')
+    bootstrap_icon('\u{F285}')
 }
 
 pub fn collapsed_icon() -> Text<'static> {
