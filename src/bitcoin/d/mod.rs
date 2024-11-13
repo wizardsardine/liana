@@ -1256,13 +1256,13 @@ impl SyncProgress {
         }
     }
 
-    /// Get the verification progress, roundup up to to three decimal places. This will not return
+    /// Get the verification progress, roundup up to four decimal places. This will not return
     /// 1.0 (ie 100% verification progress) until the verification is complete.
     pub fn rounded_up_progress(&self) -> f64 {
         let progress = roundup_progress(self.percentage);
         if progress == 1.0 && self.blocks != self.headers {
             // Don't return a 100% progress until we are actually done syncing.
-            0.999
+            0.9999
         } else {
             progress
         }
@@ -1552,5 +1552,44 @@ impl From<&&Json> for MempoolEntryFees {
             ancestor,
             descendant,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rounded_up_progress() {
+        assert_eq!(
+            SyncProgress::new(0.6, 1_000, 1_000).rounded_up_progress(),
+            0.6
+        );
+        assert_eq!(
+            SyncProgress::new(0.67891, 1_000, 1_000).rounded_up_progress(),
+            0.6789
+        );
+        assert_eq!(
+            SyncProgress::new(0.99991, 1_000, 1_000).rounded_up_progress(),
+            1.0
+        );
+        assert_eq!(
+            SyncProgress::new(1.2, 1_000, 1_000).rounded_up_progress(),
+            1.0
+        );
+        assert_eq!(
+            SyncProgress::new(1.0, 1_000, 999).rounded_up_progress(),
+            0.9999
+        );
+        // approximatively year 2198
+        assert_eq!(
+            SyncProgress::new(1.0, 9999999, 9999998).rounded_up_progress(),
+            0.9999
+        );
+        //bug or corrupted bitcond (blocks > headers)
+        assert_eq!(
+            SyncProgress::new(1.0, 999998, 999999).rounded_up_progress(),
+            0.9999
+        );
     }
 }
