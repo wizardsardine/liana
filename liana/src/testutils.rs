@@ -544,7 +544,7 @@ impl DummyLiana {
     pub fn _new(
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
-        rpc_server: bool,
+        #[cfg(all(unix, feature = "daemon"))] rpc_server: bool,
     ) -> DummyLiana {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
@@ -579,7 +579,7 @@ impl DummyLiana {
             config,
             Some(bitcoin_interface),
             Some(database),
-            #[cfg(feature = "daemon")]
+            #[cfg(all(unix, feature = "daemon"))]
             rpc_server,
         )
         .unwrap();
@@ -591,11 +591,16 @@ impl DummyLiana {
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
     ) -> DummyLiana {
-        Self::_new(bitcoin_interface, database, false)
+        Self::_new(
+            bitcoin_interface,
+            database,
+            #[cfg(all(unix, feature = "daemon"))]
+            false,
+        )
     }
 
     /// Creates a new DummyLiana interface which also spins up an RPC server.
-    #[cfg(feature = "daemon")]
+    #[cfg(all(unix, feature = "daemon"))]
     pub fn new_server(
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,

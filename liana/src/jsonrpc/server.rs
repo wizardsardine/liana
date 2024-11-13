@@ -215,7 +215,10 @@ mod tests {
         testutils::*,
     };
 
-    use std::{env, fs, io::Write, process};
+    use std::{env, fs, process};
+
+    #[cfg(not(windows))]
+    use std::io::Write;
 
     fn read_one_command(socket_path: &path::Path) -> thread::JoinHandle<Option<Request>> {
         let listener = rpcserver_setup(socket_path).unwrap();
