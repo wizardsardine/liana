@@ -29,25 +29,18 @@ cd ..
 # Finally build the projects using the toolchain just created.
 alias cargo="/liana/rust-1.71.1-x86_64-unknown-linux-gnu/cargo/bin/cargo"
 
-PATH="$PATH:$PWD/osxcross/target/bin/" \
-    CC=o64-clang \
-    CXX=o64-clang++ \
-    RUSTFLAGS="$RUSTFLAGS -Clinker=o64-clang" \
-    cargo rustc \
+for package_name in "liana" "liana-gui"; do
+    PATH="$PATH:$PWD/osxcross/target/bin/" \
+        CC=o64-clang \
+        CXX=o64-clang++ \
+        RUSTFLAGS="$RUSTFLAGS -Clinker=o64-clang" \
+        cargo rustc \
+        -p "$package_name" \
         --target x86_64-apple-darwin \
         --release
-
-cd gui/
-PATH="$PATH:$PWD/../osxcross/target/bin/" \
-    CC=o64-clang \
-    CXX=o64-clang++ \
-    RUSTFLAGS="$RUSTFLAGS -Clinker=o64-clang" \
-    cargo rustc \
-        --target x86_64-apple-darwin \
-        --release
-cd ..
+done
 
 # Avoid having to get root on the host to remove the target dir.
-chmod -R a+rw target/ gui/target
+chmod -R a+rw target/
 
 set +xe

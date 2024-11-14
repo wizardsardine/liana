@@ -170,27 +170,21 @@ FILE-NAME found in ./patches relative to the current file."
 
 ;; END of the newer rustc versions copied over from the current Guix master.
 
-(let ((is_gui (getenv "IS_GUI")))
-  (concatenate-manifests
-    (list
-      (specifications->manifest
-        (append
-          (list
-            "rust:cargo"
-            "coreutils-minimal"
-            "patchelf"
-            "gcc-toolchain@10.3.0")
-            ;; Additional dependencies for building the GUI.
-            (if
-              (string=? is_gui "1")
-              (list "pkg-config"
-                    "eudev"
-                    "fontconfig")
-              '())))
-      ;; The GUI's MSRV is 1.70 and the daemon's 1.63. We just use the same rustc version for
-      ;; both.
-      ;; FIXME: be able to compile against a specified glibc (or musl) instead of having to
-      ;; resort to backporting the newer rustc releases here. Also have proper Guix packages
-      ;; for the two projects.
-      (packages->manifest
-        `(,rust-1.71)))))
+(concatenate-manifests
+  (list
+    (specifications->manifest
+      (list
+        "rust:cargo"
+        "coreutils-minimal"
+        "patchelf"
+        "gcc-toolchain@10.3.0"
+        "pkg-config"
+        "eudev"
+        "fontconfig"))
+    ;; The GUI's MSRV is 1.70 and the daemon's 1.63. We just use the same rustc version for
+    ;; both.
+    ;; FIXME: be able to compile against a specified glibc (or musl) instead of having to
+    ;; resort to backporting the newer rustc releases here. Also have proper Guix packages
+    ;; for the two projects.
+    (packages->manifest
+      `(,rust-1.71))))
