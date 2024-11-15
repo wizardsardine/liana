@@ -6,6 +6,7 @@ use miniscript::{
         secp256k1,
     },
     descriptor,
+    miniscript::satisfy::Placeholder,
     plan::{Assets, CanSign},
     psbt::{PsbtInputExt, PsbtOutputExt},
     translate_hash_clone, ForEachKey, TranslatePk, Translator,
@@ -259,10 +260,11 @@ impl LianaDescriptor {
             };
 
             // Unfortunately rust-miniscript satisfaction size estimation is inconsistent. For
-            // Taproot it considers the whole witness (including the control block size + the
-            // script size) but under P2WSH it does not consider the witscript! Therefore we
-            // manually add the size of the witscript, but only under P2WSH by the mean of the
-            // `explicit_script()` helper.
+            // Taproot it considers the whole witness (except the control block size + the
+            // script size), while under P2WSH it does not consider the witscript! Therefore we
+            // manually add the size of the witscript under P2WSH by means of the
+            // `explicit_script()` helper, which gives an error for Taproot, and for Taproot
+            // we add the sizes of the control block and script.
             let der_desc = self
                 .receive_desc
                 .0
@@ -270,15 +272,23 @@ impl LianaDescriptor {
                 .expect("unhardened index");
             let witscript_size = der_desc
                 .explicit_script()
-                .map(|s| varint_len(s.len()) + s.len())
-                .unwrap_or(0);
+                .map(|s| varint_len(s.len()) + s.len());
 
             // Finally, compute the satisfaction template for the primary path and get its size.
-            der_desc
-                .plan(&assets)
-                .expect("Always satisfiable")
-                .witness_size()
-                + witscript_size
+            let plan = der_desc.plan(&assets).expect("Always satisfiable");
+            plan.witness_size()
+                + witscript_size.unwrap_or_else(|_| {
+                    plan.witness_template()
+                        .iter()
+                        .map(|elem| match elem {
+                            // We need to calculate the size manually before calculating the varint length.
+                            // See https://docs.rs/miniscript/11.0.0/src/miniscript/util.rs.html#35-36.
+                            Placeholder::TapScript(s) => varint_len(s.len()),
+                            Placeholder::TapControlBlock(cb) => varint_len(cb.serialize().len()),
+                            _ => 0,
+                        })
+                        .sum()
+                })
         } else {
             // We add one to account for the witness stack size, as the values above give the
             // difference in size for a satisfied input that was *already* in a transaction
@@ -1185,6 +1195,31 @@ mod tests {
             desc.spender_input_size(false),
             txin_boilerplate + wu_to_vb(wit_size(&stack)),
         );
+    }
+
+    #[test]
+    fn taproot_multisig_descriptor_sat_weight() {
+        // See https://mempool.space/signet/tx/84f09bddfe0f036d0390edf655636ad6092c3ab8f09b2bb1503caa393463f241
+        // for an example spend from this descriptor.
+        let desc = LianaDescriptor::from_str("tr(tpubD6NzVbkrYhZ4WUdbVsXDYBCXS8EPSYG1cAN9g4uP6uLQHMHXRvHSFkQBXy7MBeAvV8PDVJJ4o3AwYMKJHp45ci2g69UCAKteVSAJ61CnGEV/<0;1>/*,{and_v(v:pk([9e1c1983/48'/1'/0'/2']tpubDEWCLCMncbStq4BLXkQUAPqzzrh2tQUgYeQPt4NrB5D7gRraMyGbRqzPTmQGvqfdaFsXDVGSQBRgfXuNjDyfU626pxSjpQZszFNY6CzogxK/<2;3>/*),older(65535)),multi_a(2,[9e1c1983/48'/1'/0'/2']tpubDEWCLCMncbStq4BLXkQUAPqzzrh2tQUgYeQPt4NrB5D7gRraMyGbRqzPTmQGvqfdaFsXDVGSQBRgfXuNjDyfU626pxSjpQZszFNY6CzogxK/<0;1>/*,[3b1913e1/48'/1'/0'/2']tpubDFeZ2ezf4VUuTnjdhxJ1DKhLa2t6vzXZNz8NnEgeT2PN4pPqTCTeWUcaxKHPJcf1C8WzkLA71zSjDwuo4zqu4kkiL91ZUmJydC8f1gx89wM/<0;1>/*)})#ee0r4tw5").unwrap();
+        // varint_len(num witness elements) = 1
+        // varint_len(signature) + signature = 1 + 64
+        // varint_len(script) + script = 1 + 70
+        // varint_len(control block) + control block = 1 + 65
+        assert_eq!(
+            desc.max_sat_weight(true),
+            1 + (1 + 64) + (1 + 64) + (1 + 70) + (1 + 65)
+        );
+
+        // See https://mempool.space/signet/tx/63095cf6b5a57e5f3a7f0af0e22c8234cc4a4c1531c3236b00bd2a009f70e801
+        // for an example of a recovery transaction from the following descriptor:
+        // tr(tpubD6NzVbkrYhZ4XcC4HC7TDGrhraymFg9xo31hVtc5sh3dtsXbB5ZXewwMXi6HSmR2PyLeG8VwD3anqavSJVtXYJAAJcaEGCZdkBnnWTmhz3X/<0;1>/*,{and_v(v:pk([9e1c1983/48'/1'/0'/2']tpubDEWCLCMncbStq4BLXkQUAPqzzrh2tQUgYeQPt4NrB5D7gRraMyGbRqzPTmQGvqfdaFsXDVGSQBRgfXuNjDyfU626pxSjpQZszFNY6CzogxK/<2;3>/*),older(1)),multi_a(2,[88d8b4b9/48'/1'/0'/2']tpubDENzCJsHPDzX1EAP9eUPumw2hFUyjuUtBK8CWNPkudZTQ1mchX1hiAwog3fd6BKbq1rdZbLW3Q1d79AcvQCCMdehuSZ8GcShDcHaYTosCRa/<0;1>/*,[9e1c1983/48'/1'/0'/2']tpubDEWCLCMncbStq4BLXkQUAPqzzrh2tQUgYeQPt4NrB5D7gRraMyGbRqzPTmQGvqfdaFsXDVGSQBRgfXuNjDyfU626pxSjpQZszFNY6CzogxK/<0;1>/*)})#pepfj0gd
+        // Recovery path would use 1 + (1+64) + (1+36) + (1+65), but `max_sat_weight` considers all
+        // spending paths when passing `false`. So it currently gives the same as passing `true`.
+        // This `true` branch assumes a Schnorr signature of size 1+64+1, where the final +1 is for the sighash suffix:
+        // https://docs.rs/miniscript/11.0.0/src/miniscript/descriptor/tr.rs.html#254-301
+        // So we need to add 2, 1 for each signature.
+        assert_eq!(desc.max_sat_weight(false), desc.max_sat_weight(true) + 2);
     }
 
     #[test]

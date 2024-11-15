@@ -216,10 +216,10 @@ def multi_expression(thresh, keys, is_taproot):
     return exp + ")"
 
 
-def multisig_desc(multi_signer, csv_value, is_taproot):
+def multisig_desc(multi_signer, csv_value, is_taproot, prim_thresh, recov_thresh):
     prim_multi, recov_multi = (
-        multi_expression(3, multi_signer.prim_hds, is_taproot),
-        multi_expression(2, multi_signer.recov_hds[csv_value], is_taproot),
+        multi_expression(prim_thresh, multi_signer.prim_hds, is_taproot),
+        multi_expression(recov_thresh, multi_signer.recov_hds[csv_value], is_taproot),
     )
     if is_taproot:
         all_xpubs = [
@@ -239,9 +239,34 @@ def lianad_multisig(bitcoin_backend, directory):
     # A 3-of-4 that degrades into a 2-of-5 after 10 blocks
     csv_value = 10
     signer = MultiSigner(4, {csv_value: 5}, is_taproot=USE_TAPROOT)
-    main_desc = Descriptor.from_str(
-        multisig_desc(signer, csv_value, is_taproot=USE_TAPROOT)
+    main_desc = Descriptor.from_str(multisig_desc(signer, csv_value, USE_TAPROOT, 3, 2))
+
+    lianad = Lianad(
+        datadir,
+        signer,
+        main_desc,
+        bitcoin_backend,
     )
+
+    try:
+        lianad.start()
+        yield lianad
+    except Exception:
+        lianad.cleanup()
+        raise
+
+    lianad.cleanup()
+
+
+@pytest.fixture
+def lianad_multisig_2_of_2(bitcoin_backend, directory):
+    datadir = os.path.join(directory, "lianad")
+    os.makedirs(datadir, exist_ok=True)
+
+    # A 2-of-2 that degrades into a 1-of-1 after 10 blocks
+    csv_value = 10
+    signer = MultiSigner(2, {csv_value: 1}, is_taproot=USE_TAPROOT)
+    main_desc = Descriptor.from_str(multisig_desc(signer, csv_value, USE_TAPROOT, 2, 1))
 
     lianad = Lianad(
         datadir,
