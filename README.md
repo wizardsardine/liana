@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://wizardsardine.com/liana" target="_blank">
-    <img src="gui/ui/static/logos/liana-app-icon.svg" width="140px" />
+    <img src="liana-ui/static/logos/liana-app-icon.svg" width="140px" />
   </a>
 
 # Liana
