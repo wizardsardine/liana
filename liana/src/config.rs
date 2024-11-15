@@ -318,7 +318,9 @@ mod tests {
         toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
 
         // A valid, round-tripping, config
-        let toml_str = r#"
+        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
+        {
+            let toml_str = r#"
             data_dir = '/home/wizardsardine/custom/folder/'
             daemon = false
             log_level = 'TRACE'
@@ -332,13 +334,16 @@ mod tests {
             cookie_path = '/home/user/.bitcoin/.cookie'
             addr = '127.0.0.1:8332'
             "#.trim_start().replace("            ", "");
-        let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
-        let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
-        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
-        assert_eq!(toml_str, serialized);
+            let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
+            let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
+            assert_eq!(toml_str, serialized);
+        }
 
         // A valid, round-tripping, config for a Taproot descriptor.
-        let toml_str = r#"
+
+        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
+        {
+            let toml_str = r#"
             data_dir = '/home/wizardsardine/custom/folder/'
             daemon = false
             log_level = 'TRACE'
@@ -352,13 +357,15 @@ mod tests {
             cookie_path = '/home/user/.bitcoin/.cookie'
             addr = '127.0.0.1:8332'
             "#.trim_start().replace("            ", "");
-        let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
-        let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
-        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
-        assert_eq!(toml_str, serialized);
+            let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
+            let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
+            assert_eq!(toml_str, serialized);
+        }
 
         // A valid, round-tripping, config with `auth` instead of `cookie_path`
-        let toml_str = r#"
+        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
+        {
+            let toml_str = r#"
             data_dir = '/home/wizardsardine/custom/folder/'
             daemon = false
             log_level = 'TRACE'
@@ -372,10 +379,10 @@ mod tests {
             auth = 'my_user:my_password'
             addr = '127.0.0.1:8332'
             "#.trim_start().replace("            ", "");
-        let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
-        let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
-        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
-        assert_eq!(toml_str, serialized);
+            let parsed = toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
+            let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
+            assert_eq!(toml_str, serialized);
+        }
 
         // Invalid desc checksum
         let toml_str = r#"

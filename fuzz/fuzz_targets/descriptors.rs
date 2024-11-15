@@ -88,7 +88,7 @@ struct DummyPsbt(pub Option<Psbt>);
 impl<'a> Arbitrary<'a> for DummyPsbt {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         let psbt_bytes = <&[u8]>::arbitrary(u)?;
-        Ok(Self(Psbt::deserialize(&psbt_bytes).ok()))
+        Ok(Self(Psbt::deserialize(psbt_bytes).ok()))
     }
 }
 
@@ -150,15 +150,18 @@ fuzz_target!(|config: Config| {
     desc.receive_descriptor();
     desc.change_descriptor();
     desc.first_timelock_value();
-    desc.max_sat_weight();
-    desc.max_sat_vbytes();
-    desc.spender_input_size();
+    desc.max_sat_weight(true);
+    desc.max_sat_vbytes(true);
+    desc.spender_input_size(true);
+    desc.max_sat_weight(false);
+    desc.max_sat_vbytes(false);
+    desc.spender_input_size(false);
 
     // Exercise the various methods of derived descriptors. None should crash.
     let der_index = (config.der_index as u32).into();
     let der_descs = [
-        desc.receive_descriptor().derive(der_index, &SECP256K1),
-        desc.change_descriptor().derive(der_index, &SECP256K1),
+        desc.receive_descriptor().derive(der_index, SECP256K1),
+        desc.change_descriptor().derive(der_index, SECP256K1),
     ];
     let mut psbt_in = Default::default();
     let mut psbt_out = Default::default();
@@ -171,7 +174,7 @@ fuzz_target!(|config: Config| {
 
     // Exercise the methods gathering information from a PSBT. TODO: get more useful PSBTs.
     if let Some(mut psbt) = config.dummy_psbt.0 {
-        desc.change_indexes(&psbt, &SECP256K1);
+        desc.change_indexes(&psbt, SECP256K1);
 
         // Get the spend info without populating the PSBT at all.
         let _ = desc.partial_spend_info(&psbt);

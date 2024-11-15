@@ -57,14 +57,14 @@ The daemon contains the core logic of the wallet. It is both a library (a Rust c
 command interface and a standalone UNIX daemon that exposes a JSONRPC API through a Unix Domain
 Socket.
 
-The code for the daemon can be found in the [`src/`](src/) folder at the root of this repository.
+The code for the daemon can be found in the [`liana`](liana) folder.
 
 #### Liana GUI
 
 The GUI contains both an installer that guides a user through setting up a Liana wallet, as well as
 a graphical interface to the daemon using the [`iced`](https://github.com/iced-rs/iced/) library.
 
-The code for the GUI can be found in the [`gui/src/`](gui/src) folder.
+The code for the GUI can be found in the [`liana-gui`](liana-gui) folder.
 
 
 ## Security

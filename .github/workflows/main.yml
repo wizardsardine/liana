@@ -15,56 +15,13 @@ jobs:
       - name: rustfmt
         run: cargo fmt -- --check
       - name: clippy
-        run: cargo clippy --all-features --all-targets -- -D warnings
-
-  unit_tests:
-    needs: linter
-    strategy:
-      matrix:
-        toolchain:
-          - 1.63
-          - nightly
-        os:
-          - ubuntu-latest
-          - macOS-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout source code
-        uses: actions/checkout@v2
-      - name: Install Rust ${{ matrix.toolchain }} toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.toolchain }}
-          override: true
-          profile: minimal
-      - name: Test on Rust ${{ matrix.toolchain }} (only Windows)
-        if: matrix.os == 'windows-latest'
-        run: cargo test --verbose --no-default-features
-      - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
-        if: matrix.os != 'windows-latest'
-        run: cargo test --verbose --color always -- --nocapture
-
-  linter_gui:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v1
-      - uses: actions-rs/toolchain@v1
-        with:
-            toolchain: 1.78.0
-            components: rustfmt, clippy
-            override: true
-      - name: rustfmt
-        run: cd gui && cargo fmt -- --check
-      - name: clippy
         run: |
           sudo apt-get update &&
           sudo apt-get install --allow-downgrades libudev-dev pkg-config libvulkan-dev &&
-          cd gui &&
           cargo clippy --all-features --all-targets -- -D warnings
 
-  unit_tests_gui:
-    needs: linter_gui
+  unit_tests:
+    needs: linter
     strategy:
       matrix:
         toolchain:
@@ -86,14 +43,13 @@ jobs:
           profile: minimal
       - name: Test on Rust ${{ matrix.toolchain }} (only Windows)
         if: matrix.os == 'windows-latest'
-        run: cd gui && cargo test --verbose --no-default-features
+        run: cargo test --verbose --no-default-features
       - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
         if: matrix.os == 'macOS-latest'
-        run: cd gui && cargo test --verbose --color always -- --nocapture
+        run: cargo test --verbose --color always -- --nocapture
       - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update &&
           sudo apt-get install libudev-dev libfontconfig1-dev &&
-          cd gui &&
           cargo test --verbose --color always -- --nocapture

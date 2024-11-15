@@ -5,7 +5,7 @@ pub mod config;
 mod daemonize;
 mod database;
 pub mod descriptors;
-#[cfg(feature = "daemon")]
+#[cfg(all(unix, feature = "daemon"))]
 mod jsonrpc;
 pub mod random;
 pub mod signer;
@@ -22,7 +22,7 @@ pub use crate::bitcoin::{
     d::{BitcoinD, BitcoindError, WalletError},
     electrum::{Electrum, ElectrumError},
 };
-#[cfg(feature = "daemon")]
+#[cfg(all(unix, feature = "daemon"))]
 use crate::jsonrpc::server::{rpcserver_loop, rpcserver_setup};
 use crate::{
     bitcoin::{poller, BitcoinInterface},
@@ -435,7 +435,7 @@ impl DaemonHandle {
         config: Config,
         bitcoin: Option<impl BitcoinInterface + 'static>,
         db: Option<impl DatabaseInterface + 'static>,
-        #[cfg(feature = "daemon")] with_rpc_server: bool,
+        #[cfg(all(unix, feature = "daemon"))] with_rpc_server: bool,
     ) -> Result<Self, StartupError> {
         #[cfg(not(test))]
         setup_panic_hook();
@@ -525,7 +525,7 @@ impl DaemonHandle {
         // structure or through the JSONRPC server we may setup below.
         let control = DaemonControl::new(config, bit, poller_sender.clone(), db, secp);
 
-        #[cfg(feature = "daemon")]
+        #[cfg(all(unix, feature = "daemon"))]
         if with_rpc_server {
             let rpcserver_shutdown = sync::Arc::from(sync::atomic::AtomicBool::from(false));
             let rpcserver_handle = thread::Builder::new()
@@ -564,13 +564,13 @@ impl DaemonHandle {
     /// and SQLite).
     pub fn start_default(
         config: Config,
-        #[cfg(feature = "daemon")] with_rpc_server: bool,
+        #[cfg(all(unix, feature = "daemon"))] with_rpc_server: bool,
     ) -> Result<DaemonHandle, StartupError> {
         Self::start(
             config,
             Option::<BitcoinD>::None,
             Option::<SqliteDb>::None,
-            #[cfg(feature = "daemon")]
+            #[cfg(all(unix, feature = "daemon"))]
             with_rpc_server,
         )
     }
@@ -869,7 +869,7 @@ mod tests {
             move || {
                 let handle = DaemonHandle::start_default(
                     config,
-                    #[cfg(feature = "daemon")]
+                    #[cfg(all(unix, feature = "daemon"))]
                     false,
                 )
                 .unwrap();
@@ -894,7 +894,7 @@ mod tests {
             move || {
                 let handle = DaemonHandle::start_default(
                     config,
-                    #[cfg(feature = "daemon")]
+                    #[cfg(all(unix, feature = "daemon"))]
                     false,
                 )
                 .unwrap();

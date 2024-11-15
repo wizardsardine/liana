@@ -37,7 +37,7 @@ fuzz_target!(|data: &[u8]| {
     // parse nested fragments. Until they fix it, rule out the most trivial recursion overflow the
     // fuzzer can generate: too deep wrappers.
     // FIXME: this shouldn't be necessary when upgrading to the next rust-miniscript version.
-    if too_deep_wrappers(&desc_str) {
+    if too_deep_wrappers(desc_str) {
         return;
     }
 
@@ -57,15 +57,18 @@ fuzz_target!(|data: &[u8]| {
     desc.receive_descriptor();
     desc.change_descriptor();
     desc.first_timelock_value();
-    desc.max_sat_weight();
-    desc.max_sat_vbytes();
-    desc.spender_input_size();
+    desc.max_sat_weight(true);
+    desc.max_sat_vbytes(true);
+    desc.spender_input_size(true);
+    desc.max_sat_weight(false);
+    desc.max_sat_vbytes(false);
+    desc.spender_input_size(false);
 
     // Exercise the various methods of derived descriptors. None should crash.
     let der_index = 42.into();
     let der_descs = [
-        desc.receive_descriptor().derive(der_index, &SECP256K1),
-        desc.change_descriptor().derive(der_index, &SECP256K1),
+        desc.receive_descriptor().derive(der_index, SECP256K1),
+        desc.change_descriptor().derive(der_index, SECP256K1),
     ];
     let mut psbt_in = Default::default();
     let mut psbt_out = Default::default();

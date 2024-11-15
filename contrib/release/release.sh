@@ -38,13 +38,13 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
 (
     cd "$BUILD_DIR"
     create_dir "$LINUX_DIR_NAME"
-    cp "$BUILD_DIR/release/lianad" "$BUILD_DIR/release/liana-cli" "$BUILD_DIR/gui/release/liana-gui" ../README.md "$LINUX_DIR_NAME"
+    cp "$BUILD_DIR/release/lianad" "$BUILD_DIR/release/liana-cli" "$BUILD_DIR/release/liana-gui" ../README.md "$LINUX_DIR_NAME"
     tar -czf "$LINUX_ARCHIVE" "$LINUX_DIR_NAME"
     cp "$LINUX_ARCHIVE" "$RELEASE_DIR"
 
     unzip ../contrib/release/debian/package.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./package/DEBIAN/control
-    cp "$BUILD_DIR/release/lianad" "$BUILD_DIR/release/liana-cli" "$BUILD_DIR/gui/release/liana-gui" ../README.md ./package/usr/bin/
+    cp "$BUILD_DIR/release/lianad" "$BUILD_DIR/release/liana-cli" "$BUILD_DIR/release/liana-gui" ../README.md ./package/usr/bin/
     DIRNAME="liana_$VERSION-1_amd64"
     mv ./package "$DIRNAME"
     dpkg-deb -Zxz --build "$DIRNAME"
@@ -55,23 +55,23 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
 (
     cd "$BUILD_DIR"
     create_dir "$WINDOWS_DIR_NAME"
-    cp "$BUILD_DIR/gui/x86_64-pc-windows-gnu/release/liana-gui.exe" ../README.md "$WINDOWS_DIR_NAME"
+    cp "$BUILD_DIR/x86_64-pc-windows-gnu/release/liana-gui.exe" ../README.md "$WINDOWS_DIR_NAME"
     zip -r "$WINDOWS_ARCHIVE" "$WINDOWS_DIR_NAME"
     cp "$WINDOWS_ARCHIVE" "$RELEASE_DIR"
-    cp "$BUILD_DIR/gui/x86_64-pc-windows-gnu/release/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX.exe"
+    cp "$BUILD_DIR/x86_64-pc-windows-gnu/release/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX.exe"
 )
 
 # Create the MacOS archive and a zipped application bundle of liana-gui.
 (
     cd "$BUILD_DIR"
     create_dir "$MAC_DIR_NAME"
-    cp "$BUILD_DIR/x86_64-apple-darwin/release/lianad" "$BUILD_DIR/x86_64-apple-darwin/release/liana-cli" "$BUILD_DIR/gui/x86_64-apple-darwin/release/liana-gui" ../README.md "$MAC_DIR_NAME"
+    cp "$BUILD_DIR/x86_64-apple-darwin/release/lianad" "$BUILD_DIR/x86_64-apple-darwin/release/liana-cli" "$BUILD_DIR/x86_64-apple-darwin/release/liana-gui" ../README.md "$MAC_DIR_NAME"
     tar -czf "$MAC_ARCHIVE" "$MAC_DIR_NAME"
     cp "$MAC_ARCHIVE" "$RELEASE_DIR"
 
     unzip ../contrib/release/macos/Liana.app.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
-    cp "$BUILD_DIR/gui/x86_64-apple-darwin/release/liana-gui" ./Liana.app/Contents/MacOS/Liana
+    cp "$BUILD_DIR/x86_64-apple-darwin/release/liana-gui" ./Liana.app/Contents/MacOS/Liana
     zip -ry Liana-noncodesigned.zip Liana.app
     cp ./Liana-noncodesigned.zip "$RELEASE_DIR/"
 

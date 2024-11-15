@@ -11,6 +11,7 @@ set -xe
 alias cargo="/liana/rust-1.71.1-x86_64-unknown-linux-gnu/cargo/bin/cargo"
 RUSTFLAGS="-Clink-arg=-Wl,--no-insert-timestamp" \
     cargo rustc \
+        -p liana-gui \
         --release \
         --target x86_64-pc-windows-gnu
 

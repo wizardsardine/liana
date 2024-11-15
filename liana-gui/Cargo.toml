@@ -1,5 +1,5 @@
 [package]
-name = "liana_gui"
+name = "liana-gui"
 version = "8.0.0"
 readme = "README.md"
 description = "Liana GUI"
@@ -17,7 +17,7 @@ path = "src/main.rs"
 async-trait = "0.1"
 async-hwi = { version = "0.0.24" }
 liana = { git = "https://github.com/wizardsardine/liana", branch = "master", default-features = false, features = ["nonblocking_shutdown"] }
-liana_ui = { path = "ui" }
+liana-ui = { path = "../liana-ui" }
 backtrace = "0.3"
 hex = "0.4.3"
 
@@ -51,11 +51,6 @@ reqwest = { version = "0.11", default-features=false, features = ["json", "rustl
 rust-ini = "0.19.0"
 
 
-[patch.crates-io]
-iced_style = { git = "https://github.com/edouardparis/iced", branch = "patch-0.12.3"}
-iced_winit = { git = "https://github.com/edouardparis/iced", branch = "patch-0.12.3"}
-iced_futures = { git = "https://github.com/edouardparis/iced", branch = "patch-0.12.3"}
-
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features=false, features = ["bzip2", "deflate"] }
 
@@ -65,6 +60,3 @@ flate2 = { version = "1.0", default-features=false }
 
 [dev-dependencies]
 tokio = {version = "1.9.0", features = ["rt", "macros"]}
-
-[workspace]
-members = ["ui"]
