@@ -1,7 +1,7 @@
 # Start using Liana
 
 This documents how to install and start using Liana. If you just want to quickly try Liana on
-Bitcoin Signet, check out [this guide](doc/TRY.md) instead.
+Bitcoin Signet, check out [this guide](TRY.md) instead.
 
 
 ### Installing the software
@@ -36,7 +36,7 @@ an older glibc. This is the case most notably of Ubuntu 20 (Focal) and below, an
 (Bullseye) and below.
 
 The simplest workaround is to simply build the project yourself. Fear not, it's really trivial if
-you are a Linux user. Instructions [here](doc/BUILD.md).
+you are a Linux user. Instructions [here](BUILD.md).
 
 See [this issue](https://github.com/wizardsardine/liana/issues/414) for details.
 
@@ -189,7 +189,7 @@ on how to recover a Liana wallet backup with Bitcoin Core 25.0 and above](RECOVE
 ### Reproducible builds
 
 Releases of Liana are reproducibly built. Linux binaries are also bootstrappable. See
-[`contrib/reproducible`](contrib/reproducible) for details and instructions if you want to check a
+[`contrib/reproducible`](../contrib/reproducible) for details and instructions if you want to check a
 release.
 
 All commits on master are merge commits signed using a set of trusted GPG keys. We use the
