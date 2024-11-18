@@ -39,7 +39,7 @@ pub fn unconfirmed_amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a,
 //
 
 // Format a BTC amount as a string for display.
-fn amount_as_string(a: Amount) -> String {
+pub fn amount_as_string(a: Amount) -> String {
     let amount = a.to_btc().to_string();
 
     // Reformat the integer portion of the amount with space separation.
