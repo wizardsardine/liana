@@ -2822,33 +2822,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "liana"
-version = "8.0.0"
-source = "git+https://github.com/wizardsardine/liana?branch=master#f3206f9dfadbedb7a46aaa85996c11172c875588"
-dependencies = [
- "backtrace",
- "bdk_coin_select",
- "bdk_electrum",
- "bip39",
- "dirs 5.0.1",
- "fern",
- "getrandom",
- "jsonrpc 0.17.0",
- "log",
- "miniscript",
- "rdrand",
- "rusqlite",
- "serde",
- "serde_json",
- "toml",
-]
-
-[[package]]
 name = "liana-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
- "liana 8.0.0",
+ "liana",
  "libfuzzer-sys",
  "secp256k1 0.28.2",
 ]
@@ -2870,7 +2848,7 @@ dependencies = [
  "iced",
  "iced_runtime",
  "jsonrpc 0.12.1",
- "liana 8.0.0 (git+https://github.com/wizardsardine/liana?branch=master)",
+ "liana",
  "liana-ui",
  "log",
  "reqwest",

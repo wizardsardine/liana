@@ -334,7 +334,7 @@ impl Installer {
 
 pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
     // Start Daemon to check correctness of installation
-    match liana::DaemonHandle::start_default(cfg) {
+    match liana::DaemonHandle::start_default(cfg, false) {
         Ok(daemon) => daemon
             .stop()
             .map_err(|e| Error::Unexpected(format!("Failed to stop Liana daemon: {}", e))),
@@ -685,8 +685,6 @@ pub async fn extract_local_gui_settings(ctx: &Context) -> Settings {
 
 pub fn extract_daemon_config(ctx: &Context) -> Config {
     Config {
-        #[cfg(unix)]
-        daemon: false,
         log_level: log::LevelFilter::Info,
         main_descriptor: ctx
             .descriptor
