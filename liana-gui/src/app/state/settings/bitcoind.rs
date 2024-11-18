@@ -336,11 +336,12 @@ impl BitcoindSettings {
                 let rpc_auth = match self.selected_auth_type {
                     RpcAuthType::CookieFile => {
                         let new_path = PathBuf::from_str(&self.rpc_auth_vals.cookie_path.value);
-                        if let Ok(path) = new_path {
-                            self.rpc_auth_vals.cookie_path.valid = true;
-                            Some(BitcoindRpcAuth::CookieFile(path))
-                        } else {
-                            None
+                        match new_path {
+                            Ok(path) => {
+                                self.rpc_auth_vals.cookie_path.valid = true;
+                                Some(BitcoindRpcAuth::CookieFile(path))
+                            }
+                            Err(_) => None,
                         }
                     }
                     RpcAuthType::UserPass => Some(BitcoindRpcAuth::UserPass(

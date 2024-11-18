@@ -4,11 +4,12 @@ use std::{
     collections::HashMap, error::Error, io::Write, path::PathBuf, process, str::FromStr, sync::Arc,
 };
 
+#[cfg(target_os = "linux")]
+use iced::window::settings::PlatformSpecific;
 use iced::{
     event::{self, Event},
     executor, keyboard,
     widget::{focus_next, focus_previous},
-    window::settings::PlatformSpecific,
     Application, Command, Settings, Size, Subscription,
 };
 use tracing::{error, info};

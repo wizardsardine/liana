@@ -400,7 +400,7 @@ impl LianaDescriptor {
     /// This analysis assumes that:
     /// - The PSBT only contains input that spends Liana coins. Otherwise the analysis will be off.
     /// - The PSBT is consistent across inputs (the sequence is the same across inputs, the
-    /// signatures are either absent or present for all inputs, ..)
+    ///   signatures are either absent or present for all inputs, ..)
     /// - The provided signatures are valid for this script.
     pub fn partial_spend_info(&self, psbt: &Psbt) -> Result<PartialSpendInfo, LianaDescError> {
         // Check the PSBT isn't empty or malformed.
@@ -524,9 +524,9 @@ impl LianaDescriptor {
     /// Prune the BIP32 derivations in all the PSBT inputs for all the spending paths but the
     /// latest available one. For instance:
     /// - If there is two recovery paths, and the PSBT's first input nSequence isn't set to unlock
-    /// any of them, prune all but the primary path's bip32 derivations.
+    ///   any of them, prune all but the primary path's bip32 derivations.
     /// - If there is two recovery paths, and the PSBT's first input nSequence is set to unlock the
-    /// first one, prune all but the first recovery path's bip32 derivations.
+    ///     first one, prune all but the first recovery path's bip32 derivations.
     /// - Etc..
     pub fn prune_bip32_derivs_last_avail(&self, psbt: Psbt) -> Result<Psbt, LianaDescError> {
         let spend_info = self.partial_spend_info(&psbt)?;

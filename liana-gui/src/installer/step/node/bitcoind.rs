@@ -452,11 +452,12 @@ impl DefineBitcoind {
         let addr = std::net::SocketAddr::from_str(&self.address.value);
         let rpc_auth = match self.selected_auth_type {
             RpcAuthType::CookieFile => {
-                if let Ok(path) = PathBuf::from_str(&self.rpc_auth_vals.cookie_path.value) {
-                    Some(BitcoindRpcAuth::CookieFile(path))
-                } else {
-                    self.rpc_auth_vals.cookie_path.valid = false;
-                    None
+                match PathBuf::from_str(&self.rpc_auth_vals.cookie_path.value) {
+                    Ok(path) => Some(BitcoindRpcAuth::CookieFile(path)),
+                    Err(_) => {
+                        self.rpc_auth_vals.cookie_path.valid = false;
+                        None
+                    }
                 }
             }
             RpcAuthType::UserPass => Some(BitcoindRpcAuth::UserPass(

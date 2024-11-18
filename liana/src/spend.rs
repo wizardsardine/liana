@@ -416,7 +416,7 @@ fn select_coins_for_spend(
         i if i >= 100 => 10_000,
         _ => 100_000,
     };
-    #[cfg(debug)]
+    #[cfg(debug_assertions)]
     let bnb_rounds = bnb_rounds / 1_000;
     if let Err(e) = selector.run_bnb(lowest_fee_change_cond, bnb_rounds) {
         log::debug!(
@@ -508,9 +508,9 @@ fn derived_desc(
 ///
 /// The approach follows that taken by Bitcoin Core:
 /// - most of the time, the value returned will be the current
-/// block height, but will randomly be up to 100 blocks earlier.
+///   block height, but will randomly be up to 100 blocks earlier.
 /// - if the current tip is more than [`MAX_ANTI_FEE_SNIPING_TIP_AGE_SECS`]
-/// seconds old, a locktime value of 0 will be returned.
+///   seconds old, a locktime value of 0 will be returned.
 pub fn anti_fee_sniping_locktime(
     now: Duration,
     tip_height: u32,
@@ -613,22 +613,22 @@ pub struct CreateSpendRes {
 ///
 /// More about the parameters:
 /// * `main_descriptor`: the multipath Liana descriptor, used to derive the addresses of the
-/// candidate coins.
+///   candidate coins.
 /// * `secp`: necessary to derive data from the descriptor.
 /// * `tx_getter`: an interface to get the wallet transaction for the prevouts of the transaction.
-/// Wouldn't be necessary if we only spent Taproot coins.
+///   Wouldn't be necessary if we only spent Taproot coins.
 /// * `destinations`: a list of addresses and amounts, one per recipient i.e. per output in the
-/// transaction created. If empty all the `candidate_coins` get spent and a single change output
-/// is created to the provided `change_addr`. Can be used to sweep all, or some, coins from the
-/// wallet.
+///   transaction created. If empty all the `candidate_coins` get spent and a single change output
+///   is created to the provided `change_addr`. Can be used to sweep all, or some, coins from the
+///   wallet.
 /// * `candidate_coins`: a list of coins to consider including as input of the transaction. If
-/// `destinations` is empty, they will all be included as inputs of the transaction. Otherwise, a
-/// coin selection algorithm will be run to spend the most efficient subset of them to meet the
-/// `destinations` requirements.
+///   `destinations` is empty, they will all be included as inputs of the transaction. Otherwise, a
+///   coin selection algorithm will be run to spend the most efficient subset of them to meet the
+///   `destinations` requirements.
 /// * `fees`: the target feerate (in sats/vb) and, if necessary, minimum absolute fee for this tx.
 /// * `change_addr`: the address to use for a change output if we need to create one. Can be set to
-/// an external address (if combined with an empty list of `destinations` it's useful to sweep some
-/// or all coins of a wallet to an external address).
+///   an external address (if combined with an empty list of `destinations` it's useful to sweep some
+///   or all coins of a wallet to an external address).
 /// * `locktime`: the locktime to use for the transaction.
 #[allow(clippy::too_many_arguments)]
 pub fn create_spend(
