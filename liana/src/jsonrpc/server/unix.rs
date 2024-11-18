@@ -4,7 +4,10 @@
 //! JSONRPC2 requests on a Unix Domain Socket.
 
 use crate::{
-    jsonrpc::{api, Request, Response},
+    jsonrpc::{
+        api,
+        rpc::{Request, Response},
+    },
     DaemonControl,
 };
 
@@ -207,7 +210,7 @@ pub fn rpcserver_setup(socket_path: &path::Path) -> Result<net::UnixListener, io
 mod tests {
     use super::*;
     use crate::{
-        jsonrpc::{Params, ReqId},
+        jsonrpc::rpc::{Params, ReqId},
         testutils::*,
     };
 
