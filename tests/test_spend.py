@@ -38,6 +38,7 @@ def test_spend_change(lianad, bitcoind):
 
     # The transaction must contain a change output.
     spend_psbt = PSBT.from_base64(res["psbt"])
+    assert spend_psbt.tx
     assert len(spend_psbt.o) == 3
     assert len(spend_psbt.tx.vout) == 3
     # Since the transaction contains a change output there is no warning.
@@ -241,6 +242,7 @@ def test_send_to_self(lianad, bitcoind):
     specified_feerate = 142
     res = lianad.rpc.createspend({}, outpoints, specified_feerate)
     spend_psbt = PSBT.from_base64(res["psbt"])
+    assert spend_psbt.tx
     assert len(spend_psbt.o) == len(spend_psbt.tx.vout) == 1
 
     # Note they may ask for an impossible send-to-self. In this case we'll report missing amount.
@@ -322,6 +324,7 @@ def test_coin_selection(lianad, bitcoind):
 
     # The transaction contains a change output.
     spend_psbt_1 = PSBT.from_base64(spend_res_1["psbt"])
+    assert spend_psbt_1.tx
     assert len(spend_psbt_1.o) == 2
     assert len(spend_psbt_1.tx.vout) == 2
 
@@ -350,6 +353,7 @@ def test_coin_selection(lianad, bitcoind):
     spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], feerate)
     assert "psbt" in spend_res_2
     spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
+    assert spend_psbt_2.tx
     # The spend is using the unconfirmed change.
     assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
         bytes.fromhex(spend_txid_1)[::-1]
@@ -369,6 +373,7 @@ def test_coin_selection(lianad, bitcoind):
     spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], feerate)
     assert "psbt" in spend_res_2
     spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
+    assert spend_psbt_2.tx
     # The spend is using the unconfirmed change.
     assert spend_psbt_2.tx.vin[0].prevout.hash == uint256_from_str(
         bytes.fromhex(spend_txid_1)[::-1]
@@ -389,6 +394,7 @@ def test_coin_selection(lianad, bitcoind):
     spend_res_2 = lianad.rpc.createspend({dest_addr_2: 10_000}, [], feerate)
     assert "psbt" in spend_res_2
     spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
+    assert spend_psbt_2.tx
     spend_txid_2 = spend_psbt_2.tx.txid().hex()
     if USE_TAPROOT:
         assert len(spend_res_2["warnings"]) == 0
@@ -484,6 +490,7 @@ def test_coin_selection(lianad, bitcoind):
 
     # The transaction contains a change output.
     spend_psbt_4 = PSBT.from_base64(spend_res_4["psbt"])
+    assert spend_psbt_4.tx
     assert len(spend_psbt_4.i) == 1
     assert len(spend_psbt_4.o) == 2
     assert len(spend_psbt_4.tx.vout) == 2
@@ -496,6 +503,7 @@ def test_coin_selection(lianad, bitcoind):
     res_manual = lianad.rpc.createspend({dest_addr_4: 15_000}, outpoints, 2)
     assert len(res_manual["warnings"]) == 0
     psbt_manual = PSBT.from_base64(res_manual["psbt"])
+    assert psbt_manual.tx
 
     # Recipient details are the same for both.
     assert spend_psbt_4.tx.vout[0].nValue == psbt_manual.tx.vout[0].nValue
@@ -515,6 +523,7 @@ def test_coin_selection_changeless(lianad, bitcoind):
     # Send an amount that can be paid by just one of our coins.
     res = lianad.rpc.createspend({bitcoind.rpc.getnewaddress(): 30800}, [], 1)
     psbt = PSBT.from_base64(res["psbt"])
+    assert psbt.tx
     # Only one input needed.
     assert len(psbt.i) == 1
     # Coin A is used as input.
@@ -547,6 +556,7 @@ def test_sweep(lianad, bitcoind):
     change_addr = bitcoind.rpc.getnewaddress()
     res = lianad.rpc.createspend(destinations, all_outpoints, 1, change_addr)
     psbt = PSBT.from_base64(res["psbt"])
+    assert psbt.tx
     assert len(psbt.tx.vout) == 1
     assert psbt.tx.vout[0].nValue > balance - 500
     sign_and_broadcast_psbt(lianad, psbt)
@@ -577,6 +587,7 @@ def test_sweep(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, [spent_coin["outpoint"]], 1, change_addr)
     psbt = PSBT.from_base64(res["psbt"])
+    assert psbt.tx
     assert len(psbt.tx.vout) == 3
     sign_and_broadcast_psbt(lianad, psbt)
     wait_for(lambda: len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 1)
