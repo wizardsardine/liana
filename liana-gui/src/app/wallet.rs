@@ -207,6 +207,11 @@ impl SyncStatus {
     pub fn is_synced(&self) -> bool {
         self == &SyncStatus::Synced
     }
+
+    /// Whether the wallet itself, and not the blockchain, is syncing.
+    pub fn wallet_is_syncing(&self) -> bool {
+        self == &SyncStatus::WalletFullScan || self == &SyncStatus::LatestWalletSync
+    }
 }
 
 /// Get the [`SyncStatus`].
