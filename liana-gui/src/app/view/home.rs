@@ -63,7 +63,7 @@ pub fn home_view<'a>(
                             .push(
                                 match sync_status {
                                     SyncStatus::BlockchainSync(progress) => text(format!(
-                                        "Syncing blockchain ({:.1}%)",
+                                        "Syncing blockchain ({:.2}%)",
                                         100.0 * *progress
                                     )),
                                     SyncStatus::WalletFullScan => text("Syncing"),
