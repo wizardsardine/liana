@@ -80,12 +80,7 @@ fn main() {
         process::exit(1);
     });
 
-    let handle = DaemonHandle::start_default(
-        config,
-        #[cfg(all(unix, feature = "daemon"))]
-        true,
-    )
-    .unwrap_or_else(|e| {
+    let handle = DaemonHandle::start_default(config, cfg!(unix)).unwrap_or_else(|e| {
         log::error!("Error starting Liana daemon: {}", e);
         process::exit(1);
     });

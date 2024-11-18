@@ -2812,7 +2812,6 @@ dependencies = [
  "fern",
  "getrandom",
  "jsonrpc 0.17.0",
- "libc",
  "log",
  "miniscript",
  "rdrand",

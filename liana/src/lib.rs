@@ -1,11 +1,8 @@
 mod bitcoin;
 pub mod commands;
 pub mod config;
-#[cfg(all(unix, feature = "daemon"))]
-mod daemonize;
 mod database;
 pub mod descriptors;
-#[cfg(all(unix, feature = "daemon"))]
 mod jsonrpc;
 pub mod random;
 pub mod signer;
@@ -22,8 +19,8 @@ pub use crate::bitcoin::{
     d::{BitcoinD, BitcoindError, WalletError},
     electrum::{Electrum, ElectrumError},
 };
-#[cfg(all(unix, feature = "daemon"))]
-use crate::jsonrpc::server::{rpcserver_loop, rpcserver_setup};
+
+use crate::jsonrpc::server;
 use crate::{
     bitcoin::{poller, BitcoinInterface},
     config::Config,
@@ -103,8 +100,6 @@ pub enum StartupError {
     Database(SqliteDbError),
     Bitcoind(BitcoindError),
     Electrum(ElectrumError),
-    #[cfg(unix)]
-    Daemonization(&'static str),
     #[cfg(windows)]
     NoWatchonlyInDatadir,
 }
@@ -140,8 +135,6 @@ impl fmt::Display for StartupError {
             Self::Database(e) => write!(f, "Error initializing database: '{}'.", e),
             Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
             Self::Electrum(e) => write!(f, "Error setting up Electrum interface: '{}'.", e),
-            #[cfg(unix)]
-            Self::Daemonization(e) => write!(f, "Error when daemonizing: '{}'.", e),
             #[cfg(windows)]
             Self::NoWatchonlyInDatadir => {
                 write!(
@@ -411,7 +404,6 @@ pub enum DaemonHandle {
         poller_handle: thread::JoinHandle<()>,
         control: DaemonControl,
     },
-    #[cfg(feature = "daemon")]
     Server {
         poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         poller_handle: thread::JoinHandle<()>,
@@ -435,7 +427,7 @@ impl DaemonHandle {
         config: Config,
         bitcoin: Option<impl BitcoinInterface + 'static>,
         db: Option<impl DatabaseInterface + 'static>,
-        #[cfg(all(unix, feature = "daemon"))] with_rpc_server: bool,
+        with_rpc_server: bool,
     ) -> Result<Self, StartupError> {
         #[cfg(not(test))]
         setup_panic_hook();
@@ -490,20 +482,6 @@ impl DaemonHandle {
             (None, None) => Err(StartupError::MissingBitcoinBackendConfig)?,
         };
 
-        // If we are on a UNIX system and they told us to daemonize, do it now.
-        // NOTE: it's safe to daemonize now, as we don't carry any open DB connection
-        // https://www.sqlite.org/howtocorrupt.html#_carrying_an_open_database_connection_across_a_fork_
-        #[cfg(all(unix, feature = "daemon"))]
-        if config.daemon {
-            log::info!("Daemonizing");
-            let log_file = data_dir.as_path().join("log");
-            let pid_file = data_dir.as_path().join("lianad.pid");
-            unsafe {
-                daemonize::daemonize(&data_dir, &log_file, &pid_file)
-                    .map_err(StartupError::Daemonization)?;
-            }
-        }
-
         // Start the poller thread. Keep the thread handle to be able to check if it crashed. Store
         // an atomic to be able to stop it.
         let mut bitcoin_poller =
@@ -525,7 +503,6 @@ impl DaemonHandle {
         // structure or through the JSONRPC server we may setup below.
         let control = DaemonControl::new(config, bit, poller_sender.clone(), db, secp);
 
-        #[cfg(all(unix, feature = "daemon"))]
         if with_rpc_server {
             let rpcserver_shutdown = sync::Arc::from(sync::atomic::AtomicBool::from(false));
             let rpcserver_handle = thread::Builder::new()
@@ -535,11 +512,7 @@ impl DaemonHandle {
                     move || {
                         let mut rpc_socket = data_dir;
                         rpc_socket.push("lianad_rpc");
-                        let listener = rpcserver_setup(&rpc_socket)?;
-                        log::info!("JSONRPC server started.");
-
-                        rpcserver_loop(listener, control, shutdown)?;
-                        log::info!("JSONRPC server stopped.");
+                        server::run(&rpc_socket, control, shutdown)?;
                         Ok(())
                     }
                 })
@@ -564,13 +537,12 @@ impl DaemonHandle {
     /// and SQLite).
     pub fn start_default(
         config: Config,
-        #[cfg(all(unix, feature = "daemon"))] with_rpc_server: bool,
+        with_rpc_server: bool,
     ) -> Result<DaemonHandle, StartupError> {
         Self::start(
             config,
             Option::<BitcoinD>::None,
             Option::<SqliteDb>::None,
-            #[cfg(all(unix, feature = "daemon"))]
             with_rpc_server,
         )
     }
@@ -583,7 +555,6 @@ impl DaemonHandle {
             Self::Controller {
                 ref poller_handle, ..
             } => !poller_handle.is_finished(),
-            #[cfg(feature = "daemon")]
             Self::Server {
                 ref poller_handle,
                 ref rpcserver_handle,
@@ -606,7 +577,6 @@ impl DaemonHandle {
                 poller_handle.join().expect("Poller thread must not panic");
                 Ok(())
             }
-            #[cfg(feature = "daemon")]
             Self::Server {
                 poller_sender,
                 poller_handle,
@@ -867,12 +837,7 @@ mod tests {
         let t = thread::spawn({
             let config = config.clone();
             move || {
-                let handle = DaemonHandle::start_default(
-                    config,
-                    #[cfg(all(unix, feature = "daemon"))]
-                    false,
-                )
-                .unwrap();
+                let handle = DaemonHandle::start_default(config, false).unwrap();
                 handle.stop().unwrap();
             }
         });
@@ -892,12 +857,7 @@ mod tests {
         let t = thread::spawn({
             let config = config.clone();
             move || {
-                let handle = DaemonHandle::start_default(
-                    config,
-                    #[cfg(all(unix, feature = "daemon"))]
-                    false,
-                )
-                .unwrap();
+                let handle = DaemonHandle::start_default(config, false).unwrap();
                 handle.stop().unwrap();
             }
         });

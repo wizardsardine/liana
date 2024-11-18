@@ -544,7 +544,7 @@ impl DummyLiana {
     pub fn _new(
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
-        #[cfg(all(unix, feature = "daemon"))] rpc_server: bool,
+        rpc_server: bool,
     ) -> DummyLiana {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
@@ -575,14 +575,9 @@ impl DummyLiana {
             main_descriptor: desc,
         };
 
-        let handle = DaemonHandle::start(
-            config,
-            Some(bitcoin_interface),
-            Some(database),
-            #[cfg(all(unix, feature = "daemon"))]
-            rpc_server,
-        )
-        .unwrap();
+        let handle =
+            DaemonHandle::start(config, Some(bitcoin_interface), Some(database), rpc_server)
+                .unwrap();
         DummyLiana { tmp_dir, handle }
     }
 
@@ -591,16 +586,10 @@ impl DummyLiana {
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
     ) -> DummyLiana {
-        Self::_new(
-            bitcoin_interface,
-            database,
-            #[cfg(all(unix, feature = "daemon"))]
-            false,
-        )
+        Self::_new(bitcoin_interface, database, false)
     }
 
     /// Creates a new DummyLiana interface which also spins up an RPC server.
-    #[cfg(all(unix, feature = "daemon"))]
     pub fn new_server(
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
@@ -611,7 +600,6 @@ impl DummyLiana {
     pub fn control(&self) -> &DaemonControl {
         match self.handle {
             DaemonHandle::Controller { ref control, .. } => control,
-            #[cfg(feature = "daemon")]
             DaemonHandle::Server { .. } => unreachable!(),
         }
     }

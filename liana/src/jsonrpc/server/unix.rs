@@ -9,8 +9,8 @@ use crate::{
 };
 
 use std::{
-    io,
-    os::unix::net,
+    fs, io,
+    os::unix::{fs::PermissionsExt, net},
     path,
     sync::{self, atomic},
     thread, time,
@@ -194,17 +194,13 @@ fn bind(socket_path: &path::Path) -> Result<net::UnixListener, io::Error> {
 pub fn rpcserver_setup(socket_path: &path::Path) -> Result<net::UnixListener, io::Error> {
     log::debug!("Binding socket at {}", socket_path.display());
     // Create the socket with RW permissions only for the user
-    #[cfg(not(test))]
-    let old_umask = unsafe { libc::umask(0o177) };
-    #[allow(clippy::all)]
-    let listener = bind(socket_path);
+    let listener = bind(socket_path)?;
 
-    #[cfg(not(test))]
-    unsafe {
-        libc::umask(old_umask);
-    }
+    // Set the permissions to RW for the user only
+    let permissions = fs::Permissions::from_mode(0o600);
+    fs::set_permissions(socket_path, permissions)?;
 
-    listener
+    Ok(listener)
 }
 
 #[cfg(test)]

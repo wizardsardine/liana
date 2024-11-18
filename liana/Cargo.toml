@@ -12,16 +12,12 @@ exclude = [".github/", ".cirrus.yml", "tests/",  "test_data/", "contrib/", "pypr
 [[bin]]
 name = "lianad"
 path = "src/bin/daemon.rs"
-required-features = ["daemon"]
 
 [[bin]]
 name = "liana-cli"
 path = "src/bin/cli.rs"
-required-features = ["daemon"]
 
 [features]
-default = ["daemon"]
-daemon = ["libc"]
 nonblocking_shutdown = []
 
 [dependencies]
@@ -58,9 +54,6 @@ rusqlite = { version = "0.30", features = ["bundled", "unlock_notify"] }
 
 # To talk to bitcoind
 jsonrpc = { version = "0.17", features = ["minreq_http"], default-features = false }
-
-# Used for daemonization
-libc = { version = "0.2", optional = true }
 
 # Used for generating mnemonics
 getrandom = "0.2"
