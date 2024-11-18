@@ -1,6 +1,3 @@
-# Whether to run the process as a UNIX daemon (double fork magic)
-daemon = false
-
 # (Optional) Path to the folder where we should store the application data.
 # Defaults to `.lianad` in your home folder.
 data_dir = "/home/wizardsardine/.lianad"

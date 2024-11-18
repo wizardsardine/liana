@@ -569,8 +569,6 @@ impl DummyLiana {
             bitcoin_config,
             bitcoin_backend: None,
             data_dir: Some(data_dir),
-            #[cfg(unix)]
-            daemon: false,
             log_level: log::LevelFilter::Debug,
             main_descriptor: desc,
         };
