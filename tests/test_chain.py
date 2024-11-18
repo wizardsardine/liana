@@ -364,6 +364,7 @@ def test_rescan_and_recovery(lianad, bitcoind):
     # Create a recovery tx that sweeps the first coin.
     res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
     reco_psbt = PSBT.from_base64(res["psbt"])
+    assert reco_psbt.tx
     assert len(reco_psbt.tx.vin) == 1
     assert len(reco_psbt.tx.vout) == 1
     assert int(0.4999 * COIN) < int(reco_psbt.tx.vout[0].nValue) < int(0.5 * COIN)
@@ -388,10 +389,12 @@ def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, outpoints, 2)
     psbt_a = PSBT.from_base64(res["psbt"])
+    assert psbt_a.tx
     txid_a = psbt_a.tx.txid()
 
     # Create a conflicting transaction, not to be registered in our wallet.
     psbt_b = copy.deepcopy(psbt_a)
+    assert psbt_b.tx
     psbt_b.tx.vout[0].scriptPubKey = bytes.fromhex(
         "0014218612c653e0827f73a6a040d7805acefa6530cb"
     )

@@ -45,6 +45,7 @@ def receive_and_send(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, outpoints, 42)
     psbt = PSBT.from_base64(res["psbt"])
+    assert psbt.tx
     txid = psbt.tx.txid().hex()
     signed_psbt = lianad.signer.sign_psbt(psbt, range(3))
     lianad.rpc.updatespend(signed_psbt.to_base64())
@@ -67,6 +68,7 @@ def receive_and_send(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, outpoints, 42)
     psbt = PSBT.from_base64(res["psbt"])
+    assert psbt.tx
     txid = psbt.tx.txid().hex()
     # If we sign only with two keys it won't be able to finalize
     with pytest.raises(RpcError, match="ould not satisfy.* at index 0"):
@@ -96,6 +98,7 @@ def test_multisig(lianad_multisig, bitcoind):
     # 5 keys. Sign with the second and the fifth ones.
     res = lianad_multisig.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
     reco_psbt = PSBT.from_base64(res["psbt"])
+    assert reco_psbt.tx
     txid = reco_psbt.tx.txid().hex()
     signed_psbt = lianad_multisig.signer.sign_psbt(reco_psbt, {10: [1, 4]})
     lianad_multisig.rpc.updatespend(signed_psbt.to_base64())
@@ -126,6 +129,7 @@ def test_multipath(lianad_multipath, bitcoind):
     # It needs 3 signatures out of 5 keys.
     res = lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
     reco_psbt = PSBT.from_base64(res["psbt"])
+    assert reco_psbt.tx
     txid = reco_psbt.tx.txid().hex()
 
     # NOTE: this test was commented out due to the introduced restriction to not include
@@ -226,6 +230,7 @@ def test_coinbase_deposit(lianad, bitcoind):
     destinations = {bitcoind.rpc.getnewaddress(): int(0.999999 * COIN)}
     res = lianad.rpc.createspend(destinations, [coin["outpoint"]], 42)
     psbt = PSBT.from_base64(res["psbt"])
+    assert psbt.tx
     txid = psbt.tx.txid().hex()
     signed_psbt = lianad.signer.sign_psbt(psbt)
     lianad.rpc.updatespend(signed_psbt.to_base64())

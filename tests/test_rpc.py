@@ -384,10 +384,12 @@ def test_jsonrpc_server(lianad, bitcoind):
 def test_create_spend(lianad, bitcoind):
     # Receive a number of coins in different blocks on different addresses, and
     # one more on the same address.
+    addr = None
     for _ in range(15):
         addr = lianad.rpc.getnewaddress()["address"]
         txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
         bitcoind.generate_block(1, wait_for_mempool=txid)
+    assert addr
     txid = bitcoind.rpc.sendtoaddress(addr, 0.3556)
     bitcoind.generate_block(1, wait_for_mempool=txid)
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 16)
@@ -408,6 +410,7 @@ def test_create_spend(lianad, bitcoind):
 
     # The transaction must contain a change output.
     spend_psbt = PSBT.from_base64(res["psbt"])
+    assert spend_psbt.tx
     assert len(spend_psbt.o) == 4
     assert len(spend_psbt.tx.vout) == 4
 
@@ -475,7 +478,9 @@ def test_list_spend(lianad, bitcoind):
     # Check 'txids' parameter
     list_res = lianad.rpc.listspendtxs()["spend_txs"]
 
-    txid = PSBT.from_base64(list_res[0]["psbt"]).tx.txid().hex()
+    psbt = PSBT.from_base64(list_res[0]["psbt"])
+    assert psbt.tx
+    txid = psbt.tx.txid().hex()
 
     filtered_res = lianad.rpc.listspendtxs(txids=[txid])
     assert filtered_res["spend_txs"][0]["psbt"] == list_res[0]["psbt"]
@@ -512,6 +517,7 @@ def test_list_spend(lianad, bitcoind):
 
     # If we delete the first one, we'll get only the second one.
     first_psbt = PSBT.from_base64(res["psbt"])
+    assert first_psbt.tx
     lianad.rpc.delspendtx(first_psbt.tx.txid().hex())
     list_res = lianad.rpc.listspendtxs()["spend_txs"]
     assert len(list_res) == 1
@@ -519,6 +525,7 @@ def test_list_spend(lianad, bitcoind):
 
     # If we delete the second one, result will be empty.
     second_psbt = PSBT.from_base64(res_b["psbt"])
+    assert second_psbt.tx
     lianad.rpc.delspendtx(second_psbt.tx.txid().hex())
     list_res = lianad.rpc.listspendtxs()["spend_txs"]
     assert len(list_res) == 0
@@ -592,6 +599,7 @@ def test_broadcast_spend(lianad, bitcoind):
     }
     res = lianad.rpc.createspend(destinations, outpoints, 6)
     psbt = PSBT.from_base64(res["psbt"])
+    assert psbt.tx
     txid = psbt.tx.txid().hex()
 
     # We can't broadcast an unknown Spend
@@ -912,6 +920,7 @@ def test_create_recovery(lianad, bitcoind):
     )
     res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 18)
     reco_psbt = PSBT.from_base64(res["psbt"])
+    assert reco_psbt.tx
 
     # Check locktime being set correctly.
     tip_height = bitcoind.rpc.getblockcount()
@@ -931,6 +940,7 @@ def test_create_recovery(lianad, bitcoind):
     )
     res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 1)
     reco_psbt = PSBT.from_base64(res["psbt"])
+    assert reco_psbt.tx
     assert len(reco_psbt.tx.vin) == 1
     assert len(reco_psbt.tx.vout) == 1
     assert int(0.39999 * COIN) < int(reco_psbt.tx.vout[0].nValue) < int(0.4 * COIN)
@@ -1087,6 +1097,7 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     }
     first_res = lianad.rpc.createspend(destinations, first_outpoints, 1)
     first_psbt = PSBT.from_base64(first_res["psbt"])
+    assert first_psbt.tx
     # The transaction has a change output.
     assert len(first_psbt.o) == len(first_psbt.tx.vout) == 2
     first_txid = first_psbt.tx.txid().hex()
@@ -1121,6 +1132,7 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     # Let's use an even higher feerate.
     rbf_1_res = lianad.rpc.rbfpsbt(first_txid, False, 10)
     rbf_1_psbt = PSBT.from_base64(rbf_1_res["psbt"])
+    assert rbf_1_psbt.tx
 
     # Check the locktime is being set.
     tip_height = bitcoind.rpc.getblockcount()
@@ -1170,6 +1182,7 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     wait_for(lambda: len(lianad.rpc.listcoins([], desc_1_outpoints)["coins"]) == 2)
     desc_1_res = lianad.rpc.createspend(desc_1_destinations, desc_1_outpoints, 1)
     desc_1_psbt = PSBT.from_base64(desc_1_res["psbt"])
+    assert desc_1_psbt.tx
     assert len(desc_1_psbt.tx.vout) == 2
     desc_1_txid = sign_and_broadcast_psbt(lianad, desc_1_psbt)
     wait_for(
@@ -1186,6 +1199,7 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     wait_for(lambda: len(lianad.rpc.listcoins([], desc_2_outpoints)["coins"]) == 1)
     desc_2_res = lianad.rpc.createspend(desc_2_destinations, desc_2_outpoints, 1)
     desc_2_psbt = PSBT.from_base64(desc_2_res["psbt"])
+    assert desc_2_psbt.tx
     assert len(desc_2_psbt.tx.vout) == 2
     desc_2_txid = sign_and_broadcast_psbt(lianad, desc_2_psbt)
     wait_for(
@@ -1197,6 +1211,7 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     # Now replace the first RBF, which will also remove its descendants.
     rbf_2_res = lianad.rpc.rbfpsbt(rbf_1_txid, False, feerate)
     rbf_2_psbt = PSBT.from_base64(rbf_2_res["psbt"])
+    assert rbf_2_psbt.tx
     # The inputs are the same in both (no new inputs needed in the replacement).
     assert sorted(i.prevout.serialize() for i in rbf_1_psbt.tx.vin) == sorted(
         i.prevout.serialize() for i in rbf_2_psbt.tx.vin
@@ -1297,6 +1312,7 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
     }
     first_res = lianad.rpc.createspend(destinations, first_outpoints, 1)
     first_psbt = PSBT.from_base64(first_res["psbt"])
+    assert first_psbt.tx
     # The transaction has a change output.
     assert len(first_psbt.o) == len(first_psbt.tx.vout) == 2
     first_txid = first_psbt.tx.txid().hex()
@@ -1319,6 +1335,7 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
     rbf_1_psbt = PSBT.from_base64(rbf_1_res["psbt"])
     # Replacement only has a single input.
     assert len(rbf_1_psbt.i) == 1
+    assert rbf_1_psbt.tx
     # This input is one of the two from the previous transaction.
     assert rbf_1_psbt.tx.vin[0].prevout.serialize() in [
         i.prevout.serialize() for i in first_psbt.tx.vin
@@ -1360,6 +1377,7 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
     wait_for(lambda: len(lianad.rpc.listcoins([], desc_1_outpoints)["coins"]) == 2)
     desc_1_res = lianad.rpc.createspend(desc_1_destinations, desc_1_outpoints, 1)
     desc_1_psbt = PSBT.from_base64(desc_1_res["psbt"])
+    assert desc_1_psbt.tx
     assert len(desc_1_psbt.tx.vout) == 2
     desc_1_txid = sign_and_broadcast_psbt(lianad, desc_1_psbt)
     wait_for(
@@ -1376,6 +1394,7 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
     wait_for(lambda: len(lianad.rpc.listcoins([], desc_2_outpoints)["coins"]) == 1)
     desc_2_res = lianad.rpc.createspend(desc_2_destinations, desc_2_outpoints, 1)
     desc_2_psbt = PSBT.from_base64(desc_2_res["psbt"])
+    assert desc_2_psbt.tx
     assert len(desc_2_psbt.tx.vout) == 2
     desc_2_txid = sign_and_broadcast_psbt(lianad, desc_2_psbt)
     wait_for(
@@ -1387,6 +1406,7 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
     # Now cancel the first RBF, which will also remove its descendants.
     rbf_2_res = lianad.rpc.rbfpsbt(rbf_1_txid, True)
     rbf_2_psbt = PSBT.from_base64(rbf_2_res["psbt"])
+    assert rbf_2_psbt.tx
     # The inputs are the same in both (no new inputs needed in the replacement).
     assert len(rbf_2_psbt.tx.vin) == 1
     assert (
