@@ -77,7 +77,7 @@ impl BackendClient {
         let response = request(
             &http,
             Method::GET,
-            &format!("{}/v1/me", url),
+            format!("{}/v1/me", url),
             &credentials.access_token,
         )
         .send()

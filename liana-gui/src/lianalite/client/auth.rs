@@ -94,7 +94,7 @@ impl AuthClient {
         let response: Response = self
             .request(
                 Method::POST,
-                &format!(
+                format!(
                     "{}/auth/v1/otp?redirect_to=https://desktop.lianalite.com",
                     self.url
                 ),
@@ -128,7 +128,7 @@ impl AuthClient {
     pub async fn verify_otp(&self, token: &str) -> Result<AccessTokenResponse, AuthError> {
         let response: Response = self
             .http
-            .post(&format!("{}/auth/v1/verify", self.url))
+            .post(format!("{}/auth/v1/verify", self.url))
             .header("apikey", &self.api_public_key)
             .header("Content-Type", "application/json")
             .json(&VerifyOtp {
@@ -154,7 +154,7 @@ impl AuthClient {
     ) -> Result<AccessTokenResponse, AuthError> {
         let response: Response = self
             .http
-            .post(&format!(
+            .post(format!(
                 "{}/auth/v1/token?grant_type=refresh_token",
                 self.url
             ))

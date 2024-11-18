@@ -22,6 +22,8 @@
 use std::os::unix::net::UnixStream;
 
 use std::fmt::Debug;
+
+#[cfg(not(windows))]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -29,13 +31,17 @@ use std::{error, fmt, io};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+#[cfg(not(windows))]
 use serde_json::Deserializer;
 
+#[cfg(not(windows))]
 use tracing::debug;
 
 /// A handle to a remote JSONRPC server
 #[derive(Debug, Clone)]
 pub struct JsonRPCClient {
+    #[cfg(not(windows))]
     sockpath: PathBuf,
     timeout: Option<Duration>,
 }
@@ -56,6 +62,7 @@ impl JsonRPCClient {
     /// Creates a new client
     pub fn new<P: AsRef<Path>>(sockpath: P) -> JsonRPCClient {
         JsonRPCClient {
+            #[cfg(not(windows))]
             sockpath: sockpath.as_ref().to_path_buf(),
             timeout: None,
         }
@@ -70,8 +77,8 @@ impl JsonRPCClient {
     #[cfg(windows)]
     pub fn send_request<S: Serialize + Debug, D: DeserializeOwned + Debug>(
         &self,
-        method: &str,
-        params: Option<S>,
+        _method: &str,
+        _params: Option<S>,
     ) -> Result<Response<D>, Error> {
         Err(Error::NotSupported)
     }

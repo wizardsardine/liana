@@ -51,19 +51,19 @@ pub fn hw_list_view(
             ..
         } => match reason {
             UnsupportedReason::NotPartOfWallet(fg) => {
-                hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
+                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
             }
             UnsupportedReason::WrongNetwork => {
-                hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
+                hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
             }
             UnsupportedReason::Version {
                 minimal_supported_version,
             } => hw::unsupported_version_hardware_wallet(
-                &kind.to_string(),
+                kind.to_string(),
                 version.as_ref(),
                 minimal_supported_version,
             ),
-            _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
+            _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
         },
         HardwareWallet::Locked {
             kind, pairing_code, ..
@@ -119,19 +119,19 @@ pub fn hw_list_view_for_registration(
             ..
         } => match reason {
             UnsupportedReason::NotPartOfWallet(fg) => {
-                hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
+                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
             }
             UnsupportedReason::WrongNetwork => {
-                hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
+                hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
             }
             UnsupportedReason::Version {
                 minimal_supported_version,
             } => hw::unsupported_version_hardware_wallet(
-                &kind.to_string(),
+                kind.to_string(),
                 version.as_ref(),
                 minimal_supported_version,
             ),
-            _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
+            _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
         },
         HardwareWallet::Locked {
             kind, pairing_code, ..
@@ -175,7 +175,7 @@ pub fn hw_list_view_verify_address(
                 match kind {
                     DeviceKind::Specter | DeviceKind::SpecterSimulator => {
                         (hw::unimplemented_method_hardware_wallet(
-                            &kind.to_string(),
+                            kind.to_string(),
                             version.as_ref(),
                             fingerprint,
                             "Liana cannot request the device to display the address. \n The verification must be done manually with the device control."
@@ -198,19 +198,19 @@ pub fn hw_list_view_verify_address(
         } => (
             match reason {
                 UnsupportedReason::NotPartOfWallet(fg) => {
-                    hw::unrelated_hardware_wallet(&kind.to_string(), version.as_ref(), fg)
+                    hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
                 }
                 UnsupportedReason::WrongNetwork => {
-                    hw::wrong_network_hardware_wallet(&kind.to_string(), version.as_ref())
+                    hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
                 }
                 UnsupportedReason::Version {
                     minimal_supported_version,
                 } => hw::unsupported_version_hardware_wallet(
-                    &kind.to_string(),
+                    kind.to_string(),
                     version.as_ref(),
                     minimal_supported_version,
                 ),
-                _ => hw::unsupported_hardware_wallet(&kind.to_string(), version.as_ref()),
+                _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
             },
             false,
         ),

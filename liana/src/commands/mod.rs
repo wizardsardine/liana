@@ -745,11 +745,11 @@ impl DaemonControl {
     /// transaction will be used in the replacement.
     /// In both cases:
     /// - if the previous transaction includes a change output to one of our own change addresses,
-    /// this same address will be used for change in the RBF transaction, if required. If the previous
-    /// transaction pays to more than one of our change addresses, then the one receiving the highest
-    /// value will be used as a change address and the others will be treated as non-change outputs.
+    ///   this same address will be used for change in the RBF transaction, if required. If the previous
+    ///   transaction pays to more than one of our change addresses, then the one receiving the highest
+    ///   value will be used as a change address and the others will be treated as non-change outputs.
     /// - the RBF transaction may include additional confirmed coins as inputs if required
-    /// in order to pay the higher fee (this applies also when replacing a self-send).
+    ///   in order to pay the higher fee (this applies also when replacing a self-send).
     ///
     /// `feerate_vb` is the target feerate for the RBF transaction (in sat/vb). If `None`, it will be set
     /// to 1 sat/vb larger than the feerate of the previous transaction, which is the minimum value allowed
