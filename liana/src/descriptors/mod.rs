@@ -545,20 +545,37 @@ impl LianaDescriptor {
         Ok(self.prune_bip32_derivs(psbt, path_info))
     }
 
+    /// Maximum possible weight in weight units of an unsigned transaction, `tx`,
+    /// after satisfaction, assuming all inputs of `tx` are from this
+    /// descriptor.
+    fn unsigned_tx_max_weight(&self, tx: &bitcoin::Transaction, use_primary_path: bool) -> u64 {
+        let num_inputs: u64 = tx.input.len().try_into().unwrap();
+        let max_sat_weight: u64 = self.max_sat_weight(use_primary_path).try_into().unwrap();
+        // Add weights together before converting to vbytes to avoid rounding up multiple times.
+        tx.weight()
+            .to_wu()
+            .checked_add(max_sat_weight.checked_mul(num_inputs).unwrap())
+            .and_then(|weight| {
+                weight.checked_add(
+                    // Make sure the Segwit marker and flag are included:
+                    // https://docs.rs/bitcoin/0.31.0/src/bitcoin/blockdata/transaction.rs.html#752-753
+                    // https://docs.rs/bitcoin/0.31.0/src/bitcoin/blockdata/transaction.rs.html#968-979
+                    if num_inputs > 0 && tx.input.iter().all(|txin| txin.witness.is_empty()) {
+                        2
+                    } else {
+                        0
+                    },
+                )
+            })
+            .unwrap()
+    }
+
     /// Maximum possible size in vbytes of an unsigned transaction, `tx`,
     /// after satisfaction, assuming all inputs of `tx` are from this
     /// descriptor.
     pub fn unsigned_tx_max_vbytes(&self, tx: &bitcoin::Transaction, use_primary_path: bool) -> u64 {
         let witness_factor: u64 = WITNESS_SCALE_FACTOR.try_into().unwrap();
-        let num_inputs: u64 = tx.input.len().try_into().unwrap();
-        let max_sat_weight: u64 = self.max_sat_weight(use_primary_path).try_into().unwrap();
-        // Add weights together before converting to vbytes to avoid rounding up multiple times.
-        let tx_wu = tx
-            .weight()
-            .to_wu()
-            .checked_add(max_sat_weight.checked_mul(num_inputs).unwrap())
-            .unwrap();
-        tx_wu
+        self.unsigned_tx_max_weight(tx, use_primary_path)
             .checked_add(witness_factor.checked_sub(1).unwrap())
             .unwrap()
             .checked_div(witness_factor)
@@ -2094,6 +2111,21 @@ mod tests {
         assert_eq!(tap_psbt.inputs[0].tap_key_origins.len(), 1);
         let tap_psbt = tap_desc.prune_bip32_derivs(tap_psbt, &prim_path_info);
         assert!(tap_psbt.inputs[0].tap_key_origins.is_empty());
+    }
+
+    #[test]
+    fn unsigned_tx_max_weight_and_vbytes() {
+        let desc = LianaDescriptor::from_str("tr(tpubD6NzVbkrYhZ4WUdbVsXDYBCXS8EPSYG1cAN9g4uP6uLQHMHXRvHSFkQBXy7MBeAvV8PDVJJ4o3AwYMKJHp45ci2g69UCAKteVSAJ61CnGEV/<0;1>/*,{and_v(v:pk([9e1c1983/48'/1'/0'/2']tpubDEWCLCMncbStq4BLXkQUAPqzzrh2tQUgYeQPt4NrB5D7gRraMyGbRqzPTmQGvqfdaFsXDVGSQBRgfXuNjDyfU626pxSjpQZszFNY6CzogxK/<2;3>/*),older(65535)),multi_a(2,[9e1c1983/48'/1'/0'/2']tpubDEWCLCMncbStq4BLXkQUAPqzzrh2tQUgYeQPt4NrB5D7gRraMyGbRqzPTmQGvqfdaFsXDVGSQBRgfXuNjDyfU626pxSjpQZszFNY6CzogxK/<0;1>/*,[3b1913e1/48'/1'/0'/2']tpubDFeZ2ezf4VUuTnjdhxJ1DKhLa2t6vzXZNz8NnEgeT2PN4pPqTCTeWUcaxKHPJcf1C8WzkLA71zSjDwuo4zqu4kkiL91ZUmJydC8f1gx89wM/<0;1>/*)})#ee0r4tw5").unwrap();
+        // The following PSBT was generated from this descriptor.
+        // See https://mempool.space/signet/tx/a63c4a69be71fcba0e16f742a2697401fbc47ad7dff10a790b8f961004aa0ab4 for the corresponding tx:
+        let psbt = Psbt::from_str("cHNidP8BAF4CAAAAAU2eiiiqTjQHmDarPBbpDO7b/jXeU3ABO20p0sZ3U7SoAAAAAAD9////AaQiAAAAAAAAIlEg+5nFiKkeVa9DFXLNvpIRcDNU7a4hN2QQhb7LHBad+AAVWgMAAAEBK+YjAAAAAAAAIlEgKA3Jqw7wXvY+ggshuLnufWEMZvDvz5fd7guPe74OFr9BFOwaZX+B87gSAqM66+YwA2L5da0h0+PPsDMXht+IcnRsHCjA6OkyoLbI1pYXZBVcKqW6G8fXOBHIUtxyVltu/VVAP8MQWa0ipMEXw6XfBexyPOQfb7TJpX6+KCiz2XA/mnwRyuYibz0aLl5/ZFNFvvgN5D+JYrmGACcafbXZOAtyw0IVwXv1NpDYfRDm2LstW9CzwDg86+y3PAi9ipB5m3acrIhsHCjA6OkyoLbI1pYXZBVcKqW6G8fXOBHIUtxyVltu/VUoIBYAvFRImNeU9Uegt66wQrOOwURL8+t2LjLQLCllgNHOrQP//wCywEIVwXv1NpDYfRDm2LstW9CzwDg86+y3PAi9ipB5m3acrIhsb1/MmmOazbHeRxkVrKn2+tW/CKyAMUbx3oUK+GaB3h1HIMjdaFdS9My6uOk2lBdGjnFLNSfvvRhvUGWk6VdVgyMLrCDsGmV/gfO4EgKjOuvmMANi+XWtIdPjz7AzF4bfiHJ0bLpSnMAhFhYAvFRImNeU9Uegt66wQrOOwURL8+t2LjLQLCllgNHOPQFvX8yaY5rNsd5HGRWsqfb61b8IrIAxRvHehQr4ZoHeHZ4cGYMwAACAAQAAgAAAAIACAACAAgAAAAAAAAAhFnv1NpDYfRDm2LstW9CzwDg86+y3PAi9ipB5m3acrIhsDQB8Rh5dAAAAAAAAAAAhFsjdaFdS9My6uOk2lBdGjnFLNSfvvRhvUGWk6VdVgyMLPQEcKMDo6TKgtsjWlhdkFVwqpbobx9c4EchS3HJWW279VZ4cGYMwAACAAQAAgAAAAIACAACAAAAAAAAAAAAhFuwaZX+B87gSAqM66+YwA2L5da0h0+PPsDMXht+IcnRsPQEcKMDo6TKgtsjWlhdkFVwqpbobx9c4EchS3HJWW279VTsZE+EwAACAAQAAgAAAAIACAACAAAAAAAAAAAABFyB79TaQ2H0Q5ti7LVvQs8A4POvstzwIvYqQeZt2nKyIbAEYIFHdAhNfvRTz8EPSAs+Gf/HrAULFx3vOs18D0PWq9kGwAAEFIDNwiV3+PJcHk97y59EcUfNkHjBBPZjvSN/Hgn0S01LQAQZzAcAnIClBgez9GIlLyjqN3NPltEhBDUjmDbsiVpWlba2IMurdrQP//wCyAcBGIBs6CbrR7SfZwJL6Q4beOPUvPbetXt/T/QmplPDbPQAwrCBGP2ABIvtgyIu7uSrKRE6rIY3VNZOEJ028nuqeWNSqTbpSnCEHGzoJutHtJ9nAkvpDht449S89t61e39P9CamU8Ns9ADA9AY7TqQXjhS0u6aC8jSA+/MN5WjE8uYIs5D4/oTu1eC9PnhwZgzAAAIABAACAAAAAgAIAAIABAAAAAQAAACEHKUGB7P0YiUvKOo3c0+W0SEENSOYNuyJWlaVtrYgy6t09ARHbEQ0ckrM/6qD8+TyaH5SmkKpv4e0rE07oC0VK4TxBnhwZgzAAAIABAACAAAAAgAIAAIADAAAAAQAAACEHM3CJXf48lweT3vLn0RxR82QeMEE9mO9I38eCfRLTUtANAHxGHl0BAAAAAQAAACEHRj9gASL7YMiLu7kqykROqyGN1TWThCdNvJ7qnljUqk09AY7TqQXjhS0u6aC8jSA+/MN5WjE8uYIs5D4/oTu1eC9POxkT4TAAAIABAACAAAAAgAIAAIABAAAAAQAAAAA=").unwrap();
+        assert_eq!(desc.unsigned_tx_max_weight(&psbt.unsigned_tx, true), 646);
+        assert_eq!(desc.unsigned_tx_max_vbytes(&psbt.unsigned_tx, true), 162); // 646/4=161.5
+
+        // If `use_primary_path` is `false`, an extra 2 is added by `max_sat_weight` as it
+        // includes the sighash suffix for each of the two signatures.
+        assert_eq!(desc.unsigned_tx_max_weight(&psbt.unsigned_tx, false), 648);
+        assert_eq!(desc.unsigned_tx_max_vbytes(&psbt.unsigned_tx, false), 162); // 648/4 = 162
     }
 
     fn run_change_detection(
