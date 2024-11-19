@@ -29,7 +29,7 @@ cd ..
 # Finally build the projects using the toolchain just created.
 alias cargo="/liana/rust-1.71.1-x86_64-unknown-linux-gnu/cargo/bin/cargo"
 
-for package_name in "liana" "liana-gui"; do
+for package_name in "lianad" "liana-gui"; do
     PATH="$PATH:$PWD/osxcross/target/bin/" \
         CC=o64-clang \
         CXX=o64-clang++ \
