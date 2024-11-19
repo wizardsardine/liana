@@ -1,4 +1,4 @@
-use crate::{bitcoin::MempoolEntry, descriptors};
+use crate::descriptors;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -169,23 +169,6 @@ fn sanity_check_psbt(
 pub struct AncestorInfo {
     pub vsize: u32,
     pub fee: u32,
-}
-
-impl From<MempoolEntry> for AncestorInfo {
-    fn from(entry: MempoolEntry) -> Self {
-        Self {
-            vsize: entry
-                .ancestor_vsize
-                .try_into()
-                .expect("vsize must fit in a u32"),
-            fee: entry
-                .fees
-                .ancestor
-                .to_sat()
-                .try_into()
-                .expect("fee in sats should fit in a u32"),
-        }
-    }
 }
 
 /// A candidate for coin selection when creating a transaction.
