@@ -75,7 +75,7 @@ task:
     fingerprint_script:
       - rustc --version
       - cat tests/tools/taproot_signer/Cargo.lock
-  lianad_build_script: cd liana && cargo build --release && cd ../tests/tools/taproot_signer && cargo build --release
+  lianad_build_script: cd lianad && cargo build --release && cd ../tests/tools/taproot_signer && cargo build --release
 
   deps_script: apt update && apt install -y python3 python3-pip
 

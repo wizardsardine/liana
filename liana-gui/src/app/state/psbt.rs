@@ -7,10 +7,10 @@ use iced::Subscription;
 
 use iced::Command;
 use liana::{
-    commands::CoinStatus,
     descriptors::LianaPolicy,
     miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Network, Txid},
 };
+use lianad::commands::CoinStatus;
 
 use liana_ui::component::toast;
 use liana_ui::{

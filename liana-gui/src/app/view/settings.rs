@@ -8,10 +8,10 @@ use iced::{
 };
 
 use liana::{
-    config::BitcoindRpcAuth,
     descriptors::{LianaDescriptor, LianaPolicy},
     miniscript::bitcoin::{bip32::Fingerprint, Network},
 };
+use lianad::config::BitcoindRpcAuth;
 
 use super::{dashboard, message::*};
 
@@ -452,7 +452,7 @@ pub fn bitcoind_edit<'a>(
 pub fn bitcoind<'a>(
     is_configured_node_type: bool,
     network: Network,
-    config: &liana::config::BitcoindConfig,
+    config: &lianad::config::BitcoindConfig,
     blockheight: i32,
     is_running: Option<bool>,
     can_edit: bool,
@@ -638,7 +638,7 @@ pub fn electrum_edit<'a>(
 pub fn electrum<'a>(
     is_configured_node_type: bool,
     network: Network,
-    config: &liana::config::ElectrumConfig,
+    config: &lianad::config::ElectrumConfig,
     blockheight: i32,
     is_running: Option<bool>,
     can_edit: bool,

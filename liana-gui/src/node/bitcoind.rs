@@ -1,11 +1,11 @@
 use base64::Engine;
 use bitcoin_hashes::{sha256, Hash, HashEngine, Hmac, HmacEngine};
 use liana::{
-    config::BitcoindConfig,
     miniscript::bitcoin::{self, Network},
     random::{random_bytes, RandomnessError},
 };
 use liana_ui::component::form;
+use lianad::config::BitcoindConfig;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -462,7 +462,7 @@ impl Bitcoind {
                     return Err(StartInternalBitcoindError::ProcessExited(status));
                 }
             }
-            match liana::BitcoinD::new(&config, "internal_bitcoind_start".to_string()) {
+            match lianad::BitcoinD::new(&config, "internal_bitcoind_start".to_string()) {
                 Ok(_) => {
                     log::info!("Bitcoind seems to have successfully started.");
                     return Ok(Self {
@@ -470,7 +470,7 @@ impl Bitcoind {
                         _process: Arc::new(process),
                     });
                 }
-                Err(liana::BitcoindError::CookieFile(_)) => {
+                Err(lianad::BitcoindError::CookieFile(_)) => {
                     // This is only raised if we're using cookie authentication.
                     // Assume cookie file has not been created yet and try again.
                 }
@@ -497,7 +497,7 @@ impl Bitcoind {
 }
 
 pub fn stop_bitcoind(config: &BitcoindConfig) -> bool {
-    match liana::BitcoinD::new(config, "internal_bitcoind_stop".to_string()) {
+    match lianad::BitcoinD::new(config, "internal_bitcoind_stop".to_string()) {
         Ok(bitcoind) => {
             info!("Stopping internal bitcoind...");
             bitcoind.stop();

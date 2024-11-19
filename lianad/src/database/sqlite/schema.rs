@@ -1,4 +1,4 @@
-use crate::descriptors::LianaDescriptor;
+use liana::descriptors::LianaDescriptor;
 
 use std::{convert::TryFrom, str::FromStr};
 

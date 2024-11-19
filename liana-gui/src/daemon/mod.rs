@@ -11,12 +11,12 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use liana::{
+use liana::miniscript::bitcoin::{
+    address, bip32::Fingerprint, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid,
+};
+use lianad::{
     commands::{CoinStatus, LabelItem, TransactionInfo},
     config::Config,
-    miniscript::bitcoin::{
-        address, bip32::Fingerprint, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid,
-    },
     StartupError,
 };
 

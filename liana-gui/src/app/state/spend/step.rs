@@ -8,13 +8,13 @@ use std::{
 
 use iced::{Command, Subscription};
 use liana::{
-    commands::ListCoinsEntry,
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
         address, psbt::Psbt, secp256k1, Address, Amount, Denomination, Network, OutPoint,
     },
     spend::{SpendCreationError, MAX_FEERATE},
 };
+use lianad::commands::ListCoinsEntry;
 
 use liana_ui::{component::form, widget::Element};
 

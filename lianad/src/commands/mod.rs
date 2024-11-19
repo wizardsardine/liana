@@ -7,17 +7,20 @@ mod utils;
 use crate::{
     bitcoin::BitcoinInterface,
     database::{Coin, DatabaseConnection, DatabaseInterface},
-    descriptors,
     miniscript::bitcoin::absolute::LockTime,
     poller::PollerMessage,
-    spend::{
-        self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes,
-        SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
-    },
     DaemonControl, VERSION,
 };
 
 pub use crate::database::{CoinStatus, LabelItem};
+
+use liana::{
+    descriptors,
+    spend::{
+        self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes,
+        SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
+    },
+};
 
 use utils::{
     deser_addr_assume_checked, deser_amount_from_sats, deser_fromstr, deser_hex, ser_amount,
@@ -1280,7 +1283,8 @@ pub struct CreateRecoveryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{bitcoin::Block, database::BlockInfo, spend::InsaneFeeInfo, testutils::*};
+    use crate::{bitcoin::Block, database::BlockInfo, testutils::*};
+    use liana::spend::InsaneFeeInfo;
 
     use bitcoin::{
         bip32::{self, ChildNumber},

@@ -13,11 +13,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::{Command, Subscription};
-use liana::{
-    commands::CoinStatus,
-    miniscript::bitcoin::{Amount, OutPoint},
-};
+use liana::miniscript::bitcoin::{Amount, OutPoint};
 use liana_ui::widget::*;
+use lianad::commands::CoinStatus;
 
 use super::{
     cache::Cache,

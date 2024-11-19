@@ -4,10 +4,10 @@ use tokio::sync::Mutex;
 
 use super::{model::*, node, Daemon, DaemonBackend, DaemonError};
 use async_trait::async_trait;
-use liana::{
+use liana::miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid};
+use lianad::{
     commands::{CoinStatus, LabelItem},
     config::Config,
-    miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid},
     DaemonControl, DaemonHandle,
 };
 

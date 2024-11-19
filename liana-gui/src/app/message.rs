@@ -1,14 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use liana::{
-    config::Config as DaemonConfig,
-    miniscript::bitcoin::{
-        bip32::{ChildNumber, Fingerprint},
-        psbt::Psbt,
-        Address, Txid,
-    },
+use liana::miniscript::bitcoin::{
+    bip32::{ChildNumber, Fingerprint},
+    psbt::Psbt,
+    Address, Txid,
 };
+use lianad::config::Config as DaemonConfig;
 
 use crate::{
     app::{cache::Cache, error::Error, view, wallet::Wallet},

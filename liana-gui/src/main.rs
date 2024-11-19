@@ -17,8 +17,9 @@ use tracing_subscriber::filter::LevelFilter;
 extern crate serde;
 extern crate serde_json;
 
-use liana::{config::Config as DaemonConfig, miniscript::bitcoin};
+use liana::miniscript::bitcoin;
 use liana_ui::{component::text, font, image, theme, widget::Element};
+use lianad::config::Config as DaemonConfig;
 
 use liana_gui::{
     app::{self, cache::Cache, config::default_datadir, wallet::Wallet, App},

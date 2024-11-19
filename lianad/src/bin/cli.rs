@@ -1,6 +1,6 @@
 #![cfg(not(target_os = "windows"))]
 
-use liana::config::{config_folder_path, Config};
+use lianad::config::{config_folder_path, Config};
 
 use std::{
     env,

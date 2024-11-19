@@ -25,8 +25,8 @@ use crate::{
         },
         Coin, CoinStatus, LabelItem,
     },
-    descriptors::LianaDescriptor,
 };
+use liana::descriptors::LianaDescriptor;
 
 use std::{
     cmp,

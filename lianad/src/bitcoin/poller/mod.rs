@@ -1,6 +1,7 @@
 mod looper;
 
-use crate::{bitcoin::BitcoinInterface, database::DatabaseInterface, descriptors};
+use crate::{bitcoin::BitcoinInterface, database::DatabaseInterface};
+use liana::descriptors;
 
 use std::{
     sync::{self, mpsc},

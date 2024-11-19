@@ -9,17 +9,17 @@ use iced::{Alignment, Command, Length, Subscription};
 use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
-use liana::{
-    commands::CoinStatus,
-    config::{BitcoinBackend, Config, ConfigError},
-    miniscript::bitcoin,
-    StartupError,
-};
+use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
     component::{button, notification, text::*},
     icon,
     widget::*,
+};
+use lianad::{
+    commands::CoinStatus,
+    config::{BitcoinBackend, Config, ConfigError},
+    StartupError,
 };
 
 use crate::{
@@ -533,7 +533,7 @@ pub async fn start_bitcoind_and_daemon(
     if start_internal_bitcoind {
         if let Some(BitcoinBackend::Bitcoind(bitcoind_config)) = &config.bitcoin_backend {
             // Check if bitcoind is already running before trying to start it.
-            if liana::BitcoinD::new(bitcoind_config, "internal_bitcoind_start".to_string()).is_ok()
+            if lianad::BitcoinD::new(bitcoind_config, "internal_bitcoind_start".to_string()).is_ok()
             {
                 info!("Internal bitcoind is already running");
             } else {

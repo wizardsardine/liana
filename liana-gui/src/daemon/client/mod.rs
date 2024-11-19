@@ -4,7 +4,6 @@ use std::iter::FromIterator;
 use std::path::Path;
 
 use async_trait::async_trait;
-use liana::commands::{CoinStatus, CreateRecoveryResult};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -13,10 +12,10 @@ use tracing::{error, info};
 pub mod error;
 pub mod jsonrpc;
 
-use liana::{
-    commands::LabelItem,
+use liana::miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid};
+use lianad::{
+    commands::{CoinStatus, CreateRecoveryResult, LabelItem},
     config::Config,
-    miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid},
 };
 
 use super::{model::*, Daemon, DaemonBackend, DaemonError};
