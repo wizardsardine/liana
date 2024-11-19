@@ -504,7 +504,20 @@ impl DaemonControl {
                         // any ancestor info.
                         Some((
                             c,
-                            self.bitcoin.mempool_entry(&op.txid).map(AncestorInfo::from),
+                            self.bitcoin
+                                .mempool_entry(&op.txid)
+                                .map(|info| AncestorInfo {
+                                    vsize: info
+                                        .ancestor_vsize
+                                        .try_into()
+                                        .expect("vsize must fit in u32"),
+                                    fee: info
+                                        .fees
+                                        .ancestor
+                                        .to_sat()
+                                        .try_into()
+                                        .expect("fee in sat should fit in u32"),
+                                }),
                         ))
                     } else {
                         None
@@ -538,7 +551,20 @@ impl DaemonControl {
                         // We include any non-change coins here as they have been selected by the caller.
                         // If the unconfirmed coin's transaction is no longer in the mempool, keep the
                         // coin as a candidate but without any ancestor info (same as confirmed candidate).
-                        self.bitcoin.mempool_entry(&op.txid).map(AncestorInfo::from)
+                        self.bitcoin
+                            .mempool_entry(&op.txid)
+                            .map(|info| AncestorInfo {
+                                vsize: info
+                                    .ancestor_vsize
+                                    .try_into()
+                                    .expect("vsize must fit in u32"),
+                                fee: info
+                                    .fees
+                                    .ancestor
+                                    .to_sat()
+                                    .try_into()
+                                    .expect("fee in sat should fit in u32"),
+                            })
                     } else {
                         None
                     };
