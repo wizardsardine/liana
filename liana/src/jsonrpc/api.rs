@@ -1,6 +1,6 @@
 use crate::{
     commands::{CoinStatus, LabelItem},
-    jsonrpc::{Error, Params, Request, Response},
+    jsonrpc::rpc::{Error, Params, Request, Response},
     DaemonControl,
 };
 

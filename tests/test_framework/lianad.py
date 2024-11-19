@@ -50,7 +50,6 @@ class Lianad(TailableProc):
 
         with open(self.conf_file, "w") as f:
             f.write(f"data_dir = '{datadir}'\n")
-            f.write("daemon = false\n")
             f.write(f"log_level = '{LOG_LEVEL}'\n")
 
             f.write(f'main_descriptor = "{multi_desc}"\n')

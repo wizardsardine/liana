@@ -80,11 +80,6 @@ fn default_poll_interval() -> Duration {
     Duration::from_secs(30)
 }
 
-#[cfg(unix)]
-fn default_daemon() -> bool {
-    false
-}
-
 /// Bitcoin backend config.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum BitcoinBackend {
@@ -153,10 +148,6 @@ pub struct BitcoinConfig {
 pub struct Config {
     /// An optional custom data directory
     pub data_dir: Option<PathBuf>,
-    /// Whether to daemonize the process
-    #[cfg(unix)]
-    #[serde(default = "default_daemon")]
-    pub daemon: bool,
     /// What messages to log
     #[serde(
         deserialize_with = "deserialize_fromstr",
@@ -303,7 +294,6 @@ mod tests {
         // A valid config
         let toml_str = r#"
             data_dir = "/home/wizardsardine/custom/folder/"
-            daemon = false
             log_level = "debug"
             main_descriptor = "wsh(andor(pk([aabbccdd]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk([aabbccdd]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#dw4ulnrs"
 
@@ -318,11 +308,9 @@ mod tests {
         toml::from_str::<Config>(&toml_str).expect("Deserializing toml_str");
 
         // A valid, round-tripping, config
-        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
         {
             let toml_str = r#"
             data_dir = '/home/wizardsardine/custom/folder/'
-            daemon = false
             log_level = 'TRACE'
             main_descriptor = 'wsh(andor(pk([aabbccdd]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk([aabbccdd]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#dw4ulnrs'
 
@@ -340,12 +328,9 @@ mod tests {
         }
 
         // A valid, round-tripping, config for a Taproot descriptor.
-
-        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
         {
             let toml_str = r#"
             data_dir = '/home/wizardsardine/custom/folder/'
-            daemon = false
             log_level = 'TRACE'
             main_descriptor = 'tr([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,and_v(v:pk([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560)))#0mt7e93c'
 
@@ -363,11 +348,9 @@ mod tests {
         }
 
         // A valid, round-tripping, config with `auth` instead of `cookie_path`
-        #[cfg(unix)] // On non-UNIX there is no 'daemon' member.
         {
             let toml_str = r#"
             data_dir = '/home/wizardsardine/custom/folder/'
-            daemon = false
             log_level = 'TRACE'
             main_descriptor = 'wsh(andor(pk([aabbccdd]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk([aabbccdd]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#dw4ulnrs'
 
@@ -386,7 +369,6 @@ mod tests {
 
         // Invalid desc checksum
         let toml_str = r#"
-            daemon = false
             log_level = "trace"
             data_dir = "/home/wizardsardine/custom/folder/"
 
@@ -405,7 +387,6 @@ mod tests {
 
         // Not enough parameters: missing the Bitcoin network
         let toml_str = r#"
-            daemon = false
             log_level = "trace"
             data_dir = "/home/wizardsardine/custom/folder/"
 
