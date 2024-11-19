@@ -2804,21 +2804,13 @@ dependencies = [
 name = "liana"
 version = "8.0.0"
 dependencies = [
- "backtrace",
  "bdk_coin_select",
- "bdk_electrum",
  "bip39",
- "dirs 5.0.1",
- "fern",
  "getrandom",
- "jsonrpc 0.17.0",
  "log",
  "miniscript",
  "rdrand",
- "rusqlite",
  "serde",
- "serde_json",
- "toml",
 ]
 
 [[package]]
@@ -2850,6 +2842,7 @@ dependencies = [
  "jsonrpc 0.12.1",
  "liana",
  "liana-ui",
+ "lianad",
  "log",
  "reqwest",
  "rust-ini",
@@ -2870,6 +2863,24 @@ dependencies = [
  "bitcoin 0.31.2",
  "chrono",
  "iced",
+]
+
+[[package]]
+name = "lianad"
+version = "8.0.0"
+dependencies = [
+ "backtrace",
+ "bdk_electrum",
+ "dirs 5.0.1",
+ "fern",
+ "jsonrpc 0.17.0",
+ "liana",
+ "log",
+ "miniscript",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]

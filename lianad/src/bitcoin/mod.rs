@@ -6,11 +6,9 @@ pub mod d;
 pub mod electrum;
 pub mod poller;
 
-use crate::{
-    bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry},
-    descriptors,
-};
+use crate::bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry};
 pub use d::{MempoolEntry, MempoolEntryFees, SyncProgress};
+use liana::descriptors;
 
 use std::{fmt, sync};
 

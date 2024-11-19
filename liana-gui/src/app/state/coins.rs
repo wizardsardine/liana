@@ -4,8 +4,8 @@ use std::{cmp::Ordering, collections::HashSet};
 
 use iced::Command;
 
-use liana::commands::CoinStatus;
 use liana_ui::widget::Element;
+use lianad::commands::CoinStatus;
 
 use crate::{
     app::{

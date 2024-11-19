@@ -6,13 +6,14 @@ use iced::{
     Alignment, Command, Length, Subscription,
 };
 
-use liana::{config::ConfigError, miniscript::bitcoin::Network};
+use liana::miniscript::bitcoin::Network;
 use liana_ui::{
     color,
     component::{button, card, modal::Modal, network_banner, notification, text::*},
     icon, image, theme,
     widget::*,
 };
+use lianad::config::ConfigError;
 
 use crate::{app, installer::UserFlow};
 
@@ -466,7 +467,7 @@ async fn check_network_datadir(path: PathBuf, network: Network) -> Result<State,
     };
 
     if let Some(daemon_config_path) = cfg.daemon_config_path {
-        liana::config::Config::from_file(Some(daemon_config_path.clone())).map_err(|e| match e {
+        lianad::config::Config::from_file(Some(daemon_config_path.clone())).map_err(|e| match e {
         ConfigError::FileNotFound
         | ConfigError::DatadirNotFound => {
             format!(

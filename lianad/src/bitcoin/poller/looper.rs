@@ -1,11 +1,11 @@
 use crate::{
     bitcoin::{BitcoinInterface, BlockChainTip, UTxO, UTxOAddress},
     database::{Coin, DatabaseConnection, DatabaseInterface},
-    descriptors,
 };
 
 use std::{collections::HashSet, convert::TryInto, sync, thread, time};
 
+use liana::descriptors;
 use miniscript::bitcoin::{self, secp256k1};
 
 #[derive(Debug, Clone)]

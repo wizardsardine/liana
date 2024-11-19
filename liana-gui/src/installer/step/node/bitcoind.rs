@@ -8,10 +8,8 @@ use bitcoin_hashes::{sha256, Hash};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use flate2::read::GzDecoder;
 use iced::{Command, Subscription};
-use liana::{
-    config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth},
-    miniscript::bitcoin::Network,
-};
+use liana::miniscript::bitcoin::Network;
+use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use tar::Archive;
 use tracing::info;
@@ -473,7 +471,7 @@ impl DefineBitcoind {
             }
             (Some(rpc_auth), Ok(addr)) => {
                 ctx.bitcoin_backend =
-                    Some(liana::config::BitcoinBackend::Bitcoind(BitcoindConfig {
+                    Some(lianad::config::BitcoinBackend::Bitcoind(BitcoindConfig {
                         rpc_auth,
                         addr,
                     }));

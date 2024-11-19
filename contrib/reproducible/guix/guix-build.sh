@@ -80,6 +80,8 @@ time_machine shell --no-cwd \
     --expose="$BUILD_ROOT/Cargo.lock=/liana/Cargo.lock" \
     --expose="$PWD/liana/src=/liana/liana/src" \
     --expose="$PWD/liana/Cargo.toml=/liana/liana/Cargo.toml" \
+    --expose="$PWD/lianad/src=/liana/lianad/src" \
+    --expose="$PWD/lianad/Cargo.toml=/liana/lianad/Cargo.toml" \
     --expose="$PWD/liana-gui/Cargo.toml=/liana/liana-gui/Cargo.toml" \
     --expose="$PWD/liana-gui/src=/liana/liana-gui/src" \
     --expose="$PWD/liana-ui/src=/liana/liana-ui/src" \

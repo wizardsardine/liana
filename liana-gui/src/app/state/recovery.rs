@@ -4,14 +4,12 @@ use std::sync::Arc;
 
 use iced::Command;
 
-use liana::{
-    commands::CoinStatus,
-    miniscript::bitcoin::{
-        bip32::{DerivationPath, Fingerprint},
-        secp256k1,
-    },
+use liana::miniscript::bitcoin::{
+    bip32::{DerivationPath, Fingerprint},
+    secp256k1,
 };
 use liana_ui::{component::form, widget::Element};
+use lianad::commands::CoinStatus;
 
 use crate::{
     app::{

@@ -17,10 +17,8 @@ use miniscript::bitcoin::bip32::ChildNumber;
 use super::utils::{
     block_id_from_tip, block_info_from_anchor, height_i32_from_u32, height_u32_from_i32,
 };
-use crate::{
-    bitcoin::{Block, BlockChainTip, Coin, COINBASE_MATURITY},
-    descriptors::LianaDescriptor,
-};
+use crate::bitcoin::{Block, BlockChainTip, Coin, COINBASE_MATURITY};
+use liana::descriptors::LianaDescriptor;
 
 // We don't want to overload the server (each SPK is separate call).
 const LOOK_AHEAD_LIMIT: u32 = 30;

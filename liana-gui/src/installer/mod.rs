@@ -5,14 +5,12 @@ mod step;
 mod view;
 
 use iced::{clipboard, Command, Subscription};
-use liana::{
-    config::Config,
-    miniscript::bitcoin::{self, Network},
-};
+use liana::miniscript::bitcoin::{self, Network};
 use liana_ui::{
     component::network_banner,
     widget::{Column, Element},
 };
+use lianad::config::Config;
 use tracing::{error, info, warn};
 
 use context::{Context, RemoteBackend};
@@ -332,9 +330,9 @@ impl Installer {
     }
 }
 
-pub fn daemon_check(cfg: liana::config::Config) -> Result<(), Error> {
+pub fn daemon_check(cfg: lianad::config::Config) -> Result<(), Error> {
     // Start Daemon to check correctness of installation
-    match liana::DaemonHandle::start_default(cfg, false) {
+    match lianad::DaemonHandle::start_default(cfg, false) {
         Ok(daemon) => daemon
             .stop()
             .map_err(|e| Error::Unexpected(format!("Failed to stop Liana daemon: {}", e))),
@@ -349,7 +347,7 @@ pub async fn install_local_wallet(
     ctx: Context,
     signer: Arc<Mutex<Signer>>,
 ) -> Result<PathBuf, Error> {
-    let mut cfg: liana::config::Config = extract_daemon_config(&ctx);
+    let mut cfg: lianad::config::Config = extract_daemon_config(&ctx);
     let data_dir = cfg.data_dir.unwrap();
 
     let data_dir = data_dir

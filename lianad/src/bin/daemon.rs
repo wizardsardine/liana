@@ -5,7 +5,7 @@ use std::{
     process, thread, time,
 };
 
-use liana::{config::Config, DaemonHandle, VERSION};
+use lianad::{config::Config, DaemonHandle, VERSION};
 
 fn print_help_exit(code: i32) {
     eprintln!("lianad version {}", VERSION);

@@ -17,6 +17,8 @@ docker run --rm -ti \
     -v "$PWD/Cargo.lock":/liana/Cargo.lock \
     -v "$PWD/liana/Cargo.toml":/liana/liana/Cargo.toml \
     -v "$PWD/liana/src":/liana/liana/src \
+    -v "$PWD/lianad/Cargo.toml":/liana/lianad/Cargo.toml \
+    -v "$PWD/lianad/src":/liana/lianad/src \
     -v "$PWD/liana-gui/Cargo.toml":/liana/liana-gui/Cargo.toml \
     -v "$PWD/liana-gui/src":/liana/liana-gui/src \
     -v "$PWD/liana-ui/Cargo.toml":/liana/liana-ui/Cargo.toml \
@@ -41,6 +43,8 @@ docker run -ti \
     -v "$PWD/Cargo.lock":/liana/Cargo.lock \
     -v "$PWD/liana/Cargo.toml":/liana/liana/Cargo.toml \
     -v "$PWD/liana/src":/liana/liana/src \
+    -v "$PWD/lianad/Cargo.toml":/liana/lianad/Cargo.toml \
+    -v "$PWD/lianad/src":/liana/lianad/src \
     -v "$PWD/liana-gui/Cargo.toml":/liana/liana-gui/Cargo.toml \
     -v "$PWD/liana-gui/src":/liana/liana-gui/src \
     -v "$PWD/liana-ui/Cargo.toml":/liana/liana-ui/Cargo.toml \

@@ -1,0 +1,54 @@
+[package]
+name = "lianad"
+version = "8.0.0"
+authors = ["Antoine Poinsot <darosior@protonmail.com>"]
+edition = "2018"
+repository = "https://github.com/wizardsardine/liana"
+license-file = "LICENCE"
+keywords = ["bitcoin", "wallet", "miniscript", "inheritance", "recovery"]
+description = "Liana wallet daemon"
+exclude = [".github/", ".cirrus.yml", "tests/",  "test_data/", "contrib/", "pyproject.toml"]
+
+[[bin]]
+name = "lianad"
+path = "src/bin/daemon.rs"
+
+[[bin]]
+name = "liana-cli"
+path = "src/bin/cli.rs"
+
+[features]
+nonblocking_shutdown = []
+
+[dependencies]
+liana = { path = "../liana" }
+# For managing transactions (it re-exports the bitcoin crate)
+miniscript = { version = "11.0", features = ["serde", "compiler", "base64"] }
+
+# For Electrum backend. This is the latest version with the same bitcoin version as
+# the miniscript dependency.
+bdk_electrum = { version = "0.14" }
+
+# Don't reinvent the wheel
+dirs = "5.0"
+
+# We use TOML for the config, and JSON for RPC
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.5"
+serde_json = { version = "1.0", features = ["raw_value"] }
+
+# Logging stuff
+log = "0.4"
+fern = "0.6"
+
+# In order to have a backtrace on panic, because the
+# stdlib does not have a programmatic interface yet
+# to work with our custom panic hook.
+backtrace = "0.3"
+
+# Pinned to this version because they keep breaking their MSRV in point releases...
+# FIXME: this is unfortunate, we don't receive the updates (sometimes critical) from SQLite.
+rusqlite = { version = "0.30", features = ["bundled", "unlock_notify"] }
+
+# To talk to bitcoind
+jsonrpc = { version = "0.17", features = ["minreq_http"], default-features = false }

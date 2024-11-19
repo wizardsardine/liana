@@ -7,7 +7,6 @@ use std::{
 
 use iced::Command;
 use liana::{
-    commands::CoinStatus,
     miniscript::bitcoin::{OutPoint, Txid},
     spend::{SpendCreationError, MAX_FEERATE},
 };
@@ -15,6 +14,7 @@ use liana_ui::{
     component::{form, modal::Modal},
     widget::*,
 };
+use lianad::commands::CoinStatus;
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 

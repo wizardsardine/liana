@@ -9,11 +9,8 @@ use crate::{
     signer::Signer,
 };
 use async_hwi::DeviceKind;
-use liana::{
-    config::{BitcoinBackend, BitcoinConfig},
-    descriptors::LianaDescriptor,
-    miniscript::bitcoin,
-};
+use liana::{descriptors::LianaDescriptor, miniscript::bitcoin};
+use lianad::config::{BitcoinBackend, BitcoinConfig};
 
 #[derive(Debug, Clone)]
 pub enum RemoteBackend {

@@ -4,8 +4,9 @@ use crate::{
     database::{
         BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem, Wallet,
     },
-    descriptors, DaemonControl, DaemonHandle,
+    DaemonControl, DaemonHandle,
 };
+use liana::descriptors;
 
 use std::convert::TryInto;
 use std::{

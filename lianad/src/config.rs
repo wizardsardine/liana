@@ -1,4 +1,4 @@
-use crate::descriptors::LianaDescriptor;
+use liana::descriptors::LianaDescriptor;
 
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 

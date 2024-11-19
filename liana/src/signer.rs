@@ -407,12 +407,29 @@ impl HotSigner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{descriptors, testutils::*};
+    use crate::descriptors;
     use miniscript::{
         bitcoin::{locktime::absolute, psbt::Input as PsbtIn, Amount},
         descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
     };
     use std::collections::{BTreeMap, HashSet};
+
+    static mut COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    fn uid() -> usize {
+        unsafe {
+            let uid = COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            uid
+        }
+    }
+    fn tmp_dir() -> path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "lianad-{}-{:?}-{}",
+            std::process::id(),
+            std::thread::current().id(),
+            uid(),
+        ))
+    }
 
     #[test]
     fn hot_signer_gen() {

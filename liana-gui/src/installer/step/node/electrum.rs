@@ -1,9 +1,9 @@
 use iced::Command;
-use liana::{
+use liana_ui::{component::form, widget::*};
+use lianad::{
     config::ElectrumConfig,
     electrum_client::{self, ElectrumApi},
 };
-use liana_ui::{component::form, widget::*};
 
 use crate::{
     installer::{
@@ -45,7 +45,7 @@ impl DefineElectrum {
 
     pub fn apply(&mut self, ctx: &mut Context) -> bool {
         if self.can_try_ping() {
-            ctx.bitcoin_backend = Some(liana::config::BitcoinBackend::Electrum(ElectrumConfig {
+            ctx.bitcoin_backend = Some(lianad::config::BitcoinBackend::Electrum(ElectrumConfig {
                 addr: self.address.value.clone(),
             }));
             return true;

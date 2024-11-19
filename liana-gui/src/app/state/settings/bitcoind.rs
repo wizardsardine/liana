@@ -8,11 +8,9 @@ use chrono::{NaiveDate, Utc};
 use iced::Command;
 use tracing::info;
 
-use liana::{
-    config::{
-        BitcoinBackend, BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config, ElectrumConfig,
-    },
-    miniscript::bitcoin::Network,
+use liana::miniscript::bitcoin::Network;
+use lianad::config::{
+    BitcoinBackend, BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config, ElectrumConfig,
 };
 
 use liana_ui::{component::form, widget::Element};
@@ -353,7 +351,7 @@ impl BitcoindSettings {
                 if let (true, Some(rpc_auth)) = (self.addr.valid, rpc_auth) {
                     let mut daemon_config = daemon.config().cloned().unwrap();
                     daemon_config.bitcoin_backend =
-                        Some(liana::config::BitcoinBackend::Bitcoind(BitcoindConfig {
+                        Some(lianad::config::BitcoinBackend::Bitcoind(BitcoindConfig {
                             rpc_auth,
                             addr: new_addr.unwrap(),
                         }));
@@ -461,7 +459,7 @@ impl ElectrumSettings {
                 if self.addr.valid {
                     let mut daemon_config = daemon.config().cloned().unwrap();
                     daemon_config.bitcoin_backend =
-                        Some(liana::config::BitcoinBackend::Electrum(ElectrumConfig {
+                        Some(lianad::config::BitcoinBackend::Electrum(ElectrumConfig {
                             addr: self.addr.value.clone(),
                         }));
                     self.processing = true;

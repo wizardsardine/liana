@@ -1,7 +1,8 @@
 use std::convert::From;
 use std::io::ErrorKind;
 
-use liana::{config::ConfigError, descriptors::LianaDescError, spend::SpendCreationError};
+use liana::{descriptors::LianaDescError, spend::SpendCreationError};
+use lianad::config::ConfigError;
 
 use crate::{
     app::{settings::SettingsError, wallet::WalletError},

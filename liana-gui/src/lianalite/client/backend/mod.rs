@@ -9,10 +9,12 @@ use std::{
 use async_trait::async_trait;
 use chrono::Utc;
 use liana::{
-    commands::{CoinStatus, GetInfoDescriptors, LCSpendInfo, LabelItem},
-    config::Config,
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid},
+};
+use lianad::{
+    commands::{CoinStatus, GetInfoDescriptors, LCSpendInfo, LabelItem},
+    config::Config,
 };
 use reqwest::{Error, IntoUrl, Method, RequestBuilder, Response};
 use tokio::sync::RwLock;

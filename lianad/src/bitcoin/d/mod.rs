@@ -6,8 +6,8 @@ mod utils;
 use crate::{
     bitcoin::{Block, BlockChainTip},
     config,
-    descriptors::LianaDescriptor,
 };
+use liana::descriptors::LianaDescriptor;
 use utils::{block_before_date, roundup_progress};
 
 use std::{

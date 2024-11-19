@@ -1,4 +1,4 @@
-use liana::config::BitcoinBackend;
+use lianad::config::BitcoinBackend;
 
 pub mod bitcoind;
 pub mod electrum;

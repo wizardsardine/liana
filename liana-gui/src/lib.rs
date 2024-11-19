@@ -12,7 +12,7 @@ pub mod node;
 pub mod signer;
 pub mod utils;
 
-use liana::Version;
+use lianad::Version;
 
 pub const VERSION: Version = Version {
     major: 8,

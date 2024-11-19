@@ -25,7 +25,7 @@ export CARGO_HOME="/liana/.cargo"
 
 # We need to set RUSTC_BOOTSTRAP=1 as a workaround to be able to use unstable
 # features in the GUI dependencies
-for package_name in "liana" "liana-gui"; do
+for package_name in "lianad" "liana-gui"; do
     RUSTC_BOOTSTRAP=1 cargo -vvv \
         --color always \
         --frozen \

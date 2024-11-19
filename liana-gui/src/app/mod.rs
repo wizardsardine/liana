@@ -19,11 +19,12 @@ use iced::{clipboard, time, Command, Subscription};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
-pub use liana::{commands::CoinStatus, config::Config as DaemonConfig, miniscript::bitcoin};
+pub use liana::miniscript::bitcoin;
 use liana_ui::{
     component::network_banner,
     widget::{Column, Element},
 };
+pub use lianad::{commands::CoinStatus, config::Config as DaemonConfig};
 
 pub use config::Config;
 pub use message::Message;

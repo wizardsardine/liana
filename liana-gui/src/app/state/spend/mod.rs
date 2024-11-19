@@ -5,11 +5,9 @@ use std::sync::Arc;
 
 use iced::Command;
 
-use liana::{
-    commands::CoinStatus,
-    miniscript::bitcoin::{Network, OutPoint},
-};
+use liana::miniscript::bitcoin::{Network, OutPoint};
 use liana_ui::widget::Element;
+use lianad::commands::CoinStatus;
 
 use super::{redirect, State};
 use crate::{
