@@ -18,7 +18,8 @@ pub struct EmbeddedDaemon {
 
 impl EmbeddedDaemon {
     pub fn start(config: Config) -> Result<EmbeddedDaemon, DaemonError> {
-        let handle = DaemonHandle::start_default(config.clone()).map_err(DaemonError::Start)?;
+        let handle =
+            DaemonHandle::start_default(config.clone(), false).map_err(DaemonError::Start)?;
         Ok(Self {
             handle: Mutex::new(Some(handle)),
             config,
@@ -31,6 +32,7 @@ impl EmbeddedDaemon {
     {
         match self.handle.lock().await.as_mut() {
             Some(DaemonHandle::Controller { control, .. }) => method(control),
+            Some(_) => unreachable!("No lianad rpc server must be started"),
             None => Err(DaemonError::DaemonStopped),
         }
     }

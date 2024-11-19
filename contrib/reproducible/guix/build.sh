@@ -13,11 +13,6 @@ directory = "/vendor"
 [source.crates-io]
 replace-with = "vendored_sources"
 
-[source."https://github.com/wizardsardine/liana"]
-git = "https://github.com/wizardsardine/liana"
-branch = "master"
-replace-with = "vendored_sources"
-
 [source."https://github.com/edouardparis/iced"]
 git = "https://github.com/edouardparis/iced"
 branch = "patch-0.12.3"
