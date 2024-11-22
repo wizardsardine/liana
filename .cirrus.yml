@@ -64,9 +64,12 @@ task:
     fi
 
     if [ "$BITCOIN_BACKEND_TYPE" = "electrs" ]; then
-      curl -OL https://github.com/RCasatta/electrsd/releases/download/electrs_releases/electrs_linux_v0.9.11.zip
-      echo "2b2f8aef35cd8e16e109b948a903d010aa472f6cdf2147d47e01fd95cd1785da electrs_linux_v0.9.11.zip" | sha256sum -c
-      unzip electrs_linux_v0.9.11.zip
+      # We can't use https://github.com/RCasatta/electrsd/releases/download/electrs_releases/electrs_linux_v0.10.6.zip
+      # for now as that was built with ubuntu 24.04 and requires GLIBC_2.38. Instead, we use a binary that was built on
+      # ubuntu 20.04:
+      curl -OL https://github.com/jp1ac4/electrsd/releases/download/electrs-v0.10.6-ubuntu-20.04/electrs_linux_v0.10.6.zip
+      echo "34934bedbc4003867353f23c7983d4aa2d901dfccfd0bd74167f9fd305c56f7b electrs_linux_v0.10.6.zip" | sha256sum -c
+      unzip electrs_linux_v0.10.6.zip
       chmod 754 electrs
       export ELECTRS_PATH=$PWD/electrs
     fi
