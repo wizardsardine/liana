@@ -107,6 +107,7 @@ task:
       echo "448693f42fa2e310bd86ba9a7304c9ab464854a3c7e4c3eaa8c774efeb0fbdd1 electrs_linux_v0.10.6.zip" | sha256sum -c
       unzip electrs_linux_v0.10.6.zip
       chmod 754 electrs
+      ./electrs --version
       export ELECTRS_PATH=$PWD/electrs
     fi
 
