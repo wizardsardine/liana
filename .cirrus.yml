@@ -103,9 +103,9 @@ task:
     fi
 
     if [ "$BITCOIN_BACKEND_TYPE" = "electrs" ]; then
-      curl -OL https://github.com/RCasatta/electrsd/releases/download/electrs_releases/electrs_linux_v0.9.11.zip
-      echo "2b2f8aef35cd8e16e109b948a903d010aa472f6cdf2147d47e01fd95cd1785da electrs_linux_v0.9.11.zip" | sha256sum -c
-      unzip electrs_linux_v0.9.11.zip
+      curl -OL https://github.com/RCasatta/electrsd/releases/download/electrs_releases/electrs_linux_v0.10.6.zip
+      echo "448693f42fa2e310bd86ba9a7304c9ab464854a3c7e4c3eaa8c774efeb0fbdd1 electrs_linux_v0.10.6.zip" | sha256sum -c
+      unzip electrs_linux_v0.10.6.zip
       chmod 754 electrs
       export ELECTRS_PATH=$PWD/electrs
     fi
