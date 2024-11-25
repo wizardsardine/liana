@@ -430,6 +430,7 @@ pub struct Coin {
     pub is_change: bool,
     pub spend_txid: Option<bitcoin::Txid>,
     pub spend_block: Option<BlockInfo>,
+    pub is_from_self: bool,
 }
 
 impl std::convert::From<DbCoin> for Coin {
@@ -443,6 +444,7 @@ impl std::convert::From<DbCoin> for Coin {
             is_change,
             spend_txid,
             spend_block,
+            is_from_self,
             ..
         } = db_coin;
         Coin {
@@ -454,6 +456,7 @@ impl std::convert::From<DbCoin> for Coin {
             is_change,
             spend_txid,
             spend_block: spend_block.map(BlockInfo::from),
+            is_from_self,
         }
     }
 }

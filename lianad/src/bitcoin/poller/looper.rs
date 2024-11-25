@@ -91,6 +91,7 @@ fn update_coins(
                 block_info: None,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             };
             received.push(coin);
         }
