@@ -75,14 +75,36 @@ def test_reorg_exclusion(lianad, bitcoind):
     coin_b = get_coin(lianad, txid)
     b_spend_tx = spend_coins(lianad, bitcoind, [coin_b])
 
+    # These are external deposits so not from self.
+    assert coin_a["is_from_self"] is False
+    assert coin_b["is_from_self"] is False
+
     # A confirmed and spent coin
     addr = lianad.rpc.getnewaddress()["address"]
-    txid = bitcoind.rpc.sendtoaddress(addr, 3)
-    bitcoind.generate_block(1, wait_for_mempool=txid)
+    txid_c = bitcoind.rpc.sendtoaddress(addr, 3)
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 3)
-    coin_c = get_coin(lianad, txid)
-    c_spend_tx = spend_coins(lianad, bitcoind, [coin_c])
-    bitcoind.generate_block(1, wait_for_mempool=1)
+    # Now refresh this coin while it is unconfirmed.
+    res = lianad.rpc.createspend({}, [get_coin(lianad, txid_c)["outpoint"]], 1)
+    c_spend_psbt = PSBT.from_base64(res["psbt"])
+    txid_d = sign_and_broadcast_psbt(lianad, c_spend_psbt)
+    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 4)
+    coin_c = get_coin(lianad, txid_c)
+    coin_d = get_coin(lianad, txid_d)
+    assert coin_c["is_from_self"] is False
+    assert coin_c["block_height"] is None
+    # Even though coin_d is from a self-send, coin_c is still unconfirmed
+    # and is not from self. Therefore, coin_d is not from self either.
+    assert coin_d["is_from_self"] is False
+
+    bitcoind.generate_block(1)
+    # Wait for confirmation to be detected.
+    wait_for(lambda: get_coin(lianad, txid_d)["block_height"] is not None)
+    coin_c = get_coin(lianad, txid_c)
+    coin_d = get_coin(lianad, txid_d)
+    assert coin_c["is_from_self"] is False
+    assert coin_c["block_height"] is not None
+    assert coin_d["is_from_self"] is True
+    assert coin_d["block_height"] is not None
 
     # Make sure the transaction were confirmed >10 blocks ago, so bitcoind won't update the
     # mempool during the reorg to the initial height.
@@ -108,7 +130,7 @@ def test_reorg_exclusion(lianad, bitcoind):
         tx = bitcoind.rpc.gettransaction(txid)["hex"]
         bitcoind.rpc.sendrawtransaction(tx)
     bitcoind.rpc.sendrawtransaction(b_spend_tx)
-    bitcoind.rpc.sendrawtransaction(c_spend_tx)
+    sign_and_broadcast_psbt(lianad, c_spend_psbt)
     bitcoind.generate_block(1, wait_for_mempool=5)
     new_height = bitcoind.rpc.getblockcount()
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == new_height)
@@ -128,9 +150,11 @@ def test_reorg_exclusion(lianad, bitcoind):
         for c in lianad.rpc.listcoins()["coins"]
         if coin_c["outpoint"] == c["outpoint"]
     )
-    c_spend_txid = get_txid(c_spend_tx)
-    assert new_coin_c["spend_info"]["txid"] == c_spend_txid
+    assert new_coin_c["spend_info"]["txid"] == txid_d
     assert new_coin_c["spend_info"]["height"] == new_height
+    new_coin_d = get_coin(lianad, txid_d)
+    assert new_coin_d["is_from_self"] is True
+    assert new_coin_d["block_height"] == new_height
 
     # TODO: maybe test with some malleation for the deposit and spending txs?
 
@@ -162,17 +186,26 @@ def test_reorg_status_recovery(lianad, bitcoind):
     assert initial_height > 100
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
 
-    # Both coins are confirmed. Spend the second one then get their infos.
+    # Both coins are confirmed. Refresh the second one then get their infos.
     wait_for(lambda: len(list_coins()) == 2)
     wait_for(lambda: all(c["block_height"] is not None for c in list_coins()))
     coin_b = get_coin(lianad, txids[1])
-    tx = spend_coins(lianad, bitcoind, [coin_b])
-    locktime = bitcoind.rpc.decoderawtransaction(tx)["locktime"]
+    # Refresh coin_b.
+    res = lianad.rpc.createspend({}, [coin_b["outpoint"]], 1)
+    b_spend_psbt = PSBT.from_base64(res["psbt"])
+    txid = sign_and_broadcast_psbt(lianad, b_spend_psbt)
+    coin_c = get_coin(lianad, txid)
+    # coin_c is unconfirmed and marked as from self as its parent is confirmed.
+    assert coin_c["block_height"] is None
+    assert coin_c["is_from_self"] is True
+
+    locktime = b_spend_psbt.tx.nLockTime
     assert initial_height - 100 <= locktime <= initial_height
     bitcoind.generate_block(1, wait_for_mempool=1)
     wait_for(lambda: spend_confirmed_noticed(lianad, coin_b["outpoint"]))
     coin_a = get_coin(lianad, txids[0])
     coin_b = get_coin(lianad, txids[1])
+    coin_c = get_coin(lianad, txid)
 
     # Reorg the chain down to the initial height without shifting nor malleating
     # any transaction. The coin info should be identical (except the spend info
@@ -187,9 +220,14 @@ def test_reorg_status_recovery(lianad, bitcoind):
     if locktime == initial_height:
         # Cannot be mined until next block (initial_height + 1).
         coin_b["spend_info"] = None
+        # coin_c no longer exists.
+        with pytest.raises(StopIteration):
+            get_coin(lianad, coin_c["outpoint"])
     else:
         # Otherwise, the tx will be mined at the height the reorg happened.
         coin_b["spend_info"]["height"] = initial_height
+        new_coin_c = get_coin(lianad, coin_c["outpoint"])
+        assert new_coin_c["is_from_self"] is True
     assert new_coin_b == coin_b
 
 

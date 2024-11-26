@@ -100,6 +100,7 @@ def test_listcoins(lianad, bitcoind):
     assert res[0]["is_change"] == False
     assert res[0]["block_height"] is None
     assert res[0]["spend_info"] is None
+    assert res[0]["is_from_self"] is False
 
     assert len(lianad.rpc.listcoins(["confirmed", "spent", "spending"])["coins"]) == 0
     assert (
@@ -131,6 +132,8 @@ def test_listcoins(lianad, bitcoind):
         == lianad.rpc.listcoins(["spent", "unconfirmed", "confirmed"], [outpoint_a])
     )
 
+    assert lianad.rpc.listcoins()["coins"][0]["is_from_self"] is False
+
     # Same if the coin gets spent.
     spend_tx = spend_coins(lianad, bitcoind, (res[0],))
     spend_txid = get_txid(spend_tx)
@@ -140,6 +143,7 @@ def test_listcoins(lianad, bitcoind):
     assert spend_info["height"] is None
     assert len(lianad.rpc.listcoins(["spent"])["coins"]) == 0
     assert len(lianad.rpc.listcoins(["spending"])["coins"]) == 1
+    assert lianad.rpc.listcoins(["spending"])["coins"][0]["is_from_self"] is False
 
     # And if this spending tx gets confirmed.
     bitcoind.generate_block(1, wait_for_mempool=spend_txid)
@@ -154,6 +158,8 @@ def test_listcoins(lianad, bitcoind):
         == lianad.rpc.listcoins(["spent"])
         == lianad.rpc.listcoins(["spent", "unconfirmed", "confirmed"])
     )
+    assert len(lianad.rpc.listcoins()["coins"]) == 1
+    assert lianad.rpc.listcoins()["coins"][0]["is_from_self"] is False
 
     # Add a second coin.
     addr_b = lianad.rpc.getnewaddress()["address"]
@@ -161,6 +167,7 @@ def test_listcoins(lianad, bitcoind):
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 2)
     res = lianad.rpc.listcoins(["unconfirmed"], [])["coins"]
     outpoint_b = res[0]["outpoint"]
+    assert res[0]["is_from_self"] is False
 
     # We have one unconfirmed coin and one spent coin.
     assert (
@@ -182,6 +189,7 @@ def test_listcoins(lianad, bitcoind):
         == lianad.rpc.listcoins(["spending", "unconfirmed", "confirmed"])
         == lianad.rpc.listcoins(["spending", "unconfirmed", "confirmed"], [outpoint_b])
     )
+    assert lianad.rpc.listcoins([], [outpoint_b])["coins"][0]["is_from_self"] is False
 
     # Now confirm the second coin.
     bitcoind.generate_block(1, wait_for_mempool=txid_b)
@@ -190,6 +198,7 @@ def test_listcoins(lianad, bitcoind):
         lambda: lianad.rpc.listcoins([], [outpoint_b])["coins"][0]["block_height"]
         == block_height
     )
+    assert lianad.rpc.listcoins([], [outpoint_b])["coins"][0]["is_from_self"] is False
 
     # We have one confirmed coin and one spent coin.
     assert (
@@ -1079,6 +1088,7 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     bitcoind.generate_block(1, wait_for_mempool=txid)
     wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 3)
     coins = lianad.rpc.listcoins(["confirmed"])["coins"]
+    assert all(c["is_from_self"] is False for c in coins)
 
     # Create a spend that will later be replaced.
     first_outpoints = [c["outpoint"] for c in coins[:2]]
@@ -1113,6 +1123,13 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
             for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
         )
     )
+    # The change output is from self as its parent is confirmed.
+    lc_res = lianad.rpc.listcoins(["unconfirmed"], [])["coins"]
+    assert (
+        len(lc_res) == 1
+        and first_txid in lc_res[0]["outpoint"]
+        and lc_res[0]["is_from_self"] is True
+    )
     # We can now use RBF, but the feerate must be higher than that of the first transaction.
     with pytest.raises(RpcError, match=f"Feerate 1 too low for minimum feerate 2."):
         lianad.rpc.rbfpsbt(first_txid, False, 1)
@@ -1144,6 +1161,13 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
             c["spend_info"] is not None and c["spend_info"]["txid"] == rbf_1_txid
             for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
         )
+    )
+    # The change output of the replacement is also from self as its parent is confirmed.
+    lc_res = lianad.rpc.listcoins(["unconfirmed"], [])["coins"]
+    assert (
+        len(lc_res) == 1
+        and rbf_1_txid in lc_res[0]["outpoint"]
+        and lc_res[0]["is_from_self"] is True
     )
     mempool_rbf_1 = bitcoind.rpc.getmempoolentry(rbf_1_txid)
     # Note that in the mempool entry, "ancestor" includes rbf_1_txid itself.
@@ -1178,6 +1202,12 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
             for c in lianad.rpc.listcoins([], desc_1_outpoints)["coins"]
         )
     )
+    lc_res = [c for c in lianad.rpc.listcoins(["unconfirmed"], [])["coins"]]
+    assert (
+        len(lc_res) == 1
+        and desc_1_txid in lc_res[0]["outpoint"]
+        and lc_res[0]["is_from_self"] is True
+    )
     # Add a new transaction spending the change from the first descendant.
     desc_2_destinations = {
         bitcoind.rpc.getnewaddress(): 25_000,
@@ -1193,6 +1223,12 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
             c["spend_info"] is not None and c["spend_info"]["txid"] == desc_2_txid
             for c in lianad.rpc.listcoins([], desc_2_outpoints)["coins"]
         )
+    )
+    lc_res = [c for c in lianad.rpc.listcoins(["unconfirmed"], [])["coins"]]
+    assert (
+        len(lc_res) == 1
+        and desc_2_txid in lc_res[0]["outpoint"]
+        and lc_res[0]["is_from_self"] is True
     )
     # Now replace the first RBF, which will also remove its descendants.
     rbf_2_res = lianad.rpc.rbfpsbt(rbf_1_txid, False, feerate)
@@ -1216,6 +1252,12 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
             for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
         )
     )
+    lc_res = [c for c in lianad.rpc.listcoins(["unconfirmed"], [])["coins"]]
+    assert (
+        len(lc_res) == 1
+        and rbf_2_txid in lc_res[0]["outpoint"]
+        and lc_res[0]["is_from_self"] is True
+    )
     # The unconfirmed coins used in the descendant transactions have been removed so that
     # only one of the input coins remains, and its spend info has been wiped so that it is as before.
     assert lianad.rpc.listcoins([], desc_1_outpoints + desc_2_outpoints)["coins"] == [
@@ -1230,6 +1272,14 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
             for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
         )
     )
+    final_coins = lianad.rpc.listcoins()["coins"]
+    # We have the three original coins plus the change output from the last RBF.
+    assert len(final_coins) == 4
+    assert len(coins + lc_res) == 4
+    for fc in final_coins:
+        assert fc["outpoint"] in [c["outpoint"] for c in coins + lc_res]
+        # Original coins are not from self, but RBF change output is.
+        assert fc["is_from_self"] is (fc["outpoint"] in [c["outpoint"] for c in lc_res])
 
 
 def test_rbfpsbt_insufficient_funds(lianad, bitcoind):

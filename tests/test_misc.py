@@ -213,14 +213,22 @@ def test_coinbase_deposit(lianad, bitcoind):
     wait_for_sync()
     coins = lianad.rpc.listcoins()["coins"]
     assert (
-        len(coins) == 1 and coins[0]["is_immature"] and coins[0]["spend_info"] is None
+        len(coins) == 1
+        and coins[0]["is_immature"]
+        and coins[0]["spend_info"] is None
+        and not coins[0]["is_from_self"]
     )
 
     # Generate 100 blocks to make the coinbase mature. We should detect it as such.
+    # It remains as not from self.
     bitcoind.generate_block(100)
     wait_for_sync()
     coin = lianad.rpc.listcoins()["coins"][0]
-    assert not coin["is_immature"] and coin["block_height"] is not None
+    assert (
+        not coin["is_immature"]
+        and coin["block_height"] is not None
+        and not coins[0]["is_from_self"]
+    )
 
     # We must be able to spend the mature coin.
     destinations = {bitcoind.rpc.getnewaddress(): int(0.999999 * COIN)}
@@ -249,13 +257,17 @@ def test_coinbase_deposit(lianad, bitcoind):
     bitcoind.rpc.generatetoaddress(1, change_addr)
     wait_for(lambda: any(c["is_immature"] for c in lianad.rpc.listcoins()["coins"]))
     coin = next(c for c in lianad.rpc.listcoins()["coins"] if c["is_immature"])
-    assert coin["is_change"]
+    assert coin["is_change"] and not coin["is_from_self"]
     bitcoind.generate_block(100)
     wait_for_sync()
     coin = next(
         c for c in lianad.rpc.listcoins()["coins"] if c["outpoint"] == coin["outpoint"]
     )
-    assert not coin["is_immature"] and coin["block_height"] is not None
+    assert (
+        not coin["is_immature"]
+        and coin["block_height"] is not None
+        and not coin["is_from_self"]
+    )
 
 
 @pytest.mark.skipif(
