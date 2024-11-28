@@ -50,6 +50,21 @@ where
         .collect::<rusqlite::Result<Vec<T>>>()
 }
 
+/// Internal helper for queries boilerplate
+pub fn db_query_row<P, F, T>(
+    conn: &mut rusqlite::Connection,
+    stmt_str: &str,
+    params: P,
+    f: F,
+) -> Result<T, rusqlite::Error>
+where
+    P: IntoIterator + rusqlite::Params,
+    P::Item: rusqlite::ToSql,
+    F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+{
+    conn.prepare(stmt_str)?.query_row(params, f)
+}
+
 /// The current time as the number of seconds since the UNIX epoch, truncated to u32 since SQLite
 /// only supports i64 integers.
 pub fn curr_timestamp() -> u32 {
