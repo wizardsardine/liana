@@ -43,7 +43,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 6;
+const DB_VERSION: i64 = 7;
 
 /// Last database version for which Bitcoin transactions were not stored in database. In practice
 /// this meant we relied on the bitcoind watchonly wallet to store them for us.
@@ -733,9 +733,16 @@ impl SqliteConn {
                 let txid = &tx.txid()[..].to_vec();
                 let tx_ser = bitcoin::consensus::serialize(tx);
                 db_tx.execute(
-                    "INSERT INTO transactions (txid, tx) VALUES (?1, ?2) \
+                    "INSERT INTO transactions (txid, tx, num_inputs, num_outputs, is_coinbase) \
+                        VALUES (?1, ?2, ?3, ?4, ?5) \
                         ON CONFLICT DO NOTHING",
-                    rusqlite::params![txid, tx_ser,],
+                    rusqlite::params![
+                        txid,
+                        tx_ser,
+                        tx.input.len(),
+                        tx.output.len(),
+                        tx.is_coinbase()
+                    ],
                 )?;
             }
             Ok(())
@@ -840,7 +847,7 @@ mod tests {
         str::FromStr,
     };
 
-    use bitcoin::bip32;
+    use bitcoin::{bip32, ScriptBuf};
 
     // The database schema used by the first versions of Liana (database version 0). Used to test
     // migrations starting from the first version.
@@ -1299,8 +1306,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             conn.new_txs(&txs);
@@ -1602,8 +1609,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             conn.new_txs(&txs);
@@ -1935,8 +1942,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             conn.new_txs(&txs);
@@ -2144,8 +2151,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             conn.new_txs(&txs);
@@ -2263,8 +2270,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             conn.new_txs(&txs);
@@ -2291,8 +2298,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             let spend_txs: Vec<_> = (0..10)
@@ -2301,8 +2308,8 @@ CREATE TABLE labels (
                         bitcoin::Transaction {
                             version: bitcoin::transaction::Version::TWO,
                             lock_time: bitcoin::absolute::LockTime::from_height(1_234 + i).unwrap(),
-                            input: Vec::new(),
-                            output: Vec::new(),
+                            input: vec![bitcoin::TxIn::default()], // a single input
+                            output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                         },
                         if i % 2 == 0 {
                             Some(BlockInfo {
@@ -2462,7 +2469,7 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v0_to_v6_migration() {
+    fn v0_to_v7_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 0, using the old schema.
@@ -2568,7 +2575,7 @@ CREATE TABLE labels (
         {
             let mut conn = db.connection().unwrap();
             let version = conn.db_version();
-            assert_eq!(version, 6);
+            assert_eq!(version, 7);
         }
         // We should now be able to insert another PSBT, to query both, and the first PSBT must
         // have no associated timestamp.
@@ -2595,8 +2602,8 @@ CREATE TABLE labels (
             let tx = bitcoin::Transaction {
                 version: bitcoin::transaction::Version::TWO,
                 lock_time: bitcoin::absolute::LockTime::from_height(2).unwrap(),
-                input: Vec::new(),
-                output: Vec::new(),
+                input: vec![bitcoin::TxIn::default()], // a single input
+                output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
             };
             conn.new_txs(&[tx.clone()]);
             conn.new_unspent_coins(&[Coin {
@@ -2642,7 +2649,7 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v3_to_v6_migration() {
+    fn v3_to_v7_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 3, using the old schema.
@@ -2792,10 +2799,10 @@ CREATE TABLE labels (
 
             // Migrate the DB.
             maybe_apply_migration(&db_path, &bitcoin_txs).unwrap();
-            assert_eq!(conn.db_version(), 6);
+            assert_eq!(conn.db_version(), 7);
             // Migrating twice will be a no-op. No need to pass `bitcoin_txs` second time.
             maybe_apply_migration(&db_path, &[]).unwrap();
-            assert!(conn.db_version() == 6);
+            assert!(conn.db_version() == 7);
 
             // Compare the `DbCoin`s with the expected values.
             let coins_post = conn.coins(&[], &[]);
