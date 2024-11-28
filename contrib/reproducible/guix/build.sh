@@ -26,13 +26,13 @@ export CARGO_HOME="/liana/.cargo"
 # We need to set RUSTC_BOOTSTRAP=1 as a workaround to be able to use unstable
 # features in the GUI dependencies
 for package_name in "lianad" "liana-gui"; do
-    RUSTC_BOOTSTRAP=1 cargo -vvv \
+    RUSTC_BOOTSTRAP=1 cargo zigbuild -vvv \
         --color always \
         --frozen \
         --offline \
-        rustc \
         -p "$package_name" \
         --jobs "$JOBS" \
+	--target x86_64-unknown-linux-gnu.2.31 \
         --release \
         --target-dir "/out"
 done
@@ -40,10 +40,10 @@ done
 for bin_name in "liana-gui" "lianad" "liana-cli"; do
     # Assume 64bits. Even bitcoind doesn't ship 32bits binaries for x86.
     # FIXME: is there a cleaner way than using patchelf for this?
-    patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 "/out/release/$bin_name"
+    patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 "/out/x86_64-unknown-linux-gnu/release/$bin_name"
 
     # FIXME: Find a way to use GUIX_LD_WRAPPER_DISABLE_RPATH=yes instead
-    patchelf --remove-rpath "/out/release/$bin_name"
+    patchelf --remove-rpath "/out/x86_64-unknown-linux-gnu/release/$bin_name"
 done
 
 set +ex

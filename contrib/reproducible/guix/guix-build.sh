@@ -48,7 +48,7 @@ fi
 # across time.
 time_machine() {
     guix time-machine --url=https://git.savannah.gnu.org/git/guix.git \
-        --commit=059d38dc3f8b087f4a42df586daeb05761ee18d7 \
+        --commit=3ef5e20bcdb6caed49e5db46a135ee4c17d69b5f \
         --cores="$JOBS" \
         --keep-failed \
         --fallback \
