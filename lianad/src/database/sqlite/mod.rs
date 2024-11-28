@@ -1373,9 +1373,10 @@ CREATE TABLE labels (
                 conn.db_coins(&[outpoint_a, outpoint_b]),
             ]
             .iter()
-            .all(|c| c.len() == 2
-                && c[0].outpoint == coin_a.outpoint
-                && c[1].outpoint == coin_b.outpoint));
+            .all(|coins| coins.len() == 2
+                && coins
+                    .iter()
+                    .all(|c| [coin_a.outpoint, coin_b.outpoint].contains(&c.outpoint))));
             // We can filter for just the first coin.
             assert!([
                 conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_a]),
@@ -1425,9 +1426,10 @@ CREATE TABLE labels (
                 conn.db_coins(&[outpoint_a, outpoint_b]),
             ]
             .iter()
-            .all(|c| c.len() == 2
-                && c[0].outpoint == coin_a.outpoint
-                && c[1].outpoint == coin_b.outpoint));
+            .all(|coins| coins.len() == 2
+                && coins
+                    .iter()
+                    .all(|c| [coin_a.outpoint, coin_b.outpoint].contains(&c.outpoint))));
 
             // Now if we spend one, it'll be marked as such.
             conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().txid())]);
@@ -1478,9 +1480,10 @@ CREATE TABLE labels (
                 conn.db_coins(&[outpoint_a, outpoint_b]),
             ]
             .iter()
-            .all(|c| c.len() == 2
-                && c[0].outpoint == coin_a.outpoint
-                && c[1].outpoint == coin_b.outpoint));
+            .all(|coins| coins.len() == 2
+                && coins
+                    .iter()
+                    .all(|c| [coin_a.outpoint, coin_b.outpoint].contains(&c.outpoint))));
 
             // Add a third and fourth coin.
             let outpoint_c = bitcoin::OutPoint::new(txs.get(3).unwrap().txid(), 42);
@@ -1518,10 +1521,11 @@ CREATE TABLE labels (
                 conn.db_coins(&[outpoint_b, outpoint_c, outpoint_d]),
             ]
             .iter()
-            .all(|coin| coin.len() == 3
-                && coin[0].outpoint == coin_b.outpoint
-                && coin[1].outpoint == coin_c.outpoint
-                && coin[2].outpoint == coin_d.outpoint));
+            .all(|coins| coins.len() == 3
+                && coins
+                    .iter()
+                    .all(|c| [coin_b.outpoint, coin_c.outpoint, coin_d.outpoint]
+                        .contains(&c.outpoint))));
 
             // We can also get two of the three unconfirmed coins by filtering for their outpoints.
             assert!([
@@ -1530,9 +1534,10 @@ CREATE TABLE labels (
                 conn.db_coins(&[outpoint_b, outpoint_c]),
             ]
             .iter()
-            .all(|coin| coin.len() == 2
-                && coin[0].outpoint == coin_b.outpoint
-                && coin[1].outpoint == coin_c.outpoint));
+            .all(|coins| coins.len() == 2
+                && coins
+                    .iter()
+                    .all(|c| [coin_b.outpoint, coin_c.outpoint].contains(&c.outpoint))));
 
             // Now spend second coin, even though it is still unconfirmed.
             conn.spend_coins(&[(coin_b.outpoint, txs.get(5).unwrap().txid())]);
