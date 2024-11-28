@@ -340,6 +340,148 @@ fn migrate_v6_to_v7(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
     Ok(())
 }
 
+fn migrate_v7_to_v8(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError> {
+    // This migration is done as several database transactions in order not to
+    // have a very large database transaction containing all rows from the
+    // transactions table.
+    const TXIDS_BATCH_SIZE: u32 = 100;
+    loop {
+        let txids = db_query(
+            conn,
+            "SELECT txid FROM transactions WHERE num_inputs IS NULL LIMIT ?1",
+            rusqlite::params![TXIDS_BATCH_SIZE],
+            |row| {
+                let txid: Vec<u8> = row.get(0)?;
+                let txid: bitcoin::Txid = bitcoin::consensus::encode::deserialize(&txid)
+                    .expect("We only store valid txids");
+                Ok(txid)
+            },
+        )?;
+        if txids.is_empty() {
+            break;
+        }
+        for txid in &txids {
+            let tx = db_query_row(
+                conn,
+                "SELECT tx FROM transactions WHERE txid = ?1",
+                rusqlite::params![txid[..].to_vec()],
+                |row| {
+                    let tx: Vec<u8> = row.get(0)?;
+                    let tx: bitcoin::Transaction = bitcoin::consensus::encode::deserialize(&tx)
+                        .expect("We only store valid transactions");
+                    Ok(tx)
+                },
+            )?;
+            db_exec(conn, |db_tx| {
+                let updated = db_tx.execute(
+                    "UPDATE transactions SET num_inputs = ?1, num_outputs = ?2, is_coinbase = ?3 WHERE txid = ?4",
+                    rusqlite::params![tx.input.len(), tx.output.len(), tx.is_coinbase(), txid[..].to_vec()],
+                )?;
+                assert_eq!(updated, 1);
+                Ok(())
+            })?;
+        }
+    }
+
+    // Update the `is_from_self` column for all unconfirmed coins and those
+    // confirmed after height 0, i.e. this will act on all coins.
+    let prev_tip_height = 0;
+    // As part of the same db_tx, first make sure that all rows of the
+    // transactions table have been updated.
+    db_exec(conn, |db_tx| {
+        let num_txs_to_update: u32 = db_tx.query_row(
+            "SELECT count(txid) FROM transactions WHERE num_inputs IS NULL OR num_outputs IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(num_txs_to_update, 0);
+
+        // This is a copy of `SqliteConn::update_coins_from_self` as of
+        // the time of writing this migration. We don't use that method
+        // directly in case the schema changes in future and it no longer
+        // works on the V7 schema.
+
+        // Given the requirement for unconfirmed coins that all ancestors
+        // be from self, we perform the update in a loop until no further
+        // rows are updated in order to iterate over the unconfirmed coins.
+        // Although we don't expect any unconfirmed transaction to have
+        // more than 25 in-mempool descendants including itself, there
+        // could be more descendants in the DB following a reorg and a
+        // rollback of the tip. The max number of iterations would be
+        // one per unconfirmed coin not from self plus one for all
+        // confirmed coins.
+        // In any case, the query only sets `is_from_self` to 1 for
+        // those coins with value 0 and so the number of rows affected
+        // by each iteration must become 0.
+        let max_iterations = {
+            let num_unconfirmed: u64 = db_tx.query_row(
+                "SELECT COUNT(*) FROM coins
+                WHERE blockheight IS NULL AND is_from_self = 0",
+                [],
+                |row| row.get(0),
+            )?;
+            // Add 1 for the confirmed coins, which will all
+            // be updated in the first iteration, and another 1
+            // as a final check there's nothing left to update.
+            num_unconfirmed.checked_add(2).expect("must fit")
+        };
+        log::debug!(
+            "Updating is_from_self in up to {} iterations..",
+            max_iterations
+        );
+        let mut updated = 0;
+        for i in 0..max_iterations {
+            updated = db_tx.execute(
+                "
+                UPDATE coins
+                SET is_from_self = 1
+                FROM transactions t
+                    INNER JOIN (
+                        SELECT
+                            spend_txid,
+                            SUM(
+                                CASE
+                                    WHEN blockheight IS NOT NULL THEN 1
+                                    -- If the spending coin is unconfirmed, only count
+                                    -- it as an input coin if it is from self.
+                                    WHEN blockheight IS NULL AND is_from_self = 1 THEN 1
+                                    ELSE 0
+                                END
+                            ) AS cnt
+                        FROM coins
+                        WHERE spend_txid IS NOT NULL
+                        -- We only need to consider spend transactions that are
+                        -- unconfirmed or confirmed after `prev_tip_height
+                        -- as only these transactions will affect the coins that
+                        -- we are updating.
+                        AND (spend_block_height IS NULL OR spend_block_height > ?1)
+                        GROUP BY spend_txid
+                    ) spends
+                    ON t.txid = spends.spend_txid AND t.num_inputs = spends.cnt
+                WHERE coins.txid = t.txid
+                AND (coins.blockheight IS NULL OR coins.blockheight > ?1)
+                AND coins.is_from_self = 0
+                ",
+                [prev_tip_height],
+            )?;
+            if updated == 0 {
+                log::debug!("Finished updating is_from_self in {} iterations.", i + 1);
+                break;
+            }
+        }
+        assert_eq!(
+            updated, 0,
+            "no rows expected to be updated on final iteration while updating is_from_self",
+        );
+
+        // Finally update the DB version.
+        db_tx.execute("UPDATE version SET version = 8", [])?;
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
 /// Check the database version and if necessary apply the migrations to upgrade it to the current
 /// one. The `bitcoin_txs` parameter is here for the migration from versions 4 and earlier, which
 /// did not store the Bitcoin transactions in database, to versions 5 and later, which do. For a
@@ -397,6 +539,11 @@ pub fn maybe_apply_migration(
                 log::warn!("Upgrading database from version 6 to version 7.");
                 migrate_v6_to_v7(&mut conn)?;
                 log::warn!("Migration from database version 6 to version 7 successful.");
+            }
+            7 => {
+                log::warn!("Upgrading database from version 7 to version 8.");
+                migrate_v7_to_v8(&mut conn)?;
+                log::warn!("Migration from database version 7 to version 8 successful.");
             }
             _ => return Err(SqliteDbError::UnsupportedVersion(version)),
         }

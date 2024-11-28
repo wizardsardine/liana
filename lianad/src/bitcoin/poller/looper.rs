@@ -315,6 +315,9 @@ fn updates(
     db_conn.unspend_coins(&updated_coins.expired_spending);
     db_conn.spend_coins(&updated_coins.spending);
     db_conn.confirm_spend(&updated_coins.spent);
+    // Update info about which coins are from self only after
+    // coins have been inserted & updated above.
+    db_conn.update_coins_from_self(current_tip.height);
     if latest_tip != current_tip {
         db_conn.update_tip(&latest_tip);
         log::debug!("New tip: '{}'", latest_tip);
