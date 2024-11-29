@@ -44,3 +44,10 @@ This document details the release process.
 - Update the package managers with the new version. As of this writing we only update the [AUR
   package](https://aur.archlinux.org/packages/liana-bin) ourselves.
 - Celebrate.
+
+In order to build the release assets:
+
+```
+nix develop .#release
+./contrib/release/release.sh
+```
