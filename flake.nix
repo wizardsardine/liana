@@ -81,6 +81,9 @@
             mkdir -p $CARGO_ZIGBUILD_CACHE_DIR
             export CC=zigcc
             export CXX=zigc++
+
+            # rcodesign needs place to sign binary
+            export RUSTFLAGS="-C link-arg=-Wl,-headerpad_max_install_names"
           '';
 
           installPhaseCommand = ''
@@ -144,12 +147,12 @@
         };
 
         releaseShell = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            zip
-            unzip
-            gnutar
-            dpkg
-            rcodesign
+          buildInputs = [
+            pkgs.zip
+            pkgs.unzip
+            pkgs.gnutar
+            pkgs.dpkg
+            pkgs.rcodesign
           ];
         };
 
