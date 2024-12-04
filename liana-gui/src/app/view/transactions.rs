@@ -1,7 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Local, Utc};
-use iced::{alignment, widget::tooltip, Alignment, Length};
+use iced::{
+    alignment,
+    widget::{tooltip, Space},
+    Alignment, Length,
+};
 
 use liana_ui::{
     color,
@@ -15,9 +19,14 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{dashboard, label, message::CreateRbfMessage, message::Message, warning::warn},
+        view::{
+            dashboard, label,
+            message::{CreateRbfMessage, Message},
+            warning::warn,
+        },
     },
     daemon::model::{HistoryTransaction, Txid},
+    export::ExportMessage,
 };
 
 pub fn transactions_view<'a>(
@@ -32,7 +41,16 @@ pub fn transactions_view<'a>(
         cache,
         warning,
         Column::new()
-            .push(Container::new(h3("Transactions")).width(Length::Fill))
+            .push(
+                Row::new()
+                    .push(Container::new(h3("Transactions")))
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        Button::new("Export")
+                            .on_press(ExportMessage::Open.into())
+                            .style(theme::Button::Secondary),
+                    ),
+            )
             .push(
                 Column::new()
                     .spacing(10)
