@@ -181,6 +181,10 @@ pub trait DatabaseConnection {
     /// Store transactions in database, ignoring any that already exist.
     fn new_txs(&mut self, txs: &[bitcoin::Transaction]);
 
+    /// For all unconfirmed coins and those confirmed after `prev_tip_height`,
+    /// update whether the coin is from self or not.
+    fn update_coins_from_self(&mut self, prev_tip_height: i32);
+
     /// Retrieve a list of transactions and their corresponding block heights and times.
     fn list_wallet_transactions(
         &mut self,
@@ -379,6 +383,11 @@ impl DatabaseConnection for SqliteConn {
         self.new_txs(txs)
     }
 
+    fn update_coins_from_self(&mut self, prev_tip_height: i32) {
+        self.update_coins_from_self(prev_tip_height)
+            .expect("must not fail")
+    }
+
     fn list_wallet_transactions(
         &mut self,
         txids: &[bitcoin::Txid],
@@ -421,6 +430,7 @@ pub struct Coin {
     pub is_change: bool,
     pub spend_txid: Option<bitcoin::Txid>,
     pub spend_block: Option<BlockInfo>,
+    pub is_from_self: bool,
 }
 
 impl std::convert::From<DbCoin> for Coin {
@@ -434,6 +444,7 @@ impl std::convert::From<DbCoin> for Coin {
             is_change,
             spend_txid,
             spend_block,
+            is_from_self,
             ..
         } = db_coin;
         Coin {
@@ -445,6 +456,7 @@ impl std::convert::From<DbCoin> for Coin {
             is_change,
             spend_txid,
             spend_block: spend_block.map(BlockInfo::from),
+            is_from_self,
         }
     }
 }

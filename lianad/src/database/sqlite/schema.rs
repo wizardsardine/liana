@@ -4,6 +4,11 @@ use std::{convert::TryFrom, str::FromStr};
 
 use miniscript::bitcoin::{self, address, bip32, consensus::encode, psbt::Psbt};
 
+// Due to limitations of Sqlite's ALTER TABLE command and in order not to recreate
+// tables during migration:
+// - Columns `num_inputs` and `num_outputs` of the transactions table remain nullable.
+// - There is no CHECK constraint to prevent both `is_immature` and `is_from_self`
+//   being true in the coins table.
 pub const SCHEMA: &str = "\
 CREATE TABLE version (
     version INTEGER NOT NULL
@@ -42,6 +47,10 @@ CREATE TABLE wallets (
  * The 'is_immature' field is for coinbase deposits that are not yet buried under 100
  * blocks. Note coinbase deposits can't technically be unconfirmed but we keep them
  * as such until they become mature.
+ *
+ * The `is_from_self` field indicates if the coin is the output of a transaction whose
+ * inputs are all from the same wallet as the coin. For an unconfirmed coin, this also
+ * means that all unconfirmed ancestors, if any, are from self.
  */
 CREATE TABLE coins (
     id INTEGER PRIMARY KEY NOT NULL,
@@ -57,6 +66,7 @@ CREATE TABLE coins (
     spend_block_height INTEGER,
     spend_block_time INTEGER,
     is_immature BOOLEAN NOT NULL CHECK (is_immature IN (0,1)),
+    is_from_self BOOLEAN NOT NULL DEFAULT 0 CHECK (is_from_self IN (0,1)),
     UNIQUE (txid, vout),
     FOREIGN KEY (wallet_id) REFERENCES wallets (id)
         ON UPDATE RESTRICT
@@ -82,7 +92,10 @@ CREATE TABLE addresses (
 CREATE TABLE transactions (
     id INTEGER PRIMARY KEY NOT NULL,
     txid BLOB UNIQUE NOT NULL,
-    tx BLOB UNIQUE NOT NULL
+    tx BLOB UNIQUE NOT NULL,
+    num_inputs INTEGER CHECK (num_inputs IS NULL OR num_inputs > 0),
+    num_outputs INTEGER CHECK (num_outputs IS NULL OR num_outputs > 0),
+    is_coinbase BOOLEAN NOT NULL DEFAULT 0 CHECK (is_coinbase IN (0,1))
 );
 
 /* Transactions we created that spend some of our coins. */
@@ -195,6 +208,12 @@ pub struct DbCoin {
     pub is_change: bool,
     pub spend_txid: Option<bitcoin::Txid>,
     pub spend_block: Option<DbBlockInfo>,
+    /// A coin is from self if it is the output of a transaction whose
+    /// inputs are all from this wallet. For unconfirmed coins, we
+    /// further require that all unconfirmed ancestors, if any, also
+    /// be from self, as otherwise they will depend on an unconfirmed
+    /// external transaction.
+    pub is_from_self: bool,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
@@ -234,6 +253,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         });
 
         let is_immature: bool = row.get(12)?;
+        let is_from_self: bool = row.get(13)?;
 
         Ok(DbCoin {
             id,
@@ -246,6 +266,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             is_change,
             spend_txid,
             spend_block,
+            is_from_self,
         })
     }
 }

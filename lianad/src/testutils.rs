@@ -484,6 +484,10 @@ impl DatabaseConnection for DummyDatabase {
         }
     }
 
+    fn update_coins_from_self(&mut self, _prev_tip_height: i32) {
+        // noop
+    }
+
     fn list_wallet_transactions(
         &mut self,
         txids: &[bitcoin::Txid],

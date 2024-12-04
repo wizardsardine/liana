@@ -135,6 +135,7 @@ A coin may have one of the following four statuses:
 | `spend_info`       | object        | Information about the transaction spending this coin. See [Spending transaction info](#spending_transaction_info). |
 | `is_immature`      | bool          | Whether this coin was created by a coinbase transaction that is still immature.                                    |
 | `is_change`        | bool          | Whether the coin deposit address was derived from the change descriptor.                                           |
+| `is_from_self`     | bool          | Whether the coin and all its unconfirmed ancestors, if any, are outputs of transactions from this wallet.          |
 
 
 ##### Spending transaction info

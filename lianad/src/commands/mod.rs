@@ -425,6 +425,7 @@ impl DaemonControl {
                     spend_block,
                     is_immature,
                     is_change,
+                    is_from_self,
                     derivation_index,
                     ..
                 } = coin;
@@ -445,6 +446,7 @@ impl DaemonControl {
                     spend_info,
                     is_immature,
                     is_change,
+                    is_from_self,
                 }
             })
             .collect();
@@ -1229,6 +1231,10 @@ pub struct ListCoinsEntry {
     pub is_immature: bool,
     /// Whether the coin deposit address was derived from the change descriptor.
     pub is_change: bool,
+    /// Whether the coin is the output of a transaction whose inputs are all from
+    /// this same wallet. If the coin is unconfirmed, it also means that all its
+    /// unconfirmed ancestors, if any, are also from self.
+    pub is_from_self: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1491,6 +1497,7 @@ mod tests {
             is_change: false,
             spend_txid: None,
             spend_block: None,
+            is_from_self: false,
         }]);
         // If we try to use coin selection, the unconfirmed non-change coin will not be used
         // as a candidate and so we get a coin selection error due to insufficient funds.
@@ -1733,6 +1740,7 @@ mod tests {
             is_change: false,
             spend_txid: None,
             spend_block: None,
+            is_from_self: false,
         }]);
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op_dup], 1_001, None),
@@ -1755,6 +1763,7 @@ mod tests {
             is_change: true,
             spend_txid: None,
             spend_block: None,
+            is_from_self: false,
         };
         db_conn.new_unspent_coins(&[unconfirmed_coin]);
         // Coin selection error due to insufficient funds.
@@ -1786,6 +1795,7 @@ mod tests {
             is_change: false,
             spend_txid: None,
             spend_block: None,
+            is_from_self: false,
         }]);
         // First, create a transaction using auto coin selection.
         let psbt = if let CreateSpendResult::Success { psbt, .. } =
@@ -1921,6 +1931,7 @@ mod tests {
             is_change: false,
             spend_txid: None,
             spend_block: None,
+            is_from_self: false,
         }]);
         let empty_dest = &HashMap::<bitcoin::Address<address::NetworkUnchecked>, u64>::new();
         assert!(matches!(
@@ -1960,6 +1971,7 @@ mod tests {
             is_change: false,
             spend_txid: None,
             spend_block: None,
+            is_from_self: false,
         }]);
         assert_eq!(
             control.create_spend(&destinations, &[imma_op], 1_001, None),
@@ -2005,6 +2017,7 @@ mod tests {
                 is_change: false,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             },
             Coin {
                 outpoint: dummy_op_b,
@@ -2015,6 +2028,7 @@ mod tests {
                 is_change: false,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             },
         ]);
 
@@ -2162,6 +2176,7 @@ mod tests {
                 height: 184500,
                 time: 184500,
             }),
+            is_from_self: false,
         }]);
         // The coin is spent so we cannot RBF.
         assert_eq!(
@@ -2273,6 +2288,7 @@ mod tests {
                 derivation_index: ChildNumber::from(0),
                 amount: bitcoin::Amount::from_sat(100_000_000),
                 spend_txid: Some(spend_tx.txid()),
+                is_from_self: false,
             },
             // Deposit 2
             Coin {
@@ -2287,6 +2303,7 @@ mod tests {
                 derivation_index: ChildNumber::from(1),
                 amount: bitcoin::Amount::from_sat(2000),
                 spend_txid: None,
+                is_from_self: false,
             },
             // This coin is a change output.
             Coin {
@@ -2298,6 +2315,7 @@ mod tests {
                 derivation_index: ChildNumber::from(2),
                 amount: bitcoin::Amount::from_sat(100_000_000 - 4000 - 1000),
                 spend_txid: None,
+                is_from_self: false,
             },
             // Deposit 3
             Coin {
@@ -2312,6 +2330,7 @@ mod tests {
                 derivation_index: ChildNumber::from(3),
                 amount: bitcoin::Amount::from_sat(3000),
                 spend_txid: None,
+                is_from_self: false,
             },
         ]);
 
@@ -2532,6 +2551,7 @@ mod tests {
                     is_change: false,
                     spend_txid: None,
                     spend_block: None,
+                    is_from_self: false,
                 }]);
             }
         }

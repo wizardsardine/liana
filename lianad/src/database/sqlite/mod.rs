@@ -43,7 +43,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 6;
+const DB_VERSION: i64 = 8;
 
 /// Last database version for which Bitcoin transactions were not stored in database. In practice
 /// this meant we relied on the bitcoind watchonly wallet to store them for us.
@@ -733,14 +733,106 @@ impl SqliteConn {
                 let txid = &tx.txid()[..].to_vec();
                 let tx_ser = bitcoin::consensus::serialize(tx);
                 db_tx.execute(
-                    "INSERT INTO transactions (txid, tx) VALUES (?1, ?2) \
+                    "INSERT INTO transactions (txid, tx, num_inputs, num_outputs, is_coinbase) \
+                        VALUES (?1, ?2, ?3, ?4, ?5) \
                         ON CONFLICT DO NOTHING",
-                    rusqlite::params![txid, tx_ser,],
+                    rusqlite::params![
+                        txid,
+                        tx_ser,
+                        tx.input.len(),
+                        tx.output.len(),
+                        tx.is_coinbase()
+                    ],
                 )?;
             }
             Ok(())
         })
         .expect("Database must be available")
+    }
+
+    /// Update `is_from_self` in coins table for all unconfirmed coins
+    /// and those confirmed after `prev_tip_height`.
+    ///
+    /// This only sets the value to true as we do not expect the value
+    /// to change from true to false. In case of a reorg, the value
+    /// for all unconfirmed coins should be set to false before this
+    /// method is called.
+    pub fn update_coins_from_self(&mut self, prev_tip_height: i32) -> Result<(), rusqlite::Error> {
+        db_exec(&mut self.conn, |db_tx| {
+            // Given the requirement for unconfirmed coins that all ancestors
+            // be from self, we perform the update in a loop until no further
+            // rows are updated in order to iterate over the unconfirmed coins.
+            // Although we don't expect any unconfirmed transaction to have
+            // more than 25 in-mempool descendants including itself, there
+            // could be more descendants in the DB following a reorg and a
+            // rollback of the tip. The max number of iterations would be
+            // one per unconfirmed coin not from self plus one for all
+            // confirmed coins.
+            // In any case, the query only sets `is_from_self` to 1 for
+            // those coins with value 0 and so the number of rows affected
+            // by each iteration must become 0.
+            let max_iterations = {
+                let num_unconfirmed: u64 = db_tx.query_row(
+                    "SELECT COUNT(*) FROM coins
+                    WHERE blockheight IS NULL AND is_from_self = 0",
+                    [],
+                    |row| row.get(0),
+                )?;
+                // Add 1 for the confirmed coins, which will all
+                // be updated in the first iteration, and another 1
+                // as a final check there's nothing left to update.
+                num_unconfirmed.checked_add(2).expect("must fit")
+            };
+            log::debug!(
+                "Updating is_from_self in up to {} iterations..",
+                max_iterations
+            );
+            let mut updated = 0;
+            for i in 0..max_iterations {
+                updated = db_tx.execute(
+                    "
+                    UPDATE coins
+                    SET is_from_self = 1
+                    FROM transactions t
+                        INNER JOIN (
+                            SELECT
+                                spend_txid,
+                                SUM(
+                                    CASE
+                                        WHEN blockheight IS NOT NULL THEN 1
+                                        -- If the spending coin is unconfirmed, only count
+                                        -- it as an input coin if it is from self.
+                                        WHEN blockheight IS NULL AND is_from_self = 1 THEN 1
+                                        ELSE 0
+                                    END
+                                ) AS cnt
+                            FROM coins
+                            WHERE spend_txid IS NOT NULL
+                            -- We only need to consider spend transactions that are
+                            -- unconfirmed or confirmed after `prev_tip_height
+                            -- as only these transactions will affect the coins that
+                            -- we are updating.
+                            AND (spend_block_height IS NULL OR spend_block_height > ?1)
+                            GROUP BY spend_txid
+                        ) spends
+                        ON t.txid = spends.spend_txid AND t.num_inputs = spends.cnt
+                    WHERE coins.txid = t.txid
+                    AND (coins.blockheight IS NULL OR coins.blockheight > ?1)
+                    AND coins.is_from_self = 0
+                    ",
+                    [prev_tip_height],
+                )?;
+                if updated == 0 {
+                    log::debug!("Finished updating is_from_self in {} iterations.", i + 1);
+                    break;
+                }
+            }
+            assert_eq!(
+                updated, 0,
+                "no rows expected to be updated on final iteration while updating is_from_self",
+            );
+            Ok(())
+        })
     }
 
     pub fn list_wallet_transactions(
@@ -807,6 +899,10 @@ impl SqliteConn {
     /// - Spending transactions confirmation
     /// - Tip
     ///
+    /// The `is_from_self` value for all unconfirmed coins following the rollback is
+    /// set to false. This is because this value depends on the confirmation status
+    /// of ancestor coins and so will need to be re-evaluated.
+    ///
     /// This will have to be updated if we are to add new fields based on block data
     /// in the database eventually.
     pub fn rollback_tip(&mut self, new_tip: &BlockChainTip) {
@@ -818,6 +914,12 @@ impl SqliteConn {
             db_tx.execute(
                 "UPDATE coins SET spend_block_height = NULL, spend_block_time = NULL WHERE spend_block_height > ?1",
                 rusqlite::params![new_tip.height],
+            )?;
+            // This statement must be run after updating `blockheight` above so that it includes coins
+            // that become unconfirmed following the rollback.
+            db_tx.execute(
+                "UPDATE coins SET is_from_self = 0 WHERE blockheight IS NULL",
+                rusqlite::params![],
             )?;
             db_tx.execute(
                 "UPDATE tip SET blockheight = (?1), blockhash = (?2)",
@@ -840,7 +942,7 @@ mod tests {
         str::FromStr,
     };
 
-    use bitcoin::bip32;
+    use bitcoin::{bip32, BlockHash, ScriptBuf, TxIn};
 
     // The database schema used by the first versions of Liana (database version 0). Used to test
     // migrations starting from the first version.
@@ -1114,6 +1216,65 @@ CREATE TABLE labels (
         (tmp_dir, options, secp, db)
     }
 
+    // All values required to store a coin in the V3 schema DB (including `id` column).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct DbCoinV3 {
+        pub id: i64,
+        pub wallet_id: i64,
+        pub outpoint: bitcoin::OutPoint,
+        pub is_immature: bool,
+        pub block_info: Option<DbBlockInfo>,
+        pub amount: bitcoin::Amount,
+        pub derivation_index: bip32::ChildNumber,
+        pub is_change: bool,
+        pub spend_txid: Option<bitcoin::Txid>,
+        pub spend_block: Option<DbBlockInfo>,
+    }
+
+    // Helper to store coins in a V3 schema database (including `id` column).
+    fn store_coins_v3(conn: &mut SqliteConn, coins: &[DbCoinV3]) {
+        db_exec(&mut conn.conn, |db_tx| {
+            for coin in coins {
+                let deriv_index: u32 = coin.derivation_index.into();
+                db_tx.execute(
+                    "INSERT INTO coins (
+                            id,
+                            wallet_id,
+                            blockheight,
+                            blocktime,
+                            txid,
+                            vout,
+                            amount_sat,
+                            derivation_index,
+                            is_change,
+                            spend_txid,
+                            spend_block_height,
+                            spend_block_time,
+                            is_immature
+                        ) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    rusqlite::params![
+                        coin.id,
+                        coin.wallet_id,
+                        coin.block_info.map(|block| block.height),
+                        coin.block_info.map(|block| block.time),
+                        coin.outpoint.txid[..].to_vec(),
+                        coin.outpoint.vout,
+                        coin.amount.to_sat(),
+                        deriv_index,
+                        coin.is_change,
+                        coin.spend_txid.map(|txid| txid[..].to_vec()),
+                        coin.spend_block.map(|block| block.height),
+                        coin.spend_block.map(|block| block.time),
+                        coin.is_immature,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("Database must be available")
+    }
+
     #[test]
     fn db_startup_sanity_checks() {
         let tmp_dir = tmp_dir();
@@ -1240,8 +1401,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             conn.new_txs(&txs);
@@ -1257,6 +1418,7 @@ CREATE TABLE labels (
                 is_change: false,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             };
             conn.new_unspent_coins(&[coin_a]);
             // We can query by status and/or outpoint.
@@ -1303,6 +1465,7 @@ CREATE TABLE labels (
                 is_change: true,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             };
             conn.new_unspent_coins(&[coin_b]);
             // Both coins are unconfirmed.
@@ -1314,9 +1477,10 @@ CREATE TABLE labels (
                 conn.db_coins(&[outpoint_a, outpoint_b]),
             ]
             .iter()
-            .all(|c| c.len() == 2
-                && c[0].outpoint == coin_a.outpoint
-                && c[1].outpoint == coin_b.outpoint));
+            .all(|coins| coins.len() == 2
+                && coins
+                    .iter()
+                    .all(|c| [coin_a.outpoint, coin_b.outpoint].contains(&c.outpoint))));
             // We can filter for just the first coin.
             assert!([
                 conn.coins(&[CoinStatus::Unconfirmed], &[outpoint_a]),
@@ -1366,9 +1530,10 @@ CREATE TABLE labels (
                 conn.db_coins(&[outpoint_a, outpoint_b]),
             ]
             .iter()
-            .all(|c| c.len() == 2
-                && c[0].outpoint == coin_a.outpoint
-                && c[1].outpoint == coin_b.outpoint));
+            .all(|coins| coins.len() == 2
+                && coins
+                    .iter()
+                    .all(|c| [coin_a.outpoint, coin_b.outpoint].contains(&c.outpoint))));
 
             // Now if we spend one, it'll be marked as such.
             conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().txid())]);
@@ -1419,9 +1584,10 @@ CREATE TABLE labels (
                 conn.db_coins(&[outpoint_a, outpoint_b]),
             ]
             .iter()
-            .all(|c| c.len() == 2
-                && c[0].outpoint == coin_a.outpoint
-                && c[1].outpoint == coin_b.outpoint));
+            .all(|coins| coins.len() == 2
+                && coins
+                    .iter()
+                    .all(|c| [coin_a.outpoint, coin_b.outpoint].contains(&c.outpoint))));
 
             // Add a third and fourth coin.
             let outpoint_c = bitcoin::OutPoint::new(txs.get(3).unwrap().txid(), 42);
@@ -1434,6 +1600,7 @@ CREATE TABLE labels (
                 is_change: false,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             };
             let outpoint_d = bitcoin::OutPoint::new(txs.get(4).unwrap().txid(), 43);
             let coin_d = Coin {
@@ -1445,6 +1612,7 @@ CREATE TABLE labels (
                 is_change: false,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             };
             conn.new_unspent_coins(&[coin_c, coin_d]);
 
@@ -1459,10 +1627,11 @@ CREATE TABLE labels (
                 conn.db_coins(&[outpoint_b, outpoint_c, outpoint_d]),
             ]
             .iter()
-            .all(|coin| coin.len() == 3
-                && coin[0].outpoint == coin_b.outpoint
-                && coin[1].outpoint == coin_c.outpoint
-                && coin[2].outpoint == coin_d.outpoint));
+            .all(|coins| coins.len() == 3
+                && coins
+                    .iter()
+                    .all(|c| [coin_b.outpoint, coin_c.outpoint, coin_d.outpoint]
+                        .contains(&c.outpoint))));
 
             // We can also get two of the three unconfirmed coins by filtering for their outpoints.
             assert!([
@@ -1471,9 +1640,10 @@ CREATE TABLE labels (
                 conn.db_coins(&[outpoint_b, outpoint_c]),
             ]
             .iter()
-            .all(|coin| coin.len() == 2
-                && coin[0].outpoint == coin_b.outpoint
-                && coin[1].outpoint == coin_c.outpoint));
+            .all(|coins| coins.len() == 2
+                && coins
+                    .iter()
+                    .all(|c| [coin_b.outpoint, coin_c.outpoint].contains(&c.outpoint))));
 
             // Now spend second coin, even though it is still unconfirmed.
             conn.spend_coins(&[(coin_b.outpoint, txs.get(5).unwrap().txid())]);
@@ -1538,8 +1708,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             conn.new_txs(&txs);
@@ -1557,6 +1727,7 @@ CREATE TABLE labels (
                 is_change: false,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             };
             conn.new_unspent_coins(&[coin_a]);
             assert_eq!(conn.coins(&[], &[])[0].outpoint, coin_a.outpoint);
@@ -1599,6 +1770,7 @@ CREATE TABLE labels (
                 is_change: true,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             };
             conn.new_unspent_coins(&[coin_b]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
@@ -1722,6 +1894,7 @@ CREATE TABLE labels (
                 is_change: false,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             };
             conn.new_unspent_coins(&[coin_imma]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
@@ -1871,8 +2044,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             conn.new_txs(&txs);
@@ -1893,6 +2066,7 @@ CREATE TABLE labels (
                     is_change: false,
                     spend_txid: None,
                     spend_block: None,
+                    is_from_self: false,
                 },
                 Coin {
                     outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 2),
@@ -1906,6 +2080,7 @@ CREATE TABLE labels (
                     is_change: false,
                     spend_txid: None,
                     spend_block: None,
+                    is_from_self: false,
                 },
                 Coin {
                     outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().txid(), 3),
@@ -1922,6 +2097,7 @@ CREATE TABLE labels (
                         height: 101_199,
                         time: 1_231_678,
                     }),
+                    is_from_self: false,
                 },
                 Coin {
                     outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().txid(), 4),
@@ -1935,6 +2111,7 @@ CREATE TABLE labels (
                     is_change: false,
                     spend_txid: None,
                     spend_block: None,
+                    is_from_self: false,
                 },
                 Coin {
                     outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().txid(), 5),
@@ -1951,6 +2128,7 @@ CREATE TABLE labels (
                         height: 101_105,
                         time: 1_201_678,
                     }),
+                    is_from_self: false,
                 },
             ];
             conn.new_unspent_coins(&coins);
@@ -2080,8 +2258,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             conn.new_txs(&txs);
@@ -2096,6 +2274,7 @@ CREATE TABLE labels (
                     is_change: false,
                     spend_txid: None,
                     spend_block: None,
+                    is_from_self: false,
                 },
                 Coin {
                     outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 2),
@@ -2109,6 +2288,7 @@ CREATE TABLE labels (
                     is_change: false,
                     spend_txid: None,
                     spend_block: None,
+                    is_from_self: false,
                 },
                 Coin {
                     outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().txid(), 3),
@@ -2125,6 +2305,7 @@ CREATE TABLE labels (
                         height: 101_199,
                         time: 1_123_000,
                     }),
+                    is_from_self: false,
                 },
                 Coin {
                     outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().txid(), 4),
@@ -2138,6 +2319,7 @@ CREATE TABLE labels (
                     is_change: false,
                     spend_txid: None,
                     spend_block: None,
+                    is_from_self: false,
                 },
                 Coin {
                     outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().txid(), 5),
@@ -2154,6 +2336,7 @@ CREATE TABLE labels (
                         height: 101_105,
                         time: 1_126_000,
                     }),
+                    is_from_self: false,
                 },
             ];
             conn.new_unspent_coins(&coins);
@@ -2199,8 +2382,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             conn.new_txs(&txs);
@@ -2227,8 +2410,8 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
             let spend_txs: Vec<_> = (0..10)
@@ -2237,8 +2420,8 @@ CREATE TABLE labels (
                         bitcoin::Transaction {
                             version: bitcoin::transaction::Version::TWO,
                             lock_time: bitcoin::absolute::LockTime::from_height(1_234 + i).unwrap(),
-                            input: Vec::new(),
-                            output: Vec::new(),
+                            input: vec![bitcoin::TxIn::default()], // a single input
+                            output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                         },
                         if i % 2 == 0 {
                             Some(BlockInfo {
@@ -2282,6 +2465,7 @@ CREATE TABLE labels (
                     } else {
                         None
                     },
+                    is_from_self: false,
                 })
                 .collect();
 
@@ -2398,7 +2582,338 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v0_to_v6_migration() {
+    fn sqlite_update_coins_from_self() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        // Helper to create a dummy transaction.
+        // Varying `lock_time_height` allows to obtain a unique txid for the given `num_inputs`.
+        fn dummy_tx(num_inputs: u32, lock_time_height: u32) -> bitcoin::Transaction {
+            bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::from_height(lock_time_height).unwrap(),
+                input: (0..num_inputs).map(|_| TxIn::default()).collect(),
+                output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
+            }
+        }
+
+        {
+            let mut conn = db.connection().unwrap();
+
+            // Deposit two coins from two different external transactions.
+            let tx_a = dummy_tx(1, 0);
+            let tx_b = dummy_tx(1, 1);
+            let coin_tx_a: Coin = Coin {
+                outpoint: bitcoin::OutPoint::new(tx_a.txid(), 0),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(1_000_000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(0).unwrap(),
+                is_change: false,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            };
+            let coin_tx_b: Coin = Coin {
+                outpoint: bitcoin::OutPoint::new(tx_b.txid(), 0),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(1_000_000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(1).unwrap(),
+                is_change: false,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            };
+            conn.new_txs(&[tx_a, tx_b]);
+            conn.new_unspent_coins(&[coin_tx_a, coin_tx_b]);
+
+            // The coins are not from self.
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+            // Update from self info.
+            conn.update_coins_from_self(0).unwrap();
+            // As expected, the coins are still not marked as from self.
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+
+            // Spend `coin_tx_a` in `tx_c` with change `coin_tx_c`.
+            let tx_c = dummy_tx(1, 2);
+            let coin_tx_c: Coin = Coin {
+                outpoint: bitcoin::OutPoint::new(tx_c.txid(), 0),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(1_000_000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(2).unwrap(),
+                is_change: true,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            };
+            conn.new_txs(&[tx_c.clone()]);
+            conn.spend_coins(&[(coin_tx_a.outpoint, tx_c.txid())]);
+            conn.new_unspent_coins(&[coin_tx_c]);
+
+            // Although `coin_tx_c` has only one parent, `coin_tx_a` is
+            // unconfirmed and not from self. So all our coins are still
+            // not marked as from self.
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+            conn.update_coins_from_self(0).unwrap();
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+
+            // Now refresh `coin_tx_c` in `tx_d`, creating `coin_tx_d`.
+            let tx_d = dummy_tx(1, 3);
+            let coin_tx_d: Coin = Coin {
+                outpoint: bitcoin::OutPoint::new(tx_d.txid(), 0),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(1_000_000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(3).unwrap(),
+                is_change: true,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            };
+            conn.new_txs(&[tx_d.clone()]);
+            conn.spend_coins(&[(coin_tx_c.outpoint, tx_d.txid())]);
+            conn.new_unspent_coins(&[coin_tx_d]);
+
+            // All coins are unconfirmed and none are from self.
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+            conn.update_coins_from_self(0).unwrap();
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+
+            // Spend the deposited coin `coin_tx_b` and the refreshed coin `coin_tx_d`
+            // together in `tx_e`, creating `coin_tx_e`.
+            let tx_e = dummy_tx(2, 4); // 2 inputs
+            let coin_tx_e: Coin = Coin {
+                outpoint: bitcoin::OutPoint::new(tx_e.txid(), 0),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(1_000_000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(4).unwrap(),
+                is_change: false,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            };
+            conn.new_txs(&[tx_e.clone()]);
+            conn.spend_coins(&[
+                (coin_tx_b.outpoint, tx_e.txid()),
+                (coin_tx_d.outpoint, tx_e.txid()),
+            ]);
+            conn.new_unspent_coins(&[coin_tx_e]);
+
+            // Still there are no confirmed coins, so everything remains as not from self.
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+            conn.update_coins_from_self(0).unwrap();
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+
+            // Finally, refresh `coin_tx_e` in transaction `tx_f`, creating `coin_tx_f`.
+            let tx_f = dummy_tx(1, 5);
+            let coin_tx_f: Coin = Coin {
+                outpoint: bitcoin::OutPoint::new(tx_f.txid(), 0),
+                is_immature: false,
+                amount: bitcoin::Amount::from_sat(1_000_000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(5).unwrap(),
+                is_change: true,
+                block_info: None,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            };
+            conn.new_txs(&[tx_f.clone()]);
+            conn.spend_coins(&[(coin_tx_e.outpoint, tx_f.txid())]);
+            conn.new_unspent_coins(&[coin_tx_f]);
+
+            // Still no coins are from self.
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+            conn.update_coins_from_self(0).unwrap();
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+
+            // Now confirm `tx_a` and `tx_c` in successive blocks.
+            conn.confirm_coins(&[
+                (coin_tx_a.outpoint, 100, 1_000),
+                (coin_tx_c.outpoint, 101, 1_001),
+            ]);
+            conn.confirm_spend(&[(coin_tx_a.outpoint, tx_c.txid(), 101, 1_001)]);
+            // Coins are still not marked as from self.
+            assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
+            // Now update from self for coins confirmed after 101, which excludes the two coins above.
+            // Only `coin_tx_d` is from self, because it's unconfirmed and its parent is a confirmed coin.
+            // `coin_tx_e` still depends on `coin_tx_b` which is an unconfirmed deposit.
+            conn.update_coins_from_self(101).unwrap();
+            assert!(conn
+                .coins(&[], &[coin_tx_d.outpoint])
+                .iter()
+                .all(|c| c.is_from_self));
+            assert!(conn
+                .coins(
+                    &[],
+                    &[
+                        coin_tx_a.outpoint,
+                        coin_tx_b.outpoint,
+                        coin_tx_c.outpoint,
+                        coin_tx_e.outpoint,
+                        coin_tx_f.outpoint
+                    ]
+                )
+                .iter()
+                .all(|c| !c.is_from_self));
+
+            // Now run the update for coins confirmed after 100.
+            conn.update_coins_from_self(100).unwrap();
+            // `coin_tx_c` is now marked as from self as it has a single parent
+            // that is confirmed (even though its parent is an external deposit).
+            assert!(conn
+                .coins(&[], &[coin_tx_c.outpoint, coin_tx_d.outpoint])
+                .iter()
+                .all(|c| c.is_from_self));
+            assert!(conn
+                .coins(
+                    &[],
+                    &[
+                        coin_tx_a.outpoint,
+                        coin_tx_b.outpoint,
+                        coin_tx_e.outpoint,
+                        coin_tx_f.outpoint
+                    ]
+                )
+                .iter()
+                .all(|c| !c.is_from_self));
+
+            // Even if we run the update for coins confirmed after height 99,
+            // `coin_tx_a` will not be marked as from self as it's an external deposit.
+            conn.update_coins_from_self(99).unwrap();
+            assert!(conn
+                .coins(&[], &[coin_tx_c.outpoint, coin_tx_d.outpoint])
+                .iter()
+                .all(|c| c.is_from_self));
+            assert!(conn
+                .coins(
+                    &[],
+                    &[
+                        coin_tx_a.outpoint,
+                        coin_tx_b.outpoint,
+                        coin_tx_e.outpoint,
+                        coin_tx_f.outpoint
+                    ]
+                )
+                .iter()
+                .all(|c| !c.is_from_self));
+
+            // Now confirm the other external deposit coin.
+            conn.confirm_coins(&[(coin_tx_b.outpoint, 102, 1_002)]);
+            // If we run the update, it doesn't matter if we use a later height
+            // as there are only unconfirmed coins that need to be updated.
+            conn.update_coins_from_self(110).unwrap();
+            // `coin_tx_e` and `coin_tx_f` are also now from self.
+            assert!(conn
+                .coins(
+                    &[],
+                    &[
+                        coin_tx_c.outpoint,
+                        coin_tx_d.outpoint,
+                        coin_tx_e.outpoint,
+                        coin_tx_f.outpoint
+                    ]
+                )
+                .iter()
+                .all(|c| c.is_from_self));
+            assert!(conn
+                .coins(&[], &[coin_tx_a.outpoint, coin_tx_b.outpoint,])
+                .iter()
+                .all(|c| !c.is_from_self));
+
+            // Even if we now run the update with an earlier height,
+            // `coin_tx_b` will not be marked as from self.
+            conn.update_coins_from_self(101).unwrap();
+            // No changes from above.
+            assert!(conn
+                .coins(
+                    &[],
+                    &[
+                        coin_tx_c.outpoint,
+                        coin_tx_d.outpoint,
+                        coin_tx_e.outpoint,
+                        coin_tx_f.outpoint
+                    ]
+                )
+                .iter()
+                .all(|c| c.is_from_self));
+            assert!(conn
+                .coins(&[], &[coin_tx_a.outpoint, coin_tx_b.outpoint,])
+                .iter()
+                .all(|c| !c.is_from_self));
+
+            // Now we will roll the tip back earlier than some of our confirmed coins.
+            let new_tip = {
+                // It doesn't matter what this hash value is as we only care about the height.
+                let hash = BlockHash::from_str(
+                    "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+                )
+                .unwrap();
+                &BlockChainTip { height: 101, hash }
+            };
+            conn.rollback_tip(new_tip);
+
+            // Only `coin_tx_a` and `coin_tx_c` are still confirmed.
+            assert_eq!(
+                conn.coins(&[], &[])
+                    .iter()
+                    .filter_map(|c| if c.block_info.is_some() {
+                        Some(c.outpoint)
+                    } else {
+                        None
+                    })
+                    .collect::<Vec<_>>(),
+                vec![coin_tx_a.outpoint, coin_tx_c.outpoint]
+            );
+            // Rolling back sets all unconfirmed coins as not from self so only
+            // `coin_tx_c` is still marked as from self.
+            assert!(conn
+                .coins(&[], &[coin_tx_c.outpoint])
+                .iter()
+                .all(|c| c.is_from_self));
+            assert!(conn
+                .coins(
+                    &[],
+                    &[
+                        coin_tx_a.outpoint,
+                        coin_tx_b.outpoint,
+                        coin_tx_d.outpoint,
+                        coin_tx_e.outpoint,
+                        coin_tx_f.outpoint
+                    ]
+                )
+                .iter()
+                .all(|c| !c.is_from_self));
+
+            // Now run the update from the current tip height of 101.
+            conn.update_coins_from_self(101).unwrap();
+            // `coin_tx_d` is now marked as from self as its parent `coin_tx_c`
+            // is confirmed. Coins `coin_tx_e` and `coin_tx_f` depend on the
+            // unconfirmed `tx_coin_b` and so remain as not from self.
+            assert!(conn
+                .coins(&[], &[coin_tx_c.outpoint, coin_tx_d.outpoint])
+                .iter()
+                .all(|c| c.is_from_self));
+            assert!(conn
+                .coins(
+                    &[],
+                    &[
+                        coin_tx_a.outpoint,
+                        coin_tx_b.outpoint,
+                        coin_tx_e.outpoint,
+                        coin_tx_f.outpoint,
+                    ]
+                )
+                .iter()
+                .all(|c| !c.is_from_self));
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn v0_to_v8_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 0, using the old schema.
@@ -2421,8 +2936,8 @@ CREATE TABLE labels (
             .map(|i| bitcoin::Transaction {
                 version: bitcoin::transaction::Version::TWO,
                 lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                input: Vec::new(),
-                output: Vec::new(),
+                input: vec![bitcoin::TxIn::default()], // a single input
+                output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
             })
             .collect();
         // The helper that was used to store Spend transaction in previous versions of the software
@@ -2504,7 +3019,7 @@ CREATE TABLE labels (
         {
             let mut conn = db.connection().unwrap();
             let version = conn.db_version();
-            assert_eq!(version, 6);
+            assert_eq!(version, 8);
         }
         // We should now be able to insert another PSBT, to query both, and the first PSBT must
         // have no associated timestamp.
@@ -2531,8 +3046,8 @@ CREATE TABLE labels (
             let tx = bitcoin::Transaction {
                 version: bitcoin::transaction::Version::TWO,
                 lock_time: bitcoin::absolute::LockTime::from_height(2).unwrap(),
-                input: Vec::new(),
-                output: Vec::new(),
+                input: vec![bitcoin::TxIn::default()], // a single input
+                output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
             };
             conn.new_txs(&[tx.clone()]);
             conn.new_unspent_coins(&[Coin {
@@ -2544,6 +3059,7 @@ CREATE TABLE labels (
                 is_change: false,
                 spend_txid: None,
                 spend_block: None,
+                is_from_self: false,
             }]);
             let coins = conn.coins(&[], &[]);
             assert_eq!(coins.len(), 3);
@@ -2578,7 +3094,7 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v3_to_v6_migration() {
+    fn v3_to_v8_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 3, using the old schema.
@@ -2601,58 +3117,85 @@ CREATE TABLE labels (
                 .map(|i| bitcoin::Transaction {
                     version: bitcoin::transaction::Version::TWO,
                     lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: Vec::new(),
-                    output: Vec::new(),
+                    input: vec![bitcoin::TxIn::default()], // a single input
+                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                 })
                 .collect();
 
-            // The following coins will be inserted into the DB as unconfirmed and then
-            // some of them will be subsequently confirmed and spent.
-            // Note that `block_info`, `spend_txid` and `spend_block` will all be set to
-            // NULL in the DB by the `new_unspent_coins` method, but are set to `None`
-            // here anyway.
-            let coin_a = Coin {
+            // The state of the coins will be:
+            // - coin_a is spent.
+            // - coin_b is confirmed and spending.
+            // - coin_c is confirmed.
+            // - coin_d is the unconfirmed output of coin_b's spend and is spending.
+            // - coin_e is the unconfirmed output of coin_d's spend.
+            // - coin_imma_a is confirmed.
+            // - coin_imma_b is still immature.
+            let coin_d_outpoint = bitcoin::OutPoint::new(bitcoin_txs.get(3).unwrap().txid(), 1456);
+            let coin_e_outpoint = bitcoin::OutPoint::new(bitcoin_txs.get(4).unwrap().txid(), 4633);
+            let coin_a = DbCoinV3 {
+                id: 1,
+                wallet_id: WALLET_ID,
                 outpoint: bitcoin::OutPoint::new(bitcoin_txs.first().unwrap().txid(), 1),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(1231001),
                 derivation_index: bip32::ChildNumber::from_normal_idx(101).unwrap(),
                 is_change: false,
-                block_info: None,
-                spend_txid: None,
-                spend_block: None,
+                block_info: Some(DbBlockInfo {
+                    height: 175500,
+                    time: 1755001001,
+                }),
+                spend_txid: Some(bitcoin_txs.get(7).unwrap().txid()),
+                spend_block: Some(DbBlockInfo {
+                    height: 245500,
+                    time: 1755003000,
+                }),
             };
-            let coin_b = Coin {
+            let coin_b = DbCoinV3 {
+                id: 2,
+                wallet_id: WALLET_ID,
                 outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(1).unwrap().txid(), 19234),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(23145),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
                 is_change: false,
-                block_info: None,
-                spend_txid: None,
+                block_info: Some(DbBlockInfo {
+                    height: 175502,
+                    time: 1755001032,
+                }),
+                spend_txid: Some(coin_d_outpoint.txid),
                 spend_block: None,
             };
-            let coin_c = Coin {
+            let coin_c = DbCoinV3 {
+                id: 3,
+                wallet_id: WALLET_ID,
                 outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(2).unwrap().txid(), 932),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(354764),
                 derivation_index: bip32::ChildNumber::from_normal_idx(3401).unwrap(),
                 is_change: true,
-                block_info: None,
+                block_info: Some(DbBlockInfo {
+                    height: 175504,
+                    time: 1755005032,
+                }),
                 spend_txid: None,
                 spend_block: None,
             };
-            let coin_d = Coin {
-                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(3).unwrap().txid(), 1456),
+            let coin_d = DbCoinV3 {
+                id: 4,
+                wallet_id: WALLET_ID,
+                outpoint: coin_d_outpoint,
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(23200),
                 derivation_index: bip32::ChildNumber::from_normal_idx(4793235).unwrap(),
                 is_change: true,
                 block_info: None,
-                spend_txid: None,
+                spend_txid: Some(coin_e_outpoint.txid),
                 spend_block: None,
             };
-            let coin_e = Coin {
-                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(4).unwrap().txid(), 4633),
+            let coin_e = DbCoinV3 {
+                id: 5,
+                wallet_id: WALLET_ID,
+                outpoint: coin_e_outpoint,
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(675000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(3).unwrap(),
@@ -2661,17 +3204,24 @@ CREATE TABLE labels (
                 spend_txid: None,
                 spend_block: None,
             };
-            let coin_imma_a = Coin {
+            let coin_imma_a = DbCoinV3 {
+                id: 6,
+                wallet_id: WALLET_ID,
                 outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(5).unwrap().txid(), 5),
                 is_immature: true,
                 amount: bitcoin::Amount::from_sat(4564347),
                 derivation_index: bip32::ChildNumber::from_normal_idx(453).unwrap(),
                 is_change: false,
-                block_info: None,
+                block_info: Some(DbBlockInfo {
+                    height: 176001,
+                    time: 1755001004,
+                }),
                 spend_txid: None,
                 spend_block: None,
             };
-            let coin_imma_b = Coin {
+            let coin_imma_b = DbCoinV3 {
+                id: 7,
+                wallet_id: WALLET_ID,
                 outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(6).unwrap().txid(), 19234),
                 is_immature: true,
                 amount: bitcoin::Amount::from_sat(731453),
@@ -2681,15 +3231,7 @@ CREATE TABLE labels (
                 spend_txid: None,
                 spend_block: None,
             };
-            // After the following operations, the state of the coins will be:
-            // - coin_a is spent.
-            // - coin_b is confirmed and spending.
-            // - coin_c is confirmed.
-            // - coin_d is the unconfirmed output of coin_b's spend and is spending.
-            // - coin_e is the unconfirmed output of coin_d's spend.
-            // - coin_imma_a is confirmed.
-            // - coin_imma_b is still immature.
-            conn.new_unspent_coins(&[
+            let coins_pre = vec![
                 coin_a,
                 coin_b,
                 coin_c,
@@ -2697,55 +3239,39 @@ CREATE TABLE labels (
                 coin_e,
                 coin_imma_a,
                 coin_imma_b,
-            ]);
-            conn.confirm_coins(&[
-                (coin_a.outpoint, 175500, 1755001001),
-                (coin_b.outpoint, 175502, 1755001032),
-                (coin_c.outpoint, 175504, 1755005032),
-                (coin_imma_a.outpoint, 176001, 1755001004),
-            ]);
-            conn.spend_coins(&[
-                (coin_a.outpoint, bitcoin_txs.get(7).unwrap().txid()),
-                (coin_b.outpoint, coin_d.outpoint.txid),
-                (coin_d.outpoint, coin_e.outpoint.txid),
-            ]);
-            conn.confirm_spend(&[(
-                coin_a.outpoint,
-                bitcoin_txs.get(7).unwrap().txid(),
-                245500,
-                1755003000,
-            )]);
-            assert_eq!(conn.coins(&[CoinStatus::Unconfirmed], &[]).len(), 2);
-            assert_eq!(conn.coins(&[CoinStatus::Confirmed], &[]).len(), 2);
-            assert_eq!(conn.coins(&[CoinStatus::Spending], &[]).len(), 2);
-            assert_eq!(conn.coins(&[CoinStatus::Spent], &[]).len(), 1);
-            let coins_pre = conn.coins(&[], &[]);
-            assert_eq!(coins_pre.len(), 7);
-            assert_eq!(
-                coins_pre
-                    .iter()
-                    .filter(|c| c.is_immature)
-                    .collect::<Vec<_>>()
-                    .len(),
-                1
-            );
-            assert_eq!(
-                coins_pre
-                    .iter()
-                    .filter(|c| c.is_change)
-                    .collect::<Vec<_>>()
-                    .len(),
-                2
-            );
+            ];
+            store_coins_v3(&mut conn, &coins_pre);
 
             // Migrate the DB.
             maybe_apply_migration(&db_path, &bitcoin_txs).unwrap();
-            assert_eq!(conn.db_version(), 6);
+            assert_eq!(conn.db_version(), 8);
             // Migrating twice will be a no-op. No need to pass `bitcoin_txs` second time.
             maybe_apply_migration(&db_path, &[]).unwrap();
-            assert!(conn.db_version() == 6);
+            assert!(conn.db_version() == 8);
+
+            // Compare the `DbCoin`s with the expected values.
             let coins_post = conn.coins(&[], &[]);
-            assert_eq!(coins_pre, coins_post);
+            assert_eq!(coins_pre.len(), coins_post.len());
+            for c_post in coins_post {
+                let c_pre = coins_pre
+                    .iter()
+                    .find(|c| c.outpoint == c_post.outpoint)
+                    .unwrap();
+                assert_eq!(c_post.id, c_pre.id);
+                assert_eq!(c_post.wallet_id, c_pre.wallet_id);
+                assert_eq!(c_post.is_immature, c_pre.is_immature);
+                assert_eq!(c_post.block_info, c_pre.block_info);
+                assert_eq!(c_post.amount, c_pre.amount);
+                assert_eq!(c_post.derivation_index, c_pre.derivation_index);
+                assert_eq!(c_post.is_change, c_pre.is_change);
+                assert_eq!(c_post.spend_txid, c_pre.spend_txid);
+                assert_eq!(c_post.spend_block, c_pre.spend_block);
+                // only coins D and E are from self.
+                assert_eq!(
+                    c_post.is_from_self,
+                    [coin_d_outpoint, coin_e_outpoint].contains(&c_pre.outpoint)
+                );
+            }
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
@@ -2771,8 +3297,8 @@ CREATE TABLE labels (
             .map(|i| bitcoin::Transaction {
                 version: bitcoin::transaction::Version::TWO,
                 lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                input: Vec::new(),
-                output: Vec::new(),
+                input: vec![bitcoin::TxIn::default()], // a single input
+                output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
             })
             .collect();
         let spend_txs: Vec<_> = (0..10)
@@ -2781,12 +3307,12 @@ CREATE TABLE labels (
                     bitcoin::Transaction {
                         version: bitcoin::transaction::Version::TWO,
                         lock_time: bitcoin::absolute::LockTime::from_height(1_234 + i).unwrap(),
-                        input: Vec::new(),
-                        output: Vec::new(),
+                        input: vec![bitcoin::TxIn::default()], // a single input
+                        output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
                     },
                     if i % 2 == 0 {
-                        Some(BlockInfo {
-                            height: (i % 5) as i32 * 2_000,
+                        Some(DbBlockInfo {
+                            height: 1 + (i % 5) as i32 * 2_000,
                             time: 1722488619 + (i % 5) * 84_999,
                         })
                     } else {
@@ -2795,11 +3321,15 @@ CREATE TABLE labels (
                 )
             })
             .collect();
-        let coins: Vec<Coin> = bitcoin_txs
+        // We can use `DbCoinV3` to store coin in v4 database
+        // (fields are the same, only a constraint changed).
+        let coins: Vec<DbCoinV3> = bitcoin_txs
             .iter()
             .chain(bitcoin_txs.iter()) // We do this to have coins which originate from the same tx.
             .enumerate()
-            .map(|(i, tx)| Coin {
+            .map(|(i, tx)| DbCoinV3 {
+                id: i.try_into().unwrap(),
+                wallet_id: WALLET_ID,
                 outpoint: bitcoin::OutPoint {
                     txid: tx.txid(),
                     vout: i as u32,
@@ -2809,8 +3339,8 @@ CREATE TABLE labels (
                 derivation_index: bip32::ChildNumber::from_normal_idx(i as u32 * 100).unwrap(),
                 is_change: (i % 4) == 0,
                 block_info: if i & 2 == 0 {
-                    Some(BlockInfo {
-                        height: (i % 100) as i32 * 1_000,
+                    Some(DbBlockInfo {
+                        height: 1 + (i % 100) as i32 * 1_000,
                         time: 1722408619 + (i % 100) as u32 * 42_000,
                     })
                 } else {
@@ -2834,40 +3364,7 @@ CREATE TABLE labels (
             let mut conn = db.connection().unwrap();
 
             // Insert all these coins into database.
-            conn.new_unspent_coins(&coins);
-
-            // Confirm those which are supposed to be.
-            let confirmed_coins: Vec<_> = coins
-                .iter()
-                .filter_map(|coin| {
-                    coin.block_info
-                        .map(|blk| (coin.outpoint, blk.height, blk.time))
-                })
-                .collect();
-            conn.confirm_coins(&confirmed_coins);
-
-            // Spend those which are supposed to be.
-            let spent_coins: Vec<_> = coins
-                .iter()
-                .filter_map(|coin| coin.spend_txid.map(|txid| (coin.outpoint, txid)))
-                .collect();
-            conn.spend_coins(&spent_coins);
-
-            // Mark the spend as confirmed for those which are supposed to be.
-            let confirmed_spent_coins: Vec<_> = coins
-                .iter()
-                .filter_map(|coin| {
-                    coin.spend_block.map(|blk| {
-                        (
-                            coin.outpoint,
-                            coin.spend_txid.expect("always set when spend block is"),
-                            blk.height,
-                            blk.time,
-                        )
-                    })
-                })
-                .collect();
-            conn.confirm_spend(&confirmed_spent_coins);
+            store_coins_v3(&mut conn, &coins);
         }
 
         // Trying to migrate without specifying the transactions will fail.

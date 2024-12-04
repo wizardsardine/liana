@@ -649,6 +649,7 @@ impl Daemon for BackendWalletClient {
                         txid: info.txid,
                         height: info.height,
                     }),
+                    is_from_self: false, // FIXME: use value from backend
                 })
                 .collect(),
         })
@@ -1133,6 +1134,7 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
                         txid: info.txid,
                         height: info.height,
                     }),
+                    is_from_self: false, // FIXME: use value from backend
                 });
             }
         }
@@ -1188,6 +1190,7 @@ fn spend_tx_from_api(
                         txid: info.txid,
                         height: info.height,
                     }),
+                    is_from_self: false, // FIXME: use value from backend
                 });
             }
         }

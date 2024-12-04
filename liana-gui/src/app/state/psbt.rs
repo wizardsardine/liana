@@ -793,6 +793,7 @@ mod tests {
                     "derivation_index": 0,
                     "is_immature": false,
                     "is_change": false,
+                    "is_from_self": false,
 
                 }]})),
             ),
