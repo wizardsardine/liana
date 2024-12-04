@@ -1,4 +1,5 @@
 mod coins;
+mod export;
 mod label;
 mod psbt;
 mod psbts;

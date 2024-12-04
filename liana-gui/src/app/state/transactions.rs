@@ -28,6 +28,7 @@ use crate::{
         wallet::Wallet,
     },
     daemon::model::{self, LabelsLoader},
+    export::ExportMessage,
 };
 
 use crate::daemon::{
@@ -35,13 +36,22 @@ use crate::daemon::{
     Daemon,
 };
 
+use super::export::ExportModal;
+
+#[derive(Debug)]
+pub enum TransactionsModal {
+    CreateRbf(CreateRbfModal),
+    Export(ExportModal),
+    None,
+}
+
 pub struct TransactionsPanel {
     wallet: Arc<Wallet>,
     txs: Vec<HistoryTransaction>,
     labels_edited: LabelsEdited,
     selected_tx: Option<HistoryTransaction>,
     warning: Option<Error>,
-    create_rbf_modal: Option<CreateRbfModal>,
+    modal: TransactionsModal,
     is_last_page: bool,
     processing: bool,
 }
@@ -54,7 +64,7 @@ impl TransactionsPanel {
             txs: Vec::new(),
             labels_edited: LabelsEdited::default(),
             warning: None,
-            create_rbf_modal: None,
+            modal: TransactionsModal::None,
             is_last_page: false,
             processing: false,
         }
@@ -63,7 +73,7 @@ impl TransactionsPanel {
     pub fn preselect(&mut self, tx: HistoryTransaction) {
         self.selected_tx = Some(tx);
         self.warning = None;
-        self.create_rbf_modal = None;
+        self.modal = TransactionsModal::None;
     }
 }
 
@@ -76,19 +86,22 @@ impl State for TransactionsPanel {
                 self.labels_edited.cache(),
                 self.warning.as_ref(),
             );
-            if let Some(modal) = &self.create_rbf_modal {
-                modal.view(content)
-            } else {
-                content
+            match &self.modal {
+                TransactionsModal::CreateRbf(rbf) => rbf.view(content),
+                _ => content,
             }
         } else {
-            view::transactions::transactions_view(
+            let content = view::transactions::transactions_view(
                 cache,
                 &self.txs,
                 self.warning.as_ref(),
                 self.is_last_page,
                 self.processing,
-            )
+            );
+            match &self.modal {
+                TransactionsModal::Export(export) => export.view(content),
+                _ => content,
+            }
         }
     }
 
@@ -134,7 +147,7 @@ impl State for TransactionsPanel {
             Message::RbfModal(tx, is_cancel, res) => match res {
                 Ok(descendant_txids) => {
                     let modal = CreateRbfModal::new(*tx, is_cancel, descendant_txids);
-                    self.create_rbf_modal = Some(modal);
+                    self.modal = TransactionsModal::CreateRbf(modal);
                 }
                 Err(e) => {
                     self.warning = e.into();
@@ -146,16 +159,16 @@ impl State for TransactionsPanel {
             Message::View(view::Message::Select(i)) => {
                 self.selected_tx = self.txs.get(i).cloned();
                 // Clear modal if it's for a different tx.
-                if let Some(modal) = &self.create_rbf_modal {
+                if let TransactionsModal::CreateRbf(modal) = &self.modal {
                     if Some(modal.tx.tx.txid())
                         != self.selected_tx.as_ref().map(|selected| selected.tx.txid())
                     {
-                        self.create_rbf_modal = None;
+                        self.modal = TransactionsModal::None;
                     }
                 }
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Cancel)) => {
-                self.create_rbf_modal = None;
+                self.modal = TransactionsModal::None;
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::New(is_cancel))) => {
                 if let Some(tx) = &self.selected_tx {
@@ -249,10 +262,25 @@ impl State for TransactionsPanel {
                     );
                 }
             }
-            _ => {
-                if let Some(modal) = &mut self.create_rbf_modal {
-                    return modal.update(daemon, _cache, message);
+            Message::View(view::Message::Export(ExportMessage::Open)) => {
+                if let TransactionsModal::None = &self.modal {
+                    self.modal = TransactionsModal::Export(ExportModal::new(daemon));
+                    if let TransactionsModal::Export(m) = &self.modal {
+                        return m.launch();
+                    }
                 }
+            }
+            Message::View(view::Message::Export(ExportMessage::Close)) => {
+                if let TransactionsModal::Export(_) = &self.modal {
+                    self.modal = TransactionsModal::None;
+                }
+            }
+            _ => {
+                return match &mut self.modal {
+                    TransactionsModal::CreateRbf(modal) => modal.update(daemon, _cache, message),
+                    TransactionsModal::Export(modal) => modal.update(message),
+                    TransactionsModal::None => Command::none(),
+                };
             }
         };
         Command::none()
@@ -284,6 +312,17 @@ impl State for TransactionsPanel {
             Message::HistoryTransactions,
         )])
     }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        if let TransactionsModal::Export(modal) = &self.modal {
+            if let Some(sub) = modal.subscription() {
+                return sub.map(|m| {
+                    Message::View(view::Message::Export(ExportMessage::ExportProgress(m)))
+                });
+            }
+        }
+        iced::Subscription::none()
+    }
 }
 
 impl From<TransactionsPanel> for Box<dyn State> {
@@ -292,6 +331,7 @@ impl From<TransactionsPanel> for Box<dyn State> {
     }
 }
 
+#[derive(Debug)]
 pub struct CreateRbfModal {
     /// Transaction to replace.
     tx: model::HistoryTransaction,
