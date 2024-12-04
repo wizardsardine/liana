@@ -6,6 +6,7 @@ pub mod settings;
 pub mod state;
 pub mod view;
 pub mod wallet;
+pub mod export;
 
 mod error;
 
