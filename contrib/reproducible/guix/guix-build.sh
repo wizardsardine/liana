@@ -31,7 +31,7 @@ maybe_create_dir "$BIN_DIR"
 
 # That's what Guix comes with.
 RUST_VERSION="1.60.0"
-CARGO_BIN="$BIN_DIR/cargo"
+CARGO_BIN="$(which cargo)"
 
 # First off get the cargo binary to run on the host to vendor dependencies.
 # We assume the host is a 64bit Linux system.
@@ -41,6 +41,8 @@ if ! [ -f "$CARGO_BIN" ]; then
     echo "b8a4c3959367d053825e31f90a5eb86418eb0d80cacda52bfa80b078e18150d5 $ARCHIVE_PATH" | $SHASUM_BIN -c
     # Path of the cargo binary within the archive
     CARGO_BIN_PATH="rust-$RUST_VERSION-x86_64-unknown-linux-gnu/cargo/bin/cargo"
+    CARGO_BIN="$BIN/cargo"
+
     ( cd $BIN_DIR && tar -xzf $ARCHIVE_PATH $CARGO_BIN_PATH && mv $CARGO_BIN_PATH $CARGO_BIN )
 fi
 
@@ -48,7 +50,7 @@ fi
 # across time.
 time_machine() {
     guix time-machine --url=https://git.savannah.gnu.org/git/guix.git \
-        --commit=3ef5e20bcdb6caed49e5db46a135ee4c17d69b5f \
+        --commit=1c4a00820a1ba6265d2d96f4f7804d0807d69dcc \
         --cores="$JOBS" \
         --keep-failed \
         --fallback \
