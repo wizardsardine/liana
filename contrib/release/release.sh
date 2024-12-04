@@ -25,6 +25,10 @@ create_dir() {
     test -d "$1" || mkdir "$1"
 }
 
+# Determine the reference time used for determinism (overridable by environment)
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -c log.showSignature=false log --format=%at -1)}"
+export TAR_OPTIONS="--owner=0 --group=0 --numeric-owner --mtime='@${SOURCE_DATE_EPOCH}' --sort=name"
+
 # We'll use a folder for the builds output and another one for the final assets.
 RELEASE_DIR="$PWD/release_assets"
 BUILD_DIR="$PWD/release_build"
