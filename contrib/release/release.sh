@@ -38,13 +38,13 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
 (
     cd "$BUILD_DIR"
     create_dir "$LINUX_DIR_NAME"
-    cp "$BUILD_DIR/release/lianad" "$BUILD_DIR/release/liana-cli" "$BUILD_DIR/release/liana-gui" ../README.md "$LINUX_DIR_NAME"
+    cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ../README.md "$LINUX_DIR_NAME"
     tar -czf "$LINUX_ARCHIVE" "$LINUX_DIR_NAME"
     cp "$LINUX_ARCHIVE" "$RELEASE_DIR"
 
     unzip ../contrib/release/debian/package.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./package/DEBIAN/control
-    cp "$BUILD_DIR/release/lianad" "$BUILD_DIR/release/liana-cli" "$BUILD_DIR/release/liana-gui" ../README.md ./package/usr/bin/
+    cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ../README.md ./package/usr/bin/
     DIRNAME="liana_$VERSION-1_amd64"
     mv ./package "$DIRNAME"
     dpkg-deb -Zxz --build "$DIRNAME"
