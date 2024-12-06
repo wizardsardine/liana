@@ -413,7 +413,7 @@ pub async fn install_local_wallet(
             daemon_config_path.canonicalize().map_err(|e| {
                 Error::Unexpected(format!("Failed to canonicalize daemon config path: {}", e))
             })?,
-            // Installer started a bitcoind, it is expected that gui will start it on on startup
+            // Installer started a bitcoind, it is expected that gui will start it on startup
             ctx.internal_bitcoind.is_some(),
         ))
         .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
