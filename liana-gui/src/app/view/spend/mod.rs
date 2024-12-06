@@ -442,7 +442,7 @@ fn coin_list_view<'a>(
                             Row::new()
                                 .spacing(5)
                                 .push(
-                                    // It it not possible to know if a coin is a
+                                    // It is not possible to know if a coin is a
                                     // change coin or not so for now, From is
                                     // enough
                                     p1_regular("From").style(color::GREY_3),
