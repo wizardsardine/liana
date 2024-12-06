@@ -12,3 +12,6 @@ TODO
 Xcode_12.2.xip
 .idea/
 fuzz/corpus
+result
+release_build
+release_assets
