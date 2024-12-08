@@ -14,6 +14,8 @@ use crate::{
     hw::HardwareWalletMessage,
 };
 
+use super::state::export::ExportMessage;
+
 #[derive(Debug)]
 pub enum Message {
     Tick,
@@ -43,4 +45,5 @@ pub enum Message {
     LabelsUpdated(Result<HashMap<String, Option<String>>, Error>),
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
+    Export(ExportMessage),
 }

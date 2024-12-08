@@ -1,4 +1,7 @@
-use crate::{app::menu::Menu, node::bitcoind::RpcAuthType};
+use crate::{
+    app::{menu::Menu, state::export::ExportMessage},
+    node::bitcoind::RpcAuthType,
+};
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 
 #[derive(Debug, Clone)]
@@ -19,6 +22,7 @@ pub enum Message {
     SelectHardwareWallet(usize),
     CreateRbf(CreateRbfMessage),
     ShowQrCode(usize),
+    Export(ExportMessage),
 }
 
 #[derive(Debug, Clone)]
