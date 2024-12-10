@@ -299,3 +299,12 @@ pub fn export_transactions(
         tracing::error!("ExportState::start() fail to send msg: {}", e);
     }
 }
+
+pub async fn get_path() -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title("Choose a location to export...")
+        .set_file_name("liana.csv")
+        .save_file()
+        .await
+        .map(|fh| fh.path().to_path_buf())
+}
