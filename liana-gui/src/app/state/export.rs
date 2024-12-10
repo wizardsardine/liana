@@ -8,7 +8,7 @@ use liana_ui::{component::modal::Modal, widget::Element};
 use tokio::task::JoinHandle;
 
 use crate::app::{
-    export::{self, get_path, ExportProgress, ExportType},
+    export::{self, get_path, ExportProgress},
     message::Message,
     view::{self, export::export_modal},
 };
@@ -137,11 +137,7 @@ impl ExportModal {
                 ExportState::Started | ExportState::Progress(_) => {
                     Some(iced::subscription::unfold(
                         "transactions",
-                        export::ExportState::new(
-                            self.daemon.clone(),
-                            ExportType::Transactions,
-                            Box::new(path.to_path_buf()),
-                        ),
+                        export::ExportState::new(self.daemon.clone(), Box::new(path.to_path_buf())),
                         export::export_subscription,
                     ))
                 }
