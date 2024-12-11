@@ -75,6 +75,7 @@ impl Panels {
                     cache.last_poll_timestamp,
                     cache.last_poll_at_startup,
                 ),
+                cache.blockheight,
             ),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
