@@ -77,6 +77,9 @@ pub fn redirect(menu: Menu) -> Command<Message> {
 ///   `tip_height` is within 10% of the `timelock` expiring.
 /// - the smallest number of blocks until the expiry of `timelock` among
 ///   all confirmed coins, if any.
+///
+/// The confirmed balance includes the values of any unconfirmed coins
+/// from self.
 fn coins_summary(
     coins: &[Coin],
     tip_height: u32,
@@ -88,8 +91,14 @@ fn coins_summary(
     let mut remaining_seq = None;
     for coin in coins {
         if coin.spend_info.is_none() {
-            if coin.block_height.is_some() {
+            // Include unconfirmed coins from self in confirmed balance.
+            if coin.block_height.is_some() || coin.is_from_self {
                 balance += coin.amount;
+                // Only consider confirmed coins for remaining seq
+                // (they would not be considered as expiring so we can also skip that part)
+                if coin.block_height.is_none() {
+                    continue;
+                }
                 let seq = remaining_sequence(coin, tip_height, timelock);
                 // Warn user for coins that are expiring in less than 10 percent of
                 // the timelock.
@@ -458,10 +467,15 @@ mod tests {
             is_from_self: true,
             spend_info: None,
         });
-        // Included in unconfirmed balance. Other values remain the same.
+        // Included in confirmed balance. Other values remain the same.
         assert_eq!(
             coins_summary(&coins, tip_height, timelock),
-            (Amount::from_sat(0), Amount::from_sat(220), Vec::new(), None)
+            (
+                Amount::from_sat(111),
+                Amount::from_sat(109),
+                Vec::new(),
+                None
+            )
         );
         // Add a confirmed coin 1 more than 10% from expiry:
         coins.push(Coin {
@@ -479,8 +493,8 @@ mod tests {
         assert_eq!(
             coins_summary(&coins, tip_height, timelock),
             (
-                Amount::from_sat(101),
-                Amount::from_sat(220),
+                Amount::from_sat(212),
+                Amount::from_sat(109),
                 Vec::new(),
                 Some(1_001)
             )
@@ -492,8 +506,8 @@ mod tests {
         assert_eq!(
             coins_summary(&coins, tip_height, timelock),
             (
-                Amount::from_sat(101),
-                Amount::from_sat(220),
+                Amount::from_sat(212),
+                Amount::from_sat(109),
                 vec![OutPoint::new(dummy_txid, 3)],
                 Some(1_000)
             )
@@ -514,8 +528,8 @@ mod tests {
         assert_eq!(
             coins_summary(&coins, tip_height, timelock),
             (
-                Amount::from_sat(206),
-                Amount::from_sat(220),
+                Amount::from_sat(317),
+                Amount::from_sat(109),
                 vec![OutPoint::new(dummy_txid, 3)],
                 Some(1_000)
             )
@@ -536,8 +550,8 @@ mod tests {
         assert_eq!(
             coins_summary(&coins, tip_height, timelock),
             (
-                Amount::from_sat(314),
-                Amount::from_sat(220),
+                Amount::from_sat(425),
+                Amount::from_sat(109),
                 vec![OutPoint::new(dummy_txid, 3), OutPoint::new(dummy_txid, 5)],
                 Some(500)
             )
