@@ -133,7 +133,7 @@ impl Home {
         sync_status: SyncStatus,
         tip_height: i32,
     ) -> Self {
-        let (balance, unconfirmed_balance, _, _) = coins_summary(
+        let (balance, unconfirmed_balance, expiring_coins, remaining_seq) = coins_summary(
             coins,
             tip_height as u32,
             wallet.main_descriptor.first_timelock_value(),
@@ -144,8 +144,8 @@ impl Home {
             sync_status,
             balance,
             unconfirmed_balance,
-            remaining_sequence: None,
-            expiring_coins: Vec::new(),
+            remaining_sequence: remaining_seq,
+            expiring_coins,
             selected_event: None,
             events: Vec::new(),
             labels_edited: LabelsEdited::default(),
