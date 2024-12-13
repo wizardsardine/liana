@@ -495,7 +495,7 @@ impl DaemonControl {
         // the spend from a set of optional candidates.
         // Otherwise, only the specified coins will be used, all as mandatory candidates.
         let candidate_coins: Vec<CandidateCoin> = if coins_outpoints.is_empty() {
-            // From our unconfirmed coins, we only include those that are change outputs
+            // From our unconfirmed coins, we only include those that are from self
             // since unconfirmed external deposits are more at risk of being dropped
             // unexpectedly from the mempool as they are beyond the user's control.
             db_conn
@@ -504,7 +504,7 @@ impl DaemonControl {
                 .filter_map(|(op, c)| {
                     if c.block_info.is_some() {
                         Some((c, None)) // confirmed coins have no ancestor info
-                    } else if c.is_change && !c.is_immature {
+                    } else if c.is_from_self {
                         // In case the mempool_entry is None, the coin will be included without
                         // any ancestor info.
                         Some((
@@ -1499,7 +1499,7 @@ mod tests {
             spend_block: None,
             is_from_self: false,
         }]);
-        // If we try to use coin selection, the unconfirmed non-change coin will not be used
+        // If we try to use coin selection, the unconfirmed not-from-self coin will not be used
         // as a candidate and so we get a coin selection error due to insufficient funds.
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
@@ -1749,7 +1749,7 @@ mod tests {
             )))
         );
 
-        // Add an unconfirmed change coin to be used for coin selection.
+        // Add an unconfirmed coin from self to be used for coin selection.
         let confirmed_op_1 = bitcoin::OutPoint {
             txid: dummy_op.txid,
             vout: dummy_op.vout + 100,
@@ -1760,10 +1760,10 @@ mod tests {
             block_info: None,
             amount: bitcoin::Amount::from_sat(80_000),
             derivation_index: bip32::ChildNumber::from(42),
-            is_change: true,
+            is_change: false,
             spend_txid: None,
             spend_block: None,
-            is_from_self: false,
+            is_from_self: true,
         };
         db_conn.new_unspent_coins(&[unconfirmed_coin]);
         // Coin selection error due to insufficient funds.
@@ -1849,30 +1849,21 @@ mod tests {
         assert_eq!(auto_input, manual_input);
 
         // Now check that the spend created above using auto-selection only works when the unconfirmed coin
-        // is change and not immature.
-        // 1. not change and not immature
+        // is from self, whether or not it is from change.
+        // 1. not from self and not change
         db_conn.remove_coins(&[unconfirmed_coin.outpoint]);
         let mut unconfirmed_coin_2 = unconfirmed_coin;
+        unconfirmed_coin_2.is_from_self = false;
         unconfirmed_coin_2.is_change = false;
-        unconfirmed_coin_2.is_immature = false; // (this is already the case)
         db_conn.new_unspent_coins(&[unconfirmed_coin_2]);
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
             Ok(CreateSpendResult::InsufficientFunds { .. }),
         ));
-        // 2. change and immature
+        // 2. not from self and change
         db_conn.remove_coins(&[unconfirmed_coin_2.outpoint]);
+        unconfirmed_coin_2.is_from_self = false;
         unconfirmed_coin_2.is_change = true;
-        unconfirmed_coin_2.is_immature = true;
-        db_conn.new_unspent_coins(&[unconfirmed_coin_2]);
-        assert!(matches!(
-            control.create_spend(&destinations, &[], 1, None),
-            Ok(CreateSpendResult::InsufficientFunds { .. }),
-        ));
-        // 3. not change and immature
-        db_conn.remove_coins(&[unconfirmed_coin_2.outpoint]);
-        unconfirmed_coin_2.is_change = false;
-        unconfirmed_coin_2.is_immature = true;
         db_conn.new_unspent_coins(&[unconfirmed_coin_2]);
         assert!(matches!(
             control.create_spend(&destinations, &[], 1, None),
