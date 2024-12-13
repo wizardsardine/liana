@@ -26,6 +26,20 @@ absolute_path() {
     fi
 }
 
+# Determine the reference time used for determinism (overridable by environment)
+export SOURCE_DATE_EPOCH="$(git -c log.showsignature=false log --format=%at -1)"
+export TZ=UTC
+
+zip_archive () {
+    local archive="$1"
+    shift
+    touch -d "@$SOURCE_DATE_EPOCH" "$@"
+    find "$@" -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
+    zip -r -oX - "$@" > "$archive"
+}
+
+
+
 # Function to perform rcodesign signing
 sign_with_rcodesign() {
     # Ensure the correct number of arguments are provided
@@ -56,6 +70,8 @@ sign_with_rcodesign() {
     fi
 
     cd "$RELEASE_BUILD_DIR"
+    chmod u+w ./Liana.app/Contents/MacOS/Liana
+
     rcodesign sign \
         --digest sha256 \
         --code-signature-flags runtime \
@@ -68,8 +84,9 @@ sign_with_rcodesign() {
         --api-key-path "$NOTARY_API_CREDS_FILE" \
         --staple Liana.app
 
-    zip -ry "Liana-$VERSION.zip" Liana.app
+    zip_archive "Liana-$VERSION.zip" Liana.app
     mv "Liana-$VERSION.zip" "$RELEASE_DIR/"
+    sha256sum "$RELEASE_DIR/Liana-$VERSION.zip" | tee -a "$RELEASE_DIR/shasums.txt"
 }
 
 if [ "$#" -lt 1 ]; then

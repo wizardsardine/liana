@@ -23,9 +23,20 @@ create_dir() {
     mkdir "$1"
 }
 
+
+
 # Determine the reference time used for determinism (overridable by environment)
-export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -c log.showSignature=false log --format=%at -1)}"
+export SOURCE_DATE_EPOCH="$(git -c log.showsignature=false log --format=%at -1)"
+export TZ=UTC
 export TAR_OPTIONS="--owner=0 --group=0 --numeric-owner --sort=name"
+
+zip_archive () {
+    local archive="$1"
+    shift
+    touch -d "@$SOURCE_DATE_EPOCH" "$@"
+    find "$@" -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
+    find "$@" -type f | sort | zip -oX "$archive" -@
+}
 
 # We'll use a folder for the builds output and another one for the final assets.
 RELEASE_DIR="$PWD/release_assets"
@@ -51,7 +62,7 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
     cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ../README.md ./package/usr/bin/
     DIRNAME="liana_$VERSION-1_amd64"
     mv ./package "$DIRNAME"
-    dpkg-deb -Zxz --build "$DIRNAME"
+    dpkg-deb -Zxz --build --root-owner-group "$DIRNAME"
     mv "$DIRNAME.deb" "$RELEASE_DIR"
 )
 
@@ -60,7 +71,7 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
     cd "$BUILD_DIR"
     create_dir "$WINDOWS_DIR_NAME"
     cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" ../README.md "$WINDOWS_DIR_NAME"
-    zip -r "$WINDOWS_ARCHIVE" "$WINDOWS_DIR_NAME"
+    zip_archive "$WINDOWS_ARCHIVE" "$WINDOWS_DIR_NAME"
     mv "$WINDOWS_ARCHIVE" "$RELEASE_DIR"
     cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX.exe"
 )
@@ -76,11 +87,10 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
     unzip ../contrib/release/macos/Liana.app.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
     cp "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-gui" ./Liana.app/Contents/MacOS/Liana
-    chmod u+w ./Liana.app/Contents/MacOS/Liana
-    zip -ry "Liana-$VERSION-noncodesigned.zip" Liana.app
+    zip_archive "Liana-$VERSION-noncodesigned.zip" Liana.app
     mv "Liana-$VERSION-noncodesigned.zip" "$RELEASE_DIR/"
 )
 
-find "$RELEASE_DIR" -type f -exec sha256sum {} + | tee "$RELEASE_DIR/shasums.txt"
+find "$RELEASE_DIR" -type f ! -name "shasums.txt" -exec sha256sum {} + | tee "$RELEASE_DIR/shasums.txt"
 
 set +ex
