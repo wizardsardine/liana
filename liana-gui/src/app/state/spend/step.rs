@@ -21,7 +21,7 @@ use liana_ui::{component::form, widget::Element};
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::psbt, view, wallet::Wallet},
     daemon::{
-        model::{remaining_sequence, Coin, CreateSpendResult, SpendTx},
+        model::{coin_is_owned, remaining_sequence, Coin, CreateSpendResult, SpendTx},
         Daemon,
     },
 };
@@ -354,13 +354,16 @@ impl DefineSpend {
                     );
                 }
             }
-            // For coin selection error (insufficient funds), do not make any changes to
-            // selected coins on screen and just show user how much is left to select.
-            // User can then either:
-            // - modify recipient amounts and/or feerate and let coin selection run again, or
-            // - select coins manually.
             Ok(CreateSpendResult::InsufficientFunds { missing }) => {
                 self.amount_left_to_select = Some(Amount::from_sat(missing));
+                if !self.is_user_coin_selection {
+                    // The missing amount is based on all candidates for coin selection
+                    // being used, which are all coins if there's a recipient with max
+                    // or otherwise all owned coins.
+                    for (coin, selected) in &mut self.coins {
+                        *selected = self.send_max_to_recipient.is_some() || coin_is_owned(coin);
+                    }
+                }
                 if let Some((i, recipient)) = recipient_with_max {
                     let amount = Amount::from_sat(if destinations.is_empty() {
                         // If there are no other recipients, then the missing value will
