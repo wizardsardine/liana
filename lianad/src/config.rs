@@ -128,6 +128,9 @@ pub struct ElectrumConfig {
     /// Include "ssl://" for SSL. otherwise TCP will be assumed.
     /// Can optionally prefix with "tcp://".
     pub addr: String,
+    /// If validate_domain == false, domain of ssl certificate will not be validated
+    /// (useful to allow usage of self signed certificates on local network)
+    pub validate_domain: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
