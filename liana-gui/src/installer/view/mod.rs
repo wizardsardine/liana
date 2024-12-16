@@ -1134,7 +1134,10 @@ pub fn define_bitcoind<'a>(
         .into()
 }
 
-pub fn define_electrum<'a>(address: &form::Value<String>) -> Element<'a, Message> {
+pub fn define_electrum<'a>(
+    address: &form::Value<String>,
+    validate_domain: bool,
+) -> Element<'a, Message> {
     let col_address = Column::new()
         .push(text("Address:").bold())
         .push(
@@ -1150,7 +1153,11 @@ pub fn define_electrum<'a>(address: &form::Value<String>) -> Element<'a, Message
             .size(text::P1_SIZE)
             .padding(10),
         )
-        .push(text(electrum::ADDRESS_NOTES).size(text::P2_SIZE))
+        .push(
+            checkbox("Not validate SSL Domain, check this only if you want connect to a self sign certificate", !validate_domain)
+                .on_toggle(|b| {
+                Message::DefineNode(DefineNode::DefineElectrum(message::DefineElectrum::ValidDomainChanged(!b)))
+                }))
         .spacing(10);
 
     Column::new().push(col_address).spacing(50).into()
