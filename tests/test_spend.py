@@ -339,8 +339,9 @@ def test_coin_selection(lianad, bitcoind):
     # Check that change output is unconfirmed.
     assert len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 1
     assert lianad.rpc.listcoins(["unconfirmed"])["coins"][0]["is_change"] is True
+    assert lianad.rpc.listcoins(["unconfirmed"])["coins"][0]["is_from_self"] is True
     assert len(lianad.rpc.listcoins(["spending"])["coins"]) == 1
-    # We can use unconfirmed change as candidate.
+    # We can use unconfirmed change as candidate as it is from self.
     # Depending on the feerate, we'll get a warning about paying extra for the ancestor.
     dest_addr_2 = bitcoind.rpc.getnewaddress()
     # If feerate is higher than ancestor, we'll need to pay extra.
@@ -412,9 +413,20 @@ def test_coin_selection(lianad, bitcoind):
     )
 
     # Get another coin to check coin selection with more than one candidate.
-    recv_addr_2 = lianad.rpc.getnewaddress()["address"]
+    # This coin will be an external deposit to one of our change addresses.
+    recv_addr_2 = lianad.rpc.listaddresses(10, 1)["addresses"][0]["change"]
     deposit_2 = bitcoind.rpc.sendtoaddress(recv_addr_2, 30_000 / COIN)
     wait_for(lambda: len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 2)
+    assert (
+        len(
+            [
+                c
+                for c in lianad.rpc.listcoins(["unconfirmed"])["coins"]
+                if c["is_from_self"]
+            ]
+        )
+        == 1
+    )
     assert (
         len(
             [
@@ -423,10 +435,10 @@ def test_coin_selection(lianad, bitcoind):
                 if c["is_change"]
             ]
         )
-        == 1
+        == 2
     )
     dest_addr_3 = bitcoind.rpc.getnewaddress()
-    # As only one unconfirmed coin is change, we have insufficient funds.
+    # As only one unconfirmed coin is from self, we have insufficient funds.
     assert "missing" in lianad.rpc.createspend({dest_addr_3: 20_000}, [], 10)
 
     # If we include both unconfirmed coins manually, it will succeed.
