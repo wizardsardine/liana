@@ -130,7 +130,7 @@ pub struct Home {
     events: Vec<HistoryTransaction>,
     is_last_page: bool,
     processing: bool,
-    selected_event: Option<(usize, usize)>,
+    selected_event: Option<(HistoryTransaction, usize)>,
     labels_edited: LabelsEdited,
     warning: Option<Error>,
 }
@@ -167,11 +167,11 @@ impl Home {
 
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Some((i, output_index)) = self.selected_event {
+        if let Some((tx, output_index)) = &self.selected_event {
             view::home::payment_view(
                 cache,
-                &self.events[i],
-                output_index,
+                &tx,
+                *output_index,
                 self.labels_edited.cache(),
                 self.warning.as_ref(),
             )
@@ -266,11 +266,36 @@ impl State for Home {
                     return self.reload(daemon, self.wallet.clone());
                 }
             }
+            Message::Payment(res) => match res {
+                Ok(event) => {
+                    self.selected_event = Some(event);
+                }
+                Err(e) => {
+                    self.warning = Some(e);
+                }
+            },
+            Message::View(view::Message::SelectSub(i, j)) => {
+                let txid = self.events[i].txid;
+                return Command::perform(
+                    async move {
+                        let tx = daemon.get_history_txs(&[txid]).await?.remove(0);
+                        Ok((tx, j))
+                    },
+                    Message::Payment,
+                );
+            }
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    self.events.iter_mut().map(|tx| tx as &mut dyn Labelled),
+                    self.events
+                        .iter_mut()
+                        .map(|tx| tx as &mut dyn Labelled)
+                        .chain(
+                            self.selected_event
+                                .iter_mut()
+                                .map(|(tx, _)| tx as &mut dyn Labelled),
+                        ),
                 ) {
                     Ok(cmd) => {
                         return cmd;
@@ -286,9 +311,7 @@ impl State for Home {
             Message::View(view::Message::Close) => {
                 self.selected_event = None;
             }
-            Message::View(view::Message::SelectSub(i, j)) => {
-                self.selected_event = Some((i, j));
-            }
+
             Message::View(view::Message::Next) => {
                 if let Some(last) = self.events.last() {
                     let daemon = daemon.clone();
