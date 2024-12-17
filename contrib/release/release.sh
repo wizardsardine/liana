@@ -15,14 +15,27 @@ WINDOWS_DIR_NAME="$LIANA_PREFIX-x86_64-windows-gnu"
 WINDOWS_ARCHIVE="$WINDOWS_DIR_NAME.zip"
 MAC_DIR_NAME="$LIANA_PREFIX-x86_64-apple-darwin"
 MAC_ARCHIVE="$MAC_DIR_NAME.tar.gz"
-MAC_CODESIGN="${MAC_CODESIGN:-"0"}"
-RCODESIGN_BIN="${RCODESIGN_BIN:-"$PWD/../../macos_codesigning/apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign"}"
-CODESIGN_KEY="${CODESIGN_KEY:-"$PWD/../../macos_codesigning/wizardsardine_liana.key"}"
-CODESIGN_CERT="${CODESIGN_CERT:-"$PWD/../../macos_codesigning/antoine_devid_liana_codesigning.cer"}"
-NOTARY_API_CREDS_FILE="${NOTARY_API_CREDS_FILE:-"$PWD/../../macos_codesigning/encoded_appstore_api_key.json"}"
 
 create_dir() {
-    test -d "$1" || mkdir "$1"
+    if [ -d "$1" ]; then
+        rm -rf "$1"
+    fi
+    mkdir "$1"
+}
+
+
+
+# Determine the reference time used for determinism (overridable by environment)
+export SOURCE_DATE_EPOCH="$(git -c log.showsignature=false log --format=%at -1)"
+export TZ=UTC
+export TAR_OPTIONS="--owner=0 --group=0 --numeric-owner --sort=name"
+
+zip_archive () {
+    local archive="$1"
+    shift
+    touch -d "@$SOURCE_DATE_EPOCH" "$@"
+    find "$@" -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
+    find "$@" -type f | sort | zip -oX "$archive" -@
 }
 
 # We'll use a folder for the builds output and another one for the final assets.
@@ -32,22 +45,24 @@ create_dir "$RELEASE_DIR"
 create_dir "$BUILD_DIR"
 
 OUT_DIR="$BUILD_DIR" ./contrib/reproducible/guix/guix-build.sh
-TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
 
-# Create the Linux archive and Debian binary package.
+nix build .#release
+NIX_BUILD_DIR="$(nix path-info .#release)"
+
+#Create the Linux archive and Debian binary package.
 (
     cd "$BUILD_DIR"
     create_dir "$LINUX_DIR_NAME"
     cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ../README.md "$LINUX_DIR_NAME"
-    tar -czf "$LINUX_ARCHIVE" "$LINUX_DIR_NAME"
-    cp "$LINUX_ARCHIVE" "$RELEASE_DIR"
+    tar --mtime="@${SOURCE_DATE_EPOCH}" -czf "$LINUX_ARCHIVE" "$LINUX_DIR_NAME"
+    mv "$LINUX_ARCHIVE" "$RELEASE_DIR"
 
     unzip ../contrib/release/debian/package.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./package/DEBIAN/control
     cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ../README.md ./package/usr/bin/
     DIRNAME="liana_$VERSION-1_amd64"
     mv ./package "$DIRNAME"
-    dpkg-deb -Zxz --build "$DIRNAME"
+    dpkg-deb -Zxz --build --root-owner-group "$DIRNAME"
     mv "$DIRNAME.deb" "$RELEASE_DIR"
 )
 
@@ -55,40 +70,27 @@ TARGET_DIR="$BUILD_DIR" ./contrib/reproducible/docker/docker-build.sh
 (
     cd "$BUILD_DIR"
     create_dir "$WINDOWS_DIR_NAME"
-    cp "$BUILD_DIR/x86_64-pc-windows-gnu/release/liana-gui.exe" ../README.md "$WINDOWS_DIR_NAME"
-    zip -r "$WINDOWS_ARCHIVE" "$WINDOWS_DIR_NAME"
-    cp "$WINDOWS_ARCHIVE" "$RELEASE_DIR"
-    cp "$BUILD_DIR/x86_64-pc-windows-gnu/release/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX.exe"
+    cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" ../README.md "$WINDOWS_DIR_NAME"
+    zip_archive "$WINDOWS_ARCHIVE" "$WINDOWS_DIR_NAME"
+    mv "$WINDOWS_ARCHIVE" "$RELEASE_DIR"
+    cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX.exe"
 )
 
 # Create the MacOS archive and a zipped application bundle of liana-gui.
 (
     cd "$BUILD_DIR"
     create_dir "$MAC_DIR_NAME"
-    cp "$BUILD_DIR/x86_64-apple-darwin/release/lianad" "$BUILD_DIR/x86_64-apple-darwin/release/liana-cli" "$BUILD_DIR/x86_64-apple-darwin/release/liana-gui" ../README.md "$MAC_DIR_NAME"
-    tar -czf "$MAC_ARCHIVE" "$MAC_DIR_NAME"
-    cp "$MAC_ARCHIVE" "$RELEASE_DIR"
+    cp "$NIX_BUILD_DIR/x86_64-apple-darwin/lianad" "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-cli" "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-gui" ../README.md "$MAC_DIR_NAME"
+    tar --mtime="@${SOURCE_DATE_EPOCH}" -czf "$MAC_ARCHIVE" "$MAC_DIR_NAME"
+    mv "$MAC_ARCHIVE" "$RELEASE_DIR"
 
     unzip ../contrib/release/macos/Liana.app.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
-    cp "$BUILD_DIR/x86_64-apple-darwin/release/liana-gui" ./Liana.app/Contents/MacOS/Liana
-    zip -ry Liana-noncodesigned.zip Liana.app
-    cp ./Liana-noncodesigned.zip "$RELEASE_DIR/"
-
-    if [ "$MAC_CODESIGN" = "1" ]; then
-        $RCODESIGN_BIN sign --digest sha256 --code-signature-flags runtime --pem-source "$CODESIGN_KEY" --der-source "$CODESIGN_CERT" Liana.app/
-        $RCODESIGN_BIN notary-submit --max-wait-seconds 600 --api-key-path "$NOTARY_API_CREDS_FILE" --staple Liana.app
-        zip -ry Liana.zip Liana.app
-        cp ./Liana.zip "$RELEASE_DIR/"
-    fi
+    cp "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-gui" ./Liana.app/Contents/MacOS/Liana
+    zip_archive "Liana-$VERSION-noncodesigned.zip" Liana.app
+    mv "Liana-$VERSION-noncodesigned.zip" "$RELEASE_DIR/"
 )
 
-# Finally, sign all the assets
-(
-    cd "$RELEASE_DIR"
-    for asset in $(ls); do
-        gpg --detach-sign --armor "$asset"
-    done
-)
+find "$RELEASE_DIR" -type f ! -name "shasums.txt" -exec sha256sum {} + | tee "$RELEASE_DIR/shasums.txt"
 
 set +ex
