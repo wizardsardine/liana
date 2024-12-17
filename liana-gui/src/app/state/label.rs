@@ -5,7 +5,7 @@ use std::{collections::HashMap, iter::IntoIterator, sync::Arc};
 use crate::{
     app::{error::Error, message::Message, view},
     daemon::{
-        model::{LabelItem, Labelled},
+        model::{LabelItem, Labelled, LabelsLoader},
         Daemon,
     },
 };

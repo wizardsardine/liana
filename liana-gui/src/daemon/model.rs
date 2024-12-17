@@ -447,6 +447,16 @@ impl Labelled for HistoryTransaction {
 pub trait Labelled {
     fn labelled(&self) -> Vec<LabelItem>;
     fn labels(&mut self) -> &mut HashMap<String, String>;
+}
+
+pub trait LabelsLoader {
+    fn load_labels(&mut self, new_labels: &HashMap<String, Option<String>>);
+}
+
+impl<T: ?Sized> LabelsLoader for T
+where
+    T: Labelled,
+{
     fn load_labels(&mut self, new_labels: &HashMap<String, Option<String>>) {
         let items = self.labelled();
         let labels = self.labels();

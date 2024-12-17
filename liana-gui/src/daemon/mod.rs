@@ -333,7 +333,7 @@ pub trait Daemon: Debug {
     }
 }
 
-async fn load_labels<T: model::Labelled, D: Daemon + ?Sized>(
+async fn load_labels<T: model::Labelled + model::LabelsLoader, D: Daemon + ?Sized>(
     daemon: &D,
     targets: &mut Vec<T>,
 ) -> Result<(), DaemonError> {
