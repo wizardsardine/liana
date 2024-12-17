@@ -323,6 +323,37 @@ pub trait Daemon: Debug {
         load_labels(self, &mut txs).await?;
         Ok(txs)
     }
+
+    async fn list_pending_payments(&self) -> Result<Vec<model::Payment>, DaemonError> {
+        let mut txs = self.list_pending_txs().await?;
+        txs.sort_by(|a, b| b.time.cmp(&a.time));
+        let events = txs.into_iter().fold(Vec::new(), |mut array, tx| {
+            let mut events = model::payments_from_tx(tx);
+            array.append(&mut events);
+            array
+        });
+
+        Ok(events)
+    }
+
+    /// returns a sorted list of payments.
+    async fn list_confirmed_payments(
+        &self,
+        start: u32,
+        end: u32,
+        limit: u64,
+    ) -> Result<Vec<model::Payment>, DaemonError> {
+        let mut txs = self.list_history_txs(start, end, limit).await?;
+        txs.sort_by(|a, b| b.time.cmp(&a.time));
+        let events = txs.into_iter().fold(Vec::new(), |mut array, tx| {
+            let mut events = model::payments_from_tx(tx);
+            array.append(&mut events);
+            array
+        });
+
+        Ok(events)
+    }
+
     /// Implemented by LianaLite backend
     async fn update_wallet_metadata(
         &self,

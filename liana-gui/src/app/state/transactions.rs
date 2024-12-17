@@ -27,7 +27,7 @@ use crate::{
         view,
         wallet::Wallet,
     },
-    daemon::model,
+    daemon::model::{self, LabelsLoader},
 };
 
 use crate::daemon::{
@@ -192,11 +192,14 @@ impl State for TransactionsPanel {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    self.txs.iter_mut().map(|tx| tx as &mut dyn Labelled).chain(
-                        self.selected_tx
-                            .iter_mut()
-                            .map(|tx| tx as &mut dyn Labelled),
-                    ),
+                    self.txs
+                        .iter_mut()
+                        .map(|tx| tx as &mut dyn LabelsLoader)
+                        .chain(
+                            self.selected_tx
+                                .iter_mut()
+                                .map(|tx| tx as &mut dyn LabelsLoader),
+                        ),
                 ) {
                     Ok(cmd) => {
                         return cmd;

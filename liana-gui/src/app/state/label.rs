@@ -5,7 +5,7 @@ use std::{collections::HashMap, iter::IntoIterator, sync::Arc};
 use crate::{
     app::{error::Error, message::Message, view},
     daemon::{
-        model::{LabelItem, Labelled, LabelsLoader},
+        model::{LabelItem, LabelsLoader},
         Daemon,
     },
 };
@@ -19,7 +19,7 @@ impl LabelsEdited {
     pub fn cache(&self) -> &HashMap<String, form::Value<String>> {
         &self.0
     }
-    pub fn update<'a, T: IntoIterator<Item = &'a mut dyn Labelled>>(
+    pub fn update<'a, T: IntoIterator<Item = &'a mut dyn LabelsLoader>>(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,

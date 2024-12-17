@@ -9,6 +9,7 @@ use liana::miniscript::bitcoin::{
 };
 use liana_ui::{component::modal, widget::*};
 
+use crate::daemon::model::LabelsLoader;
 use crate::{
     app::{
         cache::Cache,
@@ -117,7 +118,7 @@ impl State for ReceivePanel {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    std::iter::once(&mut self.addresses).map(|a| a as &mut dyn Labelled),
+                    std::iter::once(&mut self.addresses).map(|a| a as &mut dyn LabelsLoader),
                 ) {
                     Ok(cmd) => cmd,
                     Err(e) => {

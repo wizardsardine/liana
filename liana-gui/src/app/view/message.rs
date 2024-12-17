@@ -1,5 +1,5 @@
 use crate::{app::menu::Menu, node::bitcoind::RpcAuthType};
-use liana::miniscript::bitcoin::bip32::Fingerprint;
+use liana::miniscript::bitcoin::{bip32::Fingerprint, OutPoint};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -8,7 +8,7 @@ pub enum Message {
     Menu(Menu),
     Close,
     Select(usize),
-    SelectSub(usize, usize),
+    SelectPayment(OutPoint),
     Label(Vec<String>, LabelMessage),
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
