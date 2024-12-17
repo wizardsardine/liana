@@ -221,7 +221,7 @@
         "pkg-config"
         "eudev"
         "fontconfig"))
-    ;; The GUI's MSRV is 1.70 and the daemon's 1.63. We just use the same rustc version for
+    ;; The GUI's MSRV is 1.80 and the daemon's 1.63. We just use the same rustc version for
     ;; both.
     ;; FIXME: be able to compile against a specified glibc (or musl) instead of having to
     ;; resort to backporting the newer rustc releases here. Also have proper Guix packages
