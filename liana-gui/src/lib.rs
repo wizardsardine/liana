@@ -2,6 +2,7 @@ pub mod app;
 pub mod daemon;
 pub mod datadir;
 pub mod download;
+pub mod export;
 pub mod hw;
 pub mod installer;
 pub mod launcher;
