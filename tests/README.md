@@ -33,7 +33,7 @@ python3 -m venv venv
 pip install -r tests/requirements.txt
 ```
 
-Additionaly you need to have `bitcoind` installed on your computer, please
+Additionally you need to have `bitcoind` installed on your computer, please
 refer to [bitcoincore](https://bitcoincore.org/en/download/) for installation. You may use a
 specific `bitcoind` binary by specifying the `BITCOIND_PATH` env var.
 

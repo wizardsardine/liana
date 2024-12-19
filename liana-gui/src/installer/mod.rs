@@ -750,7 +750,7 @@ impl From<SettingsError> for Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Auth(e) => write!(f, "Authentification error: {}", e),
+            Self::Auth(e) => write!(f, "Authentication error: {}", e),
             Self::Backend(e) => write!(f, "Remote backend error: {}", e),
             Self::Settings(e) => write!(f, "Settings file error: {}", e),
             Self::Bitcoind(e) => write!(f, "Failed to ping bitcoind: {}", e),
