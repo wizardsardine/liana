@@ -148,7 +148,11 @@ pub fn home_view<'a>(
                 .spacing(10)
                 .push(h4_bold("Last payments"))
                 .push(events.iter().fold(Column::new().spacing(10), |col, event| {
-                    col.push(event_list_view(event))
+                    if event.kind != PaymentKind::SendToSelf {
+                        col.push(event_list_view(event))
+                    } else {
+                        col
+                    }
                 }))
                 .push_maybe(if !is_last_page && !events.is_empty() {
                     Some(
