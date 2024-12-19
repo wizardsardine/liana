@@ -7,6 +7,7 @@ use iced::Command;
 use liana_ui::widget::Element;
 use lianad::commands::CoinStatus;
 
+use crate::daemon::model::LabelsLoader;
 use crate::{
     app::{
         cache::Cache,
@@ -132,7 +133,7 @@ impl State for CoinsPanel {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    std::iter::once(&mut self.coins).map(|a| a as &mut dyn Labelled),
+                    std::iter::once(&mut self.coins).map(|a| a as &mut dyn LabelsLoader),
                 ) {
                     Ok(cmd) => return cmd,
                     Err(e) => {

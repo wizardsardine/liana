@@ -409,6 +409,99 @@ impl HistoryTransaction {
 }
 
 #[derive(Debug, Clone)]
+pub struct Payment {
+    pub label: Option<String>,
+    pub address: Option<String>,
+    pub address_label: Option<String>,
+    pub amount: Amount,
+    pub outpoint: OutPoint,
+    pub time: Option<chrono::DateTime<chrono::Utc>>,
+    pub kind: PaymentKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PaymentKind {
+    Outgoing,
+    Incoming,
+    SendToSelf,
+}
+
+impl Payment {
+    pub fn compare(&self, other: &Self) -> Ordering {
+        match (&self.time, &other.time) {
+            // `None` values come first
+            (None, Some(_)) => Ordering::Less,
+            (Some(_), None) => Ordering::Greater,
+            // Both are `None`, so we consider them equal
+            (None, None) => self
+                .outpoint
+                .txid
+                .cmp(&other.outpoint.txid)
+                .then_with(|| self.outpoint.vout.cmp(&other.outpoint.vout)),
+            // Both are `Some`, compare by descending time, then by txid
+            (Some(time1), Some(time2)) => time2
+                .cmp(time1)
+                .then_with(|| self.outpoint.txid.cmp(&other.outpoint.txid))
+                .then_with(|| self.outpoint.vout.cmp(&other.outpoint.vout)),
+        }
+    }
+}
+
+impl LabelsLoader for Payment {
+    fn load_labels(&mut self, new_labels: &HashMap<String, Option<String>>) {
+        if let Some(label) = self.address.as_ref().and_then(|addr| new_labels.get(addr)) {
+            self.address_label = label.clone();
+        }
+        if let Some(label) = new_labels.get(&self.outpoint.to_string()) {
+            self.label = label.clone();
+        }
+    }
+}
+
+pub fn payments_from_tx(history_tx: HistoryTransaction) -> Vec<Payment> {
+    let time = history_tx
+        .time
+        .map(|t| chrono::DateTime::<chrono::Utc>::from_timestamp(t as i64, 0).unwrap());
+    history_tx
+        .tx
+        .output
+        .iter()
+        .enumerate()
+        .fold(Vec::new(), |mut array, (output_index, output)| {
+            if history_tx.is_external() && !history_tx.change_indexes.contains(&output_index) {
+                return array;
+            }
+            let outpoint = OutPoint {
+                txid: history_tx.tx.txid(),
+                vout: output_index as u32,
+            };
+            let label = history_tx.labels.get(&outpoint.to_string()).cloned();
+            let address = Address::from_script(&output.script_pubkey, history_tx.network)
+                .ok()
+                .map(|addr| addr.to_string());
+            let address_label = address
+                .as_ref()
+                .and_then(|addr| history_tx.labels.get(addr).cloned());
+            array.push(Payment {
+                label,
+                address,
+                address_label,
+                outpoint,
+                time,
+                amount: output.value,
+                kind: if history_tx.is_send_to_self() {
+                    PaymentKind::SendToSelf
+                } else if history_tx.is_external() {
+                    PaymentKind::Incoming
+                } else {
+                    PaymentKind::Outgoing
+                },
+            });
+            array
+        })
+}
+
+#[derive(Debug, Clone)]
 pub enum TransactionKind {
     IncomingSinglePayment(OutPoint),
     IncomingPaymentBatch(Vec<OutPoint>),
@@ -447,6 +540,16 @@ impl Labelled for HistoryTransaction {
 pub trait Labelled {
     fn labelled(&self) -> Vec<LabelItem>;
     fn labels(&mut self) -> &mut HashMap<String, String>;
+}
+
+pub trait LabelsLoader {
+    fn load_labels(&mut self, new_labels: &HashMap<String, Option<String>>);
+}
+
+impl<T: ?Sized> LabelsLoader for T
+where
+    T: Labelled,
+{
     fn load_labels(&mut self, new_labels: &HashMap<String, Option<String>>) {
         let items = self.labelled();
         let labels = self.labels();

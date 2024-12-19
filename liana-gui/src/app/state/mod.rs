@@ -28,8 +28,9 @@ use super::{
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
+use crate::daemon::model::LabelsLoader;
 use crate::daemon::{
-    model::{remaining_sequence, Coin, HistoryTransaction, Labelled},
+    model::{remaining_sequence, Coin, HistoryTransaction, Payment},
     Daemon,
 };
 pub use coins::CoinsPanel;
@@ -127,10 +128,10 @@ pub struct Home {
     unconfirmed_balance: Amount,
     remaining_sequence: Option<u32>,
     expiring_coins: Vec<OutPoint>,
-    events: Vec<HistoryTransaction>,
+    events: Vec<Payment>,
     is_last_page: bool,
     processing: bool,
-    selected_event: Option<(usize, usize)>,
+    selected_event: Option<(HistoryTransaction, usize)>,
     labels_edited: LabelsEdited,
     warning: Option<Error>,
 }
@@ -167,11 +168,11 @@ impl Home {
 
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Some((i, output_index)) = self.selected_event {
+        if let Some((tx, output_index)) = &self.selected_event {
             view::home::payment_view(
                 cache,
-                &self.events[i],
-                output_index,
+                tx,
+                *output_index,
                 self.labels_edited.cache(),
                 self.warning.as_ref(),
             )
@@ -217,7 +218,7 @@ impl State for Home {
                     );
                 }
             },
-            Message::HistoryTransactions(res) => match res {
+            Message::Payments(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(events) => {
                     self.warning = None;
@@ -225,7 +226,7 @@ impl State for Home {
                     self.is_last_page = (self.events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                 }
             },
-            Message::HistoryTransactionsExtension(res) => match res {
+            Message::PaymentsExtension(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(events) => {
                     self.processing = false;
@@ -235,13 +236,13 @@ impl State for Home {
                         if let Some(position) = self
                             .events
                             .iter()
-                            .position(|event2| event2.txid == event.txid)
+                            .position(|event2| event2.outpoint == event.outpoint)
                         {
                             let len = self.events.len();
                             for event in events {
                                 if !self.events[position..len]
                                     .iter()
-                                    .any(|event2| event2.txid == event.txid)
+                                    .any(|event2| event2.outpoint == event.outpoint)
                                 {
                                     self.events.push(event);
                                 }
@@ -266,11 +267,35 @@ impl State for Home {
                     return self.reload(daemon, self.wallet.clone());
                 }
             }
+            Message::Payment(res) => match res {
+                Ok(event) => {
+                    self.selected_event = Some(event);
+                }
+                Err(e) => {
+                    self.warning = Some(e);
+                }
+            },
+            Message::View(view::Message::SelectPayment(outpoint)) => {
+                return Command::perform(
+                    async move {
+                        let tx = daemon.get_history_txs(&[outpoint.txid]).await?.remove(0);
+                        Ok((tx, outpoint.vout as usize))
+                    },
+                    Message::Payment,
+                );
+            }
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    self.events.iter_mut().map(|tx| tx as &mut dyn Labelled),
+                    self.events
+                        .iter_mut()
+                        .map(|tx| tx as &mut dyn LabelsLoader)
+                        .chain(
+                            self.selected_event
+                                .iter_mut()
+                                .map(|(tx, _)| tx as &mut dyn LabelsLoader),
+                        ),
                 ) {
                     Ok(cmd) => {
                         return cmd;
@@ -286,9 +311,7 @@ impl State for Home {
             Message::View(view::Message::Close) => {
                 self.selected_event = None;
             }
-            Message::View(view::Message::SelectSub(i, j)) => {
-                self.selected_event = Some((i, j));
-            }
+
             Message::View(view::Message::Next) => {
                 if let Some(last) = self.events.last() {
                     let daemon = daemon.clone();
@@ -296,9 +319,10 @@ impl State for Home {
                     self.processing = true;
                     return Command::perform(
                         async move {
+                            let last_event_date = last_event_date.timestamp() as u32;
                             let mut limit = HISTORY_EVENT_PAGE_SIZE;
                             let mut events = daemon
-                                .list_history_txs(0_u32, last_event_date, limit)
+                                .list_confirmed_payments(0_u32, last_event_date, limit)
                                 .await?;
 
                             // because gethistory cursor is inclusive and use blocktime
@@ -321,12 +345,14 @@ impl State for Home {
                             {
                                 // increments of the equivalent of one page more.
                                 limit += HISTORY_EVENT_PAGE_SIZE;
-                                events = daemon.list_history_txs(0, last_event_date, limit).await?;
+                                events = daemon
+                                    .list_confirmed_payments(0, last_event_date, limit)
+                                    .await?;
                             }
                             events.sort_by(|a, b| a.compare(b));
                             Ok(events)
                         },
-                        Message::HistoryTransactionsExtension,
+                        Message::PaymentsExtension,
                     );
                 }
             }
@@ -359,16 +385,16 @@ impl State for Home {
         Command::batch(vec![
             Command::perform(
                 async move {
-                    let mut txs = daemon
-                        .list_history_txs(0, now, HISTORY_EVENT_PAGE_SIZE)
+                    let mut payments = daemon
+                        .list_confirmed_payments(0, now, HISTORY_EVENT_PAGE_SIZE)
                         .await?;
-                    txs.sort_by(|a, b| a.compare(b));
+                    payments.sort_by(|a, b| a.compare(b));
 
-                    let mut pending_txs = daemon.list_pending_txs().await?;
-                    pending_txs.extend(txs);
-                    Ok(pending_txs)
+                    let mut pending_payments = daemon.list_pending_payments().await?;
+                    pending_payments.extend(payments);
+                    Ok(pending_payments)
                 },
-                Message::HistoryTransactions,
+                Message::Payments,
             ),
             Command::perform(
                 async move {

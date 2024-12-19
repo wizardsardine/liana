@@ -23,7 +23,7 @@ use crate::{
         view::{coins, dashboard, label, message::Message},
         wallet::SyncStatus,
     },
-    daemon::model::{HistoryTransaction, TransactionKind},
+    daemon::model::{HistoryTransaction, Payment, PaymentKind, TransactionKind},
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -32,7 +32,7 @@ pub fn home_view<'a>(
     unconfirmed_balance: &'a bitcoin::Amount,
     remaining_sequence: &Option<u32>,
     expiring_coins: &[bitcoin::OutPoint],
-    events: &'a [HistoryTransaction],
+    events: &'a [Payment],
     is_last_page: bool,
     processing: bool,
     sync_status: &SyncStatus,
@@ -147,16 +147,13 @@ pub fn home_view<'a>(
             Column::new()
                 .spacing(10)
                 .push(h4_bold("Last payments"))
-                .push(events.iter().enumerate().fold(
-                    Column::new().spacing(10),
-                    |col, (i, event)| {
-                        if !event.is_send_to_self() {
-                            col.push(event_list_view(i, event))
-                        } else {
-                            col
-                        }
-                    },
-                ))
+                .push(events.iter().fold(Column::new().spacing(10), |col, event| {
+                    if event.kind != PaymentKind::SendToSelf {
+                        col.push(event_list_view(event))
+                    } else {
+                        col
+                    }
+                }))
                 .push_maybe(if !is_last_page && !events.is_empty() {
                     Some(
                         Container::new(
@@ -189,62 +186,48 @@ pub fn home_view<'a>(
         .into()
 }
 
-fn event_list_view(i: usize, event: &HistoryTransaction) -> Column<'_, Message> {
-    event.tx.output.iter().enumerate().fold(
-        Column::new().spacing(10),
-        |col, (output_index, output)| {
-            let label = if let Some(label) = event.labels.get(
-                &bitcoin::OutPoint {
-                    txid: event.tx.txid(),
-                    vout: output_index as u32,
-                }
-                .to_string(),
-            ) {
-                Some(p1_regular(label))
-            } else if let Ok(addr) =
-                bitcoin::Address::from_script(&output.script_pubkey, event.network)
-            {
-                event.labels.get(&addr.to_string()).map(|label| {
-                    p1_regular(format!("address label: {}", label)).style(color::GREY_3)
-                })
-            } else {
-                None
-            };
-            if event.is_external() {
-                if !event.change_indexes.contains(&output_index) {
-                    col
-                } else if let Some(t) = event.time {
-                    col.push(event::confirmed_incoming_event(
-                        label,
-                        DateTime::<Utc>::from_timestamp(t as i64, 0).unwrap(),
-                        &output.value,
-                        Message::SelectSub(i, output_index),
-                    ))
-                } else {
-                    col.push(event::unconfirmed_incoming_event(
-                        label,
-                        &output.value,
-                        Message::SelectSub(i, output_index),
-                    ))
-                }
-            } else if event.change_indexes.contains(&output_index) {
-                col
-            } else if let Some(t) = event.time {
-                col.push(event::confirmed_outgoing_event(
-                    label,
-                    DateTime::<Utc>::from_timestamp(t as i64, 0).unwrap(),
-                    &output.value,
-                    Message::SelectSub(i, output_index),
-                ))
-            } else {
-                col.push(event::unconfirmed_outgoing_event(
-                    label,
-                    &output.value,
-                    Message::SelectSub(i, output_index),
-                ))
-            }
-        },
-    )
+fn event_list_view(event: &Payment) -> Element<'_, Message> {
+    let label = if let Some(label) = &event.label {
+        Some(p1_regular(label))
+    } else {
+        event
+            .address_label
+            .as_ref()
+            .map(|label| p1_regular(format!("address label: {}", label)).style(color::GREY_3))
+    };
+    if event.kind == PaymentKind::Incoming {
+        if let Some(t) = event.time {
+            event::confirmed_incoming_event(
+                label,
+                t,
+                &event.amount,
+                Message::SelectPayment(event.outpoint),
+            )
+            .into()
+        } else {
+            event::unconfirmed_incoming_event(
+                label,
+                &event.amount,
+                Message::SelectPayment(event.outpoint),
+            )
+            .into()
+        }
+    } else if let Some(t) = event.time {
+        event::confirmed_outgoing_event(
+            label,
+            t,
+            &event.amount,
+            Message::SelectPayment(event.outpoint),
+        )
+        .into()
+    } else {
+        event::unconfirmed_outgoing_event(
+            label,
+            &event.amount,
+            Message::SelectPayment(event.outpoint),
+        )
+        .into()
+    }
 }
 
 pub fn payment_view<'a>(
