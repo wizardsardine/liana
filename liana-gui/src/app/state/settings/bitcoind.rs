@@ -461,6 +461,7 @@ impl ElectrumSettings {
                     daemon_config.bitcoin_backend =
                         Some(lianad::config::BitcoinBackend::Electrum(ElectrumConfig {
                             addr: self.addr.value.clone(),
+                            validate_domain: self.electrum_config.validate_domain,
                         }));
                     self.processing = true;
                     return Command::perform(async move { daemon_config }, |cfg| {
