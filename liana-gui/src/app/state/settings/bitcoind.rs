@@ -469,6 +469,7 @@ impl ElectrumSettings {
                     });
                 }
             }
+            view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
             _ => {}
         };
         Command::none()
