@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::{NaiveDate, Utc};
-use iced::Command;
+use iced::{clipboard, Command};
 use tracing::info;
 
 use liana::miniscript::bitcoin::Network;
@@ -361,6 +361,7 @@ impl BitcoindSettings {
                     });
                 }
             }
+            view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
         };
         Command::none()
     }
@@ -468,6 +469,7 @@ impl ElectrumSettings {
                     });
                 }
             }
+            view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
             _ => {}
         };
         Command::none()

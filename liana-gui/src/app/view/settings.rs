@@ -504,11 +504,23 @@ pub fn bitcoind<'a>(
 
     let mut col_fields = Column::new();
     for (k, v) in rows {
-        col_fields = col_fields.push(
+        col_fields = col_fields.push({
+            let t = if k == "Password:" {
+                "*".to_string().repeat(v.len())
+            } else {
+                v.clone()
+            };
             Row::new()
                 .push(Container::new(text(k).bold().small()).width(Length::Fill))
-                .push(text(v).small()),
-        );
+                .push(text(t).small())
+                .push(Space::with_width(10))
+                .push(
+                    Button::new(icon::clipboard_icon())
+                        .style(theme::Button::TransparentBorder)
+                        .on_press(SettingsEditMessage::Clipboard(v.to_string())),
+                )
+                .align_items(Alignment::Center)
+        });
     }
 
     card::simple(Container::new(
@@ -685,7 +697,14 @@ pub fn electrum<'a>(
         col_fields = col_fields.push(
             Row::new()
                 .push(Container::new(text(k).bold().small()).width(Length::Fill))
-                .push(text(v).small()),
+                .push(text(v.clone()).small())
+                .push(Space::with_width(10))
+                .push(
+                    Button::new(icon::clipboard_icon())
+                        .style(theme::Button::TransparentBorder)
+                        .on_press(SettingsEditMessage::Clipboard(v.to_string())),
+                )
+                .align_items(Alignment::Center),
         );
     }
 

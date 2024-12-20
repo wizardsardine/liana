@@ -91,6 +91,7 @@ pub enum SettingsEditMessage {
     BitcoindRpcAuthTypeSelected(RpcAuthType),
     Cancel,
     Confirm,
+    Clipboard(String),
 }
 
 #[derive(Debug, Clone)]
