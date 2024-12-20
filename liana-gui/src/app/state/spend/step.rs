@@ -283,8 +283,11 @@ impl DefineSpend {
             }
             outpoints
         } else if self.send_max_to_recipient.is_some() {
-            // If user has not selected coins, send the max available from all coins.
-            self.coins.iter().map(|(c, _)| c.outpoint).collect()
+            // If user has not selected coins, send the max available from all owned coins.
+            self.coins
+                .iter()
+                .filter_map(|(c, _)| coin_is_owned(c).then_some(c.outpoint))
+                .collect()
         } else {
             Vec::new() // pass empty list for auto-selection
         };
@@ -358,10 +361,9 @@ impl DefineSpend {
                 self.amount_left_to_select = Some(Amount::from_sat(missing));
                 if !self.is_user_coin_selection {
                     // The missing amount is based on all candidates for coin selection
-                    // being used, which are all coins if there's a recipient with max
-                    // or otherwise all owned coins.
+                    // being used, which are all owned coins.
                     for (coin, selected) in &mut self.coins {
-                        *selected = self.send_max_to_recipient.is_some() || coin_is_owned(coin);
+                        *selected = coin_is_owned(coin);
                     }
                 }
                 if let Some((i, recipient)) = recipient_with_max {
