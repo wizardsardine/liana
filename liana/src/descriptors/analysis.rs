@@ -324,10 +324,10 @@ impl PathInfo {
             // of our known master xpubs.
             if let Some(parent_der_paths) = origins.get(fg) {
                 // If it is, make sure it's for one of the xpubs included in the descriptor. Remove
-                // the wilcard step and check if it's in the set of the derivation paths.
+                // the wildcard step and check if it's in the set of the derivation paths.
                 let der_path_wo_wc: bip32::DerivationPath = der_path[..der_path.len() - 1].into();
                 if parent_der_paths.contains(&der_path_wo_wc) {
-                    // If the origin of the key without the wilcard step is part of our keys, count
+                    // If the origin of the key without the wildcard step is part of our keys, count
                     // it as a signature. Also record how many times this master extended key
                     // signed.
                     sigs_count += 1;
