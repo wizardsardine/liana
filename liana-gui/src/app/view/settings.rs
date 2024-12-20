@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use iced::{
     alignment,
-    widget::{radio, scrollable, tooltip as iced_tooltip, Space},
+    widget::{checkbox, radio, scrollable, tooltip as iced_tooltip, Space},
     Alignment, Length,
 };
 
@@ -551,6 +551,7 @@ pub fn electrum_edit<'a>(
     blockheight: i32,
     addr: &form::Value<String>,
     processing: bool,
+    validate_domain: bool,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
     if is_configured_node_type && blockheight != 0 {
@@ -583,6 +584,16 @@ pub fn electrum_edit<'a>(
             .push(separation().width(Length::Fill));
     }
 
+    let checkbox = checkbox(
+        "Do not validate SSL Domain(check this only if you want to use a self-signed certificate)",
+        !validate_domain,
+    )
+    .on_toggle(|b| SettingsEditMessage::ValidateDomainEdited(!b));
+    let checkbox = if addr.valid && addr.value.contains("ssl://") {
+        Some(checkbox)
+    } else {
+        None
+    };
     col = col.push(
         Column::new()
             .push(text("Address:").bold().small())
@@ -594,6 +605,7 @@ pub fn electrum_edit<'a>(
                 .size(P1_SIZE)
                 .padding(5),
             )
+            .push_maybe(checkbox)
             .push(text(electrum::ADDRESS_NOTES).size(P2_SIZE))
             .spacing(5),
     );
