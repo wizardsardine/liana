@@ -29,6 +29,13 @@ pub fn remaining_sequence(coin: &Coin, blockheight: u32, timelock: u16) -> u32 {
     }
 }
 
+/// Whether the coin is owned by this wallet.
+/// This comprises all confirmed coins together with those
+/// unconfirmed coins from self.
+pub fn coin_is_owned(coin: &Coin) -> bool {
+    coin.block_height.is_some() || coin.is_from_self
+}
+
 #[derive(Debug, Clone)]
 pub struct SpendTx {
     pub network: Network,
