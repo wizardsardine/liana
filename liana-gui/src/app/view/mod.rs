@@ -3,6 +3,7 @@ mod message;
 mod warning;
 
 pub mod coins;
+pub mod export;
 pub mod home;
 pub mod hw;
 pub mod psbt;
