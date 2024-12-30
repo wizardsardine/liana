@@ -29,7 +29,7 @@ use jsonrpc::{
 
 use miniscript::{
     bitcoin::{self, address, hashes::hex::FromHex},
-    descriptor,
+    descriptor::{self, Descriptor, DescriptorPublicKey},
 };
 
 use serde_json::Value as Json;
@@ -1056,7 +1056,11 @@ impl BitcoinD {
 
     // For the given descriptor strings check if they are imported at this timestamp in the
     // watchonly wallet.
-    fn check_descs_timestamp(&self, descs: &[String], timestamp: u32) -> bool {
+    fn check_descs_timestamp(
+        &self,
+        descs: &[&Descriptor<DescriptorPublicKey>],
+        timestamp: u32,
+    ) -> bool {
         let current_descs = self.list_descriptors();
 
         for desc in descs {
@@ -1108,15 +1112,15 @@ impl BitcoinD {
             .fold(1_000, |range, entry| {
                 cmp::max(range, entry.range.map(|r| r[1]).unwrap_or(0))
             });
-        let desc_str = [
-            desc.receive_descriptor().to_string(),
-            desc.change_descriptor().to_string(),
+        let descs = [
+            desc.receive_descriptor().as_descriptor_public_key(),
+            desc.change_descriptor().as_descriptor_public_key(),
         ];
-        let desc_json: Vec<Json> = desc_str
+        let desc_json: Vec<Json> = descs
             .iter()
-            .map(|desc_str| {
+            .map(|desc| {
                 serde_json::json!({
-                    "desc": desc_str,
+                    "desc": desc.to_string(),
                     "timestamp": timestamp,
                     "active": false,
                     "range": max_range,
@@ -1150,7 +1154,7 @@ impl BitcoinD {
             }
 
             i += 1;
-            if self.check_descs_timestamp(&desc_str, timestamp) {
+            if self.check_descs_timestamp(&descs, timestamp) {
                 return Ok(());
             } else if i >= NUM_RETRIES {
                 return Err(BitcoindError::StartRescan);
@@ -1278,15 +1282,25 @@ pub struct ListDescEntry {
 }
 
 /// Whether `current_descs` contain the descriptor `desc` at `timestamp`.
+///
+/// Any descriptors in `current_descs` that cannot be parsed as
+/// `Descriptor::<DescriptorPublicKey>` will be ignored.
 fn current_descs_contain_desc_timestamp(
     current_descs: &[ListDescEntry],
-    desc: &String,
+    desc: &Descriptor<DescriptorPublicKey>,
     timestamp: u32,
 ) -> bool {
     current_descs
         .iter()
-        .find(|entry| &entry.desc == desc)
-        .map(|entry| entry.timestamp == timestamp)
+        .filter_map(|entry| {
+            if let Ok(entry_desc) = Descriptor::<DescriptorPublicKey>::from_str(&entry.desc) {
+                Some((entry_desc, entry.timestamp))
+            } else {
+                None
+            }
+        })
+        .find(|(entry_desc, _)| entry_desc.to_string() == desc.to_string())
+        .map(|(_, entry_timestamp)| entry_timestamp == timestamp)
         .unwrap_or(false)
 }
 
@@ -1633,44 +1647,49 @@ mod tests {
             },
         ];
 
-        // These are the corresponding descriptors from the Liana wallet, using only `'`.
-        let recv_desc = "tr([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/0/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/2/*),older(65535)))".to_string();
-        let change_desc = "tr([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/1/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/3/*),older(65535)))".to_string();
+        // Create the Liana wallet descriptor:
+        let desc = LianaDescriptor::from_str("tr([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/<0;1>/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/<2;3>/*),older(65535)))").unwrap();
 
+        // The receive and change descriptors contain only `'`:
+        assert_eq!(desc.receive_descriptor().to_string(), "tr([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/0/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/2/*),older(65535)))#xhrh0cvn".to_string());
+        assert_eq!(desc.change_descriptor().to_string(), "tr([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/1/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/3/*),older(65535)))#6yyu2dsu".to_string());
+
+        let recv_desc = desc.receive_descriptor().as_descriptor_public_key();
+        let change_desc = desc.change_descriptor().as_descriptor_public_key();
         // For the receive descriptor, we don't get a match unless the timestamp matches the first occurrence.
         assert!(!current_descs_contain_desc_timestamp(
             &current_descs,
-            &recv_desc,
+            recv_desc,
             1598918399
         ));
         assert!(!current_descs_contain_desc_timestamp(
             &current_descs,
-            &recv_desc,
+            recv_desc,
             1598918401
         ));
         assert!(!current_descs_contain_desc_timestamp(
             &current_descs,
-            &change_desc,
+            change_desc,
             1598918381
         ));
         assert!(!current_descs_contain_desc_timestamp(
             &current_descs,
-            &recv_desc,
+            recv_desc,
             1598918410 // this is the second timestamp for this descriptor
         ));
         // We only get a match when we use the first timestamp for each descriptor.
         assert!(current_descs_contain_desc_timestamp(
             &current_descs,
-            &recv_desc,
+            recv_desc,
             1598918400
         ));
         assert!(current_descs_contain_desc_timestamp(
             &current_descs,
-            &change_desc,
+            change_desc,
             1598918380
         ));
 
-        // If the `listdescriptors` response contains a mix of `h` and `'`, then there is no match.
+        // If the `listdescriptors` response contains a mix of `h` and `'`, then there is still a match.
         let current_descs = vec![
             ListDescEntry {
                 desc: "this is not a descriptor and will be ignored".to_string(),
@@ -1688,14 +1707,43 @@ mod tests {
                 timestamp: 1598918380,
             },
         ];
-        assert!(!current_descs_contain_desc_timestamp(
+        assert!(current_descs_contain_desc_timestamp(
             &current_descs,
-            &recv_desc,
+            recv_desc,
             1598918400
         ));
-        assert!(!current_descs_contain_desc_timestamp(
+        assert!(current_descs_contain_desc_timestamp(
             &current_descs,
-            &change_desc,
+            change_desc,
+            1598918380
+        ));
+
+        // There is still a match if the checksum is included in the `listdescriptors` response.
+        let current_descs = vec![
+            ListDescEntry {
+                desc: "this is not a descriptor and will be ignored".to_string(),
+                range: Some([0, 999]),
+                timestamp: 1598918410,
+            },
+            ListDescEntry {
+                desc: "tr([1dce71b2/48h/1h/0h/2h]tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/0/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/2/*),older(65535)))#2h7g2wme".to_string(),
+                range: Some([0, 999]),
+                timestamp: 1598918400,
+            },
+            ListDescEntry {
+                desc: "tr([1dce71b2/48h/1h/0h/2h]tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/1/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/3/*),older(65535)))#kyer0m8k".to_string(),
+                range: Some([0, 999]),
+                timestamp: 1598918380,
+            },
+        ];
+        assert!(current_descs_contain_desc_timestamp(
+            &current_descs,
+            recv_desc,
+            1598918400
+        ));
+        assert!(current_descs_contain_desc_timestamp(
+            &current_descs,
+            change_desc,
             1598918380
         ));
     }
