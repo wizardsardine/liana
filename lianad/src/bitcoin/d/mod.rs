@@ -1060,11 +1060,7 @@ impl BitcoinD {
         let current_descs = self.list_descriptors();
 
         for desc in descs {
-            let present = current_descs
-                .iter()
-                .find(|entry| &entry.desc == desc)
-                .map(|entry| entry.timestamp == timestamp)
-                .unwrap_or(false);
+            let present = current_descs_contain_desc_timestamp(&current_descs, desc, timestamp);
             if !present {
                 return false;
             }
@@ -1279,6 +1275,19 @@ pub struct ListDescEntry {
     pub desc: String,
     pub range: Option<[u32; 2]>,
     pub timestamp: u32,
+}
+
+/// Whether `current_descs` contain the descriptor `desc` at `timestamp`.
+fn current_descs_contain_desc_timestamp(
+    current_descs: &[ListDescEntry],
+    desc: &String,
+    timestamp: u32,
+) -> bool {
+    current_descs
+        .iter()
+        .find(|entry| &entry.desc == desc)
+        .map(|entry| entry.timestamp == timestamp)
+        .unwrap_or(false)
 }
 
 /// A 'received' entry in the 'listsinceblock' result.
@@ -1591,5 +1600,103 @@ mod tests {
             SyncProgress::new(1.0, 999998, 999999).rounded_up_progress(),
             0.9999
         );
+    }
+
+    #[test]
+    fn test_current_descs_contain_desc_timestamp() {
+        // For simplicity, I've removed the checksums in the following descriptors as these will change
+        // depending on whether `h` or `'` is used.
+
+        // Simulate that `listdescriptors` returns an entry for receive and change descriptors, respectively.
+        // Include one of the descriptors with two different timestamps and another invalid descriptor.
+        let current_descs = vec![
+            ListDescEntry {
+                desc: "this is not a descriptor and will be ignored".to_string(),
+                range: Some([0, 999]),
+                timestamp: 1598918410,
+            },
+            ListDescEntry {
+                desc: "tr([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/0/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/2/*),older(65535)))".to_string(),
+                range: Some([0, 999]),
+                timestamp: 1598918400,
+            },
+            ListDescEntry {
+                desc: "tr([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/1/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/3/*),older(65535)))".to_string(),
+                range: Some([0, 999]),
+                timestamp: 1598918380,
+            },
+            // same as receive descriptor above but with different timestamp.
+            ListDescEntry {
+                desc: "tr([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/0/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/2/*),older(65535)))".to_string(),
+                range: Some([0, 999]),
+                timestamp: 1598918410,
+            },
+        ];
+
+        // These are the corresponding descriptors from the Liana wallet, using only `'`.
+        let recv_desc = "tr([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/0/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/2/*),older(65535)))".to_string();
+        let change_desc = "tr([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/1/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/3/*),older(65535)))".to_string();
+
+        // For the receive descriptor, we don't get a match unless the timestamp matches the first occurrence.
+        assert!(!current_descs_contain_desc_timestamp(
+            &current_descs,
+            &recv_desc,
+            1598918399
+        ));
+        assert!(!current_descs_contain_desc_timestamp(
+            &current_descs,
+            &recv_desc,
+            1598918401
+        ));
+        assert!(!current_descs_contain_desc_timestamp(
+            &current_descs,
+            &change_desc,
+            1598918381
+        ));
+        assert!(!current_descs_contain_desc_timestamp(
+            &current_descs,
+            &recv_desc,
+            1598918410 // this is the second timestamp for this descriptor
+        ));
+        // We only get a match when we use the first timestamp for each descriptor.
+        assert!(current_descs_contain_desc_timestamp(
+            &current_descs,
+            &recv_desc,
+            1598918400
+        ));
+        assert!(current_descs_contain_desc_timestamp(
+            &current_descs,
+            &change_desc,
+            1598918380
+        ));
+
+        // If the `listdescriptors` response contains a mix of `h` and `'`, then there is no match.
+        let current_descs = vec![
+            ListDescEntry {
+                desc: "this is not a descriptor and will be ignored".to_string(),
+                range: Some([0, 999]),
+                timestamp: 1598918410,
+            },
+            ListDescEntry {
+                desc: "tr([1dce71b2/48h/1h/0h/2h]tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/0/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/2/*),older(65535)))".to_string(),
+                range: Some([0, 999]),
+                timestamp: 1598918400,
+            },
+            ListDescEntry {
+                desc: "tr([1dce71b2/48h/1h/0h/2h]tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/1/*,and_v(v:pk([1dce71b2/48'/1'/0'/2']tpubDEeP3GefjqbaDTTaVAF5JkXWhoFxFDXQ9KuhVrMBViFXXNR2B3Lvme2d2AoyiKfzRFZChq2AGMNbU1qTbkBMfNv7WGVXLt2pnYXY87gXqcs/3/*),older(65535)))".to_string(),
+                range: Some([0, 999]),
+                timestamp: 1598918380,
+            },
+        ];
+        assert!(!current_descs_contain_desc_timestamp(
+            &current_descs,
+            &recv_desc,
+            1598918400
+        ));
+        assert!(!current_descs_contain_desc_timestamp(
+            &current_descs,
+            &change_desc,
+            1598918380
+        ));
     }
 }
