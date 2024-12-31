@@ -305,6 +305,11 @@ impl State {
                     let value = value as f64 / 100_000_000.0;
                     let fee = fee as f64 / 100_000_000.0;
                     let block = tx.height.map(|h| h.to_string()).unwrap_or("".to_string());
+                    let fee = if fee != 0.0 {
+                        fee.to_string()
+                    } else {
+                        "".into()
+                    };
 
                     let line = format!(
                         "{},{},{},{},{},{}\n",
