@@ -423,6 +423,8 @@ pub struct Payment {
 pub enum PaymentKind {
     Outgoing,
     Incoming,
+    /// A payment to self, which could be either from a self-transfer
+    /// or a change output from an outgoing transaction.
     SendToSelf,
 }
 
@@ -489,7 +491,9 @@ pub fn payments_from_tx(history_tx: HistoryTransaction) -> Vec<Payment> {
                 outpoint,
                 time,
                 amount: output.value,
-                kind: if history_tx.is_send_to_self() {
+                kind: if history_tx.is_send_to_self()
+                    || history_tx.change_indexes.contains(&output_index)
+                {
                     PaymentKind::SendToSelf
                 } else if history_tx.is_external() {
                     PaymentKind::Incoming
