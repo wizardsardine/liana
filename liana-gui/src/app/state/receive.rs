@@ -192,22 +192,12 @@ impl State for ReceivePanel {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
     ) -> Command<Message> {
         self.wallet = wallet;
         self.addresses = Addresses::default();
-        let daemon = daemon.clone();
-        Command::perform(
-            async move {
-                daemon
-                    .get_new_address()
-                    .await
-                    .map(|res| (res.address, res.derivation_index))
-                    .map_err(|e| e.into())
-            },
-            Message::ReceiveAddress,
-        )
+        Command::none()
     }
 }
 
@@ -338,7 +328,7 @@ async fn verify_address(
 mod tests {
     use super::*;
     use crate::{
-        app::cache::Cache,
+        app::{cache::Cache, view::Message as viewMessage, Message},
         daemon::{
             client::{Lianad, Request},
             model::*,
@@ -369,7 +359,11 @@ mod tests {
         let sandbox: Sandbox<ReceivePanel> =
             Sandbox::new(ReceivePanel::new(PathBuf::new(), wallet.clone()));
         let client = Arc::new(Lianad::new(daemon.run()));
-        let sandbox = sandbox.load(client, &Cache::default(), wallet).await;
+        let cache = Cache::default();
+        let sandbox = sandbox.load(client.clone(), &cache, wallet).await;
+        let sandbox = sandbox
+            .update(client, &cache, Message::View(viewMessage::Next))
+            .await;
 
         let panel = sandbox.state();
         assert_eq!(panel.addresses.list, vec![addr]);
