@@ -145,11 +145,20 @@ def xpub_fingerprint(hd):
     return _pubkey_to_fingerprint(hd.pubkey).hex()
 
 
-def single_key_desc(prim_fg, prim_xpub, reco_fg, reco_xpub, csv_value, is_taproot):
+def single_key_desc(
+    prim_fg,
+    prim_xpub,
+    reco_fg,
+    reco_xpub,
+    csv_value,
+    is_taproot,
+    prim_deriv_path="",
+    reco_deriv_path="",
+):
     if is_taproot:
-        return f"tr([{prim_fg}]{prim_xpub}/<0;1>/*,and_v(v:pk([{reco_fg}]{reco_xpub}/<0;1>/*),older({csv_value})))"
+        return f"tr([{prim_fg}{prim_deriv_path}]{prim_xpub}/<0;1>/*,and_v(v:pk([{reco_fg}{reco_deriv_path}]{reco_xpub}/<0;1>/*),older({csv_value})))"
     else:
-        return f"wsh(or_d(pk([{prim_fg}]{prim_xpub}/<0;1>/*),and_v(v:pkh([{reco_fg}]{reco_xpub}/<0;1>/*),older({csv_value}))))"
+        return f"wsh(or_d(pk([{prim_fg}{prim_deriv_path}]{prim_xpub}/<0;1>/*),and_v(v:pkh([{reco_fg}{reco_deriv_path}]{reco_xpub}/<0;1>/*),older({csv_value}))))"
 
 
 @pytest.fixture
@@ -173,6 +182,48 @@ def lianad(bitcoin_backend, directory):
             recovery_xpub,
             csv_value,
             is_taproot=USE_TAPROOT,
+        )
+    )
+
+    lianad = Lianad(
+        datadir,
+        signer,
+        main_desc,
+        bitcoin_backend,
+    )
+
+    try:
+        lianad.start()
+        yield lianad
+    except Exception:
+        lianad.cleanup()
+        raise
+
+    lianad.cleanup()
+
+
+# This can currently only be used with Taproot if no signing is required.
+@pytest.fixture
+def lianad_with_deriv_paths(bitcoin_backend, directory):
+    datadir = os.path.join(directory, "lianad")
+    os.makedirs(datadir, exist_ok=True)
+
+    signer = SingleSigner(is_taproot=USE_TAPROOT)
+    (prim_fingerprint, primary_xpub), (reco_fingerprint, recovery_xpub) = (
+        (xpub_fingerprint(signer.primary_hd), signer.primary_hd.get_xpub()),
+        (xpub_fingerprint(signer.recovery_hd), signer.recovery_hd.get_xpub()),
+    )
+    csv_value = 10
+    main_desc = Descriptor.from_str(
+        single_key_desc(
+            prim_fingerprint,
+            primary_xpub,
+            reco_fingerprint,
+            recovery_xpub,
+            csv_value,
+            USE_TAPROOT,
+            "/48h/1h/0h/2h",
+            "/46h/12h/10h/72h",
         )
     )
 
