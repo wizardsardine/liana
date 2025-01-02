@@ -29,6 +29,7 @@ use liana_ui::{
     widget::*,
 };
 
+use crate::node::electrum::validate_domain_checkbox;
 use crate::{
     hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
@@ -1134,7 +1135,15 @@ pub fn define_bitcoind<'a>(
         .into()
 }
 
-pub fn define_electrum<'a>(address: &form::Value<String>) -> Element<'a, Message> {
+pub fn define_electrum<'a>(
+    address: &form::Value<String>,
+    validate_domain: bool,
+) -> Element<'a, Message> {
+    let checkbox = validate_domain_checkbox(address, validate_domain, |b| {
+        Message::DefineNode(DefineNode::DefineElectrum(
+            message::DefineElectrum::ValidDomainChanged(b),
+        ))
+    });
     let col_address = Column::new()
         .push(text("Address:").bold())
         .push(
@@ -1150,7 +1159,8 @@ pub fn define_electrum<'a>(address: &form::Value<String>) -> Element<'a, Message
             .size(text::P1_SIZE)
             .padding(10),
         )
-        .push(text(electrum::ADDRESS_NOTES).size(text::P2_SIZE))
+        .push_maybe(checkbox)
+        .push(text(electrum::ADDRESS_NOTES))
         .spacing(10);
 
     Column::new().push(col_address).spacing(50).into()

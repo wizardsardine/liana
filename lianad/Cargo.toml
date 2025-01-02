@@ -28,6 +28,7 @@ miniscript = { version = "11.0", features = ["serde", "compiler", "base64"] }
 # For Electrum backend. This is the latest version with the same bitcoin version as
 # the miniscript dependency.
 bdk_electrum = { version = "0.14" }
+electrum-client = { version = "0.19", features = ["use-openssl"] }
 
 # Don't reinvent the wheel
 dirs = "5.0"

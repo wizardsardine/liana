@@ -41,6 +41,14 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           override: true
           profile: minimal
+      - name: Install OpenSSL (windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install openssl.light --no-progress
+          echo "C:\Program Files\OpenSSL" >> $env:GITHUB_PATH
+          echo "C:\Program Files\OpenSSL\bin" >> $env::GITHUB_PATH
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
+
       - name: Test on Rust ${{ matrix.toolchain }} (only Windows)
         if: matrix.os == 'windows-latest'
         run: cargo test --verbose --no-default-features
