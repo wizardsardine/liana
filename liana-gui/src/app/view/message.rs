@@ -89,7 +89,6 @@ pub enum RemoteBackendSettingsMessage {
 pub enum SettingsEditMessage {
     Select,
     FieldEdited(&'static str, String),
-    ValidateDomainEdited(bool),
     BitcoindRpcAuthTypeSelected(RpcAuthType),
     Cancel,
     Confirm,

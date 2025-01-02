@@ -14,19 +14,9 @@ use crate::{
     node::electrum::ConfigField,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DefineElectrum {
     address: form::Value<String>,
-    validate_domain: bool,
-}
-
-impl Default for DefineElectrum {
-    fn default() -> Self {
-        Self {
-            address: Default::default(),
-            validate_domain: true,
-        }
-    }
 }
 
 impl DefineElectrum {
@@ -48,7 +38,6 @@ impl DefineElectrum {
                             crate::node::electrum::is_electrum_address_valid(&value);
                     }
                 },
-                message::DefineElectrum::ValidDomainChanged(v) => self.validate_domain = v,
             };
         };
         Command::none()
@@ -58,7 +47,6 @@ impl DefineElectrum {
         if self.can_try_ping() {
             ctx.bitcoin_backend = Some(lianad::config::BitcoinBackend::Electrum(ElectrumConfig {
                 addr: self.address.value.clone(),
-                validate_domain: self.validate_domain,
             }));
             return true;
         }
@@ -66,15 +54,12 @@ impl DefineElectrum {
     }
 
     pub fn view(&self) -> Element<Message> {
-        view::define_electrum(&self.address, self.validate_domain)
+        view::define_electrum(&self.address)
     }
 
     pub fn ping(&self) -> Result<(), Error> {
         let builder = electrum_client::Config::builder();
-        let config = builder
-            .timeout(Some(3))
-            .validate_domain(self.validate_domain)
-            .build();
+        let config = builder.timeout(Some(3)).build();
         let client = electrum_client::Client::from_config(&self.address.value, config)
             .map_err(|e| Error::Electrum(e.to_string()))?;
         client

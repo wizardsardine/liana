@@ -81,7 +81,6 @@ pub enum DefineBitcoind {
 #[derive(Debug, Clone)]
 pub enum DefineElectrum {
     ConfigFieldEdited(electrum::ConfigField, String),
-    ValidDomainChanged(bool),
 }
 
 #[derive(Debug, Clone)]

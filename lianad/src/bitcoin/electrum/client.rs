@@ -7,10 +7,9 @@ use bdk_electrum::{
         spk_client::{FullScanRequest, FullScanResult, SyncRequest, SyncResult},
         BlockId, ChainPosition, ConfirmationHeightAnchor, TxGraph,
     },
+    electrum_client::{self, Config, ElectrumApi},
     ElectrumExt,
 };
-
-use electrum_client::{self, Config, ElectrumApi};
 
 use super::utils::{
     block_id_from_tip, height_i32_from_usize, height_usize_from_i32, outpoints_from_tx,
@@ -57,13 +56,9 @@ impl Client {
     /// Create a new client and perform sanity checks.
     pub fn new(electrum_config: &config::ElectrumConfig) -> Result<Self, Error> {
         // First use a dummy config to check connectivity (no retries, short timeout).
-        let dummy_config = Config::builder()
-            .retry(0)
-            .validate_domain(electrum_config.validate_domain)
-            .timeout(Some(3))
-            .build();
+        let dummy_config = Config::builder().retry(0).timeout(Some(3)).build();
         // Try to ping the server.
-        electrum_client::Client::from_config(&electrum_config.addr, dummy_config)
+        bdk_electrum::electrum_client::Client::from_config(&electrum_config.addr, dummy_config)
             .and_then(|dummy_client| dummy_client.ping())
             .map_err(Error::Server)?;
 
@@ -71,10 +66,10 @@ impl Client {
         let config = Config::builder()
             .retry(RETRY_LIMIT)
             .timeout(Some(RPC_SOCKET_TIMEOUT))
-            .validate_domain(electrum_config.validate_domain)
             .build();
-        let client = electrum_client::Client::from_config(&electrum_config.addr, config)
-            .map_err(Error::Server)?;
+        let client =
+            bdk_electrum::electrum_client::Client::from_config(&electrum_config.addr, config)
+                .map_err(Error::Server)?;
         Ok(Self(client))
     }
 
