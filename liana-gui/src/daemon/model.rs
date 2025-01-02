@@ -388,6 +388,13 @@ impl HistoryTransaction {
         )
     }
 
+    pub fn is_outgoing(&self) -> bool {
+        matches!(
+            self.kind,
+            TransactionKind::OutgoingPaymentBatch(_) | TransactionKind::OutgoingSinglePayment(_)
+        )
+    }
+
     pub fn is_send_to_self(&self) -> bool {
         matches!(self.kind, TransactionKind::SendToSelf)
     }
@@ -492,7 +499,8 @@ pub fn payments_from_tx(history_tx: HistoryTransaction) -> Vec<Payment> {
                 time,
                 amount: output.value,
                 kind: if history_tx.is_send_to_self()
-                    || history_tx.change_indexes.contains(&output_index)
+                    || (history_tx.is_outgoing()
+                        && history_tx.change_indexes.contains(&output_index))
                 {
                     PaymentKind::SendToSelf
                 } else if history_tx.is_external() {
