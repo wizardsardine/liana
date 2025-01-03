@@ -67,12 +67,7 @@ pub fn export_modal<'a>(
             .push(Space::with_height(Length::Fill))
             .push_maybe(progress_bar_row)
             .push(Space::with_height(Length::Fill))
-            .push(
-                Row::new()
-                    .push(Space::with_width(Length::Fill))
-                    .push(text(msg))
-                    .push(Space::with_width(Length::Fill)),
-            )
+            .push(Row::new().push(text(msg)))
             .push(Space::with_height(Length::Fill))
             .push_maybe(button.map(|b| {
                 Container::new(b)
