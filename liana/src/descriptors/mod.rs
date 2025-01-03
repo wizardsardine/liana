@@ -293,7 +293,7 @@ impl LianaDescriptor {
             // We add one to account for the witness stack size, as the values above give the
             // difference in size for a satisfied input that was *already* in a transaction
             // that spent one or more Segwit coins (and thus already have 1 WU accounted for the
-            // emtpy witness). But this method is used to account between a completely "nude"
+            // empty witness). But this method is used to account between a completely "nude"
             // transaction (and therefore no Segwit marker nor empty witness in inputs) and a
             // satisfied transaction.
             self.multi_desc
