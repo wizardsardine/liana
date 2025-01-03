@@ -1,13 +1,13 @@
 use iced::{
-    widget::{progress_bar, Button, Column, Container, Row, Space},
+    alignment::Horizontal,
+    widget::{progress_bar, Column, Container, Row, Space},
     Length,
 };
 use liana_ui::{
     component::{
-        card,
+        button, card,
         text::{h4_bold, text},
     },
-    theme,
     widget::Element,
 };
 
@@ -22,14 +22,13 @@ pub fn export_modal<'a>(
 ) -> Element<'a, Message> {
     let button = match state {
         ExportState::Started | ExportState::Progress(_) => {
-            Some(Button::new("Cancel").on_press(ExportMessage::UserStop.into()))
+            Some(button::secondary(None, "Cancel").on_press(ExportMessage::UserStop.into()))
         }
         ExportState::Ended | ExportState::TimedOut | ExportState::Aborted => {
-            Some(Button::new("Close").on_press(ExportMessage::Close.into()))
+            Some(button::secondary(None, "Close").on_press(ExportMessage::Close.into()))
         }
         _ => None,
-    }
-    .map(|b| b.height(32).style(theme::Button::Primary));
+    };
     let msg = if let Some(error) = error {
         format!("{:?}", error)
     } else {
@@ -55,31 +54,26 @@ pub fn export_modal<'a>(
             100.0
         }
     };
-    let progress_bar_row = Row::new()
-        .push(Space::with_width(30))
-        .push(progress_bar(0.0..=100.0, p))
-        .push(Space::with_width(30));
-    let button_row = button.map(|b| {
+    let progress_bar_row = (*state != ExportState::Ended).then_some(
         Row::new()
-            .push(Space::with_width(Length::Fill))
-            .push(b)
-            .push(Space::with_width(Length::Fill))
-    });
+            .push(Space::with_width(30))
+            .push(progress_bar(0.0..=100.0, p))
+            .push(Space::with_width(30)),
+    );
     card::simple(
         Column::new()
             .spacing(10)
             .push(Container::new(h4_bold(format!("Export {export_type}"))).width(Length::Fill))
             .push(Space::with_height(Length::Fill))
-            .push(progress_bar_row)
+            .push_maybe(progress_bar_row)
             .push(Space::with_height(Length::Fill))
-            .push(
-                Row::new()
-                    .push(Space::with_width(Length::Fill))
-                    .push(text(msg))
-                    .push(Space::with_width(Length::Fill)),
-            )
+            .push(Row::new().push(text(msg)))
             .push(Space::with_height(Length::Fill))
-            .push_maybe(button_row)
+            .push_maybe(button.map(|b| {
+                Container::new(b)
+                    .align_x(Horizontal::Right)
+                    .width(Length::Fill)
+            }))
             .push(Space::with_height(5)),
     )
     .width(Length::Fixed(500.0))
