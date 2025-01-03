@@ -45,11 +45,7 @@ pub fn transactions_view<'a>(
                 Row::new()
                     .push(Container::new(h3("Transactions")))
                     .push(Space::with_width(Length::Fill))
-                    .push(
-                        Button::new("Export")
-                            .on_press(ExportMessage::Open.into())
-                            .style(theme::Button::Secondary),
-                    ),
+                    .push(button::secondary(None, "Export").on_press(ExportMessage::Open.into())),
             )
             .push(
                 Column::new()

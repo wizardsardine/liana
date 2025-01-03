@@ -1,13 +1,12 @@
 use iced::{
-    widget::{progress_bar, Button, Column, Container, Row, Space},
+    widget::{progress_bar, Column, Container, Row, Space},
     Length,
 };
 use liana_ui::{
     component::{
-        card,
+        button, card,
         text::{h4_bold, text},
     },
-    theme,
     widget::Element,
 };
 
@@ -22,14 +21,13 @@ pub fn export_modal<'a>(
 ) -> Element<'a, Message> {
     let button = match state {
         ExportState::Started | ExportState::Progress(_) => {
-            Some(Button::new("Cancel").on_press(ExportMessage::UserStop.into()))
+            Some(button::secondary(None, "Cancel").on_press(ExportMessage::UserStop.into()))
         }
         ExportState::Ended | ExportState::TimedOut | ExportState::Aborted => {
-            Some(Button::new("Close").on_press(ExportMessage::Close.into()))
+            Some(button::secondary(None, "Close").on_press(ExportMessage::Close.into()))
         }
         _ => None,
-    }
-    .map(|b| b.height(32).style(theme::Button::Primary));
+    };
     let msg = if let Some(error) = error {
         format!("{:?}", error)
     } else {
