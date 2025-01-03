@@ -1,4 +1,5 @@
 use iced::{
+    alignment::Horizontal,
     widget::{progress_bar, Column, Container, Row, Space},
     Length,
 };
@@ -59,12 +60,6 @@ pub fn export_modal<'a>(
             .push(progress_bar(0.0..=100.0, p))
             .push(Space::with_width(30)),
     );
-    let button_row = button.map(|b| {
-        Row::new()
-            .push(Space::with_width(Length::Fill))
-            .push(b)
-            .push(Space::with_width(Length::Fill))
-    });
     card::simple(
         Column::new()
             .spacing(10)
@@ -79,7 +74,11 @@ pub fn export_modal<'a>(
                     .push(Space::with_width(Length::Fill)),
             )
             .push(Space::with_height(Length::Fill))
-            .push_maybe(button_row)
+            .push_maybe(button.map(|b| {
+                Container::new(b)
+                    .align_x(Horizontal::Right)
+                    .width(Length::Fill)
+            }))
             .push(Space::with_height(5)),
     )
     .width(Length::Fixed(500.0))
