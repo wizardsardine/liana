@@ -86,6 +86,16 @@ impl State for PsbtsPanel {
                 Ok(txs) => {
                     self.warning = None;
                     self.spend_txs = txs;
+                    if let Some(tx) = &self.selected_tx {
+                        if let Some(tx) = self.spend_txs.iter().find(|spend_tx| {
+                            spend_tx.psbt.unsigned_tx.txid() == tx.tx.psbt.unsigned_tx.txid()
+                        }) {
+                            let tx = psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true);
+                            let cmd = tx.load(daemon);
+                            self.selected_tx = Some(tx);
+                            return cmd;
+                        }
+                    }
                 }
             },
             Message::View(view::Message::ImportSpend(view::ImportSpendMessage::Import)) => {
