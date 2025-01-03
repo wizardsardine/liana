@@ -53,10 +53,12 @@ pub fn export_modal<'a>(
             100.0
         }
     };
-    let progress_bar_row = Row::new()
-        .push(Space::with_width(30))
-        .push(progress_bar(0.0..=100.0, p))
-        .push(Space::with_width(30));
+    let progress_bar_row = (*state != ExportState::Ended).then_some(
+        Row::new()
+            .push(Space::with_width(30))
+            .push(progress_bar(0.0..=100.0, p))
+            .push(Space::with_width(30)),
+    );
     let button_row = button.map(|b| {
         Row::new()
             .push(Space::with_width(Length::Fill))
@@ -68,7 +70,7 @@ pub fn export_modal<'a>(
             .spacing(10)
             .push(Container::new(h4_bold(format!("Export {export_type}"))).width(Length::Fill))
             .push(Space::with_height(Length::Fill))
-            .push(progress_bar_row)
+            .push_maybe(progress_bar_row)
             .push(Space::with_height(Length::Fill))
             .push(
                 Row::new()
