@@ -9,9 +9,10 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    lipo.url = "github:edouardparis/lipo-flake";
   };
 
-  outputs = { self, nixpkgs, flake-utils, crane, fenix, ... }:
+  outputs = { self, nixpkgs, flake-utils, crane, fenix, lipo, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; config = { allowUnfree = true; };};
@@ -125,6 +126,20 @@
           '';
         };
 
+        universal2-apple-darwin = pkgs.runCommand "universal2-apple-darwin" {
+          buildInputs = [ lipo.packages.${system}.lipo ];
+          # Declare dependencies by referencing them in the command
+          # No need to include x86_64-apple-darwin and aarch64-apple-darwin in buildInputs
+          # because they are referenced directly
+        } ''
+          mkdir -p $out/universal2-apple-darwin
+
+          # Combine liana-gui binaries
+          lipo -output $out/universal2-apple-darwin/liana-gui -create \
+            ${x86_64-apple-darwin}/x86_64-apple-darwin/liana-gui \
+            ${aarch64-apple-darwin}/aarch64-apple-darwin/liana-gui
+        '';
+
         devShell = pkgs.mkShell rec {
           buildInputs = with pkgs; [
             expat
@@ -161,9 +176,15 @@
           x86_64-pc-windows-gnu = x86_64-pc-windows-gnu;
           x86_64-apple-darwin = x86_64-apple-darwin;
           aarch64-apple-darwin = aarch64-apple-darwin;
+          universal2-apple-darwin = universal2-apple-darwin;
           release = pkgs.buildEnv {
             name = "release";
-            paths = [ x86_64-pc-windows-gnu x86_64-apple-darwin aarch64-apple-darwin ];
+            paths = [
+              x86_64-pc-windows-gnu
+              x86_64-apple-darwin
+              aarch64-apple-darwin
+              universal2-apple-darwin
+            ];
           };
         };
 
