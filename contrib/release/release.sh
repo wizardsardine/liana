@@ -13,8 +13,6 @@ LINUX_DIR_NAME="$LIANA_PREFIX-x86_64-linux-gnu"
 LINUX_ARCHIVE="$LINUX_DIR_NAME.tar.gz"
 WINDOWS_DIR_NAME="$LIANA_PREFIX-x86_64-windows-gnu"
 WINDOWS_ARCHIVE="$WINDOWS_DIR_NAME.zip"
-MAC_DIR_NAME="$LIANA_PREFIX-x86_64-apple-darwin"
-MAC_ARCHIVE="$MAC_DIR_NAME.tar.gz"
 
 create_dir() {
     if [ -d "$1" ]; then
@@ -79,14 +77,19 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
 # Create the MacOS archive and a zipped application bundle of liana-gui.
 (
     cd "$BUILD_DIR"
-    create_dir "$MAC_DIR_NAME"
-    cp "$NIX_BUILD_DIR/x86_64-apple-darwin/lianad" "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-cli" "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-gui" ../README.md "$MAC_DIR_NAME"
-    tar --mtime="@${SOURCE_DATE_EPOCH}" -czf "$MAC_ARCHIVE" "$MAC_DIR_NAME"
-    mv "$MAC_ARCHIVE" "$RELEASE_DIR"
+    create_dir "$LIANA_PREFIX-x86_64-apple-darwin"
+    cp "$NIX_BUILD_DIR/x86_64-apple-darwin/lianad" "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-cli" "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-gui" ../README.md "$LIANA_PREFIX-x86_64-apple-darwin"
+    tar --mtime="@${SOURCE_DATE_EPOCH}" -czf "$LIANA_PREFIX-x86_64-apple-darwin.tar.gz" "$LIANA_PREFIX-x86_64-apple-darwin"
+    mv "$LIANA_PREFIX-x86_64-apple-darwin.tar.gz" "$RELEASE_DIR"
+
+    create_dir "$LIANA_PREFIX-aarch64-apple-darwin"
+    cp "$NIX_BUILD_DIR/aarch64-apple-darwin/lianad" "$NIX_BUILD_DIR/aarch64-apple-darwin/liana-cli" "$NIX_BUILD_DIR/aarch64-apple-darwin/liana-gui" ../README.md "$LIANA_PREFIX-aarch64-apple-darwin"
+    tar --mtime="@${SOURCE_DATE_EPOCH}" -czf "$LIANA_PREFIX-aarch64-apple-darwin.tar.gz" "$LIANA_PREFIX-aarch64-apple-darwin"
+    mv "$LIANA_PREFIX-aarch64-apple-darwin.tar.gz" "$RELEASE_DIR"
 
     unzip ../contrib/release/macos/Liana.app.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
-    cp "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-gui" ./Liana.app/Contents/MacOS/Liana
+    cp "$NIX_BUILD_DIR/universal2-apple-darwin/liana-gui" ./Liana.app/Contents/MacOS/Liana
     zip_archive "Liana-$VERSION-noncodesigned.zip" Liana.app
     mv "Liana-$VERSION-noncodesigned.zip" "$RELEASE_DIR/"
 )
