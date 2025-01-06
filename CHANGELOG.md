@@ -1,5 +1,59 @@
 # Liana daemon and GUI release notes
 
+## 9.0
+
+This Liana release introduces small bug fixes and a nice new export feature.
+The whole code architecture was reworked to follow rust guidelines about workspace
+and the reproducible build now makes usage of `nix` instead of `docker`.
+The `liana-gui` linux binary is now built against an older `GLIBC 2.31` and
+the release asset for apple devices is now an universal2 target that can be run by both
+old x86_64 and new ARM apple devices.
+
+The new Blockstream Jade Plus device id was added and this hardware wallet should be supported.
+
+### Breaking changes
+
+Running Liana v9 on an existing installation will migrate its database.
+Once migrated the database won't be compatible with previous versions of Liana.
+This means you won't be able to open with Liana v8 (or below) any wallet opened or created with Liana v9.
+
+The new Minimum Supported Rust Version of the GUI software is now 1.80. This change was necessary to have
+up to date system dependencies like `rfd`.
+
+### Features
+
+#### Liana daemon / library
+
+- The daemon feature was removed, we expect user to use their own process manager like systemd.
+- Three new columns are added to the table transaction: the number of inputs, the number of outputs and if the
+  transaction is a coinbase transaction.
+- A new column is added to the coins table: `is_from_self` and a new field `is_from_self`
+  is added to the coin entry of the `list_coins` command. This field is true
+  if the coin is from a transaction that every inputs or ancestors inputs belongs to the wallet.
+
+#### Liana GUI
+
+- New button on the transactions panel allows user to do an export of their transactions to an external file using the CSV format.
+- Bitcoind and electrum information in the settings panel can now be copied to clipboard.
+- The sync progress is now displayed with a percentage with 2 decimals
+- On the send panel, the trailing zeros of the calculated max amount are not anymore trimmed.
+- Coins that are change from transactions that user control (either confirmed or every inputs belongs to the wallet),
+  are now part of the balance.
+- Unconfirmed coins can now be selected by the automatic selection if the coins is from transaction which inputs are controlled by the wallet.
+
+### Fixes
+
+#### Liana daemon / library
+
+- A spurious overestimation in fees was resolved.
+
+#### Liana GUI
+
+- The home panel was changed to load in an asynchronous and lighter way the payments list.
+- When opening the receive panel, no new address is generated without the explicit demand of the user.
+- A rescan request was failing with recent version of bitcoind because of the failure to match hardened derivation indexes.
+- While updating a PSBT, taproot signatures were not correctly merged.
+
 ## 8.0
 
 This release introduces support for Taproot descriptors on Bitbox02 devices and

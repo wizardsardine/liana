@@ -3,7 +3,7 @@
 set -e  # Exit immediately if a command exits with a non-zero status
 set -x  # Print commands and their arguments as they are executed
 
-VERSION="${VERSION:-"8.0"}"
+VERSION="${VERSION:-"9.0"}"
 # Define the release directory
 RELEASE_DIR="$PWD/release_assets"
 RELEASE_BUILD_DIR="$PWD/release_build"
