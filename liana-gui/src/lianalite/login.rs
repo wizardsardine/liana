@@ -98,7 +98,7 @@ pub struct LianaLiteLogin {
 
     // Error due to connection
     connection_error: Option<Error>,
-    // Authentification Error
+    // Authentication Error
     auth_error: Option<&'static str>,
 }
 

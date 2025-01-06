@@ -149,7 +149,7 @@ impl super::DescriptorEditModal for EditXpubModal {
 
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
         // Reset these fields.
-        // the fonction will setup them again if something is wrong
+        // the function will setup them again if something is wrong
         self.duplicate_master_fg = false;
         self.error = None;
         match message {
