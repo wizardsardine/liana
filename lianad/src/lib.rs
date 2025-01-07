@@ -26,7 +26,7 @@ use crate::{
 };
 
 use std::{
-    collections, error, fmt, fs, io, path,
+    error, fmt, fs, io, path,
     sync::{self, mpsc},
     thread,
 };
@@ -217,12 +217,7 @@ fn setup_sqlite(
             let bit = bitcoind.as_ref().ok_or(StartupError::DbMigrateBitcoinTxs(
                 "a connection to a Bitcoin backend is required",
             ))?;
-            let coins = conn.db_coins(&[]);
-            let coins_txids = coins
-                .iter()
-                .map(|c| c.outpoint.txid)
-                .chain(coins.iter().filter_map(|c| c.spend_txid))
-                .collect::<collections::HashSet<_>>();
+            let coins_txids = conn.db_list_all_txids();
             coins_txids
                 .into_iter()
                 .map(|txid| bit.get_transaction(&txid).map(|res| res.tx))
