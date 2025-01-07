@@ -87,7 +87,7 @@ sign_with_rcodesign() {
 
     zip_archive "Liana-$VERSION.zip" Liana.app
     mv "Liana-$VERSION.zip" "$RELEASE_DIR/"
-    sha256sum "$RELEASE_DIR/Liana-$VERSION.zip" | tee -a "$RELEASE_DIR/shasums.txt"
+    sha256sum "$RELEASE_DIR/Liana-$VERSION.zip" | tee -a "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
 }
 
 if [ "$#" -lt 1 ]; then
