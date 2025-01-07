@@ -7,7 +7,7 @@
 
 set -ex
 
-VERSION="${VERSION:-"8.0"}"
+VERSION="${VERSION:-"9.0"}"
 LIANA_PREFIX="liana-$VERSION"
 LINUX_DIR_NAME="$LIANA_PREFIX-x86_64-linux-gnu"
 LINUX_ARCHIVE="$LINUX_DIR_NAME.tar.gz"
@@ -94,6 +94,6 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
     mv "Liana-$VERSION-noncodesigned.zip" "$RELEASE_DIR/"
 )
 
-find "$RELEASE_DIR" -type f ! -name "shasums.txt" -exec sha256sum {} + | tee "$RELEASE_DIR/shasums.txt"
+find "$RELEASE_DIR" -type f ! -name "$LIANA_PREFIX-shasums.txt" -exec sha256sum {} + | tee "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
 
 set +ex

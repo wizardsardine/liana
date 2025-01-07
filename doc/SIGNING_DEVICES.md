@@ -30,7 +30,7 @@ firmware](https://github.com/Coldcard/firmware?tab=readme-ov-file#long-lived-bra
 For use in Taproot descriptors you should use version 6.3.3 or higher.
 
 
-## [Jade](https://github.com/Blockstream/Jade)
+## [Jade and Jade Plus](https://github.com/Blockstream/Jade)
 
 Version 1.0.30 of the firmware is supported for use in P2WSH descriptors.
 
