@@ -4,6 +4,7 @@ set -e  # Exit immediately if a command exits with a non-zero status
 set -x  # Print commands and their arguments as they are executed
 
 VERSION="${VERSION:-"9.0"}"
+LIANA_PREFIX="liana-$VERSION"
 # Define the release directory
 RELEASE_DIR="$PWD/release_assets"
 RELEASE_BUILD_DIR="$PWD/release_build"
@@ -12,7 +13,7 @@ RELEASE_BUILD_DIR="$PWD/release_build"
 sign_with_gpg() {
     (
         cd "$RELEASE_DIR"
-        gpg --detach-sign --armor "shasums.txt"
+        gpg --detach-sign --armor "$LIANA_PREFIX-shasums.txt"
     )
 }
 

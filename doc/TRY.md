@@ -98,6 +98,14 @@ Example for Linux (replace the signature name with the one corresponding to your
 gpg --keyserver hkps://keys.openpgp.org --refresh-keys 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
 ```
 
+if Liana version is superior or equal to v9:
+
+```
+gpg --keyserver hkps://keys.openpgp.org --receive 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
+sha256sum --check liana-9.0-shasums.txt
+gpg --verify liana-9.0-shasums.txt.asc
+```
+
 
 If all is good, you can run Liana!
 
