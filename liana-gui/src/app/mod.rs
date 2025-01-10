@@ -327,7 +327,7 @@ impl App {
                                 panel.update(
                                     daemon.clone(),
                                     &cache,
-                                    Message::UpdatePanelCache(current == menu, Ok(cache.clone())),
+                                    Message::UpdatePanelCache(current == menu),
                                 )
                             })
                             .collect();
