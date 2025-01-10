@@ -317,7 +317,7 @@ impl App {
                         let current = &self.panels.current;
                         let daemon = self.daemon.clone();
                         // These are the panels to update with the cache.
-                        let mut panels = [(&mut self.panels.home, Menu::Home)];
+                        let mut panels = [(&mut self.panels.home as &mut dyn State, Menu::Home)];
                         let commands: Vec<_> = panels
                             .iter_mut()
                             .map(|(panel, menu)| {
