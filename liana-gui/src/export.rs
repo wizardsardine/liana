@@ -268,7 +268,7 @@ impl State {
                 }
 
                 let mut txs: Vec<_> = map.into_values().collect();
-                txs.sort_by(|a, b| a.compare(b));
+                txs.sort_by(|a, b| b.compare(a));
 
                 for mut tx in txs {
                     let date_time = tx
