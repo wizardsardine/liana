@@ -711,6 +711,12 @@ impl Action for UpdateAction {
                                 input
                                     .partial_sigs
                                     .extend(updated_input.partial_sigs.clone().into_iter());
+                                input
+                                    .tap_script_sigs
+                                    .extend(updated_input.tap_script_sigs.iter());
+                                if let Some(sig) = updated_input.tap_key_sig {
+                                    input.tap_key_sig = Some(sig);
+                                }
                             }
                         }
                         tx.sigs = self
