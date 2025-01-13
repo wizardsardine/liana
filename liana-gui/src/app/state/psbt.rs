@@ -692,7 +692,27 @@ impl Action for UpdateAction {
                         self.success = true;
                         self.error = None;
                         let psbt = Psbt::from_str(&self.updated.value).expect("Already checked");
-                        merge_signatures(&mut tx.psbt, &psbt);
+                        for (i, input) in tx.psbt.inputs.iter_mut().enumerate() {
+                            if tx
+                                .psbt
+                                .unsigned_tx
+                                .input
+                                .get(i)
+                                .map(|tx_in| tx_in.previous_output)
+                                != psbt
+                                    .unsigned_tx
+                                    .input
+                                    .get(i)
+                                    .map(|tx_in| tx_in.previous_output)
+                            {
+                                continue;
+                            }
+                            if let Some(updated_input) = psbt.inputs.get(i) {
+                                input
+                                    .partial_sigs
+                                    .extend(updated_input.partial_sigs.clone().into_iter());
+                            }
+                        }
                         tx.sigs = self
                             .wallet
                             .main_descriptor
