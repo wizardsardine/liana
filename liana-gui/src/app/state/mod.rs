@@ -254,7 +254,7 @@ impl State for Home {
                     }
                 }
             },
-            Message::UpdatePanelCache(is_current, Ok(cache)) => {
+            Message::UpdatePanelCache(is_current) => {
                 let wallet_was_syncing = !self.sync_status.is_synced();
                 self.sync_status = sync_status(
                     daemon.backend(),
