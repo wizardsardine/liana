@@ -136,6 +136,9 @@ impl State for BitcoindSettingsState {
                 self.rescan_settings.past_possible_height = true;
                 self.rescan_settings.processing = false;
             }
+            Message::UpdatePanelCache(_) => {
+                self.rescan_settings.processing = cache.rescan_progress.is_some_and(|p| p < 1.0);
+            }
             Message::View(view::Message::Settings(view::SettingsMessage::BitcoindSettings(
                 msg,
             ))) => {
