@@ -11,8 +11,6 @@ VERSION="${VERSION:-"9.0"}"
 LIANA_PREFIX="liana-$VERSION"
 LINUX_DIR_NAME="$LIANA_PREFIX-x86_64-linux-gnu"
 LINUX_ARCHIVE="$LINUX_DIR_NAME.tar.gz"
-WINDOWS_DIR_NAME="$LIANA_PREFIX-x86_64-windows-gnu"
-WINDOWS_ARCHIVE="$WINDOWS_DIR_NAME.zip"
 
 create_dir() {
     if [ -d "$1" ]; then
@@ -67,11 +65,7 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
 # Create the Windows archive and the raw executable
 (
     cd "$BUILD_DIR"
-    create_dir "$WINDOWS_DIR_NAME"
-    cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" ../README.md "$WINDOWS_DIR_NAME"
-    zip_archive "$WINDOWS_ARCHIVE" "$WINDOWS_DIR_NAME"
-    mv "$WINDOWS_ARCHIVE" "$RELEASE_DIR"
-    cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX.exe"
+    cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX-noncodesigned.exe"
 )
 
 # Create the MacOS archive and a zipped application bundle of liana-gui.
