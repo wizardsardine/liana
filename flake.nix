@@ -2,7 +2,7 @@
   description = "Dev shell to help contributing to liana";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
     crane.url = "github:ipetkov/crane";
     fenix = {
@@ -168,7 +168,18 @@
             pkgs.gnutar
             pkgs.dpkg
             pkgs.rcodesign
+            pkgs.opensc          # Provides pkcs11 tools and module (opensc-pkcs11.so)
+            pkgs.pcsclite       # Smartcard support
+            pkgs.osslsigncode    # For signing Windows executables
+            pkgs.openssl         # To have the PKCS#11 engine available (lib/engines)
+            pkgs.libp11
           ];
+
+          shellHook = ''
+            export OPENSSL_CONF=${toString ./contrib/release/openssl-pkcs11.cnf}
+            echo "OPENSSL_CONF is set to ${toString ./contrib/release/openssl-pkcs11.cnf}"
+            echo "PKCS#11 environment ready."
+          '';
         };
 
       in {
