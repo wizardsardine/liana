@@ -56,7 +56,7 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
     unzip ../contrib/release/debian/package.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./package/DEBIAN/control
     cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ../README.md ./package/usr/bin/
-    DIRNAME="liana_$VERSION-1_amd64"
+    DIRNAME="$LIANA_PREFIX-1_amd64"
     mv ./package "$DIRNAME"
     dpkg-deb -Zxz --build --root-owner-group "$DIRNAME"
     mv "$DIRNAME.deb" "$RELEASE_DIR"
@@ -84,8 +84,8 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
     unzip ../contrib/release/macos/Liana.app.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
     cp "$NIX_BUILD_DIR/universal2-apple-darwin/liana-gui" ./Liana.app/Contents/MacOS/Liana
-    zip_archive "Liana-$VERSION-noncodesigned.zip" Liana.app
-    mv "Liana-$VERSION-noncodesigned.zip" "$RELEASE_DIR/"
+    zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" Liana.app
+    mv "$LIANA_PREFIX-macos-noncodesigned.zip" "$RELEASE_DIR/"
 )
 
 find "$RELEASE_DIR" -type f ! -name "$LIANA_PREFIX-shasums.txt" -exec sha256sum {} + | sed "s|$RELEASE_DIR/||" | tee "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
