@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::{clipboard, time, Command, Subscription};
+use iced::{clipboard, time, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
@@ -148,7 +148,7 @@ impl App {
         daemon: Arc<dyn Daemon + Sync + Send>,
         data_dir: PathBuf,
         internal_bitcoind: Option<Bitcoind>,
-    ) -> (App, Command<Message>) {
+    ) -> (App, Task<Message>) {
         let mut panels = Panels::new(
             &cache,
             wallet.clone(),
@@ -170,7 +170,7 @@ impl App {
         )
     }
 
-    fn set_current_panel(&mut self, menu: Menu) -> Command<Message> {
+    fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
         self.panels.current_mut().interrupt();
 
         match &menu {
@@ -183,7 +183,7 @@ impl App {
                 }) {
                     self.panels.transactions.preselect(tx);
                     self.panels.current = menu;
-                    return Command::none();
+                    return Task::none();
                 };
             }
             menu::Menu::PsbtPreSelected(txid) => {
@@ -198,7 +198,7 @@ impl App {
                 }) {
                     self.panels.psbts.preselect(spend_tx);
                     self.panels.current = menu;
-                    return Command::none();
+                    return Task::none();
                 };
             }
             menu::Menu::RefreshCoins(preselected) => {
@@ -279,14 +279,14 @@ impl App {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Command<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Tick => {
                 let daemon = self.daemon.clone();
                 let datadir_path = self.cache.datadir_path.clone();
                 let network = self.cache.network;
                 let last_poll_at_startup = self.cache.last_poll_at_startup;
-                Command::perform(
+                Task::perform(
                     async move {
                         // we check every 10 second if the daemon poller is alive
                         // or if the access token is not expired.
@@ -331,11 +331,11 @@ impl App {
                                 )
                             })
                             .collect();
-                        return Command::batch(commands);
+                        return Task::batch(commands);
                     }
                     Err(e) => tracing::error!("Failed to update cache: {}", e),
                 }
-                Command::none()
+                Task::none()
             }
             Message::LoadDaemonConfig(cfg) => {
                 let path = self.config.daemon_config_path.clone().expect(

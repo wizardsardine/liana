@@ -57,8 +57,8 @@ pub fn spend_view<'a>(
                         col.push(
                             Row::new()
                                 .spacing(5)
-                                .push(icon::warning_icon().style(color::ORANGE))
-                                .push(text(warning).style(color::ORANGE)),
+                                .push(icon::warning_icon().color(color::ORANGE))
+                                .push(text(warning).color(color::ORANGE)),
                         )
                     },
                 ))
@@ -154,7 +154,7 @@ pub fn create_spend_tx<'a>(
                                 Some(
                                     Container::new(
                                         text("Two payment addresses are the same")
-                                            .style(color::RED),
+                                            .color(color::RED),
                                     )
                                     .padding(10),
                                 )
@@ -206,7 +206,7 @@ pub fn create_spend_tx<'a>(
                         .spacing(10)
                         .push(
                             Row::new()
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .push(p1_bold("Coins selection").width(Length::Fill))
                                 .push(if is_self_send {
                                     Row::new()
@@ -226,7 +226,7 @@ pub fn create_spend_tx<'a>(
                                             ),
                                             P2_SIZE,
                                         ))
-                                        .push(p2_regular("selected").style(color::GREY_3))
+                                        .push(p2_regular("selected").color(color::GREY_3))
                                 } else if let Some(amount_left) = amount_left {
                                     if amount_left.to_sat() == 0 && !is_valid {
                                         // If amount left is set, the current configuration must be redraftable.
@@ -237,20 +237,20 @@ pub fn create_spend_tx<'a>(
                                             // and it has the max selected.
                                             Row::new().push(
                                                 text("Select at least one coin.")
-                                                    .style(color::GREY_3),
+                                                    .color(color::GREY_3),
                                             )
                                         } else {
                                             // There must be a recipient with max selected and value 0.
                                             Row::new().push(
                                                 text("Check max amount for recipient.")
-                                                    .style(color::GREY_3),
+                                                    .color(color::GREY_3),
                                             )
                                         }
                                     } else {
                                         Row::new()
                                             .spacing(5)
                                             .push(amount_with_size(amount_left, P2_SIZE))
-                                            .push(p2_regular("left to select").style(color::GREY_3))
+                                            .push(p2_regular("left to select").color(color::GREY_3))
                                     }
                                 } else {
                                     Row::new().push(
@@ -259,7 +259,7 @@ pub fn create_spend_tx<'a>(
                                         } else {
                                             "Add recipient details."
                                         })
-                                        .style(color::GREY_3),
+                                        .color(color::GREY_3),
                                     )
                                 })
                                 .width(Length::Fill),
@@ -282,12 +282,12 @@ pub fn create_spend_tx<'a>(
                         ),
                 )
                 .padding(20)
-                .style(theme::Card::Simple),
+                .style(theme::card::simple),
             )
             .push(
                 Row::new()
                     .spacing(20)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::secondary(None, "Clear")
@@ -325,14 +325,14 @@ pub fn recipient_view<'a>(
             .push(
                 Row::new().push(Space::with_width(Length::Fill)).push(
                     Button::new(icon::cross_icon())
-                        .style(theme::Button::Transparent)
+                        .style(theme::button::transparent)
                         .on_press(CreateSpendMessage::DeleteRecipient(index))
                         .width(Length::Shrink),
                 ),
             )
             .push(
                 Row::new()
-                    .align_items(Alignment::Start)
+                    .align_y(Alignment::Start)
                     .spacing(10)
                     .push(
                         Container::new(p1_bold("Address"))
@@ -351,7 +351,7 @@ pub fn recipient_view<'a>(
             )
             .push(
                 Row::new()
-                    .align_items(Alignment::Start)
+                    .align_y(Alignment::Start)
                     .spacing(10)
                     .push(
                         Container::new(p1_bold("Description"))
@@ -370,7 +370,7 @@ pub fn recipient_view<'a>(
             )
             .push(
                 Row::new()
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .spacing(10)
                     .push(
                         Container::new(p1_bold("Amount"))
@@ -384,7 +384,7 @@ pub fn recipient_view<'a>(
                             .map(amount_as_string)
                             .unwrap_or(amount.value.clone());
                         Some(
-                            Container::new(text(amount_txt).size(P1_SIZE).style(color::GREY_2))
+                            Container::new(text(amount_txt).size(P1_SIZE).color(color::GREY_2))
                                 .padding(10)
                                 .width(Length::Fill),
                         )
@@ -414,7 +414,7 @@ pub fn recipient_view<'a>(
             ),
     )
     .padding(20)
-    .style(theme::Card::Simple)
+    .style(theme::card::simple)
     .into()
 }
 
@@ -445,7 +445,7 @@ fn coin_list_view<'a>(
                                     // It is not possible to know if a coin is a
                                     // change coin or not so for now, From is
                                     // enough
-                                    p1_regular("From").style(color::GREY_3),
+                                    p1_regular("From").color(color::GREY_3),
                                 )
                                 .push(p1_regular(label)),
                         )
@@ -463,13 +463,13 @@ fn coin_list_view<'a>(
                     coins::coin_sequence_label(seq, timelock as u32)
                 })
                 .spacing(10)
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
                 .width(Length::Fill),
         )
         .push(amount(&coin.amount))
         // give some space for the scroll bar without using padding
         .push(Space::with_width(Length::Fixed(0.0)))
-        .align_items(Alignment::Center)
+        .align_y(Alignment::Center)
         .spacing(20)
         .into()
 }

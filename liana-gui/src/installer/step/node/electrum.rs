@@ -1,4 +1,4 @@
-use iced::Command;
+use iced::Task;
 use liana_ui::{component::form, widget::*};
 use lianad::{
     config::ElectrumConfig,
@@ -28,7 +28,7 @@ impl DefineElectrum {
         !self.address.value.is_empty() && self.address.valid
     }
 
-    pub fn update(&mut self, message: message::DefineNode) -> Command<Message> {
+    pub fn update(&mut self, message: message::DefineNode) -> Task<Message> {
         if let message::DefineNode::DefineElectrum(msg) = message {
             match msg {
                 message::DefineElectrum::ConfigFieldEdited(field, value) => match field {
@@ -40,7 +40,7 @@ impl DefineElectrum {
                 },
             };
         };
-        Command::none()
+        Task::none()
     }
 
     pub fn apply(&mut self, ctx: &mut Context) -> bool {

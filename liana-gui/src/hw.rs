@@ -1,4 +1,4 @@
-use iced::Command;
+use iced::Task;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -215,7 +215,7 @@ impl HardwareWallets {
     pub fn update(
         &mut self,
         message: HardwareWalletMessage,
-    ) -> Result<Command<HardwareWalletMessage>, async_hwi::Error> {
+    ) -> Result<Task<HardwareWalletMessage>, async_hwi::Error> {
         match message {
             HardwareWalletMessage::Error(e) => Err(async_hwi::Error::Device(e)),
             HardwareWalletMessage::List(ConnectedList { still, mut new }) => {
@@ -237,7 +237,7 @@ impl HardwareWallets {
                                     let id = id.to_string();
                                     let network = self.network;
                                     let wallet = self.wallet.clone();
-                                    cmds.push(Command::perform(
+                                    cmds.push(Task::perform(
                                         async move {
                                             (
                                                 id.clone(),
@@ -252,7 +252,7 @@ impl HardwareWallets {
                                     let id_cloned = id.clone();
                                     let network = self.network;
                                     let wallet = self.wallet.clone();
-                                    cmds.push(Command::perform(
+                                    cmds.push(Task::perform(
                                         async move {
                                             if let Err(e) = device.auth().await {
                                                 return (id_cloned, Err(e.into()));
@@ -278,9 +278,9 @@ impl HardwareWallets {
                     }
                 }
                 if cmds.is_empty() {
-                    Ok(Command::none())
+                    Ok(Task::none())
                 } else {
-                    Ok(Command::batch(cmds))
+                    Ok(Task::batch(cmds))
                 }
             }
             HardwareWalletMessage::Unlocked(id, res) => {
@@ -307,7 +307,7 @@ impl HardwareWallets {
                         }
                     }
                 }
-                Ok(Command::none())
+                Ok(Task::none())
             }
         }
     }

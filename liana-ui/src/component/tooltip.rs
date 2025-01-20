@@ -1,12 +1,12 @@
 use crate::{icon, theme, widget::*};
 
-pub fn tooltip<'a, T: 'a>(help: &'static str) -> Container<'a, T> {
+pub fn tooltip<T: 'static>(help: &'static str) -> Container<'static, T> {
     Container::new(
         iced::widget::tooltip::Tooltip::new(
             icon::tooltip_icon(),
             help,
             iced::widget::tooltip::Position::Right,
         )
-        .style(theme::Container::Card(theme::Card::Simple)),
+        .style(theme::card::simple),
     )
 }

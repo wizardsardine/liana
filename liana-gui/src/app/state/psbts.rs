@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 
 use liana::miniscript::bitcoin::psbt::Psbt;
 use liana_ui::{
@@ -76,7 +76,7 @@ impl State for PsbtsPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
                 return self.reload(daemon, self.wallet.clone());
@@ -122,7 +122,7 @@ impl State for PsbtsPanel {
                 }
             }
         }
-        Command::none()
+        Task::none()
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -137,12 +137,12 @@ impl State for PsbtsPanel {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         self.wallet = wallet;
         self.selected_tx = None;
         self.import_tx = None;
         let daemon = daemon.clone();
-        Command::perform(
+        Task::perform(
             async move {
                 daemon
                     .list_spend_transactions(None)
@@ -192,7 +192,7 @@ impl ImportPsbtModal {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::Updated(res) => {
                 self.processing = false;
@@ -213,7 +213,7 @@ impl ImportPsbtModal {
                     self.processing = true;
                     self.error = None;
                     let imported = Psbt::from_str(&self.imported.value).expect("Already checked");
-                    return Command::perform(
+                    return Task::perform(
                         async move {
                             daemon
                                 .update_spend_tx(&imported)
@@ -227,6 +227,6 @@ impl ImportPsbtModal {
             _ => {}
         }
 
-        Command::none()
+        Task::none()
     }
 }

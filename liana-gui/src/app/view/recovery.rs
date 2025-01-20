@@ -44,16 +44,16 @@ pub fn recovery<'a>(
             .push(
                 Row::new()
                     .spacing(10)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .push(
                         Button::new(text("Settings").size(30).bold())
-                            .style(theme::Button::Transparent)
+                            .style(theme::button::transparent)
                             .on_press(Message::Menu(Menu::Settings)),
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
                         Button::new(text("Recovery").size(30).bold())
-                            .style(theme::Button::Transparent)
+                            .style(theme::button::transparent)
                             .on_press(Message::Menu(Menu::Recovery)),
                     ),
             )
@@ -61,7 +61,7 @@ pub fn recovery<'a>(
             .push(
                 Row::new()
                     .spacing(20)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .push(text("Destination").bold())
                     .push(
                         Container::new(
@@ -102,7 +102,7 @@ pub fn recovery<'a>(
                         )))
                         .push(Column::with_children(recovery_paths).spacing(20)),
                 )
-                .style(theme::Container::Card(theme::Card::Simple))
+                .style(theme::card::simple)
                 .padding(20)
             })
             .push_maybe(if no_recovery_paths {
@@ -126,7 +126,7 @@ pub fn recovery<'a>(
                             },
                         )
                         .spacing(20)
-                        .align_items(Alignment::Center),
+                        .align_y(Alignment::Center),
                 )
             })
             .spacing(20),
@@ -151,7 +151,7 @@ pub fn recovery_path_view<'a>(
             Column::new()
                 .push(
                     Row::new()
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .spacing(10)
                         .push(
                             text(format!(
@@ -162,23 +162,23 @@ pub fn recovery_path_view<'a>(
                             .bold(),
                         )
                         .push(origins.iter().fold(
-                            Row::new().align_items(Alignment::Center).spacing(5),
+                            Row::new().align_y(Alignment::Center).spacing(5),
                             |row, (fg, _)| {
                                 row.push(if let Some(alias) = key_aliases.get(fg) {
                                     Container::new(
                                         tooltip::Tooltip::new(
                                             Container::new(text(alias))
                                                 .padding(5)
-                                                .style(theme::Container::Pill(theme::Pill::Simple)),
+                                                .style(theme::pill::simple),
                                             liana_ui::widget::Text::new(fg.to_string()),
                                             tooltip::Position::Bottom,
                                         )
-                                        .style(theme::Container::Card(theme::Card::Simple)),
+                                        .style(theme::card::simple),
                                     )
                                 } else {
                                     Container::new(text(fg.to_string()))
                                         .padding(5)
-                                        .style(theme::Container::Pill(theme::Pill::Simple))
+                                        .style(theme::pill::simple)
                                 })
                             },
                         )),
@@ -197,7 +197,7 @@ pub fn recovery_path_view<'a>(
                 .spacing(5),
         )
         .width(Length::Fill)
-        .align_items(Alignment::Center)
+        .align_y(Alignment::Center)
         .spacing(20)
         .into()
 }

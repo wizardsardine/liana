@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::{NaiveDate, Utc};
-use iced::{clipboard, Command};
+use iced::{clipboard, Task};
 use tracing::info;
 
 use liana::miniscript::bitcoin::Network;
@@ -90,7 +90,7 @@ impl State for BitcoindSettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::DaemonConfigLoaded(res) => match res {
                 Ok(()) => {
@@ -98,7 +98,7 @@ impl State for BitcoindSettingsState {
                     self.warning = None;
                     if let Some(settings) = &mut self.bitcoind_settings {
                         settings.edited(true);
-                        return Command::perform(async {}, |_| {
+                        return Task::perform(async {}, |_| {
                             Message::View(view::Message::Settings(
                                 view::SettingsMessage::EditBitcoindSettings,
                             ))
@@ -106,7 +106,7 @@ impl State for BitcoindSettingsState {
                     }
                     if let Some(settings) = &mut self.electrum_settings {
                         settings.edited(true);
-                        return Command::perform(async {}, |_| {
+                        return Task::perform(async {}, |_| {
                             Message::View(view::Message::Settings(
                                 view::SettingsMessage::EditBitcoindSettings,
                             ))
@@ -158,7 +158,7 @@ impl State for BitcoindSettingsState {
             }
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
@@ -303,7 +303,7 @@ impl BitcoindSettings {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: view::SettingsEditMessage,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             view::SettingsEditMessage::Select => {
                 if !self.processing {
@@ -359,14 +359,14 @@ impl BitcoindSettings {
                             addr: new_addr.unwrap(),
                         }));
                     self.processing = true;
-                    return Command::perform(async move { daemon_config }, |cfg| {
+                    return Task::perform(async move { daemon_config }, |cfg| {
                         Message::LoadDaemonConfig(Box::new(cfg))
                     });
                 }
             }
             view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
         };
-        Command::none()
+        Task::none()
     }
 
     fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
@@ -441,7 +441,7 @@ impl ElectrumSettings {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: view::SettingsEditMessage,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             view::SettingsEditMessage::Select => {
                 if !self.processing {
@@ -467,7 +467,7 @@ impl ElectrumSettings {
                             addr: self.addr.value.clone(),
                         }));
                     self.processing = true;
-                    return Command::perform(async move { daemon_config }, |cfg| {
+                    return Task::perform(async move { daemon_config }, |cfg| {
                         Message::LoadDaemonConfig(Box::new(cfg))
                     });
                 }
@@ -475,7 +475,7 @@ impl ElectrumSettings {
             view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
 
     fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
@@ -537,7 +537,7 @@ impl RescanSetting {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: view::SettingsEditMessage,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             view::SettingsEditMessage::FieldEdited(field, value) => {
                 self.invalid_date = false;
@@ -601,15 +601,15 @@ impl RescanSetting {
                     }
                 } else {
                     self.invalid_date = true;
-                    return Command::none();
+                    return Task::none();
                 };
                 if t > Utc::now().timestamp() {
                     self.future_date = true;
-                    return Command::none();
+                    return Task::none();
                 }
                 self.processing = true;
-                info!("Asking daemon to rescan with timestamp: {}", t);
-                return Command::perform(
+                info!("Asking deamon to rescan with timestamp: {}", t);
+                return Task::perform(
                     async move {
                         daemon.start_rescan(t.try_into().expect("t cannot be inferior to 0 otherwise genesis block timestamp is chosen"))
                             .await
@@ -620,7 +620,7 @@ impl RescanSetting {
             }
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
 
     fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {

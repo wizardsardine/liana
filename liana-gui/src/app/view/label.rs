@@ -28,7 +28,7 @@ pub fn label_editable(
                     )
                 )
                 .spacing(5)
-                .align_items(Alignment::Center),
+                .align_y(Alignment::Center),
             )
             .into();
         }
@@ -61,7 +61,7 @@ pub fn label_editing(
             button::secondary(None, "Cancel").on_press(view::message::LabelMessage::Cancel)
         )
         .spacing(5)
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
     .into();
     e.map(move |msg| view::Message::Label(labelled.clone(), msg))

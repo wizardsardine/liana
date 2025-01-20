@@ -21,13 +21,13 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
         "Choose wallet type",
         Column::new()
             .max_width(800.0)
-            .align_items(Alignment::Start)
+            .align_x(Alignment::Start)
             .push(
                 Button::new(
                     Column::new()
-                        .align_items(Alignment::Start)
+                        .align_x(Alignment::Start)
                         .push(h3("Simple inheritance"))
-                        .push(p2_regular("Two keys required, one for yourself to spend and another for your heir.").style(color::GREY_2))
+                        .push(p2_regular("Two keys required, one for yourself to spend and another for your heir.").color(color::GREY_2))
                         .width(Length::Fill)
                 )
                 .padding(15)
@@ -35,15 +35,15 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                         Message::SelectDescriptorTemplate(
                             context::DescriptorTemplate::SimpleInheritance,
                         )
-                ).style(theme::Button::Secondary)
+                ).style(theme::button::secondary)
                 .width(Length::Fill),
             )
             .push(
                 Button::new(
                     Column::new()
-                        .align_items(Alignment::Start)
+                        .align_x(Alignment::Start)
                         .push(h3("Expanding multisig"))
-                        .push(p2_regular("Two keys required to spend, with an extra key as a backup.").style(color::GREY_2))
+                        .push(p2_regular("Two keys required to spend, with an extra key as a backup.").color(color::GREY_2))
                         .width(Length::Fill)
                 )
                 .padding(15)
@@ -51,15 +51,15 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                         Message::SelectDescriptorTemplate(
                             context::DescriptorTemplate::MultisigSecurity,
                         )
-                ).style(theme::Button::Secondary)
+                ).style(theme::button::secondary)
                 .width(Length::Fill),
             )
             .push(
                 Button::new(
                     Column::new()
-                        .align_items(Alignment::Start)
+                        .align_x(Alignment::Start)
                         .push(h3("Build your own"))
-                        .push(p2_regular("Create a custom setup that fits all your needs.").style(color::GREY_2))
+                        .push(p2_regular("Create a custom setup that fits all your needs.").color(color::GREY_2))
                         .width(Length::Fill)
                 )
                 .padding(15)
@@ -67,7 +67,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                         Message::SelectDescriptorTemplate(
                             context::DescriptorTemplate::Custom,
                         )
-                ).style(theme::Button::Secondary)
+                ).style(theme::button::secondary)
                 .width(Length::Fill),
             )
             .spacing(20),

@@ -102,18 +102,18 @@ fn render_amount<'a, T: 'a>(
 
     let mut child_after = text(after).size(size).bold();
     if let Some(color_after) = color_after {
-        child_after = child_after.style(color_after);
+        child_after = child_after.color(color_after);
     }
     let row = Row::new()
-        .push(text(before).size(size).style(color_before))
+        .push(text(before).size(size).color(color_before))
         .push(child_after);
 
     Row::with_children(vec![
         row.into(),
-        text("BTC").size(size).style(color_before).into(),
+        text("BTC").size(size).color(color_before).into(),
     ])
     .spacing(spacing)
-    .align_items(iced::Alignment::Center)
+    .align_y(iced::Alignment::Center)
 }
 
 // Build the rendering elements for displaying a Bitcoin amount.
@@ -121,11 +121,11 @@ fn render_unconfirmed_amount<'a, T: 'a>(amount: String, size: u16) -> Row<'a, T>
     let spacing = if size > P1_SIZE { 10 } else { 5 };
 
     Row::with_children(vec![
-        text(amount).size(size).style(color::GREY_3).into(),
-        text("BTC").size(size).style(color::GREY_3).into(),
+        text(amount).size(size).color(color::GREY_3).into(),
+        text("BTC").size(size).color(color::GREY_3).into(),
     ])
     .spacing(spacing)
-    .align_items(iced::Alignment::Center)
+    .align_y(iced::Alignment::Center)
 }
 
 #[cfg(test)]

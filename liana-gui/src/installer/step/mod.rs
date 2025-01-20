@@ -22,7 +22,7 @@ pub use share_xpubs::ShareXpubs;
 
 use std::path::PathBuf;
 
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 
 use liana_ui::widget::*;
 
@@ -33,8 +33,8 @@ use crate::{
 };
 
 pub trait Step {
-    fn update(&mut self, _hws: &mut HardwareWallets, _message: Message) -> Command<Message> {
-        Command::none()
+    fn update(&mut self, _hws: &mut HardwareWallets, _message: Message) -> Task<Message> {
+        Task::none()
     }
     fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
         Subscription::none()
@@ -47,8 +47,8 @@ pub trait Step {
     ) -> Element<'a, Message>;
 
     fn load_context(&mut self, _ctx: &Context) {}
-    fn load(&self) -> Command<Message> {
-        Command::none()
+    fn load(&self) -> Task<Message> {
+        Task::none()
     }
     fn skip(&self, _ctx: &Context) -> bool {
         false
@@ -88,14 +88,14 @@ impl Step for Final {
     fn load_context(&mut self, ctx: &Context) {
         self.internal_bitcoind.clone_from(&ctx.internal_bitcoind);
     }
-    fn load(&self) -> Command<Message> {
+    fn load(&self) -> Task<Message> {
         if !self.generating && self.config_path.is_none() {
-            Command::perform(async {}, |_| Message::Install)
+            Task::perform(async {}, |_| Message::Install)
         } else {
-            Command::none()
+            Task::none()
         }
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
             Message::Installed(res) => {
                 self.generating = false;
@@ -107,9 +107,11 @@ impl Step for Final {
                     Ok(path) => {
                         self.config_path = Some(path.clone());
                         let internal_bitcoind = self.internal_bitcoind.clone();
-                        return Command::perform(async {}, move |_| {
-                            Message::Exit(path.clone(), internal_bitcoind)
-                        });
+                        let path = path.clone();
+                        return Task::perform(
+                            async { (path, internal_bitcoind) },
+                            |(path, internal_bitcoind)| Message::Exit(path, internal_bitcoind),
+                        );
                     }
                 }
             }
@@ -120,7 +122,7 @@ impl Step for Final {
             }
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
 
     fn view<'a>(

@@ -12,39 +12,39 @@ use iced::{
 
 use chrono::{DateTime, Local, Utc};
 
-pub fn unconfirmed_outgoing_event<'a, T: Clone + 'a>(
-    label: Option<Text<'a>>,
+pub fn unconfirmed_outgoing_event<T: Clone + 'static>(
+    label: Option<Text<'static>>,
     amount: &Amount,
     msg: T,
-) -> Container<'a, T> {
+) -> Container<'static, T> {
     Container::new(
         button(
             row!(
                 row!(badge::spend(), Column::new().push_maybe(label),)
                     .spacing(10)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .width(Length::Fill),
                 badge::unconfirmed(),
                 row!(text::p1_regular("-"), amount::amount(amount))
                     .spacing(5)
-                    .align_items(Alignment::Center),
+                    .align_y(Alignment::Center),
             )
-            .align_items(Alignment::Center)
+            .align_y(Alignment::Center)
             .padding(5)
             .spacing(20),
         )
         .on_press(msg)
-        .style(theme::Button::TransparentBorder),
+        .style(theme::button::transparent_border),
     )
-    .style(theme::Container::Card(theme::Card::Simple))
+    .style(theme::card::simple)
 }
 
-pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
-    label: Option<Text<'a>>,
+pub fn confirmed_outgoing_event<T: Clone + 'static>(
+    label: Option<Text<'static>>,
     date: DateTime<Utc>,
     amount: &Amount,
     msg: T,
-) -> Container<'a, T> {
+) -> Container<'static, T> {
     Container::new(
         button(
             row!(
@@ -56,59 +56,59 @@ pub fn confirmed_outgoing_event<'a, T: Clone + 'a>(
                                 .format("%b. %d, %Y - %T")
                                 .to_string()
                         )
-                        .style(color::GREY_3)
+                        .color(color::GREY_3)
                     )
                 )
                 .spacing(10)
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
                 .width(Length::Fill),
                 row!(text::p1_regular("-"), amount::amount(amount))
                     .spacing(5)
-                    .align_items(Alignment::Center),
+                    .align_y(Alignment::Center),
             )
-            .align_items(Alignment::Center)
+            .align_y(Alignment::Center)
             .padding(5)
             .spacing(20),
         )
         .on_press(msg)
-        .style(theme::Button::TransparentBorder),
+        .style(theme::button::transparent_border),
     )
-    .style(theme::Container::Card(theme::Card::Simple))
+    .style(theme::card::simple)
 }
 
-pub fn unconfirmed_incoming_event<'a, T: Clone + 'a>(
-    label: Option<Text<'a>>,
+pub fn unconfirmed_incoming_event<T: Clone + 'static>(
+    label: Option<Text<'static>>,
     amount: &Amount,
     msg: T,
-) -> Container<'a, T> {
+) -> Container<'static, T> {
     Container::new(
         button(
             row!(
                 row!(badge::receive(), Column::new().push_maybe(label))
                     .spacing(10)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .width(Length::Fill),
                 badge::unconfirmed(),
                 row!(text::p1_regular("+"), amount::amount(amount))
                     .spacing(5)
-                    .align_items(Alignment::Center),
+                    .align_y(Alignment::Center),
             )
-            .align_items(Alignment::Center)
+            .align_y(Alignment::Center)
             .padding(5)
             .spacing(20),
         )
         .on_press(msg)
-        .style(theme::Button::TransparentBorder),
+        .style(theme::button::transparent_border),
     )
-    .style(theme::Container::Card(theme::Card::Simple))
+    .style(theme::card::simple)
 }
 
-pub fn confirmed_incoming_event<'a, T: Clone + 'a>(
-    label: Option<Text<'a>>,
+pub fn confirmed_incoming_event<T: Clone + 'static>(
+    label: Option<Text<'static>>,
     date: DateTime<Utc>,
     amount: &Amount,
     msg: T,
-) -> Container<'a, T> {
+) -> Container<'static, T> {
     Container::new(
         button(
             row!(
@@ -120,22 +120,22 @@ pub fn confirmed_incoming_event<'a, T: Clone + 'a>(
                                 .format("%b. %d, %Y - %T")
                                 .to_string()
                         )
-                        .style(color::GREY_3)
+                        .color(color::GREY_3)
                     )
                 )
                 .spacing(10)
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
                 .width(Length::Fill),
                 row!(text::p1_regular("+"), amount::amount(amount))
                     .spacing(5)
-                    .align_items(Alignment::Center),
+                    .align_y(Alignment::Center),
             )
-            .align_items(Alignment::Center)
+            .align_y(Alignment::Center)
             .padding(5)
             .spacing(20),
         )
         .on_press(msg)
-        .style(theme::Button::TransparentBorder),
+        .style(theme::button::transparent_border),
     )
-    .style(theme::Container::Card(theme::Card::Simple))
+    .style(theme::card::simple)
 }

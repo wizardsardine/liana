@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::bip32::Xpub;
 use liana::miniscript::{
     bitcoin::{
@@ -137,8 +137,8 @@ impl EditXpubModal {
         }
     }
 
-    pub fn load(&self) -> Command<Message> {
-        Command::none()
+    pub fn load(&self) -> Task<Message> {
+        Task::none()
     }
 }
 
@@ -147,7 +147,7 @@ impl super::DescriptorEditModal for EditXpubModal {
         self.processing
     }
 
-    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         // Reset these fields.
         // the function will setup them again if something is wrong
         self.duplicate_master_fg = false;
@@ -167,10 +167,19 @@ impl super::DescriptorEditModal for EditXpubModal {
                     let device_version = version.clone();
                     let fingerprint = *fingerprint;
                     let device_kind = *kind;
+                    let device_cloned = device.clone();
                     let network = self.network;
-                    return Command::perform(
-                        get_extended_pubkey(device.clone(), fingerprint, self.network),
-                        move |res| {
+                    return Task::perform(
+                        async move {
+                            (
+                                device_version,
+                                device_kind,
+                                fingerprint,
+                                network,
+                                get_extended_pubkey(device_cloned, fingerprint, network).await,
+                            )
+                        },
+                        |(device_version, device_kind, fingerprint, network, res)| {
                             Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
                                 message::ImportKeyModal::FetchedKey(match res {
                                     Err(e) => Err(e),
@@ -306,7 +315,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                             self.duplicate_master_fg = true;
                         } else {
                             let coordinate = self.keys_coordinate.clone();
-                            return Command::perform(
+                            return Task::perform(
                                 async move { (coordinate, key) },
                                 move |(coordinate, key)| {
                                     message::DefineDescriptor::KeysEdited(coordinate, key)
@@ -326,7 +335,7 @@ impl super::DescriptorEditModal for EditXpubModal {
             },
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
 
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {

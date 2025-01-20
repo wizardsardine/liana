@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
@@ -59,7 +59,7 @@ pub trait Step {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message>;
+    ) -> Task<Message>;
     fn apply(&self, _draft: &mut TransactionDraft) {}
     fn interrupt(&mut self) {}
     fn load(&mut self, _draft: &TransactionDraft) {}
@@ -394,7 +394,7 @@ impl Step for DefineSpend {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::CreateSpend(msg)) => {
                 match msg {
@@ -413,7 +413,7 @@ impl Step for DefineSpend {
                                 .as_slice(),
                             self.timelock,
                         );
-                        return Command::none();
+                        return Task::none();
                     }
                     view::CreateSpendMessage::AddRecipient => {
                         self.recipients.push(Recipient::default());
@@ -483,7 +483,7 @@ impl Step for DefineSpend {
                         }
                         let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
                         self.warning = None;
-                        return Command::perform(
+                        return Task::perform(
                             async move {
                                 daemon
                                     .create_spend_tx(&inputs, &outputs, feerate_vb, None)
@@ -535,7 +535,7 @@ impl Step for DefineSpend {
             Message::Psbt(res) => match res {
                 Ok(psbt) => {
                     self.generated = Some(psbt);
-                    return Command::perform(async {}, |_| Message::View(view::Message::Next));
+                    return Task::perform(async {}, |_| Message::View(view::Message::Next));
                 }
                 Err(e) => self.warning = Some(e),
             },
@@ -577,7 +577,7 @@ impl Step for DefineSpend {
             },
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
 
     fn apply(&self, draft: &mut TransactionDraft) {
@@ -799,11 +799,11 @@ impl Step for SaveSpend {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         if let Some((psbt_state, _)) = &mut self.spend {
             psbt_state.update(daemon, cache, message)
         } else {
-            Command::none()
+            Task::none()
         }
     }
 

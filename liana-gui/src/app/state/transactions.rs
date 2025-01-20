@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use iced::Command;
+use iced::Task;
 use liana::{
     miniscript::bitcoin::{OutPoint, Txid},
     spend::{SpendCreationError, MAX_FEERATE},
@@ -110,7 +110,7 @@ impl State for TransactionsPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::HistoryTransactions(res) => match res {
                 Err(e) => self.warning = Some(e),
@@ -186,9 +186,9 @@ impl State for TransactionsPanel {
                                 )
                             })
                             .collect();
-                        return Command::perform(
+                        return Task::perform(
                             async move {
-                                daemon
+                                let res = daemon
                                     .list_coins(&[CoinStatus::Spending], &outpoints)
                                     .await
                                     .map(|res| {
@@ -197,9 +197,10 @@ impl State for TransactionsPanel {
                                             .filter_map(|c| c.spend_info.map(|info| info.txid))
                                             .collect()
                                     })
-                                    .map_err(|e| e.into())
+                                    .map_err(|e| e.into());
+                                (Box::new(tx), is_cancel, res)
                             },
-                            move |res| Message::RbfModal(Box::new(tx), is_cancel, res),
+                            |(tx, is_cancel, res)| Message::RbfModal(tx, is_cancel, res),
                         );
                     }
                 }
@@ -230,7 +231,7 @@ impl State for TransactionsPanel {
                     let daemon = daemon.clone();
                     let last_tx_date = last.time.unwrap();
                     self.processing = true;
-                    return Command::perform(
+                    return Task::perform(
                         async move {
                             let mut limit = HISTORY_EVENT_PAGE_SIZE;
                             let mut txs =
@@ -282,18 +283,18 @@ impl State for TransactionsPanel {
                 return match &mut self.modal {
                     TransactionsModal::CreateRbf(modal) => modal.update(daemon, _cache, message),
                     TransactionsModal::Export(modal) => modal.update(message),
-                    TransactionsModal::None => Command::none(),
+                    TransactionsModal::None => Task::none(),
                 };
             }
         };
-        Command::none()
+        Task::none()
     }
 
     fn reload(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         self.selected_tx = None;
         let now: u32 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -301,7 +302,7 @@ impl State for TransactionsPanel {
             .as_secs()
             .try_into()
             .unwrap();
-        Command::batch(vec![Command::perform(
+        Task::batch(vec![Task::perform(
             async move {
                 let mut txs = daemon
                     .list_history_txs(0, now, HISTORY_EVENT_PAGE_SIZE)
@@ -395,7 +396,7 @@ impl CreateRbfModal {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::FeerateEdited(s))) => {
                 self.warning = None;
@@ -424,14 +425,14 @@ impl CreateRbfModal {
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Confirm)) => {
                 self.warning = None;
                 self.processing = true;
-                return Command::perform(
+                return Task::perform(
                     rbf(daemon, self.tx.clone(), self.is_cancel, self.feerate_vb),
                     Message::RbfPsbt,
                 );
             }
             _ => {}
         }
-        Command::none()
+        Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<view::Message> {
         let modal = Modal::new(

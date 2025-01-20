@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::fmt::Display;
 
 use crate::{
@@ -20,41 +19,41 @@ pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'
                 Row::new()
                     .push(
                         Container::new(
-                            text::p1_bold(message_clone.to_string()).style(color::LIGHT_BLACK),
+                            text::p1_bold(message_clone.to_string()).color(color::LIGHT_BLACK),
                         )
                         .width(Length::Fill),
                     )
                     .push(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(10)
-                            .push(text::p1_bold("Learn more").style(color::LIGHT_BLACK))
-                            .push(icon::collapse_icon().style(color::LIGHT_BLACK)),
+                            .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                            .push(icon::collapse_icon().color(color::LIGHT_BLACK)),
                     ),
             )
-            .style(theme::Button::Transparent)
+            .style(theme::button::transparent)
         },
         move || {
             Button::new(
                 Row::new()
                     .push(
-                        Container::new(text::p1_bold(message.to_owned()).style(color::LIGHT_BLACK))
+                        Container::new(text::p1_bold(message.to_owned()).color(color::LIGHT_BLACK))
                             .width(Length::Fill),
                     )
                     .push(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(10)
-                            .push(text::p1_bold("Learn more").style(color::LIGHT_BLACK))
-                            .push(icon::collapsed_icon().style(color::LIGHT_BLACK)),
+                            .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                            .push(icon::collapsed_icon().color(color::LIGHT_BLACK)),
                     ),
             )
-            .style(theme::Button::Transparent)
+            .style(theme::button::transparent)
         },
         move || Element::<'a, T>::from(text::p2_regular(error.to_owned())),
     )))
     .padding(15)
-    .style(theme::Container::Card(theme::Card::Warning))
+    .style(theme::card::warning)
     .width(Length::Fill)
 }
 
@@ -62,14 +61,14 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
+    alias: Option<&'a str>,
 ) -> Container<'a, T> {
     container(
         row(vec![
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push_maybe(alias.map(text::p1_bold))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -86,9 +85,9 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
             ])
             .into(),
         ])
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
-    .style(theme::Container::Notification(theme::Notification::Pending))
+    .style(theme::notification::pending)
     .padding(10)
 }
 
@@ -103,40 +102,40 @@ pub fn processing_hardware_wallet_error<'a, T: 'a + Clone>(
                 Row::new()
                     .push(
                         Container::new(
-                            text::p1_bold(message_clone.to_string()).style(color::LIGHT_BLACK),
+                            text::p1_bold(message_clone.to_string()).color(color::LIGHT_BLACK),
                         )
                         .width(Length::Fill),
                     )
                     .push(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(10)
-                            .push(text::p1_bold("Learn more").style(color::LIGHT_BLACK))
-                            .push(icon::collapse_icon().style(color::LIGHT_BLACK)),
+                            .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                            .push(icon::collapse_icon().color(color::LIGHT_BLACK)),
                     ),
             )
-            .style(theme::Button::Transparent)
+            .style(theme::button::transparent)
         },
         move || {
             Button::new(
                 Row::new()
                     .push(
-                        Container::new(text::p1_bold(message.to_owned()).style(color::LIGHT_BLACK))
+                        Container::new(text::p1_bold(message.to_owned()).color(color::LIGHT_BLACK))
                             .width(Length::Fill),
                     )
                     .push(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(10)
-                            .push(text::p1_bold("Learn more").style(color::LIGHT_BLACK))
-                            .push(icon::collapsed_icon().style(color::LIGHT_BLACK)),
+                            .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                            .push(icon::collapsed_icon().color(color::LIGHT_BLACK)),
                     ),
             )
-            .style(theme::Button::Transparent)
+            .style(theme::button::transparent)
         },
         move || Element::<'a, T>::from(text::p2_regular(error.to_owned())),
     )))
     .padding(10)
-    .style(theme::Container::Notification(theme::Notification::Error))
+    .style(theme::notification::error)
     .width(Length::Fill)
 }

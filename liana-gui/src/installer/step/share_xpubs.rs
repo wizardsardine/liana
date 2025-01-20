@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Network,
@@ -85,7 +85,7 @@ impl ShareXpubs {
 impl Step for ShareXpubs {
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
             Message::ImportXpub(fg, res) => {
                 if let Some(hw_xpubs) = self.hw_xpubs.iter_mut().find(|x| x.fingerprint == fg) {
@@ -133,7 +133,7 @@ impl Step for ShareXpubs {
                             error: None,
                         });
                     }
-                    return Command::perform(
+                    return Task::perform(
                         async move {
                             (
                                 fingerprint,
@@ -146,7 +146,7 @@ impl Step for ShareXpubs {
             }
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
 
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {

@@ -26,34 +26,34 @@ pub fn inheritance_template_description(progress: (usize, usize)) -> Element<'st
         None,
         "Introduction",
         Column::new()
-            .align_items(Alignment::Start)
+            .align_x(Alignment::Start)
             .push(h3("Simple inheritance wallet"))
             .max_width(800.0)
             .push(Container::new(
                 p1_regular("For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key.")
-                .style(color::GREY_2)
-                .horizontal_alignment(alignment::Horizontal::Left)
+                .color(color::GREY_2)
+                .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(Row::new()
                 .spacing(30)
                 .push(
                     Row::new()
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .spacing(10)
-                    .push(icon::round_key_icon().size(H3_SIZE).style(color::GREEN))
+                    .push(icon::round_key_icon().size(H3_SIZE).color(color::GREEN))
                     .push(p1_regular("Primary key").bold())
                 ).push(
                     Row::new()
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .spacing(10)
-                        .push(icon::round_key_icon().size(H3_SIZE).style(color::WHITE))
+                        .push(icon::round_key_icon().size(H3_SIZE).color(color::WHITE))
                         .push(p1_regular("Inheritance key").bold())
             ))
             .push(Container::new(
                 p1_regular("You will always be able to spend using your Primary Key.
 After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds.")
-                .style(color::GREY_2)
-                .horizontal_alignment(alignment::Horizontal::Left)
+                .color(color::GREY_2)
+                .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::inheritance_template_description().width(Length::Fill))
             .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
@@ -77,28 +77,28 @@ pub fn inheritance_template<'a>(
         None,
         "Set keys",
         Column::new()
-            .align_items(Alignment::Start)
+            .align_x(Alignment::Start)
             .max_width(1000.0)
             .push(collapse::Collapse::new(
                 || {
                     Button::new(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(10)
                             .push(text("Advanced settings").small().bold())
                             .push(icon::collapse_icon()),
                     )
-                    .style(theme::Button::Transparent)
+                    .style(theme::button::transparent)
                 },
                 || {
                     Button::new(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(10)
                             .push(text("Advanced settings").small().bold())
                             .push(icon::collapsed_icon()),
                     )
-                    .style(theme::Button::Transparent)
+                    .style(theme::button::transparent)
                 },
                 move || define_descriptor_advanced_settings(use_taproot),
             ))

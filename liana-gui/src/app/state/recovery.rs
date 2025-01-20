@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use iced::Command;
+use iced::Task;
 
 use liana::miniscript::bitcoin::{
     bip32::{DerivationPath, Fingerprint},
@@ -101,7 +101,7 @@ impl State for RecoveryPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::Coins(res) => match res {
                 Err(e) => self.warning = Some(e),
@@ -153,7 +153,7 @@ impl State for RecoveryPanel {
                         .get(self.selected_path.expect("A path must be selected"))
                         .map(|p| p.sequence);
                     let network = cache.network;
-                    return Command::perform(
+                    return Task::perform(
                         async move {
                             let psbt = daemon
                                 .create_recovery(address, feerate_vb, sequence)
@@ -192,14 +192,14 @@ impl State for RecoveryPanel {
                 }
             }
         };
-        Command::none()
+        Task::none()
     }
 
     fn reload(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         let daemon = daemon.clone();
         self.wallet = wallet;
         self.selected_path = None;
@@ -207,7 +207,7 @@ impl State for RecoveryPanel {
         self.feerate = form::Value::default();
         self.recipient = form::Value::default();
         self.generated = None;
-        Command::perform(
+        Task::perform(
             async move {
                 daemon
                     .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])

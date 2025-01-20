@@ -3,7 +3,7 @@ mod step;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use iced::Command;
+use iced::Task;
 
 use liana::miniscript::bitcoin::{Network, OutPoint};
 use liana_ui::widget::Element;
@@ -88,7 +88,7 @@ impl State for CreateSpendPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         if matches!(message, Message::View(view::Message::Close)) {
             return redirect(Menu::PSBTs);
         }
@@ -114,18 +114,18 @@ impl State for CreateSpendPanel {
             return step.update(daemon, cache, message);
         }
 
-        Command::none()
+        Task::none()
     }
 
     fn reload(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
-        Command::batch(vec![
-            Command::perform(
+        Task::batch(vec![
+            Task::perform(
                 async move {
                     daemon1
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
@@ -135,7 +135,7 @@ impl State for CreateSpendPanel {
                 },
                 Message::Coins,
             ),
-            Command::perform(
+            Task::perform(
                 async move {
                     let coins = daemon
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])

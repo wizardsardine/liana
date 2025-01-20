@@ -10,7 +10,7 @@ use iced::{
     event::{self, Event},
     executor, keyboard,
     widget::{focus_next, focus_previous},
-    Application, Command, Settings, Size, Subscription,
+    Application, Settings, Size, Subscription, Task,
 };
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
@@ -152,10 +152,10 @@ impl Application for GUI {
         }
     }
 
-    fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Command<Self::Message>) {
+    fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Self::Message>) {
         let logger = Logger::setup(log_level.unwrap_or(LevelFilter::INFO));
         let mut cmds = font::loads();
-        cmds.push(Command::perform(ctrl_c(), |_| Message::CtrlC));
+        cmds.push(Task::perform(ctrl_c(), |_| Message::CtrlC));
         let state = match config {
             Config::Launcher(datadir_path) => {
                 let (launcher, command) = Launcher::new(datadir_path, None);
@@ -179,11 +179,11 @@ impl Application for GUI {
                 logger,
                 log_level,
             },
-            Command::batch(cmds),
+            Task::batch(cmds),
         )
     }
 
-    fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
+    fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match (&mut self.state, message) {
             (_, Message::CtrlC)
             | (_, Message::Event(iced::Event::Window(_, iced::window::Event::CloseRequested))) => {
@@ -374,7 +374,7 @@ impl Application for GUI {
             (State::App(i), Message::Run(msg)) => {
                 i.update(*msg).map(|msg| Message::Run(Box::new(msg)))
             }
-            _ => Command::none(),
+            _ => Task::none(),
         }
     }
 
@@ -433,7 +433,7 @@ pub fn create_app_with_remote_backend(
     datadir: PathBuf,
     network: bitcoin::Network,
     config: app::Config,
-) -> (app::App, iced::Command<app::Message>) {
+) -> (app::App, iced::Task<app::Message>) {
     let hws: Vec<HardwareWalletConfig> = wallet
         .metadata
         .ledger_hmacs

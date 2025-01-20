@@ -5,7 +5,7 @@ use std::convert::From;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iced::Command;
+use iced::Task;
 
 use liana_ui::{component::form, widget::Element};
 
@@ -55,7 +55,7 @@ impl State for SettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match &message {
             Message::View(view::Message::Settings(view::SettingsMessage::EditBitcoindSettings)) => {
                 self.setting = Some(
@@ -71,13 +71,13 @@ impl State for SettingsState {
                 self.setting
                     .as_mut()
                     .map(|s| s.reload(daemon, wallet))
-                    .unwrap_or_else(Command::none)
+                    .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(
                 view::SettingsMessage::EditRemoteBackendSettings,
             )) => {
                 self.setting = Some(BackendSettingsState::new().into());
-                Command::none()
+                Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::AboutSection)) => {
                 self.setting = Some(AboutSettingsState::default().into());
@@ -85,7 +85,7 @@ impl State for SettingsState {
                 self.setting
                     .as_mut()
                     .map(|s| s.reload(daemon, wallet))
-                    .unwrap_or_else(Command::none)
+                    .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditWalletSettings)) => {
                 self.setting = Some(
@@ -95,20 +95,20 @@ impl State for SettingsState {
                 self.setting
                     .as_mut()
                     .map(|s| s.reload(daemon, wallet))
-                    .unwrap_or_else(Command::none)
+                    .unwrap_or_else(Task::none)
             }
             Message::WalletUpdated(Ok(wallet)) => {
                 self.wallet = wallet.clone();
                 self.setting
                     .as_mut()
                     .map(|s| s.update(daemon, cache, message))
-                    .unwrap_or_else(Command::none)
+                    .unwrap_or_else(Task::none)
             }
             _ => self
                 .setting
                 .as_mut()
                 .map(|s| s.update(daemon, cache, message))
-                .unwrap_or_else(Command::none),
+                .unwrap_or_else(Task::none),
         }
     }
 
@@ -132,10 +132,10 @@ impl State for SettingsState {
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         self.setting = None;
         self.wallet = wallet;
-        Command::none()
+        Task::none()
     }
 }
 
@@ -161,7 +161,7 @@ impl State for AboutSettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         if let Message::Info(res) = message {
             match res {
                 Ok(info) => {
@@ -175,15 +175,15 @@ impl State for AboutSettingsState {
             }
         }
 
-        Command::none()
+        Task::none()
     }
 
     fn reload(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
-    ) -> Command<Message> {
-        Command::perform(
+    ) -> Task<Message> {
+        Task::perform(
             async move { daemon.get_info().await.map_err(|e| e.into()) },
             Message::Info,
         )
@@ -231,20 +231,20 @@ impl State for BackendSettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::Settings(
                 view::SettingsMessage::RemoteBackendSettings(message),
             )) => match message {
                 view::RemoteBackendSettingsMessage::SendInvitation => {
                     if !self.email_form.valid {
-                        return Command::none();
+                        return Task::none();
                     }
                     let email = self.email_form.value.clone();
                     self.processing = true;
                     self.success = false;
                     self.warning = None;
-                    Command::perform(
+                    Task::perform(
                         async move {
                             daemon.send_wallet_invitation(&email).await?;
                             Ok(())
@@ -262,7 +262,7 @@ impl State for BackendSettingsState {
                         self.email_form.value = email;
                         self.success = false;
                     }
-                    Command::none()
+                    Task::none()
                 }
             },
             Message::Updated(res) => {
@@ -274,9 +274,9 @@ impl State for BackendSettingsState {
                         self.warning = Some(e);
                     }
                 }
-                Command::none()
+                Task::none()
             }
-            _ => Command::none(),
+            _ => Task::none(),
         }
     }
 }

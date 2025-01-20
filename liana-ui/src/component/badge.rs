@@ -2,63 +2,33 @@ use iced::{widget::tooltip, Length};
 
 use crate::{component::text, icon, image, theme, widget::*};
 
-pub struct Badge {
-    icon: crate::widget::Text<'static>,
-    style: theme::Badge,
-}
-
-impl Badge {
-    pub fn new(icon: crate::widget::Text<'static>) -> Self {
-        Self {
-            icon,
-            style: theme::Badge::Standard,
-        }
-    }
-    pub fn style(self, style: theme::Badge) -> Self {
-        Self {
-            icon: self.icon,
-            style,
-        }
-    }
-}
-
-impl<'a, Message: 'a> From<Badge> for Element<'a, Message> {
-    fn from(badge: Badge) -> Element<'a, Message> {
-        Container::new(badge.icon.width(Length::Fixed(20.0)))
-            .width(Length::Fixed(40.0))
-            .height(Length::Fixed(40.0))
-            .style(theme::Container::Badge(badge.style))
-            .center_x()
-            .center_y()
-            .into()
-    }
+pub fn badge<T>(icon: crate::widget::Text<'static>) -> Container<'static, T> {
+    Container::new(icon.width(Length::Fixed(20.0)))
+        .style(theme::badge::simple)
+        .center_x(Length::Fixed(40.0))
+        .center_y(Length::Fixed(40.0))
 }
 
 pub fn receive<T>() -> Container<'static, T> {
     Container::new(icon::receive_icon().width(Length::Fixed(20.0)))
-        .width(Length::Fixed(40.0))
-        .height(Length::Fixed(40.0))
-        .style(theme::Container::Badge(theme::Badge::Standard))
-        .center_x()
-        .center_y()
+        .style(theme::badge::simple)
+        .style(theme::badge::simple)
+        .center_x(Length::Fixed(40.0))
+        .center_y(Length::Fixed(40.0))
 }
 
 pub fn cycle<T>() -> Container<'static, T> {
     Container::new(icon::arrow_repeat().width(Length::Fixed(20.0)))
-        .width(Length::Fixed(40.0))
-        .height(Length::Fixed(40.0))
-        .style(theme::Container::Badge(theme::Badge::Standard))
-        .center_x()
-        .center_y()
+        .style(theme::badge::simple)
+        .center_x(Length::Fixed(40.0))
+        .center_y(Length::Fixed(40.0))
 }
 
 pub fn spend<T>() -> Container<'static, T> {
     Container::new(icon::send_icon().width(Length::Fixed(20.0)))
-        .width(Length::Fixed(40.0))
-        .height(Length::Fixed(40.0))
-        .style(theme::Container::Badge(theme::Badge::Standard))
-        .center_x()
-        .center_y()
+        .style(theme::badge::simple)
+        .center_x(Length::Fixed(40.0))
+        .center_y(Length::Fixed(40.0))
 }
 
 pub fn coin<T>() -> Container<'static, T> {
@@ -67,11 +37,9 @@ pub fn coin<T>() -> Container<'static, T> {
             .height(Length::Fixed(25.0))
             .width(Length::Fixed(25.0)),
     )
-    .width(Length::Fixed(40.0))
-    .height(Length::Fixed(40.0))
-    .style(theme::Container::Badge(theme::Badge::Standard))
-    .center_x()
-    .center_y()
+    .style(theme::badge::simple)
+    .center_x(Length::Fixed(40.0))
+    .center_y(Length::Fixed(40.0))
 }
 
 pub fn recovery<'a, T: 'a>() -> Container<'a, T> {
@@ -108,11 +76,10 @@ pub fn badge_pill<'a, T: 'a>(label: &'a str, tooltip: &'a str) -> Container<'a, 
         tooltip::Tooltip::new(
             Container::new(text::p2_regular(label))
                 .padding(10)
-                .center_x()
-                .style(theme::Container::Pill(theme::Pill::Simple)),
+                .center_x(Length::Shrink)
+                .style(theme::pill::simple),
             tooltip,
             tooltip::Position::Top,
         )
-        .style(theme::Container::Card(theme::Card::Simple))
     })
 }

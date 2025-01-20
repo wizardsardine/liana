@@ -108,7 +108,7 @@ where
         _viewport: &Rectangle,
     ) -> event::Status {
         let state = tree.state.downcast_mut::<CarouselState>();
-        if let Event::Window(_, window::Event::RedrawRequested(now)) = event {
+        if let Event::Window(window::Event::RedrawRequested(now)) = event {
             if now.duration_since(state.last_transition) > self.interval {
                 state.last_transition = now;
                 state.current = (state.current + 1) % self.children.len();
@@ -172,7 +172,7 @@ pub fn typing_text_carousel<'a, Message, Theme>(
     text_builder: impl Fn(&'a str) -> iced::widget::Text<'a, Theme, Renderer>,
 ) -> Carousel<'a, Message, Theme>
 where
-    Theme: 'a + iced::widget::text::StyleSheet,
+    Theme: 'a + iced::widget::text::Catalog,
 {
     let mut children = Vec::new();
     if show_empty {

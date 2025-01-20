@@ -13,7 +13,7 @@ use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{Amount, OutPoint};
 use liana_ui::widget::*;
 use lianad::commands::CoinStatus;
@@ -50,8 +50,8 @@ pub trait State {
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         _message: Message,
-    ) -> Command<Message> {
-        Command::none()
+    ) -> Task<Message> {
+        Task::none()
     }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
@@ -61,14 +61,14 @@ pub trait State {
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
-    ) -> Command<Message> {
-        Command::none()
+    ) -> Task<Message> {
+        Task::none()
     }
 }
 
 /// redirect to another state with a message menu
-pub fn redirect(menu: Menu) -> Command<Message> {
-    Command::perform(async { menu }, |menu| {
+pub fn redirect(menu: Menu) -> Task<Message> {
+    Task::perform(async { menu }, |menu| {
         Message::View(view::Message::Menu(menu))
     })
 }
@@ -201,7 +201,7 @@ impl State for Home {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::Coins(res) => match res {
                 Err(e) => self.warning = Some(e),
@@ -277,7 +277,7 @@ impl State for Home {
                 }
             },
             Message::View(view::Message::SelectPayment(outpoint)) => {
-                return Command::perform(
+                return Task::perform(
                     async move {
                         let tx = daemon.get_history_txs(&[outpoint.txid]).await?.remove(0);
                         Ok((tx, outpoint.vout as usize))
@@ -318,7 +318,7 @@ impl State for Home {
                     let daemon = daemon.clone();
                     let last_event_date = last.time.unwrap();
                     self.processing = true;
-                    return Command::perform(
+                    return Task::perform(
                         async move {
                             let last_event_date = last_event_date.timestamp() as u32;
                             let mut limit = HISTORY_EVENT_PAGE_SIZE;
@@ -359,20 +359,20 @@ impl State for Home {
             }
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
 
     fn reload(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         // If the wallet is syncing, we expect it to finish soon and so better to wait for
         // updated data before reloading. Besides, if the wallet is syncing, the DB may be
         // locked if the poller is running and we wouldn't be able to reload data until
         // syncing completes anyway.
         if self.sync_status.wallet_is_syncing() {
-            return Command::none();
+            return Task::none();
         }
         self.selected_event = None;
         self.wallet = wallet;
@@ -383,8 +383,8 @@ impl State for Home {
             .as_secs()
             .try_into()
             .unwrap();
-        Command::batch(vec![
-            Command::perform(
+        Task::batch(vec![
+            Task::perform(
                 async move {
                     let mut payments = daemon
                         .list_confirmed_payments(0, now, HISTORY_EVENT_PAGE_SIZE)
@@ -397,7 +397,7 @@ impl State for Home {
                 },
                 Message::Payments,
             ),
-            Command::perform(
+            Task::perform(
                 async move {
                     daemon2
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])

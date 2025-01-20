@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use iced::{Alignment, Command, Length};
+use iced::{Alignment, Length, Task};
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
@@ -116,7 +116,7 @@ pub enum ConnectionStep {
 }
 
 impl LianaLiteLogin {
-    pub fn new(datadir: PathBuf, network: Network, settings: Settings) -> (Self, Command<Message>) {
+    pub fn new(datadir: PathBuf, network: Network, settings: Settings) -> (Self, Task<Message>) {
         match settings
             .wallets
             .first()
@@ -137,7 +137,7 @@ impl LianaLiteLogin {
                     auth_error: None,
                     processing: true,
                 },
-                Command::none(),
+                Task::none(),
             ),
             Ok(auth_config) => (
                 Self {
@@ -149,7 +149,7 @@ impl LianaLiteLogin {
                     auth_error: None,
                     processing: true,
                 },
-                Command::perform(
+                Task::perform(
                     async move {
                         let service_config = super::client::get_service_config(network)
                             .await
@@ -174,7 +174,7 @@ impl LianaLiteLogin {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Command<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match &mut self.step {
             ConnectionStep::CheckingAuthFile => {
                 if let Message::Connected(res) = message {
@@ -184,7 +184,7 @@ impl LianaLiteLogin {
                             self.auth_error = Some("No wallet found for the given email");
                         }
                         Ok(BackendState::WalletExists(client, wallet)) => {
-                            return Command::perform(async move { (client, wallet) }, |(c, w)| {
+                            return Task::perform(async move { (client, wallet) }, |(c, w)| {
                                 Message::Run(Ok((c, w)))
                             });
                         }
@@ -216,7 +216,7 @@ impl LianaLiteLogin {
                         self.processing = true;
                         self.connection_error = None;
                         self.auth_error = None;
-                        return Command::perform(
+                        return Task::perform(
                             async move {
                                 let config = super::client::get_service_config(network)
                                     .await
@@ -279,7 +279,7 @@ impl LianaLiteLogin {
                     self.processing = true;
                     self.connection_error = None;
                     self.auth_error = None;
-                    return Command::perform(
+                    return Task::perform(
                         async move {
                             client.resend_otp().await?;
                             Ok(())
@@ -309,7 +309,7 @@ impl LianaLiteLogin {
                         self.auth_error = None;
                         let wallet_id = self.wallet_id.clone();
                         let network = self.network;
-                        return Command::perform(
+                        return Task::perform(
                             async move {
                                 connect(client, otp, wallet_id, backend_api_url, network).await
                             },
@@ -322,12 +322,12 @@ impl LianaLiteLogin {
                     self.processing = false;
                     match res {
                         Ok(BackendState::NoWallet(client)) => {
-                            return Command::perform(async move { Some(client) }, Message::Install);
+                            return Task::perform(async move { Some(client) }, Message::Install);
                         }
                         Ok(BackendState::WalletExists(client, wallet)) => {
                             let datadir = self.datadir.clone();
                             let network = self.network;
-                            return Command::perform(
+                            return Task::perform(
                                 async move {
                                     update_wallet_auth_settings(
                                         datadir,
@@ -366,7 +366,7 @@ impl LianaLiteLogin {
             },
         }
 
-        Command::none()
+        Task::none()
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -374,10 +374,10 @@ impl LianaLiteLogin {
             Container::new(
                 Column::new()
                     .spacing(100)
-                    .align_items(Alignment::Center)
+                    .align_x(Alignment::Center)
                     .push(
                         Column::new()
-                            .align_items(Alignment::Center)
+                            .align_x(Alignment::Center)
                             .spacing(20)
                             .width(Length::Fill)
                             .push(h2("Liana Connect"))
@@ -391,7 +391,7 @@ impl LianaLiteLogin {
                                             .spacing(20)
                                             .push_maybe(
                                                 self.auth_error
-                                                    .map(|e| text(e).style(color::ORANGE)),
+                                                    .map(|e| text(e).color(color::ORANGE)),
                                             )
                                             .push(
                                                 form::Form::new_trimmed("email", email, |msg| {
@@ -412,7 +412,7 @@ impl LianaLiteLogin {
                                             .push(text("An authentication was send to your email"))
                                             .push_maybe(
                                                 self.auth_error
-                                                    .map(|e| text(e).style(color::ORANGE)),
+                                                    .map(|e| text(e).color(color::ORANGE)),
                                             )
                                             .spacing(20)
                                             .push(
@@ -456,10 +456,8 @@ impl LianaLiteLogin {
                     }),
             )
             .padding(50)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x()
-            .center_y(),
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
         )
         .map(Message::View);
 

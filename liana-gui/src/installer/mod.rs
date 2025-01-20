@@ -4,7 +4,7 @@ mod prompt;
 mod step;
 mod view;
 
-use iced::{clipboard, Command, Subscription};
+use iced::{clipboard, Subscription, Task};
 use liana::miniscript::bitcoin::{self, Network};
 use liana_ui::{
     component::network_banner,
@@ -64,13 +64,13 @@ pub struct Installer {
 }
 
 impl Installer {
-    fn previous(&mut self) -> Command<Message> {
+    fn previous(&mut self) -> Task<Message> {
         self.hws.reset_watch_list();
         let network = self.network;
         if self.current > 0 {
             self.current -= 1;
         } else {
-            return Command::perform(async move { network }, Message::BackToLauncher);
+            return Task::perform(async move { network }, Message::BackToLauncher);
         }
         // skip the previous step according to the current context.
         while self
@@ -82,14 +82,14 @@ impl Installer {
             if self.current > 0 {
                 self.current -= 1;
             } else {
-                return Command::perform(async move { network }, Message::BackToLauncher);
+                return Task::perform(async move { network }, Message::BackToLauncher);
             }
         }
 
         if let Some(step) = self.steps.get(self.current) {
             step.revert(&mut self.context)
         }
-        Command::none()
+        Task::none()
     }
 
     pub fn new(
@@ -97,7 +97,7 @@ impl Installer {
         network: bitcoin::Network,
         remote_backend: Option<BackendClient>,
         user_flow: UserFlow,
-    ) -> (Installer, Command<Message>) {
+    ) -> (Installer, Task<Message>) {
         let signer = Arc::new(Mutex::new(Signer::generate(network).unwrap()));
         let context = Context::new(
             network,
@@ -197,7 +197,7 @@ impl Installer {
         }
     }
 
-    fn next(&mut self) -> Command<Message> {
+    fn next(&mut self) -> Task<Message> {
         self.hws.reset_watch_list();
         let current_step = self
             .steps
@@ -209,7 +209,7 @@ impl Installer {
             } else {
                 // The step is already the last current step.
                 // No need to reload the current step.
-                return Command::none();
+                return Task::none();
             }
             // skip the step according to the current context.
             self.skip_steps();
@@ -222,16 +222,16 @@ impl Installer {
             current_step.load_context(&self.context);
             return current_step.load();
         }
-        Command::none()
+        Task::none()
     }
 
-    pub fn update(&mut self, message: Message) -> Command<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
                     error!("{}", e);
-                    Command::none()
+                    Task::none()
                 }
             },
             Message::Clibpboard(s) => clipboard::write(s),
@@ -244,7 +244,7 @@ impl Installer {
                     .expect("There is always a step")
                     .update(&mut self.hws, message);
                 match &self.context.remote_backend {
-                    RemoteBackend::WithoutWallet(backend) => Command::perform(
+                    RemoteBackend::WithoutWallet(backend) => Task::perform(
                         create_remote_wallet(
                             self.context.clone(),
                             self.signer.clone(),
@@ -252,11 +252,11 @@ impl Installer {
                         ),
                         Message::Installed,
                     ),
-                    RemoteBackend::WithWallet(backend) => Command::perform(
+                    RemoteBackend::WithWallet(backend) => Task::perform(
                         import_remote_wallet(self.context.clone(), backend.clone()),
                         Message::Installed,
                     ),
-                    RemoteBackend::None => Command::perform(
+                    RemoteBackend::None => Task::perform(
                         install_local_wallet(self.context.clone(), self.signer.clone()),
                         Message::Installed,
                     ),

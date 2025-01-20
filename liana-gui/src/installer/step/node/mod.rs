@@ -15,7 +15,7 @@ use crate::{
     node::NodeType,
 };
 
-use iced::Command;
+use iced::Task;
 use liana_ui::widget::Element;
 
 #[derive(Clone)]
@@ -62,7 +62,7 @@ impl NodeDefinition {
         }
     }
 
-    fn update(&mut self, message: message::DefineNode) -> Command<Message> {
+    fn update(&mut self, message: message::DefineNode) -> Task<Message> {
         match self {
             NodeDefinition::Bitcoind(def) => def.update(message),
             NodeDefinition::Electrum(def) => def.update(message),
@@ -154,11 +154,7 @@ impl DefineNode {
             .find(|node| node.definition.node_type() == node_type)
     }
 
-    fn update_node(
-        &mut self,
-        node_type: NodeType,
-        message: message::DefineNode,
-    ) -> Command<Message> {
+    fn update_node(&mut self, node_type: NodeType, message: message::DefineNode) -> Task<Message> {
         if let Some(node) = self.get_mut(node_type) {
             // Don't make changes while waiting for a ping result so that we
             // know which values the ping result applies to.
@@ -167,7 +163,7 @@ impl DefineNode {
                 return node.definition.update(message);
             }
         }
-        Command::none()
+        Task::none()
     }
 }
 
@@ -183,7 +179,7 @@ impl Step for DefineNode {
             node.definition.load_context(ctx);
         }
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::DefineNode(msg) = message {
             match msg {
                 message::DefineNode::NodeTypeSelected(node_type) => {
@@ -198,7 +194,7 @@ impl Step for DefineNode {
                         selected.is_running = None;
                         let def = selected.definition.clone();
                         let node_type = def.node_type();
-                        return Command::perform(async move { def.ping() }, move |res| {
+                        return Task::perform(async move { def.ping() }, move |res| {
                             Message::DefineNode(message::DefineNode::PingResult((node_type, res)))
                         });
                     }
@@ -222,7 +218,7 @@ impl Step for DefineNode {
                 }
             }
         }
-        Command::none()
+        Task::none()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {

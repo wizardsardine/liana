@@ -3,7 +3,7 @@ use std::convert::From;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 
 use liana::{
     descriptors::LianaDescriptor,
@@ -107,7 +107,7 @@ impl State for WalletSettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::WalletUpdated(res) => {
                 self.processing = false;
@@ -122,7 +122,7 @@ impl State for WalletSettingsState {
                         }
                         Err(e) => self.warning = Some(e),
                     };
-                    Command::none()
+                    Task::none()
                 }
             }
             Message::View(view::Message::Settings(
@@ -135,13 +135,13 @@ impl State for WalletSettingsState {
                 {
                     name.value = value;
                 }
-                Command::none()
+                Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::Save)) => {
                 self.modal = None;
                 self.processing = true;
                 self.updated = false;
-                Command::perform(
+                Task::perform(
                     update_keys_aliases(
                         self.data_dir.clone(),
                         cache.network,
@@ -157,7 +157,7 @@ impl State for WalletSettingsState {
             }
             Message::View(view::Message::Close) => {
                 self.modal = None;
-                Command::none()
+                Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::RegisterWallet)) => {
                 self.modal = Some(RegisterWalletModal::new(
@@ -165,13 +165,13 @@ impl State for WalletSettingsState {
                     self.wallet.clone(),
                     cache.network,
                 ));
-                Command::none()
+                Task::none()
             }
             _ => self
                 .modal
                 .as_mut()
                 .map(|m| m.update(daemon, cache, message))
-                .unwrap_or_else(Command::none),
+                .unwrap_or_else(Task::none),
         }
     }
 
@@ -179,11 +179,11 @@ impl State for WalletSettingsState {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         self.descriptor = wallet.main_descriptor.clone();
         self.keys_aliases = Self::keys_aliases(&wallet);
         self.wallet = wallet;
-        Command::perform(
+        Task::perform(
             async move { daemon.get_info().await.map_err(|e| e.into()) },
             Message::Info,
         )
@@ -244,18 +244,18 @@ impl RegisterWalletModal {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::Reload) => {
                 self.chosen_hw = None;
                 self.warning = None;
-                Command::none()
+                Task::none()
             }
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
                     self.warning = Some(e.into());
-                    Command::none()
+                    Task::none()
                 }
             },
             Message::WalletUpdated(res) => {
@@ -275,7 +275,7 @@ impl RegisterWalletModal {
                         }
                     }
                 }
-                Command::none()
+                Task::none()
             }
             Message::View(view::Message::SelectHardwareWallet(i)) => {
                 if let Some(HardwareWallet::Supported {
@@ -286,7 +286,7 @@ impl RegisterWalletModal {
                 {
                     self.chosen_hw = Some(i);
                     self.processing = true;
-                    Command::perform(
+                    Task::perform(
                         register_wallet(
                             self.data_dir.clone(),
                             cache.network,
@@ -298,10 +298,10 @@ impl RegisterWalletModal {
                         Message::WalletUpdated,
                     )
                 } else {
-                    Command::none()
+                    Task::none()
                 }
             }
-            _ => Command::none(),
+            _ => Task::none(),
         }
     }
 }

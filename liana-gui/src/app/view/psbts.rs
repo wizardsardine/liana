@@ -51,10 +51,10 @@ pub fn import_psbt_view<'a>(
 pub fn import_psbt_success_view<'a>() -> Element<'a, Message> {
     Column::new()
         .push(
-            card::simple(Container::new(text("PSBT is imported").style(color::GREEN))).padding(50),
+            card::simple(Container::new(text("PSBT is imported").color(color::GREEN))).padding(50),
         )
         .width(Length::Fixed(400.0))
-        .align_items(Alignment::Center)
+        .align_x(Alignment::Center)
         .into()
 }
 
@@ -62,7 +62,7 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
     Column::new()
         .push(
             Row::new()
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
                 .spacing(10)
                 .push(Container::new(h3("PSBTs")).width(Length::Fill))
                 .push(
@@ -84,7 +84,7 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
                     }),
             ),
         )
-        .align_items(Alignment::Center)
+        .align_x(Alignment::Center)
         .spacing(25)
         .into()
 }
@@ -107,7 +107,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                             Container::new(
                                 Row::new()
                                     .spacing(5)
-                                    .align_items(Alignment::Center)
+                                    .align_y(Alignment::Center)
                                     .push(
                                         p2_regular(format!(
                                             "{}/{}",
@@ -118,9 +118,9 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                                             },
                                             sigs.threshold
                                         ))
-                                        .style(color::GREY_3),
+                                        .color(color::GREY_3),
                                     )
-                                    .push(icon::key_icon().style(color::GREY_3)),
+                                    .push(icon::key_icon().color(color::GREY_3)),
                             )
                         })
                         .push_maybe(
@@ -129,7 +129,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                                 .map(p1_regular),
                         )
                         .spacing(10)
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .width(Length::Fill),
                 )
                 .push_maybe(if tx.is_batch() {
@@ -145,7 +145,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                 })
                 .push(
                     Column::new()
-                        .align_items(Alignment::End)
+                        .align_x(Alignment::End)
                         .push(if !tx.is_send_to_self() {
                             Container::new(amount(&tx.spend_amount))
                         } else {
@@ -154,13 +154,13 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                         .push_maybe(tx.fee_amount.map(|fee| amount_with_size(&fee, P2_SIZE)))
                         .width(Length::Fixed(140.0)),
                 )
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
                 .spacing(20),
         )
         .padding(10)
         .on_press(Message::Select(i))
-        .style(theme::Button::TransparentBorder),
+        .style(theme::button::transparent_border),
     )
-    .style(theme::Container::Card(theme::Card::Simple))
+    .style(theme::card::simple)
     .into()
 }

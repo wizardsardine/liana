@@ -46,99 +46,99 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
             .width(Length::Fill)
             .push(
                 Button::new(text("Settings").size(30).bold())
-                    .style(theme::Button::Transparent)
+                    .style(theme::button::transparent)
                     .on_press(Message::Menu(Menu::Settings)))
             .push(
                 if !is_remote_backend {
                     Container::new(
                         Button::new(
                             Row::new()
-                                .push(badge::Badge::new(icon::bitcoin_icon()))
+                                .push(badge::badge(icon::bitcoin_icon()))
                                 .push(text("Node").bold())
                                 .padding(10)
                                 .spacing(20)
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .width(Length::Fill),
                         )
                         .width(Length::Fill)
-                        .style(theme::Button::TransparentBorder)
+                        .style(theme::button::transparent_border)
                         .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings))
                     )
                     .width(Length::Fill)
-                    .style(theme::Container::Card(theme::Card::Simple))
+                    .style(theme::card::simple)
                 } else {
                     Container::new(
                         Button::new(
                             Row::new()
-                                .push(badge::Badge::new(icon::bitcoin_icon()))
+                                .push(badge::badge(icon::bitcoin_icon()))
                                 .push(text("Backend").bold())
                                 .padding(10)
                                 .spacing(20)
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .width(Length::Fill),
                         )
                         .width(Length::Fill)
-                        .style(theme::Button::TransparentBorder)
+                        .style(theme::button::transparent_border)
                         .on_press(Message::Settings(SettingsMessage::EditRemoteBackendSettings))
                     )
                     .width(Length::Fill)
-                    .style(theme::Container::Card(theme::Card::Simple))
+                    .style(theme::card::simple)
                 }
             )
             .push(
                 Container::new(
                     Button::new(
                         Row::new()
-                            .push(badge::Badge::new(icon::wallet_icon()))
+                            .push(badge::badge(icon::wallet_icon()))
                             .push(text("Wallet").bold())
                             .padding(10)
                             .spacing(20)
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(theme::Button::TransparentBorder)
+                    .style(theme::button::transparent_border)
                     .on_press(Message::Settings(SettingsMessage::EditWalletSettings))
                 )
                 .width(Length::Fill)
-                .style(theme::Container::Card(theme::Card::Simple))
+                .style(theme::card::simple)
             )
             .push(
                 Container::new(
                     Button::new(
                         Row::new()
-                            .push(badge::Badge::new(icon::recovery_icon()))
+                            .push(badge::badge(icon::recovery_icon()))
                             .push(text("Recovery").bold())
                             .push(tooltip("In case of loss of the main key, the recovery key can move the funds after a certain time."))
                             .padding(10)
                             .spacing(20)
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(theme::Button::TransparentBorder)
+                    .style(theme::button::transparent_border)
                     .on_press(Message::Menu(Menu::Recovery))
                 )
                 .width(Length::Fill)
-                .style(theme::Container::Card(theme::Card::Simple))
+                .style(theme::card::simple)
             )
             .push(
                 Container::new(
                     Button::new(
                         Row::new()
-                            .push(badge::Badge::new(icon::tooltip_icon()))
+                            .push(badge::badge(icon::tooltip_icon()))
                             .push(text("About").bold())
                             .padding(10)
                             .spacing(20)
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .width(Length::Fill),
                     )
                     .width(Length::Fill)
-                    .style(theme::Button::TransparentBorder)
+                    .style(theme::button::transparent_border)
                     .on_press(Message::Settings(SettingsMessage::AboutSection))
                 )
                 .width(Length::Fill)
-                .style(theme::Container::Card(theme::Card::Simple))
+                .style(theme::card::simple)
             )
     )
 }
@@ -156,16 +156,16 @@ pub fn bitcoind_settings<'a>(
             .push(
                 Row::new()
                     .spacing(10)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .push(
                         Button::new(text("Settings").size(30).bold())
-                            .style(theme::Button::Transparent)
+                            .style(theme::button::transparent)
                             .on_press(Message::Menu(Menu::Settings)),
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
                         Button::new(text("Node").size(30).bold())
-                            .style(theme::Button::Transparent)
+                            .style(theme::button::transparent)
                             .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings)),
                     ),
             )
@@ -187,16 +187,16 @@ pub fn about_section<'a>(
             .push(
                 Row::new()
                     .spacing(10)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .push(
                         Button::new(text("Settings").size(30).bold())
-                            .style(theme::Button::Transparent)
+                            .style(theme::button::transparent)
                             .on_press(Message::Menu(Menu::Settings)),
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
                         Button::new(text("About").size(30).bold())
-                            .style(theme::Button::Transparent)
+                            .style(theme::button::transparent)
                             .on_press(Message::Settings(SettingsMessage::AboutSection)),
                     ),
             )
@@ -205,11 +205,11 @@ pub fn about_section<'a>(
                     Column::new()
                         .push(
                             Row::new()
-                                .push(badge::Badge::new(icon::tooltip_icon()))
+                                .push(badge::badge(icon::tooltip_icon()))
                                 .push(text("Version").bold())
                                 .padding(10)
                                 .spacing(20)
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .width(Length::Fill),
                         )
                         .push(separation().width(Length::Fill))
@@ -246,16 +246,16 @@ pub fn remote_backend_section<'a>(
             .push(
                 Row::new()
                     .spacing(10)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .push(
                         Button::new(text("Settings").size(30).bold())
-                            .style(theme::Button::Transparent)
+                            .style(theme::button::transparent)
                             .on_press(Message::Menu(Menu::Settings)),
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
                         Button::new(text("Backend").size(30).bold())
-                            .style(theme::Button::Transparent)
+                            .style(theme::button::transparent)
                             .on_press(Message::Settings(
                                 SettingsMessage::EditRemoteBackendSettings,
                             )),
@@ -279,7 +279,7 @@ pub fn remote_backend_section<'a>(
                         .push(
                             Row::new()
                                 .push_maybe(if success {
-                                    Some(text("Invitation was sent").style(color::GREEN))
+                                    Some(text("Invitation was sent").color(color::GREEN))
                                 } else {
                                     None
                                 })
@@ -318,7 +318,7 @@ pub fn bitcoind_edit<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::Badge::new(icon::network_icon()))
+                            .push(badge::badge(icon::network_icon()))
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -329,7 +329,7 @@ pub fn bitcoind_edit<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::Badge::new(icon::block_icon()))
+                            .push(badge::badge(icon::block_icon()))
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -358,7 +358,7 @@ pub fn bitcoind_edit<'a>(
                             SettingsEditMessage::BitcoindRpcAuthTypeSelected,
                         ))
                         .spacing(30)
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                     },
                 ),
         )
@@ -423,11 +423,11 @@ pub fn bitcoind_edit<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::Badge::new(icon::bitcoin_icon()))
+                    .push(badge::badge(icon::bitcoin_icon()))
                     .push(text("Bitcoin Core").bold())
                     .padding(10)
                     .spacing(20)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .width(Length::Fill),
             )
             .push(separation().width(Length::Fill))
@@ -438,7 +438,7 @@ pub fn bitcoind_edit<'a>(
                         .push(cancel_button)
                         .push(confirm_button)
                         .spacing(10)
-                        .align_items(Alignment::Center),
+                        .align_y(Alignment::Center),
                 )
                 .width(Length::Fill)
                 .align_x(alignment::Horizontal::Right),
@@ -464,7 +464,7 @@ pub fn bitcoind<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::Badge::new(icon::network_icon()))
+                            .push(badge::badge(icon::network_icon()))
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -475,7 +475,7 @@ pub fn bitcoind<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::Badge::new(icon::block_icon()))
+                            .push(badge::badge(icon::block_icon()))
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -516,10 +516,10 @@ pub fn bitcoind<'a>(
                 .push(Space::with_width(10))
                 .push(
                     Button::new(icon::clipboard_icon())
-                        .style(theme::Button::TransparentBorder)
+                        .style(theme::button::transparent_border)
                         .on_press(SettingsEditMessage::Clipboard(v.to_string())),
                 )
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
         });
     }
 
@@ -529,7 +529,7 @@ pub fn bitcoind<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::Badge::new(icon::bitcoin_icon()))
+                            .push(badge::badge(icon::bitcoin_icon()))
                             .push(text("Bitcoin Core").bold())
                             .push_maybe(if is_configured_node_type {
                                 Some(is_running_label(is_running))
@@ -537,17 +537,17 @@ pub fn bitcoind<'a>(
                                 None
                             })
                             .spacing(20)
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .width(Length::Fill),
                     )
                     .push(if can_edit {
                         Button::new(icon::pencil_icon())
-                            .style(theme::Button::TransparentBorder)
+                            .style(theme::button::transparent_border)
                             .on_press(SettingsEditMessage::Select)
                     } else {
-                        Button::new(icon::pencil_icon()).style(theme::Button::TransparentBorder)
+                        Button::new(icon::pencil_icon()).style(theme::button::transparent_border)
                     })
-                    .align_items(Alignment::Center),
+                    .align_y(Alignment::Center),
             )
             .push(separation().width(Length::Fill))
             .push(col.push(col_fields))
@@ -571,7 +571,7 @@ pub fn electrum_edit<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::Badge::new(icon::network_icon()))
+                            .push(badge::badge(icon::network_icon()))
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -582,7 +582,7 @@ pub fn electrum_edit<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::Badge::new(icon::block_icon()))
+                            .push(badge::badge(icon::block_icon()))
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -621,11 +621,11 @@ pub fn electrum_edit<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::Badge::new(icon::bitcoin_icon()))
+                    .push(badge::badge(icon::bitcoin_icon()))
                     .push(text("Electrum").bold())
                     .padding(10)
                     .spacing(20)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .width(Length::Fill),
             )
             .push(separation().width(Length::Fill))
@@ -636,7 +636,7 @@ pub fn electrum_edit<'a>(
                         .push(cancel_button)
                         .push(confirm_button)
                         .spacing(10)
-                        .align_items(Alignment::Center),
+                        .align_y(Alignment::Center),
                 )
                 .width(Length::Fill)
                 .align_x(alignment::Horizontal::Right),
@@ -662,7 +662,7 @@ pub fn electrum<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::Badge::new(icon::network_icon()))
+                            .push(badge::badge(icon::network_icon()))
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -673,7 +673,7 @@ pub fn electrum<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::Badge::new(icon::block_icon()))
+                            .push(badge::badge(icon::block_icon()))
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -701,10 +701,10 @@ pub fn electrum<'a>(
                 .push(Space::with_width(10))
                 .push(
                     Button::new(icon::clipboard_icon())
-                        .style(theme::Button::TransparentBorder)
+                        .style(theme::button::transparent_border)
                         .on_press(SettingsEditMessage::Clipboard(v.to_string())),
                 )
-                .align_items(Alignment::Center),
+                .align_y(Alignment::Center),
         );
     }
 
@@ -714,7 +714,7 @@ pub fn electrum<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::Badge::new(icon::bitcoin_icon()))
+                            .push(badge::badge(icon::bitcoin_icon()))
                             .push(text("Electrum").bold())
                             .push_maybe(if is_configured_node_type {
                                 Some(is_running_label(is_running))
@@ -722,17 +722,17 @@ pub fn electrum<'a>(
                                 None
                             })
                             .spacing(20)
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .width(Length::Fill),
                     )
                     .push(if can_edit {
                         Button::new(icon::pencil_icon())
-                            .style(theme::Button::TransparentBorder)
+                            .style(theme::button::transparent_border)
                             .on_press(SettingsEditMessage::Select)
                     } else {
-                        Button::new(icon::pencil_icon()).style(theme::Button::TransparentBorder)
+                        Button::new(icon::pencil_icon()).style(theme::button::transparent_border)
                     })
-                    .align_items(Alignment::Center),
+                    .align_y(Alignment::Center),
             )
             .push(separation().width(Length::Fill))
             .push(col.push(col_fields))
@@ -747,16 +747,16 @@ pub fn is_running_label<'a, T: 'a>(is_running: Option<bool>) -> Container<'a, T>
         if running {
             Container::new(
                 Row::new()
-                    .push(icon::dot_icon().size(5).style(color::GREEN))
-                    .push(text("Running").small().style(color::GREEN))
-                    .align_items(Alignment::Center),
+                    .push(icon::dot_icon().size(5).color(color::GREEN))
+                    .push(text("Running").small().color(color::GREEN))
+                    .align_y(Alignment::Center),
             )
         } else {
             Container::new(
                 Row::new()
-                    .push(icon::dot_icon().size(5).style(color::RED))
-                    .push(text("Not running").small().style(color::RED))
-                    .align_items(Alignment::Center),
+                    .push(icon::dot_icon().size(5).color(color::RED))
+                    .push(text("Not running").small().color(color::RED))
+                    .align_y(Alignment::Center),
             )
         }
     } else {
@@ -781,15 +781,15 @@ pub fn rescan<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::Badge::new(icon::block_icon()))
+                    .push(badge::badge(icon::block_icon()))
                     .push(text("Blockchain rescan").bold().width(Length::Fill))
                     .push_maybe(if success {
-                        Some(text("Successfully rescanned the blockchain").style(color::GREEN))
+                        Some(text("Successfully rescanned the blockchain").color(color::GREEN))
                     } else {
                         None
                     })
                     .spacing(20)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .width(Length::Fill),
             )
             .push(separation().width(Length::Fill))
@@ -830,24 +830,24 @@ pub fn rescan<'a>(
                                     .size(P1_SIZE)
                                     .padding(5),
                                 )
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .spacing(10),
                         )
                         .push_maybe(if invalid_date {
-                            Some(p1_regular("Provided date is invalid").style(color::RED))
+                            Some(p1_regular("Provided date is invalid").color(color::RED))
                         } else {
                             None
                         })
                         .push_maybe(if past_possible_height {
                             Some(
                                 p1_regular("Provided date earlier than the node prune height")
-                                    .style(color::RED),
+                                    .color(color::RED),
                             )
                         } else {
                             None
                         })
                         .push_maybe(if future_date {
-                            Some(p1_regular("Provided date is in the future").style(color::RED))
+                            Some(p1_regular("Provided date is in the future").color(color::RED))
                         } else {
                             None
                         })
@@ -910,16 +910,16 @@ pub fn wallet_settings<'a>(
             .push(
                 Row::new()
                     .spacing(10)
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .push(
                         Button::new(text("Settings").size(30).bold())
-                            .style(theme::Button::Transparent)
+                            .style(theme::button::transparent)
                             .on_press(Message::Menu(Menu::Settings)),
                     )
                     .push(icon::chevron_right().size(30))
                     .push(
                         Button::new(text("Wallet").size(30).bold())
-                            .style(theme::Button::Transparent)
+                            .style(theme::button::transparent)
                             .on_press(Message::Settings(SettingsMessage::EditWalletSettings)),
                     ),
             )
@@ -935,7 +935,7 @@ pub fn wallet_settings<'a>(
                             )
                             .direction(
                                 scrollable::Direction::Horizontal(
-                                    scrollable::Properties::new().width(5).scroller_width(5),
+                                    scrollable::Scrollbar::new().width(5).scroller_width(5),
                                 ),
                             ),
                         )
@@ -973,7 +973,7 @@ pub fn wallet_settings<'a>(
                                 col.push(
                                     Row::new()
                                         .spacing(10)
-                                        .align_items(Alignment::Center)
+                                        .align_y(Alignment::Center)
                                         .push(
                                             text(fg.to_string()).bold().width(Length::Fixed(100.0)),
                                         )
@@ -994,14 +994,14 @@ pub fn wallet_settings<'a>(
                         ))
                         .push(
                             Row::new()
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .push(Space::with_width(Length::Fill))
                                 .push_maybe(if updated {
                                     Some(
                                         Row::new()
-                                            .align_items(Alignment::Center)
-                                            .push(icon::circle_check_icon().style(color::GREEN))
-                                            .push(text("Updated").style(color::GREEN)),
+                                            .align_y(Alignment::Center)
+                                            .push(icon::circle_check_icon().color(color::GREEN))
+                                            .push(text("Updated").color(color::GREEN)),
                                     )
                                 } else {
                                     None
@@ -1063,7 +1063,7 @@ fn display_policy(
                                     text(k.to_string()),
                                     iced_tooltip::Position::Bottom,
                                 )
-                                .style(theme::Container::Card(theme::Card::Simple)),
+                                .style(theme::card::simple),
                             )
                         } else {
                             Container::new(text(format!("[{}]", k)).bold())
@@ -1116,7 +1116,7 @@ fn display_policy(
                                     text(k.to_string()),
                                     iced_tooltip::Position::Bottom,
                                 )
-                                .style(theme::Container::Card(theme::Card::Simple)),
+                                .style(theme::card::simple),
                             )
                         } else {
                             Container::new(text(format!("[{}]", k)).bold())
@@ -1146,7 +1146,7 @@ fn display_policy(
         .spacing(10)
         .push(text("The wallet policy:").bold())
         .push(scrollable(col).direction(scrollable::Direction::Horizontal(
-            scrollable::Properties::new().width(5).scroller_width(5),
+            scrollable::Scrollbar::new().width(5).scroller_width(5),
         )))
         .into()
 }
@@ -1228,7 +1228,7 @@ pub fn register_wallet_modal<'a>(
                 )
                 .spacing(20)
                 .width(Length::Fill)
-                .align_items(Alignment::Center),
+                .align_x(Alignment::Center),
         ))
         .width(Length::Fixed(500.0))
         .into()

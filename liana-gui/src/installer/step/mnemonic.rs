@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use iced::Command;
+use iced::Task;
 use liana::{bip39, signer::HotSigner};
 
 use liana_ui::widget::Element;
@@ -36,11 +36,11 @@ impl From<BackupMnemonic> for Box<dyn Step> {
 }
 
 impl Step for BackupMnemonic {
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::UserActionDone(done) = message {
             self.done = done;
         }
-        Command::none()
+        Task::none()
     }
     fn skip(&self, ctx: &Context) -> bool {
         if let Some(descriptor) = &ctx.descriptor {
@@ -92,7 +92,7 @@ impl From<RecoverMnemonic> for Box<dyn Step> {
 }
 
 impl Step for RecoverMnemonic {
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
             Message::MnemonicWord(index, value) => {
                 if let Some((word, valid)) = self.words.get_mut(index) {
@@ -116,11 +116,11 @@ impl Step for RecoverMnemonic {
             Message::ImportMnemonic(recover) => self.recover = recover,
             Message::Skip => {
                 self.skip = true;
-                return Command::perform(async {}, |_| Message::Next);
+                return Task::perform(async {}, |_| Message::Next);
             }
             _ => {}
         }
-        Command::none()
+        Task::none()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {

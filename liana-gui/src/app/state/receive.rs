@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iced::{widget::qr_code, Command, Subscription};
+use iced::{widget::qr_code, Subscription, Task};
 use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, Network,
@@ -112,7 +112,7 @@ impl State for ReceivePanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
@@ -123,7 +123,7 @@ impl State for ReceivePanel {
                     Ok(cmd) => cmd,
                     Err(e) => {
                         self.warning = Some(e);
-                        Command::none()
+                        Task::none()
                     }
                 }
             }
@@ -136,11 +136,11 @@ impl State for ReceivePanel {
                     }
                     Err(e) => self.warning = Some(e),
                 }
-                Command::none()
+                Task::none()
             }
             Message::View(view::Message::Close) => {
                 self.modal = Modal::None;
-                Command::none()
+                Task::none()
             }
             Message::View(view::Message::Select(i)) => {
                 self.modal = Modal::VerifyAddress(VerifyAddressModal::new(
@@ -154,11 +154,11 @@ impl State for ReceivePanel {
                         .get(i)
                         .expect("Must be present"),
                 ));
-                Command::none()
+                Task::none()
             }
             Message::View(view::Message::Next) => {
                 let daemon = daemon.clone();
-                Command::perform(
+                Task::perform(
                     async move {
                         daemon
                             .get_new_address()
@@ -178,13 +178,13 @@ impl State for ReceivePanel {
                         self.modal = Modal::ShowQrCode(modal);
                     }
                 }
-                Command::none()
+                Task::none()
             }
             _ => {
                 if let Modal::VerifyAddress(ref mut m) = self.modal {
                     m.update(daemon, cache, message)
                 } else {
-                    Command::none()
+                    Task::none()
                 }
             }
         }
@@ -194,10 +194,10 @@ impl State for ReceivePanel {
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         self.wallet = wallet;
         self.addresses = Addresses::default();
-        Command::none()
+        Task::none()
     }
 }
 
@@ -253,13 +253,13 @@ impl VerifyAddressModal {
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
                     self.warning = Some(e.into());
-                    Command::none()
+                    Task::none()
                 }
             },
             Message::Verified(fg, res) => {
@@ -267,7 +267,7 @@ impl VerifyAddressModal {
                 if let Err(e) = res {
                     self.warning = Some(e);
                 }
-                Command::none()
+                Task::none()
             }
             Message::View(view::Message::SelectHardwareWallet(i)) => {
                 if let Some(HardwareWallet::Supported {
@@ -279,15 +279,15 @@ impl VerifyAddressModal {
                     self.warning = None;
                     self.chosen_hws.insert(*fingerprint);
                     let fg = *fingerprint;
-                    Command::perform(
+                    Task::perform(
                         verify_address(device.clone(), self.derivation_index),
                         move |res| Message::Verified(fg, res),
                     )
                 } else {
-                    Command::none()
+                    Task::none()
                 }
             }
-            _ => Command::none(),
+            _ => Task::none(),
         }
     }
 }

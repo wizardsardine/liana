@@ -24,7 +24,7 @@ use self::text::Text;
 
 pub fn separation<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Column::new().push(text::text(" ")))
-        .style(theme::Container::Border)
+        .style(theme::container::border)
         .height(Length::Fixed(1.0))
 }
 
@@ -44,10 +44,9 @@ pub fn network_banner<'a, T: 'a>(network: Network) -> Container<'a, T> {
             )
             .push(text::text(", COINS HAVE "))
             .push(text::text("NO VALUE").bold())
-            .align_items(iced::Alignment::Center),
+            .align_y(iced::Alignment::Center),
     )
     .padding(5)
-    .width(Length::Fill)
-    .center_x()
-    .style(theme::Container::Banner)
+    .center_x(Length::Fill)
+    .style(theme::banner::network)
 }
