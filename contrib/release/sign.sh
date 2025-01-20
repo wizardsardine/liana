@@ -85,9 +85,9 @@ sign_with_rcodesign() {
         --api-key-path "$NOTARY_API_CREDS_FILE" \
         --staple Liana.app
 
-    zip_archive "Liana-$VERSION.zip" Liana.app
-    mv "Liana-$VERSION.zip" "$RELEASE_DIR/"
-    sha256sum "$RELEASE_DIR/Liana-$VERSION.zip" | tee -a "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
+    zip_archive "$LIANA_PREFIX-macos.zip" Liana.app
+    mv "$LIANA_PREFIX-macos.zip" "$RELEASE_DIR/"
+    sha256sum "$RELEASE_DIR/$LIANA_PREFIX-macos.zip" | sed "s|$RELEASE_DIR/||" | tee -a "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
 }
 
 if [ "$#" -lt 1 ]; then
