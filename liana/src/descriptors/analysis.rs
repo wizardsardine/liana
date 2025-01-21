@@ -464,10 +464,14 @@ pub struct LianaPolicy {
 
 impl LianaPolicy {
     /// Create a new Liana policy from a given configuration.
+    ///
+    /// `compile` controls whether to check the policy compiles
+    /// to miniscript before returning.
     fn _new(
         primary_path: PathInfo,
         recovery_paths: BTreeMap<u16, PathInfo>,
         is_taproot: bool,
+        compile: bool,
     ) -> Result<LianaPolicy, LianaPolicyError> {
         if recovery_paths.is_empty() {
             return Err(LianaPolicyError::MissingRecoveryPath);
@@ -523,7 +527,9 @@ impl LianaPolicy {
             recovery_paths,
             is_taproot,
         };
-        policy.clone().into_multipath_descriptor_fallible()?;
+        if compile {
+            policy.clone().into_multipath_descriptor_fallible()?;
+        }
         Ok(policy)
     }
 
@@ -532,7 +538,12 @@ impl LianaPolicy {
         primary_path: PathInfo,
         recovery_paths: BTreeMap<u16, PathInfo>,
     ) -> Result<LianaPolicy, LianaPolicyError> {
-        Self::_new(primary_path, recovery_paths, /* is_taproot = */ true)
+        Self::_new(
+            primary_path,
+            recovery_paths,
+            /* is_taproot = */ true,
+            /* compile = */ true,
+        )
     }
 
     /// Create a new Liana policy for use under a P2WSH context.
@@ -540,7 +551,12 @@ impl LianaPolicy {
         primary_path: PathInfo,
         recovery_paths: BTreeMap<u16, PathInfo>,
     ) -> Result<LianaPolicy, LianaPolicyError> {
-        Self::_new(primary_path, recovery_paths, /* is_taproot = */ false)
+        Self::_new(
+            primary_path,
+            recovery_paths,
+            /* is_taproot = */ false,
+            /* compile = */ true,
+        )
     }
 
     /// Create a Liana policy from a descriptor. This will check the descriptor is correctly formed
@@ -631,7 +647,15 @@ impl LianaPolicy {
         // Use the constructor for sanity checking the keys and the Miniscript policy. Note this
         // makes sure the recovery paths mapping isn't empty, too.
         let prim_path = primary_path.ok_or(LianaPolicyError::IncompatibleDesc)?;
-        LianaPolicy::_new(prim_path, recovery_paths, is_taproot)
+        // We don't compile the policy as we assume it compiles given we started with a descriptor.
+        // This will still perform all other checks to make sure the descriptor conforms to
+        // a Liana policy.
+        LianaPolicy::_new(
+            prim_path,
+            recovery_paths,
+            is_taproot,
+            /* compile = */ false,
+        )
     }
 
     pub fn primary_path(&self) -> &PathInfo {

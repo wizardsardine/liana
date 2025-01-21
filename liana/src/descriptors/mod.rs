@@ -115,7 +115,10 @@ impl str::FromStr for LianaDescriptor {
     fn from_str(s: &str) -> Result<LianaDescriptor, Self::Err> {
         // Parse a descriptor and check it is a multipath descriptor corresponding to a valid Liana
         // spending policy.
+        // Sanity checks are not always performed when calling `Descriptor::from_str`, so we perform
+        // them explicitly. See https://github.com/rust-bitcoin/rust-miniscript/issues/734.
         let desc = descriptor::Descriptor::<descriptor::DescriptorPublicKey>::from_str(s)
+            .and_then(|desc| desc.sanity_check().map(|_| desc))
             .map_err(LianaDescError::Miniscript)?;
         LianaPolicy::from_multipath_descriptor(&desc)?;
 
