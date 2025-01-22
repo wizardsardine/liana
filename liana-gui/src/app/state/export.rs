@@ -117,7 +117,11 @@ impl ExportModal {
                 ExportState::Started | ExportState::Progress(_) => {
                     Some(iced::subscription::unfold(
                         "transactions",
-                        export::State::new(self.daemon.clone(), Box::new(path.to_path_buf())),
+                        export::Export::new(
+                            self.daemon.clone(),
+                            Box::new(path.to_path_buf()),
+                            self.export_type.clone(),
+                        ),
                         export::export_subscription,
                     ))
                 }
