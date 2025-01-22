@@ -5,6 +5,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use lianad::bip329::Labels;
+use lianad::commands::DumpLabelsResult;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -207,8 +208,10 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         Ok(())
     }
 
-    async fn dump_labels(&self) -> Result<Labels, DaemonError> {
-        todo!()
+    async fn dump_labels(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
+        let res: DumpLabelsResult =
+            self.call("dumplabels", Some(vec![json!(offset), json!(limit)]))?;
+        Ok(res.labels)
     }
 }
 
