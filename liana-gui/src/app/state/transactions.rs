@@ -28,7 +28,7 @@ use crate::{
         wallet::Wallet,
     },
     daemon::model::{self, LabelsLoader},
-    export::ExportMessage,
+    export::{ExportMessage, ExportType},
 };
 
 use crate::daemon::{
@@ -268,7 +268,10 @@ impl State for TransactionsPanel {
             }
             Message::View(view::Message::Export(ExportMessage::Open)) => {
                 if let TransactionsModal::None = &self.modal {
-                    self.modal = TransactionsModal::Export(ExportModal::new(daemon));
+                    self.modal = TransactionsModal::Export(ExportModal::new(
+                        daemon,
+                        ExportType::Transactions,
+                    ));
                     if let TransactionsModal::Export(m) = &self.modal {
                         return m.launch();
                     }
