@@ -13,7 +13,7 @@ use crate::{
         view::{self, export::export_modal},
     },
     daemon::Daemon,
-    export::{self, get_path, ExportMessage, ExportProgress, ExportState},
+    export::{self, get_path, ExportMessage, ExportProgress, ExportState, ExportType},
 };
 
 #[derive(Debug)]
@@ -111,7 +111,11 @@ impl ExportModal {
                 ExportState::Started | ExportState::Progress(_) => {
                     Some(iced::Subscription::run_with_id(
                         "transactions",
-                        export::export_subscription(self.daemon.clone(), path.to_path_buf()),
+                        export::export_subscription(
+                            self.daemon.clone(),
+                            path.to_path_buf(),
+                            ExportType::Transactions,
+                        ),
                     ))
                 }
                 _ => None,
