@@ -229,7 +229,8 @@ impl Daemon for EmbeddedDaemon {
         .await
     }
 
-    async fn dump_labels(&self) -> Result<Labels, DaemonError> {
-        self.command(|daemon| Ok(daemon.dump_labels())).await
+    async fn dump_labels(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
+        self.command(|daemon| Ok(daemon.dump_labels(offset, limit).labels))
+            .await
     }
 }
