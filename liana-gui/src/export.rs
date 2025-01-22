@@ -447,12 +447,10 @@ pub async fn export_transactions(
     .await;
 }
 
-pub async fn get_path() -> Option<PathBuf> {
-    let date = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S");
-    let file_name = format!("liana-txs-{date}.csv");
+pub async fn get_path(filename: String) -> Option<PathBuf> {
     rfd::AsyncFileDialog::new()
         .set_title("Choose a location to export...")
-        .set_file_name(file_name)
+        .set_file_name(filename)
         .save_file()
         .await
         .map(|fh| fh.path().to_path_buf())

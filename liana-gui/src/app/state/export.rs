@@ -23,22 +23,35 @@ pub struct ExportModal {
     state: ExportState,
     error: Option<export::Error>,
     daemon: Arc<dyn Daemon + Sync + Send>,
+    export_type: ExportType,
 }
 
 impl ExportModal {
     #[allow(clippy::new_without_default)]
-    pub fn new(daemon: Arc<dyn Daemon + Sync + Send>) -> Self {
+    pub fn new(daemon: Arc<dyn Daemon + Sync + Send>, export_type: ExportType) -> Self {
         Self {
             path: None,
             handle: None,
             state: ExportState::Init,
             error: None,
             daemon,
+            export_type,
+        }
+    }
+
+    pub fn default_filename(&self) -> String {
+        match self.export_type {
+            ExportType::Transactions => {
+                let date = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S");
+                format!("liana-txs-{date}.csv")
+            }
+            ExportType::Psbt => todo!(),
+            ExportType::Descriptor => todo!(),
         }
     }
 
     pub fn launch(&self) -> Task<app::message::Message> {
-        Task::perform(get_path(), |m| {
+        Task::perform(get_path(self.default_filename()), |m| {
             app::message::Message::View(view::Message::Export(ExportMessage::Path(m)))
         })
     }
