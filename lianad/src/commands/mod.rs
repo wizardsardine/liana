@@ -687,6 +687,13 @@ impl DaemonControl {
         }
     }
 
+    pub fn get_labels_bip329(&self, offset: u32, limit: u32) -> GetLabelsBip329Result {
+        let mut db_conn = self.db.connection();
+        GetLabelsBip329Result {
+            labels: db_conn.get_labels_bip329(offset, limit),
+        }
+    }
+
     pub fn list_spend(
         &self,
         txids: Option<Vec<bitcoin::Txid>>,
@@ -1182,6 +1189,11 @@ impl GetAddressResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetLabelsResult {
     pub labels: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetLabelsBip329Result {
+    pub labels: crate::bip329::Labels,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

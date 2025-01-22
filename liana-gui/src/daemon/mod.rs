@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use liana::miniscript::bitcoin::{
     address, bip32::Fingerprint, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid,
 };
+use lianad::bip329::Labels;
 use lianad::{
     commands::{CoinStatus, LabelItem, TransactionInfo},
     config::Config,
@@ -125,6 +126,7 @@ pub trait Daemon: Debug {
         &self,
         labels: &HashMap<LabelItem, Option<String>>,
     ) -> Result<(), DaemonError>;
+    async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError>;
     async fn send_wallet_invitation(&self, _email: &str) -> Result<(), DaemonError> {
         Ok(())
     }

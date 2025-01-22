@@ -7,6 +7,7 @@ mod jsonrpc;
 mod testutils;
 
 pub use bdk_electrum::electrum_client;
+pub use bip329;
 use bitcoin::electrum;
 pub use miniscript;
 

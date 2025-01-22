@@ -13,6 +13,7 @@ use liana::{
     miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid},
 };
 use lianad::{
+    bip329::Labels,
     commands::{CoinStatus, GetInfoDescriptors, LCSpendInfo, LabelItem},
     config::Config,
 };
@@ -1114,6 +1115,11 @@ impl Daemon for BackendWalletClient {
         }
 
         Ok(())
+    }
+
+    async fn get_labels_bip329(&self, _offset: u32, _limit: u32) -> Result<Labels, DaemonError> {
+        // TODO: add an endpoint on backend
+        todo!()
     }
 }
 
