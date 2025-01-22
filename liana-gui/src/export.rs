@@ -199,7 +199,7 @@ impl Export {
     ) {
         match export_type {
             ExportType::Transactions => export_transactions(sender, daemon, path).await,
-            ExportType::Psbt(_) => todo!(),
+            ExportType::Psbt(psbt) => export_psbt(sender, path, psbt),
             ExportType::Descriptor(descriptor) => export_descriptor(sender, path, descriptor),
         };
     }
@@ -465,6 +465,17 @@ pub fn export_descriptor(
 
     let descr_string = descriptor.to_string();
     if let Err(e) = file.write_all(descr_string.as_bytes()) {
+        send_error!(sender, e.into());
+        return;
+    }
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
+}
+
+pub fn export_psbt(sender: Sender<ExportProgress>, path: PathBuf, psbt: String) {
+    let mut file = open_file!(path, sender);
+
+    if let Err(e) = file.write_all(psbt.as_bytes()) {
         send_error!(sender, e.into());
         return;
     }

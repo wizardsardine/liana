@@ -45,7 +45,7 @@ impl ExportModal {
                 let date = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S");
                 format!("liana-txs-{date}.csv")
             }
-            ExportType::Psbt(_) => todo!(),
+            ExportType::Psbt(_) => "psbt.psbt".into(),
             ExportType::Descriptor(descriptor) => {
                 let checksum = descriptor
                     .to_string()
