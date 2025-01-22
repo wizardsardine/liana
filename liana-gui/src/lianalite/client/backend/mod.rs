@@ -1112,9 +1112,20 @@ impl Daemon for BackendWalletClient {
         Ok(())
     }
 
-    async fn dump_labels(&self) -> Result<Labels, DaemonError> {
-        // TODO: add an endpoint on backend
-        todo!()
+    async fn dump_labels(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
+        let response: Response = self
+            .inner
+            .request(
+                Method::POST,
+                &format!("{}/v1/wallets/{}/labels", self.inner.url, self.wallet_uuid),
+            )
+            .await
+            .json(&api::payload::DumpLabels { offset, limit })
+            .send()
+            .await?;
+
+        let res: api::Labels = response.json().await?;
+        Ok(res.labels)
     }
 }
 
