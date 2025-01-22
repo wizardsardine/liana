@@ -364,6 +364,22 @@ fn get_labels(control: &DaemonControl, params: Params) -> Result<serde_json::Val
     Ok(serde_json::json!(control.get_labels(&items)))
 }
 
+fn dump_labels(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let offset: u32 = params
+        .get(0, "offset")
+        .ok_or_else(|| Error::invalid_params("Missing 'offset' parameter."))?
+        .as_u64()
+        .and_then(|t| t.try_into().ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'offset' parameter."))?;
+    let limit: u32 = params
+        .get(0, "offset")
+        .ok_or_else(|| Error::invalid_params("Missing 'limit' parameter."))?
+        .as_u64()
+        .and_then(|t| t.try_into().ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'limit' parameter."))?;
+    Ok(serde_json::json!(control.dump_labels(offset, limit)))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -450,6 +466,12 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
                 .params
                 .ok_or_else(|| Error::invalid_params("Missing 'items' parameter."))?;
             get_labels(control, params)?
+        }
+        "dumplabels" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'offset' and 'limit' parameters."))?;
+            dump_labels(control, params)?
         }
         _ => {
             return Err(Error::method_not_found());

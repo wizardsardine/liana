@@ -20,6 +20,7 @@ use std::{
     sync,
 };
 
+use bip329::Labels;
 use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1};
 
 /// Information about the wallet.
@@ -190,6 +191,9 @@ pub trait DatabaseConnection {
         &mut self,
         txids: &[bitcoin::Txid],
     ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)>;
+
+    /// Dump all labels
+    fn dump_labels(&mut self, offset: u32, limit: u32) -> Labels;
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -365,6 +369,15 @@ impl DatabaseConnection for SqliteConn {
     fn labels(&mut self, items: &HashSet<LabelItem>) -> HashMap<String, String> {
         let labels = self.db_labels(items);
         HashMap::from_iter(labels.into_iter().map(|label| (label.item, label.value)))
+    }
+
+    fn dump_labels(&mut self, offset: u32, limit: u32) -> Labels {
+        let labels = self
+            .dump_labels(offset, limit)
+            .into_iter()
+            .map(|l| l.into())
+            .collect();
+        Labels::new(labels)
     }
 
     fn rollback_tip(&mut self, new_tip: &BlockChainTip) {
