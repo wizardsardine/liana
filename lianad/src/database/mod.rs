@@ -49,7 +49,7 @@ impl DatabaseInterface for SqliteDb {
     }
 }
 
-// FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
+// FIXME: do we need to repeat the entire trait implementation? Isn't there a nicer way?
 impl DatabaseInterface for sync::Arc<sync::Mutex<dyn DatabaseInterface>> {
     fn connection(&self) -> Box<dyn DatabaseConnection> {
         self.lock().unwrap().connection()

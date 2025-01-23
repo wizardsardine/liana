@@ -105,7 +105,7 @@ class Bitcoind(BitcoinBackend):
 
     # wait_for_mempool can be used to wait for the mempool before generating
     # blocks:
-    # True := wait for at least 1 transation
+    # True := wait for at least 1 transaction
     # int > 0 := wait for at least N transactions
     # 'tx_id' := wait for one transaction id given as a string
     # ['tx_id1', 'tx_id2'] := wait until all of the specified transaction IDs

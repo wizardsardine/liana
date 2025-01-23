@@ -4,7 +4,7 @@
 //! > Multi-thread. In this mode, SQLite can be safely used by multiple threads provided that
 //! > no single database connection is used simultaneously in two or more threads.
 //!
-//! We leverage SQLite's `unlock_notify` feature to synchronize writes accross connection. More
+//! We leverage SQLite's `unlock_notify` feature to synchronize writes across connection. More
 //! about it at https://sqlite.org/unlock_notify.html.
 
 pub mod schema;

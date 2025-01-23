@@ -591,7 +591,7 @@ impl BitcoinInterface for electrum::Electrum {
     }
 }
 
-// FIXME: do we need to repeat the entire trait implemenation? Isn't there a nicer way?
+// FIXME: do we need to repeat the entire trait implementation? Isn't there a nicer way?
 impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>> {
     fn genesis_block_timestamp(&self) -> u32 {
         self.lock().unwrap().genesis_block_timestamp()
