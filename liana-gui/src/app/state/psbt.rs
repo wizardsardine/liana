@@ -325,7 +325,7 @@ impl Action for BroadcastAction {
                 return Command::perform(
                     async move {
                         daemon
-                            .broadcast_spend_tx(&psbt.unsigned_tx.txid())
+                            .broadcast_spend_tx(&psbt.unsigned_tx.compute_txid())
                             .await
                             .map_err(|e| e.into())
                     },
@@ -378,7 +378,7 @@ impl Action for DeleteAction {
                 return Command::perform(
                     async move {
                         daemon
-                            .delete_spend_tx(&psbt.unsigned_tx.txid())
+                            .delete_spend_tx(&psbt.unsigned_tx.compute_txid())
                             .await
                             .map_err(|e| e.into())
                     },
@@ -705,7 +705,8 @@ impl Action for UpdateAction {
             Message::View(view::Message::ImportSpend(view::ImportSpendMessage::PsbtEdited(s))) => {
                 self.updated.value = s;
                 if let Ok(psbt) = Psbt::from_str(&self.updated.value) {
-                    self.updated.valid = tx.psbt.unsigned_tx.txid() == psbt.unsigned_tx.txid();
+                    self.updated.valid =
+                        tx.psbt.unsigned_tx.compute_txid() == psbt.unsigned_tx.compute_txid();
                 } else {
                     self.updated.valid = false;
                 }

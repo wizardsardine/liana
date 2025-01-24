@@ -56,16 +56,16 @@ pub fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
     match key {
         DescriptorPublicKey::XPub(key) => {
             if network == Network::Bitcoin {
-                key.xkey.network == Network::Bitcoin
+                key.xkey.network == Network::Bitcoin.into()
             } else {
-                key.xkey.network == Network::Testnet
+                key.xkey.network == Network::Testnet.into()
             }
         }
         DescriptorPublicKey::MultiXPub(key) => {
             if network == Network::Bitcoin {
-                key.xkey.network == Network::Bitcoin
+                key.xkey.network == Network::Bitcoin.into()
             } else {
-                key.xkey.network == Network::Testnet
+                key.xkey.network == Network::Testnet.into()
             }
         }
         _ => true,
@@ -210,9 +210,9 @@ impl super::DescriptorEditModal for EditXpubModal {
                 let fingerprint = self.hot_signer.lock().unwrap().fingerprint();
                 let derivation_path = default_derivation_path(self.network);
                 let key_str = format!(
-                    "[{}{}]{}",
+                    "[{}/{}]{}",
                     fingerprint,
-                    derivation_path.to_string().trim_start_matches('m'),
+                    derivation_path.to_string().trim_start_matches("m/"),
                     self.hot_signer
                         .lock()
                         .unwrap()
@@ -274,9 +274,9 @@ impl super::DescriptorEditModal for EditXpubModal {
                             self.form_xpub.valid = false;
                         } else if let Some((fingerprint, _)) = key.origin {
                             self.form_xpub.valid = if self.network == Network::Bitcoin {
-                                key.xkey.network == Network::Bitcoin
+                                key.xkey.network == Network::Bitcoin.into()
                             } else {
-                                key.xkey.network == Network::Testnet
+                                key.xkey.network == Network::Testnet.into()
                             };
                             if self.form_xpub.valid {
                                 self.chosen_signer = Some(Key {
@@ -398,6 +398,8 @@ impl super::DescriptorEditModal for EditXpubModal {
 }
 
 pub fn default_derivation_path(network: Network) -> DerivationPath {
+    // Note that "m" is ignored when parsing string and could be removed:
+    // https://github.com/rust-bitcoin/rust-bitcoin/pull/2677
     DerivationPath::from_str({
         if network == Network::Bitcoin {
             "m/48'/0'/0'/2'"
@@ -426,4 +428,29 @@ pub async fn get_extended_pubkey(
         wildcard: Wildcard::None,
         xkey,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_derivation_path() {
+        assert_eq!(
+            default_derivation_path(Network::Bitcoin).to_string(),
+            "48'/0'/0'/2'"
+        );
+        assert_eq!(
+            default_derivation_path(Network::Testnet).to_string(),
+            "48'/1'/0'/2'"
+        );
+        assert_eq!(
+            default_derivation_path(Network::Signet).to_string(),
+            "48'/1'/0'/2'"
+        );
+        assert_eq!(
+            default_derivation_path(Network::Regtest).to_string(),
+            "48'/1'/0'/2'"
+        );
+    }
 }

@@ -108,7 +108,9 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                                 .push_maybe(if let Some(outpoint) = tx.is_single_payment() {
                                     tx.labels.get(&outpoint.to_string()).map(p1_regular)
                                 } else {
-                                    tx.labels.get(&tx.tx.txid().to_string()).map(p1_regular)
+                                    tx.labels
+                                        .get(&tx.tx.compute_txid().to_string())
+                                        .map(p1_regular)
                                 })
                                 .push_maybe(tx.time.map(|t| {
                                     Container::new(
@@ -297,7 +299,7 @@ pub fn tx_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let txid = tx.tx.txid().to_string();
+    let txid = tx.tx.compute_txid().to_string();
     dashboard(
         &Menu::Transactions,
         cache,

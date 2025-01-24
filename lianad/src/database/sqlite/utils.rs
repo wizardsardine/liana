@@ -260,7 +260,7 @@ fn migrate_v4_to_v5(
         )?;
 
         for bitcoin_tx in bitcoin_txs {
-            let txid = &bitcoin_tx.txid()[..].to_vec();
+            let txid = &bitcoin_tx.compute_txid()[..].to_vec();
             let bitcoin_tx_ser = bitcoin::consensus::serialize(bitcoin_tx);
             db_tx.execute(
                 "INSERT INTO transactions (txid, tx) VALUES (?1, ?2);",

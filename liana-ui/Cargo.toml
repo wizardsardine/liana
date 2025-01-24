@@ -7,5 +7,5 @@ edition = "2021"
 
 [dependencies]
 iced = { version = "0.12.1", default-features = false, features = ["svg", "image", "lazy", "qr_code", "advanced", "webgl"] }
-bitcoin = "0.31"
+bitcoin = "0.32"
 chrono = "0.4"

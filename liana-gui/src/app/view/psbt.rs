@@ -268,7 +268,7 @@ pub fn spend_header<'a>(
     tx: &'a SpendTx,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
-    let txid = tx.psbt.unsigned_tx.txid().to_string();
+    let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
     Column::new()
         .spacing(20)
         .push(if let Some(outpoint) = tx.is_single_payment() {
@@ -357,13 +357,13 @@ pub fn spend_overview_view<'a>(
                                 Row::new()
                                     .push(p1_bold("Tx ID").width(Length::Fill))
                                     .push(
-                                        p2_regular(tx.psbt.unsigned_tx.txid().to_string())
+                                        p2_regular(tx.psbt.unsigned_tx.compute_txid().to_string())
                                             .style(color::GREY_3),
                                     )
                                     .push(
                                         Button::new(icon::clipboard_icon().style(color::GREY_3))
                                             .on_press(Message::Clipboard(
-                                                tx.psbt.unsigned_tx.txid().to_string(),
+                                                tx.psbt.unsigned_tx.compute_txid().to_string(),
                                             ))
                                             .style(theme::Button::TransparentBorder),
                                     )
@@ -744,7 +744,7 @@ pub fn outputs_view<'a>(
                                 |col: Column<'a, Message>, (i, output)| {
                                     col.spacing(10).push(payment_view(
                                         i,
-                                        tx.txid(),
+                                        tx.compute_txid(),
                                         output,
                                         network,
                                         labels,

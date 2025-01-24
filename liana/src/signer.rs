@@ -249,9 +249,9 @@ impl HotSigner {
             .as_ref()
             .ok_or(SignerError::IncompletePsbt)?
             .value;
-        let sig_type = sighash::EcdsaSighashType::All;
+        let sighash_type = sighash::EcdsaSighashType::All;
         let sighash = sighash_cache
-            .p2wsh_signature_hash(input_index, witscript, value, sig_type)
+            .p2wsh_signature_hash(input_index, witscript, value, sighash_type)
             .map_err(|_| SignerError::InsanePsbt)?;
         let sighash = secp256k1::Message::from_digest_slice(sighash.as_byte_array())
             .expect("Sighash is always 32 bytes.");
@@ -266,12 +266,12 @@ impl HotSigner {
             if pubkey.inner != *curr_pubkey {
                 return Err(SignerError::InsanePsbt);
             }
-            let sig = secp.sign_ecdsa_low_r(&sighash, &privkey.inner);
+            let signature = secp.sign_ecdsa_low_r(&sighash, &privkey.inner);
             psbt_in.partial_sigs.insert(
                 pubkey,
                 ecdsa::Signature {
-                    sig,
-                    hash_ty: sig_type,
+                    signature,
+                    sighash_type,
                 },
             );
         }
@@ -289,7 +289,7 @@ impl HotSigner {
         psbt_in: &mut PsbtIn,
         input_index: usize,
     ) -> Result<(), SignerError> {
-        let sig_type = sighash::TapSighashType::Default;
+        let sighash_type = sighash::TapSighashType::Default;
         let prevouts = sighash::Prevouts::All(prevouts);
 
         // If the details of the internal key are filled, provide a keypath signature.
@@ -305,14 +305,14 @@ impl HotSigner {
                     }
                     let keypair = keypair.tap_tweak(secp, psbt_in.tap_merkle_root).to_inner();
                     let sighash = sighash_cache
-                        .taproot_key_spend_signature_hash(input_index, &prevouts, sig_type)
+                        .taproot_key_spend_signature_hash(input_index, &prevouts, sighash_type)
                         .map_err(|_| SignerError::InsanePsbt)?;
                     let sighash = secp256k1::Message::from_digest_slice(sighash.as_byte_array())
                         .expect("Sighash is always 32 bytes.");
-                    let sig = secp.sign_schnorr_no_aux_rand(&sighash, &keypair);
+                    let signature = secp.sign_schnorr_no_aux_rand(&sighash, &keypair);
                     let sig = bitcoin::taproot::Signature {
-                        sig,
-                        hash_ty: sig_type,
+                        signature,
+                        sighash_type,
                     };
                     psbt_in.tap_key_sig = Some(sig);
                 }
@@ -334,15 +334,15 @@ impl HotSigner {
                         input_index,
                         &prevouts,
                         *leaf_hash,
-                        sig_type,
+                        sighash_type,
                     )
                     .map_err(|_| SignerError::InsanePsbt)?;
                 let sighash = secp256k1::Message::from_digest_slice(sighash.as_byte_array())
                     .expect("Sighash is always 32 bytes.");
-                let sig = secp.sign_schnorr_no_aux_rand(&sighash, &keypair);
+                let signature = secp.sign_schnorr_no_aux_rand(&sighash, &keypair);
                 let sig = bitcoin::taproot::Signature {
-                    sig,
-                    hash_ty: sig_type,
+                    signature,
+                    sighash_type,
                 };
                 psbt_in.tap_script_sigs.insert((*pubkey, *leaf_hash), sig);
             }
@@ -400,7 +400,7 @@ impl HotSigner {
     /// BIP32 encoding of those keys (xpubs, tpubs, ..) but does not affect any data (whether it is
     /// the keys or the mnemonics).
     pub fn set_network(&mut self, network: bitcoin::Network) {
-        self.master_xpriv.network = network;
+        self.master_xpriv.network = network.into();
     }
 }
 
@@ -582,7 +582,7 @@ mod tests {
                         "bc1qvklensptw5lk7d470ds60pcpsr0psdpgyvwepv",
                     )
                     .unwrap()
-                    .payload()
+                    .assume_checked()
                     .script_pubkey(),
                 }],
             },
@@ -842,7 +842,7 @@ mod tests {
                         "bc1qvklensptw5lk7d470ds60pcpsr0psdpgyvwepv",
                     )
                     .unwrap()
-                    .payload()
+                    .assume_checked()
                     .script_pubkey(),
                 }],
             },

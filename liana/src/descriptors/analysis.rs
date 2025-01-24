@@ -2,11 +2,11 @@ use miniscript::{
     bitcoin::{
         self, bip32,
         hashes::{sha256, Hash},
-        secp256k1, Sequence,
+        secp256k1,
     },
     descriptor,
     policy::{Concrete as ConcretePolicy, Liftable, Semantic as SemanticPolicy},
-    ScriptContext,
+    RelLockTime, ScriptContext, Threshold,
 };
 
 use std::{
@@ -14,6 +14,7 @@ use std::{
     convert::TryFrom,
     error, fmt,
     str::FromStr,
+    sync,
 };
 
 #[derive(Debug)]
@@ -71,9 +72,10 @@ impl error::Error for LianaPolicyError {}
 fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorPublicKey>) -> bool {
     match policy {
         SemanticPolicy::Key(..) => true,
-        SemanticPolicy::Threshold(_, subs) => {
-            subs.iter().all(|sub| matches!(sub, SemanticPolicy::Key(_)))
-        }
+        SemanticPolicy::Thresh(thresh) => thresh
+            .data()
+            .iter()
+            .all(|sub| matches!(sub.as_ref(), SemanticPolicy::Key(_))),
         _ => false,
     }
 }
@@ -185,11 +187,13 @@ impl PathInfo {
     ) -> Result<PathInfo, LianaPolicyError> {
         match policy {
             SemanticPolicy::Key(key) => Ok(PathInfo::Single(key)),
-            SemanticPolicy::Threshold(k, subs) => {
-                let keys: Result<_, LianaPolicyError> = subs
+            SemanticPolicy::Thresh(thresh) if thresh.k() > 0 && thresh.n() >= thresh.k() => {
+                let k = thresh.k();
+                let keys: Result<_, LianaPolicyError> = thresh
+                    .into_data()
                     .into_iter()
-                    .map(|sub| match sub {
-                        SemanticPolicy::Key(key) => Ok(key),
+                    .map(|sub| match sub.as_ref() {
+                        SemanticPolicy::Key(key) => Ok(key.clone()),
                         _ => Err(LianaPolicyError::IncompatibleDesc),
                     })
                     .collect();
@@ -210,7 +214,7 @@ impl PathInfo {
         // special case n == len(keys) (i.e. it's an N-of-N multisig), it is normalized as
         // `thresh(n+1, older(x), key1, key2, ...)`.
         let (k, subs) = match policy {
-            SemanticPolicy::Threshold(k, subs) => (k, subs),
+            SemanticPolicy::Thresh(thresh) => (thresh.k(), thresh.into_data()),
             _ => return Err(LianaPolicyError::IncompatibleDesc),
         };
         if k == 2 && subs.len() == 2 {
@@ -218,29 +222,29 @@ impl PathInfo {
             // of the same form as a primary path.
             let tl_value = subs
                 .iter()
-                .find_map(|s| match s {
-                    SemanticPolicy::Older(val) => Some(csv_check(val.0)),
+                .find_map(|s| match s.as_ref() {
+                    SemanticPolicy::Older(val) => Some(csv_check(val.to_consensus_u32())),
                     _ => None,
                 })
                 .ok_or(LianaPolicyError::IncompatibleDesc)??;
             let keys_sub = subs
                 .into_iter()
-                .find(is_single_key_or_multisig)
+                .find(|sub| is_single_key_or_multisig(sub.as_ref()))
                 .ok_or(LianaPolicyError::IncompatibleDesc)?;
-            PathInfo::from_primary_path(keys_sub).map(|info| (tl_value, info))
+            PathInfo::from_primary_path(keys_sub.as_ref().clone()).map(|info| (tl_value, info))
         } else if k == subs.len() && subs.len() > 2 {
             // The N-of-N case. All subs but the threshold must be keys (if one had been thresh()
             // of keys it would have been normalized).
             let mut tl_value = None;
             let mut keys = Vec::with_capacity(subs.len());
             for sub in subs {
-                match sub {
-                    SemanticPolicy::Key(key) => keys.push(key),
+                match sub.as_ref() {
+                    SemanticPolicy::Key(key) => keys.push(key.clone()),
                     SemanticPolicy::Older(val) => {
                         if tl_value.is_some() {
                             return Err(LianaPolicyError::IncompatibleDesc);
                         }
-                        tl_value = Some(csv_check(val.0)?);
+                        tl_value = Some(csv_check(val.to_consensus_u32())?);
                     }
                     _ => return Err(LianaPolicyError::IncompatibleDesc),
                 }
@@ -348,16 +352,21 @@ impl PathInfo {
     }
 
     /// Get a Miniscript Policy for this path.
-    pub fn into_ms_policy(self) -> ConcretePolicy<descriptor::DescriptorPublicKey> {
-        match self {
+    pub fn into_ms_policy(
+        self,
+    ) -> Result<ConcretePolicy<descriptor::DescriptorPublicKey>, LianaPolicyError> {
+        Ok(match self {
             PathInfo::Single(key) => ConcretePolicy::Key(key),
-            PathInfo::Multi(thresh, keys) => ConcretePolicy::Threshold(
-                thresh,
-                keys.into_iter()
-                    .map(|key| ConcretePolicy::Key(key).into())
-                    .collect(),
+            PathInfo::Multi(thresh, keys) => ConcretePolicy::Thresh(
+                Threshold::new(
+                    thresh,
+                    keys.into_iter()
+                        .map(|key| sync::Arc::new(ConcretePolicy::Key(key)))
+                        .collect(),
+                )
+                .map_err(|e| LianaPolicyError::InvalidPolicy(miniscript::Error::Threshold(e)))?,
             ),
-        }
+        })
     }
 }
 
@@ -586,13 +595,10 @@ impl LianaPolicy {
                     if *desc_int_xpub == unspend_int_xpub {
                         tree_policy
                     } else {
-                        SemanticPolicy::Threshold(
-                            1,
-                            vec![
-                                SemanticPolicy::Key(desc.internal_key().clone()),
-                                tree_policy,
-                            ],
-                        )
+                        SemanticPolicy::Thresh(Threshold::or(
+                            sync::Arc::new(SemanticPolicy::Key(desc.internal_key().clone())),
+                            sync::Arc::new(tree_policy),
+                        ))
                     }
                 } else {
                     // A Liana descriptor must contain a timelocked path.
@@ -609,15 +615,23 @@ impl LianaPolicy {
         // primary path with at least one key, and at least one timelocked recovery path with at
         // least one key.
         let subs = match policy {
-            SemanticPolicy::Threshold(1, subs) => Some(subs),
-            _ => None,
-        }
-        .ok_or(LianaPolicyError::IncompatibleDesc)?;
+            SemanticPolicy::Thresh(thresh) if thresh.is_or() && thresh.n() > 1 => {
+                thresh.into_data()
+            }
+            _ => return Err(LianaPolicyError::IncompatibleDesc),
+        };
 
         // Fetch all spending paths' semantic policies. The primary path is identified as the only
         // one that isn't timelocked.
         let (mut primary_path, mut recovery_paths) = (None::<PathInfo>, BTreeMap::new());
         for sub in subs {
+            // Rust-Miniscript now forces the policy in thresholds to be wrapped into an Arc. Since
+            // we lift the policy from the descriptor right above, there is necessarily a single
+            // reference per Arc, so it's safe to unwrap. This avoids having to clone every single
+            // sub below.
+            let sub =
+                sync::Arc::try_unwrap(sub).expect("Only a single reference, created right above.");
+
             // This is a (multi)key check. It must be the primary path.
             if is_single_key_or_multisig(&sub) {
                 // We only support a single primary path. But it may be that the primary path is a
@@ -626,7 +640,7 @@ impl LianaPolicy {
                 // thresh(2, older(42), pk(C)))`.
                 if let Some(prim_path) = primary_path {
                     if let SemanticPolicy::Key(key) = sub {
-                        primary_path = Some(prim_path.with_added_key(key));
+                        primary_path = Some(prim_path.with_added_key(key.clone()));
                     } else {
                         return Err(LianaPolicyError::IncompatibleDesc);
                     }
@@ -669,7 +683,10 @@ impl LianaPolicy {
         &self.recovery_paths
     }
 
-    fn into_policy(self) -> miniscript::policy::Concrete<descriptor::DescriptorPublicKey> {
+    fn into_policy(
+        self,
+    ) -> Result<miniscript::policy::Concrete<descriptor::DescriptorPublicKey>, LianaPolicyError>
+    {
         let LianaPolicy {
             primary_path,
             recovery_paths,
@@ -677,18 +694,21 @@ impl LianaPolicy {
         } = self;
 
         // Start with the primary spending path. We'll then or() all the recovery paths to it.
-        let primary_keys = primary_path.into_ms_policy();
+        let primary_keys = primary_path.into_ms_policy()?;
 
         // Incrementally create the top-level policy using all recovery paths.
         assert!(!recovery_paths.is_empty());
         recovery_paths
             .into_iter()
-            .fold(primary_keys, |tl_policy, (timelock, path_info)| {
-                let timelock = ConcretePolicy::Older(Sequence::from_height(timelock));
-                let keys = path_info.into_ms_policy();
+            .try_fold(primary_keys, |tl_policy, (timelock, path_info)| {
+                let timelock = ConcretePolicy::Older(RelLockTime::from_height(timelock));
+                let keys = path_info.into_ms_policy()?;
                 let recovery_branch = ConcretePolicy::And(vec![keys.into(), timelock.into()]);
                 // We assume the larger the timelock the less likely a branch would be used.
-                ConcretePolicy::Or(vec![(99, tl_policy.into()), (1, recovery_branch.into())])
+                Ok(ConcretePolicy::Or(vec![
+                    (99, tl_policy.into()),
+                    (1, recovery_branch.into()),
+                ]))
             })
     }
 
@@ -713,12 +733,12 @@ impl LianaPolicy {
                         depth: 0,
                         parent_fingerprint: [0; 4].into(),
                         child_number: 0.into(),
-                        network: bitcoin::Network::Regtest,
+                        network: bitcoin::Network::Regtest.into(),
                     },
                     derivation_path: vec![].into(),
                     wildcard: descriptor::Wildcard::None,
                 });
-            let policy = self.into_policy();
+            let policy = self.into_policy()?;
             let desc = policy
                 .clone()
                 .compile_tr(Some(dummy_internal_key.clone()))
@@ -743,7 +763,7 @@ impl LianaPolicy {
             }
         } else {
             let ms = self
-                .into_policy()
+                .into_policy()?
                 .compile::<miniscript::Segwitv0>()
                 .map_err(|e| LianaPolicyError::InvalidPolicy(e.into()))?;
             miniscript::Segwitv0::check_local_validity(&ms).expect("Miniscript must be sane");

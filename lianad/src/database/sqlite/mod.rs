@@ -611,7 +611,7 @@ impl SqliteConn {
 
     /// Insert a new Spend transaction or replace an existing one.
     pub fn store_spend(&mut self, psbt: &Psbt) {
-        let txid = &psbt.unsigned_tx.txid()[..].to_vec();
+        let txid = &psbt.unsigned_tx.compute_txid()[..].to_vec();
 
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(
@@ -752,7 +752,7 @@ impl SqliteConn {
     pub fn new_txs(&mut self, txs: &[bitcoin::Transaction]) {
         db_exec(&mut self.conn, |db_tx| {
             for tx in txs {
-                let txid = &tx.txid()[..].to_vec();
+                let txid = &tx.compute_txid()[..].to_vec();
                 let tx_ser = bitcoin::consensus::serialize(tx);
                 db_tx.execute(
                     "INSERT INTO transactions (txid, tx, num_inputs, num_outputs, is_coinbase) \
@@ -893,7 +893,7 @@ impl SqliteConn {
             w_txs.len(),
             w_txs
                 .iter()
-                .map(|t| t.transaction.txid())
+                .map(|t| t.transaction.compute_txid())
                 .collect::<HashSet<_>>()
                 .len(),
             "database must not contain inconsistent block info for the same txid"
@@ -1430,7 +1430,7 @@ CREATE TABLE labels (
             conn.new_txs(&txs);
 
             // Add one unconfirmed coin.
-            let outpoint_a = bitcoin::OutPoint::new(txs.first().unwrap().txid(), 1);
+            let outpoint_a = bitcoin::OutPoint::new(txs.first().unwrap().compute_txid(), 1);
             let coin_a = Coin {
                 outpoint: outpoint_a,
                 is_immature: false,
@@ -1477,7 +1477,7 @@ CREATE TABLE labels (
                 .is_empty());
 
             // Add a second coin.
-            let outpoint_b = bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 12);
+            let outpoint_b = bitcoin::OutPoint::new(txs.get(1).unwrap().compute_txid(), 12);
             let coin_b = Coin {
                 outpoint: outpoint_b,
                 is_immature: false,
@@ -1558,7 +1558,7 @@ CREATE TABLE labels (
                     .all(|c| [coin_a.outpoint, coin_b.outpoint].contains(&c.outpoint))));
 
             // Now if we spend one, it'll be marked as such.
-            conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().txid())]);
+            conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().compute_txid())]);
             assert!([
                 conn.coins(&[CoinStatus::Spending], &[]),
                 conn.coins(&[CoinStatus::Spending], &[outpoint_a]),
@@ -1581,7 +1581,7 @@ CREATE TABLE labels (
             // Now we confirm the spend.
             conn.confirm_spend(&[(
                 coin_a.outpoint,
-                txs.get(2).unwrap().txid(),
+                txs.get(2).unwrap().compute_txid(),
                 128_097,
                 3_000_000,
             )]);
@@ -1612,7 +1612,7 @@ CREATE TABLE labels (
                     .all(|c| [coin_a.outpoint, coin_b.outpoint].contains(&c.outpoint))));
 
             // Add a third and fourth coin.
-            let outpoint_c = bitcoin::OutPoint::new(txs.get(3).unwrap().txid(), 42);
+            let outpoint_c = bitcoin::OutPoint::new(txs.get(3).unwrap().compute_txid(), 42);
             let coin_c = Coin {
                 outpoint: outpoint_c,
                 is_immature: false,
@@ -1624,7 +1624,7 @@ CREATE TABLE labels (
                 spend_block: None,
                 is_from_self: false,
             };
-            let outpoint_d = bitcoin::OutPoint::new(txs.get(4).unwrap().txid(), 43);
+            let outpoint_d = bitcoin::OutPoint::new(txs.get(4).unwrap().compute_txid(), 43);
             let coin_d = Coin {
                 outpoint: outpoint_d,
                 is_immature: false,
@@ -1668,7 +1668,7 @@ CREATE TABLE labels (
                     .all(|c| [coin_b.outpoint, coin_c.outpoint].contains(&c.outpoint))));
 
             // Now spend second coin, even though it is still unconfirmed.
-            conn.spend_coins(&[(coin_b.outpoint, txs.get(5).unwrap().txid())]);
+            conn.spend_coins(&[(coin_b.outpoint, txs.get(5).unwrap().compute_txid())]);
             // The coin shows as spending.
             assert!([
                 conn.coins(&[CoinStatus::Spending], &[]),
@@ -1741,7 +1741,7 @@ CREATE TABLE labels (
 
             // Add one, we'll get it.
             let coin_a = Coin {
-                outpoint: bitcoin::OutPoint::new(txs.first().unwrap().txid(), 1),
+                outpoint: bitcoin::OutPoint::new(txs.first().unwrap().compute_txid(), 1),
                 is_immature: false,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(98765),
@@ -1784,7 +1784,7 @@ CREATE TABLE labels (
 
             // Add a second one (this one is change), we'll get both.
             let coin_b = Coin {
-                outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 12),
+                outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().compute_txid(), 12),
                 is_immature: false,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(1111),
@@ -1837,7 +1837,7 @@ CREATE TABLE labels (
             assert!(coins[1].block_info.is_none());
 
             // Now if we spend one, it'll be marked as such.
-            conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().txid())]);
+            conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().compute_txid())]);
             let coin = conn
                 .coins(&[], &[coin_a.outpoint])
                 .into_iter()
@@ -1855,7 +1855,7 @@ CREATE TABLE labels (
             assert!(coin.spend_txid.is_none());
 
             // Spend it back. We will see it as 'spending'
-            conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().txid())]);
+            conn.spend_coins(&[(coin_a.outpoint, txs.get(2).unwrap().compute_txid())]);
             let outpoints: HashSet<bitcoin::OutPoint> = conn
                 .list_spending_coins()
                 .into_iter()
@@ -1876,7 +1876,12 @@ CREATE TABLE labels (
             // Now if we confirm the spend.
             let height = 128_097;
             let time = 3_000_000;
-            conn.confirm_spend(&[(coin_a.outpoint, txs.get(2).unwrap().txid(), height, time)]);
+            conn.confirm_spend(&[(
+                coin_a.outpoint,
+                txs.get(2).unwrap().compute_txid(),
+                height,
+                time,
+            )]);
             // the coin is not in a spending state.
             let outpoints: HashSet<bitcoin::OutPoint> = conn
                 .list_spending_coins()
@@ -1908,7 +1913,7 @@ CREATE TABLE labels (
             // Add an immature coin. As all coins it's first registered as unconfirmed (even though
             // it's not).
             let coin_imma = Coin {
-                outpoint: bitcoin::OutPoint::new(txs.get(3).unwrap().txid(), 42),
+                outpoint: bitcoin::OutPoint::new(txs.get(3).unwrap().compute_txid(), 42),
                 is_immature: true,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(424242),
@@ -2080,7 +2085,7 @@ CREATE TABLE labels (
             // TODO: immature deposits
             let coins = [
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.first().unwrap().txid(), 1),
+                    outpoint: bitcoin::OutPoint::new(txs.first().unwrap().compute_txid(), 1),
                     is_immature: false,
                     block_info: None,
                     amount: bitcoin::Amount::from_sat(98765),
@@ -2091,7 +2096,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 2),
+                    outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().compute_txid(), 2),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_095,
@@ -2105,7 +2110,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().txid(), 3),
+                    outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().compute_txid(), 3),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_099,
@@ -2114,7 +2119,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
                     is_change: false,
-                    spend_txid: Some(txs.get(3).unwrap().txid()),
+                    spend_txid: Some(txs.get(3).unwrap().compute_txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_199,
                         time: 1_231_678,
@@ -2122,7 +2127,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().txid(), 4),
+                    outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().compute_txid(), 4),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_100,
@@ -2136,7 +2141,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().txid(), 5),
+                    outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().compute_txid(), 5),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_102,
@@ -2145,7 +2150,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
                     is_change: false,
-                    spend_txid: Some(txs.get(6).unwrap().txid()),
+                    spend_txid: Some(txs.get(6).unwrap().compute_txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_105,
                         time: 1_201_678,
@@ -2288,7 +2293,7 @@ CREATE TABLE labels (
 
             let coins = [
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.first().unwrap().txid(), 1),
+                    outpoint: bitcoin::OutPoint::new(txs.first().unwrap().compute_txid(), 1),
                     is_immature: false,
                     block_info: None,
                     amount: bitcoin::Amount::from_sat(98765),
@@ -2299,7 +2304,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 2),
+                    outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().compute_txid(), 2),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_095,
@@ -2313,7 +2318,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().txid(), 3),
+                    outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().compute_txid(), 3),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_099,
@@ -2322,7 +2327,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
                     is_change: false,
-                    spend_txid: Some(txs.get(3).unwrap().txid()),
+                    spend_txid: Some(txs.get(3).unwrap().compute_txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_199,
                         time: 1_123_000,
@@ -2330,7 +2335,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().txid(), 4),
+                    outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().compute_txid(), 4),
                     is_immature: true,
                     block_info: Some(BlockInfo {
                         height: 101_100,
@@ -2344,7 +2349,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().txid(), 5),
+                    outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().compute_txid(), 5),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_102,
@@ -2353,7 +2358,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
                     is_change: false,
-                    spend_txid: Some(txs.get(6).unwrap().txid()),
+                    spend_txid: Some(txs.get(6).unwrap().compute_txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_105,
                         time: 1_126_000,
@@ -2381,12 +2386,12 @@ CREATE TABLE labels (
 
             let db_txids = conn.db_list_txids(1_123_000, 1_127_000, 10);
             // Ordered by desc block time.
-            let expected_txids = [6, 5, 4, 3].map(|i| txs.get(i).unwrap().txid());
+            let expected_txids = [6, 5, 4, 3].map(|i| txs.get(i).unwrap().compute_txid());
             assert_eq!(&db_txids[..], &expected_txids,);
 
             let db_txids = conn.db_list_txids(1_123_000, 1_127_000, 2);
             // Ordered by desc block time.
-            let expected_txids = [6, 5].map(|i| txs.get(i).unwrap().txid());
+            let expected_txids = [6, 5].map(|i| txs.get(i).unwrap().compute_txid());
             assert_eq!(&db_txids[..], &expected_txids,);
         }
 
@@ -2412,7 +2417,7 @@ CREATE TABLE labels (
 
             let coins = [
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.first().unwrap().txid(), 1),
+                    outpoint: bitcoin::OutPoint::new(txs.first().unwrap().compute_txid(), 1),
                     is_immature: false,
                     block_info: None,
                     amount: bitcoin::Amount::from_sat(98765),
@@ -2423,7 +2428,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().txid(), 2),
+                    outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().compute_txid(), 2),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_095,
@@ -2437,7 +2442,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().txid(), 3),
+                    outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().compute_txid(), 3),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_099,
@@ -2446,7 +2451,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
                     is_change: false,
-                    spend_txid: Some(txs.get(3).unwrap().txid()),
+                    spend_txid: Some(txs.get(3).unwrap().compute_txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_199,
                         time: 1_123_000,
@@ -2454,7 +2459,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().txid(), 4),
+                    outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().compute_txid(), 4),
                     is_immature: true,
                     block_info: Some(BlockInfo {
                         height: 101_100,
@@ -2468,7 +2473,7 @@ CREATE TABLE labels (
                     is_from_self: false,
                 },
                 Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().txid(), 5),
+                    outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().compute_txid(), 5),
                     is_immature: false,
                     block_info: Some(BlockInfo {
                         height: 101_102,
@@ -2477,7 +2482,7 @@ CREATE TABLE labels (
                     amount: bitcoin::Amount::from_sat(98765),
                     derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
                     is_change: false,
-                    spend_txid: Some(txs.get(6).unwrap().txid()),
+                    spend_txid: Some(txs.get(6).unwrap().compute_txid()),
                     spend_block: Some(BlockInfo {
                         height: 101_105,
                         time: 1_126_000,
@@ -2529,7 +2534,7 @@ CREATE TABLE labels (
 
             let mut db_txids = conn.db_list_saved_txids();
             db_txids.sort();
-            let mut expected_txids: Vec<_> = txs.iter().map(|tx| tx.txid()).collect();
+            let mut expected_txids: Vec<_> = txs.iter().map(|tx| tx.compute_txid()).collect();
             expected_txids.sort();
             assert_eq!(&db_txids[..], &expected_txids,);
         }
@@ -2579,7 +2584,7 @@ CREATE TABLE labels (
                 .enumerate()
                 .map(|(i, tx)| Coin {
                     outpoint: bitcoin::OutPoint {
-                        txid: tx.txid(),
+                        txid: tx.compute_txid(),
                         vout: i as u32,
                     },
                     is_immature: (i % 10) == 0,
@@ -2595,7 +2600,7 @@ CREATE TABLE labels (
                         None
                     },
                     spend_txid: if i % 20 == 0 {
-                        Some(spend_txs[i / 20].0.txid())
+                        Some(spend_txs[i / 20].0.compute_txid())
                     } else {
                         None
                     },
@@ -2648,8 +2653,10 @@ CREATE TABLE labels (
             conn.confirm_spend(&confirmed_spent_coins);
 
             // For easy lookup, map each tx to its txid.
-            let bitcoin_txs: HashMap<_, _> =
-                bitcoin_txs.into_iter().map(|tx| (tx.txid(), tx)).collect();
+            let bitcoin_txs: HashMap<_, _> = bitcoin_txs
+                .into_iter()
+                .map(|tx| (tx.compute_txid(), tx))
+                .collect();
 
             let block_info_from_coins: HashSet<_> = coins
                 .iter()
@@ -2705,14 +2712,22 @@ CREATE TABLE labels (
                 assert_eq!(txids.len(), indices.len());
 
                 let mut db_txs = conn.list_wallet_transactions(&txids);
-                db_txs.sort_by(|a, b| a.transaction.txid().cmp(&b.transaction.txid()));
+                db_txs.sort_by(|a, b| {
+                    a.transaction
+                        .compute_txid()
+                        .cmp(&b.transaction.compute_txid())
+                });
                 let mut expected_txs: Vec<_> = txids
                     .iter()
                     .collect::<HashSet<_>>() // remove duplicates
                     .into_iter()
                     .map(|txid| wallet_txs_from_coins.get(txid).unwrap().clone())
                     .collect();
-                expected_txs.sort_by(|a, b| a.transaction.txid().cmp(&b.transaction.txid()));
+                expected_txs.sort_by(|a, b| {
+                    a.transaction
+                        .compute_txid()
+                        .cmp(&b.transaction.compute_txid())
+                });
                 assert_eq!(&db_txs[..], &expected_txs[..],);
             }
         }
@@ -2742,7 +2757,7 @@ CREATE TABLE labels (
             let tx_a = dummy_tx(1, 0);
             let tx_b = dummy_tx(1, 1);
             let coin_tx_a: Coin = Coin {
-                outpoint: bitcoin::OutPoint::new(tx_a.txid(), 0),
+                outpoint: bitcoin::OutPoint::new(tx_a.compute_txid(), 0),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(1_000_000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(0).unwrap(),
@@ -2753,7 +2768,7 @@ CREATE TABLE labels (
                 is_from_self: false,
             };
             let coin_tx_b: Coin = Coin {
-                outpoint: bitcoin::OutPoint::new(tx_b.txid(), 0),
+                outpoint: bitcoin::OutPoint::new(tx_b.compute_txid(), 0),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(1_000_000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(1).unwrap(),
@@ -2776,7 +2791,7 @@ CREATE TABLE labels (
             // Spend `coin_tx_a` in `tx_c` with change `coin_tx_c`.
             let tx_c = dummy_tx(1, 2);
             let coin_tx_c: Coin = Coin {
-                outpoint: bitcoin::OutPoint::new(tx_c.txid(), 0),
+                outpoint: bitcoin::OutPoint::new(tx_c.compute_txid(), 0),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(1_000_000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(2).unwrap(),
@@ -2787,7 +2802,7 @@ CREATE TABLE labels (
                 is_from_self: false,
             };
             conn.new_txs(&[tx_c.clone()]);
-            conn.spend_coins(&[(coin_tx_a.outpoint, tx_c.txid())]);
+            conn.spend_coins(&[(coin_tx_a.outpoint, tx_c.compute_txid())]);
             conn.new_unspent_coins(&[coin_tx_c]);
 
             // Although `coin_tx_c` has only one parent, `coin_tx_a` is
@@ -2800,7 +2815,7 @@ CREATE TABLE labels (
             // Now refresh `coin_tx_c` in `tx_d`, creating `coin_tx_d`.
             let tx_d = dummy_tx(1, 3);
             let coin_tx_d: Coin = Coin {
-                outpoint: bitcoin::OutPoint::new(tx_d.txid(), 0),
+                outpoint: bitcoin::OutPoint::new(tx_d.compute_txid(), 0),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(1_000_000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(3).unwrap(),
@@ -2811,7 +2826,7 @@ CREATE TABLE labels (
                 is_from_self: false,
             };
             conn.new_txs(&[tx_d.clone()]);
-            conn.spend_coins(&[(coin_tx_c.outpoint, tx_d.txid())]);
+            conn.spend_coins(&[(coin_tx_c.outpoint, tx_d.compute_txid())]);
             conn.new_unspent_coins(&[coin_tx_d]);
 
             // All coins are unconfirmed and none are from self.
@@ -2823,7 +2838,7 @@ CREATE TABLE labels (
             // together in `tx_e`, creating `coin_tx_e`.
             let tx_e = dummy_tx(2, 4); // 2 inputs
             let coin_tx_e: Coin = Coin {
-                outpoint: bitcoin::OutPoint::new(tx_e.txid(), 0),
+                outpoint: bitcoin::OutPoint::new(tx_e.compute_txid(), 0),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(1_000_000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(4).unwrap(),
@@ -2835,8 +2850,8 @@ CREATE TABLE labels (
             };
             conn.new_txs(&[tx_e.clone()]);
             conn.spend_coins(&[
-                (coin_tx_b.outpoint, tx_e.txid()),
-                (coin_tx_d.outpoint, tx_e.txid()),
+                (coin_tx_b.outpoint, tx_e.compute_txid()),
+                (coin_tx_d.outpoint, tx_e.compute_txid()),
             ]);
             conn.new_unspent_coins(&[coin_tx_e]);
 
@@ -2848,7 +2863,7 @@ CREATE TABLE labels (
             // Finally, refresh `coin_tx_e` in transaction `tx_f`, creating `coin_tx_f`.
             let tx_f = dummy_tx(1, 5);
             let coin_tx_f: Coin = Coin {
-                outpoint: bitcoin::OutPoint::new(tx_f.txid(), 0),
+                outpoint: bitcoin::OutPoint::new(tx_f.compute_txid(), 0),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(1_000_000),
                 derivation_index: bip32::ChildNumber::from_normal_idx(5).unwrap(),
@@ -2859,7 +2874,7 @@ CREATE TABLE labels (
                 is_from_self: false,
             };
             conn.new_txs(&[tx_f.clone()]);
-            conn.spend_coins(&[(coin_tx_e.outpoint, tx_f.txid())]);
+            conn.spend_coins(&[(coin_tx_e.outpoint, tx_f.compute_txid())]);
             conn.new_unspent_coins(&[coin_tx_f]);
 
             // Still no coins are from self.
@@ -2872,7 +2887,7 @@ CREATE TABLE labels (
                 (coin_tx_a.outpoint, 100, 1_000),
                 (coin_tx_c.outpoint, 101, 1_001),
             ]);
-            conn.confirm_spend(&[(coin_tx_a.outpoint, tx_c.txid(), 101, 1_001)]);
+            conn.confirm_spend(&[(coin_tx_a.outpoint, tx_c.compute_txid(), 101, 1_001)]);
             // Coins are still not marked as from self.
             assert!(conn.coins(&[], &[]).iter().all(|c| !c.is_from_self));
             // Now update from self for coins confirmed after 101, which excludes the two coins above.
@@ -3082,7 +3097,7 @@ CREATE TABLE labels (
         // The helper that was used to store Spend transaction in previous versions of the software
         // when there was no associated timestamp.
         fn store_spend_old(conn: &mut rusqlite::Connection, psbt: &Psbt) {
-            let txid = &psbt.unsigned_tx.txid()[..].to_vec();
+            let txid = &psbt.unsigned_tx.compute_txid()[..].to_vec();
 
             db_exec(conn, |db_tx| {
                 db_tx.execute(
@@ -3134,14 +3149,14 @@ CREATE TABLE labels (
             let mut conn = rusqlite::Connection::open(&db_path).unwrap();
             store_coin_old(
                 &mut conn,
-                &bitcoin::OutPoint::new(bitcoin_txs.first().unwrap().txid(), 5),
+                &bitcoin::OutPoint::new(bitcoin_txs.first().unwrap().compute_txid(), 5),
                 bitcoin::Amount::from_sat(14_000),
                 24.into(),
                 true,
             );
             store_coin_old(
                 &mut conn,
-                &bitcoin::OutPoint::new(bitcoin_txs.get(1).unwrap().txid(), 2),
+                &bitcoin::OutPoint::new(bitcoin_txs.get(1).unwrap().compute_txid(), 2),
                 bitcoin::Amount::from_sat(392_093_123),
                 24_567.into(),
                 false,
@@ -3190,7 +3205,7 @@ CREATE TABLE labels (
             };
             conn.new_txs(&[tx.clone()]);
             conn.new_unspent_coins(&[Coin {
-                outpoint: bitcoin::OutPoint::new(tx.txid(), 1),
+                outpoint: bitcoin::OutPoint::new(tx.compute_txid(), 1),
                 is_immature: true,
                 block_info: None,
                 amount: bitcoin::Amount::from_sat(98765),
@@ -3269,12 +3284,14 @@ CREATE TABLE labels (
             // - coin_e is the unconfirmed output of coin_d's spend.
             // - coin_imma_a is confirmed.
             // - coin_imma_b is still immature.
-            let coin_d_outpoint = bitcoin::OutPoint::new(bitcoin_txs.get(3).unwrap().txid(), 1456);
-            let coin_e_outpoint = bitcoin::OutPoint::new(bitcoin_txs.get(4).unwrap().txid(), 4633);
+            let coin_d_outpoint =
+                bitcoin::OutPoint::new(bitcoin_txs.get(3).unwrap().compute_txid(), 1456);
+            let coin_e_outpoint =
+                bitcoin::OutPoint::new(bitcoin_txs.get(4).unwrap().compute_txid(), 4633);
             let coin_a = DbCoinV3 {
                 id: 1,
                 wallet_id: WALLET_ID,
-                outpoint: bitcoin::OutPoint::new(bitcoin_txs.first().unwrap().txid(), 1),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.first().unwrap().compute_txid(), 1),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(1231001),
                 derivation_index: bip32::ChildNumber::from_normal_idx(101).unwrap(),
@@ -3283,7 +3300,7 @@ CREATE TABLE labels (
                     height: 175500,
                     time: 1755001001,
                 }),
-                spend_txid: Some(bitcoin_txs.get(7).unwrap().txid()),
+                spend_txid: Some(bitcoin_txs.get(7).unwrap().compute_txid()),
                 spend_block: Some(DbBlockInfo {
                     height: 245500,
                     time: 1755003000,
@@ -3292,7 +3309,7 @@ CREATE TABLE labels (
             let coin_b = DbCoinV3 {
                 id: 2,
                 wallet_id: WALLET_ID,
-                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(1).unwrap().txid(), 19234),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(1).unwrap().compute_txid(), 19234),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(23145),
                 derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
@@ -3307,7 +3324,7 @@ CREATE TABLE labels (
             let coin_c = DbCoinV3 {
                 id: 3,
                 wallet_id: WALLET_ID,
-                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(2).unwrap().txid(), 932),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(2).unwrap().compute_txid(), 932),
                 is_immature: false,
                 amount: bitcoin::Amount::from_sat(354764),
                 derivation_index: bip32::ChildNumber::from_normal_idx(3401).unwrap(),
@@ -3346,7 +3363,7 @@ CREATE TABLE labels (
             let coin_imma_a = DbCoinV3 {
                 id: 6,
                 wallet_id: WALLET_ID,
-                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(5).unwrap().txid(), 5),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(5).unwrap().compute_txid(), 5),
                 is_immature: true,
                 amount: bitcoin::Amount::from_sat(4564347),
                 derivation_index: bip32::ChildNumber::from_normal_idx(453).unwrap(),
@@ -3361,7 +3378,7 @@ CREATE TABLE labels (
             let coin_imma_b = DbCoinV3 {
                 id: 7,
                 wallet_id: WALLET_ID,
-                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(6).unwrap().txid(), 19234),
+                outpoint: bitcoin::OutPoint::new(bitcoin_txs.get(6).unwrap().compute_txid(), 19234),
                 is_immature: true,
                 amount: bitcoin::Amount::from_sat(731453),
                 derivation_index: bip32::ChildNumber::from_normal_idx(98).unwrap(),
@@ -3470,7 +3487,7 @@ CREATE TABLE labels (
                 id: i.try_into().unwrap(),
                 wallet_id: WALLET_ID,
                 outpoint: bitcoin::OutPoint {
-                    txid: tx.txid(),
+                    txid: tx.compute_txid(),
                     vout: i as u32,
                 },
                 is_immature: (i % 10) == 0,
@@ -3486,7 +3503,7 @@ CREATE TABLE labels (
                     None
                 },
                 spend_txid: if i % 20 == 0 {
-                    Some(spend_txs[i / 20].0.txid())
+                    Some(spend_txs[i / 20].0.compute_txid())
                 } else {
                     None
                 },
@@ -3528,7 +3545,7 @@ CREATE TABLE labels (
             let db = SqliteDb::new(db_path.clone(), None, &secp).unwrap();
             let mut conn = db.connection().unwrap();
 
-            let txids: Vec<_> = bitcoin_txs.iter().map(|tx| tx.txid()).collect();
+            let txids: Vec<_> = bitcoin_txs.iter().map(|tx| tx.compute_txid()).collect();
             let bitcoin_txs_in_db: HashSet<_> = conn
                 .list_wallet_transactions(&txids)
                 .into_iter()

@@ -92,7 +92,7 @@ impl SpendTx {
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
         for coin in coins {
             if let Some(info) = coin.spend_info {
-                if info.txid == psbt.unsigned_tx.txid() {
+                if info.txid == psbt.unsigned_tx.compute_txid() {
                     if info.height.is_some() {
                         status = SpendStatus::Spent
                     } else {
@@ -158,7 +158,7 @@ impl SpendTx {
                     .filter_map(|(i, _)| {
                         if !change_indexes.contains(&i) {
                             Some(OutPoint {
-                                txid: psbt.unsigned_tx.txid(),
+                                txid: psbt.unsigned_tx.compute_txid(),
                                 vout: i as u32,
                             })
                         } else {
@@ -247,7 +247,7 @@ impl Labelled for SpendTx {
     }
     fn labelled(&self) -> Vec<LabelItem> {
         let mut items = Vec::new();
-        let txid = self.psbt.unsigned_tx.txid();
+        let txid = self.psbt.unsigned_tx.compute_txid();
         items.push(LabelItem::Txid(txid));
         for coin in self.coins.values() {
             items.push(LabelItem::Address(coin.address.clone()));
@@ -307,7 +307,7 @@ impl HistoryTransaction {
         let kind = if coins.is_empty() {
             if change_indexes.len() == 1 {
                 TransactionKind::IncomingSinglePayment(OutPoint {
-                    txid: tx.txid(),
+                    txid: tx.compute_txid(),
                     vout: change_indexes[0] as u32,
                 })
             } else {
@@ -315,7 +315,7 @@ impl HistoryTransaction {
                     change_indexes
                         .iter()
                         .map(|i| OutPoint {
-                            txid: tx.txid(),
+                            txid: tx.compute_txid(),
                             vout: *i as u32,
                         })
                         .collect(),
@@ -331,7 +331,7 @@ impl HistoryTransaction {
                 .filter_map(|(i, _)| {
                     if !change_indexes.contains(&i) {
                         Some(OutPoint {
-                            txid: tx.txid(),
+                            txid: tx.compute_txid(),
                             vout: i as u32,
                         })
                     } else {
@@ -356,7 +356,7 @@ impl HistoryTransaction {
         Self {
             labels: HashMap::new(),
             kind,
-            txid: tx.txid(),
+            txid: tx.compute_txid(),
             tx,
             coins: coins_map,
             change_indexes,
@@ -481,7 +481,7 @@ pub fn payments_from_tx(history_tx: HistoryTransaction) -> Vec<Payment> {
                 return array;
             }
             let outpoint = OutPoint {
-                txid: history_tx.tx.txid(),
+                txid: history_tx.tx.compute_txid(),
                 vout: output_index as u32,
             };
             let label = history_tx.labels.get(&outpoint.to_string()).cloned();
@@ -528,7 +528,7 @@ impl Labelled for HistoryTransaction {
     }
     fn labelled(&self) -> Vec<LabelItem> {
         let mut items = Vec::new();
-        let txid = self.tx.txid();
+        let txid = self.tx.compute_txid();
         items.push(LabelItem::Txid(txid));
         for coin in self.coins.values() {
             items.push(LabelItem::Address(coin.address.clone()));

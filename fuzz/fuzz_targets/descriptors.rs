@@ -35,7 +35,7 @@ impl PathConfig {
         .expect("Valid pubkey: NUMS from BIP341");
         let dummy_fg = [0, 0, path_index, 0].into();
         let xpub = bip32::Xpub {
-            network: Network::Bitcoin,
+            network: Network::Bitcoin.into(),
             depth: 0,
             parent_fingerprint: dummy_fg,
             child_number: 0.into(),

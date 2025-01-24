@@ -88,7 +88,8 @@ impl State for PsbtsPanel {
                     self.spend_txs = txs;
                     if let Some(tx) = &self.selected_tx {
                         if let Some(tx) = self.spend_txs.iter().find(|spend_tx| {
-                            spend_tx.psbt.unsigned_tx.txid() == tx.tx.psbt.unsigned_tx.txid()
+                            spend_tx.psbt.unsigned_tx.compute_txid()
+                                == tx.tx.psbt.unsigned_tx.compute_txid()
                         }) {
                             let tx = psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true);
                             let cmd = tx.load(daemon);

@@ -23,11 +23,10 @@ nonblocking_shutdown = []
 [dependencies]
 liana = { path = "../liana" }
 # For managing transactions (it re-exports the bitcoin crate)
-miniscript = { version = "11.0", features = ["serde", "compiler", "base64"] }
+miniscript = { version = "12.0", features = ["serde", "compiler", "base64"] }
 
-# For Electrum backend. This is the latest version with the same bitcoin version as
-# the miniscript dependency.
-bdk_electrum = { version = "0.14" }
+# For Electrum backend.
+bdk_electrum = { version = "0.15" }
 
 # Don't reinvent the wheel
 dirs = "5.0"

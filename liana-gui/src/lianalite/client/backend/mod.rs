@@ -1140,7 +1140,7 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
         }
     }
     let mut changes_indexes = Vec::new();
-    let txid = value.raw.txid().to_string();
+    let txid = value.raw.compute_txid().to_string();
     for (index, output) in value.outputs.iter().enumerate() {
         labels.insert(format!("{}:{}", txid, index), output.label.clone());
         if let Some(address) = &output.address {
@@ -1196,7 +1196,7 @@ fn spend_tx_from_api(
         }
     }
     let mut changes_indexes = Vec::new();
-    let txid = value.raw.unsigned_tx.txid().to_string();
+    let txid = value.raw.unsigned_tx.compute_txid().to_string();
     for (index, output) in value.outputs.iter().enumerate() {
         labels.insert(format!("{}:{}", txid, index), output.label.clone());
         if let Some(address) = &output.address {

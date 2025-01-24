@@ -597,7 +597,7 @@ impl Step for DefineSpend {
                         !recipient.label.value.is_empty()
                             && Address::from_str(&recipient.address.value)
                                 .unwrap()
-                                .payload()
+                                .assume_checked()
                                 .matches_script_pubkey(&output.script_pubkey)
                             && output.value.to_sat() == recipient.amount().unwrap()
                     })
@@ -605,7 +605,7 @@ impl Step for DefineSpend {
                 {
                     draft.labels.insert(
                         OutPoint {
-                            txid: psbt.unsigned_tx.txid(),
+                            txid: psbt.unsigned_tx.compute_txid(),
                             vout: i as u32,
                         }
                         .to_string(),
@@ -671,7 +671,7 @@ impl Recipient {
         }
 
         if let Ok(address) = Address::from_str(&self.address.value) {
-            if amount <= address.payload().script_pubkey().dust_value() {
+            if amount <= address.assume_checked().script_pubkey().minimal_non_dust() {
                 return Err(Error::Unexpected(
                     "Amount must be superior to script dust value".to_string(),
                 ));
@@ -761,14 +761,16 @@ impl Step for SaveSpend {
 
         if tx.is_batch() {
             if let Some(label) = &draft.batch_label {
-                tx.labels
-                    .insert(tx.psbt.unsigned_tx.txid().to_string(), label.clone());
+                tx.labels.insert(
+                    tx.psbt.unsigned_tx.compute_txid().to_string(),
+                    label.clone(),
+                );
             }
         } else if let Some(recipient) = draft.recipients.first() {
             if !recipient.label.value.is_empty() {
                 let label = recipient.label.value.clone();
                 tx.labels
-                    .insert(tx.psbt.unsigned_tx.txid().to_string(), label);
+                    .insert(tx.psbt.unsigned_tx.compute_txid().to_string(), label);
             }
         }
 
