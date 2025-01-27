@@ -9,55 +9,16 @@ task:
     VERBOSE: 0
     LOG_LEVEL: debug
     TIMEOUT: 120
-  matrix:
-    - name: 'Misc functional tests'
-      env:
-        TEST_GROUP: tests/test_misc.py
-        matrix:
-          - USE_MIN_BITCOIN_VERSION: 'TRUE'
-          - USE_MIN_BITCOIN_VERSION: 'FALSE'
-          - USE_TAPROOT: 1
-            BITCOIN_BACKEND_TYPE: 'bitcoind'
-          - USE_TAPROOT: 1
-            BITCOIN_BACKEND_TYPE: 'electrs'
-          - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'electrs'
-    - name: 'RPC functional tests'
-      env:
-        TEST_GROUP: tests/test_rpc.py
-        matrix:
-          - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'bitcoind'
-          - USE_TAPROOT: 1
-            BITCOIN_BACKEND_TYPE: 'bitcoind'
-          - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'electrs'
-          - USE_TAPROOT: 1
-            BITCOIN_BACKEND_TYPE: 'electrs'
-    - name: 'Chain functional tests'
-      env:
-        TEST_GROUP: tests/test_chain.py
-        matrix:
-          - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'bitcoind'
-          - USE_TAPROOT: 1
-            BITCOIN_BACKEND_TYPE: 'bitcoind'
-          - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'electrs'
-          - USE_TAPROOT: 1
-            BITCOIN_BACKEND_TYPE: 'electrs'
-    - name: 'Spend functional tests'
-      env:
-        TEST_GROUP: tests/test_spend.py
-        matrix:
-          - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'bitcoind'
-          - USE_TAPROOT: 1
-            BITCOIN_BACKEND_TYPE: 'bitcoind'
-          - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'electrs'
-          - USE_TAPROOT: 1
-            BITCOIN_BACKEND_TYPE: 'electrs'
+    matrix:
+      - USE_MIN_BITCOIN_VERSION: 'TRUE' # Will use bitcoind
+      - USE_TAPROOT: 0
+        BITCOIN_BACKEND_TYPE: 'bitcoind'
+      - USE_TAPROOT: 1
+        BITCOIN_BACKEND_TYPE: 'bitcoind'
+      - USE_TAPROOT: 0
+        BITCOIN_BACKEND_TYPE: 'electrs'
+      - USE_TAPROOT: 1
+        BITCOIN_BACKEND_TYPE: 'electrs'
 
   cargo_registry_cache:
     folders: $CARGO_HOME/registry
@@ -112,14 +73,12 @@ task:
 
     # The misc tests have a backward compat test that need the path to a previous version of Liana.
     # For now it requires using 0.3.
-    if [ "$TEST_GROUP" = "tests/test_misc.py" ]; then
-      curl -LO https://github.com/wizardsardine/liana/releases/download/0.3.1/liana-0.3.1-x86_64-linux-gnu.tar.gz
-      echo "70c8595554b6f78ccc7b66ef5f5ebc5bac03a7b1ce28afe8a076f69adf59c583 liana-0.3.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
-      tar -xzf liana-0.3.1-x86_64-linux-gnu.tar.gz
-      export OLD_LIANAD_PATH="$PWD/liana-0.3.1-x86_64-linux-gnu/lianad"
-    fi
+    curl -LO https://github.com/wizardsardine/liana/releases/download/0.3.1/liana-0.3.1-x86_64-linux-gnu.tar.gz
+    echo "70c8595554b6f78ccc7b66ef5f5ebc5bac03a7b1ce28afe8a076f69adf59c583 liana-0.3.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+    tar -xzf liana-0.3.1-x86_64-linux-gnu.tar.gz
+    export OLD_LIANAD_PATH="$PWD/liana-0.3.1-x86_64-linux-gnu/lianad"
 
     # Run the functional tests
-    LIANAD_PATH=$PWD/target/release/lianad pytest $TEST_GROUP -vvv -n 2
+    LIANAD_PATH=$PWD/target/release/lianad pytest tests/ -vvv -n 2
 
   before_cache_script: rm -rf $CARGO_HOME/registry/index
