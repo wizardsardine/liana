@@ -608,7 +608,7 @@ impl RescanSetting {
                     return Command::none();
                 }
                 self.processing = true;
-                info!("Asking deamon to rescan with timestamp: {}", t);
+                info!("Asking daemon to rescan with timestamp: {}", t);
                 return Command::perform(
                     async move {
                         daemon.start_rescan(t.try_into().expect("t cannot be inferior to 0 otherwise genesis block timestamp is chosen"))

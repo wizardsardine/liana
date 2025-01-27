@@ -842,7 +842,7 @@ mod tests {
         // before checking the bitcoind sync status.
         t.join().unwrap();
 
-        // The datadir is created now, so if we restart it it won't create the wo wallet.
+        // The datadir is created now, so if we restart, it won't create the wo wallet.
         let t = thread::spawn({
             let config = config.clone();
             move || {
