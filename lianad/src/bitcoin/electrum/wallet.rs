@@ -206,8 +206,11 @@ impl BdkWallet {
         let tx_graph = self.graph.graph();
         let txo_index = &self.graph.index;
         let tip_id = self.local_chain.tip().block_id();
-        let wallet_txos =
-            tx_graph.filter_chain_txouts(&self.local_chain, tip_id, txo_index.outpoints());
+        let wallet_txos = tx_graph.filter_chain_txouts(
+            &self.local_chain,
+            tip_id,
+            txo_index.outpoints().iter().copied(),
+        );
         let mut wallet_coins = HashMap::new();
         // Go through all the wallet txos and create a coin for each.
         for ((k, i), full_txo) in wallet_txos {

@@ -160,8 +160,11 @@ impl State for TransactionsPanel {
                 self.selected_tx = self.txs.get(i).cloned();
                 // Clear modal if it's for a different tx.
                 if let TransactionsModal::CreateRbf(modal) = &self.modal {
-                    if Some(modal.tx.tx.txid())
-                        != self.selected_tx.as_ref().map(|selected| selected.tx.txid())
+                    if Some(modal.tx.tx.compute_txid())
+                        != self
+                            .selected_tx
+                            .as_ref()
+                            .map(|selected| selected.tx.compute_txid())
                     {
                         self.modal = TransactionsModal::None;
                     }
@@ -177,7 +180,7 @@ impl State for TransactionsPanel {
                         let outpoints: Vec<_> = (0..tx.tx.output.len())
                             .map(|vout| {
                                 OutPoint::new(
-                                    tx.tx.txid(),
+                                    tx.tx.compute_txid(),
                                     vout.try_into()
                                         .expect("number of transaction outputs must fit in u32"),
                                 )
@@ -458,7 +461,7 @@ async fn rbf(
     is_cancel: bool,
     feerate_vb: Option<u64>,
 ) -> Result<Txid, Error> {
-    let previous_txid = previous_tx.tx.txid();
+    let previous_txid = previous_tx.tx.compute_txid();
     let psbt = match daemon
         .rbf_psbt(&previous_txid, is_cancel, feerate_vb)
         .await?
@@ -474,7 +477,7 @@ async fn rbf(
 
     if !is_cancel {
         let mut labels = HashMap::<LabelItem, Option<String>>::new();
-        let new_txid = psbt.unsigned_tx.txid();
+        let new_txid = psbt.unsigned_tx.compute_txid();
         for item in previous_tx.labelled() {
             if let Some(label) = previous_tx.labels.get(&item.to_string()) {
                 match item {
@@ -506,5 +509,5 @@ async fn rbf(
     }
 
     daemon.update_spend_tx(&psbt).await?;
-    Ok(psbt.unsigned_tx.txid())
+    Ok(psbt.unsigned_tx.compute_txid())
 }

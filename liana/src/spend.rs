@@ -157,7 +157,7 @@ fn sanity_check_psbt(
 
     // Check for dust outputs
     for txo in psbt.unsigned_tx.output.iter() {
-        if txo.value < txo.script_pubkey.dust_value() {
+        if txo.value < txo.script_pubkey.minimal_non_dust() {
             return Err(SpendCreationError::SanityCheckFailure(psbt.clone()));
         }
     }

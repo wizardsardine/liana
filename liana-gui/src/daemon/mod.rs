@@ -141,7 +141,7 @@ pub trait Daemon: Debug {
         // TODO: Use filters in `list_spend_txs` command.
         let mut txs = self.list_spend_txs().await?.spend_txs;
         if let Some(txids) = txids {
-            txs.retain(|tx| txids.contains(&tx.psbt.unsigned_tx.txid()));
+            txs.retain(|tx| txids.contains(&tx.psbt.unsigned_tx.compute_txid()));
         }
         let outpoints: Vec<_> = txs
             .iter()
@@ -201,7 +201,7 @@ pub trait Daemon: Debug {
                 (0..tx.tx.output.len())
                     .map(|vout| {
                         OutPoint::new(
-                            tx.tx.txid(),
+                            tx.tx.compute_txid(),
                             vout.try_into()
                                 .expect("number of transaction outputs must fit in u32"),
                         )
@@ -220,7 +220,7 @@ pub trait Daemon: Debug {
                 let mut tx_coins = Vec::new();
                 let mut change_indexes = Vec::new();
                 for coin in &coins {
-                    if coin.outpoint.txid == tx.tx.txid() {
+                    if coin.outpoint.txid == tx.tx.compute_txid() {
                         change_indexes.push(coin.outpoint.vout as usize)
                     } else if tx
                         .tx
@@ -298,7 +298,7 @@ pub trait Daemon: Debug {
                 let mut tx_coins = Vec::new();
                 let mut change_indexes = Vec::new();
                 for coin in &coins {
-                    if coin.outpoint.txid == tx.tx.txid() {
+                    if coin.outpoint.txid == tx.tx.compute_txid() {
                         change_indexes.push(coin.outpoint.vout as usize)
                     } else if tx
                         .tx

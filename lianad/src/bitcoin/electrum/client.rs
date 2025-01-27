@@ -8,7 +8,7 @@ use bdk_electrum::{
         BlockId, ChainPosition, ConfirmationHeightAnchor, TxGraph,
     },
     electrum_client::{self, Config, ElectrumApi},
-    ElectrumExt,
+    BdkElectrumClient,
 };
 
 use super::utils::{
@@ -50,7 +50,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-pub struct Client(electrum_client::Client);
+pub struct Client(BdkElectrumClient<electrum_client::Client>);
 
 impl Client {
     /// Create a new client and perform sanity checks.
@@ -70,11 +70,13 @@ impl Client {
         let client =
             bdk_electrum::electrum_client::Client::from_config(&electrum_config.addr, config)
                 .map_err(Error::Server)?;
-        Ok(Self(client))
+        let bdk_electrum_client = BdkElectrumClient::new(client);
+        Ok(Self(bdk_electrum_client))
     }
 
     pub fn chain_tip(&self) -> Result<BlockChainTip, Error> {
         self.0
+            .inner
             .block_headers_subscribe()
             .map_err(Error::Server)
             .map(|notif| BlockChainTip {
@@ -84,7 +86,7 @@ impl Client {
     }
 
     fn genesis_block_header(&self) -> Result<bitcoin::block::Header, Error> {
-        self.0.block_header(0).map_err(Error::Server)
+        self.0.inner.block_header(0).map_err(Error::Server)
     }
 
     pub fn genesis_block_timestamp(&self) -> Result<u32, Error> {
@@ -105,9 +107,15 @@ impl Client {
     pub fn tip_time(&self) -> Result<u32, Error> {
         let tip_height = self.chain_tip()?.height;
         self.0
+            .inner
             .block_header(height_usize_from_i32(tip_height))
             .map_err(Error::Server)
             .map(|bh| bh.time)
+    }
+
+    /// Returns a reference to the wrapped `BdkElectrumClient`.
+    pub fn bdk_electrum_client(&self) -> &BdkElectrumClient<electrum_client::Client> {
+        &self.0
     }
 
     fn sync_with_confirmation_height_anchor(
@@ -207,9 +215,9 @@ impl Client {
         // As they are descendants, we can assume they are all unconfirmed.
         while !desc_ops.is_empty() {
             log::debug!("Syncing descendant outpoints: {:?}", desc_ops);
-            let request = SyncRequest::from_chain_tip(local_chain.tip())
-                .cache_graph_txs(&graph)
-                .chain_outpoints(desc_ops.clone());
+            self.0.populate_tx_cache(&graph);
+            let request =
+                SyncRequest::from_chain_tip(local_chain.tip()).chain_outpoints(desc_ops.clone());
             // Fetch prev txouts to ensure we have all required txs in the graph to calculate fees.
             // An unconfirmed descendant may have a confirmed parent that we wouldn't have in our graph.
             let sync_result = self.sync_with_confirmation_height_anchor(request, true)?;
@@ -256,9 +264,9 @@ impl Client {
             .collect();
         while !anc_txids.is_empty() {
             log::debug!("Syncing ancestor txids: {:?}", anc_txids);
-            let request = SyncRequest::from_chain_tip(local_chain.tip())
-                .cache_graph_txs(&graph)
-                .chain_txids(anc_txids.clone());
+            self.0.populate_tx_cache(&graph);
+            let request =
+                SyncRequest::from_chain_tip(local_chain.tip()).chain_txids(anc_txids.clone());
             // We expect to have prev txouts for all unconfirmed ancestors in our graph so no need to fetch them here.
             // Note we keep iterating through ancestors until we find one that is confirmed and only need to calculate
             // fees for unconfirmed transactions.
@@ -315,7 +323,9 @@ impl Client {
             let mut anc_fees = base_fee;
             // Ancestor size includes that of `txid`.
             let mut anc_size = base_size;
-            for desc_txid in graph.walk_descendants(tx.txid(), |_, desc_txid| Some(desc_txid)) {
+            for desc_txid in
+                graph.walk_descendants(tx.compute_txid(), |_, desc_txid| Some(desc_txid))
+            {
                 log::debug!("Getting fee for desc txid '{}'.", desc_txid);
                 let desc_tx = graph
                     .get_tx(desc_txid)
@@ -326,11 +336,14 @@ impl Client {
                 desc_fees += fee;
             }
             for anc_tx in graph.walk_ancestors(tx, |_, anc_tx| Some(anc_tx)) {
-                log::debug!("Getting fee and size for anc txid '{}'.", anc_tx.txid());
+                log::debug!(
+                    "Getting fee and size for anc txid '{}'.",
+                    anc_tx.compute_txid()
+                );
                 if let Some(ChainPosition::Unconfirmed(_)) = graph.get_chain_position(
                     &local_chain,
                     local_chain.tip().block_id(),
-                    anc_tx.txid(),
+                    anc_tx.compute_txid(),
                 ) {
                     let fee = graph
                         .calculate_fee(&anc_tx)
@@ -338,14 +351,17 @@ impl Client {
                     anc_fees += fee;
                     anc_size += anc_tx.vsize();
                 } else {
-                    log::debug!("Ancestor txid '{}' is not unconfirmed.", anc_tx.txid());
+                    log::debug!(
+                        "Ancestor txid '{}' is not unconfirmed.",
+                        anc_tx.compute_txid()
+                    );
                     continue;
                 }
             }
             let fees = MempoolEntryFees {
-                base: bitcoin::Amount::from_sat(base_fee),
-                ancestor: bitcoin::Amount::from_sat(anc_fees),
-                descendant: bitcoin::Amount::from_sat(desc_fees),
+                base: base_fee,
+                ancestor: anc_fees,
+                descendant: desc_fees,
             };
             let entry = MempoolEntry {
                 vsize: base_size.try_into().expect("tx size must fit into u64"),

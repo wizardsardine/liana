@@ -237,9 +237,9 @@ pub fn payment_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let txid = tx.tx.txid().to_string();
+    let txid = tx.tx.compute_txid().to_string();
     let outpoint = bitcoin::OutPoint {
-        txid: tx.tx.txid(),
+        txid: tx.tx.compute_txid(),
         vout: output_index as u32,
     }
     .to_string();
@@ -330,10 +330,14 @@ pub fn payment_view<'a>(
                             .push(
                                 Row::new()
                                     .align_items(Alignment::Center)
-                                    .push(Container::new(text(format!("{}", tx.tx.txid())).small()))
+                                    .push(Container::new(
+                                        text(format!("{}", tx.tx.compute_txid())).small(),
+                                    ))
                                     .push(
                                         Button::new(icon::clipboard_icon())
-                                            .on_press(Message::Clipboard(tx.tx.txid().to_string()))
+                                            .on_press(Message::Clipboard(
+                                                tx.tx.compute_txid().to_string(),
+                                            ))
                                             .style(theme::Button::TransparentBorder),
                                     )
                                     .width(Length::Shrink),
@@ -342,8 +346,9 @@ pub fn payment_view<'a>(
                     .spacing(5),
             ))
             .push(
-                button::secondary(None, "See transaction details")
-                    .on_press(Message::Menu(Menu::TransactionPreSelected(tx.tx.txid()))),
+                button::secondary(None, "See transaction details").on_press(Message::Menu(
+                    Menu::TransactionPreSelected(tx.tx.compute_txid()),
+                )),
             )
             .spacing(20),
     )

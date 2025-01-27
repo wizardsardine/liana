@@ -322,7 +322,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbSpendTransaction {
 
         let txid: Vec<u8> = row.get(2)?;
         let txid: bitcoin::Txid = encode::deserialize(&txid).expect("We only store valid txids");
-        assert_eq!(txid, psbt.unsigned_tx.txid());
+        assert_eq!(txid, psbt.unsigned_tx.compute_txid());
 
         let updated_at = row.get(3)?;
 

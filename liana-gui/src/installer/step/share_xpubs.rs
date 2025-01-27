@@ -54,9 +54,9 @@ impl SignerXpubs {
         let derivation_path = default_derivation_path(network);
         // We keep only one for the moment.
         self.xpubs = vec![format!(
-            "[{}{}]{}",
+            "[{}/{}]{}",
             signer.fingerprint(),
-            derivation_path.to_string().trim_start_matches('m'),
+            derivation_path.to_string().trim_start_matches("m/"),
             signer.get_extended_pubkey(&derivation_path)
         )];
     }

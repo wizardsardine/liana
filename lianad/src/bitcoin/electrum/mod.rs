@@ -137,10 +137,13 @@ impl Electrum {
         const FETCH_PREV_TXOUTS: bool = false;
         const STOP_GAP: usize = 200;
 
+        // TODO: See if this caching can be done in a more optimal way, e.g. only new txs after syncing.
+        self.client
+            .bdk_electrum_client()
+            .populate_tx_cache(self.bdk_wallet.graph());
         let (chain_update, mut graph_update, keychain_update) = if !self.is_rescanning() {
             log::debug!("Performing sync.");
-            let mut request = SyncRequest::from_chain_tip(local_chain_tip.clone())
-                .cache_graph_txs(self.bdk_wallet.graph());
+            let mut request = SyncRequest::from_chain_tip(local_chain_tip.clone());
 
             let all_spks: Vec<_> = self
                 .bdk_wallet
@@ -162,8 +165,7 @@ impl Electrum {
         } else {
             log::info!("Performing full scan.");
             // Either local_chain has height 0 or we want to trigger a full scan.
-            let mut request = FullScanRequest::from_chain_tip(local_chain_tip.clone())
-                .cache_graph_txs(self.bdk_wallet.graph());
+            let mut request = FullScanRequest::from_chain_tip(local_chain_tip.clone());
 
             for (k, spks) in self.bdk_wallet.index().all_unbounded_spk_iters() {
                 request = request.set_spks_for_keychain(k, spks);
@@ -228,7 +230,7 @@ impl Electrum {
         // so that conflicts can be properly handled. We use `sync_count` instead of current time
         // in seconds to ensure strictly increasing values between poller iterations.
         for tx in &graph_update.initial_changeset().txs {
-            let txid = tx.txid();
+            let txid = tx.compute_txid();
             if let Some(ChainPosition::Unconfirmed(_)) = graph_update.get_chain_position(
                 self.local_chain(),
                 self.local_chain().tip().block_id(),

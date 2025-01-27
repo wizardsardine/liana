@@ -46,7 +46,7 @@ pub fn block_info_from_anchor(anchor: ConfirmationTimeHeightAnchor) -> BlockInfo
 
 /// Get the transaction's outpoints.
 pub fn outpoints_from_tx(tx: &bitcoin::Transaction) -> Vec<bitcoin::OutPoint> {
-    let txid = tx.txid();
+    let txid = tx.compute_txid();
     (0..tx.output.len())
         .map(|i| {
             bitcoin::OutPoint::new(txid, i.try_into().expect("num tx outputs must fit in u32"))
