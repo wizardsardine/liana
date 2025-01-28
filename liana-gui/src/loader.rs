@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use iced::futures::{SinkExt, Stream};
+use iced::stream::channel;
 use iced::{Alignment, Length, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
@@ -313,60 +315,8 @@ impl Loader {
     pub fn subscription(&self) -> Subscription<Message> {
         if self.internal_bitcoind.is_some() {
             let log_path = internal_bitcoind_debug_log_path(&self.datadir_path, self.network);
-            iced::Subscription::unfold(0, log_path, move |log_path| async move {
-                // Reduce the io load.
-                tokio::time::sleep(Duration::from_millis(500)).await;
-
-                // Open the log file and seek to its end, with some breathing room to make sure
-                // we don't skip all "UpdateTip" lines. This is to avoid making BufReader read
-                // the whole file every single time below.
-                let mut file = match File::open(&log_path) {
-                    Ok(file) => file,
-                    Err(e) => {
-                        log::warn!("Opening bitcoind log file: {}", e);
-                        return (Message::None, log_path);
-                    }
-                };
-                match file.metadata() {
-                    Ok(m) => {
-                        let file_len = m.len();
-                        let offset = 1024 * 1024;
-                        if file_len > offset {
-                            if let Err(e) =
-                                file.seek(SeekFrom::Start(file_len.saturating_sub(offset)))
-                            {
-                                log::error!("Seeking to end of bitcoind log file: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Getting bitcoind log file metadata: {}", e);
-                    }
-                };
-
-                // Find the latest tip update line in bitcoind's debug.log. BufReader is only
-                // used to facilitates searching through the lines.
-                let reader = BufReader::new(file);
-                let last_update_tip = reader
-                    .lines()
-                    .filter(|l| {
-                        l.as_ref()
-                            .map(|l| l.contains("UpdateTip") || l.contains("blockheaders"))
-                            .unwrap_or(false)
-                    })
-                    .last();
-                match last_update_tip {
-                    Some(Ok(line)) => (Message::BitcoindLog(Some(line)), log_path),
-                    res => {
-                        if let Some(Err(e)) = res {
-                            log::error!("Reading bitcoind log file: {}", e);
-                        } else {
-                            log::warn!("Couldn't find an UpdateTip line in bitcoind log file.");
-                        }
-                        (Message::None, log_path)
-                    }
-                }
-            })
+            iced::Subscription::run_with_id("bitcoind_log", get_bitcoind_log(log_path))
+                .map(|msg| Message::BitcoindLog(msg))
         } else {
             Subscription::none()
         }
@@ -375,6 +325,65 @@ impl Loader {
     pub fn view(&self) -> Element<Message> {
         view(&self.step).map(Message::View)
     }
+}
+
+fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>> {
+    channel(1, move |mut output| async move {
+        loop {
+            // Reduce the io load.
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            // Open the log file and seek to its end, with some breathing room to make sure
+            // we don't skip all "UpdateTip" lines. This is to avoid making BufReader read
+            // the whole file every single time below.
+            let mut file = match File::open(&log_path) {
+                Ok(file) => file,
+                Err(e) => {
+                    log::warn!("Opening bitcoind log file: {}", e);
+                    continue;
+                }
+            };
+            match file.metadata() {
+                Ok(m) => {
+                    let file_len = m.len();
+                    let offset = 1024 * 1024;
+                    if file_len > offset {
+                        if let Err(e) = file.seek(SeekFrom::Start(file_len.saturating_sub(offset)))
+                        {
+                            log::error!("Seeking to end of bitcoind log file: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Getting bitcoind log file metadata: {}", e);
+                }
+            };
+
+            // Find the latest tip update line in bitcoind's debug.log. BufReader is only
+            // used to facilitates searching through the lines.
+            let reader = BufReader::new(file);
+            let last_update_tip = reader
+                .lines()
+                .filter(|l| {
+                    l.as_ref()
+                        .map(|l| l.contains("UpdateTip") || l.contains("blockheaders"))
+                        .unwrap_or(false)
+                })
+                .last();
+            match last_update_tip {
+                Some(Ok(line)) => {
+                    let _ = output.send(Some(line)).await;
+                }
+                res => {
+                    if let Some(Err(e)) = res {
+                        log::error!("Reading bitcoind log file: {}", e);
+                    } else {
+                        log::warn!("Couldn't find an UpdateTip line in bitcoind log file.");
+                    }
+                }
+            }
+        }
+    })
 }
 
 pub async fn load_application(

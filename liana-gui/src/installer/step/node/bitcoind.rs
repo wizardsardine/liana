@@ -70,19 +70,16 @@ impl Download {
         }
     }
 
-    pub fn progress(&mut self, new_progress: download::Progress) {
+    pub fn progress(&mut self, new_progress: Result<download::Progress, download::DownloadError>) {
         if let DownloadState::Downloading { progress } = &mut self.state {
             match new_progress {
-                download::Progress::Started => {
-                    *progress = 0.0;
-                }
-                download::Progress::Advanced(percentage) => {
+                Ok(download::Progress::Downloading(percentage)) => {
                     *progress = percentage;
                 }
-                download::Progress::Finished(bytes) => {
+                Ok(download::Progress::Finished(bytes)) => {
                     self.state = DownloadState::Finished(bytes);
                 }
-                download::Progress::Errored(e) => {
+                Err(e) => {
                     self.state = DownloadState::Errored(e);
                 }
             }

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use super::{context, Error};
 use crate::{
-    download::Progress,
+    download::{DownloadError, Progress},
     hw::HardwareWalletMessage,
     installer::step::descriptor::editor::key::Key,
     lianalite::client::{auth::AuthClient, backend::api},
@@ -103,7 +103,7 @@ pub enum InternalBitcoindMsg {
     Reload,
     DefineConfig,
     Download,
-    DownloadProgressed(Progress),
+    DownloadProgressed(Result<Progress, DownloadError>),
     Install,
     Start,
 }

@@ -115,10 +115,9 @@ impl ExportModal {
         if let Some(path) = &self.path {
             match &self.state {
                 ExportState::Started | ExportState::Progress(_) => {
-                    Some(iced::subscription::unfold(
+                    Some(iced::Subscription::run_with_id(
                         "transactions",
-                        export::State::new(self.daemon.clone(), Box::new(path.to_path_buf())),
-                        export::export_subscription,
+                        export::export_subscription(self.daemon.clone(), path.to_path_buf()),
                     ))
                 }
                 _ => None,
