@@ -235,56 +235,16 @@ impl HardwareWallets {
                                 None => {}
                                 Some(LockedDevice::BitBox02(bb)) => {
                                     let id = id.to_string();
-                                    let id_cloned = id.clone();
                                     let network = self.network;
                                     let wallet = self.wallet.clone();
                                     cmds.push(Command::perform(
                                         async move {
-                                            let paired_bb = bb.wait_confirm().await?;
-                                            let mut bitbox2 =
-                                                BitBox02::from(paired_bb).with_network(network);
-                                            let fingerprint =
-                                                bitbox2.get_master_fingerprint().await?;
-                                            let mut registered = false;
-                                            let version = bitbox2.get_version().await.ok();
-                                            if let Some(wallet) = &wallet {
-                                                let desc = wallet.main_descriptor.to_string();
-                                                bitbox2 = bitbox2.with_policy(&desc)?;
-                                                registered =
-                                                    bitbox2.is_policy_registered(&desc).await?;
-                                                if wallet.descriptor_keys().contains(&fingerprint) {
-                                                    Ok(HardwareWallet::Supported {
-                                                        id: id.clone(),
-                                                        kind: DeviceKind::BitBox02,
-                                                        fingerprint,
-                                                        device: bitbox2.into(),
-                                                        version,
-                                                        registered: Some(registered),
-                                                        alias: None,
-                                                    })
-                                                } else {
-                                                    Ok(HardwareWallet::Unsupported {
-                                                        id: id.clone(),
-                                                        kind: DeviceKind::BitBox02,
-                                                        version,
-                                                        reason: UnsupportedReason::NotPartOfWallet(
-                                                            fingerprint,
-                                                        ),
-                                                    })
-                                                }
-                                            } else {
-                                                Ok(HardwareWallet::Supported {
-                                                    id: id.clone(),
-                                                    kind: DeviceKind::BitBox02,
-                                                    fingerprint,
-                                                    device: bitbox2.into(),
-                                                    version,
-                                                    registered: Some(registered),
-                                                    alias: None,
-                                                })
-                                            }
+                                            (
+                                                id.clone(),
+                                                unlock_bitbox(id, network, bb, wallet).await,
+                                            )
                                         },
-                                        |res| HardwareWalletMessage::Unlocked(id_cloned, res),
+                                        |(id, res)| HardwareWalletMessage::Unlocked(id, res),
                                     ));
                                 }
                                 Some(LockedDevice::Jade(device)) => {
@@ -294,17 +254,22 @@ impl HardwareWallets {
                                     let wallet = self.wallet.clone();
                                     cmds.push(Command::perform(
                                         async move {
-                                            device.auth().await?;
-                                            handle_jade_device(
+                                            if let Err(e) = device.auth().await {
+                                                return (id_cloned, Err(e.into()));
+                                            }
+                                            let res = handle_jade_device(
                                                 id,
                                                 network,
                                                 device,
                                                 wallet.as_ref().map(|w| w.as_ref()),
                                                 None,
                                             )
-                                            .await
+                                            .await;
+                                            (id_cloned, res)
                                         },
-                                        |res| HardwareWalletMessage::Unlocked(id_cloned, res),
+                                        |(id_cloned, res)| {
+                                            HardwareWalletMessage::Unlocked(id_cloned, res)
+                                        },
                                     ));
                                 }
                             }
@@ -360,6 +325,52 @@ impl HardwareWallets {
             },
             refresh,
         )
+    }
+}
+
+async fn unlock_bitbox(
+    id: String,
+    network: Network,
+    bb: Box<PairingBitbox02<runtime::TokioRuntime>>,
+    wallet: Option<Arc<Wallet>>,
+) -> Result<HardwareWallet, async_hwi::Error> {
+    let paired_bb = bb.wait_confirm().await?;
+    let mut bitbox2 = BitBox02::from(paired_bb).with_network(network);
+    let fingerprint = bitbox2.get_master_fingerprint().await?;
+    let mut registered = false;
+    let version = bitbox2.get_version().await.ok();
+    if let Some(wallet) = &wallet {
+        let desc = wallet.main_descriptor.to_string();
+        bitbox2 = bitbox2.with_policy(&desc)?;
+        registered = bitbox2.is_policy_registered(&desc).await?;
+        if wallet.descriptor_keys().contains(&fingerprint) {
+            Ok(HardwareWallet::Supported {
+                id: id.clone(),
+                kind: DeviceKind::BitBox02,
+                fingerprint,
+                device: bitbox2.into(),
+                version,
+                registered: Some(registered),
+                alias: None,
+            })
+        } else {
+            Ok(HardwareWallet::Unsupported {
+                id: id.clone(),
+                kind: DeviceKind::BitBox02,
+                version,
+                reason: UnsupportedReason::NotPartOfWallet(fingerprint),
+            })
+        }
+    } else {
+        Ok(HardwareWallet::Supported {
+            id: id.clone(),
+            kind: DeviceKind::BitBox02,
+            fingerprint,
+            device: bitbox2.into(),
+            version,
+            registered: Some(registered),
+            alias: None,
+        })
     }
 }
 
