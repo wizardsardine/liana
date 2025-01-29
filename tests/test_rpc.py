@@ -1143,6 +1143,15 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
         lianad.rpc.rbfpsbt(first_txid, False, 1)
     # Using a higher feerate works.
     lianad.rpc.rbfpsbt(first_txid, False, 2)
+
+    # But we cannot use RBF if the PSBT is no longer in the DB.
+    lianad.rpc.delspendtx(first_txid)
+    with pytest.raises(RpcError, match=f"Unknown spend transaction '{first_txid}'."):
+        lianad.rpc.rbfpsbt(first_txid, False, 2)
+
+    # Now re-save the PSBT in the DB.
+    lianad.rpc.updatespend(first_psbt.to_base64())
+
     # Let's use an even higher feerate.
     rbf_1_res = lianad.rpc.rbfpsbt(first_txid, False, 10)
     rbf_1_psbt = PSBT.from_base64(rbf_1_res["psbt"])
