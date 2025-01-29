@@ -766,7 +766,8 @@ impl DaemonControl {
 
     /// Create PSBT to replace the given transaction using RBF.
     ///
-    /// `txid` must point to a PSBT in our database.
+    /// `txid` must either point to a PSBT in our database (not necessarily broadcast) or an
+    /// unconfirmed spend transaction (whether or not any associated PSBT is saved in our database).
     ///
     /// `is_cancel` indicates whether to "cancel" the transaction by including only a single (change)
     /// output in the replacement or otherwise to keep the same (non-change) outputs and simply
@@ -798,14 +799,20 @@ impl DaemonControl {
             return Err(CommandError::RbfError(RbfErrorInfo::SuperfluousFeerate));
         }
 
-        let prev_psbt = db_conn
-            .spend_tx(txid)
-            .ok_or(CommandError::UnknownSpend(*txid))?;
-        if !prev_psbt.unsigned_tx.is_explicitly_rbf() {
+        let prev_tx = if let Some(psbt) = db_conn.spend_tx(txid) {
+            psbt.unsigned_tx
+        } else {
+            db_conn
+                .coins(&[CoinStatus::Spending], &[])
+                .into_values()
+                .find(|c| c.spend_txid == Some(*txid))
+                .and_then(|_| tx_getter.get_tx(txid))
+                .ok_or(CommandError::UnknownSpend(*txid))?
+        };
+        if !prev_tx.is_explicitly_rbf() {
             return Err(CommandError::RbfError(RbfErrorInfo::NotSignaling));
         }
-        let prev_outpoints: Vec<bitcoin::OutPoint> = prev_psbt
-            .unsigned_tx
+        let prev_outpoints: Vec<bitcoin::OutPoint> = prev_tx
             .input
             .iter()
             .map(|txin| txin.previous_output)
@@ -867,8 +874,7 @@ impl DaemonControl {
             )));
         }
         // Get info about prev outputs to determine replacement outputs.
-        let prev_derivs: Vec<_> = prev_psbt
-            .unsigned_tx
+        let prev_derivs: Vec<_> = prev_tx
             .output
             .iter()
             .map(|txo| {
