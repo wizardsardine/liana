@@ -8,9 +8,9 @@ use std::{
 use iced::window::settings::PlatformSpecific;
 use iced::{
     event::{self, Event},
-    executor, keyboard,
+    keyboard,
     widget::{focus_next, focus_previous},
-    Application, Settings, Size, Subscription, Task,
+    Settings, Size, Subscription, Task,
 };
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
@@ -139,12 +139,7 @@ async fn ctrl_c() -> Result<(), ()> {
     Ok(())
 }
 
-impl Application for GUI {
-    type Executor = executor::Default;
-    type Message = Message;
-    type Flags = (Config, Option<LevelFilter>);
-    type Theme = theme::Theme;
-
+impl GUI {
     fn title(&self) -> String {
         match self.state {
             State::Installer(_) => format!("Liana v{} Installer", VERSION),
@@ -152,10 +147,9 @@ impl Application for GUI {
         }
     }
 
-    fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Self::Message>) {
+    fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {
         let logger = Logger::setup(log_level.unwrap_or(LevelFilter::INFO));
-        let mut cmds = font::loads();
-        cmds.push(Task::perform(ctrl_c(), |_| Message::CtrlC));
+        let mut cmds = vec![Task::perform(ctrl_c(), |_| Message::CtrlC)];
         let state = match config {
             Config::Launcher(datadir_path) => {
                 let (launcher, command) = Launcher::new(datadir_path, None);
@@ -183,10 +177,10 @@ impl Application for GUI {
         )
     }
 
-    fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
+    fn update(&mut self, message: Message) -> Task<Message> {
         match (&mut self.state, message) {
             (_, Message::CtrlC)
-            | (_, Message::Event(iced::Event::Window(_, iced::window::Event::CloseRequested))) => {
+            | (_, Message::Event(iced::Event::Window(iced::window::Event::CloseRequested))) => {
                 match &mut self.state {
                     State::Loader(s) => s.stop(),
                     State::Launcher(s) => s.stop(),
@@ -194,7 +188,7 @@ impl Application for GUI {
                     State::App(s) => s.stop(),
                     State::Login(_) => {}
                 };
-                iced::window::close(iced::window::Id::MAIN)
+                iced::window::get_latest().and_then(iced::window::close)
             }
             (_, Message::KeyPressed(Key::Tab(shift))) => {
                 log::debug!("Tab pressed!");
@@ -378,7 +372,7 @@ impl Application for GUI {
         }
     }
 
-    fn subscription(&self) -> Subscription<Self::Message> {
+    fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
             match &self.state {
                 State::Installer(v) => v.subscription().map(|msg| Message::Install(Box::new(msg))),
@@ -387,7 +381,7 @@ impl Application for GUI {
                 State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
                 State::Login(_) => Subscription::none(),
             },
-            iced::event::listen_with(|event, status| match (&event, status) {
+            iced::event::listen_with(|event, status, _| match (&event, status) {
                 (
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
@@ -397,22 +391,15 @@ impl Application for GUI {
                     event::Status::Ignored,
                 ) => Some(Message::KeyPressed(Key::Tab(modifiers.shift()))),
                 (
-                    iced::Event::Window(_, iced::window::Event::CloseRequested),
+                    iced::Event::Window(iced::window::Event::CloseRequested),
                     event::Status::Ignored,
                 ) => Some(Message::Event(event)),
                 _ => None,
             }),
         ])
-        .with_filter(|event| {
-            matches!(
-                event,
-                iced::Event::Window(_, iced::window::Event::CloseRequested)
-                    | iced::Event::Keyboard(_)
-            )
-        })
     }
 
-    fn view(&self) -> Element<Self::Message> {
+    fn view(&self) -> Element<Message> {
         match &self.state {
             State::Installer(v) => v.view().map(|msg| Message::Install(Box::new(msg))),
             State::App(v) => v.view().map(|msg| Message::Run(Box::new(msg))),
@@ -569,29 +556,47 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     setup_panic_hook();
 
-    let mut settings = Settings::with_flags((config, log_level));
-    settings.window.icon = Some(image::liana_app_icon());
-    settings.window.min_size = Some(Size {
-        width: 1000.0,
-        height: 650.0,
-    });
-    settings.default_text_size = text::P1_SIZE.into();
-    settings.default_font = liana_ui::font::REGULAR;
-    settings.window.exit_on_close_request = false;
+    let settings = Settings {
+        id: Some("Liana".to_string()),
+        antialiasing: false,
 
-    settings.id = Some("Liana".to_string());
+        default_text_size: text::P1_SIZE.into(),
+        default_font: liana_ui::font::REGULAR,
+        fonts: font::load(),
+    };
+
+    let mut window_settings = iced::window::Settings {
+        icon: Some(image::liana_app_icon()),
+        position: iced::window::Position::Default,
+        min_size: Some(Size {
+            width: 1000.0,
+            height: 650.0,
+        }),
+        exit_on_close_request: false,
+        ..Default::default()
+    };
 
     #[cfg(target_os = "linux")]
     {
-        settings.window.platform_specific = PlatformSpecific {
+        window_settings.platform_specific = PlatformSpecific {
             application_id: "Liana".to_string(),
+            ..Default::default()
         };
     }
 
-    if let Err(e) = GUI::run(settings) {
-        return Err(format!("Failed to launch UI: {}", e).into());
-    };
-    Ok(())
+    if let Err(e) = iced::application(GUI::title, GUI::update, GUI::view)
+        .theme(|_| theme::Theme::default())
+        .scale_factor(GUI::scale_factor)
+        .subscription(GUI::subscription)
+        .settings(settings)
+        .window(window_settings)
+        .run_with(move || GUI::new((config, log_level)))
+    {
+        log::error!("{}", e);
+        Err(format!("Failed to launch UI: {}", e).into())
+    } else {
+        Ok(())
+    }
 }
 
 // A panic in any thread should stop the main thread, and print the panic.
