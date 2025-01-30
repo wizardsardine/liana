@@ -276,7 +276,9 @@ This command does not return anything for now.
 
 ### `rbfpsbt`
 
-Create PSBT to replace the given transaction, which must point to a PSBT in our database, using RBF.
+Create PSBT to replace, using RBF, the given transaction, which must either point to a PSBT in our database
+(not necessarily broadcast) or an unconfirmed spend transaction (whether or not any associated
+PSBT is saved in our database).
 
 This command can be used to either:
 - "cancel" the transaction: the replacement will include at least one input from the previous transaction and will have only

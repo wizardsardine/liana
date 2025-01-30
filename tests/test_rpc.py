@@ -1143,6 +1143,11 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
         lianad.rpc.rbfpsbt(first_txid, False, 1)
     # Using a higher feerate works.
     lianad.rpc.rbfpsbt(first_txid, False, 2)
+
+    # We can still use RBF if the PSBT is no longer in the DB.
+    lianad.rpc.delspendtx(first_txid)
+    lianad.rpc.rbfpsbt(first_txid, False, 2)
+
     # Let's use an even higher feerate.
     rbf_1_res = lianad.rpc.rbfpsbt(first_txid, False, 10)
     rbf_1_psbt = PSBT.from_base64(rbf_1_res["psbt"])
@@ -1183,9 +1188,14 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
         mempool_rbf_1["fees"]["ancestor"] * COIN / mempool_rbf_1["ancestorsize"]
     )
     assert 9.75 < rbf_1_feerate < 10.25
-    # If we try to RBF the first transaction again, it will use the first RBF's
-    # feerate to set the min feerate, instead of 1 sat/vb of first
-    # transaction:
+    # If we try to RBF the first transaction again, it will not be possible as we
+    # deleted the PSBT above and the tx is no longer part of our wallet's
+    # spending txs (even though it's saved in the DB).
+    with pytest.raises(RpcError, match=f"Unknown spend transaction '{first_txid}'."):
+        lianad.rpc.rbfpsbt(first_txid, False, 2)
+    # If we resave the PSBT, then we can use RBF and it will use the first RBF's
+    # feerate to set the min feerate, instead of 1 sat/vb of the first transaction:
+    lianad.rpc.updatespend(first_psbt.to_base64())
     with pytest.raises(
         RpcError,
         match=f"Feerate {int(rbf_1_feerate)} too low for minimum feerate {int(rbf_1_feerate) + 1}.",
