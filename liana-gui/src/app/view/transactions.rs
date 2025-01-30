@@ -25,7 +25,7 @@ use crate::{
         },
     },
     daemon::model::{HistoryTransaction, Txid},
-    export::ExportMessage,
+    export::ImportExportMessage,
 };
 
 pub fn transactions_view<'a>(
@@ -44,7 +44,10 @@ pub fn transactions_view<'a>(
                 Row::new()
                     .push(Container::new(h3("Transactions")))
                     .push(Space::with_width(Length::Fill))
-                    .push(button::secondary(None, "Export").on_press(ExportMessage::Open.into())),
+                    .push(
+                        button::secondary(None, "Export")
+                            .on_press(ImportExportMessage::Open.into()),
+                    ),
             )
             .push(
                 Column::new()
