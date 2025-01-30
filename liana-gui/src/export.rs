@@ -1,8 +1,9 @@
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::Write,
+    io::{Read, Write},
     path::PathBuf,
+    str::FromStr,
     sync::{
         mpsc::{channel, Receiver, Sender},
         Arc, Mutex,
@@ -13,7 +14,7 @@ use std::{
 use chrono::{DateTime, Duration, Utc};
 use liana::{
     descriptors::LianaDescriptor,
-    miniscript::bitcoin::{Amount, Txid},
+    miniscript::bitcoin::{Amount, Psbt, Txid},
 };
 use tokio::{
     task::{JoinError, JoinHandle},
@@ -33,26 +34,26 @@ use crate::{
 
 macro_rules! send_error {
     ($sender:ident, $error:ident) => {
-        if let Err(e) = $sender.send(ExportProgress::Error(Error::$error)) {
-            tracing::error!("ExportState::start() fail to send msg: {}", e);
+        if let Err(e) = $sender.send(Progress::Error(Error::$error)) {
+            tracing::error!("Import/Export fail to send msg: {}", e);
         }
     };
     ($sender:ident, $error:expr) => {
-        if let Err(e) = $sender.send(ExportProgress::Error($error)) {
-            tracing::error!("ExportState::start() fail to send msg: {}", e);
+        if let Err(e) = $sender.send(Progress::Error($error)) {
+            tracing::error!("Import/Export fail to send msg: {}", e);
         }
     };
 }
 
 macro_rules! send_progress {
     ($sender:ident, $progress:ident) => {
-        if let Err(e) = $sender.send(ExportProgress::$progress) {
-            tracing::error!("ExportState::start() fail to send msg: {}", e);
+        if let Err(e) = $sender.send(Progress::$progress) {
+            tracing::error!("ImportExport fail to send msg: {}", e);
         }
     };
     ($sender:ident, $progress:ident($val:expr)) => {
-        if let Err(e) = $sender.send(ExportProgress::$progress($val)) {
-            tracing::error!("ExportState::start() fail to send msg: {}", e);
+        if let Err(e) = $sender.send(Progress::$progress($val)) {
+            tracing::error!("ImportExport fail to send msg: {}", e);
         }
     };
 }
@@ -83,23 +84,23 @@ macro_rules! open_file {
 }
 
 #[derive(Debug, Clone)]
-pub enum ExportMessage {
+pub enum ImportExportMessage {
     Open,
-    ExportProgress(ExportProgress),
+    Progress(Progress),
     TimedOut,
     UserStop,
     Path(Option<PathBuf>),
     Close,
 }
 
-impl From<ExportMessage> for view::Message {
-    fn from(value: ExportMessage) -> Self {
-        Self::Export(value)
+impl From<ImportExportMessage> for view::Message {
+    fn from(value: ImportExportMessage) -> Self {
+        Self::ImportExport(value)
     }
 }
 
 #[derive(Debug, PartialEq)]
-pub enum ExportState {
+pub enum ImportExportState {
     Init,
     ChoosePath,
     Path(PathBuf),
@@ -121,13 +122,18 @@ pub enum Error {
     NoParentDir,
     Daemon(String),
     TxTimeMissing,
+    DaemonMissing,
+    ParsePsbt,
+    ParseDescriptor,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum ExportType {
+pub enum ImportExportType {
     Transactions,
-    Psbt(String),
+    ExportPsbt(String),
     Descriptor(LianaDescriptor),
+    ImportPsbt,
+    ImportDescriptor,
 }
 
 impl From<JoinError> for Error {
@@ -156,29 +162,31 @@ pub enum Status {
 }
 
 #[derive(Debug, Clone)]
-pub enum ExportProgress {
+pub enum Progress {
     Started(Arc<Mutex<JoinHandle<()>>>),
     Progress(f32),
     Ended,
     Finished,
     Error(Error),
     None,
+    Psbt(Psbt),
+    Descriptor(LianaDescriptor),
 }
 
 pub struct Export {
-    pub receiver: Receiver<ExportProgress>,
-    pub sender: Option<Sender<ExportProgress>>,
+    pub receiver: Receiver<Progress>,
+    pub sender: Option<Sender<Progress>>,
     pub handle: Option<Arc<Mutex<JoinHandle<()>>>>,
-    pub daemon: Arc<dyn Daemon + Sync + Send>,
+    pub daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     pub path: Box<PathBuf>,
-    pub export_type: ExportType,
+    pub export_type: ImportExportType,
 }
 
 impl Export {
     pub fn new(
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         path: Box<PathBuf>,
-        export_type: ExportType,
+        export_type: ImportExportType,
     ) -> Self {
         let (sender, receiver) = channel();
         Export {
@@ -192,15 +200,17 @@ impl Export {
     }
 
     pub async fn export_logic(
-        export_type: ExportType,
-        sender: Sender<ExportProgress>,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        export_type: ImportExportType,
+        sender: Sender<Progress>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         path: PathBuf,
     ) {
         match export_type {
-            ExportType::Transactions => export_transactions(sender, daemon, path).await,
-            ExportType::Psbt(psbt) => export_psbt(sender, path, psbt),
-            ExportType::Descriptor(descriptor) => export_descriptor(sender, path, descriptor),
+            ImportExportType::Transactions => export_transactions(sender, daemon, path).await,
+            ImportExportType::ExportPsbt(psbt) => export_psbt(sender, path, psbt),
+            ImportExportType::Descriptor(descriptor) => export_descriptor(sender, path, descriptor),
+            ImportExportType::ImportPsbt => import_psbt(sender, path),
+            ImportExportType::ImportDescriptor => import_descriptor(sender, path),
         };
     }
 
@@ -238,10 +248,10 @@ impl Export {
 pub fn export_subscription(
     daemon: Arc<dyn Daemon + Sync + Send>,
     path: PathBuf,
-    export_type: ExportType,
-) -> impl Stream<Item = ExportProgress> {
+    export_type: ImportExportType,
+) -> impl Stream<Item = Progress> {
     iced::stream::channel(100, move |mut output| async move {
-        let mut state = Export::new(daemon, Box::new(path), export_type);
+        let mut state = Export::new(Some(daemon), Box::new(path), export_type);
         loop {
             match state.state() {
                 Status::Init => {
@@ -270,16 +280,16 @@ pub fn export_subscription(
             let handle = match state.handle.take() {
                 Some(h) => h,
                 None => {
-                    let _ = output.send(ExportProgress::Error(Error::HandleLost)).await;
+                    let _ = output.send(Progress::Error(Error::HandleLost)).await;
                     continue;
                 }
             };
             let msg = {
                 let h = handle.lock().expect("should not fail");
                 if h.is_finished() {
-                    Some(ExportProgress::Finished)
+                    Some(Progress::Finished)
                 } else if disconnected {
-                    Some(ExportProgress::Error(Error::ChannelLost))
+                    Some(Progress::Error(Error::ChannelLost))
                 } else {
                     None
                 }
@@ -292,17 +302,24 @@ pub fn export_subscription(
             state.handle = Some(handle);
 
             sleep(time::Duration::from_millis(100)).await;
-            let _ = output.send(ExportProgress::None).await;
+            let _ = output.send(Progress::None).await;
         }
     })
 }
 
 pub async fn export_transactions(
-    sender: Sender<ExportProgress>,
-    daemon: Arc<dyn Daemon + Sync + Send>,
+    sender: Sender<Progress>,
+    daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     path: PathBuf,
 ) {
     async move {
+        let daemon = match daemon {
+            Some(d) => d,
+            None => {
+                send_error!(sender, Error::DaemonMissing);
+                return;
+            }
+        };
         let mut file = open_file!(path, sender);
 
         let header = "Date,Label,Value,Fee,Txid,Block\n".to_string();
@@ -455,11 +472,7 @@ pub async fn export_transactions(
     .await;
 }
 
-pub fn export_descriptor(
-    sender: Sender<ExportProgress>,
-    path: PathBuf,
-    descriptor: LianaDescriptor,
-) {
+pub fn export_descriptor(sender: Sender<Progress>, path: PathBuf, descriptor: LianaDescriptor) {
     let mut file = open_file!(path, sender);
 
     let descr_string = descriptor.to_string();
@@ -471,7 +484,7 @@ pub fn export_descriptor(
     send_progress!(sender, Ended);
 }
 
-pub fn export_psbt(sender: Sender<ExportProgress>, path: PathBuf, psbt: String) {
+pub fn export_psbt(sender: Sender<Progress>, path: PathBuf, psbt: String) {
     let mut file = open_file!(path, sender);
 
     if let Err(e) = file.write_all(psbt.as_bytes()) {
@@ -480,6 +493,48 @@ pub fn export_psbt(sender: Sender<ExportProgress>, path: PathBuf, psbt: String) 
     }
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
+}
+
+pub fn import_psbt(sender: Sender<Progress>, path: PathBuf) {
+    let mut file = open_file!(path, sender);
+
+    let mut psbt_str = String::new();
+    if let Err(e) = file.read_to_string(&mut psbt_str) {
+        send_error!(sender, e.into());
+        return;
+    }
+
+    let psbt = match Psbt::from_str(&psbt_str) {
+        Ok(psbt) => psbt,
+        Err(_) => {
+            send_error!(sender, Error::ParsePsbt);
+            return;
+        }
+    };
+
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Psbt(psbt));
+}
+
+pub fn import_descriptor(sender: Sender<Progress>, path: PathBuf) {
+    let mut file = open_file!(path, sender);
+
+    let mut descr_str = String::new();
+    if let Err(e) = file.read_to_string(&mut descr_str) {
+        send_error!(sender, e.into());
+        return;
+    }
+
+    let descriptor = match LianaDescriptor::from_str(&descr_str) {
+        Ok(psbt) => psbt,
+        Err(_) => {
+            send_error!(sender, Error::ParseDescriptor);
+            return;
+        }
+    };
+
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Descriptor(descriptor));
 }
 
 pub async fn get_path(default_filename: String) -> Option<PathBuf> {
