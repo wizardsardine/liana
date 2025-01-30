@@ -512,10 +512,7 @@ impl DaemonControl {
                             self.bitcoin
                                 .mempool_entry(&op.txid)
                                 .map(|info| AncestorInfo {
-                                    vsize: info
-                                        .ancestor_vsize
-                                        .try_into()
-                                        .expect("vsize must fit in u32"),
+                                    vsize: info.ancestor_vsize,
                                     fee: info
                                         .fees
                                         .ancestor
@@ -559,10 +556,7 @@ impl DaemonControl {
                         self.bitcoin
                             .mempool_entry(&op.txid)
                             .map(|info| AncestorInfo {
-                                vsize: info
-                                    .ancestor_vsize
-                                    .try_into()
-                                    .expect("vsize must fit in u32"),
+                                vsize: info.ancestor_vsize,
                                 fee: info
                                     .fees
                                     .ancestor

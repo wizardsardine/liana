@@ -515,9 +515,9 @@ dependencies = [
 
 [[package]]
 name = "bdk_coin_select"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c084bf76f0f67546fc814ffa82044144be1bb4618183a15016c162f8b087ad4"
+checksum = "d2e57e4db8b917d554a0eb142be5267bbc88d787c3346c8dc0590fbe76be68bd"
 
 [[package]]
 name = "bdk_electrum"
