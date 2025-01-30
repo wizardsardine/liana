@@ -167,7 +167,7 @@ fn sanity_check_psbt(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AncestorInfo {
-    pub vsize: u32,
+    pub vsize: u64,
     pub fee: u32,
 }
 
@@ -269,35 +269,31 @@ fn select_coins_for_spend(
     change_txo: bitcoin::TxOut,
     feerate_vb: f32,
     replaced_fee: Option<u64>,
-    max_sat_weight: u32,
+    max_sat_weight: u64,
     must_have_change: bool,
 ) -> Result<CoinSelectionRes, InsufficientFunds> {
     let out_value_nochange = base_tx.output.iter().map(|o| o.value.to_sat()).sum();
-    let out_weight_nochange: u32 = {
-        let mut total: u32 = 0;
+    let out_weight_nochange = {
+        let mut total: u64 = 0;
         for output in &base_tx.output {
-            let weight: u32 = output
-                .weight()
-                .to_wu()
-                .try_into()
-                .expect("an output's weight must fit in u32");
+            let weight = output.weight().to_wu();
             total = total
                 .checked_add(weight)
-                .expect("sum of transaction outputs' weights must fit in u32");
+                .expect("sum of transaction outputs' weights must fit in u64");
         }
         total
     };
     let n_outputs_nochange = base_tx.output.len();
     let max_input_weight = TXIN_BASE_WEIGHT + max_sat_weight;
-    // Get feerate as u32 for calculation relating to ancestor below.
+    // Get feerate as u64 for calculation relating to ancestor below.
     // We expect `feerate_vb` to be a positive integer, but take ceil()
     // just in case to be sure we pay enough for ancestors.
-    let feerate_vb_u32 = feerate_vb.ceil() as u32;
-    let witness_factor: u32 = WITNESS_SCALE_FACTOR
+    let feerate_vb_u64 = feerate_vb.ceil() as u64;
+    let witness_factor: u64 = WITNESS_SCALE_FACTOR
         .try_into()
-        .expect("scale factor must fit in u32");
+        .expect("scale factor must fit in u64");
     // This will be used to store any extra weight added to candidates.
-    let mut added_weights = HashMap::<bitcoin::OutPoint, u32>::with_capacity(candidate_coins.len());
+    let mut added_weights = HashMap::<bitcoin::OutPoint, u64>::with_capacity(candidate_coins.len());
     let candidates: Vec<Candidate> = candidate_coins
         .iter()
         .map(|cand| Candidate {
@@ -308,9 +304,8 @@ fn select_coins_for_spend(
                     .ancestor_info
                     .map(|info| {
                         // The implied ancestor vsize if the fee had been paid at our target feerate.
-                        let ancestor_vsize_at_feerate: u32 = info
-                            .fee
-                            .checked_div(feerate_vb_u32)
+                        let ancestor_vsize_at_feerate = <u32 as Into<u64>>::into(info.fee)
+                            .checked_div(feerate_vb_u64)
                             .expect("feerate is greater than zero");
                         // If the actual ancestor vsize is bigger than the implied vsize, we will need to
                         // pay the difference in order for the combined feerate to be at the target value.
@@ -321,7 +316,7 @@ fn select_coins_for_spend(
                         info.vsize
                             .saturating_sub(ancestor_vsize_at_feerate)
                             .checked_mul(witness_factor)
-                            .expect("weight difference must fit in u32")
+                            .expect("weight difference must fit in u64")
                     })
                     .unwrap_or(0);
                 // Store the extra weight for this candidate for use later on.
@@ -329,7 +324,7 @@ fn select_coins_for_spend(
                 assert!(added_weights.insert(cand.outpoint, extra).is_none());
                 max_input_weight
                     .checked_add(extra)
-                    .expect("effective weight must fit in u32")
+                    .expect("effective weight must fit in u64")
             },
             is_segwit: true, // We only support receiving on Segwit scripts.
         })
@@ -348,11 +343,7 @@ fn select_coins_for_spend(
     // a potential difference in the size of the outputs count varint.
     let feerate = FeeRate::from_sat_per_vb(feerate_vb);
     let long_term_feerate = FeeRate::from_sat_per_vb(LONG_TERM_FEERATE_VB);
-    let change_output_weight: u32 = change_txo
-        .weight()
-        .to_wu()
-        .try_into()
-        .expect("output weight must fit in u32");
+    let change_output_weight = change_txo.weight().to_wu();
     let drain_weights = DrainWeights {
         output_weight: change_output_weight,
         spend_weight: max_input_weight,
@@ -446,7 +437,7 @@ fn select_coins_for_spend(
             .try_into()
             .expect("value is non-negative"),
     );
-    let mut total_added_weight: u32 = 0;
+    let mut total_added_weight: u64 = 0;
     let selected = selector
         .selected_indices()
         .iter()
@@ -458,7 +449,7 @@ fn select_coins_for_spend(
                         .get(&cand.outpoint)
                         .expect("contains added weight for all candidates"),
                 )
-                .expect("should fit in u32")
+                .expect("should fit in u64")
         })
         .collect();
     // Calculate added fee based on the feerate in sats/wu, which is the feerate used for coin selection.
@@ -719,7 +710,7 @@ pub fn create_spend(
         let max_sat_wu = main_descriptor
             .max_sat_weight(use_primary_path)
             .try_into()
-            .expect("Weight must fit in a u32");
+            .expect("Weight must fit in a u64");
         select_coins_for_spend(
             candidate_coins,
             tx.clone(),

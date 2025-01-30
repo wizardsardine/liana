@@ -1187,7 +1187,7 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     rbf_1_feerate = (
         mempool_rbf_1["fees"]["ancestor"] * COIN / mempool_rbf_1["ancestorsize"]
     )
-    assert 9.75 < rbf_1_feerate < 10.25
+    assert 10 <= rbf_1_feerate < 10.25
     # If we try to RBF the first transaction again, it will not be possible as we
     # deleted the PSBT above and the tx is no longer part of our wallet's
     # spending txs (even though it's saved in the DB).
