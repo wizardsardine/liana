@@ -651,7 +651,8 @@ impl DescriptorEditModal for EditThresholdModal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced_runtime::command::Action;
+    use iced::futures::StreamExt;
+    use iced_runtime::{task::into_stream, Action};
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
@@ -674,10 +675,11 @@ mod tests {
         pub async fn update(&self, message: Message) {
             let mut hws = HardwareWallets::new(PathBuf::from_str("/").unwrap(), Network::Bitcoin);
             let cmd = self.step.lock().unwrap().update(&mut hws, message);
-            for action in cmd.actions() {
-                if let Action::Future(f) = action {
-                    let msg = f.await;
-                    let _cmd = self.step.lock().unwrap().update(&mut hws, msg);
+            if let Some(mut stream) = into_stream(cmd) {
+                while let Some(action) = stream.next().await {
+                    if let Action::Output(msg) = action {
+                        let _cmd = self.step.lock().unwrap().update(&mut hws, msg);
+                    }
                 }
             }
         }

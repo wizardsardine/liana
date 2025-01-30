@@ -316,7 +316,7 @@ impl Loader {
         if self.internal_bitcoind.is_some() {
             let log_path = internal_bitcoind_debug_log_path(&self.datadir_path, self.network);
             iced::Subscription::run_with_id("bitcoind_log", get_bitcoind_log(log_path))
-                .map(|msg| Message::BitcoindLog(msg))
+                .map(Message::BitcoindLog)
         } else {
             Subscription::none()
         }
