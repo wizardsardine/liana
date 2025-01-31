@@ -206,35 +206,45 @@ impl Launcher {
                                         .align_y(Alignment::Center)
                                         .spacing(20)
                                         .push(
-                                            Button::new(
-                                                Column::new()
-                                                    .push(p1_bold(format!(
-                                                        "My Liana {} wallet",
-                                                        match self.network {
-                                                            Network::Bitcoin => "Bitcoin",
-                                                            Network::Signet => "Signet",
-                                                            Network::Testnet => "Testnet",
-                                                            Network::Regtest => "Regtest",
-                                                            _ => "",
-                                                        }
-                                                    )))
-                                                    .push_maybe(checksum.as_ref().map(|checksum| {
-                                                        p1_regular(format!("Liana-{}", checksum))
-                                                            .color(color::GREY_3)
-                                                    }))
-                                                    .push_maybe(email.as_ref().map(|email| {
-                                                        Row::new()
-                                                            .push(Space::with_width(Length::Fill))
-                                                            .push(
-                                                                p1_regular(email)
-                                                                    .color(color::GREEN),
-                                                            )
-                                                    })),
+                                            Container::new(
+                                                Button::new(
+                                                    Column::new()
+                                                        .push(p1_bold(format!(
+                                                            "My Liana {} wallet",
+                                                            match self.network {
+                                                                Network::Bitcoin => "Bitcoin",
+                                                                Network::Signet => "Signet",
+                                                                Network::Testnet => "Testnet",
+                                                                Network::Regtest => "Regtest",
+                                                                _ => "",
+                                                            }
+                                                        )))
+                                                        .push_maybe(checksum.as_ref().map(
+                                                            |checksum| {
+                                                                p1_regular(format!(
+                                                                    "Liana-{}",
+                                                                    checksum
+                                                                ))
+                                                                .color(color::GREY_3)
+                                                            },
+                                                        ))
+                                                        .push_maybe(email.as_ref().map(|email| {
+                                                            Row::new()
+                                                                .push(Space::with_width(
+                                                                    Length::Fill,
+                                                                ))
+                                                                .push(
+                                                                    p1_regular(email)
+                                                                        .color(color::GREEN),
+                                                                )
+                                                        })),
+                                                )
+                                                .on_press(ViewMessage::Run)
+                                                .padding(15)
+                                                .style(theme::button::container_border)
+                                                .width(Length::Fill),
                                             )
-                                            .on_press(ViewMessage::Run)
-                                            .style(theme::button::container_border)
-                                            .padding(10)
-                                            .width(Length::Fill),
+                                            .style(theme::card::simple),
                                         )
                                         .push(
                                             Button::new(icon::trash_icon())

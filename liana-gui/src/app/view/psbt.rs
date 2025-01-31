@@ -421,16 +421,13 @@ pub fn signatures<'a>(
                             Row::new().spacing(5),
                             |row, value| {
                                 row.push(if let Some(alias) = keys_aliases.get(value) {
-                                    Container::new(
-                                        tooltip::Tooltip::new(
-                                            Container::new(text(alias))
-                                                .padding(10)
-                                                .style(theme::pill::simple),
-                                            text(value.to_string()),
-                                            tooltip::Position::Bottom,
-                                        )
-                                        .style(theme::card::simple),
-                                    )
+                                    Container::new(tooltip::Tooltip::new(
+                                        Container::new(text(alias))
+                                            .padding(10)
+                                            .style(theme::pill::simple),
+                                        text(value.to_string()),
+                                        tooltip::Position::Bottom,
+                                    ))
                                 } else {
                                     Container::new(text(value.to_string()))
                                         .padding(10)
