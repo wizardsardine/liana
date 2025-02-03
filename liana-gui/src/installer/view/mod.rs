@@ -326,7 +326,7 @@ pub fn signer_xpubs<'a>(
                 )
                 .on_press(Message::UseHotSigner)
                 .padding(10)
-                .style(theme::button::transparent_border)
+                .style(theme::button::secondary)
                 .width(Length::Fill),
             )
             .push_maybe(if xpubs.is_empty() {
@@ -1613,15 +1613,12 @@ pub fn hw_list_view(
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
     })
-    .style(theme::button::container_border)
+    .style(theme::button::secondary)
     .width(Length::Fill);
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Select(i));
     }
-    Container::new(bttn)
-        .width(Length::Fill)
-        .style(theme::card::simple)
-        .into()
+    bttn.into()
 }
 
 pub fn key_list_view<'a>(
@@ -1633,7 +1630,7 @@ pub fn key_list_view<'a>(
     chosen: bool,
     device_must_support_taproot: bool,
 ) -> Element<'a, Message> {
-    let bttn = Button::new(if chosen {
+    Button::new(if chosen {
         hw::selected_hardware_wallet(
             kind.map(|k| k.to_string()).unwrap_or_default(),
             version,
@@ -1669,11 +1666,8 @@ pub fn key_list_view<'a>(
     .width(Length::Fill)
     .on_press(Message::DefineDescriptor(
         message::DefineDescriptor::KeyModal(message::ImportKeyModal::SelectKey(i)),
-    ));
-    Container::new(bttn)
-        .width(Length::Fill)
-        .style(theme::card::simple)
-        .into()
+    ))
+    .into()
 }
 
 pub fn backup_mnemonic<'a>(

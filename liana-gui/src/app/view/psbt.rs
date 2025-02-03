@@ -1050,7 +1050,7 @@ pub fn sign_action<'a>(
                             })
                             .on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
                             .padding(10)
-                            .style(theme::button::container_border)
+                            .style(theme::button::secondary)
                             .width(Length::Fill)
                         }))
                         .width(Length::Fill),
