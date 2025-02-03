@@ -26,3 +26,7 @@ fn banner(palette: &ContainerPalette) -> Style {
 pub fn network(theme: &Theme) -> Style {
     banner(&theme.colors.banners.network)
 }
+
+pub fn warning(theme: &Theme) -> Style {
+    banner(&theme.colors.banners.warning)
+}

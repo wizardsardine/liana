@@ -53,7 +53,7 @@ pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'
         move || Element::<'a, T>::from(text::p2_regular(error.to_owned())),
     )))
     .padding(15)
-    .style(theme::card::warning)
+    .style(theme::banner::warning)
     .width(Length::Fill)
 }
 
