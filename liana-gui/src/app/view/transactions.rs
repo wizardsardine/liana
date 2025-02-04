@@ -8,7 +8,6 @@ use iced::{
 };
 
 use liana_ui::{
-    color,
     component::{amount::*, badge, button, card, form, text::*},
     icon, theme,
     widget::*,
@@ -121,7 +120,7 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                                                 .format("%b. %d, %Y - %T")
                                                 .to_string(),
                                         )
-                                        .color(color::GREY_3)
+                                        .style(theme::text::secondary)
                                         .small(),
                                     )
                                 })),
@@ -238,9 +237,11 @@ pub fn create_rbf_modal<'a>(
                                     .align_y(Alignment::Center)
                                     .push(text(txid.to_string()))
                                     .push(
-                                        Button::new(icon::clipboard_icon().color(color::GREY_3))
-                                            .on_press(Message::Clipboard(txid.to_string()))
-                                            .style(theme::button::transparent_border),
+                                        Button::new(
+                                            icon::clipboard_icon().style(theme::text::secondary),
+                                        )
+                                        .on_press(Message::Clipboard(txid.to_string()))
+                                        .style(theme::button::transparent_border),
                                     ),
                             )
                         },
@@ -275,10 +276,10 @@ pub fn create_rbf_modal<'a>(
                 Row::new()
                     .spacing(10)
                     .align_y(Alignment::Center)
-                    .push(icon::circle_check_icon().color(color::GREEN))
+                    .push(icon::circle_check_icon().style(theme::text::secondary))
                     .push(
                         text("Replacement PSBT created successfully and ready to be signed")
-                            .color(color::GREEN),
+                            .style(theme::text::success),
                     )
             }))
             .push_maybe(replacement_txid.map(|id| {
@@ -343,7 +344,7 @@ pub fn tx_view<'a>(
                         .push_maybe(tx.fee_amount.map(|fee_amount| {
                             Row::new()
                                 .align_y(Alignment::Center)
-                                .push(h3("Miner fee: ").color(color::GREY_3))
+                                .push(h3("Miner fee: ").style(theme::text::secondary))
                                 .push(amount_with_size(&fee_amount, H3_SIZE))
                                 .push(text(" ").size(H3_SIZE))
                                 .push(
@@ -352,7 +353,7 @@ pub fn tx_view<'a>(
                                         fee_amount.to_sat() / tx.tx.vsize() as u64
                                     ))
                                     .size(H4_SIZE)
-                                    .color(color::GREY_3),
+                                    .style(theme::text::secondary),
                                 )
                         })),
                 ),

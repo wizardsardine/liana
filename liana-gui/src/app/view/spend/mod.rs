@@ -12,7 +12,6 @@ use liana::{
 };
 
 use liana_ui::{
-    color,
     component::{amount::*, badge, button, form, text::*},
     icon, theme,
     widget::*,
@@ -57,8 +56,8 @@ pub fn spend_view<'a>(
                         col.push(
                             Row::new()
                                 .spacing(5)
-                                .push(icon::warning_icon().color(color::ORANGE))
-                                .push(text(warning).color(color::ORANGE)),
+                                .push(icon::warning_icon().style(theme::text::warning))
+                                .push(text(warning).style(theme::text::warning)),
                         )
                     },
                 ))
@@ -154,7 +153,7 @@ pub fn create_spend_tx<'a>(
                                 Some(
                                     Container::new(
                                         text("Two payment addresses are the same")
-                                            .color(color::RED),
+                                            .style(theme::text::warning),
                                     )
                                     .padding(10),
                                 )
@@ -226,7 +225,7 @@ pub fn create_spend_tx<'a>(
                                             ),
                                             P2_SIZE,
                                         ))
-                                        .push(p2_regular("selected").color(color::GREY_3))
+                                        .push(p2_regular("selected").style(theme::text::secondary))
                                 } else if let Some(amount_left) = amount_left {
                                     if amount_left.to_sat() == 0 && !is_valid {
                                         // If amount left is set, the current configuration must be redraftable.
@@ -237,20 +236,23 @@ pub fn create_spend_tx<'a>(
                                             // and it has the max selected.
                                             Row::new().push(
                                                 text("Select at least one coin.")
-                                                    .color(color::GREY_3),
+                                                    .style(theme::text::secondary),
                                             )
                                         } else {
                                             // There must be a recipient with max selected and value 0.
                                             Row::new().push(
                                                 text("Check max amount for recipient.")
-                                                    .color(color::GREY_3),
+                                                    .style(theme::text::secondary),
                                             )
                                         }
                                     } else {
                                         Row::new()
                                             .spacing(5)
                                             .push(amount_with_size(amount_left, P2_SIZE))
-                                            .push(p2_regular("left to select").color(color::GREY_3))
+                                            .push(
+                                                p2_regular("left to select")
+                                                    .style(theme::text::secondary),
+                                            )
                                     }
                                 } else {
                                     Row::new().push(
@@ -259,7 +261,7 @@ pub fn create_spend_tx<'a>(
                                         } else {
                                             "Add recipient details."
                                         })
-                                        .color(color::GREY_3),
+                                        .style(theme::text::secondary),
                                     )
                                 })
                                 .width(Length::Fill),
@@ -384,9 +386,11 @@ pub fn recipient_view<'a>(
                             .map(amount_as_string)
                             .unwrap_or(amount.value.clone());
                         Some(
-                            Container::new(text(amount_txt).size(P1_SIZE).color(color::GREY_2))
-                                .padding(10)
-                                .width(Length::Fill),
+                            Container::new(
+                                text(amount_txt).size(P1_SIZE).style(theme::text::secondary),
+                            )
+                            .padding(10)
+                            .width(Length::Fill),
                         )
                     } else {
                         None
@@ -445,7 +449,7 @@ fn coin_list_view<'a>(
                                     // It is not possible to know if a coin is a
                                     // change coin or not so for now, From is
                                     // enough
-                                    p1_regular("From").color(color::GREY_3),
+                                    p1_regular("From").style(theme::text::secondary),
                                 )
                                 .push(p1_regular(label)),
                         )

@@ -14,7 +14,6 @@ use std::str::FromStr;
 
 use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
 use liana_ui::{
-    color,
     component::{
         button, card, form, hw, separation,
         text::{p1_regular, text, Text},
@@ -78,7 +77,7 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
             .push_maybe(if use_taproot {
                 Some(
                     p1_regular("Taproot is only supported by Liana version 5.0 and above")
-                        .color(color::GREY_2),
+                        .style(theme::text::secondary),
                 )
             } else {
                 None
@@ -150,13 +149,13 @@ pub fn uneditable_defined_key<'a>(
                     .push(
                         Row::new()
                             .spacing(10)
-                            .push(p1_regular(title).color(color::GREY_2))
+                            .push(p1_regular(title).style(theme::text::secondary))
                             .push(p1_bold(alias)),
                     )
-                    .push_maybe(warning.map(|w| p2_regular(w).color(color::RED))),
+                    .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )
             .push_maybe(if warning.is_none() {
-                Some(icon::check_icon().color(color::GREEN))
+                Some(icon::check_icon().style(theme::text::success))
             } else {
                 None
             }),
@@ -184,13 +183,13 @@ pub fn defined_key<'a>(
                     .push(
                         Row::new()
                             .spacing(10)
-                            .push(p1_regular(format!("{}", title)).color(color::GREY_2))
+                            .push(p1_regular(format!("{}", title)).style(theme::text::secondary))
                             .push(p1_bold(alias)),
                     )
-                    .push_maybe(warning.map(|w| p2_regular(w).color(color::RED))),
+                    .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )
             .push_maybe(if warning.is_none() {
-                Some(icon::check_icon().color(color::GREEN))
+                Some(icon::check_icon().style(theme::text::success))
             } else {
                 None
             })
@@ -358,7 +357,7 @@ pub fn edit_key_modal<'a>(
                                     .push(text("Key name:").bold())
                                     .push(tooltip(prompt::DEFINE_DESCRIPTOR_FINGERPRINT_TOOLTIP)),
                             )
-                            .push(p1_regular("Give this key a friendly name. It helps you identify it later").color(color::GREY_2))
+                            .push(p1_regular("Give this key a friendly name. It helps you identify it later").style(theme::text::secondary))
                             .push(
                                 form::Form::new("Name", form_name, |msg| {
                                     Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
@@ -375,7 +374,7 @@ pub fn edit_key_modal<'a>(
                 )
                 .push_maybe(
                     if duplicate_master_fg {
-                        Some(text("A single signing device may not be used more than once per path. (It can still be used in other paths.)").color(color::RED))
+                        Some(text("A single signing device may not be used more than once per path. (It can still be used in other paths.)").style(theme::text::error))
                     } else {
                         None
                     }

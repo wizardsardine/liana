@@ -1,7 +1,6 @@
 use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
-    color,
     component::{amount::*, badge, button, card, form, text::*},
     icon, theme,
     widget::*,
@@ -51,7 +50,10 @@ pub fn import_psbt_view<'a>(
 pub fn import_psbt_success_view<'a>() -> Element<'a, Message> {
     Column::new()
         .push(
-            card::simple(Container::new(text("PSBT is imported").color(color::GREEN))).padding(50),
+            card::simple(Container::new(
+                text("PSBT is imported").style(theme::text::success),
+            ))
+            .padding(50),
         )
         .width(Length::Fixed(400.0))
         .align_x(Alignment::Center)
@@ -118,9 +120,9 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                                             },
                                             sigs.threshold
                                         ))
-                                        .color(color::GREY_3),
+                                        .style(theme::text::secondary),
                                     )
-                                    .push(icon::key_icon().color(color::GREY_3)),
+                                    .push(icon::key_icon().style(theme::text::secondary)),
                             )
                         })
                         .push_maybe(

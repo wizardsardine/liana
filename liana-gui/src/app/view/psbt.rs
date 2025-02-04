@@ -14,7 +14,6 @@ use liana::{
 };
 
 use liana_ui::{
-    color,
     component::{
         amount::*,
         badge, button, card,
@@ -202,7 +201,8 @@ pub fn broadcast_action<'a>(
                                         .push(text(txid.to_string()))
                                         .push(
                                             Button::new(
-                                                icon::clipboard_icon().color(color::GREY_3),
+                                                icon::clipboard_icon()
+                                                    .style(theme::text::secondary),
                                             )
                                             .on_press(Message::Clipboard(txid.to_string()))
                                             .style(theme::button::transparent_border),
@@ -297,7 +297,7 @@ pub fn spend_header<'a>(
                 .push(
                     Row::new()
                         .align_y(Alignment::Center)
-                        .push(h3("Miner fee: ").color(color::GREY_3))
+                        .push(h3("Miner fee: ").style(theme::text::secondary))
                         .push_maybe(if tx.fee_amount.is_none() {
                             Some(text("Missing information about transaction inputs"))
                         } else {
@@ -308,7 +308,7 @@ pub fn spend_header<'a>(
                         .push_maybe(tx.min_feerate_vb().map(|rate| {
                             text(format!("(~{} sats/vbyte)", &rate))
                                 .size(H4_SIZE)
-                                .color(color::GREY_3)
+                                .style(theme::text::secondary)
                         })),
                 ),
         )
@@ -358,14 +358,16 @@ pub fn spend_overview_view<'a>(
                                     .push(p1_bold("Tx ID").width(Length::Fill))
                                     .push(
                                         p2_regular(tx.psbt.unsigned_tx.compute_txid().to_string())
-                                            .color(color::GREY_3),
+                                            .style(theme::text::secondary),
                                     )
                                     .push(
-                                        Button::new(icon::clipboard_icon().color(color::GREY_3))
-                                            .on_press(Message::Clipboard(
-                                                tx.psbt.unsigned_tx.compute_txid().to_string(),
-                                            ))
-                                            .style(theme::button::transparent_border),
+                                        Button::new(
+                                            icon::clipboard_icon().style(theme::text::secondary),
+                                        )
+                                        .on_press(Message::Clipboard(
+                                            tx.psbt.unsigned_tx.compute_txid().to_string(),
+                                        ))
+                                        .style(theme::button::transparent_border),
                                     )
                                     .align_y(Alignment::Center),
                             ),
@@ -414,8 +416,8 @@ pub fn signatures<'a>(
                         .align_y(Alignment::Center)
                         .spacing(10)
                         .push(p1_bold("Status"))
-                        .push(icon::circle_check_icon().color(color::GREEN))
-                        .push(text("Ready").bold().color(color::GREEN))
+                        .push(icon::circle_check_icon().style(theme::text::success))
+                        .push(text("Ready").bold().style(theme::text::success))
                         .push(text("  signed by"))
                         .push(sigs.signed_pubkeys.keys().fold(
                             Row::new().spacing(5),
@@ -453,8 +455,8 @@ pub fn signatures<'a>(
                                 Row::new()
                                     .spacing(5)
                                     .align_y(Alignment::Center)
-                                    .push(icon::circle_cross_icon().color(color::RED))
-                                    .push(text("Not ready").color(color::RED))
+                                    .push(icon::circle_cross_icon().style(theme::text::error))
+                                    .push(text("Not ready").style(theme::text::error))
                                     .width(Length::Fill),
                             )
                             .push(icon::collapse_icon()),
@@ -473,8 +475,8 @@ pub fn signatures<'a>(
                                 Row::new()
                                     .spacing(5)
                                     .align_y(Alignment::Center)
-                                    .push(icon::circle_cross_icon().color(color::RED))
-                                    .push(text("Not ready").color(color::RED))
+                                    .push(icon::circle_cross_icon().style(theme::text::error))
+                                    .push(text("Not ready").style(theme::text::error))
                                     .width(Length::Fill),
                             )
                             .push(icon::collapsed_icon()),
@@ -566,9 +568,9 @@ pub fn path_view<'a>(
             .push(
                 Row::new()
                     .push(if missing_signatures == 0 {
-                        icon::circle_check_icon().color(color::GREEN)
+                        icon::circle_check_icon().style(theme::text::success)
                     } else {
-                        icon::circle_cross_icon().color(color::GREY_3)
+                        icon::circle_cross_icon().style(theme::text::secondary)
                     })
                     .push(Space::with_width(Length::Fixed(20.0))),
             )
@@ -584,12 +586,12 @@ pub fn path_view<'a>(
                         " from "
                     }
                 ))
-                .color(color::GREY_3),
+                .style(theme::text::secondary),
             )
             .push_maybe(row_unsigned)
             .push_maybe(
                 (!sigs.signed_pubkeys.is_empty())
-                    .then_some(p1_regular(", already signed by ").color(color::GREY_3)),
+                    .then_some(p1_regular(", already signed by ").style(theme::text::secondary)),
             )
             .push(row_signed),
     )
@@ -849,10 +851,10 @@ fn input_view<'a>(
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(5)
-                        .push(p1_bold("Outpoint:").color(color::GREY_3))
-                        .push(p2_regular(outpoint.clone()).color(color::GREY_3))
+                        .push(p1_bold("Outpoint:").style(theme::text::secondary))
+                        .push(p2_regular(outpoint.clone()).style(theme::text::secondary))
                         .push(
-                            Button::new(icon::clipboard_icon().color(color::GREY_3))
+                            Button::new(icon::clipboard_icon().style(theme::text::secondary))
                                 .on_press(Message::Clipboard(outpoint.clone()))
                                 .style(theme::button::transparent_border),
                         ),
@@ -867,12 +869,14 @@ fn input_view<'a>(
                                 .align_y(Alignment::Center)
                                 .width(Length::Fill)
                                 .spacing(5)
-                                .push(p1_bold("Address:").color(color::GREY_3))
-                                .push(p2_regular(addr.clone()).color(color::GREY_3))
+                                .push(p1_bold("Address:").style(theme::text::secondary))
+                                .push(p2_regular(addr.clone()).style(theme::text::secondary))
                                 .push(
-                                    Button::new(icon::clipboard_icon().color(color::GREY_3))
-                                        .on_press(Message::Clipboard(addr))
-                                        .style(theme::button::transparent_border),
+                                    Button::new(
+                                        icon::clipboard_icon().style(theme::text::secondary),
+                                    )
+                                    .on_press(Message::Clipboard(addr))
+                                    .style(theme::button::transparent_border),
                                 ),
                         )
                 }))
@@ -886,8 +890,8 @@ fn input_view<'a>(
                                     .align_y(Alignment::Center)
                                     .width(Length::Fill)
                                     .spacing(5)
-                                    .push(p1_bold("Address label:").color(color::GREY_3))
-                                    .push(p2_regular(label).color(color::GREY_3)),
+                                    .push(p1_bold("Address label:").style(theme::text::secondary))
+                                    .push(p2_regular(label).style(theme::text::secondary)),
                             )
                     })
                 })),
@@ -948,12 +952,14 @@ fn payment_view<'a>(
                                 .align_y(Alignment::Center)
                                 .width(Length::Fill)
                                 .spacing(5)
-                                .push(p1_bold("Address:").color(color::GREY_3))
-                                .push(p2_regular(addr.clone()).color(color::GREY_3))
+                                .push(p1_bold("Address:").style(theme::text::secondary))
+                                .push(p2_regular(addr.clone()).style(theme::text::secondary))
                                 .push(
-                                    Button::new(icon::clipboard_icon().color(color::GREY_3))
-                                        .on_press(Message::Clipboard(addr.clone()))
-                                        .style(theme::button::transparent_border),
+                                    Button::new(
+                                        icon::clipboard_icon().style(theme::text::secondary),
+                                    )
+                                    .on_press(Message::Clipboard(addr.clone()))
+                                    .style(theme::button::transparent_border),
                                 ),
                         ),
                 )
@@ -966,8 +972,8 @@ fn payment_view<'a>(
                                 .align_y(Alignment::Center)
                                 .width(Length::Fill)
                                 .spacing(5)
-                                .push(p1_bold("Address label:").color(color::GREY_3))
-                                .push(p2_regular(label).color(color::GREY_3)),
+                                .push(p1_bold("Address label:").style(theme::text::secondary))
+                                .push(p2_regular(label).style(theme::text::secondary)),
                         )
                 }))
         }))
@@ -995,10 +1001,10 @@ fn change_view(output: &TxOut, network: Network) -> Element<Message> {
                         .align_y(Alignment::Center)
                         .width(Length::Fill)
                         .spacing(5)
-                        .push(p1_bold("Address:").color(color::GREY_3))
-                        .push(p2_regular(addr.clone()).color(color::GREY_3))
+                        .push(p1_bold("Address:").style(theme::text::secondary))
+                        .push(p2_regular(addr.clone()).style(theme::text::secondary))
                         .push(
-                            Button::new(icon::clipboard_icon().color(color::GREY_3))
+                            Button::new(icon::clipboard_icon().style(theme::text::secondary))
                                 .on_press(Message::Clipboard(addr))
                                 .style(theme::button::transparent_border),
                         ),
@@ -1165,7 +1171,7 @@ pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
     Column::new()
         .push(
             card::simple(Container::new(
-                text("Spend transaction is updated").color(color::GREEN),
+                text("Spend transaction is updated").style(theme::text::secondary),
             ))
             .padding(50),
         )

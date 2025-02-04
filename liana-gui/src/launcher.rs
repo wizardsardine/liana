@@ -8,7 +8,6 @@ use iced::{
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
-    color,
     component::{button, card, modal::Modal, network_banner, notification, text::*},
     icon, image, theme,
     widget::*,
@@ -225,7 +224,7 @@ impl Launcher {
                                                                     "Liana-{}",
                                                                     checksum
                                                                 ))
-                                                                .color(color::GREY_3)
+                                                                .style(theme::text::secondary)
                                                             },
                                                         ))
                                                         .push_maybe(email.as_ref().map(|email| {
@@ -234,8 +233,9 @@ impl Launcher {
                                                                     Length::Fill,
                                                                 ))
                                                                 .push(
-                                                                    p1_regular(email)
-                                                                        .color(color::GREEN),
+                                                                    p1_regular(email).style(
+                                                                        theme::text::secondary,
+                                                                    ),
                                                                 )
                                                         })),
                                                 )
@@ -271,7 +271,7 @@ impl Launcher {
                                                         )
                                                         .push(
                                                             p1_regular("Create a new Liana wallet")
-                                                                .color(color::GREY_3),
+                                                                .style(theme::text::secondary),
                                                         )
                                                         .push(
                                                             button::secondary(None, "Select")
@@ -297,7 +297,7 @@ impl Launcher {
                                                             p1_regular(
                                                                 "Add an existing Liana wallet",
                                                             )
-                                                            .color(color::GREY_3),
+                                                            .style(theme::text::secondary),
                                                         )
                                                         .push(
                                                             button::secondary(None, "Select")
@@ -425,12 +425,13 @@ impl DeleteWalletModal {
                     .spacing(10)
                     .push(Container::new(
                         h4_bold(format!("Delete configuration for {}", &self.network))
-                            .color(color::RED)
+                            .style(theme::text::destructive)
                             .width(Length::Fill),
                     ))
                     .push(Row::new().push(text(help_text_1)))
                     .push_maybe(
-                        help_text_2.map(|t| Row::new().push(p1_regular(t).color(color::GREY_3))),
+                        help_text_2
+                            .map(|t| Row::new().push(p1_regular(t).style(theme::text::secondary))),
                     )
                     .push(Row::new())
                     .push(Row::new().push(text(help_text_3)))
@@ -443,8 +444,10 @@ impl DeleteWalletModal {
                         } else {
                             Row::new()
                                 .spacing(10)
-                                .push(icon::circle_check_icon().color(color::GREEN))
-                                .push(text("Wallet successfully deleted").color(color::GREEN))
+                                .push(icon::circle_check_icon().style(theme::text::success))
+                                .push(
+                                    text("Wallet successfully deleted").style(theme::text::success),
+                                )
                         })
                         .align_x(Horizontal::Center)
                         .width(Length::Fill),

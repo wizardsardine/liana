@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
-    color,
     component::{amount::*, badge, button, form, text::*},
     icon, theme,
     widget::*,
@@ -84,7 +83,8 @@ fn coin_list_view<'a>(
                                                         // It is not possible to know if a coin is a
                                                         // change coin or not so for now, From is
                                                         // enough
-                                                        p1_regular("From").color(color::GREY_3),
+                                                        p1_regular("From")
+                                                            .style(theme::text::secondary),
                                                     )
                                                     .push(p1_regular(label)),
                                             )
@@ -101,7 +101,8 @@ fn coin_list_view<'a>(
                                                     // It is not possible to know if a coin is a
                                                     // change coin or not so for now, From is
                                                     // enough
-                                                    p1_regular("From").color(color::GREY_3),
+                                                    p1_regular("From")
+                                                        .style(theme::text::secondary),
                                                 )
                                                 .push(p1_regular(label)),
                                         )
@@ -156,7 +157,7 @@ fn coin_list_view<'a>(
                                 if blockheight > b as u32 + timelock as u32 {
                                     Some(Container::new(
                                         p1_bold("One of the recovery path is available")
-                                            .color(color::RED),
+                                            .style(theme::text::error),
                                     ))
                                 } else {
                                     Some(Container::new(p1_bold(format!(
@@ -178,25 +179,29 @@ fn coin_list_view<'a>(
                                         .push(
                                             p2_regular("Address label:")
                                                 .bold()
-                                                .color(color::GREY_2),
+                                                .style(theme::text::secondary),
                                         )
                                         .push(if let Some(label) = labels.get(&address) {
-                                            p2_regular(label).color(color::GREY_2)
+                                            p2_regular(label).style(theme::text::secondary)
                                         } else {
-                                            p2_regular("No label").color(color::GREY_2)
+                                            p2_regular("No label").style(theme::text::secondary)
                                         })
                                         .spacing(5),
                                 )
                                 .push(
                                     Row::new()
                                         .align_y(Alignment::Center)
-                                        .push(p2_regular("Address:").bold().color(color::GREY_2))
+                                        .push(
+                                            p2_regular("Address:")
+                                                .bold()
+                                                .style(theme::text::secondary),
+                                        )
                                         .push(
                                             Row::new()
                                                 .align_y(Alignment::Center)
                                                 .push(
                                                     p2_regular(address.clone())
-                                                        .color(color::GREY_2),
+                                                        .style(theme::text::secondary),
                                                 )
                                                 .push(
                                                     Button::new(icon::clipboard_icon())
@@ -214,25 +219,29 @@ fn coin_list_view<'a>(
                                         .push(
                                             p2_regular("Deposit transaction label:")
                                                 .bold()
-                                                .color(color::GREY_2),
+                                                .style(theme::text::secondary),
                                         )
                                         .push(if let Some(label) = labels.get(&txid) {
-                                            p2_regular(label).color(color::GREY_2)
+                                            p2_regular(label).style(theme::text::secondary)
                                         } else {
-                                            p2_regular("No label").color(color::GREY_2)
+                                            p2_regular("No label").style(theme::text::secondary)
                                         })
                                         .spacing(5),
                                 )
                                 .push(
                                     Row::new()
                                         .align_y(Alignment::Center)
-                                        .push(p2_regular("Outpoint:").bold().color(color::GREY_2))
+                                        .push(
+                                            p2_regular("Outpoint:")
+                                                .bold()
+                                                .style(theme::text::secondary),
+                                        )
                                         .push(
                                             Row::new()
                                                 .align_y(Alignment::Center)
                                                 .push(
                                                     p2_regular(format!("{}", coin.outpoint))
-                                                        .color(color::GREY_2),
+                                                        .style(theme::text::secondary),
                                                 )
                                                 .push(
                                                     Button::new(icon::clipboard_icon())
@@ -247,9 +256,14 @@ fn coin_list_view<'a>(
                                 .push_maybe(coin.block_height.map(|b| {
                                     Row::new()
                                         .push(
-                                            p2_regular("Block height:").bold().color(color::GREY_2),
+                                            p2_regular("Block height:")
+                                                .bold()
+                                                .style(theme::text::secondary),
                                         )
-                                        .push(p2_regular(format!("{}", b)).color(color::GREY_2))
+                                        .push(
+                                            p2_regular(format!("{}", b))
+                                                .style(theme::text::secondary),
+                                        )
                                         .spacing(5)
                                 })),
                         )
@@ -257,7 +271,11 @@ fn coin_list_view<'a>(
                             Column::new()
                                 .push(
                                     Row::new()
-                                        .push(p2_regular("Spend txid:").bold().color(color::GREY_2))
+                                        .push(
+                                            p2_regular("Spend txid:")
+                                                .bold()
+                                                .style(theme::text::secondary),
+                                        )
                                         .push(p2_regular(format!("{}", info.txid)))
                                         .spacing(5),
                                 )
@@ -266,13 +284,15 @@ fn coin_list_view<'a>(
                                         .push(
                                             p2_regular("Spend block height:")
                                                 .bold()
-                                                .color(color::GREY_2),
+                                                .style(theme::text::secondary),
                                         )
                                         .push(p2_regular(format!("{}", height)))
                                         .spacing(5)
                                 } else {
                                     Row::new().push(
-                                        p2_regular("Not in a block").bold().color(color::GREY_2),
+                                        p2_regular("Not in a block")
+                                            .bold()
+                                            .style(theme::text::secondary),
                                     )
                                 })
                                 .spacing(5)
@@ -320,7 +340,7 @@ pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, 
             Row::new()
                 .spacing(5)
                 .push(icon::clock_icon().width(Length::Fixed(20.0)))
-                .push(p2_regular(expire_message(seq)).color(color::GREY_3))
+                .push(p2_regular(expire_message(seq)).style(theme::text::secondary))
                 .align_y(Alignment::Center),
         )
         .padding(10)

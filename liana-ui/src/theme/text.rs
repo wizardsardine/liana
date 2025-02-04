@@ -30,6 +30,30 @@ pub fn secondary(theme: &Theme) -> Style {
     }
 }
 
+pub fn success(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.success),
+    }
+}
+
+pub fn warning(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.warning),
+    }
+}
+
+pub fn destructive(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.warning),
+    }
+}
+
+pub fn error(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.error),
+    }
+}
+
 pub fn custom(color: iced::Color) -> Style {
     Style { color: Some(color) }
 }
