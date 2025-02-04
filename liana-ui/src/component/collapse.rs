@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use iced::{
     advanced,
     widget::{column, component, Button, Component},
@@ -16,7 +18,7 @@ pub struct Collapse<'a, M, H, F, C> {
 impl<'a, Message, T, H, F, C, Theme, Renderer> Collapse<'a, Message, H, F, C>
 where
     Renderer: advanced::Renderer,
-    Theme: iced::widget::button::StyleSheet,
+    Theme: iced::widget::button::Catalog,
     Message: 'a,
     T: Into<Message> + Clone + 'a,
     H: Fn() -> Button<'a, Event<T>, Theme, Renderer> + 'a,
@@ -53,7 +55,7 @@ where
     F: Fn() -> Button<'a, Event<T>, Theme, Renderer>,
     C: Fn() -> Element<'a, T, Theme, Renderer>,
     Renderer: 'a + advanced::Renderer,
-    Theme: 'a + iced::widget::button::StyleSheet,
+    Theme: 'a + iced::widget::button::Catalog,
 {
     type State = Option<bool>;
     type Event = Event<T>;
@@ -96,7 +98,7 @@ impl<'a, Message, T, H: 'a, F: 'a, C: 'a, Theme, Renderer> From<Collapse<'a, Mes
 where
     Message: 'a,
     Renderer: 'a + advanced::Renderer,
-    Theme: 'a + iced::widget::button::StyleSheet,
+    Theme: 'a + iced::widget::button::Catalog,
     T: Into<Message> + Clone + 'a,
     H: Fn() -> Button<'a, Event<T>, Theme, Renderer>,
     F: Fn() -> Button<'a, Event<T>, Theme, Renderer>,

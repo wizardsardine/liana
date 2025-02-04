@@ -6,7 +6,7 @@ use std::iter::FromIterator;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 use liana::{
     descriptors::{LianaDescriptor, LianaPolicy, PathInfo},
     miniscript::{
@@ -38,8 +38,8 @@ pub trait DescriptorEditModal {
     fn processing(&self) -> bool {
         false
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, _message: Message) -> Command<Message> {
-        Command::none()
+    fn update(&mut self, _hws: &mut HardwareWallets, _message: Message) -> Task<Message> {
+        Task::none()
     }
     fn view<'a>(&'a self, _hws: &'a HardwareWallets) -> Element<'a, Message>;
     fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
@@ -202,7 +202,7 @@ impl Step for DefineDescriptor {
     }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         self.error = None;
         match message {
             Message::Close => {
@@ -294,7 +294,7 @@ impl Step for DefineDescriptor {
                 }
                 message::DefinePath::Key(j, msg) => match msg {
                     message::DefineKey::Clipboard(key) => {
-                        return Command::perform(async move { key }, Message::Clibpboard);
+                        return Task::perform(async move { key }, Message::Clibpboard);
                     }
 
                     message::DefineKey::Edit => {
@@ -347,7 +347,7 @@ impl Step for DefineDescriptor {
                 }
             }
         };
-        Command::none()
+        Task::none()
     }
 
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
@@ -553,7 +553,7 @@ impl DescriptorEditModal for EditSequenceModal {
         false
     }
 
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::DefineDescriptor(message::DefineDescriptor::ThresholdSequenceModal(msg)) =
             message
         {
@@ -570,7 +570,7 @@ impl DescriptorEditModal for EditSequenceModal {
                     if self.sequence.valid {
                         if let Ok(sequence) = u16::from_str(&self.sequence.value) {
                             let path_index = self.path_index;
-                            return Command::perform(
+                            return Task::perform(
                                 async move { (path_index, sequence) },
                                 |(path_index, sequence)| {
                                     message::DefineDescriptor::Path(
@@ -586,7 +586,7 @@ impl DescriptorEditModal for EditSequenceModal {
                 _ => {}
             }
         }
-        Command::none()
+        Task::none()
     }
 
     fn view(&self, _hws: &HardwareWallets) -> Element<Message> {
@@ -613,7 +613,7 @@ impl DescriptorEditModal for EditThresholdModal {
         false
     }
 
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::DefineDescriptor(message::DefineDescriptor::ThresholdSequenceModal(msg)) =
             message
         {
@@ -626,7 +626,7 @@ impl DescriptorEditModal for EditThresholdModal {
                 message::ThresholdSequenceModal::Confirm => {
                     let path_index = self.path_index;
                     let threshold = self.threshold.0;
-                    return Command::perform(
+                    return Task::perform(
                         async move { (path_index, threshold) },
                         |(path_index, threshold)| {
                             message::DefineDescriptor::Path(
@@ -640,7 +640,7 @@ impl DescriptorEditModal for EditThresholdModal {
                 _ => {}
             }
         }
-        Command::none()
+        Task::none()
     }
 
     fn view(&self, _hws: &HardwareWallets) -> Element<Message> {
@@ -651,7 +651,8 @@ impl DescriptorEditModal for EditThresholdModal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced_runtime::command::Action;
+    use iced::futures::StreamExt;
+    use iced_runtime::{task::into_stream, Action};
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
@@ -674,10 +675,11 @@ mod tests {
         pub async fn update(&self, message: Message) {
             let mut hws = HardwareWallets::new(PathBuf::from_str("/").unwrap(), Network::Bitcoin);
             let cmd = self.step.lock().unwrap().update(&mut hws, message);
-            for action in cmd.actions() {
-                if let Action::Future(f) = action {
-                    let msg = f.await;
-                    let _cmd = self.step.lock().unwrap().update(&mut hws, msg);
+            if let Some(mut stream) = into_stream(cmd) {
+                while let Some(action) = stream.next().await {
+                    if let Action::Output(msg) = action {
+                        let _cmd = self.step.lock().unwrap().update(&mut hws, msg);
+                    }
                 }
             }
         }

@@ -1,7 +1,8 @@
 use iced::{
     font::{Family, Stretch, Weight},
-    Command, Font,
+    Font,
 };
+use std::borrow::Cow;
 
 pub const BOLD: Font = Font {
     family: Family::Name("IBM Plex Sans"),
@@ -26,12 +27,12 @@ pub const REGULAR_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Reg
 pub const ICONEX_ICONS_BYTES: &[u8] = include_bytes!("../static/icons/iconex/iconex-icons.ttf");
 pub const BOOTSTRAP_ICONS_BYTE: &[u8] = include_bytes!("../static/icons/bootstrap-icons.ttf");
 
-pub fn loads<T: From<Result<(), iced::font::Error>> + 'static>() -> Vec<Command<T>> {
+pub fn load() -> Vec<Cow<'static, [u8]>> {
     vec![
-        iced::font::load(BOLD_BYTES).map(T::from),
-        iced::font::load(MEDIUM_BYTES).map(T::from),
-        iced::font::load(REGULAR_BYTES).map(T::from),
-        iced::font::load(ICONEX_ICONS_BYTES).map(T::from),
-        iced::font::load(BOOTSTRAP_ICONS_BYTE).map(T::from),
+        BOLD_BYTES.into(),
+        MEDIUM_BYTES.into(),
+        REGULAR_BYTES.into(),
+        ICONEX_ICONS_BYTES.into(),
+        BOOTSTRAP_ICONS_BYTE.into(),
     ]
 }

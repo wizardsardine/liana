@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use iced::Subscription;
 
-use iced::Command;
+use iced::Task;
 use liana::{
     descriptors::LianaPolicy,
     miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Network, Txid},
@@ -36,8 +36,8 @@ use crate::{
 };
 
 pub trait Action {
-    fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
-        Command::none()
+    fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        Task::none()
     }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
@@ -47,8 +47,8 @@ pub trait Action {
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _message: Message,
         _tx: &mut SpendTx,
-    ) -> Command<Message> {
-        Command::none()
+    ) -> Task<Message> {
+        Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message>;
 }
@@ -120,11 +120,11 @@ impl PsbtState {
         }
     }
 
-    pub fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Command<Message> {
+    pub fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
         if let Some(action) = &self.action {
             action.as_ref().load(daemon)
         } else {
-            Command::none()
+            Task::none()
         }
     }
 
@@ -133,12 +133,12 @@ impl PsbtState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::Spend(view::SpendTxMessage::Cancel)) => {
                 if let Some(PsbtAction::Sign(SignAction { display_modal, .. })) = &mut self.action {
                     *display_modal = false;
-                    return Command::none();
+                    return Task::none();
                 }
 
                 self.action = None;
@@ -149,7 +149,7 @@ impl PsbtState {
             Message::View(view::Message::Spend(view::SpendTxMessage::Sign)) => {
                 if let Some(PsbtAction::Sign(SignAction { display_modal, .. })) = &mut self.action {
                     *display_modal = true;
-                    return Command::none();
+                    return Task::none();
                 }
 
                 let action = SignAction::new(
@@ -171,7 +171,7 @@ impl PsbtState {
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
                 let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
-                return Command::perform(
+                return Task::perform(
                     async move {
                         daemon
                             .list_coins(&[CoinStatus::Spending], &outpoints)
@@ -231,7 +231,7 @@ impl PsbtState {
                 }
             }
         };
-        Command::none()
+        Task::none()
     }
 
     pub fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
@@ -265,7 +265,7 @@ impl Action for SaveAction {
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
                 let daemon = daemon.clone();
@@ -276,7 +276,7 @@ impl Action for SaveAction {
                         labels.insert(label_item_from_str(item), Some(label.clone()));
                     }
                 }
-                return Command::perform(
+                return Task::perform(
                     async move {
                         daemon.update_spend_tx(&psbt).await?;
                         daemon.update_labels(&labels).await.map_err(|e| e.into())
@@ -290,7 +290,7 @@ impl Action for SaveAction {
             },
             _ => {}
         }
-        Command::none()
+        Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
@@ -316,13 +316,13 @@ impl Action for BroadcastAction {
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
                 let daemon = daemon.clone();
                 let psbt = tx.psbt.clone();
                 self.error = None;
-                return Command::perform(
+                return Task::perform(
                     async move {
                         daemon
                             .broadcast_spend_tx(&psbt.unsigned_tx.compute_txid())
@@ -341,7 +341,7 @@ impl Action for BroadcastAction {
             },
             _ => {}
         }
-        Command::none()
+        Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
@@ -369,13 +369,13 @@ impl Action for DeleteAction {
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
                 let daemon = daemon.clone();
                 let psbt = tx.psbt.clone();
                 self.error = None;
-                return Command::perform(
+                return Task::perform(
                     async move {
                         daemon
                             .delete_spend_tx(&psbt.unsigned_tx.compute_txid())
@@ -391,7 +391,7 @@ impl Action for DeleteAction {
             },
             _ => {}
         }
-        Command::none()
+        Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
@@ -443,7 +443,7 @@ impl Action for SignAction {
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::View(view::Message::SelectHardwareWallet(i)) => {
                 if let Some(HardwareWallet::Supported {
@@ -456,14 +456,14 @@ impl Action for SignAction {
                     self.signing.insert(*fingerprint);
                     let psbt = tx.psbt.clone();
                     let fingerprint = *fingerprint;
-                    return Command::perform(
+                    return Task::perform(
                         sign_psbt(self.wallet.clone(), device.clone(), psbt),
                         move |res| Message::Signed(fingerprint, res),
                     );
                 }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectHotSigner)) => {
-                return Command::perform(
+                return Task::perform(
                     sign_psbt_with_hot_signer(self.wallet.clone(), tx.psbt.clone()),
                     |(fg, res)| Message::Signed(fg, res),
                 );
@@ -482,7 +482,7 @@ impl Action for SignAction {
                         let daemon = daemon.clone();
                         merge_signatures(&mut tx.psbt, &psbt);
                         if self.is_saved {
-                            return Command::perform(
+                            return Task::perform(
                                 async move { daemon.update_spend_tx(&psbt).await.map_err(|e| e.into()) },
                                 Message::Updated,
                             );
@@ -495,7 +495,7 @@ impl Action for SignAction {
                                     labels.insert(label_item_from_str(item), Some(label.clone()));
                                 }
                             }
-                            return Command::perform(
+                            return Task::perform(
                                 async move {
                                     daemon.update_spend_tx(&psbt).await?;
                                     daemon.update_labels(&labels).await.map_err(|e| e.into())
@@ -524,7 +524,7 @@ impl Action for SignAction {
             },
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let content = toast::Manager::new(
@@ -683,7 +683,7 @@ impl Action for UpdateAction {
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         tx: &mut SpendTx,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::Updated(res) => {
                 self.processing = false;
@@ -715,7 +715,7 @@ impl Action for UpdateAction {
                 self.processing = true;
                 self.error = None;
                 if let Ok(updated) = Psbt::from_str(&self.updated.value) {
-                    return Command::perform(
+                    return Task::perform(
                         async move { daemon.update_spend_tx(&updated).await.map_err(|e| e.into()) },
                         Message::Updated,
                     );
@@ -724,7 +724,7 @@ impl Action for UpdateAction {
             _ => {}
         }
 
-        Command::none()
+        Task::none()
     }
 }
 

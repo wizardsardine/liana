@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 pub mod template;
 
 use iced::widget::{container, pick_list, scrollable, slider, Button, Space};
@@ -7,6 +9,7 @@ use liana::miniscript::bitcoin::Network;
 use liana_ui::component::text::{self, h3, p1_bold, p2_regular, H3_SIZE};
 use liana_ui::image;
 use std::borrow::Cow;
+use std::fmt::Display;
 use std::str::FromStr;
 
 use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
@@ -62,7 +65,7 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
                 }),
                 |kind| Message::CreateTaprootDescriptor(kind == DescriptorKind::Taproot),
             )
-            .style(theme::PickList::Secondary)
+            .style(theme::pick_list::primary)
             .padding(10),
         ));
 
@@ -75,7 +78,7 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
             .push_maybe(if use_taproot {
                 Some(
                     p1_regular("Taproot is only supported by Liana version 5.0 and above")
-                        .style(color::GREY_2),
+                        .color(color::GREY_2),
                 )
             } else {
                 None
@@ -102,7 +105,7 @@ pub fn path(
             .push(
                 Column::new()
                     .spacing(5)
-                    .align_items(Alignment::Center)
+                    .align_x(Alignment::Center)
                     .push(Column::with_children(keys).spacing(5)),
             )
             .push_maybe(if fixed {
@@ -124,22 +127,22 @@ pub fn path(
             }),
     )
     .padding(10)
-    .style(theme::Container::Card(theme::Card::Border))
+    .style(theme::card::border)
     .into()
 }
 
 pub fn uneditable_defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
-    title: impl Into<Cow<'a, str>>,
+    title: impl Into<Cow<'a, str>> + std::fmt::Display,
     warning: Option<&'static str>,
 ) -> Element<'a, message::DefineKey> {
     card::simple(
         Row::new()
             .spacing(10)
             .width(Length::Fill)
-            .align_items(Alignment::Center)
-            .push(icon::round_key_icon().size(H3_SIZE).style(color))
+            .align_y(Alignment::Center)
+            .push(icon::round_key_icon().size(H3_SIZE).color(color))
             .push(
                 Column::new()
                     .width(Length::Fill)
@@ -147,13 +150,13 @@ pub fn uneditable_defined_key<'a>(
                     .push(
                         Row::new()
                             .spacing(10)
-                            .push(p1_regular(title).style(color::GREY_2))
+                            .push(p1_regular(title).color(color::GREY_2))
                             .push(p1_bold(alias)),
                     )
-                    .push_maybe(warning.map(|w| p2_regular(w).style(color::RED))),
+                    .push_maybe(warning.map(|w| p2_regular(w).color(color::RED))),
             )
             .push_maybe(if warning.is_none() {
-                Some(icon::check_icon().style(color::GREEN))
+                Some(icon::check_icon().color(color::GREEN))
             } else {
                 None
             }),
@@ -164,7 +167,7 @@ pub fn uneditable_defined_key<'a>(
 pub fn defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
-    title: impl Into<Cow<'a, str>>,
+    title: impl Display,
     warning: Option<&'static str>,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
@@ -172,8 +175,8 @@ pub fn defined_key<'a>(
         Row::new()
             .spacing(10)
             .width(Length::Fill)
-            .align_items(Alignment::Center)
-            .push(icon::round_key_icon().size(H3_SIZE).style(color))
+            .align_y(Alignment::Center)
+            .push(icon::round_key_icon().size(H3_SIZE).color(color))
             .push(
                 Column::new()
                     .width(Length::Fill)
@@ -181,13 +184,13 @@ pub fn defined_key<'a>(
                     .push(
                         Row::new()
                             .spacing(10)
-                            .push(p1_regular(title).style(color::GREY_2))
+                            .push(p1_regular(format!("{}", title)).color(color::GREY_2))
                             .push(p1_bold(alias)),
                     )
-                    .push_maybe(warning.map(|w| p2_regular(w).style(color::RED))),
+                    .push_maybe(warning.map(|w| p2_regular(w).color(color::RED))),
             )
             .push_maybe(if warning.is_none() {
-                Some(icon::check_icon().style(color::GREEN))
+                Some(icon::check_icon().color(color::GREEN))
             } else {
                 None
             })
@@ -200,7 +203,7 @@ pub fn defined_key<'a>(
             } else {
                 Some(
                     Button::new(icon::trash_icon())
-                        .style(theme::Button::Secondary)
+                        .style(theme::button::secondary)
                         .padding(5)
                         .on_press(message::DefineKey::Delete),
                 )
@@ -211,7 +214,7 @@ pub fn defined_key<'a>(
 
 pub fn undefined_key<'a>(
     color: iced::Color,
-    title: impl Into<Cow<'a, str>>,
+    title: impl Into<Cow<'a, str>> + std::fmt::Display,
     active: bool,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
@@ -219,8 +222,8 @@ pub fn undefined_key<'a>(
         Row::new()
             .spacing(10)
             .width(Length::Fill)
-            .align_items(Alignment::Center)
-            .push(icon::round_key_icon().size(H3_SIZE).style(color))
+            .align_y(Alignment::Center)
+            .push(icon::round_key_icon().size(H3_SIZE).color(color))
             .push(
                 Column::new()
                     .width(Length::Fill)
@@ -240,7 +243,7 @@ pub fn undefined_key<'a>(
             } else {
                 Some(
                     Button::new(icon::trash_icon())
-                        .style(theme::Button::Secondary)
+                        .style(theme::button::secondary)
                         .padding(5)
                         .on_press(message::DefineKey::Delete),
                 )
@@ -274,7 +277,7 @@ pub fn edit_key_modal<'a>(
                     .push(h3(title))
                     .push(Space::with_width(Length::Fill))
                     .push(button::transparent(Some(icon::cross_icon().size(40)), "").on_press(Message::Close))
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                 )
                 .push(
                     Column::new()
@@ -294,14 +297,14 @@ pub fn edit_key_modal<'a>(
                             })
                             .width(Length::Fill)
                             .on_press(Message::UseHotSigner)
-                            .style(theme::Button::Border),
+                            .style(theme::button::container_border),
                         )
                         .push(if manually_imported_xpub {
                                 card::simple(Column::new()
                                     .spacing(10)
                                     .push(
                                         Row::new()
-                                            .align_items(Alignment::Center)
+                                            .align_y(Alignment::Center)
                                             .push(p1_regular("Enter an extended public key:").width(Length::Fill))
                                             .push(image::success_mark_icon().width(Length::Fixed(50.0)))
                                     )
@@ -329,7 +332,7 @@ pub fn edit_key_modal<'a>(
                                     Container::new(
                                             Button::new(
                                             Row::new()
-                                                .align_items(Alignment::Center)
+                                                .align_y(Alignment::Center)
                                                 .spacing(10)
                                                 .push(icon::import_icon())
                                                 .push(p1_regular("Enter an extended public key"))
@@ -339,7 +342,7 @@ pub fn edit_key_modal<'a>(
                                             .on_press(Message::DefineDescriptor(
                                                     message::DefineDescriptor::KeyModal(message::ImportKeyModal::ManuallyImportXpub)
                                             ))
-                                            .style(theme::Button::Secondary),
+                                            .style(theme::button::secondary),
                                     )
                                 }
                         )
@@ -355,7 +358,7 @@ pub fn edit_key_modal<'a>(
                                     .push(text("Key name:").bold())
                                     .push(tooltip(prompt::DEFINE_DESCRIPTOR_FINGERPRINT_TOOLTIP)),
                             )
-                            .push(p1_regular("Give this key a friendly name. It helps you identify it later").style(color::GREY_2))
+                            .push(p1_regular("Give this key a friendly name. It helps you identify it later").color(color::GREY_2))
                             .push(
                                 form::Form::new("Name", form_name, |msg| {
                                     Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
@@ -372,7 +375,7 @@ pub fn edit_key_modal<'a>(
                 )
                 .push_maybe(
                     if duplicate_master_fg {
-                        Some(text("A single signing device may not be used more than once per path. (It can still be used in other paths.)").style(color::RED))
+                        Some(text("A single signing device may not be used more than once per path. (It can still be used in other paths.)").color(color::RED))
                     } else {
                         None
                     }
@@ -390,7 +393,7 @@ pub fn edit_key_modal<'a>(
                         } else {None})
                         .width(Length::Fixed(200.0))
                 )
-                .align_items(Alignment::Center),
+                .align_x(Alignment::Center),
         ))
         .width(Length::Fixed(800.0));
     scrollable(content).into()
@@ -421,7 +424,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
     let mut col = Column::new()
         .width(Length::Fill)
         .spacing(20)
-        .align_items(Alignment::Center)
+        .align_x(Alignment::Center)
         .push(text("Keys can move the funds after inactivity of:"))
         .push(
             Row::new()
@@ -502,7 +505,7 @@ pub fn edit_threshold_modal<'a>(threshold: (usize, usize)) -> Element<'a, Messag
         Column::new()
             .width(Length::Fill)
             .spacing(20)
-            .align_items(Alignment::Center)
+            .align_x(Alignment::Center)
             .push(threshsold_input::threshsold_input(
                 threshold.0,
                 threshold.1,
@@ -592,7 +595,7 @@ mod threshsold_input {
         fn view(&self, _state: &Self::State) -> Element<Self::Event> {
             let button = |label, on_press| {
                 Button::new(label)
-                    .style(theme::Button::Transparent)
+                    .style(theme::button::transparent)
                     .width(Length::Fixed(50.0))
                     .on_press(on_press)
             };
@@ -606,7 +609,7 @@ mod threshsold_input {
                         .align_y(alignment::Vertical::Center),
                 )
                 .push(button(icon::down_icon().size(30), Event::DecrementPressed))
-                .align_items(Alignment::Center)
+                .align_x(Alignment::Center)
                 .into()
         }
     }

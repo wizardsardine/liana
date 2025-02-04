@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::{Alignment, Command, Length, Subscription};
+use iced::futures::{SinkExt, Stream};
+use iced::stream::channel;
+use iced::{Alignment, Length, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
@@ -99,7 +101,7 @@ impl Loader {
         gui_config: GUIConfig,
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
-    ) -> (Self, Command<Message>) {
+    ) -> (Self, Task<Message>) {
         let path = gui_config
             .daemon_rpc_path
             .clone()
@@ -114,7 +116,7 @@ impl Loader {
                 internal_bitcoind,
                 waiting_daemon_bitcoind: false,
             },
-            Command::perform(connect(path), Message::Loaded),
+            Task::perform(connect(path), Message::Loaded),
         )
     }
 
@@ -122,11 +124,11 @@ impl Loader {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         info: GetInfoResult,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         // If the wallet was previously synced (blockheight > 0), load the
         // application directly.
         if info.block_height > 0 {
-            return Command::perform(
+            return Task::perform(
                 load_application(
                     daemon,
                     info,
@@ -143,13 +145,13 @@ impl Loader {
             progress: 0.0,
             bitcoind_logs: String::new(),
         };
-        Command::perform(sync(daemon, false), Message::Syncing)
+        Task::perform(sync(daemon, false), Message::Syncing)
     }
 
     fn on_load(
         &mut self,
         res: Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match res {
             Ok((daemon, info)) => {
                 if self.gui_config.start_internal_bitcoind {
@@ -168,7 +170,7 @@ impl Loader {
                         self.step = Step::StartingDaemon;
                         self.daemon_started = true;
                         self.waiting_daemon_bitcoind = true;
-                        return Command::perform(
+                        return Task::perform(
                             start_bitcoind_and_daemon(
                                 daemon_config_path,
                                 self.datadir_path.clone(),
@@ -186,19 +188,19 @@ impl Loader {
                 }
             },
         }
-        Command::none()
+        Task::none()
     }
 
-    fn on_log(&mut self, log: Option<String>) -> Command<Message> {
+    fn on_log(&mut self, log: Option<String>) -> Task<Message> {
         if let Step::Syncing { bitcoind_logs, .. } = &mut self.step {
             if let Some(l) = log {
                 *bitcoind_logs = l;
             }
         }
-        Command::none()
+        Task::none()
     }
 
-    fn on_start(&mut self, res: StartedResult) -> Command<Message> {
+    fn on_start(&mut self, res: StartedResult) -> Task<Message> {
         match res {
             Ok((daemon, bitcoind, info)) => {
                 // bitcoind may have been already started and given to the loader
@@ -211,12 +213,12 @@ impl Loader {
             }
             Err(e) => {
                 self.step = Step::Error(Box::new(e));
-                Command::none()
+                Task::none()
             }
         }
     }
 
-    fn on_sync(&mut self, res: Result<GetInfoResult, DaemonError>) -> Command<Message> {
+    fn on_sync(&mut self, res: Result<GetInfoResult, DaemonError>) -> Task<Message> {
         match &mut self.step {
             Step::Syncing {
                 daemon, progress, ..
@@ -224,7 +226,7 @@ impl Loader {
                 match res {
                     Ok(info) => {
                         if (info.sync - 1.0_f64).abs() < f64::EPSILON {
-                            return Command::perform(
+                            return Task::perform(
                                 load_application(
                                     daemon.clone(),
                                     info,
@@ -240,12 +242,12 @@ impl Loader {
                     }
                     Err(e) => {
                         self.step = Step::Error(Box::new(e.into()));
-                        return Command::none();
+                        return Task::none();
                     }
                 };
-                Command::perform(sync(daemon.clone(), true), Message::Syncing)
+                Task::perform(sync(daemon.clone(), true), Message::Syncing)
             }
-            _ => Command::none(),
+            _ => Task::none(),
         }
     }
 
@@ -281,7 +283,7 @@ impl Loader {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Command<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::View(ViewMessage::Retry) => {
                 let (loader, cmd) = Self::new(
@@ -299,74 +301,22 @@ impl Loader {
             Message::BitcoindLog(log) => self.on_log(log),
             Message::Synced(Err(e)) => {
                 self.step = Step::Error(Box::new(e));
-                Command::none()
+                Task::none()
             }
             Message::Failure(_) => {
                 self.daemon_started = false;
-                Command::none()
+                Task::none()
             }
-            Message::None => Command::none(),
-            _ => Command::none(),
+            Message::None => Task::none(),
+            _ => Task::none(),
         }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
         if self.internal_bitcoind.is_some() {
             let log_path = internal_bitcoind_debug_log_path(&self.datadir_path, self.network);
-            iced::subscription::unfold(0, log_path, move |log_path| async move {
-                // Reduce the io load.
-                tokio::time::sleep(Duration::from_millis(500)).await;
-
-                // Open the log file and seek to its end, with some breathing room to make sure
-                // we don't skip all "UpdateTip" lines. This is to avoid making BufReader read
-                // the whole file every single time below.
-                let mut file = match File::open(&log_path) {
-                    Ok(file) => file,
-                    Err(e) => {
-                        log::warn!("Opening bitcoind log file: {}", e);
-                        return (Message::None, log_path);
-                    }
-                };
-                match file.metadata() {
-                    Ok(m) => {
-                        let file_len = m.len();
-                        let offset = 1024 * 1024;
-                        if file_len > offset {
-                            if let Err(e) =
-                                file.seek(SeekFrom::Start(file_len.saturating_sub(offset)))
-                            {
-                                log::error!("Seeking to end of bitcoind log file: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Getting bitcoind log file metadata: {}", e);
-                    }
-                };
-
-                // Find the latest tip update line in bitcoind's debug.log. BufReader is only
-                // used to facilitates searching through the lines.
-                let reader = BufReader::new(file);
-                let last_update_tip = reader
-                    .lines()
-                    .filter(|l| {
-                        l.as_ref()
-                            .map(|l| l.contains("UpdateTip") || l.contains("blockheaders"))
-                            .unwrap_or(false)
-                    })
-                    .last();
-                match last_update_tip {
-                    Some(Ok(line)) => (Message::BitcoindLog(Some(line)), log_path),
-                    res => {
-                        if let Some(Err(e)) = res {
-                            log::error!("Reading bitcoind log file: {}", e);
-                        } else {
-                            log::warn!("Couldn't find an UpdateTip line in bitcoind log file.");
-                        }
-                        (Message::None, log_path)
-                    }
-                }
-            })
+            iced::Subscription::run_with_id("bitcoind_log", get_bitcoind_log(log_path))
+                .map(Message::BitcoindLog)
         } else {
             Subscription::none()
         }
@@ -375,6 +325,65 @@ impl Loader {
     pub fn view(&self) -> Element<Message> {
         view(&self.step).map(Message::View)
     }
+}
+
+fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>> {
+    channel(5, move |mut output| async move {
+        loop {
+            // Reduce the io load.
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            // Open the log file and seek to its end, with some breathing room to make sure
+            // we don't skip all "UpdateTip" lines. This is to avoid making BufReader read
+            // the whole file every single time below.
+            let mut file = match File::open(&log_path) {
+                Ok(file) => file,
+                Err(e) => {
+                    log::warn!("Opening bitcoind log file: {}", e);
+                    continue;
+                }
+            };
+            match file.metadata() {
+                Ok(m) => {
+                    let file_len = m.len();
+                    let offset = 1024 * 1024;
+                    if file_len > offset {
+                        if let Err(e) = file.seek(SeekFrom::Start(file_len.saturating_sub(offset)))
+                        {
+                            log::error!("Seeking to end of bitcoind log file: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Getting bitcoind log file metadata: {}", e);
+                }
+            };
+
+            // Find the latest tip update line in bitcoind's debug.log. BufReader is only
+            // used to facilitates searching through the lines.
+            let reader = BufReader::new(file);
+            let last_update_tip = reader
+                .lines()
+                .filter(|l| {
+                    l.as_ref()
+                        .map(|l| l.contains("UpdateTip") || l.contains("blockheaders"))
+                        .unwrap_or(false)
+                })
+                .last();
+            match last_update_tip {
+                Some(Ok(line)) => {
+                    let _ = output.send(Some(line)).await;
+                }
+                res => {
+                    if let Some(Err(e)) = res {
+                        log::error!("Reading bitcoind log file: {}", e);
+                    } else {
+                        log::warn!("Couldn't find an UpdateTip line in bitcoind log file.");
+                    }
+                }
+            }
+        }
+    })
 }
 
 pub async fn load_application(
@@ -456,14 +465,14 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                 } else {
                     SYNCING_PROGRESS_1
                 }))
-                .push(p2_regular(bitcoind_logs).style(color::GREY_3)),
+                .push(p2_regular(bitcoind_logs).color(color::GREY_3)),
         ),
         Step::Error(error) => cover(
             Some(("Error while starting the internal daemon", error)),
             Column::new()
                 .spacing(20)
                 .width(Length::Fill)
-                .align_items(Alignment::Center)
+                .align_x(Alignment::Center)
                 .push(icon::plug_icon().size(100).width(Length::Fixed(300.0)))
                 .push(
                     if matches!(
@@ -500,10 +509,8 @@ pub fn cover<'a, T: 'a + Clone, C: Into<Element<'a, T>>>(
         .push_maybe(warn.map(|w| notification::warning(w.0.to_string(), w.1.to_string())))
         .push(
             Container::new(content)
-                .width(iced::Length::Fill)
-                .height(iced::Length::Fill)
-                .center_x()
-                .center_y()
+                .center_x(iced::Length::Fill)
+                .center_y(iced::Length::Fill)
                 .padding(50),
         )
         .into()

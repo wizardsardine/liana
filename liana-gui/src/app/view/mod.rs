@@ -38,7 +38,7 @@ use crate::app::{cache::Cache, error::Error, menu::Menu};
 fn menu_green_bar<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Space::with_width(Length::Fixed(2.0)))
         .height(Length::Fixed(50.0))
-        .style(theme::Container::Custom(color::GREEN))
+        .style(theme::container::custom(color::GREEN))
 }
 
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
@@ -77,7 +77,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         )
     } else {
         row!(button::menu(Some(coins_icon()), "Coins")
-            .style(theme::Button::Menu(false))
+            .style(theme::button::menu)
             .on_press(Message::Menu(Menu::Coins))
             .width(iced::Length::Fill))
     };
@@ -161,14 +161,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                         .push_maybe(cache.rescan_progress.map(|p| {
                             Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
                                 .padding(5)
-                                .style(theme::Pill::Simple)
+                                .style(theme::pill::simple)
                         }))
                         .push(settings_button),
                 )
                 .height(Length::Shrink),
             ),
     )
-    .style(theme::Container::Foreground)
+    .style(theme::container::foreground)
 }
 
 pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
@@ -194,9 +194,8 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                             .max_width(1500),
                         Space::with_width(Length::FillPortion(1)),
                     )))
-                    .center_x()
-                    .style(theme::Container::Background)
-                    .width(Length::Fill)
+                    .center_x(Length::Fill)
+                    .style(theme::container::background)
                     .height(Length::Fill),
                 )
                 .width(Length::FillPortion(10)),
@@ -226,11 +225,11 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
                     } else {
                         Column::new().width(Length::Fill)
                     })
-                    .align_items(iced::Alignment::Center)
+                    .align_y(iced::Alignment::Center)
                     .push(button::secondary(Some(cross_icon()), "Close").on_press(Message::Close)),
             )
             .padding(10)
-            .style(theme::Container::Background),
+            .style(theme::container::background),
         )
         .push(modal_section(Container::new(scrollable(content))))
         .push_maybe(fixed_footer)
@@ -241,8 +240,8 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
 
 fn modal_section<'a, T: 'a>(menu: Container<'a, T>) -> Container<'a, T> {
     Container::new(menu.max_width(1500))
-        .style(theme::Container::Background)
-        .center_x()
+        .style(theme::container::background)
+        .center_x(Length::Fill)
         .width(Length::Fill)
         .height(Length::Fill)
 }

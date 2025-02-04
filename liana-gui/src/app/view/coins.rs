@@ -46,7 +46,7 @@ pub fn coins_view<'a>(
                     },
                 )),
         )
-        .align_items(Alignment::Center)
+        .align_x(Alignment::Center)
         .spacing(30)
         .into()
 }
@@ -84,7 +84,7 @@ fn coin_list_view<'a>(
                                                         // It is not possible to know if a coin is a
                                                         // change coin or not so for now, From is
                                                         // enough
-                                                        p1_regular("From").style(color::GREY_3),
+                                                        p1_regular("From").color(color::GREY_3),
                                                     )
                                                     .push(p1_regular(label)),
                                             )
@@ -101,7 +101,7 @@ fn coin_list_view<'a>(
                                                     // It is not possible to know if a coin is a
                                                     // change coin or not so for now, From is
                                                     // enough
-                                                    p1_regular("From").style(color::GREY_3),
+                                                    p1_regular("From").color(color::GREY_3),
                                                 )
                                                 .push(p1_regular(label)),
                                         )
@@ -123,14 +123,14 @@ fn coin_list_view<'a>(
                                     coin_sequence_label(seq, timelock as u32)
                                 })
                                 .spacing(10)
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .width(Length::Fill),
                         )
                         .push(amount(&coin.amount))
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .spacing(20),
                 )
-                .style(theme::Button::TransparentBorder)
+                .style(theme::button::transparent_border)
                 .padding(10)
                 .on_press(Message::Select(index)),
             )
@@ -156,7 +156,7 @@ fn coin_list_view<'a>(
                                 if blockheight > b as u32 + timelock as u32 {
                                     Some(Container::new(
                                         p1_bold("One of the recovery path is available")
-                                            .style(color::RED),
+                                            .color(color::RED),
                                     ))
                                 } else {
                                     Some(Container::new(p1_bold(format!(
@@ -174,72 +174,72 @@ fn coin_list_view<'a>(
                             Column::new()
                                 .push(
                                     Row::new()
-                                        .align_items(Alignment::Center)
+                                        .align_y(Alignment::Center)
                                         .push(
                                             p2_regular("Address label:")
                                                 .bold()
-                                                .style(color::GREY_2),
+                                                .color(color::GREY_2),
                                         )
                                         .push(if let Some(label) = labels.get(&address) {
-                                            p2_regular(label).style(color::GREY_2)
+                                            p2_regular(label).color(color::GREY_2)
                                         } else {
-                                            p2_regular("No label").style(color::GREY_2)
+                                            p2_regular("No label").color(color::GREY_2)
                                         })
                                         .spacing(5),
                                 )
                                 .push(
                                     Row::new()
-                                        .align_items(Alignment::Center)
-                                        .push(p2_regular("Address:").bold().style(color::GREY_2))
+                                        .align_y(Alignment::Center)
+                                        .push(p2_regular("Address:").bold().color(color::GREY_2))
                                         .push(
                                             Row::new()
-                                                .align_items(Alignment::Center)
+                                                .align_y(Alignment::Center)
                                                 .push(
                                                     p2_regular(address.clone())
-                                                        .style(color::GREY_2),
+                                                        .color(color::GREY_2),
                                                 )
                                                 .push(
                                                     Button::new(icon::clipboard_icon())
                                                         .on_press(Message::Clipboard(
                                                             address.clone(),
                                                         ))
-                                                        .style(theme::Button::TransparentBorder),
+                                                        .style(theme::button::transparent_border),
                                                 ),
                                         )
                                         .spacing(5),
                                 )
                                 .push(
                                     Row::new()
-                                        .align_items(Alignment::Center)
+                                        .align_y(Alignment::Center)
                                         .push(
                                             p2_regular("Deposit transaction label:")
                                                 .bold()
-                                                .style(color::GREY_2),
+                                                .color(color::GREY_2),
                                         )
                                         .push(if let Some(label) = labels.get(&txid) {
-                                            p2_regular(label).style(color::GREY_2)
+                                            p2_regular(label).color(color::GREY_2)
                                         } else {
-                                            p2_regular("No label").style(color::GREY_2)
+                                            p2_regular("No label").color(color::GREY_2)
                                         })
                                         .spacing(5),
                                 )
                                 .push(
                                     Row::new()
-                                        .align_items(Alignment::Center)
-                                        .push(p2_regular("Outpoint:").bold().style(color::GREY_2))
+                                        .align_y(Alignment::Center)
+                                        .push(p2_regular("Outpoint:").bold().color(color::GREY_2))
                                         .push(
                                             Row::new()
-                                                .align_items(Alignment::Center)
+                                                .align_y(Alignment::Center)
                                                 .push(
                                                     p2_regular(format!("{}", coin.outpoint))
-                                                        .style(color::GREY_2),
+                                                        .color(color::GREY_2),
                                                 )
                                                 .push(
                                                     Button::new(icon::clipboard_icon())
                                                         .on_press(Message::Clipboard(
                                                             coin.outpoint.to_string(),
                                                         ))
-                                                        .style(theme::Button::TransparentBorder),
+                                                        .style(theme::button::transparent_border),
                                                 ),
                                         )
                                         .spacing(5),
@@ -247,9 +247,9 @@ fn coin_list_view<'a>(
                                 .push_maybe(coin.block_height.map(|b| {
                                     Row::new()
                                         .push(
-                                            p2_regular("Block height:").bold().style(color::GREY_2),
+                                            p2_regular("Block height:").bold().color(color::GREY_2),
                                         )
-                                        .push(p2_regular(format!("{}", b)).style(color::GREY_2))
+                                        .push(p2_regular(format!("{}", b)).color(color::GREY_2))
                                         .spacing(5)
                                 })),
                         )
@@ -257,7 +257,7 @@ fn coin_list_view<'a>(
                             Column::new()
                                 .push(
                                     Row::new()
-                                        .push(p2_regular("Spend txid:").bold().style(color::GREY_2))
+                                        .push(p2_regular("Spend txid:").bold().color(color::GREY_2))
                                         .push(p2_regular(format!("{}", info.txid)))
                                         .spacing(5),
                                 )
@@ -266,13 +266,13 @@ fn coin_list_view<'a>(
                                         .push(
                                             p2_regular("Spend block height:")
                                                 .bold()
-                                                .style(color::GREY_2),
+                                                .color(color::GREY_2),
                                         )
                                         .push(p2_regular(format!("{}", height)))
                                         .spacing(5)
                                 } else {
                                     Row::new().push(
-                                        p2_regular("Not in a block").bold().style(color::GREY_2),
+                                        p2_regular("Not in a block").bold().color(color::GREY_2),
                                     )
                                 })
                                 .spacing(5)
@@ -291,7 +291,7 @@ fn coin_list_view<'a>(
                 None
             }),
     )
-    .style(theme::Container::Card(theme::Card::Simple))
+    .style(theme::card::simple)
 }
 
 pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, T> {
@@ -301,30 +301,30 @@ pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, 
                 .spacing(5)
                 .push(icon::clock_icon().width(Length::Fixed(20.0)))
                 .push(p2_regular("Expired"))
-                .align_items(Alignment::Center),
+                .align_y(Alignment::Center),
         )
         .padding(10)
-        .style(theme::Container::Pill(theme::Pill::Warning))
+        .style(theme::pill::warning)
     } else if seq < timelock * 10 / 100 {
         Container::new(
             Row::new()
                 .spacing(5)
                 .push(icon::clock_icon().width(Length::Fixed(20.0)))
                 .push(p2_regular(expire_message(seq)))
-                .align_items(Alignment::Center),
+                .align_y(Alignment::Center),
         )
         .padding(10)
-        .style(theme::Container::Pill(theme::Pill::Simple))
+        .style(theme::pill::simple)
     } else {
         Container::new(
             Row::new()
                 .spacing(5)
                 .push(icon::clock_icon().width(Length::Fixed(20.0)))
-                .push(p2_regular(expire_message(seq)).style(color::GREY_3))
-                .align_items(Alignment::Center),
+                .push(p2_regular(expire_message(seq)).color(color::GREY_3))
+                .align_y(Alignment::Center),
         )
         .padding(10)
-        .style(theme::Container::Pill(theme::Pill::Simple))
+        .style(theme::pill::simple)
     }
 }
 

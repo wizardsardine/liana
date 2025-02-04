@@ -69,13 +69,13 @@ pub fn home_view<'a>(
                                     SyncStatus::WalletFullScan => text("Syncing"),
                                     _ => text("Checking for new transactions"),
                                 }
-                                .style(color::GREY_2),
+                                .color(color::GREY_2),
                             )
                             .push(spinner::typing_text_carousel(
                                 "...",
                                 true,
                                 Duration::from_millis(2000),
-                                |content| text(content).style(color::GREY_2),
+                                |content| text(content).color(color::GREY_2),
                             )),
                     )
                 } else {
@@ -86,9 +86,9 @@ pub fn home_view<'a>(
                         Some(
                             Row::new()
                                 .spacing(10)
-                                .push(text("+").size(H3_SIZE).style(color::GREY_3))
+                                .push(text("+").size(H3_SIZE).color(color::GREY_3))
                                 .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
-                                .push(text("unconfirmed").size(H3_SIZE).style(color::GREY_3)),
+                                .push(text("unconfirmed").size(H3_SIZE).color(color::GREY_3)),
                         )
                     } else {
                         None
@@ -100,7 +100,7 @@ pub fn home_view<'a>(
                 Container::new(
                     Row::new()
                         .spacing(15)
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .push(
                             h4_regular(format!(
                                 "≈ {} left before first recovery path becomes available.",
@@ -111,20 +111,20 @@ pub fn home_view<'a>(
                         .push(
                             icon::tooltip_icon()
                                 .size(20)
-                                .style(color::GREY_3)
+                                .color(color::GREY_3)
                                 .width(Length::Fixed(20.0)),
                         )
                         .width(Length::Fill),
                 )
                 .padding(25)
-                .style(theme::Card::Border)
+                .style(theme::card::border)
             })
         } else {
             Some(
                 Container::new(
                     Row::new()
                         .spacing(15)
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .push(
                             h4_regular(format!(
                                 "Recovery path is or will soon be available for {} coin(s).",
@@ -140,7 +140,7 @@ pub fn home_view<'a>(
                         ),
                 )
                 .padding(25)
-                .style(theme::Card::Invalid),
+                .style(theme::card::invalid),
             )
         })
         .push(
@@ -164,11 +164,11 @@ pub fn home_view<'a>(
                                     "See more"
                                 })
                                 .width(Length::Fill)
-                                .horizontal_alignment(alignment::Horizontal::Center),
+                                .align_x(alignment::Horizontal::Center),
                             )
                             .width(Length::Fill)
                             .padding(15)
-                            .style(theme::Button::TransparentBorder)
+                            .style(theme::button::transparent_border)
                             .on_press_maybe(if !processing {
                                 Some(Message::Next)
                             } else {
@@ -176,7 +176,7 @@ pub fn home_view<'a>(
                             }),
                         )
                         .width(Length::Fill)
-                        .style(theme::Container::Card(theme::Card::Simple)),
+                        .style(theme::card::simple),
                     )
                 } else {
                     None
@@ -193,7 +193,7 @@ fn event_list_view(event: &Payment) -> Element<'_, Message> {
         event
             .address_label
             .as_ref()
-            .map(|label| p1_regular(format!("address label: {}", label)).style(color::GREY_3))
+            .map(|label| p1_regular(format!("address label: {}", label)).color(color::GREY_3))
     };
     if event.kind == PaymentKind::Incoming {
         if let Some(t) = event.time {
@@ -297,8 +297,8 @@ pub fn payment_view<'a>(
             })
             .push_maybe(tx.fee_amount.map(|fee_amount| {
                 Row::new()
-                    .align_items(Alignment::Center)
-                    .push(h3("Miner fee: ").style(color::GREY_3))
+                    .align_y(Alignment::Center)
+                    .push(h3("Miner fee: ").color(color::GREY_3))
                     .push(amount_with_size(&fee_amount, H3_SIZE))
                     .push(text(" ").size(H3_SIZE))
                     .push(
@@ -307,7 +307,7 @@ pub fn payment_view<'a>(
                             fee_amount.to_sat() / tx.tx.vsize() as u64
                         ))
                         .size(H4_SIZE)
-                        .style(color::GREY_3),
+                        .color(color::GREY_3),
                     )
             }))
             .push(card::simple(
@@ -325,11 +325,11 @@ pub fn payment_view<'a>(
                     .push(
                         Row::new()
                             .width(Length::Fill)
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .push(Container::new(text("Txid:").bold()).width(Length::Fill))
                             .push(
                                 Row::new()
-                                    .align_items(Alignment::Center)
+                                    .align_y(Alignment::Center)
                                     .push(Container::new(
                                         text(format!("{}", tx.tx.compute_txid())).small(),
                                     ))
@@ -338,7 +338,7 @@ pub fn payment_view<'a>(
                                             .on_press(Message::Clipboard(
                                                 tx.tx.compute_txid().to_string(),
                                             ))
-                                            .style(theme::Button::TransparentBorder),
+                                            .style(theme::button::transparent_border),
                                     )
                                     .width(Length::Shrink),
                             ),

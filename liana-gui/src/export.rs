@@ -17,6 +17,8 @@ use tokio::{
     time::sleep,
 };
 
+use iced::futures::{SinkExt, Stream};
+
 use crate::{
     app::view,
     daemon::{
@@ -343,42 +345,65 @@ impl State {
     }
 }
 
-pub async fn export_subscription(mut state: State) -> (ExportProgress, State) {
-    match state.state() {
-        Status::Init => {
-            state.start().await;
-        }
-        Status::Stopped => {
-            sleep(time::Duration::from_millis(1000)).await;
-            return (ExportProgress::None, state);
-        }
-        Status::Running => { /* continue */ }
-    }
-    let msg = state.receiver.try_recv();
-    let disconnected = match msg {
-        Ok(m) => return (m, state),
-        Err(e) => match e {
-            std::sync::mpsc::TryRecvError::Empty => false,
-            std::sync::mpsc::TryRecvError::Disconnected => true,
-        },
-    };
+pub fn export_subscription(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    path: PathBuf,
+) -> impl Stream<Item = ExportProgress> {
+    iced::stream::channel(100, move |mut output| async move {
+        let mut state = State::new(daemon, Box::new(path));
+        loop {
+            match state.state() {
+                Status::Init => {
+                    state.start().await;
+                }
+                Status::Stopped => {
+                    break;
+                }
+                Status::Running => {
+                    sleep(time::Duration::from_millis(100)).await;
+                    continue;
+                }
+            }
+            let msg = state.receiver.try_recv();
+            let disconnected = match msg {
+                Ok(m) => {
+                    let _ = output.send(m).await;
+                    continue;
+                }
+                Err(e) => match e {
+                    std::sync::mpsc::TryRecvError::Empty => false,
+                    std::sync::mpsc::TryRecvError::Disconnected => true,
+                },
+            };
 
-    let handle = match state.handle.take() {
-        Some(h) => h,
-        None => return (ExportProgress::Error(Error::HandleLost), state),
-    };
-    {
-        let h = handle.lock().expect("should not fail");
-        if h.is_finished() {
-            return (ExportProgress::Finished, state);
-        } else if disconnected {
-            return (ExportProgress::Error(Error::ChannelLost), state);
-        }
-    } // => release handle lock
-    state.handle = Some(handle);
+            let handle = match state.handle.take() {
+                Some(h) => h,
+                None => {
+                    let _ = output.send(ExportProgress::Error(Error::HandleLost)).await;
+                    continue;
+                }
+            };
+            let msg = {
+                let h = handle.lock().expect("should not fail");
+                if h.is_finished() {
+                    Some(ExportProgress::Finished)
+                } else if disconnected {
+                    Some(ExportProgress::Error(Error::ChannelLost))
+                } else {
+                    None
+                }
+            };
+            if let Some(msg) = msg {
+                let _ = output.send(msg).await;
+                continue;
+            }
+            // => release handle lock
+            state.handle = Some(handle);
 
-    sleep(time::Duration::from_millis(100)).await;
-    (ExportProgress::None, state)
+            sleep(time::Duration::from_millis(100)).await;
+            let _ = output.send(ExportProgress::None).await;
+        }
+    })
 }
 
 pub async fn get_path() -> Option<PathBuf> {

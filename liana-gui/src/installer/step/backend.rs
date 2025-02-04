@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use iced::Command;
+use iced::Task;
 
 use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::Network};
 use liana_ui::{component::form, widget::Element};
@@ -44,15 +44,15 @@ impl Step for ChooseBackend {
     fn skip(&self, _ctx: &Context) -> bool {
         self.network != Network::Bitcoin && self.network != Network::Signet
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::SelectBackend(message::SelectBackend::ContinueWithLocalWallet(
             local_wallet,
         )) = message
         {
             self.remote_backend_is_selected = !local_wallet;
-            Command::perform(async move {}, |_| Message::Next)
+            Task::perform(async move {}, |_| Message::Next)
         } else {
-            Command::none()
+            Task::none()
         }
     }
 
@@ -128,7 +128,7 @@ impl Step for RemoteBackendLogin {
         matches!(ctx.remote_backend, RemoteBackend::None)
             || (self.network != Network::Bitcoin && self.network != Network::Signet)
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match &mut self.step {
             ConnectionStep::EnterEmail { email } => match message {
                 Message::SelectBackend(message::SelectBackend::EmailEdited(value)) => {
@@ -149,7 +149,7 @@ impl Step for RemoteBackendLogin {
                         self.processing = true;
                         self.connection_error = None;
                         self.auth_error = None;
-                        return Command::perform(
+                        return Task::perform(
                             async move {
                                 let config =
                                     client::get_service_config(network).await.map_err(|e| {
@@ -211,7 +211,7 @@ impl Step for RemoteBackendLogin {
                     self.processing = true;
                     self.connection_error = None;
                     self.auth_error = None;
-                    return Command::perform(
+                    return Task::perform(
                         async move {
                             client.resend_otp().await?;
                             Ok(())
@@ -236,7 +236,7 @@ impl Step for RemoteBackendLogin {
                         self.connection_error = None;
                         self.auth_error = None;
                         let network = self.network;
-                        return Command::perform(
+                        return Task::perform(
                             async move { connect(client, otp, backend_api_url, network).await },
                             message::SelectBackend::Connected,
                         )
@@ -252,7 +252,7 @@ impl Step for RemoteBackendLogin {
                                 email: email.clone(),
                                 remote_backend,
                             };
-                            return Command::perform(async move {}, |_| Message::Next);
+                            return Task::perform(async move {}, |_| Message::Next);
                         }
                         Err(e) => {
                             if let Error::Auth(AuthError { http_status, .. }) = e {
@@ -278,7 +278,7 @@ impl Step for RemoteBackendLogin {
             }
         }
 
-        Command::none()
+        Task::none()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
@@ -377,9 +377,9 @@ impl Step for ImportRemoteWallet {
     fn load_context(&mut self, ctx: &Context) {
         self.backend = ctx.remote_backend.clone();
     }
-    fn load(&self) -> Command<Message> {
+    fn load(&self) -> Task<Message> {
         let backend = self.backend.clone();
-        Command::perform(
+        Task::perform(
             async move {
                 let wallets = match backend {
                     context::RemoteBackend::WithoutWallet(backend) => {
@@ -398,7 +398,7 @@ impl Step for ImportRemoteWallet {
     }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
             Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptor(desc)) => {
                 self.imported_descriptor.value = desc;
@@ -430,7 +430,7 @@ impl Step for ImportRemoteWallet {
                                 context::RemoteBackend::WithoutWallet(backend.into_inner());
                         }
                         self.descriptor = Some(desc);
-                        return Command::perform(async {}, |_| Message::Next);
+                        return Task::perform(async {}, |_| Message::Next);
                     }
                 } else {
                     self.imported_descriptor.valid = false;
@@ -455,7 +455,7 @@ impl Step for ImportRemoteWallet {
                 };
                 let token = self.invitation_token.value.clone();
                 self.error = None;
-                return Command::perform(
+                return Task::perform(
                     async move {
                         let invitation = backend.get_wallet_invitation(&token).await?;
                         Ok(invitation)
@@ -481,7 +481,7 @@ impl Step for ImportRemoteWallet {
                 };
                 let invitation = self.invitation.clone().expect("Invitation was fetched");
                 self.error = None;
-                return Command::perform(
+                return Task::perform(
                     async move {
                         backend.accept_wallet_invitation(&invitation.id).await?;
                         let wallets = backend.list_wallets().await?;
@@ -531,13 +531,13 @@ impl Step for ImportRemoteWallet {
                     // ensure that no descriptor is imported.
                     self.imported_descriptor = form::Value::default();
                     self.descriptor = Some(wallet.descriptor);
-                    return Command::perform(async {}, |_| Message::Next);
+                    return Task::perform(async {}, |_| Message::Next);
                 }
             }
             _ => {}
         }
 
-        Command::none()
+        Task::none()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {

@@ -22,8 +22,8 @@ liana-ui = { path = "../liana-ui" }
 backtrace = "0.3"
 hex = "0.4.3"
 
-iced = { version = "0.12.1", default-features = false, features = ["tokio", "svg", "qr_code", "image", "lazy", "wgpu", "advanced"] }
-iced_runtime = "0.12.1"
+iced = { version = "0.13.1", default-features = false, features = ["tokio", "svg", "qr_code", "image", "lazy", "wgpu", "advanced"] }
+iced_runtime = "0.13.1"
 
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"
@@ -48,7 +48,7 @@ chrono = "0.4.38"
 # Used for managing internal bitcoind
 base64 = "0.21"
 bitcoin_hashes = "0.12"
-reqwest = { version = "0.11", default-features=false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.11", default-features=false, features = ["json", "rustls-tls", "stream"] }
 rust-ini = "0.19.0"
 rfd = "0.15.1"
 

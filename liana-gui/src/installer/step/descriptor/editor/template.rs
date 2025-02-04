@@ -1,4 +1,4 @@
-use iced::Command;
+use iced::Task;
 
 use liana_ui::widget::Element;
 
@@ -23,12 +23,12 @@ impl From<ChooseDescriptorTemplate> for Box<dyn Step> {
     }
 }
 impl Step for ChooseDescriptorTemplate {
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::SelectDescriptorTemplate(template) = message {
             self.template = template;
-            Command::perform(async move {}, |_| Message::Next)
+            Task::perform(async move {}, |_| Message::Next)
         } else {
-            Command::none()
+            Task::none()
         }
     }
 

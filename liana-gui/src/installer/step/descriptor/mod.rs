@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{bip32::Fingerprint, Network},
@@ -77,14 +77,14 @@ impl Step for ImportDescriptor {
     }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) =
             message
         {
             self.imported_descriptor.value = desc;
             self.check_descriptor(self.network);
         }
-        Command::none()
+        Task::none()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
@@ -173,7 +173,7 @@ impl Step for RegisterDescriptor {
             map.insert(key.master_fingerprint, key.name.clone());
         }
     }
-    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
             Message::Select(i) => {
                 if let Some(HardwareWallet::Supported {
@@ -188,7 +188,7 @@ impl Step for RegisterDescriptor {
                         self.chosen_hw = Some(i);
                         self.processing = true;
                         self.error = None;
-                        return Command::perform(
+                        return Task::perform(
                             register_wallet(
                                 device.clone(),
                                 *fingerprint,
@@ -229,7 +229,7 @@ impl Step for RegisterDescriptor {
             }
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
     fn skip(&self, ctx: &Context) -> bool {
         !ctx.hw_is_used
@@ -243,8 +243,8 @@ impl Step for RegisterDescriptor {
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
         hws.refresh().map(Message::HardwareWallets)
     }
-    fn load(&self) -> Command<Message> {
-        Command::none()
+    fn load(&self) -> Task<Message> {
+        Task::none()
     }
     fn view<'a>(
         &'a self,
@@ -295,11 +295,11 @@ pub struct BackupDescriptor {
 }
 
 impl Step for BackupDescriptor {
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::UserActionDone(done) = message {
             self.done = done;
         }
-        Command::none()
+        Task::none()
     }
     fn load_context(&mut self, ctx: &Context) {
         if self.descriptor != ctx.descriptor {

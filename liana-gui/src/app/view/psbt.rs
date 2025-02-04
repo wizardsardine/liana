@@ -56,7 +56,7 @@ pub fn psbt_view<'a>(
             .spacing(20)
             .push(
                 Row::new()
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .spacing(10)
                     .push(Container::new(h3("PSBT")).width(Length::Fill))
                     .push_maybe(if !tx.sigs.recovery_paths().is_empty() {
@@ -198,14 +198,14 @@ pub fn broadcast_action<'a>(
                                     Row::new()
                                         .padding([0, 30])
                                         .spacing(5)
-                                        .align_items(Alignment::Center)
+                                        .align_y(Alignment::Center)
                                         .push(text(txid.to_string()))
                                         .push(
                                             Button::new(
-                                                icon::clipboard_icon().style(color::GREY_3),
+                                                icon::clipboard_icon().color(color::GREY_3),
                                             )
                                             .on_press(Message::Clipboard(txid.to_string()))
-                                            .style(theme::Button::TransparentBorder),
+                                            .style(theme::button::transparent_border),
                                         ),
                                 )
                             },
@@ -233,7 +233,7 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
         card::simple(
             Column::new()
                 .spacing(20)
-                .align_items(Alignment::Center)
+                .align_x(Alignment::Center)
                 .push(text("Successfully deleted this transaction."))
                 .push(button::secondary(None, "Go back to PSBTs").on_press(Message::Close)),
         )
@@ -296,8 +296,8 @@ pub fn spend_header<'a>(
                 })
                 .push(
                     Row::new()
-                        .align_items(Alignment::Center)
-                        .push(h3("Miner fee: ").style(color::GREY_3))
+                        .align_y(Alignment::Center)
+                        .push(h3("Miner fee: ").color(color::GREY_3))
                         .push_maybe(if tx.fee_amount.is_none() {
                             Some(text("Missing information about transaction inputs"))
                         } else {
@@ -308,7 +308,7 @@ pub fn spend_header<'a>(
                         .push_maybe(tx.min_feerate_vb().map(|rate| {
                             text(format!("(~{} sats/vbyte)", &rate))
                                 .size(H4_SIZE)
-                                .style(color::GREY_3)
+                                .color(color::GREY_3)
                         })),
                 ),
         )
@@ -331,7 +331,7 @@ pub fn spend_overview_view<'a>(
                             .spacing(10)
                             .push(
                                 Row::new()
-                                    .align_items(Alignment::Center)
+                                    .align_y(Alignment::Center)
                                     .push(text("PSBT").bold().width(Length::Fill))
                                     .push(
                                         Row::new()
@@ -351,28 +351,28 @@ pub fn spend_overview_view<'a>(
                                                 .on_press(Message::Spend(SpendTxMessage::EditPsbt)),
                                             ),
                                     )
-                                    .align_items(Alignment::Center),
+                                    .align_y(Alignment::Center),
                             )
                             .push(
                                 Row::new()
                                     .push(p1_bold("Tx ID").width(Length::Fill))
                                     .push(
                                         p2_regular(tx.psbt.unsigned_tx.compute_txid().to_string())
-                                            .style(color::GREY_3),
+                                            .color(color::GREY_3),
                                     )
                                     .push(
-                                        Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                        Button::new(icon::clipboard_icon().color(color::GREY_3))
                                             .on_press(Message::Clipboard(
                                                 tx.psbt.unsigned_tx.compute_txid().to_string(),
                                             ))
-                                            .style(theme::Button::TransparentBorder),
+                                            .style(theme::button::transparent_border),
                                     )
-                                    .align_items(Alignment::Center),
+                                    .align_y(Alignment::Center),
                             ),
                     )
                     .push(signatures(tx, desc_info, key_aliases)),
             )
-            .style(theme::Container::Card(theme::Card::Simple)),
+            .style(theme::card::simple),
         )
         .push_maybe(if tx.status == SpendStatus::Pending {
             Some(
@@ -391,7 +391,7 @@ pub fn spend_overview_view<'a>(
                                 .width(Length::Fixed(150.0)),
                         )
                     })
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .spacing(20),
             )
         } else {
@@ -411,36 +411,33 @@ pub fn signatures<'a>(
                 scrollable(
                     Row::new()
                         .spacing(5)
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .spacing(10)
                         .push(p1_bold("Status"))
-                        .push(icon::circle_check_icon().style(color::GREEN))
-                        .push(text("Ready").bold().style(color::GREEN))
+                        .push(icon::circle_check_icon().color(color::GREEN))
+                        .push(text("Ready").bold().color(color::GREEN))
                         .push(text("  signed by"))
                         .push(sigs.signed_pubkeys.keys().fold(
                             Row::new().spacing(5),
                             |row, value| {
                                 row.push(if let Some(alias) = keys_aliases.get(value) {
-                                    Container::new(
-                                        tooltip::Tooltip::new(
-                                            Container::new(text(alias))
-                                                .padding(10)
-                                                .style(theme::Container::Pill(theme::Pill::Simple)),
-                                            text(value.to_string()),
-                                            tooltip::Position::Bottom,
-                                        )
-                                        .style(theme::Container::Card(theme::Card::Simple)),
-                                    )
+                                    Container::new(tooltip::Tooltip::new(
+                                        Container::new(text(alias))
+                                            .padding(10)
+                                            .style(theme::pill::simple),
+                                        text(value.to_string()),
+                                        tooltip::Position::Bottom,
+                                    ))
                                 } else {
                                     Container::new(text(value.to_string()))
                                         .padding(10)
-                                        .style(theme::Container::Pill(theme::Pill::Simple))
+                                        .style(theme::pill::simple)
                                 })
                             },
                         )),
                 )
                 .direction(scrollable::Direction::Horizontal(
-                    scrollable::Properties::new().width(2).scroller_width(2),
+                    scrollable::Scrollbar::new().width(2).scroller_width(2),
                 )),
             )
             .padding(15)
@@ -449,42 +446,42 @@ pub fn signatures<'a>(
                 move || {
                     Button::new(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(20)
                             .push(p1_bold("Status"))
                             .push(
                                 Row::new()
                                     .spacing(5)
-                                    .align_items(Alignment::Center)
-                                    .push(icon::circle_cross_icon().style(color::RED))
-                                    .push(text("Not ready").style(color::RED))
+                                    .align_y(Alignment::Center)
+                                    .push(icon::circle_cross_icon().color(color::RED))
+                                    .push(text("Not ready").color(color::RED))
                                     .width(Length::Fill),
                             )
                             .push(icon::collapse_icon()),
                     )
                     .padding(15)
                     .width(Length::Fill)
-                    .style(theme::Button::TransparentBorder)
+                    .style(theme::button::transparent_border)
                 },
                 move || {
                     Button::new(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(20)
                             .push(p1_bold("Status"))
                             .push(
                                 Row::new()
                                     .spacing(5)
-                                    .align_items(Alignment::Center)
-                                    .push(icon::circle_cross_icon().style(color::RED))
-                                    .push(text("Not ready").style(color::RED))
+                                    .align_y(Alignment::Center)
+                                    .push(icon::circle_cross_icon().color(color::RED))
+                                    .push(text("Not ready").color(color::RED))
                                     .width(Length::Fill),
                             )
                             .push(icon::collapsed_icon()),
                     )
                     .padding(15)
                     .width(Length::Fill)
-                    .style(theme::Button::TransparentBorder)
+                    .style(theme::button::transparent_border)
                 },
                 move || {
                     Into::<Element<'a, Message>>::into(
@@ -521,16 +518,16 @@ fn container_from_fg(
             tooltip::Tooltip::new(
                 Container::new(text(alias))
                     .padding(10)
-                    .style(theme::Container::Pill(theme::Pill::Simple)),
+                    .style(theme::pill::simple),
                 liana_ui::widget::Text::new(fg.to_string()),
                 tooltip::Position::Bottom,
             )
-            .style(theme::Container::Card(theme::Card::Simple)),
+            .style(theme::card::simple),
         )
     } else {
         Container::new(text(fg.to_string()))
             .padding(10)
-            .style(theme::Container::Pill(theme::Pill::Simple))
+            .style(theme::pill::simple)
     }
 }
 
@@ -565,13 +562,13 @@ pub fn path_view<'a>(
 
     scrollable(
         Row::new()
-            .align_items(Alignment::Center)
+            .align_y(Alignment::Center)
             .push(
                 Row::new()
                     .push(if missing_signatures == 0 {
-                        icon::circle_check_icon().style(color::GREEN)
+                        icon::circle_check_icon().color(color::GREEN)
                     } else {
-                        icon::circle_cross_icon().style(color::GREY_3)
+                        icon::circle_cross_icon().color(color::GREY_3)
                     })
                     .push(Space::with_width(Length::Fixed(20.0))),
             )
@@ -587,17 +584,17 @@ pub fn path_view<'a>(
                         " from "
                     }
                 ))
-                .style(color::GREY_3),
+                .color(color::GREY_3),
             )
             .push_maybe(row_unsigned)
             .push_maybe(
                 (!sigs.signed_pubkeys.is_empty())
-                    .then_some(p1_regular(", already signed by ").style(color::GREY_3)),
+                    .then_some(p1_regular(", already signed by ").color(color::GREY_3)),
             )
             .push(row_signed),
     )
     .direction(scrollable::Direction::Horizontal(
-        scrollable::Properties::new().width(2).scroller_width(2),
+        scrollable::Scrollbar::new().width(2).scroller_width(2),
     ))
     .into()
 }
@@ -612,7 +609,7 @@ pub fn inputs_view<'a>(
         move || {
             Button::new(
                 Row::new()
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .push(
                         h4_bold(format!(
                             "{} coin{} spent",
@@ -625,12 +622,12 @@ pub fn inputs_view<'a>(
             )
             .padding(20)
             .width(Length::Fill)
-            .style(theme::Button::TransparentBorder)
+            .style(theme::button::transparent_border)
         },
         move || {
             Button::new(
                 Row::new()
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .push(
                         h4_bold(format!(
                             "{} coin{} spent",
@@ -643,7 +640,7 @@ pub fn inputs_view<'a>(
             )
             .padding(20)
             .width(Length::Fill)
-            .style(theme::Button::TransparentBorder)
+            .style(theme::button::transparent_border)
         },
         move || {
             tx.input
@@ -662,7 +659,7 @@ pub fn inputs_view<'a>(
                 .into()
         },
     ))
-    .style(theme::Container::Card(theme::Card::Simple))
+    .style(theme::card::simple)
     .into()
 }
 
@@ -695,7 +692,7 @@ pub fn outputs_view<'a>(
                     move || {
                         Button::new(
                             Row::new()
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .push(
                                     h4_bold(format!(
                                         "{} payment{}",
@@ -708,12 +705,12 @@ pub fn outputs_view<'a>(
                         )
                         .padding(20)
                         .width(Length::Fill)
-                        .style(theme::Button::TransparentBorder)
+                        .style(theme::button::transparent_border)
                     },
                     move || {
                         Button::new(
                             Row::new()
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .push(
                                     h4_bold(format!(
                                         "{} payment{}",
@@ -726,7 +723,7 @@ pub fn outputs_view<'a>(
                         )
                         .padding(20)
                         .width(Length::Fill)
-                        .style(theme::Button::TransparentBorder)
+                        .style(theme::button::transparent_border)
                     },
                     move || {
                         tx.output
@@ -756,12 +753,14 @@ pub fn outputs_view<'a>(
                             .into()
                     },
                 ))
-                .style(theme::Container::Card(theme::Card::Simple))
+                .style(theme::card::simple)
             } else {
-                Container::new(h4_bold("0 payment"))
-                    .padding(20)
-                    .width(Length::Fill)
-                    .style(theme::Container::Card(theme::Card::Simple))
+                Container::new(h4_bold("0 payment").style(|t| {
+                    theme::text::custom(t.colors.buttons.transparent_border.active.text)
+                }))
+                .padding(20)
+                .width(Length::Fill)
+                .style(theme::card::simple)
             }
         })
         .push_maybe(
@@ -775,24 +774,24 @@ pub fn outputs_view<'a>(
                         move || {
                             Button::new(
                                 Row::new()
-                                    .align_items(Alignment::Center)
+                                    .align_y(Alignment::Center)
                                     .push(h4_bold("Change").width(Length::Fill))
                                     .push(icon::collapse_icon()),
                             )
                             .padding(20)
                             .width(Length::Fill)
-                            .style(theme::Button::TransparentBorder)
+                            .style(theme::button::transparent_border)
                         },
                         move || {
                             Button::new(
                                 Row::new()
-                                    .align_items(Alignment::Center)
+                                    .align_y(Alignment::Center)
                                     .push(h4_bold("Change").width(Length::Fill))
                                     .push(icon::collapsed_icon()),
                             )
                             .padding(20)
                             .width(Length::Fill)
-                            .style(theme::Button::TransparentBorder)
+                            .style(theme::button::transparent_border)
                         },
                         move || {
                             tx.output
@@ -808,7 +807,7 @@ pub fn outputs_view<'a>(
                                 .into()
                         },
                     ))
-                    .style(theme::Container::Card(theme::Card::Simple)),
+                    .style(theme::card::simple),
                 )
             } else {
                 None
@@ -829,7 +828,7 @@ fn input_view<'a>(
         .push(
             Row::new()
                 .spacing(5)
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
                 .push(
                     Container::new(if let Some(label) = labels_editing.get(&outpoint) {
                         label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
@@ -848,47 +847,47 @@ fn input_view<'a>(
             Column::new()
                 .push(
                     Row::new()
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .spacing(5)
-                        .push(p1_bold("Outpoint:").style(color::GREY_3))
-                        .push(p2_regular(outpoint.clone()).style(color::GREY_3))
+                        .push(p1_bold("Outpoint:").color(color::GREY_3))
+                        .push(p2_regular(outpoint.clone()).color(color::GREY_3))
                         .push(
-                            Button::new(icon::clipboard_icon().style(color::GREY_3))
+                            Button::new(icon::clipboard_icon().color(color::GREY_3))
                                 .on_press(Message::Clipboard(outpoint.clone()))
-                                .style(theme::Button::TransparentBorder),
+                                .style(theme::button::transparent_border),
                         ),
                 )
                 .push_maybe(coin.map(|c| {
                     let addr = c.address.to_string();
                     Row::new()
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .width(Length::Fill)
                         .push(
                             Row::new()
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .width(Length::Fill)
                                 .spacing(5)
-                                .push(p1_bold("Address:").style(color::GREY_3))
-                                .push(p2_regular(addr.clone()).style(color::GREY_3))
+                                .push(p1_bold("Address:").color(color::GREY_3))
+                                .push(p2_regular(addr.clone()).color(color::GREY_3))
                                 .push(
-                                    Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                    Button::new(icon::clipboard_icon().color(color::GREY_3))
                                         .on_press(Message::Clipboard(addr))
-                                        .style(theme::Button::TransparentBorder),
+                                        .style(theme::button::transparent_border),
                                 ),
                         )
                 }))
                 .push_maybe(coin.and_then(|c| {
                     labels.get(&c.address.to_string()).map(|label| {
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .width(Length::Fill)
                             .push(
                                 Row::new()
-                                    .align_items(Alignment::Center)
+                                    .align_y(Alignment::Center)
                                     .width(Length::Fill)
                                     .spacing(5)
-                                    .push(p1_bold("Address label:").style(color::GREY_3))
-                                    .push(p2_regular(label).style(color::GREY_3)),
+                                    .push(p1_bold("Address label:").color(color::GREY_3))
+                                    .push(p2_regular(label).color(color::GREY_3)),
                             )
                     })
                 })),
@@ -927,7 +926,7 @@ fn payment_view<'a>(
         .push(
             Row::new()
                 .spacing(5)
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
                 .push(
                     Container::new(if let Some(label) = labels_editing.get(&outpoint) {
                         label::label_editing(change_labels, label, text::P1_SIZE)
@@ -942,33 +941,33 @@ fn payment_view<'a>(
             Column::new()
                 .push(
                     Row::new()
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .width(Length::Fill)
                         .push(
                             Row::new()
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .width(Length::Fill)
                                 .spacing(5)
-                                .push(p1_bold("Address:").style(color::GREY_3))
-                                .push(p2_regular(addr.clone()).style(color::GREY_3))
+                                .push(p1_bold("Address:").color(color::GREY_3))
+                                .push(p2_regular(addr.clone()).color(color::GREY_3))
                                 .push(
-                                    Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                    Button::new(icon::clipboard_icon().color(color::GREY_3))
                                         .on_press(Message::Clipboard(addr.clone()))
-                                        .style(theme::Button::TransparentBorder),
+                                        .style(theme::button::transparent_border),
                                 ),
                         ),
                 )
                 .push_maybe(labels.get(&addr).map(|label| {
                     Row::new()
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .width(Length::Fill)
                         .push(
                             Row::new()
-                                .align_items(Alignment::Center)
+                                .align_y(Alignment::Center)
                                 .width(Length::Fill)
                                 .spacing(5)
-                                .push(p1_bold("Address label:").style(color::GREY_3))
-                                .push(p2_regular(label).style(color::GREY_3)),
+                                .push(p1_bold("Address label:").color(color::GREY_3))
+                                .push(p2_regular(label).color(color::GREY_3)),
                         )
                 }))
         }))
@@ -989,19 +988,19 @@ fn change_view(output: &TxOut, network: Network) -> Element<Message> {
         )
         .push(
             Row::new()
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
                 .width(Length::Fill)
                 .push(
                     Row::new()
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .width(Length::Fill)
                         .spacing(5)
-                        .push(p1_bold("Address:").style(color::GREY_3))
-                        .push(p2_regular(addr.clone()).style(color::GREY_3))
+                        .push(p1_bold("Address:").color(color::GREY_3))
+                        .push(p2_regular(addr.clone()).color(color::GREY_3))
                         .push(
-                            Button::new(icon::clipboard_icon().style(color::GREY_3))
+                            Button::new(icon::clipboard_icon().color(color::GREY_3))
                                 .on_press(Message::Clipboard(addr))
-                                .style(theme::Button::TransparentBorder),
+                                .style(theme::button::transparent_border),
                         ),
                 ),
         )
@@ -1051,14 +1050,14 @@ pub fn sign_action<'a>(
                             })
                             .on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
                             .padding(10)
-                            .style(theme::Button::Border)
+                            .style(theme::button::secondary)
                             .width(Length::Fill)
                         }))
                         .width(Length::Fill),
                 )
                 .spacing(20)
                 .width(Length::Fill)
-                .align_items(Alignment::Center),
+                .align_x(Alignment::Center),
         ))
         .width(Length::Fixed(500.0))
         .into()
@@ -1086,7 +1085,7 @@ pub fn sign_action_toasts<'a>(
                             kind,
                             version.as_ref(),
                             fingerprint,
-                            alias.as_ref(),
+                            alias.as_ref().map(|x| x.as_str()),
                         )
                         .max_width(400.0)
                         .into(),
@@ -1131,7 +1130,7 @@ pub fn update_spend_view<'a>(
                             button::secondary(Some(icon::clipboard_icon()), "Copy")
                                 .on_press(Message::Clipboard(psbt)),
                         )
-                        .align_items(Alignment::Center),
+                        .align_y(Alignment::Center),
                 )
                 .push(separation().width(Length::Fill))
                 .push(
@@ -1166,11 +1165,11 @@ pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
     Column::new()
         .push(
             card::simple(Container::new(
-                text("Spend transaction is updated").style(color::GREEN),
+                text("Spend transaction is updated").color(color::GREEN),
             ))
             .padding(50),
         )
         .width(Length::Fixed(400.0))
-        .align_items(Alignment::Center)
+        .align_x(Alignment::Center)
         .into()
 }

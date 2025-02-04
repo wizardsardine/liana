@@ -25,18 +25,18 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
         None,
         "Introduction",
         Column::new()
-            .align_items(Alignment::Start)
+            .align_x(Alignment::Start)
             .push(h3("Build your own"))
             .max_width(800.0)
             .push(Container::new(
                 p1_regular("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.")
-                .style(color::GREY_2)
-                .horizontal_alignment(alignment::Horizontal::Left)
+                .color(color::GREY_2)
+                .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(Container::new(
                 p1_regular("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.")
-                .style(color::GREY_2)
-                .horizontal_alignment(alignment::Horizontal::Left)
+                .color(color::GREY_2)
+                .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::custom_template_description().width(Length::Fill))
             .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
@@ -66,28 +66,28 @@ pub fn custom_template<'a>(
         None,
         "Set keys",
         Column::new()
-            .align_items(Alignment::Start)
+            .align_x(Alignment::Start)
             .max_width(1000.0)
             .push(collapse::Collapse::new(
                 || {
                     Button::new(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(10)
                             .push(text("Advanced settings").small().bold())
                             .push(icon::collapse_icon()),
                     )
-                    .style(theme::Button::Transparent)
+                    .style(theme::button::transparent)
                 },
                 || {
                     Button::new(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(10)
                             .push(text("Advanced settings").small().bold())
                             .push(icon::collapsed_icon()),
                     )
-                    .style(theme::Button::Transparent)
+                    .style(theme::button::transparent)
                 },
                 move || define_descriptor_advanced_settings(use_taproot),
             ))

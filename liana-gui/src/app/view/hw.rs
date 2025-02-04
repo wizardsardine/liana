@@ -69,7 +69,7 @@ pub fn hw_list_view(
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
     })
-    .style(theme::Button::Border)
+    .style(theme::button::secondary)
     .width(Length::Fill);
     if !signing {
         if let HardwareWallet::Supported { registered, .. } = hw {
@@ -78,10 +78,7 @@ pub fn hw_list_view(
             }
         }
     }
-    Container::new(bttn)
-        .width(Length::Fill)
-        .style(theme::Container::Card(theme::Card::Simple))
-        .into()
+    bttn.into()
 }
 
 pub fn hw_list_view_for_registration(
@@ -137,15 +134,12 @@ pub fn hw_list_view_for_registration(
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
     })
-    .style(theme::Button::Border)
+    .style(theme::button::secondary)
     .width(Length::Fill);
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::SelectHardwareWallet(i));
     }
-    Container::new(bttn)
-        .width(Length::Fill)
-        .style(theme::Container::Card(theme::Card::Simple))
-        .into()
+    bttn.into()
 }
 
 pub fn hw_list_view_verify_address(
@@ -222,13 +216,10 @@ pub fn hw_list_view_verify_address(
         ),
     };
     let mut bttn = Button::new(content)
-        .style(theme::Button::Border)
+        .style(theme::button::secondary)
         .width(Length::Fill);
     if selectable && hw.is_supported() {
         bttn = bttn.on_press(Message::SelectHardwareWallet(i));
     }
-    Container::new(bttn)
-        .width(Length::Fill)
-        .style(theme::Container::Card(theme::Card::Simple))
-        .into()
+    bttn.into()
 }

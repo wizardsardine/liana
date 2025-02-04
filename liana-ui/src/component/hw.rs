@@ -8,7 +8,7 @@ use std::fmt::Display;
 
 pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
     kind: K,
-    pairing_code: Option<impl Into<Cow<'a, str>>>,
+    pairing_code: Option<impl Into<Cow<'a, str>> + Display>,
 ) -> Container<'a, T> {
     Container::new(
         column(vec![
@@ -38,7 +38,7 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
 ) -> Container<'a, T> {
     Container::new(
         column(vec![
@@ -58,12 +58,12 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     .padding(10)
 }
 
-pub fn warning_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
+pub fn warning_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
-    warning: &'static str,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    warning: &'a str,
 ) -> Container<'a, T> {
     container(
         row(vec![
@@ -83,14 +83,14 @@ pub fn warning_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
             .into(),
             column(vec![tooltip::Tooltip::new(
                 icon::warning_icon(),
-                warning,
+                iced::widget::text!("{}", warning),
                 tooltip::Position::Bottom,
             )
-            .style(theme::Container::Card(theme::Card::Simple))
+            .style(theme::card::simple)
             .into()])
             .into(),
         ])
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
     .padding(10)
 }
@@ -119,7 +119,7 @@ pub fn unimplemented_method_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
             message,
             tooltip::Position::Bottom,
         )
-        .style(theme::Container::Card(theme::Card::Simple)),
+        .style(theme::card::simple),
     )
     .width(Length::Fill)
 }
@@ -147,7 +147,7 @@ pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
             "This signer does not have a key in this wallet.",
             tooltip::Position::Bottom,
         )
-        .style(theme::Container::Card(theme::Card::Simple)),
+        .style(theme::card::simple),
     )
     .width(Length::Fill)
 }
@@ -156,7 +156,7 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
 ) -> Container<'a, T> {
     container(
         row(vec![
@@ -180,41 +180,48 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
             ])
             .into(),
         ])
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
     .padding(10)
 }
 
-pub fn selected_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
+pub fn selected_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
     warning: Option<&'static str>,
 ) -> Container<'a, T> {
     container(
-        Row::new()
-            .push(
-                column(vec![
-                    Row::new()
-                        .spacing(5)
-                        .push_maybe(alias.map(|a| text::p1_bold(a)))
-                        .push(text::p1_regular(format!("#{}", fingerprint)))
-                        .into(),
-                    Row::new()
-                        .spacing(5)
-                        .push(text::caption(kind.to_string()))
-                        .push_maybe(version.map(|v| text::caption(v.to_string())))
-                        .into(),
-                ])
-                .width(Length::Fill),
-            )
-            .push_maybe(warning.map(|w| {
-                tooltip::Tooltip::new(icon::warning_icon(), w, tooltip::Position::Bottom)
-                    .style(theme::Container::Card(theme::Card::Simple))
-            }))
-            .push(image::success_mark_icon().width(Length::Fixed(50.0)))
-            .align_items(Alignment::Center),
+        row(vec![
+            column(vec![
+                Row::new()
+                    .spacing(5)
+                    .push_maybe(alias.map(text::p1_bold))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .into(),
+                Row::new()
+                    .spacing(5)
+                    .push(text::caption(kind.to_string()))
+                    .push_maybe(version.map(|v| text::caption(v)))
+                    .into(),
+            ])
+            .width(Length::Fill)
+            .into(),
+            if let Some(w) = warning {
+                tooltip::Tooltip::new(
+                    icon::warning_icon(),
+                    iced::widget::text!("{}", w),
+                    tooltip::Position::Bottom,
+                )
+                .style(theme::card::simple)
+                .into()
+            } else {
+                Row::new().into()
+            },
+            image::success_mark_icon().width(Length::Fixed(50.0)).into(),
+        ])
+        .align_y(Alignment::Center),
     )
     .padding(10)
 }
@@ -223,7 +230,7 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
 ) -> Container<'a, T> {
     container(
         row(vec![
@@ -242,14 +249,14 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
             .width(Length::Fill)
             .into(),
             row(vec![
-                text::p1_regular("Signed").style(color::GREEN).into(),
+                text::p1_regular("Signed").color(color::GREEN).into(),
                 image::success_mark_icon().width(Length::Fixed(50.0)).into(),
             ])
-            .align_items(Alignment::Center)
+            .align_y(Alignment::Center)
             .spacing(5)
             .into(),
         ])
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
     .padding(10)
 }
@@ -258,7 +265,7 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
 ) -> Container<'a, T> {
     container(
         row(vec![
@@ -277,19 +284,19 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
             .width(Length::Fill)
             .into(),
             row(vec![
-                text::p1_regular("Registered").style(color::GREEN).into(),
+                text::p1_regular("Registered").color(color::GREEN).into(),
                 image::success_mark_icon().width(Length::Fixed(50.0)).into(),
             ])
-            .align_items(Alignment::Center)
+            .align_y(Alignment::Center)
             .spacing(5)
             .into(),
         ])
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
     .padding(10)
 }
 
-pub fn wrong_network_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
+pub fn wrong_network_hardware_wallet<'a, T: 'static, K: Display, V: Display>(
     kind: K,
     version: Option<V>,
 ) -> Container<'a, T> {
@@ -313,15 +320,15 @@ pub fn wrong_network_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
                 "The wrong bitcoin application is open or the device was initialized with the wrong network",
                 tooltip::Position::Bottom,
             )
-            .style(theme::Container::Card(theme::Card::Simple))
+            .style(theme::card::simple)
             .into(),
         ])
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
     .padding(10)
 }
 
-pub fn unsupported_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
+pub fn unsupported_hardware_wallet<'a, T: 'static, K: Display, V: Display>(
     kind: K,
     version: Option<V>,
 ) -> Container<'a, T> {
@@ -345,15 +352,15 @@ pub fn unsupported_hardware_wallet<'a, T: 'a, K: Display, V: Display>(
                 "Make sure your device is unlocked and a supported Bitcoin application is opened.",
                 tooltip::Position::Bottom,
             )
-            .style(theme::Container::Card(theme::Card::Simple))
+            .style(theme::card::simple)
             .into(),
         ])
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
     .padding(10)
 }
 
-pub fn unsupported_version_hardware_wallet<'a, T: 'a, K: Display, V: Display, S: Display>(
+pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Display, S: Display>(
     kind: K,
     version: Option<V>,
     requested_version: S,
@@ -376,17 +383,17 @@ pub fn unsupported_version_hardware_wallet<'a, T: 'a, K: Display, V: Display, S:
                 "Please upgrade firmware",
                 tooltip::Position::Bottom,
             )
-            .style(theme::Container::Card(theme::Card::Simple))
+            .style(theme::card::simple)
             .into(),
         ])
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
     .padding(10)
 }
 
 pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
 ) -> Container<'a, T> {
     container(
         row(vec![
@@ -404,21 +411,21 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
             .width(Length::Fill)
             .into(),
             row(vec![
-                text::p1_regular("Signed").style(color::GREEN).into(),
+                text::p1_regular("Signed").color(color::GREEN).into(),
                 image::success_mark_icon().width(Length::Fixed(50.0)).into(),
             ])
-            .align_items(Alignment::Center)
+            .align_y(Alignment::Center)
             .spacing(5)
             .into(),
         ])
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
     .padding(10)
 }
 
 pub fn selected_hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
 ) -> Container<'a, T> {
     container(
         row(vec![
@@ -440,14 +447,14 @@ pub fn selected_hot_signer<'a, T: 'a, F: Display>(
             .into(),
             image::success_mark_icon().width(Length::Fixed(50.0)).into(),
         ])
-        .align_items(Alignment::Center),
+        .align_y(Alignment::Center),
     )
     .padding(10)
 }
 
 pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
 ) -> Container<'a, T> {
     Container::new(
         column(vec![
@@ -471,7 +478,7 @@ pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
 
 pub fn hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>>>,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
 ) -> Container<'a, T> {
     Container::new(
         column(vec![

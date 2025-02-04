@@ -67,11 +67,11 @@ pub fn transactions_view<'a>(
                                         "See more"
                                     })
                                     .width(Length::Fill)
-                                    .horizontal_alignment(alignment::Horizontal::Center),
+                                    .align_x(alignment::Horizontal::Center),
                                 )
                                 .width(Length::Fill)
                                 .padding(15)
-                                .style(theme::Button::TransparentBorder)
+                                .style(theme::button::transparent_border)
                                 .on_press_maybe(if !processing {
                                     Some(Message::Next)
                                 } else {
@@ -79,13 +79,13 @@ pub fn transactions_view<'a>(
                                 }),
                             )
                             .width(Length::Fill)
-                            .style(theme::Container::Card(theme::Card::Simple)),
+                            .style(theme::card::simple),
                         )
                     } else {
                         None
                     }),
             )
-            .align_items(Alignment::Center)
+            .align_x(Alignment::Center)
             .spacing(30),
     )
 }
@@ -121,13 +121,13 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                                                 .format("%b. %d, %Y - %T")
                                                 .to_string(),
                                         )
-                                        .style(color::GREY_3)
+                                        .color(color::GREY_3)
                                         .small(),
                                     )
                                 })),
                         )
                         .spacing(10)
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .width(Length::Fill),
                 )
                 .push_maybe(if tx.time.is_none() {
@@ -145,24 +145,24 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                         .spacing(5)
                         .push(text("+"))
                         .push(amount(&tx.incoming_amount))
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                 } else if tx.outgoing_amount != Amount::from_sat(0) {
                     Row::new()
                         .spacing(5)
                         .push(text("-"))
                         .push(amount(&tx.outgoing_amount))
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                 } else {
                     Row::new().push(text("Self-transfer"))
                 })
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
                 .spacing(20),
         )
         .padding(10)
         .on_press(Message::Select(i))
-        .style(theme::Button::TransparentBorder),
+        .style(theme::button::transparent_border),
     )
-    .style(theme::Container::Card(theme::Card::Simple))
+    .style(theme::card::simple)
     .into()
 }
 
@@ -235,12 +235,12 @@ pub fn create_rbf_modal<'a>(
                                 Row::new()
                                     .padding([0, 30])
                                     .spacing(5)
-                                    .align_items(Alignment::Center)
+                                    .align_y(Alignment::Center)
                                     .push(text(txid.to_string()))
                                     .push(
-                                        Button::new(icon::clipboard_icon().style(color::GREY_3))
+                                        Button::new(icon::clipboard_icon().color(color::GREY_3))
                                             .on_press(Message::Clipboard(txid.to_string()))
-                                            .style(theme::Button::TransparentBorder),
+                                            .style(theme::button::transparent_border),
                                     ),
                             )
                         },
@@ -274,11 +274,11 @@ pub fn create_rbf_modal<'a>(
             } else {
                 Row::new()
                     .spacing(10)
-                    .align_items(Alignment::Center)
-                    .push(icon::circle_check_icon().style(color::GREEN))
+                    .align_y(Alignment::Center)
+                    .push(icon::circle_check_icon().color(color::GREEN))
                     .push(
                         text("Replacement PSBT created successfully and ready to be signed")
-                            .style(color::GREEN),
+                            .color(color::GREEN),
                     )
             }))
             .push_maybe(replacement_txid.map(|id| {
@@ -342,8 +342,8 @@ pub fn tx_view<'a>(
                         })
                         .push_maybe(tx.fee_amount.map(|fee_amount| {
                             Row::new()
-                                .align_items(Alignment::Center)
-                                .push(h3("Miner fee: ").style(color::GREY_3))
+                                .align_y(Alignment::Center)
+                                .push(h3("Miner fee: ").color(color::GREY_3))
                                 .push(amount_with_size(&fee_amount, H3_SIZE))
                                 .push(text(" ").size(H3_SIZE))
                                 .push(
@@ -352,7 +352,7 @@ pub fn tx_view<'a>(
                                         fee_amount.to_sat() / tx.tx.vsize() as u64
                                     ))
                                     .size(H4_SIZE)
-                                    .style(color::GREY_3),
+                                    .color(color::GREY_3),
                                 )
                         })),
                 ),
@@ -396,16 +396,16 @@ pub fn tx_view<'a>(
                     .push(
                         Row::new()
                             .width(Length::Fill)
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .push(Container::new(text("Txid:").bold()).width(Length::Fill))
                             .push(
                                 Row::new()
-                                    .align_items(Alignment::Center)
+                                    .align_y(Alignment::Center)
                                     .push(Container::new(text(txid.clone()).small()))
                                     .push(
                                         Button::new(icon::clipboard_icon())
                                             .on_press(Message::Clipboard(txid.clone()))
-                                            .style(theme::Button::TransparentBorder),
+                                            .style(theme::button::transparent_border),
                                     )
                                     .width(Length::Shrink),
                             ),

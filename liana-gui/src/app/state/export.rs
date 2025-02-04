@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 use liana_ui::{component::modal::Modal, widget::Element};
 use tokio::task::JoinHandle;
 
@@ -37,13 +37,13 @@ impl ExportModal {
         }
     }
 
-    pub fn launch(&self) -> Command<Message> {
-        Command::perform(get_path(), |m| {
+    pub fn launch(&self) -> Task<Message> {
+        Task::perform(get_path(), |m| {
             Message::View(view::Message::Export(ExportMessage::Path(m)))
         })
     }
 
-    pub fn update(&mut self, message: Message) -> Command<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         if let Message::View(view::Message::Export(m)) = message {
             match m {
                 ExportMessage::ExportProgress(m) => match m {
@@ -73,16 +73,16 @@ impl ExportModal {
                         self.path = Some(path);
                         self.start();
                     } else {
-                        return Command::perform(async {}, |_| {
+                        return Task::perform(async {}, |_| {
                             Message::View(view::Message::Export(ExportMessage::Close))
                         });
                     }
                 }
                 ExportMessage::Close | ExportMessage::Open => { /* unreachable */ }
             }
-            Command::none()
+            Task::none()
         } else {
-            Command::none()
+            Task::none()
         }
     }
     pub fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<view::Message> {
@@ -115,10 +115,9 @@ impl ExportModal {
         if let Some(path) = &self.path {
             match &self.state {
                 ExportState::Started | ExportState::Progress(_) => {
-                    Some(iced::subscription::unfold(
+                    Some(iced::Subscription::run_with_id(
                         "transactions",
-                        export::State::new(self.daemon.clone(), Box::new(path.to_path_buf())),
-                        export::export_subscription,
+                        export::export_subscription(self.daemon.clone(), path.to_path_buf()),
                     ))
                 }
                 _ => None,

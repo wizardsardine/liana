@@ -7,7 +7,7 @@ use std::str::FromStr;
 use bitcoin_hashes::{sha256, Hash};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use flate2::read::GzDecoder;
-use iced::{Command, Subscription};
+use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::Network;
 use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -70,19 +70,16 @@ impl Download {
         }
     }
 
-    pub fn progress(&mut self, new_progress: download::Progress) {
+    pub fn progress(&mut self, new_progress: Result<download::Progress, download::DownloadError>) {
         if let DownloadState::Downloading { progress } = &mut self.state {
             match new_progress {
-                download::Progress::Started => {
-                    *progress = 0.0;
-                }
-                download::Progress::Advanced(percentage) => {
+                Ok(download::Progress::Downloading(percentage)) => {
                     *progress = percentage;
                 }
-                download::Progress::Finished(bytes) => {
+                Ok(download::Progress::Finished(bytes)) => {
                     self.state = DownloadState::Finished(bytes);
                 }
-                download::Progress::Errored(e) => {
+                Err(e) => {
                     self.state = DownloadState::Errored(e);
                 }
             }
@@ -303,16 +300,16 @@ impl Step for SelectBitcoindTypeStep {
     fn skip(&self, ctx: &Context) -> bool {
         ctx.remote_backend.is_some()
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::SelectBitcoindType(msg) = message {
             match msg {
                 message::SelectBitcoindTypeMsg::UseExternal(selected) => {
                     self.use_external = selected;
                 }
             };
-            return Command::perform(async {}, |_| Message::Next);
+            return Task::perform(async {}, |_| Message::Next);
         };
-        Command::none()
+        Task::none()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
@@ -410,7 +407,7 @@ impl DefineBitcoind {
         self.network = Some(ctx.bitcoin_config.network);
     }
 
-    pub fn update(&mut self, message: message::DefineNode) -> Command<Message> {
+    pub fn update(&mut self, message: message::DefineNode) -> Task<Message> {
         if let message::DefineNode::DefineBitcoind(msg) = message {
             match msg {
                 message::DefineBitcoind::ConfigFieldEdited(field, value) => match field {
@@ -443,7 +440,7 @@ impl DefineBitcoind {
                 }
             };
         };
-        Command::none()
+        Task::none()
     }
 
     pub fn apply(&mut self, ctx: &mut Context) -> bool {
@@ -552,7 +549,7 @@ impl Step for InternalBitcoindStep {
             }
         }
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Command<Message> {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::InternalBitcoind(msg) = message {
             match msg {
                 message::InternalBitcoindMsg::Previous => {
@@ -568,7 +565,7 @@ impl Step for InternalBitcoindStep {
                         }
                     }
                     self.started = None; // clear both Ok and Err
-                    return Command::perform(async {}, |_| Message::Previous);
+                    return Task::perform(async {}, |_| Message::Previous);
                 }
                 message::InternalBitcoindMsg::Reload => {
                     return self.load();
@@ -583,7 +580,7 @@ impl Step for InternalBitcoindStep {
                         }
                         Err(e) => {
                             self.error = Some(e.to_string());
-                            return Command::none();
+                            return Task::none();
                         }
                     };
                     let (rpc_port, p2p_port) = if let Some(network_conf) =
@@ -599,18 +596,18 @@ impl Step for InternalBitcoindStep {
                                         "Could not get distinct ports. Please try again."
                                             .to_string(),
                                     );
-                                    return Command::none();
+                                    return Task::none();
                                 }
                                 (rpc_port, p2p_port)
                             }
                             (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
                                 self.error = Some(format!("Could not get available port: {}.", e));
-                                return Command::none();
+                                return Task::none();
                             }
                             (Err(e1), Err(e2)) => {
                                 self.error =
                                     Some(format!("Could not get available ports: {}; {}.", e1, e2));
-                                return Command::none();
+                                return Task::none();
                             }
                         }
                     };
@@ -618,7 +615,7 @@ impl Step for InternalBitcoindStep {
                         Ok((rpc_auth, password)) => (rpc_auth, password),
                         Err(e) => {
                             self.error = Some(e.to_string());
-                            return Command::none();
+                            return Task::none();
                         }
                     };
                     let bitcoind_config = BitcoindConfig {
@@ -637,12 +634,12 @@ impl Step for InternalBitcoindStep {
                         &self.bitcoind_datadir,
                     )) {
                         self.error = Some(e.to_string());
-                        return Command::none();
+                        return Task::none();
                     };
                     self.error = None;
                     self.internal_bitcoind_config = Some(conf);
                     self.bitcoind_config = Some(bitcoind_config);
-                    return Command::perform(async {}, |_| {
+                    return Task::perform(async {}, |_| {
                         Message::InternalBitcoind(message::InternalBitcoindMsg::Reload)
                     });
                 }
@@ -659,7 +656,7 @@ impl Step for InternalBitcoindStep {
                         download.progress(progress);
                         if let DownloadState::Finished(_) = &download.state {
                             info!("Download of bitcoind complete.");
-                            return Command::perform(async {}, |_| {
+                            return Task::perform(async {}, |_| {
                                 Message::InternalBitcoind(message::InternalBitcoindMsg::Install)
                             });
                         }
@@ -681,7 +678,7 @@ impl Step for InternalBitcoindStep {
                                         &self.liana_datadir,
                                         VERSION,
                                     ));
-                                    return Command::perform(async {}, |_| {
+                                    return Task::perform(async {}, |_| {
                                         Message::InternalBitcoind(
                                             message::InternalBitcoindMsg::Start,
                                         )
@@ -691,7 +688,7 @@ impl Step for InternalBitcoindStep {
                                     info!("Installation of bitcoind failed.");
                                     self.install_state = Some(InstallState::Errored(e.clone()));
                                     self.error = Some(e.to_string());
-                                    return Command::none();
+                                    return Task::none();
                                 }
                             };
                         }
@@ -702,7 +699,7 @@ impl Step for InternalBitcoindStep {
                         self.started = Some(Err(
                             StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()),
                         ));
-                        return Command::none();
+                        return Task::none();
                     };
                     let bitcoind_config = self
                         .bitcoind_config
@@ -713,7 +710,7 @@ impl Step for InternalBitcoindStep {
                         Err(e) => {
                             self.started =
                                 Some(Err(StartInternalBitcoindError::CommandError(e.to_string())));
-                            return Command::none();
+                            return Task::none();
                         }
                         Ok(bitcoind) => {
                             self.error = None;
@@ -724,7 +721,7 @@ impl Step for InternalBitcoindStep {
                 }
             };
         };
-        Command::none()
+        Task::none()
     }
 
     fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
@@ -734,25 +731,25 @@ impl Step for InternalBitcoindStep {
         Subscription::none()
     }
 
-    fn load(&self) -> Command<Message> {
+    fn load(&self) -> Task<Message> {
         if self.internal_bitcoind_config.is_none() {
-            return Command::perform(async {}, |_| {
+            return Task::perform(async {}, |_| {
                 Message::InternalBitcoind(message::InternalBitcoindMsg::DefineConfig)
             });
         }
         if let Some(download) = &self.exe_download {
             if let DownloadState::Idle = download.state {
-                return Command::perform(async {}, |_| {
+                return Task::perform(async {}, |_| {
                     Message::InternalBitcoind(message::InternalBitcoindMsg::Download)
                 });
             }
         }
         if self.started.is_none() {
-            return Command::perform(async {}, |_| {
+            return Task::perform(async {}, |_| {
                 Message::InternalBitcoind(message::InternalBitcoindMsg::Start)
             });
         }
-        Command::none()
+        Task::none()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {

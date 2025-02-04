@@ -110,13 +110,13 @@ impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
         Container::new(
             Column::new()
                 .push(if !form.valid {
-                    form.input.style(theme::Form::Invalid)
+                    form.input.style(theme::text_input::invalid)
                 } else {
                     form.input
                 })
                 .push_maybe(if !form.valid {
                     form.warning
-                        .map(|message| text::caption(message).style(color::RED))
+                        .map(|message| text::caption(message).color(color::RED))
                 } else {
                     None
                 })

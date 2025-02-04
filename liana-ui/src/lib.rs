@@ -19,9 +19,9 @@ pub mod widget {
     pub type Text<'a> = iced::widget::Text<'a, Theme, Renderer>;
     pub type TextInput<'a, Message> = iced::widget::TextInput<'a, Message, Theme, Renderer>;
     pub type Tooltip<'a> = iced::widget::Tooltip<'a, Theme, Renderer>;
-    pub type ProgressBar = iced::widget::ProgressBar<Theme>;
+    pub type ProgressBar<'a> = iced::widget::ProgressBar<'a, Theme>;
     pub type PickList<'a, T, L, V, Message> =
         iced::widget::PickList<'a, T, L, V, Message, Theme, Renderer>;
     pub type Scrollable<'a, Message> = iced::widget::Scrollable<'a, Message, Theme, Renderer>;
-    pub type Svg = iced::widget::Svg<Theme>;
+    pub type Svg<'a> = iced::widget::Svg<'a, Theme>;
 }

@@ -42,7 +42,7 @@ pub fn receive<'a>(
     Column::new()
         .push(
             Row::new()
-                .align_items(Alignment::Center)
+                .align_y(Alignment::Center)
                 .push(Container::new(h3("Receive")).width(Length::Fill))
                 .push(
                     button::secondary(Some(icon::plus_icon()), "Generate address")
@@ -85,7 +85,7 @@ pub fn receive<'a>(
                                                             .push(
                                                                 p2_regular(addr)
                                                                     .small()
-                                                                    .style(color::GREY_3),
+                                                                    .color(color::GREY_3),
                                                             )
                                                             // Space between the address and the scrollbar
                                                             .push(Space::with_height(
@@ -93,7 +93,7 @@ pub fn receive<'a>(
                                                             )),
                                                     )
                                                     .direction(scrollable::Direction::Horizontal(
-                                                        scrollable::Properties::new()
+                                                        scrollable::Scrollbar::new()
                                                             .width(2)
                                                             .scroller_width(2),
                                                     )),
@@ -102,12 +102,12 @@ pub fn receive<'a>(
                                             )
                                             .push(
                                                 Button::new(
-                                                    icon::clipboard_icon().style(color::GREY_3),
+                                                    icon::clipboard_icon().color(color::GREY_3),
                                                 )
                                                 .on_press(Message::Clipboard(address.to_string()))
-                                                .style(theme::Button::TransparentBorder),
+                                                .style(theme::button::transparent_border),
                                             )
-                                            .align_items(Alignment::Center),
+                                            .align_y(Alignment::Center),
                                     )
                                     .push(
                                         Row::new()
@@ -153,14 +153,14 @@ pub fn verify_address_modal<'a>(
                                 .push(
                                     Row::new()
                                         .width(Length::Fill)
-                                        .align_items(Alignment::Center)
+                                        .align_y(Alignment::Center)
                                         .push(
                                             Container::new(text("Address:").bold())
                                                 .width(Length::Fill),
                                         )
                                         .push(
                                             Row::new()
-                                                .align_items(Alignment::Center)
+                                                .align_y(Alignment::Center)
                                                 .push(Container::new(
                                                     text(address.to_string()).small(),
                                                 ))
@@ -169,7 +169,7 @@ pub fn verify_address_modal<'a>(
                                                         .on_press(Message::Clipboard(
                                                             address.to_string(),
                                                         ))
-                                                        .style(theme::Button::TransparentBorder),
+                                                        .style(theme::button::transparent_border),
                                                 )
                                                 .width(Length::Shrink),
                                         ),
@@ -177,7 +177,7 @@ pub fn verify_address_modal<'a>(
                                 .push(
                                     Row::new()
                                         .width(Length::Fill)
-                                        .align_items(Alignment::Center)
+                                        .align_y(Alignment::Center)
                                         .push(
                                             Container::new(text("Derivation index:").bold())
                                                 .width(Length::Fill),
@@ -211,7 +211,7 @@ pub fn verify_address_modal<'a>(
                 )
                 .spacing(20)
                 .width(Length::Fill)
-                .align_items(Alignment::Center),
+                .align_x(Alignment::Center),
         ))
         .width(Length::Fill)
         .max_width(750)
@@ -225,17 +225,12 @@ pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, M
                 .push(Space::with_width(Length::Fill))
                 .push(
                     Container::new(QRCode::<liana_ui::theme::Theme>::new(qr).cell_size(8))
-                        .padding(10)
-                        .style(theme::Container::QrCode),
+                        .padding(10),
                 )
                 .push(Space::with_width(Length::Fill)),
         )
         .push(Space::with_height(Length::Fixed(15.0)))
-        .push(
-            Container::new(text(address).size(15))
-                .width(Length::Fill)
-                .center_x(),
-        )
+        .push(Container::new(text(address).size(15)).center_x(Length::Fill))
         .width(Length::Fill)
         .max_width(400)
         .into()

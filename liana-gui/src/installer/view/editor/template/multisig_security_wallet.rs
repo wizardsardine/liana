@@ -31,39 +31,39 @@ pub fn multisig_security_template_description(
         None,
         "Introduction",
         Column::new()
-            .align_items(Alignment::Start)
+            .align_x(Alignment::Start)
             .push(h3("Expanding multisig wallet"))
             .max_width(800.0)
             .push(Container::new(
                 p1_regular("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.")
-                .style(color::GREY_2)
-                .horizontal_alignment(alignment::Horizontal::Left)
+                .color(color::GREY_2)
+                .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(Row::new()
                 .spacing(30)
                 .push(
                     Row::new()
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .spacing(10)
-                    .push(icon::round_key_icon().size(H3_SIZE).style(color::GREEN))
+                    .push(icon::round_key_icon().size(H3_SIZE).color(color::GREEN))
                     .push(p1_regular("Primary key #1").bold())
                 ).push(
                     Row::new()
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .spacing(10)
-                    .push(icon::round_key_icon().size(H3_SIZE).style(color::GREEN))
+                    .push(icon::round_key_icon().size(H3_SIZE).color(color::GREEN))
                     .push(p1_regular("Primary key #2").bold())
                 ).push(
                     Row::new()
-                        .align_items(Alignment::Center)
+                        .align_y(Alignment::Center)
                         .spacing(10)
-                        .push(icon::round_key_icon().size(H3_SIZE).style(color::ORANGE))
+                        .push(icon::round_key_icon().size(H3_SIZE).color(color::ORANGE))
                         .push(p1_regular("Recovery key").bold())
             ))
             .push(Container::new(
                 p1_regular("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):")
-                .style(color::GREY_2)
-                .horizontal_alignment(alignment::Horizontal::Left)
+                .color(color::GREY_2)
+                .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::multisig_security_template_description().width(Length::Fill))
             .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
@@ -88,28 +88,28 @@ pub fn multisig_security_template<'a>(
         None,
         "Set keys",
         Column::new()
-            .align_items(Alignment::Start)
+            .align_x(Alignment::Start)
             .max_width(1000.0)
             .push(collapse::Collapse::new(
                 || {
                     Button::new(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(10)
                             .push(text("Advanced settings").small().bold())
                             .push(icon::collapse_icon()),
                     )
-                    .style(theme::Button::Transparent)
+                    .style(theme::button::transparent)
                 },
                 || {
                     Button::new(
                         Row::new()
-                            .align_items(Alignment::Center)
+                            .align_y(Alignment::Center)
                             .spacing(10)
                             .push(text("Advanced settings").small().bold())
                             .push(icon::collapsed_icon()),
                     )
-                    .style(theme::Button::Transparent)
+                    .style(theme::button::transparent)
                 },
                 move || define_descriptor_advanced_settings(use_taproot),
             ))

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::{cmp::Ordering, collections::HashSet};
 
-use iced::Command;
+use iced::Task;
 
 use liana_ui::widget::Element;
 use lianad::commands::CoinStatus;
@@ -113,7 +113,7 @@ impl State for CoinsPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         match message {
             Message::Coins(res) => match res {
                 Err(e) => self.warning = Some(e),
@@ -150,18 +150,18 @@ impl State for CoinsPanel {
             }
             _ => {}
         };
-        Command::none()
+        Task::none()
     }
 
     fn reload(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
-        Command::batch(vec![
-            Command::perform(
+        Task::batch(vec![
+            Task::perform(
                 async move {
                     daemon1
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
@@ -171,7 +171,7 @@ impl State for CoinsPanel {
                 },
                 Message::Coins,
             ),
-            Command::perform(
+            Task::perform(
                 async move {
                     let coins = daemon2
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])

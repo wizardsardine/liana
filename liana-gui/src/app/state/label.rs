@@ -9,7 +9,7 @@ use crate::{
         Daemon,
     },
 };
-use iced::Command;
+use iced::Task;
 use liana_ui::component::form;
 
 #[derive(Default)]
@@ -24,7 +24,7 @@ impl LabelsEdited {
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
         targets: T,
-    ) -> Result<Command<Message>, Error> {
+    ) -> Result<Task<Message>, Error> {
         match message {
             Message::View(view::Message::Label(items, msg)) => match msg {
                 view::LabelMessage::Edited(value) => {
@@ -64,7 +64,7 @@ impl LabelsEdited {
                             }
                         }
                     }
-                    return Ok(Command::perform(
+                    return Ok(Task::perform(
                         async move {
                             daemon.update_labels(&updated_labels).await?;
                             Ok(updated_labels_str)
@@ -88,7 +88,7 @@ impl LabelsEdited {
             },
             _ => {}
         };
-        Ok(Command::none())
+        Ok(Task::none())
     }
 }
 

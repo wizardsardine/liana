@@ -7,7 +7,7 @@ fn bootstrap_icon(unicode: char) -> Text<'static> {
     Text::new(unicode.to_string())
         .font(BOOTSTRAP_ICONS)
         .width(Length::Fixed(20.0))
-        .horizontal_alignment(alignment::Horizontal::Center)
+        .align_x(alignment::Horizontal::Center)
         .size(P1_SIZE)
 }
 
@@ -129,7 +129,7 @@ fn iconex_icon(unicode: char) -> Text<'static> {
     Text::new(unicode.to_string())
         .font(ICONEX_ICONS)
         .width(Length::Fixed(20.0))
-        .horizontal_alignment(alignment::Horizontal::Center)
+        .align_x(alignment::Horizontal::Center)
         .size(P1_SIZE)
 }
 
