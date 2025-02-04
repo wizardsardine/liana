@@ -328,7 +328,7 @@ impl Loader {
 }
 
 fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>> {
-    channel(1, move |mut output| async move {
+    channel(5, move |mut output| async move {
         loop {
             // Reduce the io load.
             tokio::time::sleep(Duration::from_millis(500)).await;

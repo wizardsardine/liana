@@ -22,9 +22,7 @@ pub fn file<I: 'static + Hash + Copy + Send + Sync, T: ToString>(
 fn download(url: String) -> impl Stream<Item = Result<Progress, DownloadError>> {
     try_channel(100, move |mut output| async move {
         let response = reqwest::get(&url).await?;
-        let total = response
-            .content_length()
-            .ok_or(DownloadError::NoContentLength)?;
+        let total = response.content_length();
 
         let _ = output.send(Progress::Downloading(0.0)).await;
 
@@ -37,11 +35,13 @@ fn download(url: String) -> impl Stream<Item = Result<Progress, DownloadError>> 
             downloaded += chunk.len();
             bytes.append(&mut chunk.to_vec());
 
-            let _ = output
-                .send(Progress::Downloading(
-                    100.0 * downloaded as f32 / total as f32,
-                ))
-                .await;
+            if let Some(total) = total {
+                let _ = output
+                    .send(Progress::Downloading(
+                        100.0 * downloaded as f32 / total as f32,
+                    ))
+                    .await;
+            }
         }
 
         let _ = output.send(Progress::Finished(bytes)).await;
