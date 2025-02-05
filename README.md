@@ -35,7 +35,7 @@ Liana can be used for **trustless inheritance**, **loss protection** or **safer 
 
 ## Usage
 
-Liana is available on Windows, Mac and Linux. To install and start using it see
+Liana is available on Windows, MacOc and Linux. To install and start using it see
 [`doc/USAGE.md`](doc/USAGE.md). A more accessible version of Liana is also available as a web
 application [here](https://lianalite.com/).
 
