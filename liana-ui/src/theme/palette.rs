@@ -170,7 +170,7 @@ impl std::default::Default for Palette {
             },
             text: Text {
                 primary: color::WHITE,
-                secondary: color::GREY_3,
+                secondary: color::GREY_2,
                 warning: color::ORANGE,
                 success: color::GREEN,
                 error: color::RED,
