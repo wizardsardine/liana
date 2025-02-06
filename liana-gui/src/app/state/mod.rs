@@ -29,7 +29,7 @@ use super::{
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
-use crate::daemon::model::LabelsLoader;
+use crate::daemon::model::{coin_is_owned, LabelsLoader};
 use crate::daemon::{
     model::{remaining_sequence, Coin, HistoryTransaction, Payment},
     Daemon,
@@ -94,7 +94,7 @@ fn coins_summary(
     for coin in coins {
         if coin.spend_info.is_none() {
             // Include unconfirmed coins from self in confirmed balance.
-            if coin.block_height.is_some() || coin.is_from_self {
+            if coin_is_owned(coin) {
                 balance += coin.amount;
                 // Only consider confirmed coins for remaining seq
                 // (they would not be considered as expiring so we can also skip that part)
