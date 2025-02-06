@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait = "0.1"
-async-hwi = { version = "0.0.26" }
+async-hwi = { version = "0.0.27" }
 liana = { path = "../liana" }
 lianad = { path = "../lianad", default-features = false, features = ["nonblocking_shutdown"] }
 liana-ui = { path = "../liana-ui" }
