@@ -267,9 +267,9 @@ dependencies = [
 
 [[package]]
 name = "async-hwi"
-version = "0.0.26"
+version = "0.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b67f67913279ff8009b46fde618b87d46f7c4306c7e93342fed09c6bb5dea09"
+checksum = "e9e928e319430e339a0d6895e42f40fef8eb7d4c47a8f17c35a572a718072e7e"
 dependencies = [
  "async-trait",
  "bitbox-api",
