@@ -16,7 +16,6 @@ use lianad::config::BitcoindRpcAuth;
 use super::{dashboard, message::*};
 
 use liana_ui::{
-    color,
     component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
     icon, theme,
     widget::*,
@@ -279,7 +278,7 @@ pub fn remote_backend_section<'a>(
                         .push(
                             Row::new()
                                 .push_maybe(if success {
-                                    Some(text("Invitation was sent").color(color::GREEN))
+                                    Some(text("Invitation was sent").style(theme::text::success))
                                 } else {
                                     None
                                 })
@@ -747,15 +746,15 @@ pub fn is_running_label<'a, T: 'a>(is_running: Option<bool>) -> Container<'a, T>
         if running {
             Container::new(
                 Row::new()
-                    .push(icon::dot_icon().size(5).color(color::GREEN))
-                    .push(text("Running").small().color(color::GREEN))
+                    .push(icon::dot_icon().size(5).style(theme::text::success))
+                    .push(text("Running").small().style(theme::text::success))
                     .align_y(Alignment::Center),
             )
         } else {
             Container::new(
                 Row::new()
-                    .push(icon::dot_icon().size(5).color(color::RED))
-                    .push(text("Not running").small().color(color::RED))
+                    .push(icon::dot_icon().size(5).style(theme::text::error))
+                    .push(text("Not running").small().style(theme::text::error))
                     .align_y(Alignment::Center),
             )
         }
@@ -784,7 +783,10 @@ pub fn rescan<'a>(
                     .push(badge::badge(icon::block_icon()))
                     .push(text("Blockchain rescan").bold().width(Length::Fill))
                     .push_maybe(if success {
-                        Some(text("Successfully rescanned the blockchain").color(color::GREEN))
+                        Some(
+                            text("Successfully rescanned the blockchain")
+                                .style(theme::text::success),
+                        )
                     } else {
                         None
                     })
@@ -834,20 +836,23 @@ pub fn rescan<'a>(
                                 .spacing(10),
                         )
                         .push_maybe(if invalid_date {
-                            Some(p1_regular("Provided date is invalid").color(color::RED))
+                            Some(p1_regular("Provided date is invalid").style(theme::text::error))
                         } else {
                             None
                         })
                         .push_maybe(if past_possible_height {
                             Some(
                                 p1_regular("Provided date earlier than the node prune height")
-                                    .color(color::RED),
+                                    .style(theme::text::error),
                             )
                         } else {
                             None
                         })
                         .push_maybe(if future_date {
-                            Some(p1_regular("Provided date is in the future").color(color::RED))
+                            Some(
+                                p1_regular("Provided date is in the future")
+                                    .style(theme::text::error),
+                            )
                         } else {
                             None
                         })
@@ -1000,8 +1005,11 @@ pub fn wallet_settings<'a>(
                                     Some(
                                         Row::new()
                                             .align_y(Alignment::Center)
-                                            .push(icon::circle_check_icon().color(color::GREEN))
-                                            .push(text("Updated").color(color::GREEN)),
+                                            .push(
+                                                icon::circle_check_icon()
+                                                    .style(theme::text::success),
+                                            )
+                                            .push(text("Updated").style(theme::text::success)),
                                     )
                                 } else {
                                     None

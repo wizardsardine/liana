@@ -15,7 +15,6 @@ use liana::miniscript::bitcoin::{
 };
 
 use liana_ui::{
-    color,
     component::{
         button, card, form,
         text::{self, *},
@@ -85,7 +84,7 @@ pub fn receive<'a>(
                                                             .push(
                                                                 p2_regular(addr)
                                                                     .small()
-                                                                    .color(color::GREY_3),
+                                                                    .style(theme::text::secondary),
                                                             )
                                                             // Space between the address and the scrollbar
                                                             .push(Space::with_height(
@@ -102,7 +101,8 @@ pub fn receive<'a>(
                                             )
                                             .push(
                                                 Button::new(
-                                                    icon::clipboard_icon().color(color::GREY_3),
+                                                    icon::clipboard_icon()
+                                                        .style(theme::text::secondary),
                                                 )
                                                 .on_press(Message::Clipboard(address.to_string()))
                                                 .style(theme::button::transparent_border),

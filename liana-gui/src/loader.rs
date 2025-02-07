@@ -13,9 +13,8 @@ use tracing::{debug, info, warn};
 
 use liana::miniscript::bitcoin;
 use liana_ui::{
-    color,
     component::{button, notification, text::*},
-    icon,
+    icon, theme,
     widget::*,
 };
 use lianad::{
@@ -465,7 +464,7 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                 } else {
                     SYNCING_PROGRESS_1
                 }))
-                .push(p2_regular(bitcoind_logs).color(color::GREY_3)),
+                .push(p2_regular(bitcoind_logs).style(theme::text::secondary)),
         ),
         Step::Error(error) => cover(
             Some(("Error while starting the internal daemon", error)),

@@ -69,13 +69,13 @@ pub fn home_view<'a>(
                                     SyncStatus::WalletFullScan => text("Syncing"),
                                     _ => text("Checking for new transactions"),
                                 }
-                                .color(color::GREY_2),
+                                .style(theme::text::secondary),
                             )
                             .push(spinner::typing_text_carousel(
                                 "...",
                                 true,
                                 Duration::from_millis(2000),
-                                |content| text(content).color(color::GREY_2),
+                                |content| text(content).style(theme::text::secondary),
                             )),
                     )
                 } else {
@@ -86,9 +86,13 @@ pub fn home_view<'a>(
                         Some(
                             Row::new()
                                 .spacing(10)
-                                .push(text("+").size(H3_SIZE).color(color::GREY_3))
+                                .push(text("+").size(H3_SIZE).style(theme::text::secondary))
                                 .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
-                                .push(text("unconfirmed").size(H3_SIZE).color(color::GREY_3)),
+                                .push(
+                                    text("unconfirmed")
+                                        .size(H3_SIZE)
+                                        .style(theme::text::secondary),
+                                ),
                         )
                     } else {
                         None
@@ -111,7 +115,7 @@ pub fn home_view<'a>(
                         .push(
                             icon::tooltip_icon()
                                 .size(20)
-                                .color(color::GREY_3)
+                                .style(theme::text::secondary)
                                 .width(Length::Fixed(20.0)),
                         )
                         .width(Length::Fill),
@@ -190,10 +194,9 @@ fn event_list_view(event: &Payment) -> Element<'_, Message> {
     let label = if let Some(label) = &event.label {
         Some(p1_regular(label))
     } else {
-        event
-            .address_label
-            .as_ref()
-            .map(|label| p1_regular(format!("address label: {}", label)).color(color::GREY_3))
+        event.address_label.as_ref().map(|label| {
+            p1_regular(format!("address label: {}", label)).style(theme::text::secondary)
+        })
     };
     if event.kind == PaymentKind::Incoming {
         if let Some(t) = event.time {
@@ -298,7 +301,7 @@ pub fn payment_view<'a>(
             .push_maybe(tx.fee_amount.map(|fee_amount| {
                 Row::new()
                     .align_y(Alignment::Center)
-                    .push(h3("Miner fee: ").color(color::GREY_3))
+                    .push(h3("Miner fee: ").style(theme::text::secondary))
                     .push(amount_with_size(&fee_amount, H3_SIZE))
                     .push(text(" ").size(H3_SIZE))
                     .push(
@@ -307,7 +310,7 @@ pub fn payment_view<'a>(
                             fee_amount.to_sat() / tx.tx.vsize() as u64
                         ))
                         .size(H4_SIZE)
-                        .color(color::GREY_3),
+                        .style(theme::text::secondary),
                     )
             }))
             .push(card::simple(

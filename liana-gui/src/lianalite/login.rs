@@ -4,9 +4,8 @@ use iced::{Alignment, Length, Task};
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
-    color,
     component::{button, form, network_banner, notification, text::*},
-    icon,
+    icon, theme,
     widget::*,
 };
 
@@ -391,7 +390,7 @@ impl LianaLiteLogin {
                                             .spacing(20)
                                             .push_maybe(
                                                 self.auth_error
-                                                    .map(|e| text(e).color(color::ORANGE)),
+                                                    .map(|e| text(e).style(theme::text::warning)),
                                             )
                                             .push(
                                                 form::Form::new_trimmed("email", email, |msg| {
@@ -412,7 +411,7 @@ impl LianaLiteLogin {
                                             .push(text("An authentication was send to your email"))
                                             .push_maybe(
                                                 self.auth_error
-                                                    .map(|e| text(e).color(color::ORANGE)),
+                                                    .map(|e| text(e).style(theme::text::warning)),
                                             )
                                             .spacing(20)
                                             .push(

@@ -20,7 +20,6 @@ use liana::{
     miniscript::bitcoin::{self, bip32::Fingerprint},
 };
 use liana_ui::{
-    color,
     component::{
         button, card, collapse, form, hw, separation,
         text::{h2, h3, h4_bold, h5_regular, p1_regular, text, Text},
@@ -76,10 +75,10 @@ pub fn import_wallet_or_descriptor<'a>(
             Button::new(
                 Column::new()
                     .spacing(5)
-                    .push(h4_bold("Load a shared wallet").color(color::WHITE))
+                    .push(h4_bold("Load a shared wallet").style(theme::text::primary))
                     .push(
                         text("If you received an invitation to join a shared wallet")
-                            .color(color::GREY_3),
+                            .style(theme::text::secondary),
                     ),
             )
             .padding(15)
@@ -90,10 +89,10 @@ pub fn import_wallet_or_descriptor<'a>(
             Button::new(
                 Column::new()
                     .spacing(5)
-                    .push(h4_bold("Load a shared wallet").color(color::WHITE))
+                    .push(h4_bold("Load a shared wallet").style(theme::text::primary))
                     .push(
                         text("Type the invitation token you received by email")
-                            .color(color::GREY_3),
+                            .style(theme::text::secondary),
                     ),
             )
             .padding(15)
@@ -170,8 +169,11 @@ pub fn import_wallet_or_descriptor<'a>(
             Button::new(
                 Column::new()
                     .spacing(5)
-                    .push(h4_bold("Load a wallet from descriptor").color(color::WHITE))
-                    .push(text("Creates a new wallet from the descriptor").color(color::GREY_3)),
+                    .push(h4_bold("Load a wallet from descriptor").style(theme::text::primary))
+                    .push(
+                        text("Creates a new wallet from the descriptor")
+                            .style(theme::text::secondary),
+                    ),
             )
             .padding(15)
             .width(Length::Fill)
@@ -181,8 +183,11 @@ pub fn import_wallet_or_descriptor<'a>(
             Button::new(
                 Column::new()
                     .spacing(5)
-                    .push(h4_bold("Load a wallet from descriptor").color(color::WHITE))
-                    .push(text("Creates a new wallet from the descriptor").color(color::GREY_3)),
+                    .push(h4_bold("Load a wallet from descriptor").style(theme::text::primary))
+                    .push(
+                        text("Creates a new wallet from the descriptor")
+                            .style(theme::text::secondary),
+                    ),
             )
             .padding(15)
             .width(Length::Fill)
@@ -319,7 +324,7 @@ pub fn signer_xpubs<'a>(
                     Row::new().align_y(Alignment::Center).push(
                         Column::new()
                             .push(text("Generate a new mnemonic").bold())
-                            .push(text(BACKUP_WARNING).small().color(color::ORANGE))
+                            .push(text(BACKUP_WARNING).small().style(theme::text::warning))
                             .spacing(5)
                             .width(Length::Fill),
                     ),
@@ -510,7 +515,7 @@ pub fn share_xpubs<'a>(
                 .width(Length::Fill),
             )
             .push_maybe(if hws.is_empty() {
-                Some(p1_regular("No signing device connected").color(color::GREY_3))
+                Some(p1_regular("No signing device connected").style(theme::text::secondary))
             } else {
                 None
             })
@@ -975,16 +980,16 @@ pub fn define_bitcoin_node<'a>(
                         Row::new()
                             .spacing(10)
                             .align_y(Alignment::Center)
-                            .push(icon::circle_check_icon().color(color::GREEN))
-                            .push(text("Connection checked").color(color::GREEN)),
+                            .push(icon::circle_check_icon().style(theme::text::success))
+                            .push(text("Connection checked").style(theme::text::success)),
                     )
                 } else {
                     Container::new(
                         Row::new()
                             .spacing(10)
                             .align_y(Alignment::Center)
-                            .push(icon::circle_cross_icon().color(color::RED))
-                            .push(text("Connection failed").color(color::RED)),
+                            .push(icon::circle_cross_icon().style(theme::text::error))
+                            .push(text("Connection failed").style(theme::text::error)),
                     )
                 }
             })
@@ -1058,7 +1063,7 @@ pub fn define_bitcoind<'a>(
                     is not supported. Insert an IP address bound to the same machine \
                     running Liana (ignore this warning if that's already the case)",
                 )
-                .color(color::ORANGE)
+                .style(theme::text::warning)
                 .size(text::CAPTION_SIZE),
             )
         } else {
@@ -1285,8 +1290,8 @@ pub fn start_internal_bitcoind<'a>(
                     DownloadState::Finished(_) => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(icon::circle_check_icon().color(color::GREEN))
-                        .push(text("Download complete").color(color::GREEN)),
+                        .push(icon::circle_check_icon().style(theme::text::success))
+                        .push(text("Download complete").style(theme::text::success)),
                     DownloadState::Downloading { progress } => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
@@ -1296,8 +1301,8 @@ pub fn start_internal_bitcoind<'a>(
                     DownloadState::Errored(e) => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(icon::circle_cross_icon().color(color::RED))
-                        .push(text(format!("Download failed: '{}'.", e)).color(color::RED)),
+                        .push(icon::circle_cross_icon().style(theme::text::error))
+                        .push(text(format!("Download failed: '{}'.", e)).style(theme::text::error)),
                     _ => Row::new().spacing(10).align_y(Alignment::Center),
                 }
             }))
@@ -1310,20 +1315,26 @@ pub fn start_internal_bitcoind<'a>(
                     InstallState::Finished => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(icon::circle_check_icon().color(color::GREEN))
-                        .push(text("Installation complete").color(color::GREEN)),
+                        .push(icon::circle_check_icon().style(theme::text::success))
+                        .push(text("Installation complete").style(theme::text::success)),
                     InstallState::Errored(e) => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(icon::circle_cross_icon().color(color::RED))
-                        .push(text(format!("Installation failed: '{}'.", e)).color(color::RED)),
+                        .push(icon::circle_cross_icon().style(theme::text::error))
+                        .push(
+                            text(format!("Installation failed: '{}'.", e))
+                                .style(theme::text::error),
+                        ),
                 }
             } else if exe_path.is_some() {
                 Row::new()
                     .spacing(10)
                     .align_y(Alignment::Center)
-                    .push(icon::circle_check_icon().color(color::GREEN))
-                    .push(text("Liana-managed bitcoind already installed").color(color::GREEN))
+                    .push(icon::circle_check_icon().style(theme::text::success))
+                    .push(
+                        text("Liana-managed bitcoind already installed")
+                            .style(theme::text::success),
+                    )
             } else if let Some(DownloadState::Downloading { progress }) = download_state {
                 Row::new()
                     .spacing(10)
@@ -1339,17 +1350,18 @@ pub fn start_internal_bitcoind<'a>(
                             Row::new()
                                 .spacing(10)
                                 .align_y(Alignment::Center)
-                                .push(icon::circle_check_icon().color(color::GREEN))
-                                .push(text("Started").color(color::GREEN)),
+                                .push(icon::circle_check_icon().style(theme::text::success))
+                                .push(text("Started").style(theme::text::success)),
                         )
                     } else {
                         Container::new(
                             Row::new()
                                 .spacing(10)
                                 .align_y(Alignment::Center)
-                                .push(icon::circle_cross_icon().color(color::RED))
+                                .push(icon::circle_cross_icon().style(theme::text::error))
                                 .push(
-                                    text(res.as_ref().err().unwrap().to_string()).color(color::RED),
+                                    text(res.as_ref().err().unwrap().to_string())
+                                        .style(theme::text::error),
                                 ),
                         )
                     }
@@ -1411,8 +1423,8 @@ pub fn install<'a>(
                     Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(icon::circle_check_icon().color(color::GREEN))
-                        .push(text("Installed").color(color::GREEN)),
+                        .push(icon::circle_check_icon().style(theme::text::success))
+                        .push(text("Installed").style(theme::text::success)),
                 )
             } else {
                 Container::new(Space::with_height(Length::Fixed(25.0)))
@@ -1491,7 +1503,7 @@ pub fn defined_sequence<'a>(
                             .spacing(5)
                             .push(
                                 text::p1_regular("Available after inactivity of ~")
-                                    .color(color::GREY_2),
+                                    .style(theme::text::secondary),
                             )
                             .push(
                                 Button::new(
@@ -1530,14 +1542,17 @@ pub fn defined_sequence<'a>(
                 )
             } else {
                 Row::new()
-                    .push(p1_regular("Able to move the funds at any time.").color(color::GREY_2))
+                    .push(
+                        p1_regular("Able to move the funds at any time.")
+                            .style(theme::text::secondary),
+                    )
                     .padding(5)
             })
             .push_maybe(if duplicate_sequence {
                 Some(
                     text("No two recovery options may become available at the very same date.")
                         .small()
-                        .color(color::RED),
+                        .style(theme::text::error),
                 )
             } else {
                 None
@@ -1768,7 +1783,10 @@ pub fn recover_mnemonic<'a>(
                                             .width(Length::Fixed(100.0)),
                                         )
                                         .push_maybe(if *valid {
-                                            Some(icon::circle_check_icon().color(color::GREEN))
+                                            Some(
+                                                icon::circle_check_icon()
+                                                    .style(theme::text::success),
+                                            )
                                         } else {
                                             None
                                         }),
@@ -1776,7 +1794,9 @@ pub fn recover_mnemonic<'a>(
                             },
                         ))
                         .push(Space::with_height(Length::Fixed(50.0)))
-                        .push_maybe(error.map(|e| card::invalid(text(e).color(color::RED)))),
+                        .push_maybe(
+                            error.map(|e| card::invalid(text(e).style(theme::text::error))),
+                        ),
                 )
             } else {
                 None
@@ -1832,14 +1852,16 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                             .spacing(20)
                             .width(Length::FillPortion(1))
                             .push(h3("Use your own node"))
-                            .push(text::p2_medium(LOCAL_WALLET_DESC).color(color::GREY_3)),
+                            .push(text::p2_medium(LOCAL_WALLET_DESC).style(theme::text::secondary)),
                     )
                     .push(
                         Column::new()
                             .spacing(20)
                             .width(Length::FillPortion(1))
                             .push(h3("Use Liana Connect"))
-                            .push(text::p2_medium(REMOTE_BACKEND_DESC).color(color::GREY_3)),
+                            .push(
+                                text::p2_medium(REMOTE_BACKEND_DESC).style(theme::text::secondary),
+                            ),
                     ),
             )
             .push(
@@ -1900,8 +1922,8 @@ pub fn connection_step_enter_email<'a>(
 ) -> Element<'a, Message> {
     Column::new()
         .spacing(20)
-        .push_maybe(connection_error.map(|e| text(e.to_string()).color(color::ORANGE)))
-        .push_maybe(auth_error.map(|e| text(e.to_string()).color(color::ORANGE)))
+        .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
+        .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push(text(
             "Enter the email you want to associate with the wallet:",
         ))
@@ -1934,10 +1956,10 @@ pub fn connection_step_enter_otp<'a>(
 ) -> Element<'a, Message> {
     Column::new()
         .spacing(20)
-        .push(text(email).color(color::GREEN))
+        .push(text(email).style(theme::text::success))
         .push(text("An authentication token has been emailed to you"))
-        .push_maybe(connection_error.map(|e| text(e.to_string()).color(color::ORANGE)))
-        .push_maybe(auth_error.map(|e| text(e.to_string()).color(color::ORANGE)))
+        .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
+        .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push(
             form::Form::new_trimmed("Token", otp, |msg| {
                 Message::SelectBackend(message::SelectBackend::OTPEdited(msg))
@@ -1972,9 +1994,9 @@ pub fn connection_step_connected<'a>(
 ) -> Element<'a, Message> {
     Column::new()
         .spacing(20)
-        .push(text(email).color(color::GREEN))
-        .push_maybe(connection_error.map(|e| text(e.to_string()).color(color::ORANGE)))
-        .push_maybe(auth_error.map(|e| text(e.to_string()).color(color::ORANGE)))
+        .push(text(email).style(theme::text::success))
+        .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
+        .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push(Container::new(
             Row::new()
                 .spacing(10)
@@ -2012,9 +2034,13 @@ fn layout<'a>(
     Container::new(scrollable(
         Column::new()
             .width(Length::Fill)
-            .push(Row::new().push(Space::with_width(Length::Fill)).push_maybe(
-                email.map(|e| Container::new(p1_regular(e).color(color::GREEN)).padding(20)),
-            ))
+            .push(
+                Row::new()
+                    .push(Space::with_width(Length::Fill))
+                    .push_maybe(email.map(|e| {
+                        Container::new(p1_regular(e).style(theme::text::success)).padding(20)
+                    })),
+            )
             .push(Space::with_height(Length::Fixed(100.0)))
             .push(
                 Row::new()

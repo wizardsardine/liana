@@ -5,7 +5,6 @@ pub mod multisig_security_wallet;
 use iced::{Alignment, Length};
 
 use liana_ui::{
-    color,
     component::text::{h3, p2_regular},
     theme,
     widget::*,
@@ -27,7 +26,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                     Column::new()
                         .align_x(Alignment::Start)
                         .push(h3("Simple inheritance"))
-                        .push(p2_regular("Two keys required, one for yourself to spend and another for your heir.").color(color::GREY_2))
+                        .push(p2_regular("Two keys required, one for yourself to spend and another for your heir.").style(theme::text::secondary))
                         .width(Length::Fill)
                 )
                 .padding(15)
@@ -43,7 +42,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                     Column::new()
                         .align_x(Alignment::Start)
                         .push(h3("Expanding multisig"))
-                        .push(p2_regular("Two keys required to spend, with an extra key as a backup.").color(color::GREY_2))
+                        .push(p2_regular("Two keys required to spend, with an extra key as a backup.").style(theme::text::secondary))
                         .width(Length::Fill)
                 )
                 .padding(15)
@@ -59,7 +58,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                     Column::new()
                         .align_x(Alignment::Start)
                         .push(h3("Build your own"))
-                        .push(p2_regular("Create a custom setup that fits all your needs.").color(color::GREY_2))
+                        .push(p2_regular("Create a custom setup that fits all your needs.").style(theme::text::secondary))
                         .width(Length::Fill)
                 )
                 .padding(15)
