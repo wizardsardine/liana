@@ -296,7 +296,7 @@ pub fn edit_key_modal<'a>(
                             })
                             .width(Length::Fill)
                             .on_press(Message::UseHotSigner)
-                            .style(theme::button::container_border),
+                            .style(theme::button::secondary),
                         )
                         .push(if manually_imported_xpub {
                                 card::simple(Column::new()
