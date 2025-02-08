@@ -142,7 +142,7 @@ pub struct SqliteDb {
 }
 
 impl SqliteDb {
-    /// Instanciate an SQLite database either from an existing database file or by creating a fresh
+    /// Instantiate an SQLite database either from an existing database file or by creating a fresh
     /// one.
     /// NOTE: don't forget to apply any migration with `maybe_apply_migration` if necessary.
     pub fn new(
@@ -984,7 +984,7 @@ CREATE TABLE tip (
  * now (and the foreseeable future).
  *
  * The 'timestamp' field is the creation date of the wallet. We guarantee to have seen all
- * information related to our descriptor(s) that occured after this date.
+ * information related to our descriptor(s) that occurred after this date.
  * The optional 'rescan_timestamp' field is a the timestamp we need to rescan the chain
  * for events related to our descriptor(s) from.
  */
@@ -1054,7 +1054,7 @@ CREATE TABLE tip (
  * now (and the foreseeable future).
  *
  * The 'timestamp' field is the creation date of the wallet. We guarantee to have seen all
- * information related to our descriptor(s) that occured after this date.
+ * information related to our descriptor(s) that occurred after this date.
  * The optional 'rescan_timestamp' field is a the timestamp we need to rescan the chain
  * for events related to our descriptor(s) from.
  */
@@ -1140,7 +1140,7 @@ CREATE TABLE tip (
  * now (and the foreseeable future).
  *
  * The 'timestamp' field is the creation date of the wallet. We guarantee to have seen all
- * information related to our descriptor(s) that occured after this date.
+ * information related to our descriptor(s) that occurred after this date.
  * The optional 'rescan_timestamp' field is a the timestamp we need to rescan the chain
  * for events related to our descriptor(s) from.
  */

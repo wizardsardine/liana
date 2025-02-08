@@ -1604,7 +1604,7 @@ mod tests {
             SyncProgress::new(1.0, 1_000, 999).rounded_up_progress(),
             0.9999
         );
-        // approximatively year 2198
+        // approximately year 2198
         assert_eq!(
             SyncProgress::new(1.0, 9999999, 9999998).rounded_up_progress(),
             0.9999

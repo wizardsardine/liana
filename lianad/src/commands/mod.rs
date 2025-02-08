@@ -1045,7 +1045,7 @@ impl DaemonControl {
         Ok(())
     }
 
-    /// list_confirmed_transactions retrieves a limited list of transactions which occured between two given dates.
+    /// list_confirmed_transactions retrieves a limited list of transactions which occurred between two given dates.
     pub fn list_confirmed_transactions(
         &self,
         start: u32,
