@@ -25,7 +25,7 @@ CREATE TABLE tip (
  * now (and the foreseeable future).
  *
  * The 'timestamp' field is the creation date of the wallet. We guarantee to have seen all
- * information related to our descriptor(s) that occured after this date.
+ * information related to our descriptor(s) that occurred after this date.
  * The optional 'rescan_timestamp' field is a the timestamp we need to rescan the chain
  * for events related to our descriptor(s) from.
  */
