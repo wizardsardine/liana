@@ -508,6 +508,7 @@ impl Step for DefineDescriptor {
                         threshold: p.threshold,
                         keys: self.path_keys(p),
                     }),
+                self.paths.len().saturating_sub(1), // subtract 1 for primary path
                 self.valid(),
             ),
         };

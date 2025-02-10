@@ -59,6 +59,7 @@ pub fn custom_template<'a>(
     use_taproot: bool,
     primary_path: Path<'a>,
     recovery_paths: &mut dyn Iterator<Item = Path<'a>>,
+    num_recovery_paths: usize,
     valid: bool,
 ) -> Element<'a, Message> {
     layout(
@@ -144,6 +145,9 @@ pub fn custom_template<'a>(
                                 .iter()
                                 .enumerate()
                                 .map(|(j, recovery_key)| {
+                                    // We cannot delete a key if doing so would remove all recovery paths,
+                                    // i.e. if there is only 1 recovery path and it contains only 1 key.
+                                    let fixed = num_recovery_paths < 2 && p.keys.len() < 2;
                                     if let Some(key) = recovery_key {
                                         defined_key(
                                             &key.name,
@@ -154,14 +158,14 @@ pub fn custom_template<'a>(
                                             } else {
                                                 None
                                             },
-                                            false,
+                                            fixed,
                                         )
                                     } else {
                                         undefined_key(
                                             color::ORANGE,
                                             "Recovery key",
                                             !p.keys[0..j].iter().any(|k| k.is_none()),
-                                            false,
+                                            fixed,
                                         )
                                     }
                                     .map(move |msg| message::DefinePath::Key(j, msg))
