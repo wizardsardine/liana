@@ -62,6 +62,7 @@ pub fn custom_template<'a>(
     num_recovery_paths: usize,
     valid: bool,
 ) -> Element<'a, Message> {
+    let prim_keys_fixed = primary_path.keys.len() < 2; // can only delete a primary key if there are 2 or more
     layout(
         progress,
         None,
@@ -114,14 +115,14 @@ pub fn custom_template<'a>(
                                     } else {
                                         None
                                     },
-                                    i == 0,
+                                    prim_keys_fixed,
                                 )
                             } else {
                                 undefined_key(
                                     color::GREEN,
                                     "Primary key",
                                     !primary_path.keys[0..i].iter().any(|k| k.is_none()),
-                                    i == 0,
+                                    prim_keys_fixed,
                                 )
                             }
                             .map(move |msg| message::DefinePath::Key(i, msg))
