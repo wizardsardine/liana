@@ -3,6 +3,7 @@ use super::{
     editor::Editor,
 };
 use iced::alignment;
+use iced::widget::overlay::menu;
 use iced::widget::text_input::{Catalog, Status, Style, StyleFn, Value};
 
 use iced_core::clipboard::{self, Clipboard};
@@ -27,9 +28,9 @@ use iced_runtime::task::{self, Task};
 use iced_runtime::Action;
 
 #[allow(missing_debug_implementations)]
-pub struct TextInput<'a, Message, Theme = iced::Theme, Renderer = iced::widget::Renderer>
+pub struct TextInput<'a, Message, Theme = crate::theme::Theme, Renderer = iced::widget::Renderer>
 where
-    Theme: Catalog,
+    Theme: Catalog + menu::Catalog,
     Renderer: text::Renderer,
 {
     id: Option<Id>,
@@ -41,12 +42,14 @@ where
     padding: Padding,
     size: Option<Pixels>,
     line_height: text::LineHeight,
+    text_shaping: text::Shaping,
     alignment: alignment::Horizontal,
     on_input: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_paste: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_submit: Option<Message>,
     icon: Option<Icon<Renderer::Font>>,
-    class: Theme::Class<'a>,
+    class: <Theme as Catalog>::Class<'a>,
+    menu_class: <Theme as menu::Catalog>::Class<'a>,
 }
 
 /// The default [`Padding`] of a [`TextInput`].
@@ -55,7 +58,7 @@ pub const DEFAULT_PADDING: Padding = Padding::new(5.0);
 impl<'a, Message, Theme, Renderer> TextInput<'a, Message, Theme, Renderer>
 where
     Message: Clone,
-    Theme: Catalog,
+    Theme: Catalog + iced::widget::overlay::menu::Catalog,
     Renderer: text::Renderer,
 {
     /// Creates a new [`TextInput`] with the given placeholder and
@@ -71,12 +74,14 @@ where
             padding: DEFAULT_PADDING,
             size: None,
             line_height: text::LineHeight::default(),
+            text_shaping: text::Shaping::default(),
             alignment: alignment::Horizontal::Left,
             on_input: None,
             on_paste: None,
             on_submit: None,
             icon: None,
-            class: Theme::default(),
+            class: <Theme as Catalog>::default(),
+            menu_class: <Theme as menu::Catalog>::default(),
         }
     }
 
@@ -186,7 +191,7 @@ where
     #[must_use]
     pub fn style(mut self, style: impl Fn(&Theme, Status) -> Style + 'a) -> Self
     where
-        Theme::Class<'a>: From<StyleFn<'a, Theme>>,
+        <Theme as Catalog>::Class<'a>: From<StyleFn<'a, Theme>>,
     {
         self.class = (Box::new(style) as StyleFn<'a, Theme>).into();
         self
@@ -194,7 +199,7 @@ where
 
     /// Sets the style class of the [`TextInput`].
     #[must_use]
-    pub fn class(mut self, class: impl Into<Theme::Class<'a>>) -> Self {
+    pub fn class(mut self, class: impl Into<<Theme as Catalog>::Class<'a>>) -> Self {
         self.class = class.into();
         self
     }
@@ -327,7 +332,7 @@ where
             Status::Active
         };
 
-        let style = theme.style(&self.class, status);
+        let style = Catalog::style(theme, &self.class, status);
 
         renderer.fill_quad(
             renderer::Quad {
@@ -470,7 +475,7 @@ impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for TextInput<'a, Message, Theme, Renderer>
 where
     Message: Clone,
-    Theme: Catalog,
+    Theme: Catalog + menu::Catalog,
     Renderer: text::Renderer,
 {
     fn tag(&self) -> tree::Tag {
@@ -543,9 +548,30 @@ where
         };
 
         match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
+
+                if state.menu.is_open {
+                    // Event wasn't processed by overlay, so cursor was clicked either outside its
+                    // bounds or on the drop-down, either way we close the overlay.
+                    state.menu.is_open = false;
+
+                    return event::Status::Captured;
+                } else if cursor.is_over(layout.bounds()) {
+                    state.menu.is_open = true;
+                    return event::Status::Captured;
+                } else {
+                    return event::Status::Ignored;
+                }
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
                 let state = state::<Renderer>(tree);
+                // Event wasn't processed by overlay, so cursor was clicked either outside its
+                // bounds or on the drop-down, either way we close the overlay.
+                if state.menu.is_open {
+                    state.menu.is_open = false;
+                }
 
                 let click_position = cursor.position_over(layout.bounds());
 
@@ -1023,13 +1049,115 @@ where
             mouse::Interaction::default()
         }
     }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        translation: Vector,
+    ) -> Option<iced_core::overlay::Element<'b, Message, Theme, Renderer>> {
+        let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
+        let font = self.font.unwrap_or_else(|| renderer.default_font());
+        let text_size = self.size.unwrap_or_else(|| renderer.default_size());
+
+        if state.menu.is_open {
+            let bounds = layout.bounds();
+            let cursor_state = state.cursor.state(&self.value);
+            let grapheme_position = state
+                .value
+                .raw()
+                .grapheme_position(
+                    0,
+                    match cursor_state {
+                        cursor::State::Index(i) => i,
+                        cursor::State::Selection { end, .. } => end,
+                    },
+                )
+                .unwrap_or(Point::ORIGIN);
+
+            let overlay_translate = Vector {
+                x: if grapheme_position.x > bounds.width {
+                    bounds.width
+                } else {
+                    grapheme_position.x
+                },
+                y: 0.0,
+            };
+
+            let mut children_layout = layout.children();
+            let text_bounds = children_layout.next().unwrap().bounds();
+            let selected_text = if let Some((start, end)) = state.cursor.selection(&self.value) {
+                self.value.select(start, end).to_string()
+            } else {
+                String::new()
+            };
+
+            let value = &mut self.value;
+            let line_height = iced_core::text::LineHeight::Absolute(1.0.into());
+            let is_open = &mut state.menu.is_open;
+            let cursor = &mut state.cursor;
+            let state_value = &mut state.value;
+            let on_input = &mut self.on_input;
+            let on_paste = &mut self.on_paste;
+            let menu = super::menu::Menu::new(
+                selected_text,
+                &mut state.menu.menu,
+                &mut state.menu.hovered_option,
+                move |content| {
+                    *is_open = false;
+                    if let Some(content) = content {
+                        let content = Value::new(&content);
+                        let mut editor = Editor::new(value, cursor);
+
+                        editor.paste(content.clone());
+                        let message = if let Some(on_paste) = on_paste {
+                            Some((on_paste)(editor.contents()))
+                        } else {
+                            on_input
+                                .as_ref()
+                                .map(|on_input| (on_input)(editor.contents()))
+                        };
+
+                        *state_value = paragraph::Plain::new(Text {
+                            font,
+                            line_height,
+                            content: &value.to_string(),
+                            bounds: Size::new(f32::INFINITY, text_bounds.height),
+                            size: text_size,
+                            horizontal_alignment: alignment::Horizontal::Left,
+                            vertical_alignment: alignment::Vertical::Top,
+                            shaping: text::Shaping::Advanced,
+                            wrapping: text::Wrapping::default(),
+                        });
+
+                        message
+                    } else {
+                        None
+                    }
+                },
+                &self.menu_class,
+            )
+            .width(100.0)
+            .padding(self.padding)
+            .font(font)
+            .text_shaping(self.text_shaping);
+
+            Some(menu.overlay(
+                layout.position() + translation + overlay_translate,
+                bounds.height,
+            ))
+        } else {
+            None
+        }
+    }
 }
 
 impl<'a, Message, Theme, Renderer> From<TextInput<'a, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
-    Theme: Catalog + 'a,
+    Theme: Catalog + iced::overlay::menu::Catalog + 'a,
     Renderer: text::Renderer + 'a,
 {
     fn from(
@@ -1137,7 +1265,7 @@ pub fn select_all<T>(id: impl Into<Id>) -> Task<T> {
 }
 
 /// The state of a [`TextInput`].
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct State<P: text::Paragraph> {
     value: paragraph::Plain<P>,
     placeholder: paragraph::Plain<P>,
@@ -1149,6 +1277,14 @@ pub struct State<P: text::Paragraph> {
     cursor: Cursor,
     keyboard_modifiers: keyboard::Modifiers,
     // TODO: Add stateful horizontal scrolling offset
+    menu: MenuState,
+}
+
+#[derive(Debug, Default)]
+pub struct MenuState {
+    menu: super::menu::State,
+    is_open: bool,
+    hovered_option: Option<usize>,
 }
 
 fn state<Renderer: text::Renderer>(tree: &mut Tree) -> &mut State<Renderer::Paragraph> {
