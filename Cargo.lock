@@ -3118,6 +3118,9 @@ dependencies = [
  "bitcoin",
  "chrono",
  "iced",
+ "iced_core",
+ "iced_runtime",
+ "unicode-segmentation",
 ]
 
 [[package]]
