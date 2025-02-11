@@ -184,7 +184,7 @@ pub fn custom_template<'a>(
                 Row::new()
                     .push(
                         button::secondary(Some(icon::plus_icon()), "Add recovery option")
-                            .width(Length::Fixed(200.0))
+                            .width(Length::Fixed(210.0))
                             .on_press(Message::DefineDescriptor(
                                 message::DefineDescriptor::AddRecoveryPath,
                             )),
