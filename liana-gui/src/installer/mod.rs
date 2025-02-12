@@ -1,4 +1,5 @@
 mod context;
+mod descriptor;
 mod message;
 mod prompt;
 mod step;
@@ -21,8 +22,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     app::{
-        config as gui_config, settings as gui_settings,
-        settings::{AuthConfig, Settings, SettingsError, WalletSetting},
+        config as gui_config,
+        settings::{self as gui_settings, AuthConfig, Settings, SettingsError, WalletSetting},
         wallet::wallet_name,
     },
     daemon::DaemonError,
@@ -30,11 +31,16 @@ use crate::{
     hw::{HardwareWalletConfig, HardwareWallets},
     lianalite::client::{
         auth::AuthError,
-        backend::{BackendClient, BackendWalletClient},
+        backend::{
+            api::payload::{Provider, ProviderKey},
+            BackendClient, BackendWalletClient,
+        },
     },
+    services,
     signer::Signer,
 };
 
+pub use descriptor::{KeySource, KeySourceKind, PathKind, PathSequence};
 pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, DefineDescriptor,
@@ -498,8 +504,23 @@ pub async fn create_remote_wallet(
 
     info!("Gui configuration file created");
 
+    let pks: Vec<_> = ctx
+        .keys
+        .values()
+        .filter_map(|key| {
+            key.provider_key.as_ref().map(|pk| ProviderKey {
+                fingerprint: key.master_fingerprint.to_string(),
+                uuid: pk.uuid.clone(),
+                token: pk.token.clone(),
+                provider: Provider {
+                    uuid: pk.provider.uuid.clone(),
+                    name: pk.provider.name.clone(),
+                },
+            })
+        })
+        .collect();
     let wallet = remote_backend
-        .create_wallet(&wallet_name(descriptor), descriptor)
+        .create_wallet(&wallet_name(descriptor), descriptor, &pks)
         .await
         .map_err(|e| Error::Unexpected(e.to_string()))?;
 
@@ -515,7 +536,7 @@ pub async fn create_remote_wallet(
     let descriptor_str = descriptor.to_string();
     let aliases = ctx
         .keys
-        .iter()
+        .values()
         .filter_map(|k| {
             if descriptor_str.contains(&k.master_fingerprint.to_string()) {
                 Some((k.master_fingerprint, k.name.to_string()))
@@ -674,7 +695,7 @@ pub async fn extract_local_gui_settings(ctx: &Context) -> Settings {
         wallets: vec![WalletSetting {
             name: wallet_name(descriptor),
             descriptor_checksum,
-            keys: ctx.keys.clone(),
+            keys: ctx.keys.values().cloned().collect(),
             hardware_wallets,
             remote_backend_auth: None,
         }],
@@ -700,6 +721,7 @@ pub enum Error {
     // DaemonError does not implement Clone.
     // TODO: maybe Arc is overkill
     Backend(Arc<DaemonError>),
+    Services(services::Error),
     Settings(SettingsError),
     Bitcoind(String),
     Electrum(String),
@@ -752,6 +774,7 @@ impl std::fmt::Display for Error {
         match self {
             Self::Auth(e) => write!(f, "Authentication error: {}", e),
             Self::Backend(e) => write!(f, "Remote backend error: {}", e),
+            Self::Services(e) => write!(f, "Services error: {}", e),
             Self::Settings(e) => write!(f, "Settings file error: {}", e),
             Self::Bitcoind(e) => write!(f, "Failed to ping bitcoind: {}", e),
             Self::Electrum(e) => write!(f, "Failed to ping Electrum: {}", e),

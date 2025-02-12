@@ -29,8 +29,10 @@ use liana_ui::{
 };
 
 use crate::{
+    app::settings,
     hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
+        descriptor::{Key, PathSequence, PathWarning},
         message::{self, DefineBitcoind, DefineNode, Message},
         prompt,
         step::{DownloadState, InstallState},
@@ -686,7 +688,7 @@ pub fn backup_descriptor<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
     descriptor: &'a LianaDescriptor,
-    keys_aliases: &'a HashMap<Fingerprint, String>,
+    keys: &'a HashMap<Fingerprint, settings::KeySetting>,
     done: bool,
 ) -> Element<'a, Message> {
     layout(
@@ -749,7 +751,7 @@ pub fn backup_descriptor<'a>(
                 .max_width(1500),
             )
             .push(
-                card::simple(display_policy(descriptor.policy(), keys_aliases))
+                card::simple(display_policy(descriptor.policy(), keys))
                     .width(Length::Fill)
                     .max_width(1500),
             )
@@ -772,7 +774,7 @@ pub fn backup_descriptor<'a>(
 
 fn display_policy(
     policy: LianaPolicy,
-    keys_aliases: &HashMap<Fingerprint, String>,
+    keys: &HashMap<Fingerprint, settings::KeySetting>,
 ) -> Element<'_, Message> {
     let (primary_threshold, primary_keys) = policy.primary_path().thresh_origins();
     // The iteration over an HashMap keys can have a different order at each refresh
@@ -800,10 +802,10 @@ fn display_policy(
                     .iter()
                     .enumerate()
                     .fold(Row::new().spacing(5), |row, (i, k)| {
-                        let content = if let Some(alias) = keys_aliases.get(k) {
+                        let content = if let Some(key) = keys.get(k) {
                             Container::new(
                                 iced_tooltip::Tooltip::new(
-                                    text(alias).bold(),
+                                    text(key.name.clone()).bold(),
                                     text(k.to_string()),
                                     iced_tooltip::Position::Bottom,
                                 )
@@ -847,10 +849,10 @@ fn display_policy(
                 .push(recovery_keys.iter().enumerate().fold(
                     Row::new().spacing(5),
                     |row, (i, k)| {
-                        let content = if let Some(alias) = keys_aliases.get(k) {
+                        let content = if let Some(key) = keys.get(k) {
                             Container::new(
                                 iced_tooltip::Tooltip::new(
-                                    text(alias).bold(),
+                                    text(key.name.clone()).bold(),
                                     text(k.to_string()),
                                     iced_tooltip::Position::Bottom,
                                 )
@@ -877,7 +879,18 @@ fn display_policy(
                     ))
                     .bold(),
                 )
-                .push(text(format!("(Recovery path #{})", i + 1))),
+                .push(text(
+                    // If max timelock and all keys are from provider, then it's a safety net path.
+                    if *sequence == u16::MAX
+                        && recovery_keys
+                            .iter()
+                            .all(|fg| keys.get(fg).is_some_and(|k| k.provider_key.is_some()))
+                    {
+                        "(Safety Net path)".to_string()
+                    } else {
+                        format!("(Recovery path #{})", i + 1)
+                    },
+                )),
         );
     }
     Column::new()
@@ -1488,15 +1501,38 @@ pub fn defined_threshold<'a>(
 }
 
 pub fn defined_sequence<'a>(
-    sequence: u16,
-    duplicate_sequence: bool,
+    sequence: PathSequence,
+    warning: Option<PathWarning>,
 ) -> Element<'a, message::DefinePath> {
-    let (n_years, n_months, n_days, n_hours, n_minutes) = duration_from_sequence(sequence);
+    let (n_years, n_months, n_days, n_hours, n_minutes) = duration_from_sequence(sequence.as_u16());
+    let duration_row = Row::new()
+        .padding(5)
+        .spacing(5)
+        .align_y(Alignment::Center)
+        .push(text(
+            [
+                (n_years, "y"),
+                (n_months, "m"),
+                (n_days, "d"),
+                (n_hours, "h"),
+                (n_minutes, "mn"),
+            ]
+            .iter()
+            .filter_map(|(n, unit)| {
+                if *n > 0 {
+                    Some(format!("{}{}", n, unit))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<String>>()
+            .join(" "),
+        ));
     Container::new(
         Column::new()
             .spacing(5)
-            .push(if sequence != 0 {
-                Row::new().align_y(Alignment::Center).push(
+            .push(match sequence {
+                PathSequence::Recovery(_) => Row::new().align_y(Alignment::Center).push(
                     Container::new(
                         Row::new()
                             .align_y(Alignment::Center)
@@ -1506,57 +1542,38 @@ pub fn defined_sequence<'a>(
                                     .style(theme::text::secondary),
                             )
                             .push(
-                                Button::new(
-                                    Row::new()
-                                        .padding(5)
-                                        .spacing(5)
-                                        .align_y(Alignment::Center)
-                                        .push(text(
-                                            [
-                                                (n_years, "y"),
-                                                (n_months, "m"),
-                                                (n_days, "d"),
-                                                (n_hours, "h"),
-                                                (n_minutes, "mn"),
-                                            ]
-                                            .iter()
-                                            .filter_map(|(n, unit)| {
-                                                if *n > 0 {
-                                                    Some(format!("{}{}", n, unit))
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                            .collect::<Vec<String>>()
-                                            .join(" "),
-                                        ))
-                                        .push(icon::pencil_icon()),
-                                )
-                                .style(theme::button::secondary)
-                                .on_press(message::DefinePath::EditSequence),
+                                Button::new(duration_row.push(icon::pencil_icon()))
+                                    .style(theme::button::secondary)
+                                    .on_press(message::DefinePath::EditSequence),
                             ),
                     )
                     .width(Length::Fill)
                     .padding(5)
                     .align_y(alignment::Vertical::Center),
-                )
-            } else {
-                Row::new()
+                ),
+                PathSequence::Primary => Row::new()
                     .push(
                         p1_regular("Able to move the funds at any time.")
                             .style(theme::text::secondary),
                     )
+                    .padding(5),
+                PathSequence::SafetyNet => Row::new().align_y(Alignment::Center).push(
+                    Container::new(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .spacing(5)
+                            .push(
+                                text::p1_regular("Available after inactivity of ~")
+                                    .style(theme::text::secondary),
+                            )
+                            .push(duration_row),
+                    )
+                    .width(Length::Fill)
                     .padding(5)
+                    .align_y(alignment::Vertical::Center),
+                ),
             })
-            .push_maybe(if duplicate_sequence {
-                Some(
-                    text("No two recovery options may become available at the very same date.")
-                        .small()
-                        .style(theme::text::error),
-                )
-            } else {
-                None
-            })
+            .push_maybe(warning.map(|w| text(w.message()).small().style(theme::text::error)))
             .spacing(15),
     )
     .padding(5)
@@ -1682,6 +1699,33 @@ pub fn key_list_view<'a>(
     .on_press(Message::DefineDescriptor(
         message::DefineDescriptor::KeyModal(message::ImportKeyModal::SelectKey(i)),
     ))
+    .into()
+}
+
+pub fn provider_key_list_view(i: Option<usize>, key: &Key, chosen: bool) -> Element<'_, Message> {
+    // If `i.is_some()`, it means this key is in our list of (saved) keys and can be selected.
+    let key_kind = key
+        .source
+        .provider_key_kind()
+        .expect("has kind")
+        .to_string();
+    let token = key.source.token().expect("has token");
+    Button::new(if i.is_some() {
+        if chosen {
+            hw::selected_provider_key(key.fingerprint, key.name.clone(), key_kind, token)
+        } else {
+            hw::unselected_provider_key(key.fingerprint, key.name.clone(), key_kind, token)
+        }
+    } else {
+        hw::unsaved_provider_key(key.fingerprint, key_kind, token)
+    })
+    .style(theme::button::secondary)
+    .width(Length::Fill)
+    .on_press_maybe(i.map(|i| {
+        Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
+            message::ImportKeyModal::SelectKey(i),
+        ))
+    }))
     .into()
 }
 

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use iced::{
@@ -27,6 +27,7 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
+        settings::ProviderKey,
         view::{hw, warning::warn},
     },
     hw::HardwareWallet,
@@ -849,6 +850,7 @@ pub fn wallet_settings<'a>(
     warning: Option<&Error>,
     descriptor: &'a LianaDescriptor,
     keys_aliases: &'a [(Fingerprint, form::Value<String>)],
+    provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
     processing: bool,
     updated: bool,
 ) -> Element<'a, Message> {
@@ -943,16 +945,22 @@ pub fn wallet_settings<'a>(
             .push(header)
             .push(descr)
             .push(
-                card::simple(display_policy(descriptor.policy(), keys_aliases)).width(Length::Fill),
+                card::simple(display_policy(
+                    descriptor.policy(),
+                    keys_aliases,
+                    provider_keys,
+                ))
+                .width(Length::Fill),
             )
             .push(aliases),
     )
 }
 
-fn display_policy(
+fn display_policy<'a>(
     policy: LianaPolicy,
-    keys_aliases: &[(Fingerprint, form::Value<String>)],
-) -> Element<'_, Message> {
+    keys_aliases: &'a [(Fingerprint, form::Value<String>)],
+    provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
+) -> Element<'a, Message> {
     let (primary_threshold, primary_keys) = policy.primary_path().thresh_origins();
     let recovery_paths = policy.recovery_paths();
 
@@ -1068,7 +1076,18 @@ fn display_policy(
                     ))
                     .bold(),
                 )
-                .push(text(format!("(Recovery path #{})", i + 1))),
+                .push(text(
+                    // If max timelock and all keys are from provider, then it's a safety net path.
+                    if *sequence == u16::MAX
+                        && recovery_keys
+                            .iter()
+                            .all(|fg| provider_keys.contains_key(fg))
+                    {
+                        "(Safety Net path)".to_string()
+                    } else {
+                        format!("(Recovery path #{})", i + 1)
+                    },
+                )),
         );
     }
     Column::new()

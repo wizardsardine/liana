@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,7 +57,7 @@ pub struct Context {
     pub bitcoin_backend: Option<BitcoinBackend>,
     pub descriptor_template: DescriptorTemplate,
     pub descriptor: Option<LianaDescriptor>,
-    pub keys: Vec<KeySetting>,
+    pub keys: HashMap<bitcoin::bip32::Fingerprint, KeySetting>,
     pub hws: Vec<(DeviceKind, bitcoin::bip32::Fingerprint, Option<[u8; 32]>)>,
     pub data_dir: PathBuf,
     pub network: bitcoin::Network,
@@ -83,7 +84,7 @@ impl Context {
                 poll_interval_secs: Duration::from_secs(30),
             },
             hws: Vec::new(),
-            keys: Vec::new(),
+            keys: HashMap::new(),
             bitcoin_backend: None,
             descriptor: None,
             data_dir,

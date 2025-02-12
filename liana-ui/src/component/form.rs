@@ -93,6 +93,12 @@ where
         self
     }
 
+    /// Sets the [`Form`] with a warning message
+    pub fn maybe_warning(mut self, warning: Option<&'a str>) -> Self {
+        self.warning = warning;
+        self
+    }
+
     /// Sets the padding of the [`Form`].
     pub fn padding(mut self, units: u16) -> Self {
         self.input = self.input.padding(units);

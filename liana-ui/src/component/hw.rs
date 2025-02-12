@@ -496,3 +496,82 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
     )
     .padding(10)
 }
+
+pub fn selected_provider_key<'a, T: 'a, F: Display>(
+    fingerprint: F,
+    alias: impl Into<Cow<'a, str>> + Display,
+    key_kind: impl Into<Cow<'a, str>> + Display,
+    token: impl Into<Cow<'a, str>> + Display,
+) -> Container<'a, T> {
+    container(
+        row(vec![
+            column(vec![
+                Row::new()
+                    .spacing(5)
+                    .push(text::p1_bold(alias))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .into(),
+                Row::new()
+                    .spacing(5)
+                    .push(text::caption(format!("{key_kind} ({token})")))
+                    .into(),
+            ])
+            .width(Length::Fill)
+            .into(),
+            image::success_mark_icon().width(Length::Fixed(50.0)).into(),
+        ])
+        .align_y(Alignment::Center),
+    )
+    .padding(10)
+}
+
+pub fn unselected_provider_key<'a, T: 'a, F: Display>(
+    fingerprint: F,
+    alias: impl Into<Cow<'a, str>> + Display,
+    key_kind: impl Into<Cow<'a, str>> + Display,
+    token: impl Into<Cow<'a, str>> + Display,
+) -> Container<'a, T> {
+    container(
+        row(vec![column(vec![
+            Row::new()
+                .spacing(5)
+                .push(text::p1_bold(alias))
+                .push(text::p1_regular(format!("#{}", fingerprint)))
+                .into(),
+            Row::new()
+                .spacing(5)
+                .push(text::caption(format!("{key_kind} ({token})")))
+                .into(),
+        ])
+        .width(Length::Fill)
+        .into()])
+        .align_y(Alignment::Center),
+    )
+    .padding(10)
+}
+
+pub fn unsaved_provider_key<'a, T: 'a, F: Display>(
+    fingerprint: F,
+    key_kind: impl Into<Cow<'a, str>> + Display,
+    token: impl Into<Cow<'a, str>> + Display,
+) -> Container<'a, T> {
+    container(
+        row(vec![
+            column(vec![
+                Row::new()
+                    .spacing(5)
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .into(),
+                Row::new()
+                    .spacing(5)
+                    .push(text::caption(format!("{key_kind} ({token})")))
+                    .into(),
+            ])
+            .width(Length::Fill)
+            .into(),
+            image::success_mark_icon().width(Length::Fixed(50.0)).into(), // it must be selected if unsaved
+        ])
+        .align_y(Alignment::Center),
+    )
+    .padding(10)
+}
