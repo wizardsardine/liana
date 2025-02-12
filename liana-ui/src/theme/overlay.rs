@@ -1,5 +1,6 @@
+pub use iced::widget::overlay::menu::Catalog;
 use iced::{
-    widget::overlay::menu::{Catalog, Style, StyleFn},
+    widget::overlay::menu::{Style, StyleFn},
     Border,
 };
 
