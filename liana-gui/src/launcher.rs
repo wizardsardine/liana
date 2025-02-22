@@ -23,8 +23,22 @@ const NETWORKS: [Network; 4] = [
     Network::Regtest,
 ];
 
+// ===================
+// ~~~~~~ STATE ~~~~~~
+// ===================
+pub struct Launcher {
+    state: WalletState,
+    network: Network,
+    datadir_path: PathBuf,
+    error: Option<String>,
+    delete_wallet_modal: Option<DeleteWalletModal>,
+}
+
+// ===================
+// ~~~~ SUB STATE ~~~~
+// ===================
 #[derive(Debug, Clone)]
-pub enum State {
+pub enum WalletState {
     Unchecked,
     Wallet {
         name: Option<String>,
@@ -34,14 +48,9 @@ pub enum State {
     NoWallet,
 }
 
-pub struct Launcher {
-    state: State,
-    network: Network,
-    datadir_path: PathBuf,
-    error: Option<String>,
-    delete_wallet_modal: Option<DeleteWalletModal>,
-}
-
+// ===================
+// ~~~ STATE CTOR ~~~~
+// ===================
 impl Launcher {
     pub fn new(datadir_path: PathBuf, network: Option<Network>) -> (Self, Task<Message>) {
         let network = network.unwrap_or(
@@ -53,7 +62,7 @@ impl Launcher {
         );
         (
             Self {
-                state: State::Unchecked,
+                state: WalletState::Unchecked,
                 network,
                 datadir_path: datadir_path.clone(),
                 error: None,
@@ -65,66 +74,118 @@ impl Launcher {
             ),
         )
     }
+}
 
+// ===================
+// ~~~~~ UPDATE ~~~~~~
+// ===================
+impl Launcher {
     pub fn stop(&mut self) {}
 
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> {
-        match message {
-            Message::View(ViewMessage::ImportWallet) => {
-                let datadir_path = self.datadir_path.clone();
-                let network = self.network;
-                Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::AddWallet)
-                })
+    fn do_import_wallet(&mut self) -> Task<Message> {
+        let datadir_path = self.datadir_path.clone();
+        let network = self.network;
+        Task::perform(async move { (datadir_path, network) }, |(d, n)| {
+            Message::Install(d, n, UserFlow::AddWallet)
+        })
+    }
+
+    fn do_create_wallet(&mut self) -> Task<Message> {
+        let datadir_path = self.datadir_path.clone();
+        let network = self.network;
+        Task::perform(async move { (datadir_path, network) }, |(d, n)| {
+            Message::Install(d, n, UserFlow::CreateWallet)
+        })
+    }
+
+    fn do_share_xpubs(&mut self) -> Task<Message> {
+        let datadir_path = self.datadir_path.clone();
+        let network = self.network;
+        Task::perform(async move { (datadir_path, network) }, |(d, n)| {
+            Message::Install(d, n, UserFlow::ShareXpubs)
+        })
+    }
+
+    fn do_delete_wallet(&mut self) -> Task<Message> {
+        let wallet_datadir = self.datadir_path.join(self.network.to_string());
+        let config_path = wallet_datadir.join(app::config::DEFAULT_FILE_NAME);
+        let internal_bitcoind = if let Ok(cfg) = app::Config::from_file(&config_path) {
+            Some(cfg.start_internal_bitcoind)
+        } else {
+            None
+        };
+        self.delete_wallet_modal = Some(DeleteWalletModal::new(
+            self.network,
+            wallet_datadir,
+            internal_bitcoind,
+        ));
+        Task::none()
+    }
+
+    fn do_select_network(&mut self, network: Network) -> Task<Message> {
+        self.network = network;
+        Task::perform(
+            check_network_datadir(self.datadir_path.clone(), self.network),
+            Message::Checked,
+        )
+    }
+
+    fn do_run(&mut self) -> Task<Message> {
+        if matches!(self.state, WalletState::Wallet { .. }) {
+            let datadir_path = self.datadir_path.clone();
+            let mut path = self.datadir_path.clone();
+            path.push(self.network.to_string());
+            path.push(app::config::DEFAULT_FILE_NAME);
+            let cfg = app::Config::from_file(&path).expect("Already checked");
+            let network = self.network;
+            Task::perform(async move { (datadir_path.clone(), cfg, network) }, |m| {
+                Message::Run(m.0, m.1, m.2)
+            })
+        } else {
+            Task::none()
+        }
+    }
+
+    fn view_update(&mut self, view_message: ViewMessage) -> Option<Task<Message>> {
+        match view_message {
+            ViewMessage::ImportWallet => Some(self.do_import_wallet()),
+            ViewMessage::CreateWallet => Some(self.do_create_wallet()),
+            ViewMessage::ShareXpubs => Some(self.do_share_xpubs()),
+            ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal) => {
+                Some(self.do_delete_wallet())
             }
-            Message::View(ViewMessage::CreateWallet) => {
-                let datadir_path = self.datadir_path.clone();
-                let network = self.network;
-                Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::CreateWallet)
-                })
+            ViewMessage::SelectNetwork(network) => Some(self.do_select_network(network)),
+            ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted) => {
+                self.state = WalletState::NoWallet;
+                Some(Task::none())
             }
-            Message::View(ViewMessage::ShareXpubs) => {
-                let datadir_path = self.datadir_path.clone();
-                let network = self.network;
-                Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::ShareXpubs)
-                })
-            }
-            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal)) => {
-                let wallet_datadir = self.datadir_path.join(self.network.to_string());
-                let config_path = wallet_datadir.join(app::config::DEFAULT_FILE_NAME);
-                let internal_bitcoind = if let Ok(cfg) = app::Config::from_file(&config_path) {
-                    Some(cfg.start_internal_bitcoind)
-                } else {
-                    None
-                };
-                self.delete_wallet_modal = Some(DeleteWalletModal::new(
-                    self.network,
-                    wallet_datadir,
-                    internal_bitcoind,
-                ));
-                Task::none()
-            }
-            Message::View(ViewMessage::SelectNetwork(network)) => {
-                self.network = network;
-                Task::perform(
-                    check_network_datadir(self.datadir_path.clone(), self.network),
-                    Message::Checked,
-                )
-            }
-            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted)) => {
-                self.state = State::NoWallet;
-                Task::none()
-            }
-            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::CloseModal)) => {
+            ViewMessage::DeleteWallet(DeleteWalletMessage::CloseModal) => {
                 self.delete_wallet_modal = None;
-                Task::none()
+                Some(Task::none())
             }
+            ViewMessage::Run => Some(self.do_run()),
+            ViewMessage::Check | ViewMessage::StartInstall(_) | ViewMessage::DeleteWallet(_) => {
+                None
+            }
+        }
+    }
+
+    fn default_update(&mut self, message: &Message) -> Task<Message> {
+        if let Some(modal) = &mut self.delete_wallet_modal {
+            return modal.update(message.clone());
+        }
+        Task::none()
+    }
+
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message.clone() {
+            Message::View(view_message) => self
+                .view_update(view_message)
+                .unwrap_or(self.default_update(&message)),
             Message::Checked(res) => match res {
                 Err(e) => {
                     self.error = Some(e);
@@ -135,196 +196,159 @@ impl Launcher {
                     Task::none()
                 }
             },
-            Message::View(ViewMessage::Run) => {
-                if matches!(self.state, State::Wallet { .. }) {
-                    let datadir_path = self.datadir_path.clone();
-                    let mut path = self.datadir_path.clone();
-                    path.push(self.network.to_string());
-                    path.push(app::config::DEFAULT_FILE_NAME);
-                    let cfg = app::Config::from_file(&path).expect("Already checked");
-                    let network = self.network;
-                    Task::perform(async move { (datadir_path.clone(), cfg, network) }, |m| {
-                        Message::Run(m.0, m.1, m.2)
-                    })
-                } else {
-                    Task::none()
-                }
-            }
-            _ => {
-                if let Some(modal) = &mut self.delete_wallet_modal {
-                    return modal.update(message);
-                }
-                Task::none()
-            }
+            Message::Install(..) | Message::Run(..) => self.default_update(&message),
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
-        let content = Into::<Element<ViewMessage>>::into(scrollable(
-            Column::new()
-                .push(
-                    Row::new()
-                        .spacing(20)
-                        .push(
-                            Container::new(image::liana_brand_grey().width(Length::Fixed(200.0)))
-                                .width(Length::Fill),
-                        )
-                        .push(
-                            button::secondary(None, "Share Xpubs")
-                                .on_press(ViewMessage::ShareXpubs),
-                        )
-                        .push(
-                            pick_list(
-                                &NETWORKS[..],
-                                Some(self.network),
-                                ViewMessage::SelectNetwork,
-                            )
-                            .style(theme::pick_list::primary)
-                            .padding(10),
-                        )
-                        .align_y(Alignment::Center)
-                        .padding(100),
-                )
+    fn view_wallet(
+        &self,
+        email: &Option<String>,
+        checksum: &Option<String>,
+    ) -> Column<ViewMessage> {
+        Column::new().push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .spacing(20)
                 .push(
                     Container::new(
-                        Column::new()
-                            .align_x(Alignment::Center)
-                            .spacing(30)
-                            .push(if matches!(self.state, State::Wallet { .. }) {
-                                text("Welcome back").size(50).bold()
-                            } else {
-                                text("Welcome").size(50).bold()
-                            })
-                            .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
-                            .push(match &self.state {
-                                State::Unchecked => Column::new(),
-                                State::Wallet {
-                                    email, checksum, ..
-                                } => Column::new().push(
+                        Button::new(
+                            Column::new()
+                                .push(p1_bold(format!(
+                                    "My Liana {} wallet",
+                                    match self.network {
+                                        Network::Bitcoin => "Bitcoin",
+                                        Network::Signet => "Signet",
+                                        Network::Testnet => "Testnet",
+                                        Network::Regtest => "Regtest",
+                                        _ => "",
+                                    }
+                                )))
+                                .push_maybe(checksum.as_ref().map(|checksum| {
+                                    p1_regular(format!("Liana-{}", checksum))
+                                        .style(theme::text::secondary)
+                                }))
+                                .push_maybe(email.as_ref().map(|email| {
                                     Row::new()
-                                        .align_y(Alignment::Center)
-                                        .spacing(20)
-                                        .push(
-                                            Container::new(
-                                                Button::new(
-                                                    Column::new()
-                                                        .push(p1_bold(format!(
-                                                            "My Liana {} wallet",
-                                                            match self.network {
-                                                                Network::Bitcoin => "Bitcoin",
-                                                                Network::Signet => "Signet",
-                                                                Network::Testnet => "Testnet",
-                                                                Network::Regtest => "Regtest",
-                                                                _ => "",
-                                                            }
-                                                        )))
-                                                        .push_maybe(checksum.as_ref().map(
-                                                            |checksum| {
-                                                                p1_regular(format!(
-                                                                    "Liana-{}",
-                                                                    checksum
-                                                                ))
-                                                                .style(theme::text::secondary)
-                                                            },
-                                                        ))
-                                                        .push_maybe(email.as_ref().map(|email| {
-                                                            Row::new()
-                                                                .push(Space::with_width(
-                                                                    Length::Fill,
-                                                                ))
-                                                                .push(
-                                                                    p1_regular(email).style(
-                                                                        theme::text::secondary,
-                                                                    ),
-                                                                )
-                                                        })),
-                                                )
-                                                .on_press(ViewMessage::Run)
-                                                .padding(15)
-                                                .style(theme::button::container_border)
-                                                .width(Length::Fill),
-                                            )
-                                            .style(theme::card::simple),
-                                        )
-                                        .push(
-                                            Button::new(icon::trash_icon())
-                                                .style(theme::button::secondary)
-                                                .padding(10)
-                                                .on_press(ViewMessage::DeleteWallet(
-                                                    DeleteWalletMessage::ShowModal,
-                                                )),
-                                        ),
-                                ),
-                                State::NoWallet => Column::new()
-                                    .push(
-                                        Row::new()
-                                            .align_y(Alignment::End)
-                                            .spacing(20)
-                                            .push(
-                                                Container::new(
-                                                    Column::new()
-                                                        .spacing(20)
-                                                        .align_x(Alignment::Center)
-                                                        .push(
-                                                            image::create_new_wallet_icon()
-                                                                .width(Length::Fixed(100.0)),
-                                                        )
-                                                        .push(
-                                                            p1_regular("Create a new Liana wallet")
-                                                                .style(theme::text::secondary),
-                                                        )
-                                                        .push(
-                                                            button::secondary(None, "Select")
-                                                                .width(Length::Fixed(200.0))
-                                                                .on_press(
-                                                                    ViewMessage::CreateWallet,
-                                                                ),
-                                                        )
-                                                        .align_x(Alignment::Center),
-                                                )
-                                                .padding(20),
-                                            )
-                                            .push(
-                                                Container::new(
-                                                    Column::new()
-                                                        .spacing(20)
-                                                        .align_x(Alignment::Center)
-                                                        .push(
-                                                            image::restore_wallet_icon()
-                                                                .width(Length::Fixed(100.0)),
-                                                        )
-                                                        .push(
-                                                            p1_regular(
-                                                                "Add an existing Liana wallet",
-                                                            )
-                                                            .style(theme::text::secondary),
-                                                        )
-                                                        .push(
-                                                            button::secondary(None, "Select")
-                                                                .width(Length::Fixed(200.0))
-                                                                .on_press(
-                                                                    ViewMessage::ImportWallet,
-                                                                ),
-                                                        )
-                                                        .align_x(Alignment::Center),
-                                                )
-                                                .padding(20),
-                                            ),
-                                    )
-                                    .align_x(Alignment::Center),
-                            })
-                            .max_width(500),
+                                        .push(Space::with_width(Length::Fill))
+                                        .push(p1_regular(email).style(theme::text::secondary))
+                                })),
+                        )
+                        .on_press(ViewMessage::Run)
+                        .padding(15)
+                        .style(theme::button::container_border)
+                        .width(Length::Fill),
                     )
-                    .center_x(Length::Fill),
+                    .style(theme::card::simple),
                 )
-                .push(Space::with_height(Length::Fixed(100.0))),
-        ))
-        .map(Message::View);
-        let content = if self.network != Network::Bitcoin {
+                .push(
+                    Button::new(icon::trash_icon())
+                        .style(theme::button::secondary)
+                        .padding(10)
+                        .on_press(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal)),
+                ),
+        )
+    }
+
+    fn view_no_wallet(&self) -> Column<ViewMessage> {
+        Column::new()
+            .push(
+                Row::new()
+                    .align_y(Alignment::End)
+                    .spacing(20)
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .align_x(Alignment::Center)
+                                .push(image::create_new_wallet_icon().width(Length::Fixed(100.0)))
+                                .push(
+                                    p1_regular("Create a new Liana wallet")
+                                        .style(theme::text::secondary),
+                                )
+                                .push(
+                                    button::secondary(None, "Select")
+                                        .width(Length::Fixed(200.0))
+                                        .on_press(ViewMessage::CreateWallet),
+                                )
+                                .align_x(Alignment::Center),
+                        )
+                        .padding(20),
+                    )
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .align_x(Alignment::Center)
+                                .push(image::restore_wallet_icon().width(Length::Fixed(100.0)))
+                                .push(
+                                    p1_regular("Add an existing Liana wallet")
+                                        .style(theme::text::secondary),
+                                )
+                                .push(
+                                    button::secondary(None, "Select")
+                                        .width(Length::Fixed(200.0))
+                                        .on_press(ViewMessage::ImportWallet),
+                                )
+                                .align_x(Alignment::Center),
+                        )
+                        .padding(20),
+                    ),
+            )
+            .align_x(Alignment::Center)
+    }
+
+    fn view_navigation_bar(&self) -> Row<ViewMessage> {
+        Row::new()
+            .spacing(20)
+            .push(
+                Container::new(image::liana_brand_grey().width(Length::Fixed(200.0)))
+                    .width(Length::Fill),
+            )
+            .push(button::secondary(None, "Share Xpubs").on_press(ViewMessage::ShareXpubs))
+            .push(
+                pick_list(
+                    &NETWORKS[..],
+                    Some(self.network),
+                    ViewMessage::SelectNetwork,
+                )
+                .style(theme::pick_list::primary)
+                .padding(10),
+            )
+            .align_y(Alignment::Center)
+            .padding(100)
+    }
+
+    fn view_body(&self) -> Container<ViewMessage> {
+        Container::new(
+            Column::new()
+                .align_x(Alignment::Center)
+                .spacing(30)
+                .push(if matches!(self.state, WalletState::Wallet { .. }) {
+                    text("Welcome back").size(50).bold()
+                } else {
+                    text("Welcome").size(50).bold()
+                })
+                .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
+                .push(match &self.state {
+                    WalletState::Unchecked => Column::new(),
+                    WalletState::Wallet {
+                        email, checksum, ..
+                    } => self.view_wallet(email, checksum),
+                    WalletState::NoWallet => self.view_no_wallet(),
+                })
+                .max_width(500),
+        )
+    }
+
+    fn with_children<'a>(&'a self, content: Element<'a, Message>) -> Element<'a, Message> {
+        if self.network != Network::Bitcoin {
             Column::with_children(vec![network_banner(self.network).into(), content]).into()
         } else {
             content
-        };
+        }
+    }
+
+    fn with_modal<'a>(&'a self, content: Element<'a, Message>) -> Element<'a, Message> {
         if let Some(modal) = &self.delete_wallet_modal {
             Modal::new(Container::new(content).height(Length::Fill), modal.view())
                 .on_blur(Some(Message::View(ViewMessage::DeleteWallet(
@@ -335,13 +359,24 @@ impl Launcher {
             content
         }
     }
+
+    pub fn view(&self) -> Element<Message> {
+        let content = Into::<Element<ViewMessage>>::into(scrollable(
+            Column::new()
+                .push(self.view_navigation_bar())
+                .push(self.view_body().center_x(Length::Fill))
+                .push(Space::with_height(Length::Fixed(100.0))),
+        ))
+        .map(Message::View);
+        self.with_modal(self.with_children(content))
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     View(ViewMessage),
     Install(PathBuf, Network, UserFlow),
-    Checked(Result<State, String>),
+    Checked(Result<WalletState, String>),
     Run(PathBuf, app::config::Config, Network),
 }
 
@@ -459,7 +494,7 @@ impl DeleteWalletModal {
     }
 }
 
-async fn check_network_datadir(path: PathBuf, network: Network) -> Result<State, String> {
+async fn check_network_datadir(path: PathBuf, network: Network) -> Result<WalletState, String> {
     let mut config_path = path.clone();
     config_path.push(network.to_string());
     config_path.push(app::config::DEFAULT_FILE_NAME);
@@ -468,7 +503,7 @@ async fn check_network_datadir(path: PathBuf, network: Network) -> Result<State,
         Ok(cfg) => cfg,
         Err(e) => {
             if e == app::config::ConfigError::NotFound {
-                return Ok(State::NoWallet);
+                return Ok(WalletState::NoWallet);
             } else {
                 return Err(format!(
                     "Failed to read GUI configuration file in the directory: {}",
@@ -511,14 +546,14 @@ async fn check_network_datadir(path: PathBuf, network: Network) -> Result<State,
 
     if let Ok(settings) = app::settings::Settings::from_file(path, network) {
         if let Some(wallet) = settings.wallets.first().cloned() {
-            return Ok(State::Wallet {
+            return Ok(WalletState::Wallet {
                 name: Some(wallet.name),
                 checksum: Some(wallet.descriptor_checksum),
                 email: wallet.remote_backend_auth.map(|auth| auth.email),
             });
         }
     }
-    Ok(State::Wallet {
+    Ok(WalletState::Wallet {
         name: None,
         checksum: None,
         email: None,
