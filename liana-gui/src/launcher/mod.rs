@@ -28,6 +28,7 @@ pub(super) mod prelude {
 mod launcher_update;
 mod launcher_view;
 
+#[allow(clippy::module_inception)]
 pub mod launcher {
     pub use super::launcher_update::*;
     pub(super) use super::prelude::*;
