@@ -155,26 +155,26 @@ impl Launcher {
     }
 
     fn do_run(&mut self) -> Task<Message> {
-        if matches!(self.state, WalletState::Wallet { .. }) {
-            let datadir_path = self.datadir_path.clone();
-            let mut path = self.datadir_path.clone();
-            path.push(self.network.to_string());
-            path.push(app::config::DEFAULT_FILE_NAME);
-            let cfg = app::Config::from_file(&path).expect("Already checked");
-            let network = self.network;
-            Task::perform(async move { (datadir_path.clone(), cfg, network) }, |m| {
-                Message::Run(m.0, m.1, m.2)
-            })
-        } else {
-            Task::none()
+        match self.state {
+            WalletState::NoWallet | WalletState::Unchecked => return Task::none(),
+            WalletState::Wallet { .. } => {}
         }
+        let datadir_path = self.datadir_path.clone();
+        let mut path = self.datadir_path.clone();
+        path.push(self.network.to_string());
+        path.push(app::config::DEFAULT_FILE_NAME);
+        let cfg = app::Config::from_file(&path).expect("Already checked");
+        let network = self.network;
+        Task::perform(async move { (datadir_path.clone(), cfg, network) }, |m| {
+            Message::Run(m.0, m.1, m.2)
+        })
     }
 
     fn default_update(&mut self, message: &Message) -> Task<Message> {
-        if let Some(modal) = &mut self.delete_wallet_modal {
-            return modal.update(message.clone());
-        }
-        Task::none()
+        let Some(modal) = &mut self.delete_wallet_modal else {
+            return Task::none();
+        };
+        modal.update(message.clone())
     }
 }
 
