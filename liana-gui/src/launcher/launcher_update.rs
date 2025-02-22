@@ -63,6 +63,49 @@ impl Launcher {
         Subscription::none()
     }
 
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message.clone() {
+            Message::View(view_message) => self
+                .handle_view(view_message)
+                .unwrap_or(self.default_update(&message)),
+            Message::Checked(res) => match res {
+                Err(e) => {
+                    self.error = Some(e);
+                    Task::none()
+                }
+                Ok(state) => {
+                    self.state = state;
+                    Task::none()
+                }
+            },
+            Message::Install(..) | Message::Run(..) => self.default_update(&message),
+        }
+    }
+
+    fn handle_view(&mut self, view_message: ViewMessage) -> Option<Task<Message>> {
+        match view_message {
+            ViewMessage::ImportWallet => Some(self.do_import_wallet()),
+            ViewMessage::CreateWallet => Some(self.do_create_wallet()),
+            ViewMessage::ShareXpubs => Some(self.do_share_xpubs()),
+            ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal) => {
+                Some(self.do_delete_wallet())
+            }
+            ViewMessage::SelectNetwork(network) => Some(self.do_select_network(network)),
+            ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted) => {
+                self.state = WalletState::NoWallet;
+                Some(Task::none())
+            }
+            ViewMessage::DeleteWallet(DeleteWalletMessage::CloseModal) => {
+                self.delete_wallet_modal = None;
+                Some(Task::none())
+            }
+            ViewMessage::Run => Some(self.do_run()),
+            ViewMessage::Check | ViewMessage::StartInstall(_) | ViewMessage::DeleteWallet(_) => {
+                None
+            }
+        }
+    }
+
     fn do_import_wallet(&mut self) -> Task<Message> {
         let datadir_path = self.datadir_path.clone();
         let network = self.network;
@@ -127,54 +170,11 @@ impl Launcher {
         }
     }
 
-    fn handle_view(&mut self, view_message: ViewMessage) -> Option<Task<Message>> {
-        match view_message {
-            ViewMessage::ImportWallet => Some(self.do_import_wallet()),
-            ViewMessage::CreateWallet => Some(self.do_create_wallet()),
-            ViewMessage::ShareXpubs => Some(self.do_share_xpubs()),
-            ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal) => {
-                Some(self.do_delete_wallet())
-            }
-            ViewMessage::SelectNetwork(network) => Some(self.do_select_network(network)),
-            ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted) => {
-                self.state = WalletState::NoWallet;
-                Some(Task::none())
-            }
-            ViewMessage::DeleteWallet(DeleteWalletMessage::CloseModal) => {
-                self.delete_wallet_modal = None;
-                Some(Task::none())
-            }
-            ViewMessage::Run => Some(self.do_run()),
-            ViewMessage::Check | ViewMessage::StartInstall(_) | ViewMessage::DeleteWallet(_) => {
-                None
-            }
-        }
-    }
-
     fn default_update(&mut self, message: &Message) -> Task<Message> {
         if let Some(modal) = &mut self.delete_wallet_modal {
             return modal.update(message.clone());
         }
         Task::none()
-    }
-
-    pub fn update(&mut self, message: Message) -> Task<Message> {
-        match message.clone() {
-            Message::View(view_message) => self
-                .handle_view(view_message)
-                .unwrap_or(self.default_update(&message)),
-            Message::Checked(res) => match res {
-                Err(e) => {
-                    self.error = Some(e);
-                    Task::none()
-                }
-                Ok(state) => {
-                    self.state = state;
-                    Task::none()
-                }
-            },
-            Message::Install(..) | Message::Run(..) => self.default_update(&message),
-        }
     }
 }
 
