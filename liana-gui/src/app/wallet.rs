@@ -179,6 +179,28 @@ impl Wallet {
             Ok(self)
         }
     }
+
+    pub fn keys(&self) -> HashMap<Fingerprint, settings::KeySetting> {
+        let mut map = HashMap::new();
+        self.keys_aliases.iter().for_each(|(fg, alias)| {
+            map.insert(
+                *fg,
+                settings::KeySetting {
+                    name: alias.clone(),
+                    master_fingerprint: *fg,
+                    provider_key: None,
+                },
+            );
+        });
+
+        self.provider_keys.iter().for_each(|(fg, key)| {
+            if let Some(entry) = map.get_mut(fg) {
+                entry.provider_key = Some(key.clone())
+            }
+        });
+
+        map
+    }
 }
 
 #[allow(clippy::large_enum_variant)]
