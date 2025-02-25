@@ -732,7 +732,7 @@ impl Action for UpdateAction {
 mod tests {
     use super::*;
     use crate::{
-        app::{cache::Cache, state::PsbtsPanel},
+        app::{cache::Cache, state::PsbtsPanel, Config},
         daemon::client::{Lianad, Request},
         utils::{mock::Daemon, sandbox::Sandbox},
     };
@@ -798,24 +798,35 @@ mod tests {
                 Ok(json!({})),
             ),
         ]);
+        let config = Config {
+            daemon_config_path: None,
+            daemon_rpc_path: None,
+            log_level: None,
+            debug: None,
+            start_internal_bitcoind: false,
+        };
         let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
         let sandbox: Sandbox<PsbtsPanel> = Sandbox::new(PsbtsPanel::new(wallet.clone()));
         let client = Arc::new(Lianad::new(daemon.run()));
         let cache = Cache::default();
         let sandbox = sandbox
-            .load(client.clone(), &Cache::default(), wallet)
+            .load(client.clone(), &Cache::default(), &config, wallet.clone())
             .await;
         let _sandbox = sandbox
             .update(
                 client.clone(),
                 &cache,
                 Message::View(view::Message::Select(0)),
+                &config,
+                wallet.clone(),
             )
             .await
             .update(
                 client.clone(),
                 &cache,
                 Message::View(view::Message::Spend(view::SpendTxMessage::EditPsbt)),
+                &config,
+                wallet.clone(),
             )
             .await
             .update(
@@ -824,6 +835,8 @@ mod tests {
                 Message::View(view::Message::ImportSpend(
                     view::ImportSpendMessage::PsbtEdited("panic".to_string()),
                 )),
+                &config,
+                wallet.clone(),
             )
             .await
             .update(
@@ -832,6 +845,8 @@ mod tests {
                 Message::View(view::Message::ImportSpend(
                     view::ImportSpendMessage::Confirm,
                 )),
+                &config,
+                wallet,
             )
             .await;
     }

@@ -134,7 +134,8 @@ pub enum Error {
 #[derive(Debug, PartialEq, Clone)]
 pub enum ImportExportType {
     Transactions,
-    ExportString(String),
+    ExportPsbt(String),
+    ExportBackup(String),
     Descriptor(LianaDescriptor),
     ExportLabels,
     ImportPsbt,
@@ -218,11 +219,12 @@ impl Export {
     ) {
         match export_type {
             ImportExportType::Transactions => export_transactions(sender, daemon, path).await,
-            ImportExportType::ExportString(str) => export_string(sender, path, str),
+            ImportExportType::ExportPsbt(str) => export_string(sender, path, str),
             ImportExportType::Descriptor(descriptor) => export_descriptor(sender, path, descriptor),
             ImportExportType::ExportLabels => export_labels(sender, daemon, path).await,
             ImportExportType::ImportPsbt => import_psbt(sender, path),
             ImportExportType::ImportDescriptor => import_descriptor(sender, path),
+            ImportExportType::ExportBackup(str) => export_string(sender, path, str),
         };
     }
 
