@@ -5,6 +5,7 @@ mod prompt;
 mod step;
 mod view;
 
+pub use context::{Context, RemoteBackend};
 use iced::{clipboard, Subscription, Task};
 use liana::miniscript::bitcoin::{self, Network};
 use liana_ui::{
@@ -13,8 +14,6 @@ use liana_ui::{
 };
 use lianad::config::Config;
 use tracing::{error, info, warn};
-
-use context::{Context, RemoteBackend};
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -429,7 +428,7 @@ pub async fn install_local_wallet(
     info!("Gui configuration file created");
 
     // create liana GUI settings file
-    let settings: gui_settings::Settings = extract_local_gui_settings(&ctx).await;
+    let settings: gui_settings::Settings = extract_local_gui_settings(&ctx);
     create_and_write_file(
         network_datadir_path,
         gui_settings::DEFAULT_FILE_NAME,
@@ -669,7 +668,7 @@ pub async fn extract_remote_gui_settings(ctx: &Context, backend: &BackendWalletC
     }
 }
 
-pub async fn extract_local_gui_settings(ctx: &Context) -> Settings {
+pub fn extract_local_gui_settings(ctx: &Context) -> Settings {
     let descriptor = ctx
         .descriptor
         .as_ref()

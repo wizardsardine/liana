@@ -6,6 +6,7 @@ use liana::{
 };
 use liana_ui::component::form;
 use lianad::config::BitcoindConfig;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -154,7 +155,7 @@ impl std::fmt::Display for RpcAuthParseError {
 }
 
 /// Represents RPC auth credentials as stored in bitcoin.conf.
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub struct RpcAuth {
     pub user: String,
     salt: String,
@@ -209,7 +210,7 @@ impl std::str::FromStr for RpcAuth {
 }
 
 /// Represents section for a single network in `bitcoin.conf` file.
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub struct InternalBitcoindNetworkConfig {
     pub rpc_port: u16,
     pub p2p_port: u16,
