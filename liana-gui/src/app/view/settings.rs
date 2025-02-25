@@ -17,7 +17,8 @@ use super::{dashboard, message::*};
 
 use liana_ui::{
     component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
-    icon, theme,
+    icon,
+    theme::{self},
     widget::*,
 };
 
@@ -35,7 +36,89 @@ use crate::{
     },
 };
 
+fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
+    Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(
+            Button::new(text("Settings").size(30).bold())
+                .style(theme::button::transparent)
+                .on_press(Message::Menu(Menu::Settings)),
+        )
+        .push(icon::chevron_right().size(30))
+        .push(
+            Button::new(text(title).size(30).bold())
+                .style(theme::button::transparent)
+                .on_press(Message::Settings(msg)),
+        )
+}
+
+fn settings_section(
+    title: &str,
+    tool_tip: Option<&'static str>,
+    icon: liana_ui::widget::Text<'static>,
+    msg: Message,
+) -> Container<'static, Message> {
+    let tt = tool_tip.map(tooltip);
+    Container::new(
+        Button::new(
+            Row::new()
+                .push(badge::badge(icon))
+                .push(text(title).bold())
+                .push_maybe(tt)
+                .padding(10)
+                .spacing(20)
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .style(theme::button::transparent_border)
+        .on_press(msg),
+    )
+    .width(Length::Fill)
+    .style(theme::card::simple)
+}
+
 pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
+    let header = Button::new(text("Settings").size(30).bold())
+        .style(theme::button::transparent)
+        .on_press(Message::Menu(Menu::Settings));
+
+    let node = settings_section(
+        "Node",
+        None,
+        icon::bitcoin_icon(),
+        Message::Settings(SettingsMessage::EditBitcoindSettings),
+    );
+
+    let backend = settings_section(
+        "Backend",
+        None,
+        icon::bitcoin_icon(),
+        Message::Settings(SettingsMessage::EditRemoteBackendSettings),
+    );
+
+    let wallet = settings_section(
+        "Wallet",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::EditWalletSettings),
+    );
+
+    let recovery = settings_section(
+        "Recovery",
+        Some("In case of loss of the main key, the recovery key can move the funds after a certain time."),
+        icon::recovery_icon(),
+        Message::Menu(Menu::Recovery),
+    );
+
+    let about = settings_section(
+        "About",
+        None,
+        icon::tooltip_icon(),
+        Message::Settings(SettingsMessage::AboutSection),
+    );
+
     dashboard(
         &Menu::Settings,
         cache,
@@ -43,131 +126,28 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
         Column::new()
             .spacing(20)
             .width(Length::Fill)
-            .push(
-                Button::new(text("Settings").size(30).bold())
-                    .style(theme::button::transparent)
-                    .on_press(Message::Menu(Menu::Settings)))
-            .push(
-                if !is_remote_backend {
-                    Container::new(
-                        Button::new(
-                            Row::new()
-                                .push(badge::badge(icon::bitcoin_icon()))
-                                .push(text("Node").bold())
-                                .padding(10)
-                                .spacing(20)
-                                .align_y(Alignment::Center)
-                                .width(Length::Fill),
-                        )
-                        .width(Length::Fill)
-                        .style(theme::button::transparent_border)
-                        .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings))
-                    )
-                    .width(Length::Fill)
-                    .style(theme::card::simple)
-                } else {
-                    Container::new(
-                        Button::new(
-                            Row::new()
-                                .push(badge::badge(icon::bitcoin_icon()))
-                                .push(text("Backend").bold())
-                                .padding(10)
-                                .spacing(20)
-                                .align_y(Alignment::Center)
-                                .width(Length::Fill),
-                        )
-                        .width(Length::Fill)
-                        .style(theme::button::transparent_border)
-                        .on_press(Message::Settings(SettingsMessage::EditRemoteBackendSettings))
-                    )
-                    .width(Length::Fill)
-                    .style(theme::card::simple)
-                }
-            )
-            .push(
-                Container::new(
-                    Button::new(
-                        Row::new()
-                            .push(badge::badge(icon::wallet_icon()))
-                            .push(text("Wallet").bold())
-                            .padding(10)
-                            .spacing(20)
-                            .align_y(Alignment::Center)
-                            .width(Length::Fill),
-                    )
-                    .width(Length::Fill)
-                    .style(theme::button::transparent_border)
-                    .on_press(Message::Settings(SettingsMessage::EditWalletSettings))
-                )
-                .width(Length::Fill)
-                .style(theme::card::simple)
-            )
-            .push(
-                Container::new(
-                    Button::new(
-                        Row::new()
-                            .push(badge::badge(icon::recovery_icon()))
-                            .push(text("Recovery").bold())
-                            .push(tooltip("In case of loss of the main key, the recovery key can move the funds after a certain time."))
-                            .padding(10)
-                            .spacing(20)
-                            .align_y(Alignment::Center)
-                            .width(Length::Fill),
-                    )
-                    .width(Length::Fill)
-                    .style(theme::button::transparent_border)
-                    .on_press(Message::Menu(Menu::Recovery))
-                )
-                .width(Length::Fill)
-                .style(theme::card::simple)
-            )
-            .push(
-                Container::new(
-                    Button::new(
-                        Row::new()
-                            .push(badge::badge(icon::tooltip_icon()))
-                            .push(text("About").bold())
-                            .padding(10)
-                            .spacing(20)
-                            .align_y(Alignment::Center)
-                            .width(Length::Fill),
-                    )
-                    .width(Length::Fill)
-                    .style(theme::button::transparent_border)
-                    .on_press(Message::Settings(SettingsMessage::AboutSection))
-                )
-                .width(Length::Fill)
-                .style(theme::card::simple)
-            )
+            .push(header)
+            .push(if !is_remote_backend { node } else { backend })
+            .push(wallet)
+            .push(recovery)
+            .push(about),
     )
 }
+
 pub fn bitcoind_settings<'a>(
     cache: &'a Cache,
     warning: Option<&Error>,
     settings: Vec<Element<'a, Message>>,
 ) -> Element<'a, Message> {
+    let header = header("Node", SettingsMessage::EditBitcoindSettings);
+
     dashboard(
         &Menu::Settings,
         cache,
         warning,
         Column::new()
             .spacing(20)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(
-                        Button::new(text("Settings").size(30).bold())
-                            .style(theme::button::transparent)
-                            .on_press(Message::Menu(Menu::Settings)),
-                    )
-                    .push(icon::chevron_right().size(30))
-                    .push(
-                        Button::new(text("Node").size(30).bold())
-                            .style(theme::button::transparent)
-                            .on_press(Message::Settings(SettingsMessage::EditBitcoindSettings)),
-                    ),
-            )
+            .push(header)
             .push(Column::with_children(settings).spacing(20)),
     )
 }
@@ -177,55 +157,41 @@ pub fn about_section<'a>(
     warning: Option<&Error>,
     lianad_version: Option<&String>,
 ) -> Element<'a, Message> {
+    let header = header("About", SettingsMessage::AboutSection);
+
+    let content = card::simple(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(badge::badge(icon::tooltip_icon()))
+                    .push(text("Version").bold())
+                    .padding(10)
+                    .spacing(20)
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill),
+            )
+            .push(separation().width(Length::Fill))
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(
+                Row::new().push(Space::with_width(Length::Fill)).push(
+                    Column::new()
+                        .push(text(format!("liana-gui v{}", crate::VERSION)))
+                        .push_maybe(
+                            lianad_version.map(|version| text(format!("lianad v{}", version))),
+                        ),
+                ),
+            ),
+    );
+
     dashboard(
         &Menu::Settings,
         cache,
         warning,
         Column::new()
             .spacing(20)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(
-                        Button::new(text("Settings").size(30).bold())
-                            .style(theme::button::transparent)
-                            .on_press(Message::Menu(Menu::Settings)),
-                    )
-                    .push(icon::chevron_right().size(30))
-                    .push(
-                        Button::new(text("About").size(30).bold())
-                            .style(theme::button::transparent)
-                            .on_press(Message::Settings(SettingsMessage::AboutSection)),
-                    ),
-            )
-            .push(
-                card::simple(
-                    Column::new()
-                        .push(
-                            Row::new()
-                                .push(badge::badge(icon::tooltip_icon()))
-                                .push(text("Version").bold())
-                                .padding(10)
-                                .spacing(20)
-                                .align_y(Alignment::Center)
-                                .width(Length::Fill),
-                        )
-                        .push(separation().width(Length::Fill))
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            Row::new().push(Space::with_width(Length::Fill)).push(
-                                Column::new()
-                                    .push(text(format!("liana-gui v{}", crate::VERSION)))
-                                    .push_maybe(
-                                        lianad_version
-                                            .map(|version| text(format!("lianad v{}", version))),
-                                    ),
-                            ),
-                        ),
-                )
-                .width(Length::Fill),
-            ),
+            .push(header)
+            .push(content)
+            .width(Length::Fill),
     )
 }
 
@@ -236,68 +202,48 @@ pub fn remote_backend_section<'a>(
     success: bool,
     warning: Option<&Error>,
 ) -> Element<'a, Message> {
+    let header = header("Backend", SettingsMessage::EditRemoteBackendSettings);
+
+    let content = card::simple(
+        Column::new()
+            .spacing(20)
+            .push(text("Grant access to wallet to another user"))
+            .push(
+                form::Form::new_trimmed("User email", email_form, |email| {
+                    Message::Settings(SettingsMessage::RemoteBackendSettings(
+                        RemoteBackendSettingsMessage::EditInvitationEmail(email),
+                    ))
+                })
+                .warning("Email is invalid")
+                .size(P1_SIZE)
+                .padding(10),
+            )
+            .push(
+                Row::new()
+                    .push_maybe(if success {
+                        Some(text("Invitation was sent").style(theme::text::success))
+                    } else {
+                        None
+                    })
+                    .push(Space::with_width(Length::Fill))
+                    .push(button::secondary(None, "Send invitation").on_press_maybe(
+                        if !processing && email_form.valid {
+                            Some(Message::Settings(SettingsMessage::RemoteBackendSettings(
+                                RemoteBackendSettingsMessage::SendInvitation,
+                            )))
+                        } else {
+                            None
+                        },
+                    )),
+            ),
+    )
+    .width(Length::Fill);
+
     dashboard(
         &Menu::Settings,
         cache,
         warning,
-        Column::new()
-            .spacing(20)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(
-                        Button::new(text("Settings").size(30).bold())
-                            .style(theme::button::transparent)
-                            .on_press(Message::Menu(Menu::Settings)),
-                    )
-                    .push(icon::chevron_right().size(30))
-                    .push(
-                        Button::new(text("Backend").size(30).bold())
-                            .style(theme::button::transparent)
-                            .on_press(Message::Settings(
-                                SettingsMessage::EditRemoteBackendSettings,
-                            )),
-                    ),
-            )
-            .push(
-                card::simple(
-                    Column::new()
-                        .spacing(20)
-                        .push(text("Grant access to wallet to another user"))
-                        .push(
-                            form::Form::new_trimmed("User email", email_form, |email| {
-                                Message::Settings(SettingsMessage::RemoteBackendSettings(
-                                    RemoteBackendSettingsMessage::EditInvitationEmail(email),
-                                ))
-                            })
-                            .warning("Email is invalid")
-                            .size(P1_SIZE)
-                            .padding(10),
-                        )
-                        .push(
-                            Row::new()
-                                .push_maybe(if success {
-                                    Some(text("Invitation was sent").style(theme::text::success))
-                                } else {
-                                    None
-                                })
-                                .push(Space::with_width(Length::Fill))
-                                .push(button::secondary(None, "Send invitation").on_press_maybe(
-                                    if !processing && email_form.valid {
-                                        Some(Message::Settings(
-                                            SettingsMessage::RemoteBackendSettings(
-                                                RemoteBackendSettingsMessage::SendInvitation,
-                                            ),
-                                        ))
-                                    } else {
-                                        None
-                                    },
-                                )),
-                        ),
-                )
-                .width(Length::Fill),
-            ),
+        Column::new().spacing(20).push(header).push(content),
     )
 }
 
@@ -906,125 +852,100 @@ pub fn wallet_settings<'a>(
     processing: bool,
     updated: bool,
 ) -> Element<'a, Message> {
+    let header = header("Wallet", SettingsMessage::EditWalletSettings);
+
+    let descr = card::simple(
+        Column::new()
+            .push(text("Wallet descriptor:").bold())
+            .push(
+                scrollable(
+                    Column::new()
+                        .push(text(descriptor.to_string()).small())
+                        .push(Space::with_height(Length::Fixed(5.0))),
+                )
+                .direction(scrollable::Direction::Horizontal(
+                    scrollable::Scrollbar::new().width(5).scroller_width(5),
+                )),
+            )
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(Column::new().width(Length::Fill))
+                    .push(
+                        button::secondary(Some(icon::clipboard_icon()), "Copy")
+                            .on_press(Message::Clipboard(descriptor.to_string())),
+                    )
+                    .push(
+                        button::secondary(Some(icon::chip_icon()), "Register on hardware device")
+                            .on_press(Message::Settings(SettingsMessage::RegisterWallet)),
+                    ),
+            )
+            .spacing(10),
+    )
+    .width(Length::Fill);
+
+    let aliases = card::simple(
+        Column::new()
+            .push(text("Fingerprint aliases:").bold())
+            .push(keys_aliases.iter().fold(
+                Column::new().spacing(10),
+                |col, (fingerprint, name)| {
+                    let fg = *fingerprint;
+                    col.push(
+                        Row::new()
+                            .spacing(10)
+                            .align_y(Alignment::Center)
+                            .push(text(fg.to_string()).bold().width(Length::Fixed(100.0)))
+                            .push(
+                                form::Form::new("Alias", name, move |msg| {
+                                    Message::Settings(SettingsMessage::FingerprintAliasEdited(
+                                        fg, msg,
+                                    ))
+                                })
+                                .warning("Please enter correct alias")
+                                .size(P1_SIZE)
+                                .padding(10),
+                            ),
+                    )
+                },
+            ))
+            .push(
+                Row::new()
+                    .align_y(Alignment::Center)
+                    .push(Space::with_width(Length::Fill))
+                    .push_maybe(if updated {
+                        Some(
+                            Row::new()
+                                .align_y(Alignment::Center)
+                                .push(icon::circle_check_icon().style(theme::text::success))
+                                .push(text("Updated").style(theme::text::success)),
+                        )
+                    } else {
+                        None
+                    })
+                    .push(if !processing {
+                        button::secondary(None, "Update")
+                            .on_press(Message::Settings(SettingsMessage::Save))
+                    } else {
+                        button::secondary(None, "Updating")
+                    }),
+            )
+            .spacing(10),
+    )
+    .width(Length::Fill);
+
     dashboard(
         &Menu::Settings,
         cache,
         warning,
         Column::new()
             .spacing(20)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(
-                        Button::new(text("Settings").size(30).bold())
-                            .style(theme::button::transparent)
-                            .on_press(Message::Menu(Menu::Settings)),
-                    )
-                    .push(icon::chevron_right().size(30))
-                    .push(
-                        Button::new(text("Wallet").size(30).bold())
-                            .style(theme::button::transparent)
-                            .on_press(Message::Settings(SettingsMessage::EditWalletSettings)),
-                    ),
-            )
-            .push(
-                card::simple(
-                    Column::new()
-                        .push(text("Wallet descriptor:").bold())
-                        .push(
-                            scrollable(
-                                Column::new()
-                                    .push(text(descriptor.to_string()).small())
-                                    .push(Space::with_height(Length::Fixed(5.0))),
-                            )
-                            .direction(
-                                scrollable::Direction::Horizontal(
-                                    scrollable::Scrollbar::new().width(5).scroller_width(5),
-                                ),
-                            ),
-                        )
-                        .push(
-                            Row::new()
-                                .spacing(10)
-                                .push(Column::new().width(Length::Fill))
-                                .push(
-                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                        .on_press(Message::Clipboard(descriptor.to_string())),
-                                )
-                                .push(
-                                    button::secondary(
-                                        Some(icon::chip_icon()),
-                                        "Register on hardware device",
-                                    )
-                                    .on_press(Message::Settings(SettingsMessage::RegisterWallet)),
-                                ),
-                        )
-                        .spacing(10),
-                )
-                .width(Length::Fill),
-            )
+            .push(header)
+            .push(descr)
             .push(
                 card::simple(display_policy(descriptor.policy(), keys_aliases)).width(Length::Fill),
             )
-            .push(
-                card::simple(
-                    Column::new()
-                        .push(text("Fingerprint aliases:").bold())
-                        .push(keys_aliases.iter().fold(
-                            Column::new().spacing(10),
-                            |col, (fingerprint, name)| {
-                                let fg = *fingerprint;
-                                col.push(
-                                    Row::new()
-                                        .spacing(10)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            text(fg.to_string()).bold().width(Length::Fixed(100.0)),
-                                        )
-                                        .push(
-                                            form::Form::new("Alias", name, move |msg| {
-                                                Message::Settings(
-                                                    SettingsMessage::FingerprintAliasEdited(
-                                                        fg, msg,
-                                                    ),
-                                                )
-                                            })
-                                            .warning("Please enter correct alias")
-                                            .size(P1_SIZE)
-                                            .padding(10),
-                                        ),
-                                )
-                            },
-                        ))
-                        .push(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(Space::with_width(Length::Fill))
-                                .push_maybe(if updated {
-                                    Some(
-                                        Row::new()
-                                            .align_y(Alignment::Center)
-                                            .push(
-                                                icon::circle_check_icon()
-                                                    .style(theme::text::success),
-                                            )
-                                            .push(text("Updated").style(theme::text::success)),
-                                    )
-                                } else {
-                                    None
-                                })
-                                .push(if !processing {
-                                    button::secondary(None, "Update")
-                                        .on_press(Message::Settings(SettingsMessage::Save))
-                                } else {
-                                    button::secondary(None, "Updating")
-                                }),
-                        )
-                        .spacing(10),
-                )
-                .width(Length::Fill),
-            ),
+            .push(aliases),
     )
 }
 
