@@ -20,9 +20,14 @@ use crate::{
         state::State,
         view::{self},
         wallet::Wallet,
+        Config,
     },
+    backup::Backup,
     daemon::{Daemon, DaemonBackend},
+    export::{ImportExportMessage, ImportExportType},
 };
+
+use super::export::ExportModal;
 
 pub struct SettingsState {
     data_dir: PathBuf,
@@ -55,6 +60,8 @@ impl State for SettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
+        config: &Config,
+        wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match &message {
             Message::View(view::Message::Settings(view::SettingsMessage::EditBitcoindSettings)) => {
@@ -79,6 +86,10 @@ impl State for SettingsState {
                 self.setting = Some(BackendSettingsState::new().into());
                 Task::none()
             }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportExportSection)) => {
+                self.setting = Some(ImportExportSettingsState::default().into());
+                Task::none()
+            }
             Message::View(view::Message::Settings(view::SettingsMessage::AboutSection)) => {
                 self.setting = Some(AboutSettingsState::default().into());
                 let wallet = self.wallet.clone();
@@ -97,17 +108,17 @@ impl State for SettingsState {
                     .map(|s| s.reload(daemon, wallet))
                     .unwrap_or_else(Task::none)
             }
-            Message::WalletUpdated(Ok(wallet)) => {
-                self.wallet = wallet.clone();
+            Message::WalletUpdated(Ok(wal)) => {
+                self.wallet = wal.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.update(daemon, cache, message))
+                    .map(|s| s.update(daemon, cache, message, config, wallet))
                     .unwrap_or_else(Task::none)
             }
             _ => self
                 .setting
                 .as_mut()
-                .map(|s| s.update(daemon, cache, message))
+                .map(|s| s.update(daemon, cache, message, config, wallet))
                 .unwrap_or_else(Task::none),
         }
     }
@@ -146,6 +157,113 @@ impl From<SettingsState> for Box<dyn State> {
 }
 
 #[derive(Default)]
+pub struct ImportExportSettingsState {
+    warning: Option<Error>,
+    modal: Option<ExportModal>,
+}
+
+impl State for ImportExportSettingsState {
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        let content = view::settings::import_export(cache, self.warning.as_ref());
+        if let Some(modal) = &self.modal {
+            modal.view(content)
+        } else {
+            content
+        }
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        if let Some(modal) = &self.modal {
+            if let Some(sub) = modal.subscription() {
+                return sub.map(|m| {
+                    Message::View(view::Message::Settings(
+                        view::SettingsMessage::ImportExport(ImportExportMessage::Progress(m)),
+                    ))
+                });
+            }
+        }
+        iced::Subscription::none()
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        message: Message,
+        config: &Config,
+        wallet: Arc<Wallet>,
+    ) -> Task<Message> {
+        match message {
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportExport(
+                ImportExportMessage::Close,
+            ))) => {
+                self.modal = None;
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportDescriptor)) => {
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(
+                        daemon,
+                        ImportExportType::Descriptor(wallet.main_descriptor.clone()),
+                    );
+                    self.modal = Some(modal);
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportLabels)) => {
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(daemon, ImportExportType::ExportLabels);
+                    self.modal = Some(modal);
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportWallet)) => {
+                if self.modal.is_none() {
+                    let datadir = cache.datadir_path.clone();
+                    let network = cache.network;
+                    let config = config.clone();
+                    let wallet = wallet.clone();
+                    let daemon = daemon.clone();
+                    return Task::perform(
+                        async move {
+                            let backup =
+                                Backup::from_app(datadir, network, config, wallet, daemon).await;
+                            backup.unwrap().to_string()
+                            // TODO: do not unwrap, return an error message instead
+                        },
+                        |s| {
+                            Message::View(view::Message::Settings(
+                                view::SettingsMessage::ExportBackup(s),
+                            ))
+                        },
+                    );
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
+                let modal = ExportModal::new(daemon, ImportExportType::ExportBackup(backup));
+                self.modal = Some(modal);
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
+                // TODO:
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(
+                        daemon,
+                        ImportExportType::Descriptor(wallet.main_descriptor.clone()),
+                    );
+                    self.modal = Some(modal);
+                }
+            }
+            _ => {}
+        }
+
+        Task::none()
+    }
+}
+
+impl From<ImportExportSettingsState> for Box<dyn State> {
+    fn from(s: ImportExportSettingsState) -> Box<dyn State> {
+        Box::new(s)
+    }
+}
+
+#[derive(Default)]
 pub struct AboutSettingsState {
     daemon_version: Option<String>,
     warning: Option<Error>,
@@ -161,6 +279,8 @@ impl State for AboutSettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         if let Message::Info(res) = message {
             match res {
@@ -231,6 +351,8 @@ impl State for BackendSettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match message {
             Message::View(view::Message::Settings(

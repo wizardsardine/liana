@@ -9,6 +9,7 @@ use liana::miniscript::bitcoin::{
 };
 use liana_ui::{component::modal, widget::*};
 
+use crate::app::Config;
 use crate::daemon::model::LabelsLoader;
 use crate::{
     app::{
@@ -112,6 +113,8 @@ impl State for ReceivePanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match message {
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
@@ -328,7 +331,7 @@ async fn verify_address(
 mod tests {
     use super::*;
     use crate::{
-        app::{cache::Cache, view::Message as viewMessage, Message},
+        app::{cache::Cache, view::Message as viewMessage, Config, Message},
         daemon::{
             client::{Lianad, Request},
             model::*,
@@ -355,14 +358,30 @@ mod tests {
                 ChildNumber::from_normal_idx(0).unwrap()
             ))),
         )]);
+        let config = Config {
+            daemon_config_path: None,
+            daemon_rpc_path: None,
+            log_level: None,
+            debug: None,
+            start_internal_bitcoind: false,
+        };
+
         let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
         let sandbox: Sandbox<ReceivePanel> =
             Sandbox::new(ReceivePanel::new(PathBuf::new(), wallet.clone()));
         let client = Arc::new(Lianad::new(daemon.run()));
         let cache = Cache::default();
-        let sandbox = sandbox.load(client.clone(), &cache, wallet).await;
         let sandbox = sandbox
-            .update(client, &cache, Message::View(viewMessage::Next))
+            .load(client.clone(), &cache, &config, wallet.clone())
+            .await;
+        let sandbox = sandbox
+            .update(
+                client,
+                &cache,
+                Message::View(viewMessage::Next),
+                &config,
+                wallet,
+            )
             .await;
 
         let panel = sandbox.state();

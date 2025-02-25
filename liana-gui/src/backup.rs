@@ -44,6 +44,7 @@ pub struct Backup {
     pub proprietary: serde_json::Map<String, serde_json::Value>,
 }
 
+#[derive(Debug)]
 pub enum Error {
     DescriptorMissing,
     NotSingleWallet,

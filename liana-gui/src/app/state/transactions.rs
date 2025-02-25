@@ -26,6 +26,7 @@ use crate::{
         state::{label::LabelsEdited, State},
         view,
         wallet::Wallet,
+        Config,
     },
     daemon::model::{self, LabelsLoader},
     export::{ImportExportMessage, ImportExportType},
@@ -110,6 +111,8 @@ impl State for TransactionsPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match message {
             Message::HistoryTransactions(res) => match res {
