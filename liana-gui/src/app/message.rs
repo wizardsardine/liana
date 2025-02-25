@@ -11,7 +11,7 @@ use lianad::config::Config as DaemonConfig;
 use crate::{
     app::{cache::Cache, error::Error, view, wallet::Wallet},
     daemon::model::*,
-    export::ExportMessage,
+    export::ImportExportMessage,
     hw::HardwareWalletMessage,
 };
 
@@ -47,5 +47,5 @@ pub enum Message {
     LabelsUpdated(Result<HashMap<String, Option<String>>, Error>),
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
-    Export(ExportMessage),
+    Export(ImportExportMessage),
 }

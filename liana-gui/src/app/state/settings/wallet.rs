@@ -18,6 +18,7 @@ use liana_ui::{
 use crate::{
     app::{
         cache::Cache, error::Error, message::Message, settings, state::State, view, wallet::Wallet,
+        Config,
     },
     daemon::{Daemon, DaemonBackend},
     hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
@@ -107,6 +108,8 @@ impl State for WalletSettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match message {
             Message::WalletUpdated(res) => {

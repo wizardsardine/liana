@@ -1,5 +1,5 @@
 mod coins;
-mod export;
+pub mod export;
 mod label;
 mod psbt;
 mod psbts;
@@ -18,6 +18,7 @@ use liana::miniscript::bitcoin::{Amount, OutPoint};
 use liana_ui::widget::*;
 use lianad::commands::CoinStatus;
 
+use super::Config;
 use super::{
     cache::Cache,
     error::Error,
@@ -50,6 +51,8 @@ pub trait State {
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         _message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         Task::none()
     }
@@ -201,6 +204,8 @@ impl State for Home {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match message {
             Message::Coins(res) => match res {

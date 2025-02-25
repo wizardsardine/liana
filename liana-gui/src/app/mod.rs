@@ -316,6 +316,8 @@ impl App {
                         self.cache.clone_from(&cache);
                         let current = &self.panels.current;
                         let daemon = self.daemon.clone();
+                        let config = self.config.clone();
+                        let wallet = self.wallet.clone();
                         // These are the panels to update with the cache.
                         let mut panels = [
                             (&mut self.panels.home as &mut dyn State, Menu::Home),
@@ -328,6 +330,8 @@ impl App {
                                     daemon.clone(),
                                     &cache,
                                     Message::UpdatePanelCache(current == menu),
+                                    &config,
+                                    wallet.clone(),
                                 )
                             })
                             .collect();
@@ -350,14 +354,19 @@ impl App {
                     self.daemon.clone(),
                     &self.cache,
                     Message::WalletUpdated(Ok(wallet)),
+                    &self.config,
+                    self.wallet.clone(),
                 )
             }
             Message::View(view::Message::Menu(menu)) => self.set_current_panel(menu),
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
-            _ => self
-                .panels
-                .current_mut()
-                .update(self.daemon.clone(), &self.cache, message),
+            _ => self.panels.current_mut().update(
+                self.daemon.clone(),
+                &self.cache,
+                message,
+                &self.config,
+                self.wallet.clone(),
+            ),
         }
     }
 

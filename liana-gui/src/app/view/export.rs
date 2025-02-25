@@ -11,21 +11,21 @@ use liana_ui::{
     widget::Element,
 };
 
-use crate::export::{Error, ExportMessage};
-use crate::{app::view::message::Message, export::ExportState};
+use crate::export::{Error, ImportExportMessage};
+use crate::{app::view::message::Message, export::ImportExportState};
 
 /// Return the modal view for an export task
 pub fn export_modal<'a>(
-    state: &ExportState,
+    state: &ImportExportState,
     error: Option<&'a Error>,
     export_type: &str,
 ) -> Element<'a, Message> {
     let button = match state {
-        ExportState::Started | ExportState::Progress(_) => {
-            Some(button::secondary(None, "Cancel").on_press(ExportMessage::UserStop.into()))
+        ImportExportState::Started | ImportExportState::Progress(_) => {
+            Some(button::secondary(None, "Cancel").on_press(ImportExportMessage::UserStop.into()))
         }
-        ExportState::Ended | ExportState::TimedOut | ExportState::Aborted => {
-            Some(button::secondary(None, "Close").on_press(ExportMessage::Close.into()))
+        ImportExportState::Ended | ImportExportState::TimedOut | ImportExportState::Aborted => {
+            Some(button::secondary(None, "Close").on_press(ImportExportMessage::Close.into()))
         }
         _ => None,
     };
@@ -33,26 +33,29 @@ pub fn export_modal<'a>(
         format!("{:?}", error)
     } else {
         match state {
-            ExportState::Init => "".to_string(),
-            ExportState::ChoosePath => {
+            ImportExportState::Init => "".to_string(),
+            ImportExportState::ChoosePath => {
                 "Select the path you want to export in the popup window...".into()
             }
-            ExportState::Path(_) => "".into(),
-            ExportState::Started => "Starting export...".into(),
-            ExportState::Progress(p) => format!("Progress: {}%", p.round()),
-            ExportState::TimedOut => "Export failed: timeout".into(),
-            ExportState::Aborted => "Export canceled".into(),
-            ExportState::Ended => "Export successful!".into(),
-            ExportState::Closed => "".into(),
+            ImportExportState::Path(_) => "".into(),
+            ImportExportState::Started => "Starting export...".into(),
+            ImportExportState::Progress(p) => format!("Progress: {}%", p.round()),
+            ImportExportState::TimedOut => "Export failed: timeout".into(),
+            ImportExportState::Aborted => "Export canceled".into(),
+            ImportExportState::Ended => "Export successful!".into(),
+            ImportExportState::Closed => "".into(),
         }
     };
     let p = match state {
-        ExportState::Init => 0.0,
-        ExportState::ChoosePath | ExportState::Path(_) | ExportState::Started => 5.0,
-        ExportState::Progress(p) => *p,
-        ExportState::TimedOut | ExportState::Aborted | ExportState::Ended | ExportState::Closed => {
-            100.0
+        ImportExportState::Init => 0.0,
+        ImportExportState::ChoosePath | ImportExportState::Path(_) | ImportExportState::Started => {
+            5.0
         }
+        ImportExportState::Progress(p) => *p,
+        ImportExportState::TimedOut
+        | ImportExportState::Aborted
+        | ImportExportState::Ended
+        | ImportExportState::Closed => 100.0,
     };
     let progress_bar_row = Row::new()
         .push(Space::with_width(30))

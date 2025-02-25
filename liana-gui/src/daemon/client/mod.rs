@@ -4,6 +4,8 @@ use std::iter::FromIterator;
 use std::path::Path;
 
 use async_trait::async_trait;
+use lianad::bip329::Labels;
+use lianad::commands::DumpLabelsResult;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -204,6 +206,12 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
             HashMap::from_iter(items.iter().map(|(a, l)| (a.to_string(), l.clone())));
         let _res: serde_json::value::Value = self.call("updatelabels", Some(vec![labels]))?;
         Ok(())
+    }
+
+    async fn dump_labels(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
+        let res: DumpLabelsResult =
+            self.call("dumplabels", Some(vec![json!(offset), json!(limit)]))?;
+        Ok(res.labels)
     }
 }
 
