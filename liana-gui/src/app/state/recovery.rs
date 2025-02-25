@@ -17,10 +17,10 @@ use crate::{
         error::Error,
         menu::Menu,
         message::Message,
-        state::psbt,
-        state::{redirect, State},
+        state::{psbt, redirect, State},
         view,
         wallet::Wallet,
+        Config,
     },
     daemon::{
         model::{remaining_sequence, Coin, SpendTx},
@@ -101,6 +101,8 @@ impl State for RecoveryPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match message {
             Message::Coins(res) => match res {

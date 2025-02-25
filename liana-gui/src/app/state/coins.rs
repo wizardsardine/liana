@@ -7,6 +7,7 @@ use iced::Task;
 use liana_ui::widget::Element;
 use lianad::commands::CoinStatus;
 
+use crate::app::Config;
 use crate::daemon::model::LabelsLoader;
 use crate::{
     app::{
@@ -113,6 +114,8 @@ impl State for CoinsPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match message {
             Message::Coins(res) => match res {

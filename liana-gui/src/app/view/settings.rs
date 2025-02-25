@@ -105,6 +105,13 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
         Message::Settings(SettingsMessage::EditWalletSettings),
     );
 
+    let import_export = settings_section(
+        "Import/export",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ImportExportSection),
+    );
+
     let recovery = settings_section(
         "Recovery",
         Some("In case of loss of the main key, the recovery key can move the funds after a certain time."),
@@ -129,6 +136,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
             .push(header)
             .push(if !is_remote_backend { node } else { backend })
             .push(wallet)
+            .push(import_export)
             .push(recovery)
             .push(about),
     )
@@ -149,6 +157,52 @@ pub fn bitcoind_settings<'a>(
             .spacing(20)
             .push(header)
             .push(Column::with_children(settings).spacing(20)),
+    )
+}
+
+pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'a, Message> {
+    let header = header("Import/Export", SettingsMessage::ImportExportSection);
+
+    let export_descriptor = settings_section(
+        "Export descriptor",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ExportDescriptor),
+    );
+
+    let export_labels = settings_section(
+        "Export labels",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ExportLabels),
+    );
+
+    let export_wallet = settings_section(
+        "Export Wallet",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ExportWallet),
+    );
+
+    let import_wallet = settings_section(
+        "Import wallet",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ImportWallet),
+    );
+
+    dashboard(
+        &Menu::Settings,
+        cache,
+        warning,
+        Column::new()
+            .spacing(20)
+            .push(header)
+            .push(export_descriptor)
+            .push(export_labels)
+            .push(export_wallet)
+            .push(import_wallet)
+            .width(Length::Fill),
     )
 }
 
