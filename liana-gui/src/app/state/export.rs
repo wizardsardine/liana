@@ -45,7 +45,7 @@ impl ExportModal {
             ImportExportType::Transactions => {
                 format!("liana-txs-{date}.csv")
             }
-            ImportExportType::ExportPsbt(_) => "psbt.psbt".into(),
+            ImportExportType::ExportString(_) => "psbt.psbt".into(),
             ImportExportType::Descriptor(descriptor) => {
                 let checksum = descriptor
                     .to_string()
