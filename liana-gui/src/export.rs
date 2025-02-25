@@ -134,7 +134,7 @@ pub enum Error {
 #[derive(Debug, PartialEq, Clone)]
 pub enum ImportExportType {
     Transactions,
-    ExportPsbt(String),
+    ExportString(String),
     Descriptor(LianaDescriptor),
     ExportLabels,
     ImportPsbt,
@@ -218,7 +218,7 @@ impl Export {
     ) {
         match export_type {
             ImportExportType::Transactions => export_transactions(sender, daemon, path).await,
-            ImportExportType::ExportPsbt(psbt) => export_psbt(sender, path, psbt),
+            ImportExportType::ExportString(str) => export_string(sender, path, str),
             ImportExportType::Descriptor(descriptor) => export_descriptor(sender, path, descriptor),
             ImportExportType::ExportLabels => export_labels(sender, daemon, path).await,
             ImportExportType::ImportPsbt => import_psbt(sender, path),
@@ -497,10 +497,10 @@ pub fn export_descriptor(sender: Sender<Progress>, path: PathBuf, descriptor: Li
     send_progress!(sender, Ended);
 }
 
-pub fn export_psbt(sender: Sender<Progress>, path: PathBuf, psbt: String) {
+pub fn export_string(sender: Sender<Progress>, path: PathBuf, str: String) {
     let mut file = open_file!(path, sender);
 
-    if let Err(e) = file.write_all(psbt.as_bytes()) {
+    if let Err(e) = file.write_all(str.as_bytes()) {
         send_error!(sender, e.into());
         return;
     }
