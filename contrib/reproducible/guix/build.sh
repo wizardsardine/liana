@@ -17,6 +17,11 @@ replace-with = "vendored_sources"
 git = "https://github.com/edouardparis/iced"
 branch = "patch-0.12.3"
 replace-with = "vendored_sources"
+
+[source."https://github.com/wizardsardine/bdk"]
+git = "https://github.com/wizardsardine/bdk"
+branch = "release/1.0.0-alpha.13"
+replace-with = "vendored_sources"
 EOF
 
 ls -la .cargo/config.toml
