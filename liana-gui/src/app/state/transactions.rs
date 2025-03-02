@@ -279,10 +279,16 @@ impl State for TransactionsPanel {
                     self.modal = TransactionsModal::None;
                 }
             }
-            _ => {
+            ref msg => {
                 return match &mut self.modal {
                     TransactionsModal::CreateRbf(modal) => modal.update(daemon, _cache, message),
-                    TransactionsModal::Export(modal) => modal.update(message),
+                    TransactionsModal::Export(modal) => {
+                        if let Message::View(view::Message::Export(m)) = msg {
+                            modal.update(m.clone())
+                        } else {
+                            Task::none()
+                        }
+                    }
                     TransactionsModal::None => Task::none(),
                 };
             }
