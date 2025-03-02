@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 
 use crate::{
     app::{
-        message::Message,
+        self,
         view::{self, export::export_modal},
     },
     daemon::Daemon,
@@ -37,53 +37,47 @@ impl ExportModal {
         }
     }
 
-    pub fn launch(&self) -> Task<Message> {
+    pub fn launch(&self) -> Task<app::message::Message> {
         Task::perform(get_path(), |m| {
-            Message::View(view::Message::Export(ExportMessage::Path(m)))
+            app::message::Message::View(view::Message::Export(ExportMessage::Path(m)))
         })
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> {
-        if let Message::View(view::Message::Export(m)) = message {
-            match m {
-                ExportMessage::ExportProgress(m) => match m {
-                    ExportProgress::Started(handle) => {
-                        self.handle = Some(handle);
-                        self.state = ExportState::Progress(0.0);
-                    }
-                    ExportProgress::Progress(p) => {
-                        if let ExportState::Progress(_) = self.state {
-                            self.state = ExportState::Progress(p);
-                        }
-                    }
-                    ExportProgress::Finished | ExportProgress::Ended => {
-                        self.state = ExportState::Ended
-                    }
-                    ExportProgress::Error(e) => self.error = Some(e),
-                    ExportProgress::None => {}
-                },
-                ExportMessage::TimedOut => {
-                    self.stop(ExportState::TimedOut);
+    pub fn update(&mut self, message: ExportMessage) -> Task<app::message::Message> {
+        match message {
+            ExportMessage::ExportProgress(m) => match m {
+                ExportProgress::Started(handle) => {
+                    self.handle = Some(handle);
+                    self.state = ExportState::Progress(0.0);
                 }
-                ExportMessage::UserStop => {
-                    self.stop(ExportState::Aborted);
-                }
-                ExportMessage::Path(p) => {
-                    if let Some(path) = p {
-                        self.path = Some(path);
-                        self.start();
-                    } else {
-                        return Task::perform(async {}, |_| {
-                            Message::View(view::Message::Export(ExportMessage::Close))
-                        });
+                ExportProgress::Progress(p) => {
+                    if let ExportState::Progress(_) = self.state {
+                        self.state = ExportState::Progress(p);
                     }
                 }
-                ExportMessage::Close | ExportMessage::Open => { /* unreachable */ }
+                ExportProgress::Finished | ExportProgress::Ended => self.state = ExportState::Ended,
+                ExportProgress::Error(e) => self.error = Some(e),
+                ExportProgress::None => {}
+            },
+            ExportMessage::TimedOut => {
+                self.stop(ExportState::TimedOut);
             }
-            Task::none()
-        } else {
-            Task::none()
+            ExportMessage::UserStop => {
+                self.stop(ExportState::Aborted);
+            }
+            ExportMessage::Path(p) => {
+                if let Some(path) = p {
+                    self.path = Some(path);
+                    self.start();
+                } else {
+                    return Task::perform(async {}, |_| {
+                        app::message::Message::View(view::Message::Export(ExportMessage::Close))
+                    });
+                }
+            }
+            ExportMessage::Close | ExportMessage::Open => { /* unreachable */ }
         }
+        Task::none()
     }
     pub fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<view::Message> {
         let modal = Modal::new(
