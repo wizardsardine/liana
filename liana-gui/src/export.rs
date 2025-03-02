@@ -394,11 +394,9 @@ pub fn export_subscription(
                 let _ = output.send(msg).await;
                 continue;
             }
-            // => release handle lock
             state.handle = Some(handle);
 
             sleep(time::Duration::from_millis(100)).await;
-            let _ = output.send(ExportProgress::None).await;
         }
     })
 }
