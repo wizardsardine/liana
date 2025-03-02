@@ -170,6 +170,13 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
         Message::Settings(SettingsMessage::ExportDescriptor),
     );
 
+    let export_transactions = settings_section(
+        "Export transactions",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ExportTransactions),
+    );
+
     let export_labels = settings_section(
         "Export labels",
         None,
@@ -199,6 +206,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
             .spacing(20)
             .push(header)
             .push(export_descriptor)
+            .push(export_transactions)
             .push(export_labels)
             .push(export_wallet)
             .push(import_wallet)

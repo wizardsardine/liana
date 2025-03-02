@@ -1,26 +1,27 @@
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::{Debug, Display};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use chrono::{Duration, Utc};
-use liana::miniscript;
-use liana::miniscript::bitcoin::bip32::Fingerprint;
-use liana::miniscript::bitcoin::{Network, Transaction, Txid};
+use liana::miniscript::{
+    self,
+    bitcoin::{bip32::Fingerprint, Network, Txid},
+};
 use lianad::bip329;
 use serde::{Deserialize, Serialize};
-
-use crate::app::settings::Settings;
-use crate::app::wallet::Wallet;
-use crate::app::Config;
-use crate::daemon::model::HistoryTransaction;
-use crate::daemon::{Daemon, DaemonBackend, DaemonError};
-use crate::installer::{
-    extract_daemon_config, extract_local_gui_settings, extract_remote_gui_settings, Context,
-    RemoteBackend,
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::{Debug, Display},
+    path::PathBuf,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
-use crate::lianalite::client::backend::api::DEFAULT_LIMIT;
+
+use crate::{
+    app::{settings::Settings, wallet::Wallet, Config},
+    daemon::{model::HistoryTransaction, Daemon, DaemonBackend, DaemonError},
+    installer::{
+        extract_daemon_config, extract_local_gui_settings, extract_remote_gui_settings, Context,
+        RemoteBackend,
+    },
+    lianalite::client::backend::api::DEFAULT_LIMIT,
+};
 
 const CONFIG_KEY: &str = "config";
 const SETTINGS_KEY: &str = "settings";
@@ -187,13 +188,13 @@ impl Backup {
         account.transactions = get_transactions(&daemon)
             .await?
             .into_iter()
-            .map(|tx| tx.tx)
+            .map(|tx| miniscript::bitcoin::consensus::encode::serialize_hex(&tx.tx))
             .collect();
         account.psbts = daemon
             .list_spend_transactions(None)
             .await?
             .into_iter()
-            .map(|tx| tx.psbt)
+            .map(|tx| tx.psbt.serialize_hex())
             .collect();
 
         Ok(Backup {
@@ -317,9 +318,9 @@ pub struct Account {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<bip329::Labels>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub transactions: Vec<Transaction>,
+    pub transactions: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub psbts: Vec<miniscript::bitcoin::Psbt>,
+    pub psbts: Vec<String>,
     #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     pub proprietary: serde_json::Map<String, serde_json::Value>,
 }

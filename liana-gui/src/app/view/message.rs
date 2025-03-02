@@ -76,6 +76,7 @@ pub enum SettingsMessage {
     EditWalletSettings,
     ImportExportSection,
     ExportDescriptor,
+    ExportTransactions,
     ExportLabels,
     ExportWallet,
     ExportBackup(String),

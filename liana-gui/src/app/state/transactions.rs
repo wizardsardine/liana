@@ -20,6 +20,7 @@ pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
 use crate::{
     app::{
+        self,
         cache::Cache,
         error::Error,
         message::Message,
@@ -276,7 +277,9 @@ impl State for TransactionsPanel {
                         ImportExportType::Transactions,
                     ));
                     if let TransactionsModal::Export(m) = &self.modal {
-                        return m.launch();
+                        return m.launch(|m| {
+                            app::message::Message::View(view::Message::ImportExport(m))
+                        });
                     }
                 }
             }

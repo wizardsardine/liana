@@ -264,6 +264,7 @@ pub fn export_subscription(
     path: PathBuf,
     export_type: ImportExportType,
 ) -> impl Stream<Item = Progress> {
+    log::warn!("export_subscription");
     iced::stream::channel(100, move |mut output| async move {
         let mut state = Export::new(Some(daemon), Box::new(path), export_type);
         loop {

@@ -162,6 +162,18 @@ pub struct ImportExportSettingsState {
     modal: Option<ExportModal>,
 }
 
+macro_rules! launch {
+    ($s:ident, $m: ident) => {
+        let launch = $m.launch(|m| {
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::ImportExport(m),
+            ))
+        });
+        $s.modal = Some($m);
+        return launch
+    };
+}
+
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let content = view::settings::import_export(cache, self.warning.as_ref());
@@ -194,27 +206,42 @@ impl State for ImportExportSettingsState {
         wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match message {
-            Message::View(view::Message::Settings(view::SettingsMessage::ImportExport(
-                ImportExportMessage::Close,
-            ))) => {
+            Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
+                log::warn!("ImportExportSettingsState.update(Close)");
                 self.modal = None;
             }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportExport(m))) => {
+                log::warn!("ImportExportSettingsState.update(ImportExport({:?}))", m);
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.update(m);
+                };
+            }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportDescriptor)) => {
+                log::warn!("ImportExportSettingsState.update(ExportDescriptor)");
                 if self.modal.is_none() {
                     let modal = ExportModal::new(
                         daemon,
                         ImportExportType::Descriptor(wallet.main_descriptor.clone()),
                     );
-                    self.modal = Some(modal);
+                    launch!(self, modal);
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportTransactions)) => {
+                log::warn!("ImportExportSettingsState.update(ExportTransactions)");
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(daemon, ImportExportType::Transactions);
+                    launch!(self, modal);
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportLabels)) => {
+                log::warn!("ImportExportSettingsState.update(ExportLabels)");
                 if self.modal.is_none() {
                     let modal = ExportModal::new(daemon, ImportExportType::ExportLabels);
-                    self.modal = Some(modal);
+                    launch!(self, modal);
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportWallet)) => {
+                log::warn!("ImportExportSettingsState.update(ExportWallet)");
                 if self.modal.is_none() {
                     let datadir = cache.datadir_path.clone();
                     let network = cache.network;
@@ -225,7 +252,8 @@ impl State for ImportExportSettingsState {
                         async move {
                             let backup =
                                 Backup::from_app(datadir, network, config, wallet, daemon).await;
-                            backup.unwrap().to_string()
+                            let backup = backup.unwrap();
+                            serde_json::to_string_pretty(&backup).unwrap()
                             // TODO: do not unwrap, return an error message instead
                         },
                         |s| {
@@ -237,20 +265,24 @@ impl State for ImportExportSettingsState {
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
+                log::warn!("ImportExportSettingsState.update(ExportBackup)");
                 let modal = ExportModal::new(daemon, ImportExportType::ExportBackup(backup));
-                self.modal = Some(modal);
+                launch!(self, modal);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
+                log::warn!("ImportExportSettingsState.update(ImportWallet)");
                 // TODO:
                 if self.modal.is_none() {
                     let modal = ExportModal::new(
                         daemon,
                         ImportExportType::Descriptor(wallet.main_descriptor.clone()),
                     );
-                    self.modal = Some(modal);
+                    launch!(self, modal);
                 }
             }
-            _ => {}
+            m => {
+                log::warn!("ImportExportSettingsState.update({:?})", m);
+            }
         }
 
         Task::none()
