@@ -359,10 +359,7 @@ pub fn export_subscription(
                 Status::Stopped => {
                     break;
                 }
-                Status::Running => {
-                    sleep(time::Duration::from_millis(100)).await;
-                    continue;
-                }
+                Status::Running => {}
             }
             let msg = state.receiver.try_recv();
             let disconnected = match msg {
