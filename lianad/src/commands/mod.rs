@@ -314,6 +314,8 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         let block_height = db_conn.chain_tip().map(|tip| tip.height).unwrap_or(0);
         let wallet = db_conn.wallet();
+        let receive_index: u32 = db_conn.receive_index().into();
+        let change_index: u32 = db_conn.change_index().into();
         let rescan_progress = wallet
             .rescan_timestamp
             .map(|_| self.bitcoin.rescan_progress().unwrap_or(1.0));
@@ -328,6 +330,8 @@ impl DaemonControl {
             rescan_progress,
             timestamp: wallet.timestamp,
             last_poll_timestamp: wallet.last_poll_timestamp,
+            receive_index,
+            change_index,
         }
     }
 
@@ -1168,6 +1172,10 @@ pub struct GetInfoResult {
     pub timestamp: u32,
     /// Timestamp of last poll, if any.
     pub last_poll_timestamp: Option<u32>,
+    /// Last index used to generate a receive address
+    pub receive_index: u32,
+    /// Last index used to generate a change address
+    pub change_index: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
