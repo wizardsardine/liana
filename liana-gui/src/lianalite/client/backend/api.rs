@@ -105,6 +105,8 @@ pub struct Wallet {
     pub name: String,
     #[serde(deserialize_with = "deser_fromstr")]
     pub descriptor: LianaDescriptor,
+    pub deposit_derivation_index: u32,
+    pub change_derivation_index: u32,
     pub recovery_paths: Vec<RecoveryPath>,
     pub biggest_remaining_sequence: Option<u32>,
     pub smallest_remaining_sequence: Option<u32>,
