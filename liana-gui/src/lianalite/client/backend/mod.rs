@@ -594,6 +594,8 @@ impl Daemon for BackendWalletClient {
             timestamp: wallet.created_at as u32,
             // We can ignore this field for remote backend as the wallet should remain synced.
             last_poll_timestamp: None,
+            receive_index: wallet.deposit_derivation_index,
+            change_index: wallet.change_derivation_index,
         })
     }
 

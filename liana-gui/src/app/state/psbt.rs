@@ -754,6 +754,8 @@ mod tests {
                     "block_height": 1000,
                     "sync": 1.0,
                     "descriptors": { "main": LianaDescriptor::from_str(DESC).unwrap() },
+                    "receive_index": 4,
+                    "change_index": 3,
                     "timestamp": 1000,
                 })),
             ),
