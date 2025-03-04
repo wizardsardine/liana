@@ -4,7 +4,7 @@ use std::sync::Arc;
 use iced_runtime::{task::into_stream, Action};
 
 use crate::{
-    app::{cache::Cache, message::Message, state::State, wallet::Wallet},
+    app::{cache::Cache, message::Message, state::State, wallet::Wallet, Config},
     daemon::Daemon,
 };
 
@@ -26,12 +26,18 @@ impl<S: State + 'static> Sandbox<S> {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
+        config: &Config,
+        wallet: Arc<Wallet>,
     ) -> Self {
-        let cmd = self.state.update(daemon.clone(), cache, message);
+        let cmd = self
+            .state
+            .update(daemon.clone(), cache, message, config, wallet.clone());
         if let Some(mut stream) = into_stream(cmd) {
             while let Some(action) = stream.next().await {
                 if let Action::Output(msg) = action {
-                    let _cmd = self.state.update(daemon.clone(), cache, msg);
+                    let _cmd =
+                        self.state
+                            .update(daemon.clone(), cache, msg, config, wallet.clone());
                 }
             }
         }
@@ -42,13 +48,16 @@ impl<S: State + 'static> Sandbox<S> {
         mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
+        config: &Config,
         wallet: Arc<Wallet>,
     ) -> Self {
-        let cmd = self.state.reload(daemon.clone(), wallet);
+        let cmd = self.state.reload(daemon.clone(), wallet.clone());
         if let Some(mut stream) = into_stream(cmd) {
             while let Some(action) = stream.next().await {
                 if let Action::Output(msg) = action {
-                    let _cmd = self.state.update(daemon.clone(), cache, msg);
+                    let _cmd =
+                        self.state
+                            .update(daemon.clone(), cache, msg, config, wallet.clone());
                 }
             }
         }

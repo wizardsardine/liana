@@ -11,7 +11,7 @@ use lianad::commands::CoinStatus;
 
 use super::{redirect, State};
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet},
+    app::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet, Config},
     daemon::{
         model::{Coin, LabelItem},
         Daemon,
@@ -88,6 +88,8 @@ impl State for CreateSpendPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         if matches!(message, Message::View(view::Message::Close)) {
             return redirect(Menu::PSBTs);

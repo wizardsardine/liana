@@ -20,15 +20,17 @@ pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
 use crate::{
     app::{
+        self,
         cache::Cache,
         error::Error,
         message::Message,
         state::{label::LabelsEdited, State},
         view,
         wallet::Wallet,
+        Config,
     },
     daemon::model::{self, LabelsLoader},
-    export::ExportMessage,
+    export::{ImportExportMessage, ImportExportType},
 };
 
 use crate::daemon::{
@@ -110,6 +112,8 @@ impl State for TransactionsPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         _cache: &Cache,
         message: Message,
+        _config: &Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match message {
             Message::HistoryTransactions(res) => match res {
@@ -266,23 +270,34 @@ impl State for TransactionsPanel {
                     );
                 }
             }
-            Message::View(view::Message::Export(ExportMessage::Open)) => {
+            Message::View(view::Message::ImportExport(ImportExportMessage::Open)) => {
                 if let TransactionsModal::None = &self.modal {
-                    self.modal = TransactionsModal::Export(ExportModal::new(daemon));
+                    self.modal = TransactionsModal::Export(ExportModal::new(
+                        daemon,
+                        ImportExportType::Transactions,
+                    ));
                     if let TransactionsModal::Export(m) = &self.modal {
-                        return m.launch();
+                        return m.launch(|m| {
+                            app::message::Message::View(view::Message::ImportExport(m))
+                        });
                     }
                 }
             }
-            Message::View(view::Message::Export(ExportMessage::Close)) => {
+            Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
                 if let TransactionsModal::Export(_) = &self.modal {
                     self.modal = TransactionsModal::None;
                 }
             }
-            _ => {
+            ref msg => {
                 return match &mut self.modal {
                     TransactionsModal::CreateRbf(modal) => modal.update(daemon, _cache, message),
-                    TransactionsModal::Export(modal) => modal.update(message),
+                    TransactionsModal::Export(modal) => {
+                        if let Message::View(view::Message::ImportExport(m)) = msg {
+                            modal.update(m.clone())
+                        } else {
+                            Task::none()
+                        }
+                    }
                     TransactionsModal::None => Task::none(),
                 };
             }
@@ -321,7 +336,9 @@ impl State for TransactionsPanel {
         if let TransactionsModal::Export(modal) = &self.modal {
             if let Some(sub) = modal.subscription() {
                 return sub.map(|m| {
-                    Message::View(view::Message::Export(ExportMessage::ExportProgress(m)))
+                    Message::View(view::Message::ImportExport(ImportExportMessage::Progress(
+                        m,
+                    )))
                 });
             }
         }

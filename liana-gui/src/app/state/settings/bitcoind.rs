@@ -15,8 +15,9 @@ use lianad::config::{
 
 use liana_ui::{component::form, widget::Element};
 
+use crate::app::wallet::Wallet;
 use crate::{
-    app::{cache::Cache, error::Error, message::Message, state::settings::State, view},
+    app::{self, cache::Cache, error::Error, message::Message, state::settings::State, view},
     daemon::Daemon,
     node::{
         bitcoind::{RpcAuthType, RpcAuthValues},
@@ -90,6 +91,8 @@ impl State for BitcoindSettingsState {
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
         message: Message,
+        _config: &app::Config,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         match message {
             Message::DaemonConfigLoaded(res) => match res {

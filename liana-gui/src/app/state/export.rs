@@ -9,115 +9,167 @@ use tokio::task::JoinHandle;
 
 use crate::{
     app::{
-        message::Message,
+        self,
         view::{self, export::export_modal},
     },
     daemon::Daemon,
-    export::{self, get_path, ExportMessage, ExportProgress, ExportState},
+    export::{self, get_path, ImportExportMessage, ImportExportState, ImportExportType, Progress},
 };
 
 #[derive(Debug)]
 pub struct ExportModal {
     path: Option<PathBuf>,
     handle: Option<Arc<Mutex<JoinHandle<()>>>>,
-    state: ExportState,
+    state: ImportExportState,
     error: Option<export::Error>,
     daemon: Arc<dyn Daemon + Sync + Send>,
+    import_export_type: ImportExportType,
 }
 
 impl ExportModal {
     #[allow(clippy::new_without_default)]
-    pub fn new(daemon: Arc<dyn Daemon + Sync + Send>) -> Self {
+    pub fn new(daemon: Arc<dyn Daemon + Sync + Send>, export_type: ImportExportType) -> Self {
         Self {
             path: None,
             handle: None,
-            state: ExportState::Init,
+            state: ImportExportState::Init,
             error: None,
             daemon,
+            import_export_type: export_type,
         }
     }
 
-    pub fn launch(&self) -> Task<Message> {
-        Task::perform(get_path(), |m| {
-            Message::View(view::Message::Export(ExportMessage::Path(m)))
+    pub fn modal_title(&self) -> &'static str {
+        match self.import_export_type {
+            ImportExportType::Transactions => "Export Transactions",
+            ImportExportType::ExportPsbt(_) => "Export PSBT",
+            ImportExportType::ExportBackup(_) => "Export Backup",
+            ImportExportType::Descriptor(_) => "Export Descriptor",
+            ImportExportType::ExportLabels => "Export Labels",
+            ImportExportType::ImportPsbt => "Import PSBT",
+            ImportExportType::ImportDescriptor => "Import Descriptor",
+        }
+    }
+
+    pub fn default_filename(&self) -> String {
+        let date = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S");
+        match &self.import_export_type {
+            ImportExportType::Transactions => {
+                format!("liana-txs-{date}.csv")
+            }
+            ImportExportType::ExportPsbt(_) => "psbt.psbt".into(),
+            ImportExportType::Descriptor(descriptor) => {
+                let checksum = descriptor
+                    .to_string()
+                    .split_once('#')
+                    .map(|(_, checksum)| checksum)
+                    .unwrap()
+                    .to_string();
+                format!("liana-{}.descriptor", checksum)
+            }
+            ImportExportType::ImportPsbt => "psbt.psbt".into(),
+            ImportExportType::ImportDescriptor => "descriptor.descriptor".into(),
+            ImportExportType::ExportLabels => format!("liana-labels-{date}.csv"),
+            ImportExportType::ExportBackup(_) => format!("liana-backup-{date}.json"),
+        }
+    }
+
+    pub fn launch(
+        &self,
+        f: fn(ImportExportMessage) -> app::Message,
+    ) -> Task<app::message::Message> {
+        Task::perform(get_path(self.default_filename()), move |m| {
+            f(ImportExportMessage::Path(m))
         })
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> {
-        if let Message::View(view::Message::Export(m)) = message {
-            match m {
-                ExportMessage::ExportProgress(m) => match m {
-                    ExportProgress::Started(handle) => {
-                        self.handle = Some(handle);
-                        self.state = ExportState::Progress(0.0);
-                    }
-                    ExportProgress::Progress(p) => {
-                        if let ExportState::Progress(_) = self.state {
-                            self.state = ExportState::Progress(p);
-                        }
-                    }
-                    ExportProgress::Finished | ExportProgress::Ended => {
-                        self.state = ExportState::Ended
-                    }
-                    ExportProgress::Error(e) => self.error = Some(e),
-                    ExportProgress::None => {}
-                },
-                ExportMessage::TimedOut => {
-                    self.stop(ExportState::TimedOut);
+    pub fn update(&mut self, message: ImportExportMessage) -> Task<app::message::Message> {
+        match message {
+            ImportExportMessage::Progress(m) => match m {
+                Progress::Started(handle) => {
+                    self.handle = Some(handle);
+                    self.state = ImportExportState::Progress(0.0);
                 }
-                ExportMessage::UserStop => {
-                    self.stop(ExportState::Aborted);
-                }
-                ExportMessage::Path(p) => {
-                    if let Some(path) = p {
-                        self.path = Some(path);
-                        self.start();
-                    } else {
-                        return Task::perform(async {}, |_| {
-                            Message::View(view::Message::Export(ExportMessage::Close))
-                        });
+                Progress::Progress(p) => {
+                    if let ImportExportState::Progress(_) = self.state {
+                        self.state = ImportExportState::Progress(p);
                     }
                 }
-                ExportMessage::Close | ExportMessage::Open => { /* unreachable */ }
+                Progress::Finished | Progress::Ended => self.state = ImportExportState::Ended,
+                Progress::Error(e) => self.error = Some(e),
+                Progress::None => {}
+                Progress::Psbt(_) => {
+                    if self.import_export_type == ImportExportType::ImportPsbt {
+                        self.state = ImportExportState::Ended;
+                    }
+                    // TODO: forward PSBT
+                }
+                Progress::Descriptor(_) => {
+                    if self.import_export_type == ImportExportType::ImportDescriptor {
+                        self.state = ImportExportState::Ended;
+                    }
+                    // TODO: forward Descriptor
+                }
+            },
+            ImportExportMessage::TimedOut => {
+                self.stop(ImportExportState::TimedOut);
             }
-            Task::none()
-        } else {
-            Task::none()
+            ImportExportMessage::UserStop => {
+                self.stop(ImportExportState::Aborted);
+            }
+            ImportExportMessage::Path(p) => {
+                if let Some(path) = p {
+                    self.path = Some(path);
+                    self.start();
+                } else {
+                    return Task::perform(async {}, |_| {
+                        app::message::Message::View(view::Message::ImportExport(
+                            ImportExportMessage::Close,
+                        ))
+                    });
+                }
+            }
+            ImportExportMessage::Close | ImportExportMessage::Open => { /* unreachable */ }
         }
+        Task::none()
     }
     pub fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<view::Message> {
         let modal = Modal::new(
             content,
-            export_modal(&self.state, self.error.as_ref(), "Transactions"),
+            export_modal(&self.state, self.error.as_ref(), self.modal_title()),
         );
         match self.state {
-            ExportState::TimedOut
-            | ExportState::Aborted
-            | ExportState::Ended
-            | ExportState::Closed => modal.on_blur(Some(view::Message::Close)),
+            ImportExportState::TimedOut
+            | ImportExportState::Aborted
+            | ImportExportState::Ended
+            | ImportExportState::Closed => modal.on_blur(Some(view::Message::Close)),
             _ => modal,
         }
         .into()
     }
 
     pub fn start(&mut self) {
-        self.state = ExportState::Started;
+        self.state = ImportExportState::Started;
     }
 
-    pub fn stop(&mut self, state: ExportState) {
+    pub fn stop(&mut self, state: ImportExportState) {
         if let Some(handle) = self.handle.take() {
             handle.lock().expect("poisoned").abort();
             self.state = state;
         }
     }
 
-    pub fn subscription(&self) -> Option<Subscription<export::ExportProgress>> {
+    pub fn subscription(&self) -> Option<Subscription<export::Progress>> {
         if let Some(path) = &self.path {
             match &self.state {
-                ExportState::Started | ExportState::Progress(_) => {
+                ImportExportState::Started | ImportExportState::Progress(_) => {
                     Some(iced::Subscription::run_with_id(
-                        "transactions",
-                        export::export_subscription(self.daemon.clone(), path.to_path_buf()),
+                        self.modal_title(),
+                        export::export_subscription(
+                            self.daemon.clone(),
+                            path.to_path_buf(),
+                            self.import_export_type.clone(),
+                        ),
                     ))
                 }
                 _ => None,
