@@ -359,15 +359,14 @@ pub fn export_subscription(
                 Status::Stopped => {
                     break;
                 }
-                Status::Running => {
-                    sleep(time::Duration::from_millis(100)).await;
-                    continue;
-                }
+                Status::Running => {}
             }
             let msg = state.receiver.try_recv();
             let disconnected = match msg {
                 Ok(m) => {
-                    let _ = output.send(m).await;
+                    if let Err(e) = output.send(m).await {
+                        tracing::error!("export_subscription() fail to send message: {}", e);
+                    }
                     continue;
                 }
                 Err(e) => match e {
@@ -379,7 +378,9 @@ pub fn export_subscription(
             let handle = match state.handle.take() {
                 Some(h) => h,
                 None => {
-                    let _ = output.send(ExportProgress::Error(Error::HandleLost)).await;
+                    if let Err(e) = output.send(ExportProgress::Error(Error::HandleLost)).await {
+                        tracing::error!("export_subscription() fail to send message: {}", e);
+                    }
                     continue;
                 }
             };
@@ -394,14 +395,14 @@ pub fn export_subscription(
                 }
             };
             if let Some(msg) = msg {
-                let _ = output.send(msg).await;
+                if let Err(e) = output.send(msg).await {
+                    tracing::error!("export_subscription() fail to send message: {}", e);
+                }
                 continue;
             }
-            // => release handle lock
             state.handle = Some(handle);
 
             sleep(time::Duration::from_millis(100)).await;
-            let _ = output.send(ExportProgress::None).await;
         }
     })
 }
