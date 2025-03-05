@@ -36,6 +36,18 @@ impl ExportModal {
         }
     }
 
+    pub fn modal_title(&self) -> &'static str {
+        match self.import_export_type {
+            ImportExportType::Transactions => "Export Transactions",
+            ImportExportType::ExportPsbt(_) => "Export PSBT",
+            ImportExportType::ExportBackup(_) => "Export Backup",
+            ImportExportType::Descriptor(_) => "Export Descriptor",
+            ImportExportType::ExportLabels => "Export Labels",
+            ImportExportType::ImportPsbt => "Import PSBT",
+            ImportExportType::ImportDescriptor => "Import Descriptor",
+        }
+    }
+
     pub fn default_filename(&self) -> String {
         let date = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S");
         match &self.import_export_type {
@@ -117,7 +129,7 @@ impl ExportModal {
     pub fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<view::Message> {
         let modal = Modal::new(
             content,
-            export_modal(&self.state, self.error.as_ref(), "Transactions"),
+            export_modal(&self.state, self.error.as_ref(), self.modal_title()),
         );
         match self.state {
             ImportExportState::TimedOut
@@ -145,7 +157,7 @@ impl ExportModal {
             match &self.state {
                 ImportExportState::Started | ImportExportState::Progress(_) => {
                     Some(iced::Subscription::run_with_id(
-                        "transactions",
+                        self.modal_title(),
                         export::export_subscription(
                             self.daemon.clone(),
                             path.to_path_buf(),
