@@ -739,10 +739,17 @@ pub fn backup_descriptor<'a>(
                             ),
                         )
                         .push(
-                            Row::new().push(Column::new().width(Length::Fill)).push(
-                                button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                    .on_press(Message::Clibpboard(descriptor.to_string())),
-                            ),
+                            Row::new()
+                                .push(Space::with_width(Length::Fill))
+                                .push(
+                                    button::secondary(Some(icon::wallet_icon()), "Backup")
+                                        .on_press(Message::BackupWallet),
+                                )
+                                .push(Space::with_width(10))
+                                .push(
+                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
+                                        .on_press(Message::Clibpboard(descriptor.to_string())),
+                                ),
                         )
                         .spacing(10),
                 )

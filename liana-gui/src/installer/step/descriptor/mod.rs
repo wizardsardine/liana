@@ -16,7 +16,9 @@ use liana_ui::{component::form, widget::Element};
 use async_hwi::DeviceKind;
 
 use crate::{
-    app::wallet::wallet_name,
+    app::{state::export::ExportModal, wallet::wallet_name},
+    backup::Backup,
+    export::{ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
         message::{self, Message},
@@ -302,12 +304,62 @@ pub struct BackupDescriptor {
     done: bool,
     descriptor: Option<LianaDescriptor>,
     key_aliases: HashMap<Fingerprint, String>,
+    modal: Option<ExportModal>,
 }
 
 impl Step for BackupDescriptor {
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
-        if let Message::UserActionDone(done) = message {
-            self.done = done;
+    fn subscription(&self, _hws: &HardwareWallets) -> iced::Subscription<Message> {
+        if let Some(modal) = &self.modal {
+            if let Some(sub) = modal.subscription() {
+                return sub.map(|m| {
+                    Message::ImportExport(crate::export::ImportExportMessage::Progress(m))
+                });
+            }
+        }
+        iced::Subscription::none()
+    }
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        ctx: &Context,
+    ) -> Task<Message> {
+        match message {
+            Message::ImportExport(ImportExportMessage::Close) => {
+                self.modal = None;
+            }
+            Message::ImportExport(m) => {
+                if let Some(modal) = self.modal.as_mut() {
+                    let task: Task<Message> = modal.update(m);
+                    return task;
+                };
+            }
+            Message::BackupWallet => {
+                if self.modal.is_none() {
+                    let ctx = ctx.clone();
+                    return Task::perform(
+                        async move {
+                            let backup = Backup::from_installer(ctx, true).await;
+                            let backup = backup.unwrap();
+                            serde_json::to_string_pretty(&backup).unwrap()
+                            // TODO: do not unwrap, return an error message instead
+                        },
+                        Message::ExportWallet,
+                    );
+                }
+            }
+            Message::ExportWallet(str) => {
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(None, ImportExportType::ExportBackup(str));
+                    let launch = modal.launch();
+                    self.modal = Some(modal);
+                    return launch;
+                }
+            }
+            Message::UserActionDone(done) => {
+                self.done = done;
+            }
+            _ => {}
         }
         Task::none()
     }

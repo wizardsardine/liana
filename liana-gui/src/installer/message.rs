@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use super::{context, Error};
 use crate::{
     download::{DownloadError, Progress},
+    export::ImportExportMessage,
     hw::HardwareWalletMessage,
     installer::step::descriptor::editor::key::Key,
     lianalite::client::{auth::AuthClient, backend::api},
@@ -44,6 +45,15 @@ pub enum Message {
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
     MnemonicWord(usize, String),
     ImportMnemonic(bool),
+    BackupWallet,
+    ExportWallet(String),
+    ImportExport(ImportExportMessage),
+}
+
+impl From<ImportExportMessage> for Message {
+    fn from(value: ImportExportMessage) -> Self {
+        Message::ImportExport(value)
+    }
 }
 
 #[derive(Debug, Clone)]
