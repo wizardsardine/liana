@@ -19,13 +19,16 @@ pub struct ExportModal {
     handle: Option<Arc<Mutex<JoinHandle<()>>>>,
     state: ImportExportState,
     error: Option<export::Error>,
-    daemon: Arc<dyn Daemon + Sync + Send>,
+    daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     import_export_type: ImportExportType,
 }
 
 impl ExportModal {
     #[allow(clippy::new_without_default)]
-    pub fn new(daemon: Arc<dyn Daemon + Sync + Send>, export_type: ImportExportType) -> Self {
+    pub fn new(
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        export_type: ImportExportType,
+    ) -> Self {
         Self {
             path: None,
             handle: None,
