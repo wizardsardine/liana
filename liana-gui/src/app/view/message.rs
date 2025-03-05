@@ -1,4 +1,4 @@
-use crate::{app::menu::Menu, export::ImportExportMessage, node::bitcoind::RpcAuthType};
+use crate::{app::menu::Menu, backup, export::ImportExportMessage, node::bitcoind::RpcAuthType};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, OutPoint};
 
 pub trait Close {
@@ -89,7 +89,7 @@ pub enum SettingsMessage {
     ExportTransactions,
     ExportLabels,
     ExportWallet,
-    ExportBackup(String),
+    ExportBackup(Result<String, backup::Error>),
     ImportWallet,
     AboutSection,
     RegisterWallet,

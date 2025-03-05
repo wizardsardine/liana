@@ -25,6 +25,7 @@ use crate::{
         settings::{self as gui_settings, AuthConfig, Settings, SettingsError, WalletSetting},
         wallet::wallet_name,
     },
+    backup,
     daemon::DaemonError,
     datadir::create_directory,
     hw::{HardwareWalletConfig, HardwareWallets},
@@ -730,6 +731,7 @@ pub enum Error {
     CannotGetAvailablePort(String),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
+    Backup(backup::Error),
 }
 
 impl From<jsonrpc::simple_http::Error> for Error {
@@ -783,6 +785,7 @@ impl std::fmt::Display for Error {
             Self::CannotCreateFile(e) => write!(f, "Failed to create file: {}", e),
             Self::Unexpected(e) => write!(f, "Unexpected: {}", e),
             Self::HardwareWallet(e) => write!(f, "Hardware Wallet: {}", e),
+            Self::Backup(e) => write!(f, "Backup: {:?}", e),
         }
     }
 }

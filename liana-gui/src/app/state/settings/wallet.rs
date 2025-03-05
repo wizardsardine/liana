@@ -240,7 +240,7 @@ impl State for WalletSettingsState {
                         },
                         |s| {
                             Message::View(view::Message::Settings(
-                                view::SettingsMessage::ExportBackup(s),
+                                view::SettingsMessage::ExportBackup(Ok(s)),
                             ))
                         },
                     )
@@ -248,7 +248,9 @@ impl State for WalletSettingsState {
                     Task::none()
                 }
             }
-            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(Ok(
+                backup,
+            )))) => {
                 if self.modal.is_none() {
                     let modal =
                         // ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
