@@ -44,7 +44,12 @@ impl Step for ChooseBackend {
     fn skip(&self, _ctx: &Context) -> bool {
         self.network != Network::Bitcoin && self.network != Network::Signet
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         if let Message::SelectBackend(message::SelectBackend::ContinueWithLocalWallet(
             local_wallet,
         )) = message
@@ -128,7 +133,12 @@ impl Step for RemoteBackendLogin {
         matches!(ctx.remote_backend, RemoteBackend::None)
             || (self.network != Network::Bitcoin && self.network != Network::Signet)
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         match &mut self.step {
             ConnectionStep::EnterEmail { email } => match message {
                 Message::SelectBackend(message::SelectBackend::EmailEdited(value)) => {
@@ -398,7 +408,12 @@ impl Step for ImportRemoteWallet {
     }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         match message {
             Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptor(desc)) => {
                 self.imported_descriptor.value = desc;

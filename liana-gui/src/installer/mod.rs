@@ -241,7 +241,7 @@ impl Installer {
                     .steps
                     .get_mut(self.current)
                     .expect("There is always a step")
-                    .update(&mut self.hws, message);
+                    .update(&mut self.hws, message, &self.context);
                 match &self.context.remote_backend {
                     RemoteBackend::WithoutWallet(backend) => Task::perform(
                         create_remote_wallet(
@@ -283,13 +283,13 @@ impl Installer {
                 self.steps
                     .get_mut(self.current)
                     .expect("There is always a step")
-                    .update(&mut self.hws, Message::Installed(Err(e)))
+                    .update(&mut self.hws, Message::Installed(Err(e)), &self.context)
             }
             _ => self
                 .steps
                 .get_mut(self.current)
                 .expect("There is always a step")
-                .update(&mut self.hws, message),
+                .update(&mut self.hws, message, &self.context),
         }
     }
 

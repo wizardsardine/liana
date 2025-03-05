@@ -33,7 +33,12 @@ use crate::{
 };
 
 pub trait Step {
-    fn update(&mut self, _hws: &mut HardwareWallets, _message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        _message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         Task::none()
     }
     fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
@@ -95,7 +100,12 @@ impl Step for Final {
             Task::none()
         }
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         match message {
             Message::Installed(res) => {
                 self.generating = false;

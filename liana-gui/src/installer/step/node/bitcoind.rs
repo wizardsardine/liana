@@ -300,7 +300,12 @@ impl Step for SelectBitcoindTypeStep {
     fn skip(&self, ctx: &Context) -> bool {
         ctx.remote_backend.is_some()
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         if let Message::SelectBitcoindType(msg) = message {
             match msg {
                 message::SelectBitcoindTypeMsg::UseExternal(selected) => {
@@ -549,7 +554,12 @@ impl Step for InternalBitcoindStep {
             }
         }
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         if let Message::InternalBitcoind(msg) = message {
             match msg {
                 message::InternalBitcoindMsg::Previous => {

@@ -77,7 +77,12 @@ impl Step for ImportDescriptor {
     }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         if let Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) =
             message
         {
@@ -173,7 +178,12 @@ impl Step for RegisterDescriptor {
             map.insert(key.master_fingerprint, key.name.clone());
         }
     }
-    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         match message {
             Message::Select(i) => {
                 if let Some(HardwareWallet::Supported {
