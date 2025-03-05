@@ -16,7 +16,9 @@ use liana_ui::{component::form, widget::Element};
 use async_hwi::DeviceKind;
 
 use crate::{
-    app::{settings::KeySetting, wallet::wallet_name},
+    app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
+    backup::{self, Backup},
+    export::{ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
         message::{self, Message},
@@ -292,16 +294,71 @@ pub struct BackupDescriptor {
     done: bool,
     descriptor: Option<LianaDescriptor>,
     keys: HashMap<Fingerprint, KeySetting>,
+    modal: Option<ExportModal>,
+    error: Option<Error>,
+    context: Option<Context>,
 }
 
 impl Step for BackupDescriptor {
+    fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
+        if let Some(modal) = &self.modal {
+            if let Some(sub) = modal.subscription() {
+                sub.map(|m| Message::ImportExport(ImportExportMessage::Progress(m)))
+            } else {
+                Subscription::none()
+            }
+        } else {
+            Subscription::none()
+        }
+    }
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
-        if let Message::UserActionDone(done) = message {
-            self.done = done;
+        match message {
+            Message::ImportExport(ImportExportMessage::Close) => {
+                self.modal = None;
+            }
+            Message::ImportExport(m) => {
+                if let Some(modal) = self.modal.as_mut() {
+                    let task: Task<Message> = modal.update(m);
+                    return task;
+                };
+            }
+            Message::BackupWallet => {
+                if let (None, Some(ctx)) = (&self.modal, self.context.as_ref()) {
+                    let ctx = ctx.clone();
+                    return Task::perform(
+                        async move {
+                            let backup = Backup::from_installer(ctx, true).await?;
+                            serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
+                        },
+                        Message::ExportWallet,
+                    );
+                }
+            }
+            Message::ExportWallet(str) => {
+                if self.modal.is_none() {
+                    let str = match str {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::error!("{e:?}");
+                            self.error = Some(Error::Backup(e));
+                            return Task::none();
+                        }
+                    };
+                    let modal = ExportModal::new(None, ImportExportType::ExportBackup(str));
+                    let launch = modal.launch();
+                    self.modal = Some(modal);
+                    return launch;
+                }
+            }
+            Message::UserActionDone(done) => {
+                self.done = done;
+            }
+            _ => {}
         }
         Task::none()
     }
     fn load_context(&mut self, ctx: &Context) {
+        self.context = Some(ctx.clone());
         if self.descriptor != ctx.descriptor {
             self.descriptor.clone_from(&ctx.descriptor);
             self.done = false;
@@ -318,13 +375,19 @@ impl Step for BackupDescriptor {
         progress: (usize, usize),
         email: Option<&'a str>,
     ) -> Element<Message> {
-        view::backup_descriptor(
+        let content = view::backup_descriptor(
             progress,
             email,
             self.descriptor.as_ref().expect("Must be a descriptor"),
             &self.keys,
+            self.error.as_ref(),
             self.done,
-        )
+        );
+        if let Some(modal) = &self.modal {
+            modal.view(content)
+        } else {
+            content
+        }
     }
 }
 

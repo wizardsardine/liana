@@ -46,19 +46,19 @@ pub struct Backup {
     pub proprietary: serde_json::Map<String, serde_json::Value>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Error {
     DescriptorMissing,
     NotSingleWallet,
     Json,
     SettingsFromFile,
-    Daemon(DaemonError),
+    Daemon(String),
     TxTimeMissing,
 }
 
 impl From<DaemonError> for Error {
     fn from(value: DaemonError) -> Self {
-        Error::Daemon(value)
+        Error::Daemon(value.to_string())
     }
 }
 

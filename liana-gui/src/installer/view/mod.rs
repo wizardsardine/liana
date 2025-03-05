@@ -689,6 +689,7 @@ pub fn backup_descriptor<'a>(
     email: Option<&'a str>,
     descriptor: &'a LianaDescriptor,
     keys: &'a HashMap<Fingerprint, settings::KeySetting>,
+    error: Option<&Error>,
     done: bool,
 ) -> Element<'a, Message> {
     layout(
@@ -724,6 +725,7 @@ pub fn backup_descriptor<'a>(
                     ))
                     .max_width(1000),
             )
+            .push_maybe(error.map(|e| card::error("Failed to export backup", e.to_string())))
             .push(
                 card::simple(
                     Column::new()
@@ -741,10 +743,17 @@ pub fn backup_descriptor<'a>(
                             ),
                         )
                         .push(
-                            Row::new().push(Column::new().width(Length::Fill)).push(
-                                button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                    .on_press(Message::Clibpboard(descriptor.to_string())),
-                            ),
+                            Row::new()
+                                .push(Space::with_width(Length::Fill))
+                                .push(
+                                    button::secondary(Some(icon::wallet_icon()), "Backup")
+                                        .on_press(Message::BackupWallet),
+                                )
+                                .push(Space::with_width(10))
+                                .push(
+                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
+                                        .on_press(Message::Clibpboard(descriptor.to_string())),
+                                ),
                         )
                         .spacing(10),
                 )

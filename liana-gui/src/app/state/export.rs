@@ -69,7 +69,7 @@ impl ExportModal {
             }
             ImportExportType::ImportPsbt => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor => "descriptor.descriptor".into(),
-            ImportExportType::ExportLabels => format!("liana-labels-{date}.csv"),
+            ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
             ImportExportType::ExportBackup(_) => format!("liana-backup-{date}.json"),
         }
     }
@@ -95,8 +95,12 @@ impl ExportModal {
                         self.state = ImportExportState::Progress(p);
                     }
                 }
-                Progress::Finished | Progress::Ended => self.state = ImportExportState::Ended,
-                Progress::Error(e) => self.error = Some(e),
+                Progress::Finished | Progress::Ended => {
+                    self.state = ImportExportState::Ended;
+                }
+                Progress::Error(e) => {
+                    self.error = Some(e);
+                }
                 Progress::None => {}
                 Progress::Psbt(_) => {
                     if self.import_export_type == ImportExportType::ImportPsbt {

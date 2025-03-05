@@ -8,6 +8,7 @@ use super::{context, Error};
 use crate::{
     app::settings::ProviderKey,
     app::view::Close,
+    backup,
     download::{DownloadError, Progress},
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
@@ -51,6 +52,8 @@ pub enum Message {
     RedeemNextKey,
     KeyRedeemed(ProviderKey, Result<(), services::Error>),
     AllKeysRedeemed,
+    BackupWallet,
+    ExportWallet(Result<String, backup::Error>),
     ImportExport(ImportExportMessage),
 }
 
@@ -62,7 +65,7 @@ impl Close for Message {
 
 impl From<ImportExportMessage> for Message {
     fn from(value: ImportExportMessage) -> Self {
-        Self::ImportExport(value)
+        Message::ImportExport(value)
     }
 }
 

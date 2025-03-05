@@ -271,13 +271,15 @@ impl State for ImportExportSettingsState {
                         },
                         |s| {
                             Message::View(view::Message::Settings(
-                                view::SettingsMessage::ExportBackup(s),
+                                view::SettingsMessage::ExportBackup(Ok(s)),
                             ))
                         },
                     );
                 }
             }
-            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(Ok(
+                backup,
+            )))) => {
                 let modal = ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
                 launch!(self, modal);
             }
