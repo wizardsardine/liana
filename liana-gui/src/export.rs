@@ -260,12 +260,12 @@ impl Export {
 }
 
 pub fn export_subscription(
-    daemon: Arc<dyn Daemon + Sync + Send>,
+    daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     path: PathBuf,
     export_type: ImportExportType,
 ) -> impl Stream<Item = Progress> {
     iced::stream::channel(100, move |mut output| async move {
-        let mut state = Export::new(Some(daemon), Box::new(path), export_type);
+        let mut state = Export::new(daemon, Box::new(path), export_type);
         loop {
             match state.state() {
                 Status::Init => {

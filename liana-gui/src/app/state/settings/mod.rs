@@ -218,7 +218,7 @@ impl State for ImportExportSettingsState {
             Message::View(view::Message::Settings(view::SettingsMessage::ExportDescriptor)) => {
                 if self.modal.is_none() {
                     let modal = ExportModal::new(
-                        daemon,
+                        Some(daemon),
                         ImportExportType::Descriptor(wallet.main_descriptor.clone()),
                     );
                     launch!(self, modal);
@@ -226,13 +226,13 @@ impl State for ImportExportSettingsState {
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportTransactions)) => {
                 if self.modal.is_none() {
-                    let modal = ExportModal::new(daemon, ImportExportType::Transactions);
+                    let modal = ExportModal::new(Some(daemon), ImportExportType::Transactions);
                     launch!(self, modal);
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportLabels)) => {
                 if self.modal.is_none() {
-                    let modal = ExportModal::new(daemon, ImportExportType::ExportLabels);
+                    let modal = ExportModal::new(Some(daemon), ImportExportType::ExportLabels);
                     launch!(self, modal);
                 }
             }
@@ -260,14 +260,14 @@ impl State for ImportExportSettingsState {
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
-                let modal = ExportModal::new(daemon, ImportExportType::ExportBackup(backup));
+                let modal = ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
                 launch!(self, modal);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
                 // TODO:
                 if self.modal.is_none() {
                     let modal = ExportModal::new(
-                        daemon,
+                        Some(daemon),
                         ImportExportType::Descriptor(wallet.main_descriptor.clone()),
                     );
                     launch!(self, modal);
