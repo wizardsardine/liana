@@ -49,3 +49,9 @@ pub enum Message {
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
 }
+
+impl From<ImportExportMessage> for Message {
+    fn from(value: ImportExportMessage) -> Self {
+        Message::View(view::Message::ImportExport(value))
+    }
+}

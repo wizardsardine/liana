@@ -164,11 +164,7 @@ pub struct ImportExportSettingsState {
 
 macro_rules! launch {
     ($s:ident, $m: ident) => {
-        let launch = $m.launch(|m| {
-            Message::View(view::Message::Settings(
-                view::SettingsMessage::ImportExport(m),
-            ))
-        });
+        let launch = $m.launch();
         $s.modal = Some($m);
         return launch
     };

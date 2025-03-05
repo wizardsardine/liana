@@ -62,13 +62,16 @@ impl ExportModal {
         }
     }
 
-    pub fn launch(&self) -> Task<app::message::Message> {
-        Task::perform(get_path(self.default_filename()), |m| {
-            app::message::Message::View(view::Message::ImportExport(ImportExportMessage::Path(m)))
+    pub fn launch<M: From<ImportExportMessage> + Send + 'static>(&self) -> Task<M> {
+        Task::perform(get_path(self.default_filename()), move |m| {
+            ImportExportMessage::Path(m).into()
         })
     }
 
-    pub fn update(&mut self, message: ImportExportMessage) -> Task<app::message::Message> {
+    pub fn update<M: From<ImportExportMessage> + Send + 'static>(
+        &mut self,
+        message: ImportExportMessage,
+    ) -> Task<M> {
         match message {
             ImportExportMessage::Progress(m) => match m {
                 Progress::Started(handle) => {
@@ -107,11 +110,7 @@ impl ExportModal {
                     self.path = Some(path);
                     self.start();
                 } else {
-                    return Task::perform(async {}, |_| {
-                        app::message::Message::View(view::Message::ImportExport(
-                            ImportExportMessage::Close,
-                        ))
-                    });
+                    return Task::perform(async {}, |_| ImportExportMessage::Close.into());
                 }
             }
             ImportExportMessage::Close | ImportExportMessage::Open => { /* unreachable */ }
