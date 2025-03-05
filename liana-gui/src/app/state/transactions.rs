@@ -269,7 +269,7 @@ impl State for TransactionsPanel {
             Message::View(view::Message::ImportExport(ImportExportMessage::Open)) => {
                 if let TransactionsModal::None = &self.modal {
                     self.modal = TransactionsModal::Export(ExportModal::new(
-                        daemon,
+                        Some(daemon),
                         ImportExportType::Transactions,
                     ));
                     if let TransactionsModal::Export(m) = &self.modal {
