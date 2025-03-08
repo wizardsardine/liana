@@ -1070,6 +1070,11 @@ impl DaemonControl {
         ListTransactionsResult { transactions }
     }
 
+    /// Store transactions in database, ignoring any that already exist.
+    pub fn store_transactions(&self, txs: &[bitcoin::Transaction]) {
+        self.db.connection().new_txs(txs);
+    }
+
     /// Create a transaction that sweeps all coins for which a timelocked recovery path is
     /// currently available to a provided address with the provided feerate.
     ///
