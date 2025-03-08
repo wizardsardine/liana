@@ -36,7 +36,11 @@ use std::{
 };
 
 use miniscript::{
-    bitcoin::{self, address, bip32, psbt::Psbt},
+    bitcoin::{
+        self, address,
+        bip32::{self, ChildNumber},
+        psbt::Psbt,
+    },
     psbt::PsbtExt,
 };
 use serde::{Deserialize, Serialize};
@@ -351,6 +355,39 @@ impl DaemonControl {
             .derive(index, &self.secp)
             .address(self.config.bitcoin_config.network);
         GetAddressResult::new(address, index)
+    }
+
+    /// Update derivation indexes
+    pub fn update_deriv_indexes(
+        &self,
+        receive: Option<u32>,
+        change: Option<u32>,
+    ) -> Result<(), CommandError> {
+        let mut db_conn = self.db.connection();
+
+        if let Some(index) = receive {
+            let child = match ChildNumber::from_normal_idx(index) {
+                Ok(i) => i,
+                Err(_) => return Err(CommandError::InvalidDerivationIndex),
+            };
+            let db_receive = db_conn.receive_index();
+            if child > db_receive {
+                db_conn.set_receive_index(child, &self.secp);
+            }
+        }
+
+        if let Some(index) = change {
+            let child = match ChildNumber::from_normal_idx(index) {
+                Ok(i) => i,
+                Err(_) => return Err(CommandError::InvalidDerivationIndex),
+            };
+            let db_change = db_conn.change_index();
+            if child > db_change {
+                db_conn.set_change_index(child, &self.secp);
+            }
+        }
+
+        Ok(())
     }
 
     /// list addresses

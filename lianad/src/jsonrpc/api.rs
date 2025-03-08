@@ -199,6 +199,49 @@ fn list_addresses(
     Ok(serde_json::json!(&res))
 }
 
+fn update_deriv_indexes(
+    control: &DaemonControl,
+    params: Params,
+) -> Result<serde_json::Value, Error> {
+    let receive = params.get(0, "receive");
+    let change = params.get(1, "change");
+
+    if receive.is_none() && change.is_none() {
+        return Err(Error::invalid_params(
+            "Missing 'receive' or 'change' parameter",
+        ));
+    }
+
+    let receive = match receive {
+        Some(i) => {
+            let res = i.as_i64().ok_or(Error::invalid_params(
+                "Invalid value for 'receive' param".to_string(),
+            ))?;
+            let res = res
+                .try_into()
+                .map_err(|_| Error::invalid_params("Invalid value for 'receive' param"))?;
+            Some(res)
+        }
+        None => None,
+    };
+
+    let change = match change {
+        Some(i) => {
+            let res = i.as_i64().ok_or(Error::invalid_params(
+                "Invalid value for 'change' param".to_string(),
+            ))?;
+            let res = res
+                .try_into()
+                .map_err(|_| Error::invalid_params("Invalid value for 'change' param"))?;
+            Some(res)
+        }
+        None => None,
+    };
+
+    control.update_deriv_indexes(receive, change)?;
+    Ok(serde_json::json!({}))
+}
+
 fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let start: u32 = params
         .get(0, "start")
@@ -417,6 +460,12 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
         }
         "getinfo" => serde_json::json!(&control.get_info()),
         "getnewaddress" => serde_json::json!(&control.get_new_address()),
+        "updatederivationindexes" => {
+            let params = req.params.ok_or_else(|| {
+                Error::invalid_params("Missing 'receive' or 'change' parameters.")
+            })?;
+            update_deriv_indexes(control, params)?
+        }
         "listcoins" => {
             let params = req.params;
             list_coins(control, params)?
