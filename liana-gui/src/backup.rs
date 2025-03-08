@@ -57,6 +57,12 @@ pub enum Error {
     TxTimeMissing,
 }
 
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
 impl From<DaemonError> for Error {
     fn from(value: DaemonError) -> Self {
         Error::Daemon(value.to_string())
@@ -353,7 +359,7 @@ pub struct Key {
     pub metadata: Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum KeyRole {
     /// Key to be used in normal spending condition
     Main,
@@ -365,7 +371,7 @@ pub enum KeyRole {
     Cosigning,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum KeyType {
     /// Main user
     Internal,

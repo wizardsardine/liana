@@ -273,7 +273,7 @@ impl State for TransactionsPanel {
                         ImportExportType::Transactions,
                     ));
                     if let TransactionsModal::Export(m) = &self.modal {
-                        return m.launch();
+                        return m.launch(true);
                     }
                 }
             }
