@@ -107,6 +107,25 @@ impl WalletSetting {
         }
         map
     }
+
+    pub fn update_alias(&mut self, key: &Fingerprint, alias: &str) {
+        let key_aliases = self.keys_aliases();
+        if key_aliases.contains_key(key) {
+            self.keys = self
+                .keys
+                .clone()
+                .into_iter()
+                .map(|mut ks| {
+                    if ks.master_fingerprint == *key {
+                        ks.name = alias.into();
+                        ks
+                    } else {
+                        ks
+                    }
+                })
+                .collect();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
