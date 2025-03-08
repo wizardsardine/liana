@@ -98,6 +98,19 @@ impl Daemon for EmbeddedDaemon {
         self.command(|daemon| Ok(daemon.get_new_address())).await
     }
 
+    async fn update_deriv_indexes(
+        &self,
+        receive: Option<u32>,
+        change: Option<u32>,
+    ) -> Result<(), DaemonError> {
+        self.command(|daemon| {
+            daemon
+                .update_deriv_indexes(receive, change)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
+        .await
+    }
+
     async fn list_coins(
         &self,
         statuses: &[CoinStatus],

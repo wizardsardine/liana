@@ -627,6 +627,14 @@ impl Daemon for BackendWalletClient {
         })
     }
 
+    async fn update_deriv_indexes(
+        &self,
+        _receive: Option<u32>,
+        _change: Option<u32>,
+    ) -> Result<(), DaemonError> {
+        Err(DaemonError::NotImplemented)
+    }
+
     /// Spent coins are not returned if statuses is empty, unless their outpoints are specified.
     async fn list_coins(
         &self,

@@ -43,6 +43,8 @@ pub enum DaemonError {
     ClientNotSupported,
     /// Error when selecting coins for spend.
     CoinSelectionError,
+    /// Not implemented feature
+    NotImplemented,
 }
 
 impl std::fmt::Display for DaemonError {
@@ -57,6 +59,7 @@ impl std::fmt::Display for DaemonError {
             Self::Start(e) => write!(f, "Daemon did not start: {}", e),
             Self::ClientNotSupported => write!(f, "Daemon communication is not supported"),
             Self::CoinSelectionError => write!(f, "Coin selection error"),
+            Self::NotImplemented => write!(f, "This feature is not implemented for this backend"),
         }
     }
 }
@@ -82,6 +85,11 @@ pub trait Daemon: Debug {
     async fn stop(&self) -> Result<(), DaemonError>;
     async fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;
     async fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;
+    async fn update_deriv_indexes(
+        &self,
+        receive: Option<u32>,
+        change: Option<u32>,
+    ) -> Result<(), DaemonError>;
     async fn list_coins(
         &self,
         statuses: &[CoinStatus],

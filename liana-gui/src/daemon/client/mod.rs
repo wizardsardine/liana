@@ -83,6 +83,14 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         self.call("getnewaddress", Option::<Request>::None)
     }
 
+    async fn update_deriv_indexes(
+        &self,
+        receive: Option<u32>,
+        change: Option<u32>,
+    ) -> Result<(), DaemonError> {
+        self.call("updatederivationindexes", Some(vec![receive, change]))
+    }
+
     async fn list_coins(
         &self,
         statuses: &[CoinStatus],
