@@ -48,6 +48,7 @@ impl ExportModal {
             ImportExportType::ExportLabels => "Export Labels",
             ImportExportType::ImportPsbt => "Import PSBT",
             ImportExportType::ImportDescriptor => "Import Descriptor",
+            ImportExportType::ImportBackup(..) => "Restore Backup",
         }
     }
 
@@ -70,12 +71,14 @@ impl ExportModal {
             ImportExportType::ImportPsbt => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor => "descriptor.descriptor".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
-            ImportExportType::ExportBackup(_) => format!("liana-backup-{date}.json"),
+            ImportExportType::ExportBackup(_) | ImportExportType::ImportBackup(_, _) => {
+                format!("liana-backup-{date}.json")
+            }
         }
     }
 
-    pub fn launch<M: From<ImportExportMessage> + Send + 'static>(&self) -> Task<M> {
-        Task::perform(get_path(self.default_filename()), move |m| {
+    pub fn launch<M: From<ImportExportMessage> + Send + 'static>(&self, write: bool) -> Task<M> {
+        Task::perform(get_path(self.default_filename(), write), move |m| {
             ImportExportMessage::Path(m).into()
         })
     }
@@ -95,11 +98,21 @@ impl ExportModal {
                         self.state = ImportExportState::Progress(p);
                     }
                 }
-                Progress::Finished | Progress::Ended => {
-                    self.state = ImportExportState::Ended;
+                Progress::Finished | Progress::Ended => self.state = ImportExportState::Ended,
+                Progress::KeyAliasesConflict(ref sender) => {
+                    if let ImportExportType::ImportBackup(_, aliases) = &self.import_export_type {
+                        self.import_export_type =
+                            ImportExportType::ImportBackup(Some(sender.clone()), aliases.clone());
+                    }
+                }
+                Progress::LabelsConflict(ref sender) => {
+                    if let ImportExportType::ImportBackup(labels, _) = &self.import_export_type {
+                        self.import_export_type =
+                            ImportExportType::ImportBackup(labels.clone(), Some(sender.clone()));
+                    }
                 }
                 Progress::Error(e) => {
-                    self.error = Some(e);
+                    self.error = Some(e.clone());
                 }
                 Progress::None => {}
                 Progress::Psbt(_) => {
@@ -130,6 +143,36 @@ impl ExportModal {
                 }
             }
             ImportExportMessage::Close | ImportExportMessage::Open => { /* unreachable */ }
+            ImportExportMessage::Overwrite => {
+                if let ImportExportType::ImportBackup(labels, aliases) =
+                    &mut self.import_export_type
+                {
+                    if let Some(sender) = labels.take() {
+                        if sender.send(true).is_err() {
+                            tracing::error!("ExportModal.update(): fail to send labels ACK");
+                        }
+                    } else if let Some(sender) = aliases.take() {
+                        if sender.send(true).is_err() {
+                            tracing::error!("ExportModal.update(): fail to send aliases ACK");
+                        }
+                    }
+                }
+            }
+            ImportExportMessage::Ignore => {
+                if let ImportExportType::ImportBackup(labels, aliases) =
+                    &mut self.import_export_type
+                {
+                    if let Some(sender) = labels.take() {
+                        if sender.send(false).is_err() {
+                            tracing::error!("ExportModal.update(): fail to send labels NACK");
+                        }
+                    } else if let Some(sender) = aliases.take() {
+                        if sender.send(false).is_err() {
+                            tracing::error!("ExportModal.update(): fail to send aliases NACK");
+                        }
+                    }
+                }
+            }
         }
         Task::none()
     }
@@ -140,7 +183,12 @@ impl ExportModal {
     {
         let modal = Modal::new(
             content,
-            export_modal(&self.state, self.error.as_ref(), self.modal_title()),
+            export_modal(
+                &self.state,
+                self.error.as_ref(),
+                self.modal_title(),
+                &self.import_export_type,
+            ),
         );
         match self.state {
             ImportExportState::TimedOut

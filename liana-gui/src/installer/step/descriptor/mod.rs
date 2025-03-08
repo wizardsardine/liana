@@ -345,7 +345,7 @@ impl Step for BackupDescriptor {
                         }
                     };
                     let modal = ExportModal::new(None, ImportExportType::ExportBackup(str));
-                    let launch = modal.launch();
+                    let launch = modal.launch(true);
                     self.modal = Some(modal);
                     return launch;
                 }

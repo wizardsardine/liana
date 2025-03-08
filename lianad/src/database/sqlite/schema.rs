@@ -3,7 +3,14 @@ use liana::descriptors::LianaDescriptor;
 
 use std::{convert::TryFrom, str::FromStr};
 
-use miniscript::bitcoin::{self, address, bip32, consensus::encode, psbt::Psbt};
+use miniscript::bitcoin::{
+    self,
+    address::{self, NetworkUnchecked},
+    bip32,
+    consensus::encode,
+    psbt::Psbt,
+    Address, OutPoint,
+};
 
 // Due to limitations of Sqlite's ALTER TABLE command and in order not to recreate
 // tables during migration:
@@ -376,14 +383,19 @@ impl From<DbLabel> for Label {
             Some(value.value)
         };
         match value.item_kind {
-            DbLabelledKind::Address => Label::Address(bip329::AddressRecord { ref_, label }),
-            DbLabelledKind::OutPoint => Label::Output(bip329::OutputRecord {
-                ref_,
+            DbLabelledKind::Address => Label::Address(bip329::AddressRecord {
+                ref_: Address::<NetworkUnchecked>::from_str(&ref_)
+                    .expect("db contains valid adresses"),
                 label,
-                spendable: None,
+            }),
+            DbLabelledKind::OutPoint => Label::Output(bip329::OutputRecord {
+                ref_: OutPoint::from_str(&ref_).expect(" db contais valid outpoints"),
+                label,
+                spendable: true,
             }),
             DbLabelledKind::Txid => Label::Transaction(bip329::TransactionRecord {
-                ref_,
+                ref_: bitcoin::consensus::encode::deserialize_hex(&ref_)
+                    .expect("db contains valid txid"),
                 label,
                 // FIXME: "Optional key origin information referencing the wallet associated with the label"
                 origin: None,

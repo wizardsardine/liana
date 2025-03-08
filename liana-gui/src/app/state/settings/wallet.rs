@@ -254,7 +254,7 @@ impl State for WalletSettingsState {
                 if self.modal.is_none() {
                     let modal =
                         ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
-                    let launch = modal.launch();
+                    let launch = modal.launch(true);
                     self.modal = Modal::ImportExport(modal);
                     launch
                 } else {
@@ -267,7 +267,7 @@ impl State for WalletSettingsState {
                         Some(daemon),
                         ImportExportType::Descriptor(self.wallet.main_descriptor.clone()),
                     );
-                    let launch = modal.launch();
+                    let launch = modal.launch(false);
                     self.modal = Modal::ImportExport(modal);
                     launch
                 } else {

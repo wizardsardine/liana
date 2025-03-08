@@ -183,8 +183,8 @@ impl ImportExportSettingsState {
 }
 
 macro_rules! launch {
-    ($s:ident, $m: ident) => {
-        let launch = $m.launch();
+    ($s:ident, $m: ident, $write:ident) => {
+        let launch = $m.launch($write);
         $s.modal = Some($m);
         return launch
     };
@@ -239,19 +239,19 @@ impl State for ImportExportSettingsState {
                         Some(daemon),
                         ImportExportType::Descriptor(self.wallet.main_descriptor.clone()),
                     );
-                    launch!(self, modal);
+                    launch!(self, modal, true);
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportTransactions)) => {
                 if self.modal.is_none() {
                     let modal = ExportModal::new(Some(daemon), ImportExportType::Transactions);
-                    launch!(self, modal);
+                    launch!(self, modal, true);
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportLabels)) => {
                 if self.modal.is_none() {
                     let modal = ExportModal::new(Some(daemon), ImportExportType::ExportLabels);
-                    launch!(self, modal);
+                    launch!(self, modal, true);
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportWallet)) => {
@@ -281,7 +281,7 @@ impl State for ImportExportSettingsState {
                 backup,
             )))) => {
                 let modal = ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
-                launch!(self, modal);
+                launch!(self, modal, true);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
                 // TODO:

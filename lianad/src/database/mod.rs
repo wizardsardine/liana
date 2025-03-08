@@ -576,7 +576,7 @@ impl LabelItem {
         match label {
             bip329::Label::Transaction(tx_record) => {
                 if let (Some(txid), Some(label)) = (
-                    Txid::from_str(&tx_record.ref_).ok(),
+                    Txid::from_str(&tx_record.ref_.to_string()).ok(),
                     tx_record.label.clone(),
                 ) {
                     Some((Self::Txid(txid), label))
@@ -586,7 +586,8 @@ impl LabelItem {
             }
             bip329::Label::Address(address_record) => {
                 if let (Some(addr), Some(label)) = (
-                    Address::from_str(&address_record.ref_).ok(),
+                    Address::from_str(&address_record.ref_.clone().assume_checked().to_string())
+                        .ok(),
                     address_record.label.clone(),
                 ) {
                     if addr.is_valid_for_network(network) {
@@ -600,7 +601,7 @@ impl LabelItem {
             }
             bip329::Label::Output(output_record) => {
                 if let (Some(outpoint), Some(label)) = (
-                    OutPoint::from_str(&output_record.ref_).ok(),
+                    OutPoint::from_str(&output_record.ref_.to_string()).ok(),
                     output_record.label.clone(),
                 ) {
                     Some((Self::OutPoint(outpoint), label))
