@@ -125,6 +125,14 @@ impl Daemon for EmbeddedDaemon {
             .await
     }
 
+    async fn store_transactions(&self, txs: &[Transaction]) -> Result<(), DaemonError> {
+        self.command(|daemon| {
+            daemon.store_transactions(txs);
+            Ok(())
+        })
+        .await
+    }
+
     async fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
         self.command(|daemon| Ok(daemon.list_transactions(txids)))
             .await
