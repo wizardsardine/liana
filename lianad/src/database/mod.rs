@@ -21,7 +21,7 @@ use std::{
 };
 
 use bip329::Labels;
-use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1};
+use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid};
 
 /// Information about the wallet.
 ///
@@ -569,6 +569,46 @@ impl LabelItem {
             Some(LabelItem::OutPoint(outpoint))
         } else {
             None
+        }
+    }
+
+    pub fn from_bip329(label: &bip329::Label, network: Network) -> Option<(Self, String)> {
+        match label {
+            bip329::Label::Transaction(tx_record) => {
+                if let (Some(txid), Some(label)) = (
+                    Txid::from_str(&tx_record.ref_).ok(),
+                    tx_record.label.clone(),
+                ) {
+                    Some((Self::Txid(txid), label))
+                } else {
+                    None
+                }
+            }
+            bip329::Label::Address(address_record) => {
+                if let (Some(addr), Some(label)) = (
+                    Address::from_str(&address_record.ref_).ok(),
+                    address_record.label.clone(),
+                ) {
+                    if addr.is_valid_for_network(network) {
+                        Some((Self::Address(addr.assume_checked()), label))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            bip329::Label::Output(output_record) => {
+                if let (Some(outpoint), Some(label)) = (
+                    OutPoint::from_str(&output_record.ref_).ok(),
+                    output_record.label.clone(),
+                ) {
+                    Some((Self::OutPoint(outpoint), label))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 }
