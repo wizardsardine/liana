@@ -17,11 +17,32 @@ use liana_ui::{
 
 use crate::{
     app::{
-        cache::Cache, error::Error, message::Message, settings, state::State, view, wallet::Wallet,
+        cache::Cache,
+        error::Error,
+        message::Message,
+        settings,
+        state::{export::ExportModal, State},
+        view,
+        wallet::Wallet,
+        Config,
     },
+    backup::Backup,
     daemon::{Daemon, DaemonBackend},
+    export::{ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
 };
+
+enum Modal {
+    None,
+    RegisterWallet(RegisterWalletModal),
+    ImportExport(ExportModal),
+}
+
+impl Modal {
+    fn is_none(&self) -> bool {
+        matches!(self, Modal::None)
+    }
+}
 
 pub struct WalletSettingsState {
     data_dir: PathBuf,
@@ -29,22 +50,24 @@ pub struct WalletSettingsState {
     descriptor: LianaDescriptor,
     keys_aliases: Vec<(Fingerprint, form::Value<String>)>,
     wallet: Arc<Wallet>,
-    modal: Option<RegisterWalletModal>,
+    modal: Modal,
     processing: bool,
     updated: bool,
+    config: Arc<Config>,
 }
 
 impl WalletSettingsState {
-    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>) -> Self {
+    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>, config: Arc<Config>) -> Self {
         WalletSettingsState {
             data_dir,
             descriptor: wallet.main_descriptor.clone(),
             keys_aliases: Self::keys_aliases(&wallet),
             wallet,
             warning: None,
-            modal: None,
+            modal: Modal::None,
             processing: false,
             updated: false,
+            config,
         }
     }
 
@@ -86,20 +109,31 @@ impl State for WalletSettingsState {
             self.processing,
             self.updated,
         );
-        if let Some(m) = &self.modal {
-            modal::Modal::new(content, m.view())
+
+        match &self.modal {
+            Modal::None => content,
+            Modal::RegisterWallet(m) => modal::Modal::new(content, m.view())
                 .on_blur(Some(view::Message::Close))
-                .into()
-        } else {
-            content
+                .into(),
+            Modal::ImportExport(m) => m.view(content),
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        if let Some(modal) = &self.modal {
-            modal.subscription()
-        } else {
-            Subscription::none()
+        match &self.modal {
+            Modal::None => Subscription::none(),
+            Modal::RegisterWallet(modal) => modal.subscription(),
+            Modal::ImportExport(modal) => {
+                if let Some(sub) = modal.subscription() {
+                    sub.map(|m| {
+                        Message::View(view::Message::Settings(
+                            view::SettingsMessage::ImportExport(ImportExportMessage::Progress(m)),
+                        ))
+                    })
+                } else {
+                    Subscription::none()
+                }
+            }
         }
     }
 
@@ -112,7 +146,7 @@ impl State for WalletSettingsState {
         match message {
             Message::WalletUpdated(res) => {
                 self.processing = false;
-                if let Some(modal) = &mut self.modal {
+                if let Modal::RegisterWallet(modal) = &mut self.modal {
                     modal.update(daemon, cache, Message::WalletUpdated(res))
                 } else {
                     match res {
@@ -139,7 +173,7 @@ impl State for WalletSettingsState {
                 Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::Save)) => {
-                self.modal = None;
+                self.modal = Modal::None;
                 self.processing = true;
                 self.updated = false;
                 Task::perform(
@@ -157,22 +191,93 @@ impl State for WalletSettingsState {
                 )
             }
             Message::View(view::Message::Close) => {
-                self.modal = None;
+                self.modal = Modal::None;
                 Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::RegisterWallet)) => {
-                self.modal = Some(RegisterWalletModal::new(
+                self.modal = Modal::RegisterWallet(RegisterWalletModal::new(
                     self.data_dir.clone(),
                     self.wallet.clone(),
                     cache.network,
                 ));
                 Task::none()
             }
-            _ => self
-                .modal
-                .as_mut()
-                .map(|m| m.update(daemon, cache, message))
-                .unwrap_or_else(Task::none),
+
+            Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
+                if let Modal::ImportExport(_) = &self.modal {
+                    self.modal = Modal::None;
+                }
+                Task::none()
+            }
+            Message::View(view::Message::ImportExport(m)) => {
+                if let Modal::ImportExport(modal) = &mut self.modal {
+                    modal.update(m)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportExport(m))) => {
+                if let Modal::ImportExport(modal) = &mut self.modal {
+                    modal.update(m)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportWallet)) => {
+                if self.modal.is_none() {
+                    let datadir = cache.datadir_path.clone();
+                    let network = cache.network;
+                    let config = self.config.clone();
+                    let wallet = self.wallet.clone();
+                    let daemon = daemon.clone();
+                    Task::perform(
+                        async move {
+                            let backup =
+                                Backup::from_app(datadir, network, config, wallet, daemon).await;
+                            let backup = backup.unwrap();
+                            serde_json::to_string_pretty(&backup).unwrap()
+                            // TODO: do not unwrap, return an error message instead
+                        },
+                        |s| {
+                            Message::View(view::Message::Settings(
+                                view::SettingsMessage::ExportBackup(s),
+                            ))
+                        },
+                    )
+                } else {
+                    Task::none()
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
+                if self.modal.is_none() {
+                    let modal =
+                        // ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
+                        ExportModal::new(daemon, ImportExportType::ExportBackup(backup));
+                    let launch = modal.launch();
+                    self.modal = Modal::ImportExport(modal);
+                    launch
+                } else {
+                    Task::none()
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(
+                        // Some(daemon),
+                        daemon,
+                        ImportExportType::Descriptor(self.wallet.main_descriptor.clone()),
+                    );
+                    let launch = modal.launch();
+                    self.modal = Modal::ImportExport(modal);
+                    launch
+                } else {
+                    Task::none()
+                }
+            }
+            _ => match &mut self.modal {
+                Modal::RegisterWallet(m) => m.update(daemon, cache, message),
+                _ => Task::none(),
+            },
         }
     }
 
