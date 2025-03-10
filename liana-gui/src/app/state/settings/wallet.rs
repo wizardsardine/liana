@@ -253,7 +253,6 @@ impl State for WalletSettingsState {
             )))) => {
                 if self.modal.is_none() {
                     let modal =
-                        // ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
                         ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
                     let launch = modal.launch();
                     self.modal = Modal::ImportExport(modal);
@@ -265,7 +264,6 @@ impl State for WalletSettingsState {
             Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
                 if self.modal.is_none() {
                     let modal = ExportModal::new(
-                        // Some(daemon),
                         Some(daemon),
                         ImportExportType::Descriptor(self.wallet.main_descriptor.clone()),
                     );
