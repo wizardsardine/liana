@@ -1117,9 +1117,22 @@ impl Daemon for BackendWalletClient {
         Ok(())
     }
 
-    async fn get_labels_bip329(&self, _offset: u32, _limit: u32) -> Result<Labels, DaemonError> {
-        // TODO: add an endpoint on backend
-        todo!()
+    async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
+        let response: Response = self
+            .inner
+            .request(
+                Method::GET,
+                &format!(
+                    "{}/v1/wallets/{}/labels/bip329?offset={}&limit={}",
+                    self.inner.url, self.wallet_uuid, offset, limit
+                ),
+            )
+            .await
+            .send()
+            .await?;
+
+        let res: api::Labels = response.json().await?;
+        Ok(res.labels)
     }
 }
 

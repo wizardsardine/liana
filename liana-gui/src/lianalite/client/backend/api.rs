@@ -334,6 +334,11 @@ pub struct ListPsbts {
 }
 
 #[derive(Deserialize)]
+pub struct Labels {
+    pub labels: lianad::bip329::Labels,
+}
+
+#[derive(Deserialize)]
 pub struct Address {
     #[serde(deserialize_with = "deser_addr_assume_checked")]
     pub address: bitcoin::Address,
