@@ -40,9 +40,9 @@ impl ExportModal {
     }
 
     pub fn default_filename(&self) -> String {
+        let date = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S");
         match &self.import_export_type {
             ImportExportType::Transactions => {
-                let date = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S");
                 format!("liana-txs-{date}.csv")
             }
             ImportExportType::ExportPsbt(_) => "psbt.psbt".into(),
@@ -57,6 +57,7 @@ impl ExportModal {
             }
             ImportExportType::ImportPsbt => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor => "descriptor.descriptor".into(),
+            ImportExportType::ExportLabels => format!("liana-labels-{date}.csv"),
         }
     }
 

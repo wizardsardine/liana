@@ -16,6 +16,7 @@ use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{Amount, Psbt, Txid},
 };
+use lianad::bip329::{error::ExportError, Labels};
 use tokio::{
     task::{JoinError, JoinHandle},
     time::sleep,
@@ -31,6 +32,8 @@ use crate::{
     },
     lianalite::client::backend::api::DEFAULT_LIMIT,
 };
+
+const DUMP_LABELS_LIMIT: u32 = 100;
 
 macro_rules! send_error {
     ($sender:ident, $error:ident) => {
@@ -125,6 +128,7 @@ pub enum Error {
     DaemonMissing,
     ParsePsbt,
     ParseDescriptor,
+    Bip329Export(String),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -132,6 +136,7 @@ pub enum ImportExportType {
     Transactions,
     ExportPsbt(String),
     Descriptor(LianaDescriptor),
+    ExportLabels,
     ImportPsbt,
     ImportDescriptor,
 }
@@ -151,6 +156,12 @@ impl From<std::io::Error> for Error {
 impl From<DaemonError> for Error {
     fn from(value: DaemonError) -> Self {
         Error::Daemon(format!("{:?}", value))
+    }
+}
+
+impl From<ExportError> for Error {
+    fn from(value: ExportError) -> Self {
+        Error::Bip329Export(format!("{:?}", value))
     }
 }
 
@@ -209,6 +220,7 @@ impl Export {
             ImportExportType::Transactions => export_transactions(sender, daemon, path).await,
             ImportExportType::ExportPsbt(psbt) => export_psbt(sender, path, psbt),
             ImportExportType::Descriptor(descriptor) => export_descriptor(sender, path, descriptor),
+            ImportExportType::ExportLabels => export_labels(sender, daemon, path).await,
             ImportExportType::ImportPsbt => import_psbt(sender, path),
             ImportExportType::ImportDescriptor => import_descriptor(sender, path),
         };
@@ -536,6 +548,54 @@ pub fn import_descriptor(sender: Sender<Progress>, path: PathBuf) {
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Descriptor(descriptor));
+}
+
+pub async fn export_labels(
+    sender: Sender<Progress>,
+    daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+    path: PathBuf,
+) {
+    let daemon = match daemon {
+        Some(d) => d,
+        None => {
+            send_error!(sender, Error::DaemonMissing);
+            return;
+        }
+    };
+    let mut labels = Labels::new(Vec::new());
+    let mut offset = 0u32;
+    loop {
+        let mut fetched = match daemon.get_labels_bip329(offset, DUMP_LABELS_LIMIT).await {
+            Ok(l) => l,
+            Err(e) => {
+                send_error!(sender, e.into());
+                return;
+            }
+        }
+        .into_vec();
+        let fetch_len = fetched.len() as u32;
+        labels.append(&mut fetched);
+        if fetch_len < DUMP_LABELS_LIMIT {
+            break;
+        } else {
+            offset += DUMP_LABELS_LIMIT;
+        }
+    }
+    let json = match labels.export() {
+        Ok(j) => j,
+        Err(e) => {
+            send_error!(sender, e.into());
+            return;
+        }
+    };
+    let mut file = open_file!(path, sender);
+
+    if let Err(e) = file.write_all(json.as_bytes()) {
+        send_error!(sender, e.into());
+        return;
+    }
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
 }
 
 pub async fn get_path(filename: String) -> Option<PathBuf> {
