@@ -46,6 +46,7 @@ pub struct Backup {
     pub proprietary: serde_json::Map<String, serde_json::Value>,
 }
 
+#[derive(Debug)]
 pub enum Error {
     DescriptorMissing,
     NotSingleWallet,
@@ -148,7 +149,7 @@ impl Backup {
     pub async fn from_app(
         datadir: PathBuf,
         network: Network,
-        config: Config,
+        config: Arc<Config>,
         wallet: Arc<Wallet>,
         daemon: Arc<dyn Daemon + Sync + Send>,
     ) -> Result<Self, Error> {
@@ -165,7 +166,7 @@ impl Backup {
             }
         }
 
-        if let Ok(config) = serde_json::to_value(config) {
+        if let Ok(config) = serde_json::to_value((*config).clone()) {
             proprietary.insert(CONFIG_KEY.to_string(), config);
         }
 

@@ -64,7 +64,7 @@ pub fn export_modal<'a>(
     card::simple(
         Column::new()
             .spacing(10)
-            .push(Container::new(h4_bold(format!("Export {export_type}"))).width(Length::Fill))
+            .push(Container::new(h4_bold(export_type)).width(Length::Fill))
             .push(Space::with_height(Length::Fill))
             .push(progress_bar_row)
             .push(Space::with_height(Length::Fill))

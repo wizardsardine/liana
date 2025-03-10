@@ -287,7 +287,7 @@ impl State for TransactionsPanel {
                     TransactionsModal::CreateRbf(modal) => modal.update(daemon, _cache, message),
                     TransactionsModal::Export(modal) => {
                         if let Message::View(view::Message::ImportExport(m)) = msg {
-                            modal.update(m.clone())
+                            modal.update::<Message>(m.clone())
                         } else {
                             Task::none()
                         }

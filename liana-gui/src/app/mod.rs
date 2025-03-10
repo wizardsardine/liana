@@ -62,6 +62,7 @@ impl Panels {
         data_dir: PathBuf,
         daemon_backend: DaemonBackend,
         internal_bitcoind: Option<&Bitcoind>,
+        config: Arc<Config>,
     ) -> Panels {
         Self {
             current: Menu::Home,
@@ -93,6 +94,7 @@ impl Panels {
                 wallet.clone(),
                 daemon_backend,
                 internal_bitcoind.is_some(),
+                config.clone(),
             ),
         }
     }
@@ -132,7 +134,7 @@ impl Panels {
 
 pub struct App {
     cache: Cache,
-    config: Config,
+    config: Arc<Config>,
     wallet: Arc<Wallet>,
     daemon: Arc<dyn Daemon + Sync + Send>,
     internal_bitcoind: Option<Bitcoind>,
@@ -149,12 +151,14 @@ impl App {
         data_dir: PathBuf,
         internal_bitcoind: Option<Bitcoind>,
     ) -> (App, Task<Message>) {
+        let config = Arc::new(config);
         let mut panels = Panels::new(
             &cache,
             wallet.clone(),
             data_dir,
             daemon.backend(),
             internal_bitcoind.as_ref(),
+            config.clone(),
         );
         let cmd = panels.home.reload(daemon.clone(), wallet.clone());
         (
