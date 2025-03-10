@@ -11,7 +11,10 @@ use std::{
 };
 
 use chrono::{DateTime, Duration, Utc};
-use liana::miniscript::bitcoin::{Amount, Txid};
+use liana::{
+    descriptors::LianaDescriptor,
+    miniscript::bitcoin::{Amount, Txid},
+};
 use tokio::{
     task::{JoinError, JoinHandle},
     time::sleep,
@@ -52,6 +55,31 @@ macro_rules! send_progress {
             tracing::error!("ExportState::start() fail to send msg: {}", e);
         }
     };
+}
+
+macro_rules! open_file {
+    ($path:ident, $sender:ident) => {{
+        let dir = match $path.parent() {
+            Some(dir) => dir,
+            None => {
+                send_error!($sender, NoParentDir);
+                return;
+            }
+        };
+        if !dir.exists() {
+            if let Err(e) = fs::create_dir_all(dir) {
+                send_error!($sender, e.into());
+                return;
+            }
+        }
+        match File::create($path.as_path()) {
+            Ok(f) => f,
+            Err(e) => {
+                send_error!($sender, e.into());
+                return;
+            }
+        }
+    }};
 }
 
 #[derive(Debug, Clone)]
@@ -95,11 +123,11 @@ pub enum Error {
     TxTimeMissing,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ExportType {
     Transactions,
-    Psbt,
-    Descriptor,
+    Psbt(String),
+    Descriptor(LianaDescriptor),
 }
 
 impl From<JoinError> for Error {
@@ -171,8 +199,8 @@ impl Export {
     ) {
         match export_type {
             ExportType::Transactions => export_transactions(sender, daemon, path).await,
-            ExportType::Psbt => todo!(),
-            ExportType::Descriptor => todo!(),
+            ExportType::Psbt(_) => todo!(),
+            ExportType::Descriptor(descriptor) => export_descriptor(sender, path, descriptor),
         };
     }
 
@@ -182,7 +210,7 @@ impl Export {
             let path = self.path.clone();
 
             let cloned_sender = sender.clone();
-            let export_type = self.export_type;
+            let export_type = self.export_type.clone();
             let handle = tokio::spawn(async move {
                 Self::export_logic(export_type, cloned_sender, daemon, *path).await;
             });
@@ -276,26 +304,7 @@ pub async fn export_transactions(
     path: PathBuf,
 ) {
     async move {
-        let dir = match path.parent() {
-            Some(dir) => dir,
-            None => {
-                send_error!(sender, NoParentDir);
-                return;
-            }
-        };
-        if !dir.exists() {
-            if let Err(e) = fs::create_dir_all(dir) {
-                send_error!(sender, e.into());
-                return;
-            }
-        }
-        let mut file = match File::create(path.as_path()) {
-            Ok(f) => f,
-            Err(e) => {
-                send_error!(sender, e.into());
-                return;
-            }
-        };
+        let mut file = open_file!(path, sender);
 
         let header = "Date,Label,Value,Fee,Txid,Block\n".to_string();
         if let Err(e) = file.write_all(header.as_bytes()) {
@@ -445,6 +454,22 @@ pub async fn export_transactions(
         send_progress!(sender, Ended);
     }
     .await;
+}
+
+pub fn export_descriptor(
+    sender: Sender<ExportProgress>,
+    path: PathBuf,
+    descriptor: LianaDescriptor,
+) {
+    let mut file = open_file!(path, sender);
+
+    let descr_string = descriptor.to_string();
+    if let Err(e) = file.write_all(descr_string.as_bytes()) {
+        send_error!(sender, e.into());
+        return;
+    }
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
 }
 
 pub async fn get_path(filename: String) -> Option<PathBuf> {

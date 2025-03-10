@@ -40,13 +40,21 @@ impl ExportModal {
     }
 
     pub fn default_filename(&self) -> String {
-        match self.export_type {
+        match &self.export_type {
             ExportType::Transactions => {
                 let date = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S");
                 format!("liana-txs-{date}.csv")
             }
-            ExportType::Psbt => todo!(),
-            ExportType::Descriptor => todo!(),
+            ExportType::Psbt(_) => todo!(),
+            ExportType::Descriptor(descriptor) => {
+                let checksum = descriptor
+                    .to_string()
+                    .split_once('#')
+                    .map(|(_, checksum)| checksum)
+                    .expect("cannot fail")
+                    .to_string();
+                format!("liana-{}.descriptor", checksum)
+            }
         }
     }
 
