@@ -264,11 +264,15 @@ pub fn import_descriptor<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
     imported_descriptor: &form::Value<String>,
+    imported_backup: bool,
     wrong_network: bool,
     error: Option<&String>,
 ) -> Element<'a, Message> {
+    let valid = !imported_descriptor.value.is_empty() && imported_descriptor.valid;
+
     let col_descriptor = Column::new()
         .push(text("Descriptor:").bold())
+        .push(Space::with_height(10))
         .push(
             form::Form::new_trimmed("Descriptor", imported_descriptor, |msg| {
                 Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(msg))
@@ -280,21 +284,65 @@ pub fn import_descriptor<'a>(
             })
             .size(text::P1_SIZE)
             .padding(10),
+        );
+
+    let descriptor = if imported_backup {
+        None
+    } else {
+        Some(col_descriptor)
+    };
+
+    let or = if !valid && !imported_backup {
+        Some(
+            Row::new()
+                .push(text("or").bold())
+                .push(Space::with_width(Length::Fill)),
         )
-        .spacing(10);
+    } else {
+        None
+    };
+
+    let import_backup = if !valid && !imported_backup {
+        Some(
+            Row::new()
+                .push(button::secondary(None, "Import backup").on_press(Message::ImportBackup))
+                .push(Space::with_width(Length::Fill)),
+        )
+    } else {
+        None
+    };
+
+    let backup_imported = if imported_backup {
+        Some(
+            Row::new()
+                .push(text("Backup successfuly imported!").bold())
+                .push(Space::with_width(Length::Fill)),
+        )
+    } else {
+        None
+    };
+
     layout(
         progress,
         email,
         "Import the wallet",
         Column::new()
-            .push(Column::new().spacing(20).push(col_descriptor).push(text(
-                "If you are using a Bitcoin Core node, \
+            .push(
+                Column::new()
+                    .spacing(20)
+                    .push_maybe(descriptor)
+                    .push_maybe(or)
+                    .push_maybe(import_backup)
+                    .push_maybe(backup_imported)
+                    .push(text(
+                        "If you are using a Bitcoin Core node, \
                 you will need to perform a rescan of \
                 the blockchain after creating the wallet \
                 in order to see your coins and past \
                 transactions. This can be done in \
                 Settings > Node.",
-            )))
+                    )),
+            )
             .push(
                 if imported_descriptor.value.is_empty() || !imported_descriptor.valid {
                     button::secondary(None, "Next").width(Length::Fixed(200.0))

@@ -195,11 +195,11 @@ pub enum ImportExportType {
         Option<SyncSender<bool>>, /*overwrite_labels*/
         Option<SyncSender<bool>>, /*overwrite_aliases*/
     ),
+    WalletFromBackup,
     Descriptor(LianaDescriptor),
     ExportLabels,
     ImportPsbt,
     ImportDescriptor,
-    WalletFromBackup,
 }
 
 impl ImportExportType {
@@ -278,7 +278,7 @@ pub enum Progress {
         (
             LianaDescriptor,
             Network,
-            HashMap<Fingerprint, String>,
+            HashMap<Fingerprint, settings::KeySetting>,
             Backup,
         ),
     ),
@@ -317,7 +317,6 @@ impl Export {
         path: PathBuf,
     ) {
         match export_type {
-            ImportExportType::WalletFromBackup => wallet_from_backup(sender, path).await,
             ImportExportType::Transactions => export_transactions(sender, daemon, path).await,
             ImportExportType::ExportPsbt(str) => export_string(sender, path, str),
             ImportExportType::Descriptor(descriptor) => export_descriptor(sender, path, descriptor),
@@ -326,6 +325,7 @@ impl Export {
             ImportExportType::ImportDescriptor => import_descriptor(sender, path),
             ImportExportType::ExportBackup(str) => export_string(sender, path, str),
             ImportExportType::ImportBackup(..) => import_backup(sender, path, daemon).await,
+            ImportExportType::WalletFromBackup => wallet_from_backup(sender, path).await,
         };
     }
 
@@ -1089,10 +1089,16 @@ pub async fn wallet_from_backup(sender: Sender<Progress>, path: PathBuf) {
         }
     };
 
-    let mut aliases: HashMap<Fingerprint, String> = HashMap::new();
+    let mut aliases: HashMap<Fingerprint, settings::KeySetting> = HashMap::new();
     for (k, v) in &account.keys {
-        if let Some(alias) = &v.alias {
-            aliases.insert(*k, alias.clone());
+        if let Some(ks) = KeySetting::from_backup(
+            v.alias.clone().unwrap_or("".into()),
+            *k,
+            v.role,
+            v.key_type,
+            v.metadata.clone(),
+        ) {
+            aliases.insert(*k, ks);
         }
     }
 
