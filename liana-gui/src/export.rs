@@ -31,8 +31,11 @@ use iced::futures::{SinkExt, Stream};
 
 use crate::{
     app::{
-        settings::{KeySetting, Settings},
+        cache::Cache,
+        settings::{self, KeySetting, Settings},
         view,
+        wallet::Wallet,
+        Config,
     },
     backup::{self, Backup},
     daemon::{
@@ -40,6 +43,7 @@ use crate::{
         Daemon, DaemonBackend, DaemonError,
     },
     lianalite::client::backend::api::DEFAULT_LIMIT,
+    node::bitcoind::Bitcoind,
 };
 
 const DUMP_LABELS_LIMIT: u32 = 100;
@@ -117,7 +121,7 @@ pub enum ImportExportMessage {
     Close,
     Overwrite,
     Ignore,
-    UpdateAliases(HashMap<Fingerprint, String>),
+    UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
 }
 
 impl From<ImportExportMessage> for view::Message {
@@ -265,7 +269,7 @@ pub enum Progress {
     Descriptor(LianaDescriptor),
     LabelsConflict(SyncSender<bool>),
     KeyAliasesConflict(SyncSender<bool>),
-    UpdateAliases(HashMap<Fingerprint, String>),
+    UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
 }
 
 pub struct Export {
@@ -952,18 +956,180 @@ pub async fn import_backup(
         }
 
         settings.wallets.get_mut(0).expect("already checked").keys =
-            settings_aliases.into_values().collect();
+            settings_aliases.clone().into_values().collect();
         if settings.to_file(datadir.to_path_buf(), network).is_err() {
             send_error!(
                 sender,
                 Error::BackupImport("Fail to import keys aliases".into())
             );
             return;
+        } else {
+            // Update wallet state
+            send_progress!(sender, UpdateAliases(settings_aliases));
         }
     }
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
+}
+
+#[derive(Debug)]
+pub enum RestoreBackupError {
+    Daemon(DaemonError),
+    Network,
+    InvalidDescriptor,
+    WrongDescriptor,
+    NoAccount,
+    SeveralAccounts,
+    LianaConnectNotSupported,
+    GetLabels,
+    LabelsNotEmpty,
+    NotImplemented,
+    InvalidPsbt,
+}
+
+impl Display for RestoreBackupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RestoreBackupError::Daemon(e) => write!(f, "Daemon error during restore process: {e}"),
+            RestoreBackupError::Network => write!(f, "Backup & wallet network don't matches"),
+            RestoreBackupError::InvalidDescriptor => write!(f, "The backup descriptor is invalid"),
+            RestoreBackupError::WrongDescriptor => {
+                write!(f, "Backup & wallet descriptor don't matches")
+            }
+            RestoreBackupError::NoAccount => write!(f, "There is no account in the backup"),
+            RestoreBackupError::SeveralAccounts => {
+                write!(f, "There is several accounts in the backup")
+            }
+            RestoreBackupError::LianaConnectNotSupported => {
+                write!(f, "Restore a backup to Liana-connect is not yet supported")
+            }
+            RestoreBackupError::GetLabels => write!(f, "Fails to get labels during backup restore"),
+            RestoreBackupError::LabelsNotEmpty => write!(
+                f,
+                "Cannot load labels: there is already labels into the database"
+            ),
+            RestoreBackupError::NotImplemented => write!(f, "Not implemented"),
+            RestoreBackupError::InvalidPsbt => write!(f, "Psbt is invalid"),
+        }
+    }
+}
+
+impl From<DaemonError> for RestoreBackupError {
+    fn from(value: DaemonError) -> Self {
+        Self::Daemon(value)
+    }
+}
+
+#[allow(unused)]
+/// Import backup data if wallet created from a backup
+///    - check if networks matches
+///    - check if descriptors matches
+///    - check if labels are empty
+///    - update receive and change indexes
+///    - parse psbt from backup
+///    - import PSBTs
+///    - import labels
+pub async fn import_backup_at_launch(
+    cache: Cache,
+    wallet: Arc<Wallet>,
+    config: Config,
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    datadir: PathBuf,
+    internal_bitcoind: Option<Bitcoind>,
+    backup: Backup,
+) -> Result<
+    (
+        Cache,
+        Arc<Wallet>,
+        Config,
+        Arc<dyn Daemon + Sync + Send>,
+        PathBuf,
+        Option<Bitcoind>,
+    ),
+    RestoreBackupError,
+> {
+    // TODO: drop after support for restore to liana-connect
+    if matches!(daemon.backend(), DaemonBackend::RemoteBackend) {
+        return Err(RestoreBackupError::LianaConnectNotSupported);
+    }
+
+    // get backend info
+    let info = daemon.get_info().await?;
+
+    // check if networks matches
+    let network = info.network;
+    if backup.network != network {
+        return Err(RestoreBackupError::Network);
+    }
+
+    // check if descriptors matches
+    let descriptor = info.descriptors.main;
+    let account = match backup.accounts.len() {
+        0 => return Err(RestoreBackupError::NoAccount),
+        1 => backup.accounts.first().expect("already checked"),
+        _ => return Err(RestoreBackupError::SeveralAccounts),
+    };
+
+    let backup_descriptor = LianaDescriptor::from_str(&account.descriptor)
+        .map_err(|_| RestoreBackupError::InvalidDescriptor)?;
+
+    if backup_descriptor != descriptor {
+        return Err(RestoreBackupError::WrongDescriptor);
+    }
+
+    // check there is no labels in DB
+    if account.labels.is_some()
+        && !daemon
+            .get_labels_bip329(0, u32::MAX)
+            .await
+            .map_err(|_| RestoreBackupError::GetLabels)?
+            .to_vec()
+            .is_empty()
+    {
+        return Err(RestoreBackupError::LabelsNotEmpty);
+    }
+
+    // parse PSBTs
+    let mut psbts = Vec::new();
+    for psbt_str in &account.psbts {
+        psbts.push(Psbt::from_str(psbt_str).map_err(|_| RestoreBackupError::InvalidPsbt)?);
+    }
+
+    // update receive & change index
+    let db_receive = info.receive_index;
+    let i = account.receive_index.unwrap_or(0);
+    let receive = if db_receive < i { Some(i) } else { None };
+
+    let db_change = info.change_index;
+    let i = account.change_index.unwrap_or(0);
+    let change = if db_change < i { Some(i) } else { None };
+
+    daemon.update_deriv_indexes(receive, change).await?;
+
+    // import labels
+    if let Some(labels) = account.labels.clone().map(|l| l.into_vec()) {
+        let labels: HashMap<LabelItem, Option<String>> = labels
+            .into_iter()
+            .filter_map(|l| {
+                if let Some((item, label)) = LabelItem::from_bip329(&l, network) {
+                    Some((item, Some(label)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        daemon.update_labels(&labels).await?;
+    }
+
+    // import PSBTs
+    for psbt in psbts {
+        if let Err(e) = daemon.update_spend_tx(&psbt).await {
+            tracing::error!("Fail to restore PSBT: {e}")
+        }
+    }
+
+    Ok((cache, wallet, config, daemon, datadir, internal_bitcoind))
 }
 
 pub async fn export_labels(

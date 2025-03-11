@@ -7,7 +7,7 @@ use lianad::config::ConfigError;
 use crate::{
     app::{settings::SettingsError, wallet::WalletError},
     daemon::DaemonError,
-    export,
+    export::{self, RestoreBackupError},
 };
 
 #[derive(Debug)]
@@ -20,6 +20,7 @@ pub enum Error {
     Desc(LianaDescError),
     Spend(SpendCreationError),
     ImportExport(export::Error),
+    RestoreBackup(RestoreBackupError),
 }
 
 impl std::fmt::Display for Error {
@@ -61,6 +62,7 @@ impl std::fmt::Display for Error {
             Self::HardwareWallet(e) => write!(f, "error: {}\nPlease check if the device is still connected and unlocked with the correct firmware open for the current network and no other application is accessing the device.", e),
             Self::Desc(e) => write!(f, "Liana descriptor error: {}", e),
             Self::ImportExport(e) => write!(f, "{e}"),
+            Self::RestoreBackup(e) => write!(f, "{e}"),
         }
     }
 }
