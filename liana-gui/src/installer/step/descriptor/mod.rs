@@ -18,7 +18,7 @@ use async_hwi::DeviceKind;
 use crate::{
     app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
     backup::{self, Backup},
-    export::{ImportExportMessage, ImportExportType},
+    export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
         message::{self, Message},
@@ -32,6 +32,8 @@ pub struct ImportDescriptor {
     imported_descriptor: form::Value<String>,
     wrong_network: bool,
     error: Option<String>,
+    modal: Option<ExportModal>,
+    imported_backup: bool,
 }
 
 impl ImportDescriptor {
@@ -41,6 +43,8 @@ impl ImportDescriptor {
             imported_descriptor: form::Value::default(),
             wrong_network: false,
             error: None,
+            modal: None,
+            imported_backup: false,
         }
     }
 
@@ -77,14 +81,55 @@ impl Step for ImportDescriptor {
     fn skip(&self, ctx: &Context) -> bool {
         ctx.remote_backend.is_some()
     }
-    // form value is set as valid each time it is edited.
-    // Verification of the values is happening when the user click on Next button.
+
+    fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
+        if let Some(modal) = &self.modal {
+            if let Some(sub) = modal.subscription() {
+                sub.map(|m| Message::ImportExport(ImportExportMessage::Progress(m)))
+            } else {
+                Subscription::none()
+            }
+        } else {
+            Subscription::none()
+        }
+    }
+
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
-        if let Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) =
-            message
-        {
-            self.imported_descriptor.value = desc;
-            self.check_descriptor(self.network);
+        match message {
+            Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) => {
+                self.imported_descriptor.value = desc;
+                self.check_descriptor(self.network);
+            }
+            Message::ImportExport(ImportExportMessage::Close) => {
+                self.modal = None;
+            }
+            Message::ImportBackup => {
+                if !self.imported_backup {
+                    let modal = ExportModal::new(None, ImportExportType::WalletFromBackup);
+                    let launch = modal.launch(false);
+                    self.modal = Some(modal);
+                    return launch;
+                }
+            }
+            Message::ImportExport(ImportExportMessage::Progress(Progress::WalletFromBackup(r))) => {
+                let (descriptor, network, aliases, backup) = r;
+                if self.network == network {
+                    self.imported_backup = true;
+                    self.imported_descriptor.value = descriptor.to_string();
+                    return Task::perform(async move { (aliases, backup) }, |(a, b)| {
+                        Message::WalletFromBackup((a, b))
+                    });
+                } else {
+                    self.error = Some("Backup network do not match the selected network!".into());
+                }
+            }
+            Message::ImportExport(m) => {
+                if let Some(modal) = self.modal.as_mut() {
+                    let task: Task<Message> = modal.update(m);
+                    return task;
+                };
+            }
+            _ => {}
         }
         Task::none()
     }
@@ -108,13 +153,19 @@ impl Step for ImportDescriptor {
         progress: (usize, usize),
         email: Option<&'a str>,
     ) -> Element<Message> {
-        view::import_descriptor(
+        let content = view::import_descriptor(
             progress,
             email,
             &self.imported_descriptor,
+            self.imported_backup,
             self.wrong_network,
             self.error.as_ref(),
-        )
+        );
+        if let Some(modal) = &self.modal {
+            modal.view(content)
+        } else {
+            content
+        }
     }
 }
 

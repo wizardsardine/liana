@@ -292,6 +292,11 @@ impl Installer {
                     .expect("There is always a step")
                     .update(&mut self.hws, Message::Installed(Err(e)))
             }
+            Message::WalletFromBackup((ks, backup)) => {
+                self.context.keys = ks;
+                self.context.backup = Some(backup);
+                Task::none()
+            }
             _ => self
                 .steps
                 .get_mut(self.current)
