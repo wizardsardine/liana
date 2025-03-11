@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use super::{context, Error};
 use crate::{
     app::settings::ProviderKey,
+    app::view::Close,
     download::{DownloadError, Progress},
+    export::ImportExportMessage,
     hw::HardwareWalletMessage,
     installer::descriptor::{Key, PathKind},
     lianalite::client::{auth::AuthClient, backend::api},
@@ -49,6 +51,19 @@ pub enum Message {
     RedeemNextKey,
     KeyRedeemed(ProviderKey, Result<(), services::Error>),
     AllKeysRedeemed,
+    ImportExport(ImportExportMessage),
+}
+
+impl Close for Message {
+    fn close() -> Self {
+        Self::Close
+    }
+}
+
+impl From<ImportExportMessage> for Message {
+    fn from(value: ImportExportMessage) -> Self {
+        Self::ImportExport(value)
+    }
 }
 
 #[derive(Debug, Clone)]

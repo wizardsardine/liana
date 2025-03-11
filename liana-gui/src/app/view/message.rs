@@ -1,6 +1,10 @@
 use crate::{app::menu::Menu, export::ImportExportMessage, node::bitcoind::RpcAuthType};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, OutPoint};
 
+pub trait Close {
+    fn close() -> Self;
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Reload,
@@ -20,6 +24,12 @@ pub enum Message {
     CreateRbf(CreateRbfMessage),
     ShowQrCode(usize),
     ImportExport(ImportExportMessage),
+}
+
+impl Close for Message {
+    fn close() -> Self {
+        Self::Close
+    }
 }
 
 #[derive(Debug, Clone)]
