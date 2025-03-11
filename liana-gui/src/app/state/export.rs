@@ -8,7 +8,7 @@ use liana_ui::{component::modal::Modal, widget::Element};
 use tokio::task::JoinHandle;
 
 use crate::{
-    app::view::{self, export::export_modal},
+    app::view::{export::export_modal, Close},
     daemon::Daemon,
     export::{self, get_path, ImportExportMessage, ImportExportState, ImportExportType, Progress},
 };
@@ -129,7 +129,11 @@ impl ExportModal {
         }
         Task::none()
     }
-    pub fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<view::Message> {
+
+    pub fn view<'a, M>(&'a self, content: Element<'a, M>) -> Element<M>
+    where
+        M: 'a + Close + Clone + From<export::ImportExportMessage>,
+    {
         let modal = Modal::new(
             content,
             export_modal(&self.state, self.error.as_ref(), self.modal_title()),
@@ -138,7 +142,7 @@ impl ExportModal {
             ImportExportState::TimedOut
             | ImportExportState::Aborted
             | ImportExportState::Ended
-            | ImportExportState::Closed => modal.on_blur(Some(view::Message::Close)),
+            | ImportExportState::Closed => modal.on_blur(Some(M::close())),
             _ => modal,
         }
         .into()

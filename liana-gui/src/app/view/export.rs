@@ -11,11 +11,10 @@ use liana_ui::{
     widget::Element,
 };
 
-use crate::export::{Error, ImportExportMessage};
-use crate::{app::view::message::Message, export::ImportExportState};
+use crate::export::{Error, ImportExportMessage, ImportExportState};
 
 /// Return the modal view for an export task
-pub fn export_modal<'a>(
+pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
     state: &ImportExportState,
     error: Option<&'a Error>,
     export_type: &str,
