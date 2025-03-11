@@ -50,6 +50,7 @@ impl From<&Error> for WarningMessage {
             Error::Desc(e) => WarningMessage(format!("Descriptor analysis error: '{}'.", e)),
             Error::Spend(e) => WarningMessage(format!("Spend creation error: '{}'.", e)),
             Error::ImportExport(e) => WarningMessage(format!("{e}")),
+            Error::RestoreBackup(e) => WarningMessage(format!("Fail to restore backup: {e}")),
         }
     }
 }
