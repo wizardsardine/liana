@@ -16,7 +16,7 @@ use async_hwi::bitbox::api::btc::Fingerprint;
 use chrono::{DateTime, Duration, Utc};
 use liana::{
     descriptors::LianaDescriptor,
-    miniscript::bitcoin::{Amount, Psbt, Txid},
+    miniscript::bitcoin::{Amount, Network, Psbt, Txid},
 };
 use lianad::{
     bip329::{error::ExportError, Labels},
@@ -195,6 +195,7 @@ pub enum ImportExportType {
     ExportLabels,
     ImportPsbt,
     ImportDescriptor,
+    WalletFromBackup,
 }
 
 impl ImportExportType {
@@ -207,6 +208,7 @@ impl ImportExportType {
             | ImportExportType::ExportLabels => "Export successful!",
             ImportExportType::ImportBackup(_, _)
             | ImportExportType::ImportPsbt
+            | ImportExportType::WalletFromBackup
             | ImportExportType::ImportDescriptor => "Import successful",
         }
     }
@@ -270,6 +272,14 @@ pub enum Progress {
     LabelsConflict(SyncSender<bool>),
     KeyAliasesConflict(SyncSender<bool>),
     UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
+    WalletFromBackup(
+        (
+            LianaDescriptor,
+            Network,
+            HashMap<Fingerprint, String>,
+            Backup,
+        ),
+    ),
 }
 
 pub struct Export {
@@ -305,6 +315,7 @@ impl Export {
         path: PathBuf,
     ) {
         match export_type {
+            ImportExportType::WalletFromBackup => wallet_from_backup(sender, path).await,
             ImportExportType::Transactions => export_transactions(sender, daemon, path).await,
             ImportExportType::ExportPsbt(str) => export_string(sender, path, str),
             ImportExportType::Descriptor(descriptor) => export_descriptor(sender, path, descriptor),
@@ -1019,6 +1030,81 @@ impl From<DaemonError> for RestoreBackupError {
     fn from(value: DaemonError) -> Self {
         Self::Daemon(value)
     }
+}
+
+/// Create a wallet from a backup
+///    - load backup from file
+///    - extract descriptor
+///    - extract network
+///    - extract aliases
+pub async fn wallet_from_backup(sender: Sender<Progress>, path: PathBuf) {
+    // Load backup from file
+    let mut file = open_file_read!(path, sender);
+
+    let mut backup_str = String::new();
+    if let Err(e) = file.read_to_string(&mut backup_str) {
+        send_error!(sender, e.into());
+        return;
+    }
+
+    let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
+    let backup = match backup {
+        Ok(psbt) => psbt,
+        Err(e) => {
+            send_error!(sender, Error::BackupImport(format!("{:?}", e)));
+            return;
+        }
+    };
+
+    let network = backup.network;
+
+    let account = match backup.accounts.len() {
+        0 => {
+            send_error!(
+                sender,
+                Error::BackupImport("There is no account in the backup!".into())
+            );
+            return;
+        }
+        1 => backup.accounts.first().expect("already checked"),
+        _ => {
+            send_error!(
+                sender,
+                Error::BackupImport(
+                    "Liana is actually not supporting import of backup with several accounts!"
+                        .into()
+                )
+            );
+            return;
+        }
+    };
+
+    let descriptor = match LianaDescriptor::from_str(&account.descriptor) {
+        Ok(d) => d,
+        Err(_) => {
+            send_error!(
+                sender,
+                Error::BackupImport(
+                    "The backup descriptor is not a valid Liana descriptor!".into()
+                )
+            );
+            return;
+        }
+    };
+
+    let mut aliases: HashMap<Fingerprint, String> = HashMap::new();
+    for (k, v) in &account.keys {
+        if let Some(alias) = &v.alias {
+            aliases.insert(*k, alias.clone());
+        }
+    }
+
+    send_progress!(
+        sender,
+        WalletFromBackup((descriptor, network, aliases, backup))
+    );
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
 }
 
 #[allow(unused)]
