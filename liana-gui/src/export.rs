@@ -11,6 +11,7 @@ use std::{
     time,
 };
 
+use async_hwi::bitbox::api::btc::Fingerprint;
 use chrono::{DateTime, Duration, Utc};
 use liana::{
     descriptors::LianaDescriptor,
@@ -32,7 +33,7 @@ use crate::{
         settings::{KeySetting, Settings},
         view,
     },
-    backup::Backup,
+    backup::{self, Backup},
     daemon::{
         model::{HistoryTransaction, Labelled},
         Daemon, DaemonBackend, DaemonError,
@@ -115,6 +116,7 @@ pub enum ImportExportMessage {
     Close,
     Overwrite,
     Ignore,
+    UpdateAliases(HashMap<Fingerprint, String>),
 }
 
 impl From<ImportExportMessage> for view::Message {
@@ -153,6 +155,7 @@ pub enum Error {
     BackupImport(String),
     LabelsConflict(SyncSender<bool>),
     KeyAliasesConflict(SyncSender<bool>),
+    Backup(backup::Error),
 }
 
 #[derive(Debug, Clone)]
@@ -240,6 +243,7 @@ pub enum Progress {
     None,
     Psbt(Psbt),
     Descriptor(LianaDescriptor),
+    UpdateAliases(HashMap<Fingerprint, String>),
 }
 
 pub struct Export {

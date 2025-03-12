@@ -10,7 +10,7 @@ use iced::Task;
 use liana_ui::{component::form, widget::Element};
 
 use bitcoind::BitcoindSettingsState;
-use wallet::WalletSettingsState;
+use wallet::{app_backup, WalletSettingsState};
 
 use crate::{
     app::{
@@ -22,9 +22,8 @@ use crate::{
         wallet::Wallet,
         Config,
     },
-    backup::Backup,
     daemon::{Daemon, DaemonBackend},
-    export::{ImportExportMessage, ImportExportType},
+    export::{self, ImportExportMessage, ImportExportType},
 };
 
 use super::export::ExportModal;
@@ -224,6 +223,14 @@ impl State for ImportExportSettingsState {
                 self.modal = None;
             }
             Message::View(view::Message::ImportExport(m)) => {
+                if let ImportExportMessage::UpdateAliases(aliases) = m {
+                    let mut wallet = (*self.wallet).clone();
+                    wallet.keys_aliases = aliases;
+                    let wallet = Arc::new(wallet);
+                    return Task::perform(async {}, move |_| {
+                        Message::WalletUpdated(Ok(wallet.clone()))
+                    });
+                }
                 if let Some(modal) = self.modal.as_mut() {
                     return modal.update(m);
                 };
@@ -262,29 +269,32 @@ impl State for ImportExportSettingsState {
                     let wallet = self.wallet.clone();
                     let daemon = daemon.clone();
                     return Task::perform(
-                        async move {
-                            let backup =
-                                Backup::from_app(datadir, network, config, wallet, daemon).await;
-                            let backup = backup.unwrap();
-                            serde_json::to_string_pretty(&backup).unwrap()
-                            // TODO: do not unwrap, return an error message instead
-                        },
+                        async move { app_backup(datadir, network, config, wallet, daemon).await },
                         |s| {
                             Message::View(view::Message::Settings(
-                                view::SettingsMessage::ExportBackup(Ok(s)),
+                                view::SettingsMessage::ExportBackup(s),
                             ))
                         },
                     );
                 }
             }
-            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(Ok(
-                backup,
-            )))) => {
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
+                let backup = match backup {
+                    Ok(b) => b,
+                    Err(e) => {
+                        self.warning = Some(Error::ImportExport(export::Error::Backup(e)));
+                        return Task::none();
+                    }
+                };
                 let modal = ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
                 launch!(self, modal, true);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
-                // TODO:
+                if self.modal.is_none() {
+                    let modal =
+                        ExportModal::new(Some(daemon), ImportExportType::ImportBackup(None, None));
+                    launch!(self, modal, false);
+                }
             }
             _ => {}
         }

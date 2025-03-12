@@ -136,6 +136,11 @@ impl ExportModal {
                     }
                     // TODO: forward Descriptor
                 }
+                Progress::UpdateAliases(map) => {
+                    return Task::perform(async {}, move |_| {
+                        ImportExportMessage::UpdateAliases(map.clone()).into()
+                    });
+                }
             },
             ImportExportMessage::TimedOut => {
                 self.stop(ImportExportState::TimedOut);
@@ -182,6 +187,7 @@ impl ExportModal {
                     }
                 }
             }
+            ImportExportMessage::UpdateAliases(_) => { /* unexpected */ }
         }
         Task::none()
     }

@@ -49,6 +49,7 @@ impl From<&Error> for WarningMessage {
             Error::HardwareWallet(_) => WarningMessage("Hardware wallet error".to_string()),
             Error::Desc(e) => WarningMessage(format!("Descriptor analysis error: '{}'.", e)),
             Error::Spend(e) => WarningMessage(format!("Spend creation error: '{}'.", e)),
+            Error::ImportExport(e) => WarningMessage(format!("{e:?}")),
         }
     }
 }
