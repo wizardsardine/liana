@@ -74,7 +74,14 @@ pub enum Error {
 
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            Error::DescriptorMissing => write!(f, "Backup: descriptor missing"),
+            Error::NotSingleWallet => write!(f, "Backup: Zero or several wallets"),
+            Error::Json => write!(f, "Backup: json error"),
+            Error::SettingsFromFile => write!(f, "Backup: fail to parse setting from file"),
+            Error::Daemon(e) => write!(f, "Backup daemon error: {e}"),
+            Error::TxTimeMissing => write!(f, "Backup: transaction block height missing"),
+        }
     }
 }
 

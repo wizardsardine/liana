@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Display,
     fs::{self, File},
     io::{Read, Write},
     path::PathBuf,
@@ -154,6 +155,27 @@ pub enum Error {
     Bip329Export(String),
     BackupImport(String),
     Backup(backup::Error),
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Io(e) => write!(f, "ImportExport Io Error: {e}"),
+            Error::HandleLost => write!(f, "ImportExport: subprocess handle lost"),
+            Error::UnexpectedEnd => write!(f, "ImportExport: unexpected end of the process"),
+            Error::JoinError(e) => write!(f, "ImportExport fail to handle.join(): {e} "),
+            Error::ChannelLost => write!(f, "ImportExport: the channel have been closed"),
+            Error::NoParentDir => write!(f, "ImportExport: there is no parent dir"),
+            Error::Daemon(e) => write!(f, "ImportExport daemon error: {e}"),
+            Error::TxTimeMissing => write!(f, "ImportExport: transaction block height missing"),
+            Error::DaemonMissing => write!(f, "ImportExport: the daemon is missing"),
+            Error::ParsePsbt => write!(f, "ImportExport: fail to parse PSBT"),
+            Error::ParseDescriptor => write!(f, "ImportExport: fail to parse descriptor"),
+            Error::Bip329Export(e) => write!(f, "Bip329Export: {e}"),
+            Error::BackupImport(e) => write!(f, "BackupImport: {e}"),
+            Error::Backup(e) => write!(f, "Backup: {e}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
