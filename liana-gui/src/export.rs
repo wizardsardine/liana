@@ -947,8 +947,8 @@ pub async fn import_backup(
             if let Some(ks) = KeySetting::from_backup(
                 v.alias.clone().unwrap_or("".into()),
                 *k,
-                v.role.clone(),
-                v.key_type.clone(),
+                v.role,
+                v.key_type,
                 v.metadata.clone(),
             ) {
                 settings_aliases.insert(*k, ks);
