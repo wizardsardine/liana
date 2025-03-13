@@ -669,6 +669,7 @@ pub async fn import_backup(
     path: PathBuf,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
 ) {
+    tracing::warn!("import_backup()");
     let daemon = match daemon {
         Some(d) => d,
         None => {
@@ -695,6 +696,8 @@ pub async fn import_backup(
         return;
     }
 
+    tracing::warn!("import_backup() file read");
+
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(psbt) => psbt,
@@ -703,6 +706,8 @@ pub async fn import_backup(
             return;
         }
     };
+
+    tracing::warn!("import_backup() backup parsed");
 
     // get backend info
     let info = match daemon.get_info().await {
@@ -722,6 +727,8 @@ pub async fn import_backup(
         );
         return;
     }
+
+    tracing::warn!("import_backup() networks matches");
 
     // check if descriptors matches
     let descriptor = info.descriptors.main;
@@ -759,6 +766,8 @@ pub async fn import_backup(
         }
     };
 
+    tracing::warn!("import_backup() descriptor extracted");
+
     if backup_descriptor != descriptor {
         send_error!(
             sender,
@@ -766,6 +775,8 @@ pub async fn import_backup(
         );
         return;
     }
+
+    tracing::warn!("import_backup() descriptor matches");
 
     // TODO: check if timestamp matches?
 
@@ -793,6 +804,7 @@ pub async fn import_backup(
             }
         }
         if conflict {
+            tracing::warn!("import_backup() labels conflicts, ask user to ACK");
             write_labels = match ack_receiver.recv() {
                 Ok(b) => b,
                 Err(_) => {
@@ -874,6 +886,7 @@ pub async fn import_backup(
             }
         }
         if conflict {
+            tracing::warn!("import_backup() aliases conflicts, ask user to ACK");
             // wait for the user ACK/NACK
             write_aliases = match ack_receiver.recv() {
                 Ok(a) => a,
@@ -931,6 +944,8 @@ pub async fn import_backup(
         }
     }
 
+    tracing::warn!("import_backup() PSBTs imported");
+
     // import labels if no conflict or user ACK
     if write_labels {
         let labels: HashMap<LabelItem, Option<String>> = backup_labels
@@ -947,6 +962,8 @@ pub async fn import_backup(
             send_error!(sender, Error::BackupImport("Fail to import labels".into()));
             return;
         }
+
+        tracing::warn!("import_backup() labels imported");
     }
 
     // update aliases if no conflict or user ACK
@@ -975,7 +992,10 @@ pub async fn import_backup(
             // Update wallet state
             send_progress!(sender, UpdateAliases(settings_aliases));
         }
+        tracing::warn!("import_backup() aliases imported");
     }
+
+    tracing::warn!("import_backup() backup restore successful");
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
@@ -1138,6 +1158,8 @@ pub async fn import_backup_at_launch(
     ),
     RestoreBackupError,
 > {
+    log::warn!("import_backup_at_launch()");
+
     // TODO: drop after support for restore to liana-connect
     if matches!(daemon.backend(), DaemonBackend::RemoteBackend) {
         return Err(RestoreBackupError::LianaConnectNotSupported);
@@ -1151,6 +1173,8 @@ pub async fn import_backup_at_launch(
     if backup.network != network {
         return Err(RestoreBackupError::Network);
     }
+
+    log::warn!("import_backup_at_launch(): network matches");
 
     // check if descriptors matches
     let descriptor = info.descriptors.main;
@@ -1167,6 +1191,8 @@ pub async fn import_backup_at_launch(
         return Err(RestoreBackupError::WrongDescriptor);
     }
 
+    log::warn!("import_backup_at_launch(): descriptor matches");
+
     // check there is no labels in DB
     if account.labels.is_some()
         && !daemon
@@ -1179,11 +1205,15 @@ pub async fn import_backup_at_launch(
         return Err(RestoreBackupError::LabelsNotEmpty);
     }
 
+    log::warn!("import_backup_at_launch(): db labels empty");
+
     // parse PSBTs
     let mut psbts = Vec::new();
     for psbt_str in &account.psbts {
         psbts.push(Psbt::from_str(psbt_str).map_err(|_| RestoreBackupError::InvalidPsbt)?);
     }
+
+    log::warn!("import_backup_at_launch(): psbt parsed");
 
     // update receive & change index
     let db_receive = info.receive_index;
@@ -1195,6 +1225,8 @@ pub async fn import_backup_at_launch(
     let change = if db_change < i { Some(i) } else { None };
 
     daemon.update_deriv_indexes(receive, change).await?;
+
+    log::warn!("import_backup_at_launch(): deriv indexes changed");
 
     // import labels
     if let Some(labels) = account.labels.clone().map(|l| l.into_vec()) {
@@ -1211,12 +1243,16 @@ pub async fn import_backup_at_launch(
         daemon.update_labels(&labels).await?;
     }
 
+    log::warn!("import_backup_at_launch(): labels imported");
+
     // import PSBTs
     for psbt in psbts {
         if let Err(e) = daemon.update_spend_tx(&psbt).await {
             tracing::error!("Fail to restore PSBT: {e}")
         }
     }
+
+    log::warn!("import_backup_at_launch(): psbt imported");
 
     Ok((cache, wallet, config, daemon, datadir, internal_bitcoind))
 }
