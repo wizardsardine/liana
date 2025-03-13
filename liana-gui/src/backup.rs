@@ -236,7 +236,7 @@ impl Backup {
             .list_spend_transactions(None)
             .await?
             .into_iter()
-            .map(|tx| tx.psbt.serialize_hex())
+            .map(|tx| tx.psbt.to_string())
             .collect();
 
         let statuses = [
