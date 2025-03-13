@@ -10,6 +10,7 @@ pub mod lianalite;
 pub mod loader;
 pub mod logger;
 pub mod node;
+pub mod services;
 pub mod signer;
 pub mod utils;
 

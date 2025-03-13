@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
 use serde::{Deserialize, Serialize};
 
-use crate::hw::HardwareWalletConfig;
+use crate::{hw::HardwareWalletConfig, lianalite::client::backend, services};
 
 pub const DEFAULT_FILE_NAME: &str = "settings.json";
 
@@ -89,12 +89,66 @@ impl WalletSetting {
         }
         map
     }
+
+    pub fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey> {
+        let mut map = HashMap::new();
+        for (fingerprint, provider_key) in self
+            .keys
+            .iter()
+            .filter_map(|k| k.provider_key.as_ref().map(|pk| (k.master_fingerprint, pk)))
+        {
+            map.insert(fingerprint, provider_key.clone());
+        }
+        map
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+pub struct Provider {
+    pub uuid: String,
+    pub name: String,
+}
+
+impl From<backend::api::Provider> for Provider {
+    fn from(provider: backend::api::Provider) -> Self {
+        Self {
+            uuid: provider.uuid,
+            name: provider.name,
+        }
+    }
+}
+
+impl From<services::api::Provider> for Provider {
+    fn from(provider: services::api::Provider) -> Self {
+        Self {
+            uuid: provider.uuid,
+            name: provider.name,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+pub struct ProviderKey {
+    pub uuid: String,
+    pub token: String,
+    pub provider: Provider,
+}
+
+impl From<backend::api::ProviderKey> for ProviderKey {
+    fn from(pk: backend::api::ProviderKey) -> Self {
+        Self {
+            uuid: pk.uuid.clone(),
+            token: pk.token.clone(),
+            provider: pk.provider.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct KeySetting {
     pub name: String,
     pub master_fingerprint: Fingerprint,
+    pub provider_key: Option<ProviderKey>,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]

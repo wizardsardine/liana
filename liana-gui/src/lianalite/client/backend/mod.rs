@@ -148,11 +148,16 @@ impl BackendClient {
         &self,
         name: &str,
         descriptor: &LianaDescriptor,
+        provider_keys: &Vec<api::payload::ProviderKey>,
     ) -> Result<api::Wallet, DaemonError> {
         let response = self
             .request(Method::POST, &format!("{}/v1/wallets", self.url))
             .await
-            .json(&api::payload::CreateWallet { name, descriptor })
+            .json(&api::payload::CreateWallet {
+                name,
+                descriptor,
+                provider_keys,
+            })
             .send()
             .await?;
         if !response.status().is_success() {

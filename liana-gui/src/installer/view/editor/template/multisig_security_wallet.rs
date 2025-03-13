@@ -12,8 +12,8 @@ use liana_ui::{
 
 use crate::installer::{
     context,
+    descriptor::{Path, PathKind, PathSequence},
     message::{self, Message},
-    step::descriptor::editor::key::Key,
     view::{
         editor::{
             define_descriptor_advanced_settings, defined_key, path, undefined_key,
@@ -77,10 +77,8 @@ pub fn multisig_security_template_description(
 pub fn multisig_security_template<'a>(
     progress: (usize, usize),
     use_taproot: bool,
-    primary_keys: Vec<Option<&'a Key>>,
-    recovery_keys: Vec<Option<&'a Key>>,
-    sequence: u16,
-    threshold: usize,
+    primary_path: &'a Path,
+    recovery_path: &'a Path,
     valid: bool,
 ) -> Element<'a, Message> {
     layout(
@@ -117,10 +115,11 @@ pub fn multisig_security_template<'a>(
                 path(
                     color::GREEN,
                     None,
-                    0,
-                    false,
-                    primary_keys.len(),
-                    primary_keys
+                    PathSequence::Primary,
+                    primary_path.warning,
+                    primary_path.keys.len(),
+                    primary_path
+                        .keys
                         .iter()
                         .enumerate()
                         .map(|(i, primary_key)| {
@@ -129,7 +128,7 @@ pub fn multisig_security_template<'a>(
                                     &key.name,
                                     color::GREEN,
                                     format!("Primary key #{}", i + 1),
-                                    if use_taproot && !key.is_compatible_taproot {
+                                    if use_taproot && !key.source.is_compatible_taproot() {
                                         Some("This device does not support Taproot")
                                     } else {
                                         None
@@ -140,7 +139,7 @@ pub fn multisig_security_template<'a>(
                                 undefined_key(
                                     color::GREEN,
                                     format!("Primary key #{}", i + 1),
-                                    !primary_keys[0..i].iter().any(|k| k.is_none()),
+                                    !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                                     true,
                                 )
                             }
@@ -151,10 +150,10 @@ pub fn multisig_security_template<'a>(
                 )
                 .map(move |msg| {
                     if let message::DefinePath::Key(i, message::DefineKey::Edit) = msg {
-                        Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(vec![
-                            (0, i),
-                            (1, i),
-                        ]))
+                        Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(
+                            PathKind::Primary,
+                            vec![(0, i), (1, i)],
+                        ))
                     } else {
                         Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg))
                     }
@@ -164,10 +163,11 @@ pub fn multisig_security_template<'a>(
                 path(
                     color::ORANGE,
                     None,
-                    sequence,
-                    false,
-                    threshold,
-                    recovery_keys
+                    recovery_path.sequence,
+                    recovery_path.warning,
+                    recovery_path.threshold,
+                    recovery_path
+                        .keys
                         .iter()
                         .enumerate()
                         .map(|(j, recovery_key)| {
@@ -177,7 +177,7 @@ pub fn multisig_security_template<'a>(
                                         &key.name,
                                         color::GREEN,
                                         format!("Primary key #{}", j + 1),
-                                        if use_taproot && !key.is_compatible_taproot {
+                                        if use_taproot && !key.source.is_compatible_taproot() {
                                             Some("This device does not support Taproot")
                                         } else {
                                             None
@@ -188,7 +188,7 @@ pub fn multisig_security_template<'a>(
                                         &key.name,
                                         color::ORANGE,
                                         "Recovery key".to_string(),
-                                        if use_taproot && !key.is_compatible_taproot {
+                                        if use_taproot && !key.source.is_compatible_taproot() {
                                             Some("This device does not support Taproot")
                                         } else {
                                             None
@@ -204,8 +204,8 @@ pub fn multisig_security_template<'a>(
                                     } else {
                                         "Recovery key".to_string()
                                     },
-                                    !(primary_keys.iter().any(|k| k.is_none())
-                                        || recovery_keys[0..j].iter().any(|k| k.is_none())),
+                                    !(primary_path.keys.iter().any(|k| k.is_none())
+                                        || recovery_path.keys[0..j].iter().any(|k| k.is_none())),
                                     true,
                                 )
                             }
@@ -216,12 +216,15 @@ pub fn multisig_security_template<'a>(
                 )
                 .map(move |msg| {
                     if let message::DefinePath::Key(i, message::DefineKey::Edit) = msg {
-                        Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(if i < 2 {
-                            vec![(0, i), (1, i)]
+                        let (path_kind, keys) = if i < 2 {
+                            (PathKind::Primary, vec![(0, i), (1, i)])
                         } else {
                             // recovery path is the path with three keys
-                            vec![(1, i)]
-                        }))
+                            (PathKind::Recovery, vec![(1, i)])
+                        };
+                        Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(
+                            path_kind, keys,
+                        ))
                     } else {
                         Message::DefineDescriptor(message::DefineDescriptor::Path(1, msg))
                     }

@@ -297,7 +297,7 @@ impl GUI {
                 _ => l.update(*msg).map(|msg| Message::Login(Box::new(msg))),
             },
             (State::Installer(i), Message::Install(msg)) => {
-                if let installer::Message::Exit(path, internal_bitcoind) = *msg {
+                if let installer::Message::Exit(path, internal_bitcoind, remove_log) = *msg {
                     let settings = app::settings::Settings::from_file(i.datadir.clone(), i.network)
                         .expect("A settings file was created");
                     if settings
@@ -326,7 +326,9 @@ impl GUI {
                             self.log_level
                                 .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                         );
-                        self.logger.remove_install_log_file(datadir_path.clone());
+                        if remove_log {
+                            self.logger.remove_install_log_file(datadir_path.clone());
+                        }
                         let (loader, command) = Loader::new(
                             datadir_path,
                             cfg,
@@ -443,6 +445,12 @@ pub fn create_app_with_remote_backend(
             }
         })
         .collect();
+    let provider_keys: HashMap<_, _> = wallet
+        .metadata
+        .provider_keys
+        .into_iter()
+        .map(|pk| (pk.fingerprint, pk.into()))
+        .collect();
     App::new(
         Cache {
             network,
@@ -459,6 +467,7 @@ pub fn create_app_with_remote_backend(
             Wallet::new(wallet.descriptor)
                 .with_name(wallet.name)
                 .with_key_aliases(aliases)
+                .with_provider_keys(provider_keys)
                 .with_hardware_wallets(hws)
                 .load_hotsigners(&datadir, network)
                 .expect("Datadir should be conform"),

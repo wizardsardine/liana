@@ -121,9 +121,25 @@ pub struct ListWallets {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct Provider {
+    pub uuid: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderKey {
+    #[serde(deserialize_with = "deser_fromstr")]
+    pub fingerprint: bip32::Fingerprint,
+    pub uuid: String,
+    pub token: String,
+    pub provider: Provider,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct WalletMetadata {
     pub ledger_hmacs: Vec<LedgerHmac>,
     pub fingerprint_aliases: Vec<FingerprintAlias>,
+    pub provider_keys: Vec<ProviderKey>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -336,10 +352,25 @@ pub mod payload {
     }
 
     #[derive(Serialize)]
+    pub struct Provider {
+        pub uuid: String,
+        pub name: String,
+    }
+
+    #[derive(Serialize)]
+    pub struct ProviderKey {
+        pub fingerprint: String,
+        pub uuid: String,
+        pub token: String,
+        pub provider: Provider,
+    }
+
+    #[derive(Serialize)]
     pub struct CreateWallet<'a> {
         pub name: &'a str,
         #[serde(serialize_with = "ser_to_string")]
         pub descriptor: &'a LianaDescriptor,
+        pub provider_keys: &'a Vec<ProviderKey>,
     }
 
     #[derive(Serialize)]

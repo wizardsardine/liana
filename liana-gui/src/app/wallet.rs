@@ -31,7 +31,9 @@ pub fn wallet_name(main_descriptor: &LianaDescriptor) -> String {
 pub struct Wallet {
     pub name: String,
     pub main_descriptor: LianaDescriptor,
+    // TODO: We could replace these two fields with `keys: HashMap<Fingerprint, settings::KeySetting>`.
     pub keys_aliases: HashMap<Fingerprint, String>,
+    pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Arc<Signer>>,
 }
@@ -42,6 +44,7 @@ impl Wallet {
             name: wallet_name(&main_descriptor),
             main_descriptor,
             keys_aliases: HashMap::new(),
+            provider_keys: HashMap::new(),
             hardware_wallets: Vec::new(),
             signer: None,
         }
@@ -54,6 +57,14 @@ impl Wallet {
 
     pub fn with_key_aliases(mut self, aliases: HashMap<Fingerprint, String>) -> Self {
         self.keys_aliases = aliases;
+        self
+    }
+
+    pub fn with_provider_keys(
+        mut self,
+        provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
+    ) -> Self {
+        self.provider_keys = provider_keys;
         self
     }
 
@@ -101,6 +112,7 @@ impl Wallet {
                     self.with_name(wallet_setting.name.clone())
                         .with_hardware_wallets(wallet_setting.hardware_wallets.clone())
                         .with_key_aliases(wallet_setting.keys_aliases())
+                        .with_provider_keys(wallet_setting.provider_keys())
                 } else {
                     self
                 }
@@ -117,6 +129,7 @@ impl Wallet {
                             .map(|(master_fingerprint, name)| settings::KeySetting {
                                 name,
                                 master_fingerprint,
+                                provider_key: self.provider_keys.get(&master_fingerprint).cloned(),
                             })
                             .collect(),
                         descriptor_checksum: self.descriptor_checksum(),

@@ -82,6 +82,7 @@ impl State for WalletSettingsState {
             self.warning.as_ref(),
             &self.descriptor,
             &self.keys_aliases,
+            &self.wallet.provider_keys,
             self.processing,
             self.updated,
         );
@@ -389,6 +390,7 @@ async fn update_keys_aliases(
                 .map(|(master_fingerprint, name)| settings::KeySetting {
                     master_fingerprint: *master_fingerprint,
                     name: name.clone(),
+                    provider_key: wallet.provider_keys.get(master_fingerprint).cloned(),
                 })
                 .collect();
         }
