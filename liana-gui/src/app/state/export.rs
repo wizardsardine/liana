@@ -91,6 +91,7 @@ impl ExportModal {
         &mut self,
         message: ImportExportMessage,
     ) -> Task<M> {
+        log::warn!("ExportModal::update({message:?})");
         match message {
             ImportExportMessage::Progress(m) => match m {
                 Progress::Started(handle) => {
@@ -107,6 +108,7 @@ impl ExportModal {
                     if let ImportExportType::ImportBackup(labels, aliases) =
                         &self.import_export_type
                     {
+                        log::warn!("Progress::Error(LabelsConflict)");
                         match e {
                             export::Error::LabelsConflict(ref sender) => {
                                 self.import_export_type = ImportExportType::ImportBackup(
@@ -120,7 +122,12 @@ impl ExportModal {
                                     Some(sender.clone()),
                                 );
                             }
-                            _ => self.error = Some(e.clone()),
+                            _ => {
+                                self.error = {
+                                    log::warn!("Progress::Error({e})");
+                                    Some(e.clone())
+                                }
+                            }
                         }
                     } else {
                         self.error = Some(e.clone())
