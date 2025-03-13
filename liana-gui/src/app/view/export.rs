@@ -77,8 +77,8 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
                 ),
         )),
     );
-    let (msg, button) = match (error.is_none(), import_export_type) {
-        (true, ImportExportType::ImportBackup(labels, aliases)) => match (labels, aliases) {
+    let (msg, button) = match import_export_type {
+        ImportExportType::ImportBackup(labels, aliases) => match (labels, aliases) {
             (Some(_), _) => labels_btn,
 
             (_, Some(_)) => aliases_btn,
