@@ -34,7 +34,7 @@ fn now() -> u64 {
         .as_secs()
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Backup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -313,7 +313,7 @@ async fn get_transactions(
     Ok(vec)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Account {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -353,7 +353,7 @@ impl Account {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Key {
     pub key: Fingerprint,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -366,7 +366,7 @@ pub struct Key {
     pub metadata: Value,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum KeyRole {
     /// Key to be used in normal spending condition
     Main,
@@ -378,7 +378,7 @@ pub enum KeyRole {
     Cosigning,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum KeyType {
     /// Main user
     Internal,

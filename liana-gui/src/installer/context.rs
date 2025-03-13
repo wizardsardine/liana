@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::{
     app::settings::KeySetting,
+    backup::Backup,
     lianalite::client::backend::{BackendClient, BackendWalletClient},
     node::bitcoind::{Bitcoind, InternalBitcoindConfig},
     signer::Signer,
@@ -69,6 +70,7 @@ pub struct Context {
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
     pub remote_backend: RemoteBackend,
+    pub backup: Option<Backup>,
 }
 
 impl Context {
@@ -95,6 +97,7 @@ impl Context {
             internal_bitcoind_config: None,
             internal_bitcoind: None,
             remote_backend,
+            backup: None,
         }
     }
 }

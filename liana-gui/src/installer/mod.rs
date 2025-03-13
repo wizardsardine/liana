@@ -66,7 +66,7 @@ pub struct Installer {
     signer: Arc<Mutex<Signer>>,
 
     /// Context is data passed through each step.
-    context: Context,
+    pub context: Context,
 }
 
 impl Installer {

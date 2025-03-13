@@ -23,6 +23,9 @@ use lianad::{
     StartupError,
 };
 
+use crate::app;
+use crate::backup::Backup;
+use crate::export::RestoreBackupError;
 use crate::{
     app::{
         cache::Cache,
@@ -56,7 +59,7 @@ pub struct Loader {
     pub daemon_started: bool,
     pub internal_bitcoind: Option<Bitcoind>,
     pub waiting_daemon_bitcoind: bool,
-
+    pub backup: Option<Backup>,
     step: Step,
 }
 
@@ -83,6 +86,20 @@ pub enum Message {
                 Cache,
                 Arc<dyn Daemon + Sync + Send>,
                 Option<Bitcoind>,
+                Option<Backup>,
+            ),
+            Error,
+        >,
+    ),
+    App(
+        Result<
+            (
+                Cache,
+                Arc<Wallet>,
+                app::Config,
+                Arc<dyn Daemon + Sync + Send>,
+                PathBuf,
+                Option<Bitcoind>,
             ),
             Error,
         >,
@@ -100,6 +117,7 @@ impl Loader {
         gui_config: GUIConfig,
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
+        backup: Option<Backup>,
     ) -> (Self, Task<Message>) {
         let path = gui_config
             .daemon_rpc_path
@@ -114,6 +132,7 @@ impl Loader {
                 daemon_started: false,
                 internal_bitcoind,
                 waiting_daemon_bitcoind: false,
+                backup,
             },
             Task::perform(connect(path), Message::Loaded),
         )
@@ -134,6 +153,7 @@ impl Loader {
                     self.datadir_path.clone(),
                     self.network,
                     self.internal_bitcoind.clone(),
+                    self.backup.clone(),
                 ),
                 Message::Synced,
             );
@@ -232,6 +252,7 @@ impl Loader {
                                     self.datadir_path.clone(),
                                     self.network,
                                     self.internal_bitcoind.clone(),
+                                    self.backup.clone(),
                                 ),
                                 Message::Synced,
                             );
@@ -290,6 +311,7 @@ impl Loader {
                     self.gui_config.clone(),
                     self.network,
                     self.internal_bitcoind.clone(),
+                    self.backup.clone(),
                 );
                 *self = loader;
                 cmd
@@ -391,12 +413,14 @@ pub async fn load_application(
     datadir_path: PathBuf,
     network: bitcoin::Network,
     internal_bitcoind: Option<Bitcoind>,
+    backup: Option<Backup>,
 ) -> Result<
     (
         Arc<Wallet>,
         Cache,
         Arc<dyn Daemon + Sync + Send>,
         Option<Bitcoind>,
+        Option<Backup>,
     ),
     Error,
 > {
@@ -421,7 +445,7 @@ pub async fn load_application(
         ..Default::default()
     };
 
-    Ok((Arc::new(wallet), cache, daemon, internal_bitcoind))
+    Ok((Arc::new(wallet), cache, daemon, internal_bitcoind, backup))
 }
 
 #[derive(Clone, Debug)]
@@ -582,6 +606,7 @@ pub enum Error {
     Daemon(DaemonError),
     Bitcoind(StartInternalBitcoindError),
     BitcoindLogs(std::io::Error),
+    RestoreBackup(RestoreBackupError),
 }
 
 impl std::fmt::Display for Error {
@@ -592,6 +617,7 @@ impl std::fmt::Display for Error {
             Self::Daemon(e) => write!(f, "Liana daemon error: {}", e),
             Self::Bitcoind(e) => write!(f, "Bitcoind error: {}", e),
             Self::BitcoindLogs(e) => write!(f, "Bitcoind logs error: {}", e),
+            Self::RestoreBackup(e) => write!(f, "Restore backup: {e}"),
         }
     }
 }
