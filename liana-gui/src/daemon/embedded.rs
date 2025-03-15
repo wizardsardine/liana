@@ -1,3 +1,4 @@
+use lianad::bip329::Labels;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tokio::sync::Mutex;
@@ -226,5 +227,10 @@ impl Daemon for EmbeddedDaemon {
             Ok(())
         })
         .await
+    }
+
+    async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
+        self.command(|daemon| Ok(daemon.get_labels_bip329(offset, limit).labels))
+            .await
     }
 }

@@ -55,3 +55,4 @@ rusqlite = { version = "0.30", features = ["bundled", "unlock_notify"] }
 
 # To talk to bitcoind
 jsonrpc = { version = "0.17", features = ["minreq_http"], default-features = false }
+bip329 = {version = "0.1.1", default-features = false }

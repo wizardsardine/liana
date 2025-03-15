@@ -23,7 +23,12 @@ impl From<ChooseDescriptorTemplate> for Box<dyn Step> {
     }
 }
 impl Step for ChooseDescriptorTemplate {
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         if let Message::SelectDescriptorTemplate(template) = message {
             self.template = template;
             Task::perform(async move {}, |_| Message::Next)

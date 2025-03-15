@@ -1,3 +1,4 @@
+use bip329::Label;
 use liana::descriptors::LianaDescriptor;
 
 use std::{convert::TryFrom, str::FromStr};
@@ -362,6 +363,31 @@ impl From<i64> for DbLabelledKind {
         } else {
             assert_eq!(value, 2);
             Self::Txid
+        }
+    }
+}
+
+impl From<DbLabel> for Label {
+    fn from(value: DbLabel) -> Self {
+        let ref_ = value.item;
+        let label = if value.value.is_empty() {
+            None
+        } else {
+            Some(value.value)
+        };
+        match value.item_kind {
+            DbLabelledKind::Address => Label::Address(bip329::AddressRecord { ref_, label }),
+            DbLabelledKind::OutPoint => Label::Output(bip329::OutputRecord {
+                ref_,
+                label,
+                spendable: None,
+            }),
+            DbLabelledKind::Txid => Label::Transaction(bip329::TransactionRecord {
+                ref_,
+                label,
+                // FIXME: "Optional key origin information referencing the wallet associated with the label"
+                origin: None,
+            }),
         }
     }
 }

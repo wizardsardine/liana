@@ -574,6 +574,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         fonts: font::load(),
     };
 
+    #[allow(unused_mut)]
     let mut window_settings = iced::window::Settings {
         icon: Some(image::liana_app_icon()),
         position: iced::window::Position::Default,

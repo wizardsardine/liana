@@ -36,7 +36,12 @@ impl From<BackupMnemonic> for Box<dyn Step> {
 }
 
 impl Step for BackupMnemonic {
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         if let Message::UserActionDone(done) = message {
             self.done = done;
         }
@@ -92,7 +97,12 @@ impl From<RecoverMnemonic> for Box<dyn Step> {
 }
 
 impl Step for RecoverMnemonic {
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         match message {
             Message::MnemonicWord(index, value) => {
                 if let Some((word, valid)) = self.words.get_mut(index) {

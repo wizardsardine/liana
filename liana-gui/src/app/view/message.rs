@@ -1,5 +1,9 @@
-use crate::{app::menu::Menu, export::ExportMessage, node::bitcoind::RpcAuthType};
+use crate::{app::menu::Menu, backup, export::ImportExportMessage, node::bitcoind::RpcAuthType};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, OutPoint};
+
+pub trait Close {
+    fn close() -> Self;
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -19,7 +23,13 @@ pub enum Message {
     SelectHardwareWallet(usize),
     CreateRbf(CreateRbfMessage),
     ShowQrCode(usize),
-    Export(ExportMessage),
+    ImportExport(ImportExportMessage),
+}
+
+impl Close for Message {
+    fn close() -> Self {
+        Self::Close
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -70,9 +80,17 @@ pub enum SettingsMessage {
     BitcoindSettings(SettingsEditMessage),
     ElectrumSettings(SettingsEditMessage),
     RescanSettings(SettingsEditMessage),
+    ImportExport(ImportExportMessage),
     EditRemoteBackendSettings,
     RemoteBackendSettings(RemoteBackendSettingsMessage),
     EditWalletSettings,
+    ImportExportSection,
+    ExportDescriptor,
+    ExportTransactions,
+    ExportLabels,
+    ExportWallet,
+    ExportBackup(Result<String, backup::Error>),
+    ImportWallet,
     AboutSection,
     RegisterWallet,
     FingerprintAliasEdited(Fingerprint, String),
