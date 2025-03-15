@@ -678,6 +678,18 @@ impl SqliteConn {
         .expect("Db must not fail")
     }
 
+    pub fn labels_bip329(&mut self, offset: u32, limit: u32) -> Vec<DbLabel> {
+        db_query(
+            &mut self.conn,
+            "SELECT * FROM labels \
+                ORDER BY id \
+                LIMIT ?1 OFFSET ?2",
+            rusqlite::params![limit, offset],
+            |row| row.try_into(),
+        )
+        .expect("Db must not fail")
+    }
+
     /// Retrieves a limited and ordered list of transactions ids that happened during the given
     /// range.
     pub fn db_list_txids(&mut self, start: u32, end: u32, limit: u64) -> Vec<bitcoin::Txid> {

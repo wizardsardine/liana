@@ -24,11 +24,12 @@ use lianad::config::Config as DaemonConfig;
 use liana_gui::{
     app::{self, cache::Cache, config::default_datadir, wallet::Wallet, App},
     datadir,
+    export::import_backup_at_launch,
     hw::HardwareWalletConfig,
     installer::{self, Installer},
     launcher::{self, Launcher},
     lianalite::{
-        client::{backend::api, backend::BackendWalletClient},
+        client::backend::{api, BackendWalletClient},
         login,
     },
     loader::{self, Loader},
@@ -162,7 +163,7 @@ impl GUI {
                     network,
                     log_level.unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                 );
-                let (loader, command) = Loader::new(datadir_path, cfg, network, None);
+                let (loader, command) = Loader::new(datadir_path, cfg, network, None, None);
                 cmds.push(command.map(|msg| Message::Load(Box::new(msg))));
                 State::Loader(Box::new(loader))
             }
@@ -242,12 +243,13 @@ impl GUI {
                             self.state = State::Login(Box::new(login));
                             command.map(|msg| Message::Login(Box::new(msg)))
                         } else {
-                            let (loader, command) = Loader::new(datadir_path, cfg, network, None);
+                            let (loader, command) =
+                                Loader::new(datadir_path, cfg, network, None, None);
                             self.state = State::Loader(Box::new(loader));
                             command.map(|msg| Message::Load(Box::new(msg)))
                         }
                     } else {
-                        let (loader, command) = Loader::new(datadir_path, cfg, network, None);
+                        let (loader, command) = Loader::new(datadir_path, cfg, network, None, None);
                         self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))
                     }
@@ -334,6 +336,7 @@ impl GUI {
                             cfg,
                             daemon_cfg.bitcoin_config.network,
                             internal_bitcoind,
+                            i.context.backup.take(),
                         );
                         self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))
@@ -353,18 +356,45 @@ impl GUI {
                     self.state = State::Launcher(Box::new(launcher));
                     command.map(|msg| Message::Launch(Box::new(msg)))
                 }
-                loader::Message::Synced(Ok((wallet, cache, daemon, bitcoind))) => {
-                    let (app, command) = App::new(
-                        cache,
-                        wallet,
-                        loader.gui_config.clone(),
-                        daemon,
-                        loader.datadir_path.clone(),
-                        bitcoind,
-                    );
+                loader::Message::Synced(Ok((wallet, cache, daemon, bitcoind, backup))) => {
+                    if let Some(backup) = backup {
+                        let config = loader.gui_config.clone();
+                        let datadir = loader.datadir_path.clone();
+                        Task::perform(
+                            async move {
+                                import_backup_at_launch(
+                                    cache, wallet, config, daemon, datadir, bitcoind, backup,
+                                )
+                                .await
+                            },
+                            |r| {
+                                let r = r.map_err(loader::Error::RestoreBackup);
+                                Message::Load(Box::new(loader::Message::App(r)))
+                            },
+                        )
+                    } else {
+                        let (app, command) = App::new(
+                            cache,
+                            wallet,
+                            loader.gui_config.clone(),
+                            daemon,
+                            loader.datadir_path.clone(),
+                            bitcoind,
+                        );
+                        self.state = State::App(app);
+                        command.map(|msg| Message::Run(Box::new(msg)))
+                    }
+                }
+                loader::Message::App(Ok((cache, wallet, config, daemon, datadir, bitcoind))) => {
+                    let (app, command) = App::new(cache, wallet, config, daemon, datadir, bitcoind);
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
                 }
+                loader::Message::App(Err(e)) => {
+                    tracing::error!("Fail to import backup: {e}");
+                    Task::none()
+                }
+
                 _ => loader.update(*msg).map(|msg| Message::Load(Box::new(msg))),
             },
             (State::App(i), Message::Run(msg)) => {
@@ -574,6 +604,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         fonts: font::load(),
     };
 
+    #[allow(unused_mut)]
     let mut window_settings = iced::window::Settings {
         icon: Some(image::liana_app_icon()),
         position: iced::window::Position::Default,

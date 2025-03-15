@@ -36,7 +36,11 @@ use std::{
 };
 
 use miniscript::{
-    bitcoin::{self, address, bip32, psbt::Psbt},
+    bitcoin::{
+        self, address,
+        bip32::{self, ChildNumber},
+        psbt::Psbt,
+    },
     psbt::PsbtExt,
 };
 use serde::{Deserialize, Serialize};
@@ -314,6 +318,8 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         let block_height = db_conn.chain_tip().map(|tip| tip.height).unwrap_or(0);
         let wallet = db_conn.wallet();
+        let receive_index: u32 = db_conn.receive_index().into();
+        let change_index: u32 = db_conn.change_index().into();
         let rescan_progress = wallet
             .rescan_timestamp
             .map(|_| self.bitcoin.rescan_progress().unwrap_or(1.0));
@@ -328,6 +334,8 @@ impl DaemonControl {
             rescan_progress,
             timestamp: wallet.timestamp,
             last_poll_timestamp: wallet.last_poll_timestamp,
+            receive_index,
+            change_index,
         }
     }
 
@@ -347,6 +355,39 @@ impl DaemonControl {
             .derive(index, &self.secp)
             .address(self.config.bitcoin_config.network);
         GetAddressResult::new(address, index)
+    }
+
+    /// Update derivation indexes
+    pub fn update_deriv_indexes(
+        &self,
+        receive: Option<u32>,
+        change: Option<u32>,
+    ) -> Result<(), CommandError> {
+        let mut db_conn = self.db.connection();
+
+        if let Some(index) = receive {
+            let child = match ChildNumber::from_normal_idx(index) {
+                Ok(i) => i,
+                Err(_) => return Err(CommandError::InvalidDerivationIndex),
+            };
+            let db_receive = db_conn.receive_index();
+            if child > db_receive {
+                db_conn.set_receive_index(child, &self.secp);
+            }
+        }
+
+        if let Some(index) = change {
+            let child = match ChildNumber::from_normal_idx(index) {
+                Ok(i) => i,
+                Err(_) => return Err(CommandError::InvalidDerivationIndex),
+            };
+            let db_change = db_conn.change_index();
+            if child > db_change {
+                db_conn.set_change_index(child, &self.secp);
+            }
+        }
+
+        Ok(())
     }
 
     /// list addresses
@@ -684,6 +725,13 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         GetLabelsResult {
             labels: db_conn.labels(items),
+        }
+    }
+
+    pub fn get_labels_bip329(&self, offset: u32, limit: u32) -> GetLabelsBip329Result {
+        let mut db_conn = self.db.connection();
+        GetLabelsBip329Result {
+            labels: db_conn.get_labels_bip329(offset, limit),
         }
     }
 
@@ -1070,6 +1118,11 @@ impl DaemonControl {
         ListTransactionsResult { transactions }
     }
 
+    /// Store transactions in database, ignoring any that already exist.
+    pub fn store_transactions(&self, txs: &[bitcoin::Transaction]) {
+        self.db.connection().new_txs(txs);
+    }
+
     /// Create a transaction that sweeps all coins for which a timelocked recovery path is
     /// currently available to a provided address with the provided feerate.
     ///
@@ -1161,6 +1214,10 @@ pub struct GetInfoResult {
     pub timestamp: u32,
     /// Timestamp of last poll, if any.
     pub last_poll_timestamp: Option<u32>,
+    /// Last index used to generate a receive address
+    pub receive_index: u32,
+    /// Last index used to generate a change address
+    pub change_index: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1182,6 +1239,11 @@ impl GetAddressResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetLabelsResult {
     pub labels: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetLabelsBip329Result {
+    pub labels: crate::bip329::Labels,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

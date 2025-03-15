@@ -41,11 +41,16 @@ impl From<&Error> for WarningMessage {
                 DaemonError::CoinSelectionError => {
                     WarningMessage("Error when selecting coins for spend".to_string())
                 }
+                DaemonError::NotImplemented => {
+                    WarningMessage("Feature not implemented for this backend".to_string())
+                }
             },
             Error::Unexpected(_) => WarningMessage("Unknown error".to_string()),
             Error::HardwareWallet(_) => WarningMessage("Hardware wallet error".to_string()),
             Error::Desc(e) => WarningMessage(format!("Descriptor analysis error: '{}'.", e)),
             Error::Spend(e) => WarningMessage(format!("Spend creation error: '{}'.", e)),
+            Error::ImportExport(e) => WarningMessage(format!("{e}")),
+            Error::RestoreBackup(e) => WarningMessage(format!("Fail to restore backup: {e}")),
         }
     }
 }

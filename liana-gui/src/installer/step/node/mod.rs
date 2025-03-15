@@ -179,7 +179,12 @@ impl Step for DefineNode {
             node.definition.load_context(ctx);
         }
     }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        _hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         if let Message::DefineNode(msg) = message {
             match msg {
                 message::DefineNode::NodeTypeSelected(node_type) => {

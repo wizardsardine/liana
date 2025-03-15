@@ -1,3 +1,4 @@
+use lianad::bip329::Labels;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tokio::sync::Mutex;
@@ -97,6 +98,19 @@ impl Daemon for EmbeddedDaemon {
         self.command(|daemon| Ok(daemon.get_new_address())).await
     }
 
+    async fn update_deriv_indexes(
+        &self,
+        receive: Option<u32>,
+        change: Option<u32>,
+    ) -> Result<(), DaemonError> {
+        self.command(|daemon| {
+            daemon
+                .update_deriv_indexes(receive, change)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
+        .await
+    }
+
     async fn list_coins(
         &self,
         statuses: &[CoinStatus],
@@ -123,6 +137,14 @@ impl Daemon for EmbeddedDaemon {
     ) -> Result<ListTransactionsResult, DaemonError> {
         self.command(|daemon| Ok(daemon.list_confirmed_transactions(start, end, limit)))
             .await
+    }
+
+    async fn store_transactions(&self, txs: &[Transaction]) -> Result<(), DaemonError> {
+        self.command(|daemon| {
+            daemon.store_transactions(txs);
+            Ok(())
+        })
+        .await
     }
 
     async fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
@@ -226,5 +248,10 @@ impl Daemon for EmbeddedDaemon {
             Ok(())
         })
         .await
+    }
+
+    async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
+        self.command(|daemon| Ok(daemon.get_labels_bip329(offset, limit).labels))
+            .await
     }
 }

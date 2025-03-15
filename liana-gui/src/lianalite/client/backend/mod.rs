@@ -13,6 +13,7 @@ use liana::{
     miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid},
 };
 use lianad::{
+    bip329::Labels,
     commands::{CoinStatus, GetInfoDescriptors, LCSpendInfo, LabelItem},
     config::Config,
 };
@@ -593,6 +594,8 @@ impl Daemon for BackendWalletClient {
             timestamp: wallet.created_at as u32,
             // We can ignore this field for remote backend as the wallet should remain synced.
             last_poll_timestamp: None,
+            receive_index: wallet.deposit_derivation_index,
+            change_index: wallet.change_derivation_index,
         })
     }
 
@@ -622,6 +625,14 @@ impl Daemon for BackendWalletClient {
             address: res.address,
             derivation_index: res.derivation_index,
         })
+    }
+
+    async fn update_deriv_indexes(
+        &self,
+        _receive: Option<u32>,
+        _change: Option<u32>,
+    ) -> Result<(), DaemonError> {
+        Err(DaemonError::NotImplemented)
     }
 
     /// Spent coins are not returned if statuses is empty, unless their outpoints are specified.
@@ -1081,6 +1092,10 @@ impl Daemon for BackendWalletClient {
         Ok(spend_txs)
     }
 
+    async fn store_transactions(&self, _txs: &[Transaction]) -> Result<(), DaemonError> {
+        Err(DaemonError::NotImplemented)
+    }
+
     /// Implemented by LianaLite backend
     async fn update_wallet_metadata(
         &self,
@@ -1114,6 +1129,25 @@ impl Daemon for BackendWalletClient {
         }
 
         Ok(())
+    }
+
+    async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
+        let response: Response = self
+            .inner
+            .request(
+                Method::POST,
+                &format!(
+                    "{}/v1/wallets/{}/labels/bip329",
+                    self.inner.url, self.wallet_uuid
+                ),
+            )
+            .await
+            .json(&api::payload::DumpLabels { offset, limit })
+            .send()
+            .await?;
+
+        let res: api::Labels = response.json().await?;
+        Ok(res.labels)
     }
 }
 

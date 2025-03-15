@@ -28,7 +28,7 @@ use crate::{
         wallet::Wallet,
     },
     daemon::model::{self, LabelsLoader},
-    export::ExportMessage,
+    export::{ImportExportMessage, ImportExportType},
 };
 
 use crate::daemon::{
@@ -266,15 +266,18 @@ impl State for TransactionsPanel {
                     );
                 }
             }
-            Message::View(view::Message::Export(ExportMessage::Open)) => {
+            Message::View(view::Message::ImportExport(ImportExportMessage::Open)) => {
                 if let TransactionsModal::None = &self.modal {
-                    self.modal = TransactionsModal::Export(ExportModal::new(daemon));
+                    self.modal = TransactionsModal::Export(ExportModal::new(
+                        Some(daemon),
+                        ImportExportType::Transactions,
+                    ));
                     if let TransactionsModal::Export(m) = &self.modal {
-                        return m.launch();
+                        return m.launch(true);
                     }
                 }
             }
-            Message::View(view::Message::Export(ExportMessage::Close)) => {
+            Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
                 if let TransactionsModal::Export(_) = &self.modal {
                     self.modal = TransactionsModal::None;
                 }
@@ -283,8 +286,8 @@ impl State for TransactionsPanel {
                 return match &mut self.modal {
                     TransactionsModal::CreateRbf(modal) => modal.update(daemon, _cache, message),
                     TransactionsModal::Export(modal) => {
-                        if let Message::View(view::Message::Export(m)) = msg {
-                            modal.update(m.clone())
+                        if let Message::View(view::Message::ImportExport(m)) = msg {
+                            modal.update::<Message>(m.clone())
                         } else {
                             Task::none()
                         }
@@ -327,7 +330,9 @@ impl State for TransactionsPanel {
         if let TransactionsModal::Export(modal) = &self.modal {
             if let Some(sub) = modal.subscription() {
                 return sub.map(|m| {
-                    Message::View(view::Message::Export(ExportMessage::ExportProgress(m)))
+                    Message::View(view::Message::ImportExport(ImportExportMessage::Progress(
+                        m,
+                    )))
                 });
             }
         }

@@ -155,7 +155,12 @@ impl Step for DefineDescriptor {
     }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
-    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+    fn update(
+        &mut self,
+        hws: &mut HardwareWallets,
+        message: Message,
+        _ctx: &Context,
+    ) -> Task<Message> {
         self.error = None;
         match message {
             Message::Close => {
@@ -621,6 +626,8 @@ impl DescriptorEditModal for EditThresholdModal {
 
 #[cfg(test)]
 mod tests {
+    use crate::installer::RemoteBackend;
+
     use super::*;
     use iced::futures::StreamExt;
     use iced_runtime::{task::into_stream, Action};
@@ -647,11 +654,12 @@ mod tests {
 
         pub async fn update(&self, message: Message) {
             let mut hws = HardwareWallets::new(PathBuf::from_str("/").unwrap(), Network::Bitcoin);
-            let cmd = self.step.lock().unwrap().update(&mut hws, message);
+            let ctx = Context::new(Network::Regtest, PathBuf::new(), RemoteBackend::None);
+            let cmd = self.step.lock().unwrap().update(&mut hws, message, &ctx);
             if let Some(mut stream) = into_stream(cmd) {
                 while let Some(action) = stream.next().await {
                     if let Action::Output(msg) = action {
-                        let _cmd = self.step.lock().unwrap().update(&mut hws, msg);
+                        let _cmd = self.step.lock().unwrap().update(&mut hws, msg, &ctx);
                     }
                 }
             }

@@ -2,12 +2,17 @@ use liana::miniscript::{
     bitcoin::{bip32::Fingerprint, Network},
     DescriptorPublicKey,
 };
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use super::{context, Error};
 use crate::{
-    app::settings::ProviderKey,
+    app::{
+        settings::{self, ProviderKey},
+        view::Close,
+    },
+    backup::{self, Backup},
     download::{DownloadError, Progress},
+    export::ImportExportMessage,
     hw::HardwareWalletMessage,
     installer::descriptor::{Key, PathKind},
     lianalite::client::{auth::AuthClient, backend::api},
@@ -49,6 +54,23 @@ pub enum Message {
     RedeemNextKey,
     KeyRedeemed(ProviderKey, Result<(), services::Error>),
     AllKeysRedeemed,
+    BackupWallet,
+    ExportWallet(Result<String, backup::Error>),
+    ImportExport(ImportExportMessage),
+    ImportBackup,
+    WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
+}
+
+impl Close for Message {
+    fn close() -> Self {
+        Self::Close
+    }
+}
+
+impl From<ImportExportMessage> for Message {
+    fn from(value: ImportExportMessage) -> Self {
+        Message::ImportExport(value)
+    }
 }
 
 #[derive(Debug, Clone)]

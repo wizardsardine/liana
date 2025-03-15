@@ -106,6 +106,13 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
         Message::Settings(SettingsMessage::EditWalletSettings),
     );
 
+    let import_export = settings_section(
+        "Import/export",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ImportExportSection),
+    );
+
     let recovery = settings_section(
         "Recovery",
         Some("In case of loss of the main key, the recovery key can move the funds after a certain time."),
@@ -130,6 +137,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
             .push(header)
             .push(if !is_remote_backend { node } else { backend })
             .push(wallet)
+            .push(import_export)
             .push(recovery)
             .push(about),
     )
@@ -150,6 +158,60 @@ pub fn bitcoind_settings<'a>(
             .spacing(20)
             .push(header)
             .push(Column::with_children(settings).spacing(20)),
+    )
+}
+
+pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'a, Message> {
+    let header = header("Import/Export", SettingsMessage::ImportExportSection);
+
+    let export_descriptor = settings_section(
+        "Export descriptor",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ExportDescriptor),
+    );
+
+    let export_transactions = settings_section(
+        "Export transactions",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ExportTransactions),
+    );
+
+    let export_labels = settings_section(
+        "Export labels",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ExportLabels),
+    );
+
+    let export_wallet = settings_section(
+        "Back Up Wallet",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ExportWallet),
+    );
+
+    let import_wallet = settings_section(
+        "Restore wallet",
+        None,
+        icon::wallet_icon(),
+        Message::Settings(SettingsMessage::ImportWallet),
+    );
+
+    dashboard(
+        &Menu::Settings,
+        cache,
+        warning,
+        Column::new()
+            .spacing(20)
+            .push(header)
+            .push(export_descriptor)
+            .push(export_transactions)
+            .push(export_labels)
+            .push(export_wallet)
+            .push(import_wallet)
+            .width(Length::Fill),
     )
 }
 
@@ -856,6 +918,18 @@ pub fn wallet_settings<'a>(
 ) -> Element<'a, Message> {
     let header = header("Wallet", SettingsMessage::EditWalletSettings);
 
+    let import_export = Row::new()
+        .push(
+            button::secondary(Some(icon::wallet_icon()), "Backup")
+                .on_press(Message::Settings(SettingsMessage::ExportWallet)),
+        )
+        .push(Space::with_width(10))
+        .push(
+            button::secondary(Some(icon::wallet_icon()), "Restore")
+                .on_press(Message::Settings(SettingsMessage::ImportWallet)),
+        )
+        .push(Space::with_width(Length::Fill));
+
     let descr = card::simple(
         Column::new()
             .push(text("Wallet descriptor:").bold())
@@ -943,6 +1017,7 @@ pub fn wallet_settings<'a>(
         Column::new()
             .spacing(20)
             .push(header)
+            .push(import_export)
             .push(descr)
             .push(
                 card::simple(display_policy(
