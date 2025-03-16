@@ -3,7 +3,10 @@ use liana::miniscript::{
     self,
     bitcoin::{bip32::Fingerprint, Network, Txid},
 };
-use lianad::bip329;
+use lianad::{
+    bip329,
+    commands::{CoinStatus, ListCoinsEntry},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -213,6 +216,19 @@ impl Backup {
             .map(|tx| tx.psbt.serialize_hex())
             .collect();
 
+        let statuses = [
+            CoinStatus::Unconfirmed,
+            CoinStatus::Confirmed,
+            CoinStatus::Spending,
+        ];
+        account.coins = daemon
+            .list_coins(&statuses, &[])
+            .await?
+            .coins
+            .into_iter()
+            .map(|c| (c.outpoint.clone().to_string(), Coin::from(c)))
+            .collect();
+
         Ok(Backup {
             name: Some(name),
             accounts: vec![account],
@@ -337,8 +353,37 @@ pub struct Account {
     pub transactions: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub psbts: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub coins: BTreeMap<String, Coin>,
     #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     pub proprietary: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Coin {
+    amount: u64,
+    outpoint: String,
+    address: String,
+    block_height: Option<i32>,
+    account: u32,
+    derivation_index: u32,
+    is_coinbase: Option<bool>,
+    is_from_self: Option<bool>,
+}
+
+impl From<ListCoinsEntry> for Coin {
+    fn from(value: ListCoinsEntry) -> Self {
+        Self {
+            amount: value.amount.to_sat(),
+            outpoint: value.outpoint.to_string(),
+            address: value.address.to_string(),
+            block_height: value.block_height,
+            account: if value.is_change { 1 } else { 0 },
+            derivation_index: value.derivation_index.into(),
+            is_coinbase: if value.is_immature { Some(true) } else { None },
+            is_from_self: Some(value.is_from_self),
+        }
+    }
 }
 
 impl Account {
@@ -353,6 +398,7 @@ impl Account {
             labels: None,
             transactions: Vec::new(),
             psbts: Vec::new(),
+            coins: BTreeMap::new(),
             proprietary: serde_json::Map::new(),
         }
     }
