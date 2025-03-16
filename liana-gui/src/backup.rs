@@ -189,10 +189,16 @@ impl Backup {
             proprietary.insert(CONFIG_KEY.to_string(), config);
         }
 
+        let info = daemon.get_info().await?;
+
         let mut account = Account::new(descriptor);
+
+        account.chain_tip = Some(ChainTip {
+            block_height: info.block_height,
+            block_hash: None,
+        });
         account.proprietary = proprietary;
         account.name = Some(name.clone());
-        let info = daemon.get_info().await?;
         account.timestamp = Some(info.timestamp as u64);
         account.change_index = Some(info.change_index);
         account.receive_index = Some(info.receive_index);
@@ -372,11 +378,19 @@ pub struct Account {
     pub psbts: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub coins: BTreeMap<String, Coin>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_tip: Option<ChainTip>,
     #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     pub proprietary: serde_json::Map<String, serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChainTip {
+    pub block_height: i32,
+    pub block_hash: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Coin {
     amount: u64,
     outpoint: String,
@@ -417,6 +431,7 @@ impl Account {
             psbts: Vec::new(),
             coins: BTreeMap::new(),
             proprietary: serde_json::Map::new(),
+            chain_tip: None,
         }
     }
 }
