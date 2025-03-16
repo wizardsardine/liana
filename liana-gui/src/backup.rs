@@ -25,10 +25,16 @@ use crate::{
         RemoteBackend,
     },
     lianalite::client::backend::api::DEFAULT_LIMIT,
+    VERSION,
 };
 
 const CONFIG_KEY: &str = "config";
 const SETTINGS_KEY: &str = "settings";
+const LIANA_VERSION_KEY: &str = "liana_version";
+
+pub fn liana_version() -> String {
+    format!("{}.{}.{}", VERSION.major, VERSION.minor, VERSION.patch)
+}
 
 fn now() -> u64 {
     SystemTime::now()
@@ -47,6 +53,12 @@ pub struct Backup {
     /// App proprietary metadata (settings, configuration, etc..)
     #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     pub proprietary: serde_json::Map<String, serde_json::Value>,
+    #[serde(default = "default_version")]
+    pub version: u32,
+}
+
+fn default_version() -> u32 {
+    0
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +110,7 @@ impl Backup {
         let mut account = Account::new(descriptor);
 
         let mut proprietary = serde_json::Map::new();
+        proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
 
         let config = extract_daemon_config(&ctx);
         if let Ok(config) = serde_json::to_value(config) {
@@ -145,6 +158,7 @@ impl Backup {
             network: ctx.network,
             proprietary: serde_json::Map::new(),
             date: now,
+            version: 0,
         })
     }
 
@@ -157,6 +171,8 @@ impl Backup {
         daemon: Arc<dyn Daemon + Sync + Send>,
     ) -> Result<Self, Error> {
         let mut proprietary = serde_json::Map::new();
+        proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
+
         let name = wallet.name.clone();
         let descriptor = wallet.main_descriptor.to_string();
         let keys = wallet.keys();
@@ -235,6 +251,7 @@ impl Backup {
             network,
             proprietary: serde_json::Map::new(),
             date: now(),
+            version: 0,
         })
     }
 
