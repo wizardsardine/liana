@@ -266,7 +266,10 @@ impl super::DescriptorEditModal for EditXpubModal {
                                         && existing.source.provider_key_kind()
                                             != key.source.provider_key_kind()
                                 }) {
-                                    Some("Two keys with the same fingerprint must have the same provider key kind.".to_string())
+                                    Some(
+                                        "Fetched key has already been added to the wallet."
+                                            .to_string(),
+                                    )
                                 } else {
                                     None
                                 };
