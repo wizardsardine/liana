@@ -63,6 +63,8 @@ This command does not take any parameter for now.
 | `rescan_progress`    | float or null   | Progress of an ongoing rescan as a percentage (between 0 and 1) if there is any              |
 | `timestamp`          | integer         | Unix timestamp of wallet creation date                                                       |
 | `last_poll_timestamp`| integer or null | Unix timestamp of last poll (if any) of the blockchain                                       |
+| `receive_index`      | integer         | Last index used to generate a receive address                                                |
+| `change_index`       | integer         | Last index used to generate a change address                                                 |
 
 ### `getnewaddress`
 

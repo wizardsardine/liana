@@ -36,6 +36,8 @@ def test_getinfo(lianad):
     time.sleep(lianad.poll_interval_secs + 1)
     res = lianad.rpc.getinfo()
     assert res["last_poll_timestamp"] > last_poll_timestamp
+    assert res["receive_index"] == 0
+    assert res["change_index"] == 0
 
 
 def test_getaddress(lianad):
@@ -45,6 +47,9 @@ def test_getaddress(lianad):
     assert res["address"] != lianad.rpc.getnewaddress()["address"]
     # new address has derivation_index higher than the previous one
     assert lianad.rpc.getnewaddress()["derivation_index"] == res["derivation_index"] + 2
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == res["derivation_index"] + 3
+    assert info["change_index"] == 0
 
 
 def test_listaddresses(lianad):
@@ -419,6 +424,8 @@ def test_create_spend(lianad, bitcoind):
     spend_psbt = PSBT.from_base64(res["psbt"])
     assert len(spend_psbt.o) == 4
     assert len(spend_psbt.tx.vout) == 4
+
+    assert lianad.rpc.getinfo()["change_index"] == 15
 
     # The transaction must contain the spent transaction for each input for P2WSH. But not for Taproot.
     # We don't make assumptions about the ordering of PSBT inputs.
