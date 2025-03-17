@@ -1211,6 +1211,76 @@ def test_labels(lianad, bitcoind):
     assert res[random_address] == "this address is random"
 
 
+def test_labels_bip329(lianad, bitcoind):
+    # Label 5 addresses
+    addresses = []
+    for i in range(0,5):
+        addr = lianad.rpc.getnewaddress()["address"]
+        addresses.append(addr)
+        lianad.rpc.updatelabels({addr: f"addr{i}"})
+
+    # Label 5 coin
+    txids = []
+    for i in range(0,5):
+        addr = lianad.rpc.getnewaddress()["address"]
+        txid = bitcoind.rpc.sendtoaddress(addr, 1)
+        txids.append(txid)
+        wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == i+1 )
+
+    coins = lianad.rpc.listcoins()["coins"]
+    for i in range(0,5):
+        coin = coins[i]
+        lianad.rpc.updatelabels({coin["outpoint"]: f"coin{i}"})
+
+    # Label 5 transactions
+    for i, txid in enumerate(txids):
+        lianad.rpc.updatelabels({txid: f"tx{i}"})
+
+    # Get Bip-0329 labels
+    bip329_labels = lianad.rpc.getlabelsbip329(0,100)["labels"]
+    assert len(bip329_labels) == 15
+
+    def label_found(name, labels):
+        for label in labels:
+            if label["label"] == name:
+                return True
+        return False
+
+    # All transactions are labelled
+    for i in range(0, len(txids)):
+        assert label_found(f"tx{i}", bip329_labels)
+
+    # All adresses are labelled
+    for i in range(0, len(addresses)):
+        assert label_found(f"addr{i}", bip329_labels)
+
+    # All coins are labelled
+    for i in range(0, len(coins)):
+        assert label_found(f"coin{i}", bip329_labels)
+
+    # There is no conflict between batches
+    batch1 = lianad.rpc.getlabelsbip329(0,5)["labels"]
+    assert len(batch1) == 5
+
+    batch2 = lianad.rpc.getlabelsbip329(5,5)["labels"]
+    assert len(batch2) == 5
+
+    batch3 = lianad.rpc.getlabelsbip329(10,5)["labels"]
+    assert len(batch3) == 5
+
+    for label in batch1:
+        print(label)
+        name = label["label"]
+
+        assert not label_found(name, batch2)
+        assert not label_found(name, batch3)
+
+    for label in batch2:
+        name = label["label"]
+        assert not label_found(name, batch1)
+        assert not label_found(name, batch3)
+
+
 def test_rbfpsbt_bump_fee(lianad, bitcoind):
     """Test the use of RBF to bump the fee of a transaction."""
 

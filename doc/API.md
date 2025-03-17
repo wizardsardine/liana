@@ -25,6 +25,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`createrecovery`](#createrecovery)                         | Create a recovery transaction to sweep expired coins          |
 | [`updatelabels`](#updatelabels)                             | Update the labels                                             |
 | [`getlabels`](#getlabels)                                   | Get the labels for the given addresses, txids and outpoints   |
+| [`getlabelsbip329`](#getlabelsbip329)                       | Get the labels in BIP-0329 format                             |
 
 # Reference
 
@@ -460,3 +461,22 @@ Items without labels are not present in the response map.
 | Field    | Type   | Description                                                                      |
 | -------- | ------ | -------------------------------------------------------------------------------- |
 | `labels` | object | A mapping of bitcoin addresses, txids and outpoints as keys, and string as values |
+
+### `getlabelsbip329`
+
+Retrieve a list of labels in [BIP-0329](https://github.com/bitcoin/bips/blob/master/bip-0329.mediawiki) 
+format, with pagination support.  
+
+#### Request
+
+| Field    | Type    | Description                                |
+| -------- | ------- | ------------------------------------------ |
+| `offset` | integer | Index to start returning labels from       |
+| `limit`  | integer | Maximum number of labels to return         |
+
+#### Response
+
+| Field    | Type   | Description                                       |
+| -------- | ------ | ------------------------------------------------- |
+| `labels` | array  | A list of BIP-0329-formatted label objects        |
+
