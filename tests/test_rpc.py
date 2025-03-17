@@ -20,6 +20,8 @@ from test_framework.utils import (
     USE_TAPROOT,
 )
 
+MAX_DERIV = 2**31 - 1
+
 
 def test_getinfo(lianad):
     res = lianad.rpc.getinfo()
@@ -38,6 +40,127 @@ def test_getinfo(lianad):
     assert res["last_poll_timestamp"] > last_poll_timestamp
     assert res["receive_index"] == 0
     assert res["change_index"] == 0
+
+
+def test_update_derivation_indexes(lianad):
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 0
+    assert info["change_index"] == 0
+
+    ret = lianad.rpc.updatederivationindexes(0, 0)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 0
+    assert info["change_index"] == 0
+    assert ret["receive"] == 0
+    assert ret["change"] == 0
+
+    ret = lianad.rpc.updatederivationindexes(receive=3)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 3
+    assert info["change_index"] == 0
+    assert ret["receive"] == 3
+    assert ret["change"] == 0
+
+    ret = lianad.rpc.updatederivationindexes(change=4)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 3
+    assert info["change_index"] == 4
+    assert ret["receive"] == 3
+    assert ret["change"] == 4
+
+    ret = lianad.rpc.updatederivationindexes(receive=1, change=2)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 3
+    assert info["change_index"] == 4
+    assert ret["receive"] == 3
+    assert ret["change"] == 4
+
+    ret = lianad.rpc.updatederivationindexes(5, 6)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 5
+    assert info["change_index"] == 6
+    assert ret["receive"] == 5
+    assert ret["change"] == 6
+
+    ret = lianad.rpc.updatederivationindexes(0, 0)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 5
+    assert info["change_index"] == 6
+    assert ret["receive"] == 5
+    assert ret["change"] == 6
+
+    # Will explicitly error on invalid indexes
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Invalid params: Invalid value for \'receive\' param"
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(-1)
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Invalid params: Invalid value for \'change\' param"
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(0, -1)
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Unhardened or overflowing BIP32 derivation index."
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(MAX_DERIV + 1, 2)
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Unhardened or overflowing BIP32 derivation index."
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(0, MAX_DERIV + 1)
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Unhardened or overflowing BIP32 derivation index."
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(receive=(MAX_DERIV+1))
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Unhardened or overflowing BIP32 derivation index."
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(change=(MAX_DERIV+1))
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Invalid params: Missing \'receive\' or \'change\' parameter"
+        ),
+    ):
+        lianad.rpc.updatederivationindexes()
+
+    last_derivs = lianad.rpc.updatederivationindexes(0, 0)
+    last_receive = last_derivs["receive"]
+    last_change = last_derivs["change"]
+
+    ret = lianad.rpc.updatederivationindexes(0, (MAX_DERIV - 1))
+    assert ret["receive"] == last_receive
+    assert ret["change"] == last_change + 1000
+
+    last_derivs = lianad.rpc.updatederivationindexes(0, 0)
+    last_receive = last_derivs["receive"]
+    last_change = last_derivs["change"]
+
+    ret = lianad.rpc.updatederivationindexes((MAX_DERIV -1 ), 0)
+    assert ret["receive"] == last_receive + 1000
+    assert ret["change"] == last_change
 
 
 def test_getaddress(lianad):
