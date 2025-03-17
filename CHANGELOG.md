@@ -1,5 +1,55 @@
 # Liana daemon and GUI release notes
 
+## 10.0
+
+This version does not introduce any breaking changes in the database schema.
+Two new features are implemented: Backup and Third party keys fetching during the install.
+
+### Dependencies upgrade
+
+Two big upgrades were done that affect most of the code of the project:
+
+- We upgraded our `rust-bitcoin` dependency to 0.32 for both `lianad` and `liana-gui`.
+- We upgraded our `iced` dependency to 13.1 for `liana-gui`.
+
+### Features
+
+#### Liana GUI
+
+During the install process, the xpub of a key provider can be fetch from a Wizardsardine service by entering a token.
+This Xpub can be used as a "Safety Net", a paid product where a third party keeps a recovery key for you
+in case you lose your access to your funds.
+
+We changed the default value of the "standard" recovery paths to ~1y, so the safety net can be quickly set with the
+maximum timelock without conflicting with an other recovery path.
+
+By right-clicking with the mouse on text input, a button "Paste" appears and allows user to paste from the clipboard.
+
+A new backup system for wallet configurations, including descriptors, has been introduced.
+Users can now back up their wallet configurations by downloading a file during the wallet creation process.
+They can also update their backup (for changes in labels, aliases, etc.) by downloading it from the Wallet settings.
+This backup file can be used to restore the wallet or keep it synchronized across different devices.
+
+A new "Export/Import" section will be available in the settings, consolidating all export and import options.
+This section will include the backup and restore wallet functions, as well as new features like "Export Labels"
+and "Export Descriptor."
+
+The export of labels adheres to the BIP329 standard, both in the wallet backup and the "Export Labels" function.
+
+Replace by fee action can now be executed on transactions without any related PSBT in the database.
+
+### Fixes
+
+#### Lianad
+
+Sometimes fee rate using rounded-up vbytes was lower than target value, this was fixed by updating the coin selection
+dependency `bdk_coin_select`.
+
+#### Liana GUI
+
+- We fixed some typos and wording.
+- In the installer, the gui allows now deletion of any primary key and prevents deletion of all recovery paths
+
 ## 9.0
 
 This Liana release introduces small bug fixes and a nice new export feature.
