@@ -167,35 +167,35 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
     let export_descriptor = settings_section(
         "Export descriptor",
         None,
-        icon::wallet_icon(),
+        icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportDescriptor),
     );
 
     let export_transactions = settings_section(
         "Export transactions",
         None,
-        icon::wallet_icon(),
+        icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportTransactions),
     );
 
     let export_labels = settings_section(
         "Export labels",
         None,
-        icon::wallet_icon(),
+        icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportLabels),
     );
 
     let export_wallet = settings_section(
         "Back Up Wallet",
         None,
-        icon::wallet_icon(),
+        icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportWallet),
     );
 
     let import_wallet = settings_section(
         "Restore wallet",
         None,
-        icon::wallet_icon(),
+        icon::restore_icon(),
         Message::Settings(SettingsMessage::ImportWallet),
     );
 
@@ -920,12 +920,12 @@ pub fn wallet_settings<'a>(
 
     let import_export = Row::new()
         .push(
-            button::secondary(Some(icon::wallet_icon()), "Backup")
+            button::secondary(Some(icon::backup_icon()), "Backup")
                 .on_press(Message::Settings(SettingsMessage::ExportWallet)),
         )
         .push(Space::with_width(10))
         .push(
-            button::secondary(Some(icon::wallet_icon()), "Restore")
+            button::secondary(Some(icon::restore_icon()), "Restore")
                 .on_press(Message::Settings(SettingsMessage::ImportWallet)),
         )
         .push(Space::with_width(Length::Fill));

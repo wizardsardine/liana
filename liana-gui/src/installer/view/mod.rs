@@ -740,10 +740,17 @@ pub fn backup_descriptor<'a>(
     error: Option<&Error>,
     done: bool,
 ) -> Element<'a, Message> {
+    let backup_button = if done {
+        button::secondary(Some(icon::backup_icon()), "Back Up Wallet")
+            .on_press(Message::BackupWallet)
+    } else {
+        button::primary(Some(icon::backup_icon()), "Back Up Wallet").on_press(Message::BackupWallet)
+    };
+
     layout(
         progress,
         email,
-        "Backup your wallet descriptor",
+        "Back Up your wallet",
         Column::new()
             .push(
                 Column::new()
@@ -793,10 +800,7 @@ pub fn backup_descriptor<'a>(
                         .push(
                             Row::new()
                                 .push(Space::with_width(Length::Fill))
-                                .push(
-                                    button::secondary(Some(icon::wallet_icon()), "Backup")
-                                        .on_press(Message::BackupWallet),
-                                )
+                                .push(backup_button)
                                 .push(Space::with_width(10))
                                 .push(
                                     button::secondary(Some(icon::clipboard_icon()), "Copy")
@@ -813,10 +817,11 @@ pub fn backup_descriptor<'a>(
                     .max_width(1500),
             )
             .push(
-                checkbox("I have backed up my descriptor", done).on_toggle(Message::UserActionDone),
+                checkbox("I have backed up my wallet/descriptor", done)
+                    .on_toggle(Message::UserActionDone),
             )
             .push(if done {
-                button::secondary(None, "Next")
+                button::primary(None, "Next")
                     .on_press(Message::Next)
                     .width(Length::Fixed(200.0))
             } else {

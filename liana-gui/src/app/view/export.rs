@@ -92,7 +92,7 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
             .width(Length::Fill)
     });
 
-    let p = match state {
+    let mut p = match state {
         ImportExportState::Init => 0.0,
         ImportExportState::ChoosePath | ImportExportState::Path(_) | ImportExportState::Started => {
             5.0
@@ -103,6 +103,10 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
         | ImportExportState::Ended
         | ImportExportState::Closed => 100.0,
     };
+    // keep progress bar visible
+    if p == 0.0 {
+        p += 2.5;
+    }
     let progress_bar_row = Row::new()
         .push(Space::with_width(30))
         .push(progress_bar(0.0..=100.0, p))
@@ -120,6 +124,6 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
             .push(Space::with_height(5)),
     )
     .width(Length::Fixed(500.0))
-    .height(Length::Fixed(220.0))
+    .height(Length::Fixed(250.0))
     .into()
 }

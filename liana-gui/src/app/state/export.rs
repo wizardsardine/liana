@@ -104,15 +104,15 @@ impl ExportModal {
                 }
                 Progress::Finished | Progress::Ended => self.state = ImportExportState::Ended,
                 Progress::KeyAliasesConflict(ref sender) => {
-                    if let ImportExportType::ImportBackup(_, aliases) = &self.import_export_type {
+                    if let ImportExportType::ImportBackup(_, None) = &self.import_export_type {
                         self.import_export_type =
-                            ImportExportType::ImportBackup(Some(sender.clone()), aliases.clone());
+                            ImportExportType::ImportBackup(None, Some(sender.clone()));
                     }
                 }
                 Progress::LabelsConflict(ref sender) => {
-                    if let ImportExportType::ImportBackup(labels, _) = &self.import_export_type {
+                    if let ImportExportType::ImportBackup(None, _) = &self.import_export_type {
                         self.import_export_type =
-                            ImportExportType::ImportBackup(labels.clone(), Some(sender.clone()));
+                            ImportExportType::ImportBackup(Some(sender.clone()), None);
                     }
                 }
                 Progress::Error(e) => {
