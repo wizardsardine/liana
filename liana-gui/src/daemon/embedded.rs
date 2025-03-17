@@ -1,4 +1,5 @@
 use lianad::bip329::Labels;
+use lianad::commands::UpdateDerivIndexesResult;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tokio::sync::Mutex;
@@ -102,7 +103,7 @@ impl Daemon for EmbeddedDaemon {
         &self,
         receive: Option<u32>,
         change: Option<u32>,
-    ) -> Result<(), DaemonError> {
+    ) -> Result<UpdateDerivIndexesResult, DaemonError> {
         self.command(|daemon| {
             daemon
                 .update_deriv_indexes(receive, change)

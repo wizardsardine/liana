@@ -15,6 +15,7 @@ use liana::miniscript::bitcoin::{
     address, bip32::Fingerprint, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid,
 };
 use lianad::bip329::Labels;
+use lianad::commands::UpdateDerivIndexesResult;
 use lianad::{
     commands::{CoinStatus, LabelItem, TransactionInfo},
     config::Config,
@@ -90,7 +91,7 @@ pub trait Daemon: Debug {
         &self,
         receive: Option<u32>,
         change: Option<u32>,
-    ) -> Result<(), DaemonError>;
+    ) -> Result<UpdateDerivIndexesResult, DaemonError>;
     async fn list_coins(
         &self,
         statuses: &[CoinStatus],

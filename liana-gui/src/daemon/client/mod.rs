@@ -5,7 +5,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use lianad::bip329::Labels;
-use lianad::commands::GetLabelsBip329Result;
+use lianad::commands::{GetLabelsBip329Result, UpdateDerivIndexesResult};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -87,7 +87,7 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         &self,
         receive: Option<u32>,
         change: Option<u32>,
-    ) -> Result<(), DaemonError> {
+    ) -> Result<UpdateDerivIndexesResult, DaemonError> {
         self.call("updatederivationindexes", Some(vec![receive, change]))
     }
 

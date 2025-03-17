@@ -14,7 +14,7 @@ use liana::{
 };
 use lianad::{
     bip329::Labels,
-    commands::{CoinStatus, GetInfoDescriptors, LCSpendInfo, LabelItem},
+    commands::{CoinStatus, GetInfoDescriptors, LCSpendInfo, LabelItem, UpdateDerivIndexesResult},
     config::Config,
 };
 use reqwest::{Error, IntoUrl, Method, RequestBuilder, Response};
@@ -631,7 +631,7 @@ impl Daemon for BackendWalletClient {
         &self,
         _receive: Option<u32>,
         _change: Option<u32>,
-    ) -> Result<(), DaemonError> {
+    ) -> Result<UpdateDerivIndexesResult, DaemonError> {
         Err(DaemonError::NotImplemented)
     }
 

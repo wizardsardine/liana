@@ -362,32 +362,53 @@ impl DaemonControl {
         &self,
         receive: Option<u32>,
         change: Option<u32>,
-    ) -> Result<(), CommandError> {
+    ) -> Result<UpdateDerivIndexesResult, CommandError> {
         let mut db_conn = self.db.connection();
 
+        const MAX_INCREMENT_GAP: u32 = 1_000;
+
+        let db_receive = db_conn.receive_index().into();
+        let mut final_receive = db_receive;
+
+        let db_change = db_conn.change_index().into();
+        let mut final_change = db_change;
+
         if let Some(index) = receive {
-            let child = match ChildNumber::from_normal_idx(index) {
-                Ok(i) => i,
-                Err(_) => return Err(CommandError::InvalidDerivationIndex),
-            };
-            let db_receive = db_conn.receive_index();
-            if child > db_receive {
-                db_conn.set_receive_index(child, &self.secp);
+            ChildNumber::from_normal_idx(index)
+                .map_err(|_| CommandError::InvalidDerivationIndex)?;
+            if index > db_receive {
+                let delta = (index - db_receive).min(MAX_INCREMENT_GAP);
+                let index = db_receive + delta;
+                final_receive = index;
+                match ChildNumber::from_normal_idx(index) {
+                    Ok(i) => {
+                        db_conn.set_receive_index(i, &self.secp);
+                    }
+                    Err(_) => return Err(CommandError::InvalidDerivationIndex),
+                };
             }
         }
 
         if let Some(index) = change {
-            let child = match ChildNumber::from_normal_idx(index) {
-                Ok(i) => i,
-                Err(_) => return Err(CommandError::InvalidDerivationIndex),
-            };
-            let db_change = db_conn.change_index();
-            if child > db_change {
-                db_conn.set_change_index(child, &self.secp);
+            ChildNumber::from_normal_idx(index)
+                .map_err(|_| CommandError::InvalidDerivationIndex)?;
+            if index > db_change {
+                let delta = (index - db_change).min(MAX_INCREMENT_GAP);
+                let index = db_change + delta;
+                final_change = index;
+                match ChildNumber::from_normal_idx(index) {
+                    Ok(i) => {
+                        db_conn.set_change_index(i, &self.secp);
+                    }
+                    Err(_) => return Err(CommandError::InvalidDerivationIndex),
+                };
             }
         }
 
-        Ok(())
+        Ok(UpdateDerivIndexesResult {
+            receive: final_receive,
+            change: final_change,
+        })
     }
 
     /// list addresses
@@ -1213,6 +1234,12 @@ pub struct GetInfoResult {
     pub receive_index: u32,
     /// Last index used to generate a change address
     pub change_index: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateDerivIndexesResult {
+    pub receive: u32,
+    pub change: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -238,8 +238,9 @@ fn update_deriv_indexes(
         None => None,
     };
 
-    control.update_deriv_indexes(receive, change)?;
-    Ok(serde_json::json!({}))
+    Ok(serde_json::json!(
+        control.update_deriv_indexes(receive, change)?
+    ))
 }
 
 fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
