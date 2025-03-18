@@ -1,9 +1,9 @@
 mod bitcoind;
 mod wallet;
 
+use std::convert::From;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::{collections::HashMap, convert::From};
 
 use iced::Task;
 
@@ -223,23 +223,6 @@ impl State for ImportExportSettingsState {
                 self.modal = None;
             }
             Message::View(view::Message::ImportExport(m)) => {
-                if let ImportExportMessage::UpdateAliases(aliases) = m {
-                    let mut wallet = (*self.wallet).clone();
-                    let mut ka = HashMap::new();
-                    let mut pk = HashMap::new();
-                    aliases.iter().for_each(|(k, ks)| {
-                        ka.insert(*k, ks.name());
-                        if let Some(p_key) = &ks.provider_key {
-                            pk.insert(*k, p_key.clone());
-                        }
-                    });
-                    wallet.keys_aliases = ka;
-                    wallet.provider_keys = pk;
-                    let wallet = Arc::new(wallet);
-                    return Task::perform(async {}, move |_| {
-                        Message::WalletUpdated(Ok(wallet.clone()))
-                    });
-                }
                 if let Some(modal) = self.modal.as_mut() {
                     return modal.update(m);
                 };

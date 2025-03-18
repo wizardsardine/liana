@@ -203,6 +203,22 @@ impl State for WalletSettingsState {
                 Task::none()
             }
 
+            Message::View(view::Message::ImportExport(ImportExportMessage::UpdateAliases(
+                aliases,
+            ))) => {
+                self.processing = true;
+                self.updated = false;
+                Task::perform(
+                    update_keys_aliases(
+                        self.data_dir.clone(),
+                        cache.network,
+                        self.wallet.clone(),
+                        aliases.into_iter().map(|(fg, ks)| (fg, ks.name)).collect(),
+                        daemon,
+                    ),
+                    Message::WalletUpdated,
+                )
+            }
             Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
                 if let Modal::ImportExport(_) = &self.modal {
                     self.modal = Modal::None;
@@ -472,7 +488,7 @@ async fn register_wallet(
     Ok(wallet)
 }
 
-async fn update_keys_aliases(
+pub async fn update_keys_aliases(
     data_dir: PathBuf,
     network: Network,
     wallet: Arc<Wallet>,
