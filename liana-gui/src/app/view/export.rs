@@ -33,7 +33,7 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
     .map(Container::new);
 
     let msg = if let Some(error) = error {
-        format!("{:?}", error)
+        format!("{}", error)
     } else {
         match state {
             ImportExportState::Init => "".to_string(),
