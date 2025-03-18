@@ -9,7 +9,7 @@ use miniscript::bitcoin::{
     bip32,
     consensus::encode,
     psbt::Psbt,
-    Address, OutPoint,
+    Address, OutPoint, Txid,
 };
 
 // Due to limitations of Sqlite's ALTER TABLE command and in order not to recreate
@@ -376,7 +376,11 @@ impl From<i64> for DbLabelledKind {
 
 impl From<DbLabel> for Label {
     fn from(value: DbLabel) -> Self {
-        let ref_ = value.item;
+        let mut ref_ = value.item;
+        if value.item_kind == DbLabelledKind::Txid {
+            let frontward: Txid = bitcoin::consensus::encode::deserialize_hex(&ref_).unwrap();
+            ref_ = frontward.to_string();
+        }
         let label = if value.value.is_empty() {
             None
         } else {
