@@ -165,6 +165,11 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         )
     }
 
+    async fn store_transactions(&self, txs: &[Transaction]) -> Result<(), DaemonError> {
+        self.call("storetransactions", Some(vec![json!(txs)]))?;
+        Ok(())
+    }
+
     async fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
         self.call("listtransactions", Some(vec![txids]))
     }
