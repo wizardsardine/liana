@@ -460,7 +460,7 @@ pub struct Key {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_type: Option<KeyType>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
-    pub metadata: Value,
+    pub proprietary: Value,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]

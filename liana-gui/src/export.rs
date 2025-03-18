@@ -960,7 +960,7 @@ pub async fn import_backup(
                 *k,
                 v.role,
                 v.key_type,
-                v.metadata.clone(),
+                v.proprietary.clone(),
             ) {
                 settings_aliases.insert(*k, ks);
             }
@@ -1099,7 +1099,7 @@ pub async fn wallet_from_backup(sender: Sender<Progress>, path: PathBuf) {
             *k,
             v.role,
             v.key_type,
-            v.metadata.clone(),
+            v.proprietary.clone(),
         ) {
             aliases.insert(*k, ks);
         }

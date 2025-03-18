@@ -185,7 +185,7 @@ impl KeySetting {
                     alias: Some(self.name.clone()),
                     role: None,
                     key_type: Some(KeyType::ThirdParty),
-                    metadata,
+                    proprietary: metadata,
                 };
             }
         }
@@ -194,7 +194,7 @@ impl KeySetting {
             alias: Some(self.name.clone()),
             role: None,
             key_type: None,
-            metadata: serde_json::Value::Null,
+            proprietary: serde_json::Value::Null,
         }
     }
 
