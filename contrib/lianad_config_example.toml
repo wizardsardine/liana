@@ -50,8 +50,13 @@ poll_interval_secs = 30
 # In order to connect, it needs the address as a string, which can be
 # optionally prefixed with "ssl://" or "tcp://". If omitted, "tcp://"
 # will be assumed.
+# `validate_domain` field is optional: used in case of SSL connection,
+# if set to `false`, internal electrum client will not try to validate
+# the domain associated to the certificate: it's useful in case of 
+# self-signed certificate. Its default value is `true`.
 # [electrum_config]
 # addr = "127.0.0.1:50001"
+# validate_domain = false 
 #
 #
 [bitcoind_config]

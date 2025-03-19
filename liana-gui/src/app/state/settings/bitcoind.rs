@@ -326,6 +326,7 @@ impl BitcoindSettings {
                     }
                 }
             }
+            view::SettingsEditMessage::ValidateDomainEdited(_) => {}
             view::SettingsEditMessage::BitcoindRpcAuthTypeSelected(auth_type) => {
                 if !self.processing {
                     self.selected_auth_type = auth_type;
@@ -465,6 +466,7 @@ impl ElectrumSettings {
                     daemon_config.bitcoin_backend =
                         Some(lianad::config::BitcoinBackend::Electrum(ElectrumConfig {
                             addr: self.addr.value.clone(),
+                            validate_domain: self.electrum_config.validate_domain,
                         }));
                     self.processing = true;
                     return Task::perform(async move { daemon_config }, |cfg| {
@@ -473,6 +475,11 @@ impl ElectrumSettings {
                 }
             }
             view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
+            view::SettingsEditMessage::ValidateDomainEdited(b) => {
+                if !self.processing {
+                    self.electrum_config.validate_domain = b;
+                }
+            }
             _ => {}
         };
         Task::none()
@@ -487,6 +494,7 @@ impl ElectrumSettings {
                 cache.blockheight,
                 &self.addr,
                 self.processing,
+                self.electrum_config.validate_domain,
             )
         } else {
             view::settings::electrum(
