@@ -5,12 +5,11 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{
-        mpsc::{channel, sync_channel, Receiver, Sender, SyncSender},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time,
 };
+
+use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
 use chrono::{DateTime, Duration, Utc};
@@ -147,8 +146,8 @@ pub enum ImportExportType {
     ExportPsbt(String),
     ExportBackup(String),
     ImportBackup(
-        Option<SyncSender<bool>>, /*overwrite_labels*/
-        Option<SyncSender<bool>>, /*overwrite_aliases*/
+        Option<Sender<bool>>, /*overwrite_labels*/
+        Option<Sender<bool>>, /*overwrite_aliases*/
     ),
     WalletFromBackup,
     Descriptor(LianaDescriptor),
@@ -228,8 +227,8 @@ pub enum Progress {
     None,
     Psbt(Psbt),
     Descriptor(LianaDescriptor),
-    LabelsConflict(SyncSender<bool>),
-    KeyAliasesConflict(SyncSender<bool>),
+    LabelsConflict(Sender<bool>),
+    KeyAliasesConflict(Sender<bool>),
     UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
     WalletFromBackup(
         (
@@ -242,8 +241,8 @@ pub enum Progress {
 }
 
 pub struct Export {
-    pub receiver: Receiver<Progress>,
-    pub sender: Option<Sender<Progress>>,
+    pub receiver: UnboundedReceiver<Progress>,
+    pub sender: Option<UnboundedSender<Progress>>,
     pub handle: Option<Arc<Mutex<JoinHandle<()>>>>,
     pub daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     pub path: Box<PathBuf>,
@@ -256,7 +255,7 @@ impl Export {
         path: Box<PathBuf>,
         export_type: ImportExportType,
     ) -> Self {
-        let (sender, receiver) = channel();
+        let (sender, receiver) = unbounded_channel();
         Export {
             receiver,
             sender: Some(sender),
@@ -269,7 +268,7 @@ impl Export {
 
     pub async fn export_logic(
         export_type: ImportExportType,
-        sender: Sender<Progress>,
+        sender: UnboundedSender<Progress>,
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         path: PathBuf,
     ) {
@@ -349,8 +348,8 @@ pub fn export_subscription(
                     continue;
                 }
                 Err(e) => match e {
-                    std::sync::mpsc::TryRecvError::Empty => false,
-                    std::sync::mpsc::TryRecvError::Disconnected => true,
+                    tokio::sync::mpsc::error::TryRecvError::Empty => false,
+                    tokio::sync::mpsc::error::TryRecvError::Disconnected => true,
                 },
             };
 
@@ -387,7 +386,7 @@ pub fn export_subscription(
 }
 
 pub async fn export_transactions(
-    sender: &Sender<Progress>,
+    sender: &UnboundedSender<Progress>,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     path: PathBuf,
 ) -> Result<(), Error> {
@@ -526,7 +525,7 @@ pub async fn export_transactions(
 }
 
 pub async fn export_descriptor(
-    sender: &Sender<Progress>,
+    sender: &UnboundedSender<Progress>,
     path: PathBuf,
     descriptor: LianaDescriptor,
 ) -> Result<(), Error> {
@@ -541,7 +540,7 @@ pub async fn export_descriptor(
 }
 
 pub async fn export_string(
-    sender: &Sender<Progress>,
+    sender: &UnboundedSender<Progress>,
     path: PathBuf,
     psbt: String,
 ) -> Result<(), Error> {
@@ -552,7 +551,7 @@ pub async fn export_string(
     Ok(())
 }
 
-pub async fn import_psbt(sender: &Sender<Progress>, path: PathBuf) -> Result<(), Error> {
+pub async fn import_psbt(sender: &UnboundedSender<Progress>, path: PathBuf) -> Result<(), Error> {
     let mut file = File::open(&path)?;
 
     let mut psbt_str = String::new();
@@ -565,7 +564,10 @@ pub async fn import_psbt(sender: &Sender<Progress>, path: PathBuf) -> Result<(),
     Ok(())
 }
 
-pub async fn import_descriptor(sender: &Sender<Progress>, path: PathBuf) -> Result<(), Error> {
+pub async fn import_descriptor(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+) -> Result<(), Error> {
     let mut file = File::open(path)?;
 
     let mut descr_str = String::new();
@@ -589,7 +591,7 @@ pub async fn import_descriptor(sender: &Sender<Progress>, path: PathBuf) -> Resu
 ///    - import labels if no conflict or user ACK
 ///    - update aliases if no conflict or user ACK
 pub async fn import_backup(
-    sender: &Sender<Progress>,
+    sender: &UnboundedSender<Progress>,
     path: PathBuf,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
 ) -> Result<(), Error> {
@@ -679,7 +681,7 @@ pub async fn import_backup(
         let backup_labels_map = labels.clone().into_map();
 
         // if there is a conflict, we ask user to ACK before overwrite
-        let (ack_sender, ack_receiver) = sync_channel(0);
+        let (ack_sender, mut ack_receiver) = channel(0);
         let mut conflict = false;
         for (k, l) in &backup_labels_map {
             if let Some(lab) = labels_map.get(k) {
@@ -691,9 +693,9 @@ pub async fn import_backup(
             }
         }
         if conflict {
-            write_labels = match ack_receiver.recv() {
-                Ok(b) => b,
-                Err(_) => {
+            write_labels = match ack_receiver.recv().await {
+                Some(b) => b,
+                None => {
                     return Err(Error::BackupImport("Fail to receive labels ACK".into()));
                 }
             }
@@ -743,7 +745,7 @@ pub async fn import_backup(
             }
         };
 
-        let (ack_sender, ack_receiver) = sync_channel(0);
+        let (ack_sender, mut ack_receiver) = channel(0);
         let mut conflict = false;
         for (fg, key) in &account.keys {
             if let Some(k) = settings_aliases.get(fg) {
@@ -757,9 +759,9 @@ pub async fn import_backup(
         }
         if conflict {
             // wait for the user ACK/NACK
-            write_aliases = match ack_receiver.recv() {
-                Ok(a) => a,
-                Err(_) => {
+            write_aliases = match ack_receiver.recv().await {
+                Some(a) => a,
+                None => {
                     return Err(Error::BackupImport("Fail to receive aliases ACK".into()));
                 }
             };
@@ -902,7 +904,10 @@ impl From<DaemonError> for RestoreBackupError {
 ///    - extract descriptor
 ///    - extract network
 ///    - extract aliases
-pub async fn wallet_from_backup(sender: &Sender<Progress>, path: PathBuf) -> Result<(), Error> {
+pub async fn wallet_from_backup(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+) -> Result<(), Error> {
     // Load backup from file
     let mut file = File::open(path)?;
 
@@ -1076,7 +1081,7 @@ pub async fn import_backup_at_launch(
 }
 
 pub async fn export_labels(
-    sender: &Sender<Progress>,
+    sender: &UnboundedSender<Progress>,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     path: PathBuf,
 ) -> Result<(), Error> {
