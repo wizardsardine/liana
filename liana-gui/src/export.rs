@@ -681,7 +681,7 @@ pub async fn import_backup(
         let backup_labels_map = labels.clone().into_map();
 
         // if there is a conflict, we ask user to ACK before overwrite
-        let (ack_sender, mut ack_receiver) = channel(0);
+        let (ack_sender, mut ack_receiver) = channel(1);
         let mut conflict = false;
         for (k, l) in &backup_labels_map {
             if let Some(lab) = labels_map.get(k) {
@@ -745,7 +745,7 @@ pub async fn import_backup(
             }
         };
 
-        let (ack_sender, mut ack_receiver) = channel(0);
+        let (ack_sender, mut ack_receiver) = channel(1);
         let mut conflict = false;
         for (fg, key) in &account.keys {
             if let Some(k) = settings_aliases.get(fg) {
