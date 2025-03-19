@@ -17,11 +17,32 @@ use liana_ui::{
 
 use crate::{
     app::{
-        cache::Cache, error::Error, message::Message, settings, state::State, view, wallet::Wallet,
+        cache::Cache,
+        error::Error,
+        message::Message,
+        settings,
+        state::{export::ExportModal, State},
+        view,
+        wallet::Wallet,
+        Config,
     },
+    backup::{self, Backup},
     daemon::{Daemon, DaemonBackend},
+    export::{self, ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
 };
+
+enum Modal {
+    None,
+    RegisterWallet(RegisterWalletModal),
+    ImportExport(ExportModal),
+}
+
+impl Modal {
+    fn is_none(&self) -> bool {
+        matches!(self, Modal::None)
+    }
+}
 
 pub struct WalletSettingsState {
     data_dir: PathBuf,
@@ -29,22 +50,24 @@ pub struct WalletSettingsState {
     descriptor: LianaDescriptor,
     keys_aliases: Vec<(Fingerprint, form::Value<String>)>,
     wallet: Arc<Wallet>,
-    modal: Option<RegisterWalletModal>,
+    modal: Modal,
     processing: bool,
     updated: bool,
+    config: Arc<Config>,
 }
 
 impl WalletSettingsState {
-    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>) -> Self {
+    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>, config: Arc<Config>) -> Self {
         WalletSettingsState {
             data_dir,
             descriptor: wallet.main_descriptor.clone(),
             keys_aliases: Self::keys_aliases(&wallet),
             wallet,
             warning: None,
-            modal: None,
+            modal: Modal::None,
             processing: false,
             updated: false,
+            config,
         }
     }
 
@@ -86,20 +109,31 @@ impl State for WalletSettingsState {
             self.processing,
             self.updated,
         );
-        if let Some(m) = &self.modal {
-            modal::Modal::new(content, m.view())
+
+        match &self.modal {
+            Modal::None => content,
+            Modal::RegisterWallet(m) => modal::Modal::new(content, m.view())
                 .on_blur(Some(view::Message::Close))
-                .into()
-        } else {
-            content
+                .into(),
+            Modal::ImportExport(m) => m.view(content),
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        if let Some(modal) = &self.modal {
-            modal.subscription()
-        } else {
-            Subscription::none()
+        match &self.modal {
+            Modal::None => Subscription::none(),
+            Modal::RegisterWallet(modal) => modal.subscription(),
+            Modal::ImportExport(modal) => {
+                if let Some(sub) = modal.subscription() {
+                    sub.map(|m| {
+                        Message::View(view::Message::Settings(
+                            view::SettingsMessage::ImportExport(ImportExportMessage::Progress(m)),
+                        ))
+                    })
+                } else {
+                    Subscription::none()
+                }
+            }
         }
     }
 
@@ -112,7 +146,7 @@ impl State for WalletSettingsState {
         match message {
             Message::WalletUpdated(res) => {
                 self.processing = false;
-                if let Some(modal) = &mut self.modal {
+                if let Modal::RegisterWallet(modal) = &mut self.modal {
                     modal.update(daemon, cache, Message::WalletUpdated(res))
                 } else {
                     match res {
@@ -139,7 +173,7 @@ impl State for WalletSettingsState {
                 Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::Save)) => {
-                self.modal = None;
+                self.modal = Modal::None;
                 self.processing = true;
                 self.updated = false;
                 Task::perform(
@@ -157,22 +191,106 @@ impl State for WalletSettingsState {
                 )
             }
             Message::View(view::Message::Close) => {
-                self.modal = None;
+                self.modal = Modal::None;
                 Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::RegisterWallet)) => {
-                self.modal = Some(RegisterWalletModal::new(
+                self.modal = Modal::RegisterWallet(RegisterWalletModal::new(
                     self.data_dir.clone(),
                     self.wallet.clone(),
                     cache.network,
                 ));
                 Task::none()
             }
-            _ => self
-                .modal
-                .as_mut()
-                .map(|m| m.update(daemon, cache, message))
-                .unwrap_or_else(Task::none),
+
+            Message::View(view::Message::ImportExport(ImportExportMessage::UpdateAliases(
+                aliases,
+            ))) => {
+                self.processing = true;
+                self.updated = false;
+                Task::perform(
+                    update_keys_aliases(
+                        self.data_dir.clone(),
+                        cache.network,
+                        self.wallet.clone(),
+                        aliases.into_iter().map(|(fg, ks)| (fg, ks.name)).collect(),
+                        daemon,
+                    ),
+                    Message::WalletUpdated,
+                )
+            }
+            Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
+                if let Modal::ImportExport(_) = &self.modal {
+                    self.modal = Modal::None;
+                }
+                Task::none()
+            }
+            Message::View(view::Message::ImportExport(m)) => {
+                if let Modal::ImportExport(modal) = &mut self.modal {
+                    modal.update(m)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportExport(m))) => {
+                if let Modal::ImportExport(modal) = &mut self.modal {
+                    modal.update(m)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportWallet)) => {
+                if self.modal.is_none() {
+                    let datadir = cache.datadir_path.clone();
+                    let network = cache.network;
+                    let config = self.config.clone();
+                    let wallet = self.wallet.clone();
+                    let daemon = daemon.clone();
+                    Task::perform(
+                        async move { app_backup(datadir, network, config, wallet, daemon).await },
+                        |s| {
+                            Message::View(view::Message::Settings(
+                                view::SettingsMessage::ExportBackup(s),
+                            ))
+                        },
+                    )
+                } else {
+                    Task::none()
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
+                if self.modal.is_none() {
+                    let backup = match backup {
+                        Ok(b) => b,
+                        Err(e) => {
+                            self.warning = Some(Error::ImportExport(export::Error::Backup(e)));
+                            return Task::none();
+                        }
+                    };
+                    let modal =
+                        ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
+                    let launch = modal.launch(true);
+                    self.modal = Modal::ImportExport(modal);
+                    launch
+                } else {
+                    Task::none()
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
+                if self.modal.is_none() {
+                    let modal =
+                        ExportModal::new(Some(daemon), ImportExportType::ImportBackup(None, None));
+                    let launch = modal.launch(false);
+                    self.modal = Modal::ImportExport(modal);
+                    launch
+                } else {
+                    Task::none()
+                }
+            }
+            _ => match &mut self.modal {
+                Modal::RegisterWallet(m) => m.update(daemon, cache, message),
+                _ => Task::none(),
+            },
         }
     }
 
@@ -370,7 +488,7 @@ async fn register_wallet(
     Ok(wallet)
 }
 
-async fn update_keys_aliases(
+pub async fn update_keys_aliases(
     data_dir: PathBuf,
     network: Network,
     wallet: Arc<Wallet>,
@@ -406,4 +524,15 @@ async fn update_keys_aliases(
         .await?;
 
     Ok(Arc::new(wallet))
+}
+
+pub async fn app_backup(
+    datadir: PathBuf,
+    network: Network,
+    config: Arc<Config>,
+    wallet: Arc<Wallet>,
+    daemon: Arc<dyn Daemon + Sync + Send>,
+) -> Result<String, backup::Error> {
+    let backup = Backup::from_app(datadir, network, config, wallet, daemon).await?;
+    serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
 }

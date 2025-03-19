@@ -523,6 +523,10 @@ impl DatabaseConnection for DummyDatabase {
         }
         wallet_txs
     }
+
+    fn get_labels_bip329(&mut self, _offset: u32, _limit: u32) -> bip329::Labels {
+        todo!()
+    }
 }
 
 pub struct DummyLiana {

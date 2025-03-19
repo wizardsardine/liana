@@ -5,6 +5,7 @@ mod prompt;
 mod step;
 mod view;
 
+pub use context::{Context, RemoteBackend};
 use iced::{clipboard, Subscription, Task};
 use liana::miniscript::bitcoin::{self, Network};
 use liana_ui::{
@@ -13,8 +14,6 @@ use liana_ui::{
 };
 use lianad::config::Config;
 use tracing::{error, info, warn};
-
-use context::{Context, RemoteBackend};
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -26,6 +25,7 @@ use crate::{
         settings::{self as gui_settings, AuthConfig, Settings, SettingsError, WalletSetting},
         wallet::wallet_name,
     },
+    backup,
     daemon::DaemonError,
     datadir::create_directory,
     hw::{HardwareWalletConfig, HardwareWallets},
@@ -66,7 +66,7 @@ pub struct Installer {
     signer: Arc<Mutex<Signer>>,
 
     /// Context is data passed through each step.
-    context: Context,
+    pub context: Context,
 }
 
 impl Installer {
@@ -292,6 +292,11 @@ impl Installer {
                     .expect("There is always a step")
                     .update(&mut self.hws, Message::Installed(Err(e)))
             }
+            Message::WalletFromBackup((ks, backup)) => {
+                self.context.keys = ks;
+                self.context.backup = Some(backup);
+                Task::none()
+            }
             _ => self
                 .steps
                 .get_mut(self.current)
@@ -429,7 +434,7 @@ pub async fn install_local_wallet(
     info!("Gui configuration file created");
 
     // create liana GUI settings file
-    let settings: gui_settings::Settings = extract_local_gui_settings(&ctx).await;
+    let settings: gui_settings::Settings = extract_local_gui_settings(&ctx);
     create_and_write_file(
         network_datadir_path,
         gui_settings::DEFAULT_FILE_NAME,
@@ -669,7 +674,7 @@ pub async fn extract_remote_gui_settings(ctx: &Context, backend: &BackendWalletC
     }
 }
 
-pub async fn extract_local_gui_settings(ctx: &Context) -> Settings {
+pub fn extract_local_gui_settings(ctx: &Context) -> Settings {
     let descriptor = ctx
         .descriptor
         .as_ref()
@@ -731,6 +736,7 @@ pub enum Error {
     CannotGetAvailablePort(String),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
+    Backup(backup::Error),
 }
 
 impl From<jsonrpc::simple_http::Error> for Error {
@@ -784,6 +790,7 @@ impl std::fmt::Display for Error {
             Self::CannotCreateFile(e) => write!(f, "Failed to create file: {}", e),
             Self::Unexpected(e) => write!(f, "Unexpected: {}", e),
             Self::HardwareWallet(e) => write!(f, "Hardware Wallet: {}", e),
+            Self::Backup(e) => write!(f, "Backup: {:?}", e),
         }
     }
 }

@@ -36,7 +36,11 @@ use std::{
 };
 
 use miniscript::{
-    bitcoin::{self, address, bip32, psbt::Psbt},
+    bitcoin::{
+        self, address,
+        bip32::{self, ChildNumber},
+        psbt::Psbt,
+    },
     psbt::PsbtExt,
 };
 use serde::{Deserialize, Serialize};
@@ -314,6 +318,8 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         let block_height = db_conn.chain_tip().map(|tip| tip.height).unwrap_or(0);
         let wallet = db_conn.wallet();
+        let receive_index: u32 = db_conn.receive_index().into();
+        let change_index: u32 = db_conn.change_index().into();
         let rescan_progress = wallet
             .rescan_timestamp
             .map(|_| self.bitcoin.rescan_progress().unwrap_or(1.0));
@@ -328,6 +334,8 @@ impl DaemonControl {
             rescan_progress,
             timestamp: wallet.timestamp,
             last_poll_timestamp: wallet.last_poll_timestamp,
+            receive_index,
+            change_index,
         }
     }
 
@@ -347,6 +355,60 @@ impl DaemonControl {
             .derive(index, &self.secp)
             .address(self.config.bitcoin_config.network);
         GetAddressResult::new(address, index)
+    }
+
+    /// Update derivation indexes
+    pub fn update_deriv_indexes(
+        &self,
+        receive: Option<u32>,
+        change: Option<u32>,
+    ) -> Result<UpdateDerivIndexesResult, CommandError> {
+        let mut db_conn = self.db.connection();
+
+        const MAX_INCREMENT_GAP: u32 = 1_000;
+
+        let db_receive = db_conn.receive_index().into();
+        let mut final_receive = db_receive;
+
+        let db_change = db_conn.change_index().into();
+        let mut final_change = db_change;
+
+        if let Some(index) = receive {
+            ChildNumber::from_normal_idx(index)
+                .map_err(|_| CommandError::InvalidDerivationIndex)?;
+            if index > db_receive {
+                let delta = (index - db_receive).min(MAX_INCREMENT_GAP);
+                let index = db_receive + delta;
+                final_receive = index;
+                match ChildNumber::from_normal_idx(index) {
+                    Ok(i) => {
+                        db_conn.set_receive_index(i, &self.secp);
+                    }
+                    Err(_) => return Err(CommandError::InvalidDerivationIndex),
+                };
+            }
+        }
+
+        if let Some(index) = change {
+            ChildNumber::from_normal_idx(index)
+                .map_err(|_| CommandError::InvalidDerivationIndex)?;
+            if index > db_change {
+                let delta = (index - db_change).min(MAX_INCREMENT_GAP);
+                let index = db_change + delta;
+                final_change = index;
+                match ChildNumber::from_normal_idx(index) {
+                    Ok(i) => {
+                        db_conn.set_change_index(i, &self.secp);
+                    }
+                    Err(_) => return Err(CommandError::InvalidDerivationIndex),
+                };
+            }
+        }
+
+        Ok(UpdateDerivIndexesResult {
+            receive: final_receive,
+            change: final_change,
+        })
     }
 
     /// list addresses
@@ -684,6 +746,13 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         GetLabelsResult {
             labels: db_conn.labels(items),
+        }
+    }
+
+    pub fn get_labels_bip329(&self, offset: u32, limit: u32) -> GetLabelsBip329Result {
+        let mut db_conn = self.db.connection();
+        GetLabelsBip329Result {
+            labels: db_conn.get_labels_bip329(offset, limit),
         }
     }
 
@@ -1161,6 +1230,16 @@ pub struct GetInfoResult {
     pub timestamp: u32,
     /// Timestamp of last poll, if any.
     pub last_poll_timestamp: Option<u32>,
+    /// Last index used to generate a receive address
+    pub receive_index: u32,
+    /// Last index used to generate a change address
+    pub change_index: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateDerivIndexesResult {
+    pub receive: u32,
+    pub change: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1182,6 +1261,11 @@ impl GetAddressResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetLabelsResult {
     pub labels: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetLabelsBip329Result {
+    pub labels: crate::bip329::Labels,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

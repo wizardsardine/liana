@@ -6,9 +6,15 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
+use liana_ui::component::form;
 use serde::{Deserialize, Serialize};
 
-use crate::{hw::HardwareWalletConfig, lianalite::client::backend, services};
+use crate::{
+    backup::{Key, KeyRole, KeyType},
+    hw::HardwareWalletConfig,
+    lianalite::client::backend,
+    services,
+};
 
 pub const DEFAULT_FILE_NAME: &str = "settings.json";
 
@@ -101,6 +107,25 @@ impl WalletSetting {
         }
         map
     }
+
+    pub fn update_alias(&mut self, key: &Fingerprint, alias: &str) {
+        let key_aliases = self.keys_aliases();
+        if key_aliases.contains_key(key) {
+            self.keys = self
+                .keys
+                .clone()
+                .into_iter()
+                .map(|mut ks| {
+                    if ks.master_fingerprint == *key {
+                        ks.name = alias.into();
+                        ks
+                    } else {
+                        ks
+                    }
+                })
+                .collect();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -149,6 +174,67 @@ pub struct KeySetting {
     pub name: String,
     pub master_fingerprint: Fingerprint,
     pub provider_key: Option<ProviderKey>,
+}
+
+impl KeySetting {
+    pub fn to_backup(&self) -> Key {
+        if let Some(provider_key) = &self.provider_key {
+            if let Ok(metadata) = serde_json::to_value(provider_key) {
+                return Key {
+                    key: self.master_fingerprint,
+                    alias: Some(self.name.clone()),
+                    role: None,
+                    key_type: Some(KeyType::ThirdParty),
+                    proprietary: metadata,
+                };
+            }
+        }
+        Key {
+            key: self.master_fingerprint,
+            alias: Some(self.name.clone()),
+            role: None,
+            key_type: None,
+            proprietary: serde_json::Value::Null,
+        }
+    }
+
+    pub fn from_backup(
+        name: String,
+        fg: Fingerprint,
+        _role: Option<KeyRole>,
+        key_type: Option<KeyType>,
+        metadata: serde_json::Value,
+    ) -> Option<Self> {
+        if let Some(KeyType::ThirdParty) = key_type {
+            let provider_key = serde_json::from_value(metadata).ok();
+            Some(Self {
+                name,
+                master_fingerprint: fg,
+                provider_key,
+            })
+        } else {
+            Some(Self {
+                name,
+                master_fingerprint: fg,
+                provider_key: None,
+            })
+        }
+    }
+
+    pub fn to_form(&self) -> form::Value<String> {
+        form::Value {
+            value: self.name.clone(),
+            valid: true,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    pub fn has_name(&self) -> bool {
+        !self.name.is_empty()
+    }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]

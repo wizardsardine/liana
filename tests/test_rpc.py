@@ -20,6 +20,8 @@ from test_framework.utils import (
     USE_TAPROOT,
 )
 
+MAX_DERIV = 2**31 - 1
+
 
 def test_getinfo(lianad):
     res = lianad.rpc.getinfo()
@@ -36,6 +38,129 @@ def test_getinfo(lianad):
     time.sleep(lianad.poll_interval_secs + 1)
     res = lianad.rpc.getinfo()
     assert res["last_poll_timestamp"] > last_poll_timestamp
+    assert res["receive_index"] == 0
+    assert res["change_index"] == 0
+
+
+def test_update_derivation_indexes(lianad):
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 0
+    assert info["change_index"] == 0
+
+    ret = lianad.rpc.updatederivationindexes(0, 0)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 0
+    assert info["change_index"] == 0
+    assert ret["receive"] == 0
+    assert ret["change"] == 0
+
+    ret = lianad.rpc.updatederivationindexes(receive=3)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 3
+    assert info["change_index"] == 0
+    assert ret["receive"] == 3
+    assert ret["change"] == 0
+
+    ret = lianad.rpc.updatederivationindexes(change=4)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 3
+    assert info["change_index"] == 4
+    assert ret["receive"] == 3
+    assert ret["change"] == 4
+
+    ret = lianad.rpc.updatederivationindexes(receive=1, change=2)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 3
+    assert info["change_index"] == 4
+    assert ret["receive"] == 3
+    assert ret["change"] == 4
+
+    ret = lianad.rpc.updatederivationindexes(5, 6)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 5
+    assert info["change_index"] == 6
+    assert ret["receive"] == 5
+    assert ret["change"] == 6
+
+    ret = lianad.rpc.updatederivationindexes(0, 0)
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 5
+    assert info["change_index"] == 6
+    assert ret["receive"] == 5
+    assert ret["change"] == 6
+
+    # Will explicitly error on invalid indexes
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Invalid params: Invalid value for \'receive\' param"
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(-1)
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Invalid params: Invalid value for \'change\' param"
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(0, -1)
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Unhardened or overflowing BIP32 derivation index."
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(MAX_DERIV + 1, 2)
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Unhardened or overflowing BIP32 derivation index."
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(0, MAX_DERIV + 1)
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Unhardened or overflowing BIP32 derivation index."
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(receive=(MAX_DERIV+1))
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Unhardened or overflowing BIP32 derivation index."
+        ),
+    ):
+        lianad.rpc.updatederivationindexes(change=(MAX_DERIV+1))
+
+    with pytest.raises(
+        RpcError,
+        match=re.escape(
+            "Invalid params: Missing \'receive\' or \'change\' parameter"
+        ),
+    ):
+        lianad.rpc.updatederivationindexes()
+
+    last_derivs = lianad.rpc.updatederivationindexes(0, 0)
+    last_receive = last_derivs["receive"]
+    last_change = last_derivs["change"]
+
+    ret = lianad.rpc.updatederivationindexes(0, (MAX_DERIV - 1))
+    assert ret["receive"] == last_receive
+    assert ret["change"] == last_change + 1000
+
+    last_derivs = lianad.rpc.updatederivationindexes(0, 0)
+    last_receive = last_derivs["receive"]
+    last_change = last_derivs["change"]
+
+    ret = lianad.rpc.updatederivationindexes((MAX_DERIV -1 ), 0)
+    assert ret["receive"] == last_receive + 1000
+    assert ret["change"] == last_change
 
 
 def test_getaddress(lianad):
@@ -45,6 +170,9 @@ def test_getaddress(lianad):
     assert res["address"] != lianad.rpc.getnewaddress()["address"]
     # new address has derivation_index higher than the previous one
     assert lianad.rpc.getnewaddress()["derivation_index"] == res["derivation_index"] + 2
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == res["derivation_index"] + 3
+    assert info["change_index"] == 0
 
 
 def test_listaddresses(lianad):
@@ -419,6 +547,8 @@ def test_create_spend(lianad, bitcoind):
     spend_psbt = PSBT.from_base64(res["psbt"])
     assert len(spend_psbt.o) == 4
     assert len(spend_psbt.tx.vout) == 4
+
+    assert lianad.rpc.getinfo()["change_index"] == 15
 
     # The transaction must contain the spent transaction for each input for P2WSH. But not for Taproot.
     # We don't make assumptions about the ordering of PSBT inputs.
@@ -1079,6 +1209,76 @@ def test_labels(lianad, bitcoind):
     assert addr not in res
     assert sec_addr not in res
     assert res[random_address] == "this address is random"
+
+
+def test_labels_bip329(lianad, bitcoind):
+    # Label 5 addresses
+    addresses = []
+    for i in range(0,5):
+        addr = lianad.rpc.getnewaddress()["address"]
+        addresses.append(addr)
+        lianad.rpc.updatelabels({addr: f"addr{i}"})
+
+    # Label 5 coin
+    txids = []
+    for i in range(0,5):
+        addr = lianad.rpc.getnewaddress()["address"]
+        txid = bitcoind.rpc.sendtoaddress(addr, 1)
+        txids.append(txid)
+        wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == i+1 )
+
+    coins = lianad.rpc.listcoins()["coins"]
+    for i in range(0,5):
+        coin = coins[i]
+        lianad.rpc.updatelabels({coin["outpoint"]: f"coin{i}"})
+
+    # Label 5 transactions
+    for i, txid in enumerate(txids):
+        lianad.rpc.updatelabels({txid: f"tx{i}"})
+
+    # Get Bip-0329 labels
+    bip329_labels = lianad.rpc.getlabelsbip329(0,100)["labels"]
+    assert len(bip329_labels) == 15
+
+    def label_found(name, labels):
+        for label in labels:
+            if label["label"] == name:
+                return True
+        return False
+
+    # All transactions are labelled
+    for i in range(0, len(txids)):
+        assert label_found(f"tx{i}", bip329_labels)
+
+    # All adresses are labelled
+    for i in range(0, len(addresses)):
+        assert label_found(f"addr{i}", bip329_labels)
+
+    # All coins are labelled
+    for i in range(0, len(coins)):
+        assert label_found(f"coin{i}", bip329_labels)
+
+    # There is no conflict between batches
+    batch1 = lianad.rpc.getlabelsbip329(0,5)["labels"]
+    assert len(batch1) == 5
+
+    batch2 = lianad.rpc.getlabelsbip329(5,5)["labels"]
+    assert len(batch2) == 5
+
+    batch3 = lianad.rpc.getlabelsbip329(10,5)["labels"]
+    assert len(batch3) == 5
+
+    for label in batch1:
+        print(label)
+        name = label["label"]
+
+        assert not label_found(name, batch2)
+        assert not label_found(name, batch3)
+
+    for label in batch2:
+        name = label["label"]
+        assert not label_found(name, batch1)
+        assert not label_found(name, batch3)
 
 
 def test_rbfpsbt_bump_fee(lianad, bitcoind):

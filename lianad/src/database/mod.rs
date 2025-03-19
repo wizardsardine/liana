@@ -20,7 +20,8 @@ use std::{
     sync,
 };
 
-use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1};
+use bip329::Labels;
+use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid};
 
 /// Information about the wallet.
 ///
@@ -190,6 +191,9 @@ pub trait DatabaseConnection {
         &mut self,
         txids: &[bitcoin::Txid],
     ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)>;
+
+    /// Dump all labels
+    fn get_labels_bip329(&mut self, offset: u32, limit: u32) -> Labels;
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -365,6 +369,15 @@ impl DatabaseConnection for SqliteConn {
     fn labels(&mut self, items: &HashSet<LabelItem>) -> HashMap<String, String> {
         let labels = self.db_labels(items);
         HashMap::from_iter(labels.into_iter().map(|label| (label.item, label.value)))
+    }
+
+    fn get_labels_bip329(&mut self, offset: u32, limit: u32) -> Labels {
+        let labels = self
+            .labels_bip329(offset, limit)
+            .into_iter()
+            .map(|l| l.into())
+            .collect();
+        Labels::new(labels)
     }
 
     fn rollback_tip(&mut self, new_tip: &BlockChainTip) {
@@ -556,6 +569,47 @@ impl LabelItem {
             Some(LabelItem::OutPoint(outpoint))
         } else {
             None
+        }
+    }
+
+    pub fn from_bip329(label: &bip329::Label, network: Network) -> Option<(Self, String)> {
+        match label {
+            bip329::Label::Transaction(tx_record) => {
+                if let (Some(txid), Some(label)) = (
+                    Txid::from_str(&tx_record.ref_.to_string()).ok(),
+                    tx_record.label.clone(),
+                ) {
+                    Some((Self::Txid(txid), label))
+                } else {
+                    None
+                }
+            }
+            bip329::Label::Address(address_record) => {
+                if let (Some(addr), Some(label)) = (
+                    Address::from_str(&address_record.ref_.clone().assume_checked().to_string())
+                        .ok(),
+                    address_record.label.clone(),
+                ) {
+                    if addr.is_valid_for_network(network) {
+                        Some((Self::Address(addr.assume_checked()), label))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            bip329::Label::Output(output_record) => {
+                if let (Some(outpoint), Some(label)) = (
+                    OutPoint::from_str(&output_record.ref_.to_string()).ok(),
+                    output_record.label.clone(),
+                ) {
+                    Some((Self::OutPoint(outpoint), label))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 }

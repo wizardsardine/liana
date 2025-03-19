@@ -16,7 +16,9 @@ use liana_ui::{component::form, widget::Element};
 use async_hwi::DeviceKind;
 
 use crate::{
-    app::{settings::KeySetting, wallet::wallet_name},
+    app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
+    backup::{self, Backup},
+    export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
         message::{self, Message},
@@ -30,6 +32,8 @@ pub struct ImportDescriptor {
     imported_descriptor: form::Value<String>,
     wrong_network: bool,
     error: Option<String>,
+    modal: Option<ExportModal>,
+    imported_backup: bool,
 }
 
 impl ImportDescriptor {
@@ -39,6 +43,8 @@ impl ImportDescriptor {
             imported_descriptor: form::Value::default(),
             wrong_network: false,
             error: None,
+            modal: None,
+            imported_backup: false,
         }
     }
 
@@ -75,14 +81,55 @@ impl Step for ImportDescriptor {
     fn skip(&self, ctx: &Context) -> bool {
         ctx.remote_backend.is_some()
     }
-    // form value is set as valid each time it is edited.
-    // Verification of the values is happening when the user click on Next button.
+
+    fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
+        if let Some(modal) = &self.modal {
+            if let Some(sub) = modal.subscription() {
+                sub.map(|m| Message::ImportExport(ImportExportMessage::Progress(m)))
+            } else {
+                Subscription::none()
+            }
+        } else {
+            Subscription::none()
+        }
+    }
+
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
-        if let Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) =
-            message
-        {
-            self.imported_descriptor.value = desc;
-            self.check_descriptor(self.network);
+        match message {
+            Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) => {
+                self.imported_descriptor.value = desc;
+                self.check_descriptor(self.network);
+            }
+            Message::ImportExport(ImportExportMessage::Close) => {
+                self.modal = None;
+            }
+            Message::ImportBackup => {
+                if !self.imported_backup {
+                    let modal = ExportModal::new(None, ImportExportType::WalletFromBackup);
+                    let launch = modal.launch(false);
+                    self.modal = Some(modal);
+                    return launch;
+                }
+            }
+            Message::ImportExport(ImportExportMessage::Progress(Progress::WalletFromBackup(r))) => {
+                let (descriptor, network, aliases, backup) = r;
+                if self.network == network {
+                    self.imported_backup = true;
+                    self.imported_descriptor.value = descriptor.to_string();
+                    return Task::perform(async move { (aliases, backup) }, |(a, b)| {
+                        Message::WalletFromBackup((a, b))
+                    });
+                } else {
+                    self.error = Some("Backup network do not match the selected network!".into());
+                }
+            }
+            Message::ImportExport(m) => {
+                if let Some(modal) = self.modal.as_mut() {
+                    let task: Task<Message> = modal.update(m);
+                    return task;
+                };
+            }
+            _ => {}
         }
         Task::none()
     }
@@ -106,13 +153,19 @@ impl Step for ImportDescriptor {
         progress: (usize, usize),
         email: Option<&'a str>,
     ) -> Element<Message> {
-        view::import_descriptor(
+        let content = view::import_descriptor(
             progress,
             email,
             &self.imported_descriptor,
+            self.imported_backup,
             self.wrong_network,
             self.error.as_ref(),
-        )
+        );
+        if let Some(modal) = &self.modal {
+            modal.view(content)
+        } else {
+            content
+        }
     }
 }
 
@@ -292,16 +345,71 @@ pub struct BackupDescriptor {
     done: bool,
     descriptor: Option<LianaDescriptor>,
     keys: HashMap<Fingerprint, KeySetting>,
+    modal: Option<ExportModal>,
+    error: Option<Error>,
+    context: Option<Context>,
 }
 
 impl Step for BackupDescriptor {
+    fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
+        if let Some(modal) = &self.modal {
+            if let Some(sub) = modal.subscription() {
+                sub.map(|m| Message::ImportExport(ImportExportMessage::Progress(m)))
+            } else {
+                Subscription::none()
+            }
+        } else {
+            Subscription::none()
+        }
+    }
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
-        if let Message::UserActionDone(done) = message {
-            self.done = done;
+        match message {
+            Message::ImportExport(ImportExportMessage::Close) => {
+                self.modal = None;
+            }
+            Message::ImportExport(m) => {
+                if let Some(modal) = self.modal.as_mut() {
+                    let task: Task<Message> = modal.update(m);
+                    return task;
+                };
+            }
+            Message::BackupWallet => {
+                if let (None, Some(ctx)) = (&self.modal, self.context.as_ref()) {
+                    let ctx = ctx.clone();
+                    return Task::perform(
+                        async move {
+                            let backup = Backup::from_installer(ctx, true).await?;
+                            serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
+                        },
+                        Message::ExportWallet,
+                    );
+                }
+            }
+            Message::ExportWallet(str) => {
+                if self.modal.is_none() {
+                    let str = match str {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::error!("{e:?}");
+                            self.error = Some(Error::Backup(e));
+                            return Task::none();
+                        }
+                    };
+                    let modal = ExportModal::new(None, ImportExportType::ExportBackup(str));
+                    let launch = modal.launch(true);
+                    self.modal = Some(modal);
+                    return launch;
+                }
+            }
+            Message::UserActionDone(done) => {
+                self.done = done;
+            }
+            _ => {}
         }
         Task::none()
     }
     fn load_context(&mut self, ctx: &Context) {
+        self.context = Some(ctx.clone());
         if self.descriptor != ctx.descriptor {
             self.descriptor.clone_from(&ctx.descriptor);
             self.done = false;
@@ -318,13 +426,19 @@ impl Step for BackupDescriptor {
         progress: (usize, usize),
         email: Option<&'a str>,
     ) -> Element<Message> {
-        view::backup_descriptor(
+        let content = view::backup_descriptor(
             progress,
             email,
             self.descriptor.as_ref().expect("Must be a descriptor"),
             &self.keys,
+            self.error.as_ref(),
             self.done,
-        )
+        );
+        if let Some(modal) = &self.modal {
+            modal.view(content)
+        } else {
+            content
+        }
     }
 }
 

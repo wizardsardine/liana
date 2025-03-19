@@ -9,8 +9,9 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | ----------------------------------------------------------- | ----------------------------------------------------          |
 | [`stop`](#stop)                                             | Stops liana daemon                                            |
 | [`getinfo`](#getinfo)                                       | Get general information about the daemon                      |
+| [`updatederivationindexes`](#updatederivationindexes)       | Update last generated addresses derivation indexes            |
 | [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                                   |
-| [`listaddresses`](#listaddresses)                           | List addresses given start_index and count                     |
+| [`listaddresses`](#listaddresses)                           | List addresses given start_index and count                    |
 | [`listcoins`](#listcoins)                                   | List all wallet transaction outputs.                          |
 | [`createspend`](#createspend)                               | Create a new Spend transaction                                |
 | [`updatespend`](#updatespend)                               | Store a created Spend transaction                             |
@@ -24,6 +25,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`createrecovery`](#createrecovery)                         | Create a recovery transaction to sweep expired coins          |
 | [`updatelabels`](#updatelabels)                             | Update the labels                                             |
 | [`getlabels`](#getlabels)                                   | Get the labels for the given addresses, txids and outpoints   |
+| [`getlabelsbip329`](#getlabelsbip329)                       | Get the labels in BIP-0329 format                             |
 
 # Reference
 
@@ -63,6 +65,38 @@ This command does not take any parameter for now.
 | `rescan_progress`    | float or null   | Progress of an ongoing rescan as a percentage (between 0 and 1) if there is any              |
 | `timestamp`          | integer         | Unix timestamp of wallet creation date                                                       |
 | `last_poll_timestamp`| integer or null | Unix timestamp of last poll (if any) of the blockchain                                       |
+| `receive_index`      | integer         | Last index used to generate a receive address                                                |
+| `change_index`       | integer         | Last index used to generate a change address                                                 |
+
+
+### `updatederivationindexes`
+
+Updates the last generated address derivation indexes in the wallet database.
+At least one of the `receive` or `change` arguments is required.
+
+Derivation indexes **must be unhardened**. If a provided index is lower than
+the one currently stored in the database, it will be ignored.
+
+**Note:** Each time a derivation index in the database is incremented, the 
+corresponding new addresses must be inserted into the database. To prevent 
+excessive increments, there is a limit: the derivation index can only be 
+incremented by a maximum of **1000** from its current value.
+
+The updated indexes will be returned in the response.
+
+#### Request
+
+| Field     | Type              | Description                                              |
+|-----------|-------------------|----------------------------------------------------------|
+| `receive` | integer(optional) | The latest receive address derivation index to update    |
+| `change`  | integer(optional) | The latest change address derivation index to update     |
+
+#### Response
+
+| Field     | Type    | Description                                              |
+|-----------|---------|----------------------------------------------------------|
+| `receive` | integer | The updated receive address derivation index             |
+| `change`  | integer | The updated change address derivation index              |
 
 ### `getnewaddress`
 
@@ -427,3 +461,22 @@ Items without labels are not present in the response map.
 | Field    | Type   | Description                                                                      |
 | -------- | ------ | -------------------------------------------------------------------------------- |
 | `labels` | object | A mapping of bitcoin addresses, txids and outpoints as keys, and string as values |
+
+### `getlabelsbip329`
+
+Retrieve a list of labels in [BIP-0329](https://github.com/bitcoin/bips/blob/master/bip-0329.mediawiki) 
+format, with pagination support.  
+
+#### Request
+
+| Field    | Type    | Description                                |
+| -------- | ------- | ------------------------------------------ |
+| `offset` | integer | Index to start returning labels from       |
+| `limit`  | integer | Maximum number of labels to return         |
+
+#### Response
+
+| Field    | Type   | Description                                       |
+| -------- | ------ | ------------------------------------------------- |
+| `labels` | array  | A list of BIP-0329-formatted label objects        |
+

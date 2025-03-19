@@ -199,6 +199,50 @@ fn list_addresses(
     Ok(serde_json::json!(&res))
 }
 
+fn update_deriv_indexes(
+    control: &DaemonControl,
+    params: Params,
+) -> Result<serde_json::Value, Error> {
+    let receive = params.get(0, "receive");
+    let change = params.get(1, "change");
+
+    if receive.is_none() && change.is_none() {
+        return Err(Error::invalid_params(
+            "Missing 'receive' or 'change' parameter",
+        ));
+    }
+
+    let receive = match receive {
+        Some(i) => {
+            let res = i.as_i64().ok_or(Error::invalid_params(
+                "Invalid value for 'receive' param".to_string(),
+            ))?;
+            let res = res
+                .try_into()
+                .map_err(|_| Error::invalid_params("Invalid value for 'receive' param"))?;
+            Some(res)
+        }
+        None => None,
+    };
+
+    let change = match change {
+        Some(i) => {
+            let res = i.as_i64().ok_or(Error::invalid_params(
+                "Invalid value for 'change' param".to_string(),
+            ))?;
+            let res = res
+                .try_into()
+                .map_err(|_| Error::invalid_params("Invalid value for 'change' param"))?;
+            Some(res)
+        }
+        None => None,
+    };
+
+    Ok(serde_json::json!(
+        control.update_deriv_indexes(receive, change)?
+    ))
+}
+
 fn list_confirmed(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let start: u32 = params
         .get(0, "start")
@@ -364,6 +408,22 @@ fn get_labels(control: &DaemonControl, params: Params) -> Result<serde_json::Val
     Ok(serde_json::json!(control.get_labels(&items)))
 }
 
+fn get_labels_bip329(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let offset: u32 = params
+        .get(0, "offset")
+        .ok_or_else(|| Error::invalid_params("Missing 'offset' parameter."))?
+        .as_u64()
+        .and_then(|t| t.try_into().ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'offset' parameter."))?;
+    let limit: u32 = params
+        .get(1, "limit")
+        .ok_or_else(|| Error::invalid_params("Missing 'limit' parameter."))?
+        .as_u64()
+        .and_then(|t| t.try_into().ok())
+        .ok_or_else(|| Error::invalid_params("Invalid 'limit' parameter."))?;
+    Ok(serde_json::json!(control.get_labels_bip329(offset, limit)))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -401,6 +461,12 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
         }
         "getinfo" => serde_json::json!(&control.get_info()),
         "getnewaddress" => serde_json::json!(&control.get_new_address()),
+        "updatederivationindexes" => {
+            let params = req.params.ok_or_else(|| {
+                Error::invalid_params("Missing 'receive' or 'change' parameters.")
+            })?;
+            update_deriv_indexes(control, params)?
+        }
         "listcoins" => {
             let params = req.params;
             list_coins(control, params)?
@@ -450,6 +516,12 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
                 .params
                 .ok_or_else(|| Error::invalid_params("Missing 'items' parameter."))?;
             get_labels(control, params)?
+        }
+        "getlabelsbip329" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'offset' and 'limit' parameters."))?;
+            get_labels_bip329(control, params)?
         }
         _ => {
             return Err(Error::method_not_found());

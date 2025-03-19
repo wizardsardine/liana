@@ -1,8 +1,16 @@
+use bip329::Label;
 use liana::descriptors::LianaDescriptor;
 
 use std::{convert::TryFrom, str::FromStr};
 
-use miniscript::bitcoin::{self, address, bip32, consensus::encode, psbt::Psbt};
+use miniscript::bitcoin::{
+    self,
+    address::{self, NetworkUnchecked},
+    bip32,
+    consensus::encode,
+    psbt::Psbt,
+    Address, OutPoint, Txid,
+};
 
 // Due to limitations of Sqlite's ALTER TABLE command and in order not to recreate
 // tables during migration:
@@ -362,6 +370,40 @@ impl From<i64> for DbLabelledKind {
         } else {
             assert_eq!(value, 2);
             Self::Txid
+        }
+    }
+}
+
+impl From<DbLabel> for Label {
+    fn from(value: DbLabel) -> Self {
+        let mut ref_ = value.item;
+        if value.item_kind == DbLabelledKind::Txid {
+            let frontward: Txid = bitcoin::consensus::encode::deserialize_hex(&ref_).unwrap();
+            ref_ = frontward.to_string();
+        }
+        let label = if value.value.is_empty() {
+            None
+        } else {
+            Some(value.value)
+        };
+        match value.item_kind {
+            DbLabelledKind::Address => Label::Address(bip329::AddressRecord {
+                ref_: Address::<NetworkUnchecked>::from_str(&ref_)
+                    .expect("db contains valid adresses"),
+                label,
+            }),
+            DbLabelledKind::OutPoint => Label::Output(bip329::OutputRecord {
+                ref_: OutPoint::from_str(&ref_).expect(" db contais valid outpoints"),
+                label,
+                spendable: true,
+            }),
+            DbLabelledKind::Txid => Label::Transaction(bip329::TransactionRecord {
+                ref_: bitcoin::consensus::encode::deserialize_hex(&ref_)
+                    .expect("db contains valid txid"),
+                label,
+                // FIXME: "Optional key origin information referencing the wallet associated with the label"
+                origin: None,
+            }),
         }
     }
 }

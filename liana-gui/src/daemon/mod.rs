@@ -14,12 +14,15 @@ use async_trait::async_trait;
 use liana::miniscript::bitcoin::{
     address, bip32::Fingerprint, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid,
 };
+use lianad::bip329::Labels;
+use lianad::commands::UpdateDerivIndexesResult;
 use lianad::{
     commands::{CoinStatus, LabelItem, TransactionInfo},
     config::Config,
     StartupError,
 };
 
+use crate::app::settings::Settings;
 use crate::{hw::HardwareWalletConfig, node};
 
 #[derive(Debug)]
@@ -42,6 +45,8 @@ pub enum DaemonError {
     ClientNotSupported,
     /// Error when selecting coins for spend.
     CoinSelectionError,
+    /// Not implemented feature
+    NotImplemented,
 }
 
 impl std::fmt::Display for DaemonError {
@@ -56,6 +61,7 @@ impl std::fmt::Display for DaemonError {
             Self::Start(e) => write!(f, "Daemon did not start: {}", e),
             Self::ClientNotSupported => write!(f, "Daemon communication is not supported"),
             Self::CoinSelectionError => write!(f, "Coin selection error"),
+            Self::NotImplemented => write!(f, "This feature is not implemented for this backend"),
         }
     }
 }
@@ -81,6 +87,11 @@ pub trait Daemon: Debug {
     async fn stop(&self) -> Result<(), DaemonError>;
     async fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;
     async fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;
+    async fn update_deriv_indexes(
+        &self,
+        receive: Option<u32>,
+        change: Option<u32>,
+    ) -> Result<UpdateDerivIndexesResult, DaemonError>;
     async fn list_coins(
         &self,
         statuses: &[CoinStatus],
@@ -125,6 +136,7 @@ pub trait Daemon: Debug {
         &self,
         labels: &HashMap<LabelItem, Option<String>>,
     ) -> Result<(), DaemonError>;
+    async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError>;
     async fn send_wallet_invitation(&self, _email: &str) -> Result<(), DaemonError> {
         Ok(())
     }
@@ -354,12 +366,33 @@ pub trait Daemon: Debug {
         Ok(events)
     }
 
-    /// Implemented by LianaLite backend
+    /// Reimplemented by LianaLite backend
     async fn update_wallet_metadata(
         &self,
-        _fingerprint_aliases: &HashMap<Fingerprint, String>,
+        fingerprint_aliases: &HashMap<Fingerprint, String>,
         _hws: &[HardwareWalletConfig],
     ) -> Result<(), DaemonError> {
+        if let Some(datadir) = self
+            .config()
+            .ok_or(DaemonError::Unexpected("Config missing".into()))?
+            .data_dir()
+        {
+            let network = self.get_info().await?.network;
+            let mut settings = Settings::from_file(datadir, network)
+                .map_err(|_| DaemonError::Unexpected("Fail to read Settings from file".into()))?;
+            let wallet = if settings.wallets.len() == 1 {
+                settings.wallets.get_mut(0).expect("already checked")
+            } else {
+                return Err(DaemonError::Unexpected(
+                    "Settings file contains more than one wallet".into(),
+                ));
+            };
+            for fg in wallet.keys_aliases().keys() {
+                if fingerprint_aliases.contains_key(fg) {
+                    wallet.update_alias(fg, fingerprint_aliases.get(fg).expect("checked"));
+                }
+            }
+        }
         Ok(())
     }
 }

@@ -10,7 +10,7 @@ use iced::Task;
 use liana_ui::{component::form, widget::Element};
 
 use bitcoind::BitcoindSettingsState;
-use wallet::WalletSettingsState;
+use wallet::{app_backup, WalletSettingsState};
 
 use crate::{
     app::{
@@ -20,9 +20,13 @@ use crate::{
         state::State,
         view::{self},
         wallet::Wallet,
+        Config,
     },
     daemon::{Daemon, DaemonBackend},
+    export::{self, ImportExportMessage, ImportExportType},
 };
+
+use super::export::ExportModal;
 
 pub struct SettingsState {
     data_dir: PathBuf,
@@ -30,6 +34,7 @@ pub struct SettingsState {
     setting: Option<Box<dyn State>>,
     daemon_backend: DaemonBackend,
     internal_bitcoind: bool,
+    config: Arc<Config>,
 }
 
 impl SettingsState {
@@ -38,6 +43,7 @@ impl SettingsState {
         wallet: Arc<Wallet>,
         daemon_backend: DaemonBackend,
         internal_bitcoind: bool,
+        config: Arc<Config>,
     ) -> Self {
         Self {
             data_dir,
@@ -45,6 +51,7 @@ impl SettingsState {
             setting: None,
             daemon_backend,
             internal_bitcoind,
+            config,
         }
     }
 }
@@ -79,6 +86,12 @@ impl State for SettingsState {
                 self.setting = Some(BackendSettingsState::new().into());
                 Task::none()
             }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportExportSection)) => {
+                self.setting = Some(
+                    ImportExportSettingsState::new(self.wallet.clone(), self.config.clone()).into(),
+                );
+                Task::none()
+            }
             Message::View(view::Message::Settings(view::SettingsMessage::AboutSection)) => {
                 self.setting = Some(AboutSettingsState::default().into());
                 let wallet = self.wallet.clone();
@@ -89,7 +102,12 @@ impl State for SettingsState {
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditWalletSettings)) => {
                 self.setting = Some(
-                    WalletSettingsState::new(self.data_dir.clone(), self.wallet.clone()).into(),
+                    WalletSettingsState::new(
+                        self.data_dir.clone(),
+                        self.wallet.clone(),
+                        self.config.clone(),
+                    )
+                    .into(),
                 );
                 let wallet = self.wallet.clone();
                 self.setting
@@ -141,6 +159,144 @@ impl State for SettingsState {
 
 impl From<SettingsState> for Box<dyn State> {
     fn from(s: SettingsState) -> Box<dyn State> {
+        Box::new(s)
+    }
+}
+
+pub struct ImportExportSettingsState {
+    warning: Option<Error>,
+    modal: Option<ExportModal>,
+    wallet: Arc<Wallet>,
+    config: Arc<Config>,
+}
+
+impl ImportExportSettingsState {
+    pub fn new(wallet: Arc<Wallet>, config: Arc<Config>) -> Self {
+        Self {
+            warning: None,
+            modal: None,
+            wallet,
+            config,
+        }
+    }
+}
+
+macro_rules! launch {
+    ($s:ident, $m: ident, $write:ident) => {
+        let launch = $m.launch($write);
+        $s.modal = Some($m);
+        return launch
+    };
+}
+
+impl State for ImportExportSettingsState {
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        let content = view::settings::import_export(cache, self.warning.as_ref());
+        if let Some(modal) = &self.modal {
+            modal.view(content)
+        } else {
+            content
+        }
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        if let Some(modal) = &self.modal {
+            if let Some(sub) = modal.subscription() {
+                return sub.map(|m| {
+                    Message::View(view::Message::Settings(
+                        view::SettingsMessage::ImportExport(ImportExportMessage::Progress(m)),
+                    ))
+                });
+            }
+        }
+        iced::Subscription::none()
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        message: Message,
+    ) -> Task<Message> {
+        match message {
+            Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
+                self.modal = None;
+            }
+            Message::View(view::Message::ImportExport(m)) => {
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.update(m);
+                };
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportExport(m))) => {
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.update(m);
+                };
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportDescriptor)) => {
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(
+                        Some(daemon),
+                        ImportExportType::Descriptor(self.wallet.main_descriptor.clone()),
+                    );
+                    launch!(self, modal, true);
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportTransactions)) => {
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(Some(daemon), ImportExportType::Transactions);
+                    launch!(self, modal, true);
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportLabels)) => {
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(Some(daemon), ImportExportType::ExportLabels);
+                    launch!(self, modal, true);
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportWallet)) => {
+                if self.modal.is_none() {
+                    let datadir = cache.datadir_path.clone();
+                    let network = cache.network;
+                    let config = self.config.clone();
+                    let wallet = self.wallet.clone();
+                    let daemon = daemon.clone();
+                    return Task::perform(
+                        async move { app_backup(datadir, network, config, wallet, daemon).await },
+                        |s| {
+                            Message::View(view::Message::Settings(
+                                view::SettingsMessage::ExportBackup(s),
+                            ))
+                        },
+                    );
+                }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
+                let backup = match backup {
+                    Ok(b) => b,
+                    Err(e) => {
+                        self.warning = Some(Error::ImportExport(export::Error::Backup(e)));
+                        return Task::none();
+                    }
+                };
+                let modal = ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
+                launch!(self, modal, true);
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
+                if self.modal.is_none() {
+                    let modal =
+                        ExportModal::new(Some(daemon), ImportExportType::ImportBackup(None, None));
+                    launch!(self, modal, false);
+                }
+            }
+            _ => {}
+        }
+
+        Task::none()
+    }
+}
+
+impl From<ImportExportSettingsState> for Box<dyn State> {
+    fn from(s: ImportExportSettingsState) -> Box<dyn State> {
         Box::new(s)
     }
 }
