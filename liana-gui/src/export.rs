@@ -3,14 +3,13 @@ use std::{
     fmt::Display,
     fs::{self, File},
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
-    sync::{
-        mpsc::{channel, sync_channel, Receiver, Sender, SyncSender},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time,
 };
+
+use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
 use chrono::{DateTime, Duration, Utc};
@@ -48,19 +47,6 @@ use crate::{
 
 const DUMP_LABELS_LIMIT: u32 = 100;
 
-macro_rules! send_error {
-    ($sender:ident, $error:ident) => {
-        if let Err(e) = $sender.send(Progress::Error(Error::$error)) {
-            tracing::error!("Import/Export fail to send msg: {}", e);
-        }
-    };
-    ($sender:ident, $error:expr) => {
-        if let Err(e) = $sender.send(Progress::Error($error)) {
-            tracing::error!("Import/Export fail to send msg: {}", e);
-        }
-    };
-}
-
 macro_rules! send_progress {
     ($sender:ident, $progress:ident) => {
         if let Err(e) = $sender.send(Progress::$progress) {
@@ -74,41 +60,13 @@ macro_rules! send_progress {
     };
 }
 
-macro_rules! open_file_write {
-    ($path:ident, $sender:ident) => {{
-        let dir = match $path.parent() {
-            Some(dir) => dir,
-            None => {
-                send_error!($sender, NoParentDir);
-                return;
-            }
-        };
-        if !dir.exists() {
-            if let Err(e) = fs::create_dir_all(dir) {
-                send_error!($sender, e.into());
-                return;
-            }
-        }
-        match File::create($path.as_path()) {
-            Ok(f) => f,
-            Err(e) => {
-                send_error!($sender, e.into());
-                return;
-            }
-        }
-    }};
-}
-
-macro_rules! open_file_read {
-    ($path:ident, $sender:ident) => {{
-        match File::open($path.as_path()) {
-            Ok(f) => f,
-            Err(e) => {
-                send_error!($sender, e.into());
-                return;
-            }
-        }
-    }};
+async fn open_file_write(path: &Path) -> Result<File, Error> {
+    let dir = path.parent().ok_or(Error::NoParentDir)?;
+    if !dir.exists() {
+        fs::create_dir_all(dir)?;
+    }
+    let file = File::create(path)?;
+    Ok(file)
 }
 
 #[derive(Debug, Clone)]
@@ -188,8 +146,8 @@ pub enum ImportExportType {
     ExportPsbt(String),
     ExportBackup(String),
     ImportBackup(
-        Option<SyncSender<bool>>, /*overwrite_labels*/
-        Option<SyncSender<bool>>, /*overwrite_aliases*/
+        Option<Sender<bool>>, /*overwrite_labels*/
+        Option<Sender<bool>>, /*overwrite_aliases*/
     ),
     WalletFromBackup,
     Descriptor(LianaDescriptor),
@@ -269,8 +227,8 @@ pub enum Progress {
     None,
     Psbt(Psbt),
     Descriptor(LianaDescriptor),
-    LabelsConflict(SyncSender<bool>),
-    KeyAliasesConflict(SyncSender<bool>),
+    LabelsConflict(Sender<bool>),
+    KeyAliasesConflict(Sender<bool>),
     UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
     WalletFromBackup(
         (
@@ -283,8 +241,8 @@ pub enum Progress {
 }
 
 pub struct Export {
-    pub receiver: Receiver<Progress>,
-    pub sender: Option<Sender<Progress>>,
+    pub receiver: UnboundedReceiver<Progress>,
+    pub sender: Option<UnboundedSender<Progress>>,
     pub handle: Option<Arc<Mutex<JoinHandle<()>>>>,
     pub daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     pub path: Box<PathBuf>,
@@ -297,7 +255,7 @@ impl Export {
         path: Box<PathBuf>,
         export_type: ImportExportType,
     ) -> Self {
-        let (sender, receiver) = channel();
+        let (sender, receiver) = unbounded_channel();
         Export {
             receiver,
             sender: Some(sender),
@@ -310,21 +268,27 @@ impl Export {
 
     pub async fn export_logic(
         export_type: ImportExportType,
-        sender: Sender<Progress>,
+        sender: UnboundedSender<Progress>,
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         path: PathBuf,
     ) {
-        match export_type {
-            ImportExportType::Transactions => export_transactions(sender, daemon, path).await,
-            ImportExportType::ExportPsbt(str) => export_string(sender, path, str),
-            ImportExportType::Descriptor(descriptor) => export_descriptor(sender, path, descriptor),
-            ImportExportType::ExportLabels => export_labels(sender, daemon, path).await,
-            ImportExportType::ImportPsbt => import_psbt(sender, path),
-            ImportExportType::ImportDescriptor => import_descriptor(sender, path),
-            ImportExportType::ExportBackup(str) => export_string(sender, path, str),
-            ImportExportType::ImportBackup(..) => import_backup(sender, path, daemon).await,
-            ImportExportType::WalletFromBackup => wallet_from_backup(sender, path).await,
-        };
+        if let Err(e) = match export_type {
+            ImportExportType::Transactions => export_transactions(&sender, daemon, path).await,
+            ImportExportType::ExportPsbt(str) => export_string(&sender, path, str).await,
+            ImportExportType::Descriptor(descriptor) => {
+                export_descriptor(&sender, path, descriptor).await
+            }
+            ImportExportType::ExportLabels => export_labels(&sender, daemon, path).await,
+            ImportExportType::ImportPsbt => import_psbt(&sender, path).await,
+            ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
+            ImportExportType::ExportBackup(str) => export_string(&sender, path, str).await,
+            ImportExportType::ImportBackup(..) => import_backup(&sender, path, daemon).await,
+            ImportExportType::WalletFromBackup => wallet_from_backup(&sender, path).await,
+        } {
+            if let Err(e) = sender.send(Progress::Error(e)) {
+                tracing::error!("Import/Export fail to send msg: {}", e);
+            }
+        }
     }
 
     pub async fn start(&mut self) {
@@ -384,8 +348,8 @@ pub fn export_subscription(
                     continue;
                 }
                 Err(e) => match e {
-                    std::sync::mpsc::TryRecvError::Empty => false,
-                    std::sync::mpsc::TryRecvError::Disconnected => true,
+                    tokio::sync::mpsc::error::TryRecvError::Empty => false,
+                    tokio::sync::mpsc::error::TryRecvError::Disconnected => true,
                 },
             };
 
@@ -422,233 +386,197 @@ pub fn export_subscription(
 }
 
 pub async fn export_transactions(
-    sender: Sender<Progress>,
+    sender: &UnboundedSender<Progress>,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     path: PathBuf,
-) {
-    async move {
-        let daemon = match daemon {
-            Some(d) => d,
-            None => {
-                send_error!(sender, Error::DaemonMissing);
-                return;
-            }
-        };
-        let mut file = open_file_write!(path, sender);
+) -> Result<(), Error> {
+    let daemon = daemon.ok_or(Error::DaemonMissing)?;
+    let mut file = open_file_write(&path).await?;
 
-        let header = "Date,Label,Value,Fee,Txid,Block\n".to_string();
-        if let Err(e) = file.write_all(header.as_bytes()) {
-            send_error!(sender, e.into());
-            return;
+    let header = "Date,Label,Value,Fee,Txid,Block\n".to_string();
+    file.write_all(header.as_bytes())?;
+
+    // look 2 hour forward
+    // https://github.com/bitcoin/bitcoin/blob/62bd61de110b057cbfd6e31e4d0b727d93119c72/src/chain.h#L29
+    let mut end = ((Utc::now() + Duration::hours(2)).timestamp()) as u32;
+    let total_txs = daemon
+        .list_confirmed_txs(0, end, u32::MAX as u64)
+        .await?
+        .transactions
+        .len();
+
+    if total_txs == 0 {
+        send_progress!(sender, Ended);
+    } else {
+        send_progress!(sender, Progress(5.0));
+    }
+
+    let max = match daemon.backend() {
+        DaemonBackend::RemoteBackend => DEFAULT_LIMIT as u64,
+        _ => u32::MAX as u64,
+    };
+
+    // store txs in a map to avoid duplicates
+    let mut map = HashMap::<Txid, HistoryTransaction>::new();
+    let mut limit = max;
+
+    loop {
+        let history_txs = daemon.list_history_txs(0, end, limit).await?;
+        let dl = map.len() + history_txs.len();
+        if dl > 0 {
+            let progress = (dl as f32) / (total_txs as f32) * 80.0;
+            send_progress!(sender, Progress(progress));
         }
-
-        // look 2 hour forward
-        // https://github.com/bitcoin/bitcoin/blob/62bd61de110b057cbfd6e31e4d0b727d93119c72/src/chain.h#L29
-        let mut end = ((Utc::now() + Duration::hours(2)).timestamp()) as u32;
-        let total_txs = daemon.list_confirmed_txs(0, end, u32::MAX as u64).await;
-        let total_txs = match total_txs {
-            Ok(r) => r.transactions.len(),
-            Err(e) => {
-                send_error!(sender, e.into());
-                return;
-            }
-        };
-
-        if total_txs == 0 {
-            send_progress!(sender, Ended);
-        } else {
-            send_progress!(sender, Progress(5.0));
+        // all txs have been fetched
+        if history_txs.is_empty() {
+            break;
         }
-
-        let max = match daemon.backend() {
-            DaemonBackend::RemoteBackend => DEFAULT_LIMIT as u64,
-            _ => u32::MAX as u64,
-        };
-
-        // store txs in a map to avoid duplicates
-        let mut map = HashMap::<Txid, HistoryTransaction>::new();
-        let mut limit = max;
-
-        loop {
-            let history = daemon.list_history_txs(0, end, limit).await;
-            let history_txs = match history {
-                Ok(h) => h,
-                Err(e) => {
-                    send_error!(sender, e.into());
-                    return;
-                }
+        if history_txs.len() == limit as usize {
+            let first = if let Some(t) = history_txs.first().expect("checked").time {
+                t
+            } else {
+                return Err(Error::TxTimeMissing);
             };
-            let dl = map.len() + history_txs.len();
-            if dl > 0 {
-                let progress = (dl as f32) / (total_txs as f32) * 80.0;
-                send_progress!(sender, Progress(progress));
-            }
-            // all txs have been fetched
-            if history_txs.is_empty() {
-                break;
-            }
-            if history_txs.len() == limit as usize {
-                let first = if let Some(t) = history_txs.first().expect("checked").time {
-                    t
-                } else {
-                    send_error!(sender, TxTimeMissing);
-                    return;
-                };
-                let last = if let Some(t) = history_txs.last().expect("checked").time {
-                    t
-                } else {
-                    send_error!(sender, TxTimeMissing);
-                    return;
-                };
-                // limit too low, all tx are in the same timestamp
-                // we must increase limit and retry
-                if first == last {
-                    limit += DEFAULT_LIMIT as u64;
-                    continue;
-                } else {
-                    // add txs to map
-                    for tx in history_txs {
-                        let txid = tx.txid;
-                        map.insert(txid, tx);
-                    }
-                    limit = max;
-                    end = first.min(last);
-                    continue;
-                }
-            } else
-            /* history_txs.len() < limit */
-            {
+            let last = if let Some(t) = history_txs.last().expect("checked").time {
+                t
+            } else {
+                return Err(Error::TxTimeMissing);
+            };
+            // limit too low, all tx are in the same timestamp
+            // we must increase limit and retry
+            if first == last {
+                limit += DEFAULT_LIMIT as u64;
+                continue;
+            } else {
                 // add txs to map
                 for tx in history_txs {
                     let txid = tx.txid;
                     map.insert(txid, tx);
                 }
-                break;
+                limit = max;
+                end = first.min(last);
+                continue;
             }
+        } else
+        /* history_txs.len() < limit */
+        {
+            // add txs to map
+            for tx in history_txs {
+                let txid = tx.txid;
+                map.insert(txid, tx);
+            }
+            break;
         }
-
-        let mut txs: Vec<_> = map.into_values().collect();
-        txs.sort_by(|a, b| b.compare(a));
-
-        for mut tx in txs {
-            let date_time = tx
-                .time
-                .map(|t| {
-                    let mut str = DateTime::from_timestamp(t as i64, 0)
-                        .expect("bitcoin timestamp")
-                        .to_rfc3339();
-                    //str has the form `1996-12-19T16:39:57-08:00`
-                    //                            ^        ^^^^^^
-                    //          replace `T` by ` `|           | drop this part
-                    str = str.replace("T", " ");
-                    str[0..(str.len() - 6)].to_string()
-                })
-                .unwrap_or("".to_string());
-
-            let txid = tx.txid.clone().to_string();
-            let txid_label = tx.labels().get(&txid).cloned();
-            let mut label = if let Some(txid) = txid_label {
-                txid
-            } else {
-                "".to_string()
-            };
-            if !label.is_empty() {
-                label = format!("\"{}\"", label);
-            }
-            let txid = tx.txid.to_string();
-            let fee = tx.fee_amount.unwrap_or(Amount::ZERO).to_sat() as i128;
-            let mut inputs_amount = 0;
-            tx.coins.iter().for_each(|(_, coin)| {
-                inputs_amount += coin.amount.to_sat() as i128;
-            });
-            let value = tx.incoming_amount.to_sat() as i128 - inputs_amount;
-            let value = value as f64 / 100_000_000.0;
-            let fee = fee as f64 / 100_000_000.0;
-            let block = tx.height.map(|h| h.to_string()).unwrap_or("".to_string());
-            let fee = if fee != 0.0 {
-                fee.to_string()
-            } else {
-                "".into()
-            };
-
-            let line = format!(
-                "{},{},{},{},{},{}\n",
-                date_time, label, value, fee, txid, block
-            );
-            if let Err(e) = file.write_all(line.as_bytes()) {
-                send_error!(sender, e.into());
-                return;
-            }
-        }
-        send_progress!(sender, Progress(100.0));
-        send_progress!(sender, Ended);
     }
-    .await;
+
+    let mut txs: Vec<_> = map.into_values().collect();
+    txs.sort_by(|a, b| b.compare(a));
+
+    for mut tx in txs {
+        let date_time = tx
+            .time
+            .map(|t| {
+                let mut str = DateTime::from_timestamp(t as i64, 0)
+                    .expect("bitcoin timestamp")
+                    .to_rfc3339();
+                //str has the form `1996-12-19T16:39:57-08:00`
+                //                            ^        ^^^^^^
+                //          replace `T` by ` `|           | drop this part
+                str = str.replace("T", " ");
+                str[0..(str.len() - 6)].to_string()
+            })
+            .unwrap_or("".to_string());
+
+        let txid = tx.txid.clone().to_string();
+        let txid_label = tx.labels().get(&txid).cloned();
+        let mut label = if let Some(txid) = txid_label {
+            txid
+        } else {
+            "".to_string()
+        };
+        if !label.is_empty() {
+            label = format!("\"{}\"", label);
+        }
+        let txid = tx.txid.to_string();
+        let fee = tx.fee_amount.unwrap_or(Amount::ZERO).to_sat() as i128;
+        let mut inputs_amount = 0;
+        tx.coins.iter().for_each(|(_, coin)| {
+            inputs_amount += coin.amount.to_sat() as i128;
+        });
+        let value = tx.incoming_amount.to_sat() as i128 - inputs_amount;
+        let value = value as f64 / 100_000_000.0;
+        let fee = fee as f64 / 100_000_000.0;
+        let block = tx.height.map(|h| h.to_string()).unwrap_or("".to_string());
+        let fee = if fee != 0.0 {
+            fee.to_string()
+        } else {
+            "".into()
+        };
+
+        let line = format!(
+            "{},{},{},{},{},{}\n",
+            date_time, label, value, fee, txid, block
+        );
+        file.write_all(line.as_bytes())?;
+    }
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
+    Ok(())
 }
 
-pub fn export_descriptor(sender: Sender<Progress>, path: PathBuf, descriptor: LianaDescriptor) {
-    let mut file = open_file_write!(path, sender);
+pub async fn export_descriptor(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    descriptor: LianaDescriptor,
+) -> Result<(), Error> {
+    let mut file = open_file_write(&path).await?;
 
     let descr_string = descriptor.to_string();
-    if let Err(e) = file.write_all(descr_string.as_bytes()) {
-        send_error!(sender, e.into());
-        return;
-    }
+    file.write_all(descr_string.as_bytes())?;
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
+
+    Ok(())
 }
 
-pub fn export_string(sender: Sender<Progress>, path: PathBuf, psbt: String) {
-    let mut file = open_file_write!(path, sender);
-
-    if let Err(e) = file.write_all(psbt.as_bytes()) {
-        send_error!(sender, e.into());
-        return;
-    }
+pub async fn export_string(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    psbt: String,
+) -> Result<(), Error> {
+    let mut file = open_file_write(&path).await?;
+    file.write_all(psbt.as_bytes())?;
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
+    Ok(())
 }
 
-pub fn import_psbt(sender: Sender<Progress>, path: PathBuf) {
-    let mut file = open_file_read!(path, sender);
+pub async fn import_psbt(sender: &UnboundedSender<Progress>, path: PathBuf) -> Result<(), Error> {
+    let mut file = File::open(&path)?;
 
     let mut psbt_str = String::new();
-    if let Err(e) = file.read_to_string(&mut psbt_str) {
-        send_error!(sender, e.into());
-        return;
-    }
+    file.read_to_string(&mut psbt_str)?;
 
-    let psbt = match Psbt::from_str(&psbt_str) {
-        Ok(psbt) => psbt,
-        Err(_) => {
-            send_error!(sender, Error::ParsePsbt);
-            return;
-        }
-    };
+    let psbt = Psbt::from_str(&psbt_str).map_err(|_| Error::ParsePsbt)?;
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Psbt(psbt));
+    Ok(())
 }
 
-pub fn import_descriptor(sender: Sender<Progress>, path: PathBuf) {
-    let mut file = open_file_read!(path, sender);
+pub async fn import_descriptor(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+) -> Result<(), Error> {
+    let mut file = File::open(path)?;
 
     let mut descr_str = String::new();
-    if let Err(e) = file.read_to_string(&mut descr_str) {
-        send_error!(sender, e.into());
-        return;
-    }
-
-    let descriptor = match LianaDescriptor::from_str(&descr_str) {
-        Ok(psbt) => psbt,
-        Err(_) => {
-            send_error!(sender, Error::ParseDescriptor);
-            return;
-        }
-    };
+    file.read_to_string(&mut descr_str)?;
+    let descriptor = LianaDescriptor::from_str(&descr_str).map_err(|_| Error::ParseDescriptor)?;
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Descriptor(descriptor));
+    Ok(())
 }
 
 /// Import a backup in an already existing wallet:
@@ -663,42 +591,30 @@ pub fn import_descriptor(sender: Sender<Progress>, path: PathBuf) {
 ///    - import labels if no conflict or user ACK
 ///    - update aliases if no conflict or user ACK
 pub async fn import_backup(
-    sender: Sender<Progress>,
+    sender: &UnboundedSender<Progress>,
     path: PathBuf,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-) {
-    let daemon = match daemon {
-        Some(d) => d,
-        None => {
-            send_error!(sender, Error::DaemonMissing);
-            return;
-        }
-    };
+) -> Result<(), Error> {
+    let daemon = daemon.ok_or(Error::DaemonMissing)?;
 
     // TODO: drop after support for restore to liana-connect
     if matches!(daemon.backend(), DaemonBackend::RemoteBackend) {
-        send_error!(
-            sender,
-            Error::BackupImport("Restore to a Liana-connect backend is not yet supported!".into())
-        );
-        return;
+        return Err(Error::BackupImport(
+            "Restore to a Liana-connect backend is not yet supported!".into(),
+        ));
     }
 
     // Load backup from file
-    let mut file = open_file_read!(path, sender);
+    let mut file = File::open(&path)?;
 
     let mut backup_str = String::new();
-    if let Err(e) = file.read_to_string(&mut backup_str) {
-        send_error!(sender, e.into());
-        return;
-    }
+    file.read_to_string(&mut backup_str)?;
 
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(psbt) => psbt,
         Err(e) => {
-            send_error!(sender, Error::BackupImport(format!("{:?}", e)));
-            return;
+            return Err(Error::BackupImport(format!("{:?}", e)));
         }
     };
 
@@ -706,63 +622,47 @@ pub async fn import_backup(
     let info = match daemon.get_info().await {
         Ok(info) => info,
         Err(e) => {
-            send_error!(sender, Error::Daemon(format!("{e:?}")));
-            return;
+            return Err(Error::Daemon(format!("{e:?}")));
         }
     };
 
     // check if networks matches
     let network = info.network;
     if backup.network != network {
-        send_error!(
-            sender,
-            Error::BackupImport("The network of the backup don't match the wallet network!".into())
-        );
-        return;
+        return Err(Error::BackupImport(
+            "The network of the backup don't match the wallet network!".into(),
+        ));
     }
 
     // check if descriptors matches
     let descriptor = info.descriptors.main;
     let account = match backup.accounts.len() {
         0 => {
-            send_error!(
-                sender,
-                Error::BackupImport("There is no account in the backup!".into())
-            );
-            return;
+            return Err(Error::BackupImport(
+                "There is no account in the backup!".into(),
+            ));
         }
         1 => backup.accounts.first().expect("already checked"),
         _ => {
-            send_error!(
-                sender,
-                Error::BackupImport(
-                    "Liana is actually not supporting import of backup with several accounts!"
-                        .into()
-                )
-            );
-            return;
+            return Err(Error::BackupImport(
+                "Liana is actually not supporting import of backup with several accounts!".into(),
+            ));
         }
     };
 
     let backup_descriptor = match LianaDescriptor::from_str(&account.descriptor) {
         Ok(d) => d,
         Err(_) => {
-            send_error!(
-                sender,
-                Error::BackupImport(
-                    "The backup descriptor is not a valid Liana descriptor!".into()
-                )
-            );
-            return;
+            return Err(Error::BackupImport(
+                "The backup descriptor is not a valid Liana descriptor!".into(),
+            ));
         }
     };
 
     if backup_descriptor != descriptor {
-        send_error!(
-            sender,
-            Error::BackupImport("The backup descriptor do not match this wallet!".into())
-        );
-        return;
+        return Err(Error::BackupImport(
+            "The backup descriptor do not match this wallet!".into(),
+        ));
     }
 
     // TODO: check if timestamp matches?
@@ -773,8 +673,7 @@ pub async fn import_backup(
         let db_labels = match daemon.get_labels_bip329(0, u32::MAX).await {
             Ok(l) => l,
             Err(_) => {
-                send_error!(sender, Error::BackupImport("Fail to dump DB labels".into()));
-                return;
+                return Err(Error::BackupImport("Fail to dump DB labels".into()));
             }
         };
 
@@ -782,7 +681,7 @@ pub async fn import_backup(
         let backup_labels_map = labels.clone().into_map();
 
         // if there is a conflict, we ask user to ACK before overwrite
-        let (ack_sender, ack_receiver) = sync_channel(0);
+        let (ack_sender, mut ack_receiver) = channel(1);
         let mut conflict = false;
         for (k, l) in &backup_labels_map {
             if let Some(lab) = labels_map.get(k) {
@@ -794,14 +693,10 @@ pub async fn import_backup(
             }
         }
         if conflict {
-            write_labels = match ack_receiver.recv() {
-                Ok(b) => b,
-                Err(_) => {
-                    send_error!(
-                        sender,
-                        Error::BackupImport("Fail to receive labels ACK".into())
-                    );
-                    return;
+            write_labels = match ack_receiver.recv().await {
+                Some(b) => b,
+                None => {
+                    return Err(Error::BackupImport("Fail to receive labels ACK".into()));
                 }
             }
         }
@@ -815,19 +710,11 @@ pub async fn import_backup(
         Some(c) => match &c.data_dir {
             Some(dd) => dd,
             None => {
-                send_error!(
-                    sender,
-                    Error::BackupImport("Fail to get Daemon config".into())
-                );
-                return;
+                return Err(Error::BackupImport("Fail to get Daemon config".into()));
             }
         },
         None => {
-            send_error!(
-                sender,
-                Error::BackupImport("Fail to get Daemon config".into())
-            );
-            return;
+            return Err(Error::BackupImport("Fail to get Daemon config".into()));
         }
     };
 
@@ -837,11 +724,7 @@ pub async fn import_backup(
         let settings = match Settings::from_file(datadir.to_path_buf(), network) {
             Ok(s) => s,
             Err(_) => {
-                send_error!(
-                    sender,
-                    Error::BackupImport("Fail to get App Settings".into())
-                );
-                return;
+                return Err(Error::BackupImport("Fail to get App Settings".into()));
             }
         };
 
@@ -856,15 +739,13 @@ pub async fn import_backup(
                 .map(|s| (s.master_fingerprint, s))
                 .collect(),
             _ => {
-                send_error!(
-                    sender,
-                    Error::BackupImport("Settings.wallets.len() is not 1".into())
-                );
-                return;
+                return Err(Error::BackupImport(
+                    "Settings.wallets.len() is not 1".into(),
+                ));
             }
         };
 
-        let (ack_sender, ack_receiver) = sync_channel(0);
+        let (ack_sender, mut ack_receiver) = channel(1);
         let mut conflict = false;
         for (fg, key) in &account.keys {
             if let Some(k) = settings_aliases.get(fg) {
@@ -878,14 +759,10 @@ pub async fn import_backup(
         }
         if conflict {
             // wait for the user ACK/NACK
-            write_aliases = match ack_receiver.recv() {
-                Ok(a) => a,
-                Err(_) => {
-                    send_error!(
-                        sender,
-                        Error::BackupImport("Fail to receive aliases ACK".into())
-                    );
-                    return;
+            write_aliases = match ack_receiver.recv().await {
+                Some(a) => a,
+                None => {
+                    return Err(Error::BackupImport("Fail to receive aliases ACK".into()));
                 }
             };
         }
@@ -905,11 +782,9 @@ pub async fn import_backup(
     let change = if db_change < i { Some(i) } else { None };
 
     if daemon.update_deriv_indexes(receive, change).await.is_err() {
-        send_error!(
-            sender,
-            Error::BackupImport("Fail to update derivation indexes".into())
-        );
-        return;
+        return Err(Error::BackupImport(
+            "Fail to update derivation indexes".into(),
+        ));
     }
 
     // parse PSBTs
@@ -920,8 +795,7 @@ pub async fn import_backup(
                 psbts.push(p);
             }
             Err(_) => {
-                send_error!(sender, Error::BackupImport("Fail to parse PSBT".into()));
-                return;
+                return Err(Error::BackupImport("Fail to parse PSBT".into()));
             }
         }
     }
@@ -929,8 +803,7 @@ pub async fn import_backup(
     // import PSBTs
     for psbt in psbts {
         if daemon.update_spend_tx(&psbt).await.is_err() {
-            send_error!(sender, Error::BackupImport("Fail to store PSBT".into()));
-            return;
+            return Err(Error::BackupImport("Fail to store PSBT".into()));
         }
     }
 
@@ -947,8 +820,7 @@ pub async fn import_backup(
             })
             .collect();
         if daemon.update_labels(&labels).await.is_err() {
-            send_error!(sender, Error::BackupImport("Fail to import labels".into()));
-            return;
+            return Err(Error::BackupImport("Fail to import labels".into()));
         }
     }
 
@@ -969,11 +841,7 @@ pub async fn import_backup(
         settings.wallets.get_mut(0).expect("already checked").keys =
             settings_aliases.clone().into_values().collect();
         if settings.to_file(datadir.to_path_buf(), network).is_err() {
-            send_error!(
-                sender,
-                Error::BackupImport("Fail to import keys aliases".into())
-            );
-            return;
+            return Err(Error::BackupImport("Fail to import keys aliases".into()));
         } else {
             // Update wallet state
             send_progress!(sender, UpdateAliases(settings_aliases));
@@ -982,6 +850,7 @@ pub async fn import_backup(
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -1035,22 +904,21 @@ impl From<DaemonError> for RestoreBackupError {
 ///    - extract descriptor
 ///    - extract network
 ///    - extract aliases
-pub async fn wallet_from_backup(sender: Sender<Progress>, path: PathBuf) {
+pub async fn wallet_from_backup(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+) -> Result<(), Error> {
     // Load backup from file
-    let mut file = open_file_read!(path, sender);
+    let mut file = File::open(path)?;
 
     let mut backup_str = String::new();
-    if let Err(e) = file.read_to_string(&mut backup_str) {
-        send_error!(sender, e.into());
-        return;
-    }
+    file.read_to_string(&mut backup_str)?;
 
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(psbt) => psbt,
         Err(e) => {
-            send_error!(sender, Error::BackupImport(format!("{:?}", e)));
-            return;
+            return Err(Error::BackupImport(format!("{:?}", e)));
         }
     };
 
@@ -1058,35 +926,24 @@ pub async fn wallet_from_backup(sender: Sender<Progress>, path: PathBuf) {
 
     let account = match backup.accounts.len() {
         0 => {
-            send_error!(
-                sender,
-                Error::BackupImport("There is no account in the backup!".into())
-            );
-            return;
+            return Err(Error::BackupImport(
+                "There is no account in the backup!".into(),
+            ));
         }
         1 => backup.accounts.first().expect("already checked"),
         _ => {
-            send_error!(
-                sender,
-                Error::BackupImport(
-                    "Liana is actually not supporting import of backup with several accounts!"
-                        .into()
-                )
-            );
-            return;
+            return Err(Error::BackupImport(
+                "Liana is actually not supporting import of backup with several accounts!".into(),
+            ));
         }
     };
 
     let descriptor = match LianaDescriptor::from_str(&account.descriptor) {
         Ok(d) => d,
         Err(_) => {
-            send_error!(
-                sender,
-                Error::BackupImport(
-                    "The backup descriptor is not a valid Liana descriptor!".into()
-                )
-            );
-            return;
+            return Err(Error::BackupImport(
+                "The backup descriptor is not a valid Liana descriptor!".into(),
+            ));
         }
     };
 
@@ -1109,6 +966,7 @@ pub async fn wallet_from_backup(sender: Sender<Progress>, path: PathBuf) {
     );
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
+    Ok(())
 }
 
 #[allow(unused)]
@@ -1223,28 +1081,18 @@ pub async fn import_backup_at_launch(
 }
 
 pub async fn export_labels(
-    sender: Sender<Progress>,
+    sender: &UnboundedSender<Progress>,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     path: PathBuf,
-) {
-    let daemon = match daemon {
-        Some(d) => d,
-        None => {
-            send_error!(sender, Error::DaemonMissing);
-            return;
-        }
-    };
+) -> Result<(), Error> {
+    let daemon = daemon.ok_or(Error::DaemonMissing)?;
     let mut labels = Labels::new(Vec::new());
     let mut offset = 0u32;
     loop {
-        let mut fetched = match daemon.get_labels_bip329(offset, DUMP_LABELS_LIMIT).await {
-            Ok(l) => l,
-            Err(e) => {
-                send_error!(sender, e.into());
-                return;
-            }
-        }
-        .into_vec();
+        let mut fetched = daemon
+            .get_labels_bip329(offset, DUMP_LABELS_LIMIT)
+            .await?
+            .into_vec();
         let fetch_len = fetched.len() as u32;
         labels.append(&mut fetched);
         if fetch_len < DUMP_LABELS_LIMIT {
@@ -1253,21 +1101,13 @@ pub async fn export_labels(
             offset += DUMP_LABELS_LIMIT;
         }
     }
-    let json = match labels.export() {
-        Ok(j) => j,
-        Err(e) => {
-            send_error!(sender, e.into());
-            return;
-        }
-    };
-    let mut file = open_file_write!(path, sender);
+    let json = labels.export()?;
+    let mut file = open_file_write(&path).await?;
 
-    if let Err(e) = file.write_all(json.as_bytes()) {
-        send_error!(sender, e.into());
-        return;
-    }
+    file.write_all(json.as_bytes())?;
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
+    Ok(())
 }
 
 pub async fn get_path(filename: String, write: bool) -> Option<PathBuf> {

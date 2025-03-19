@@ -158,13 +158,27 @@ impl ExportModal {
                     &mut self.import_export_type
                 {
                     if let Some(sender) = labels.take() {
-                        if sender.send(true).is_err() {
-                            tracing::error!("ExportModal.update(): fail to send labels ACK");
-                        }
+                        return Task::perform(
+                            async move {
+                                if sender.send(true).await.is_err() {
+                                    tracing::error!(
+                                        "ExportModal.update(): fail to send labels NACK"
+                                    );
+                                }
+                            },
+                            |_| ImportExportMessage::Ignore.into(),
+                        );
                     } else if let Some(sender) = aliases.take() {
-                        if sender.send(true).is_err() {
-                            tracing::error!("ExportModal.update(): fail to send aliases ACK");
-                        }
+                        return Task::perform(
+                            async move {
+                                if sender.send(true).await.is_err() {
+                                    tracing::error!(
+                                        "ExportModal.update(): fail to send aliases NACK"
+                                    );
+                                }
+                            },
+                            |_| ImportExportMessage::Ignore.into(),
+                        );
                     }
                 }
             }
@@ -173,13 +187,27 @@ impl ExportModal {
                     &mut self.import_export_type
                 {
                     if let Some(sender) = labels.take() {
-                        if sender.send(false).is_err() {
-                            tracing::error!("ExportModal.update(): fail to send labels NACK");
-                        }
+                        return Task::perform(
+                            async move {
+                                if sender.send(false).await.is_err() {
+                                    tracing::error!(
+                                        "ExportModal.update(): fail to send labels NACK"
+                                    );
+                                }
+                            },
+                            |_| ImportExportMessage::Ignore.into(),
+                        );
                     } else if let Some(sender) = aliases.take() {
-                        if sender.send(false).is_err() {
-                            tracing::error!("ExportModal.update(): fail to send aliases NACK");
-                        }
+                        return Task::perform(
+                            async move {
+                                if sender.send(false).await.is_err() {
+                                    tracing::error!(
+                                        "ExportModal.update(): fail to send aliases NACK"
+                                    );
+                                }
+                            },
+                            |_| ImportExportMessage::Ignore.into(),
+                        );
                     }
                 }
             }
