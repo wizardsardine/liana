@@ -995,7 +995,6 @@ pub enum RestoreBackupError {
     LianaConnectNotSupported,
     GetLabels,
     LabelsNotEmpty,
-    NotImplemented,
     InvalidPsbt,
 }
 
@@ -1020,7 +1019,6 @@ impl Display for RestoreBackupError {
                 f,
                 "Cannot load labels: there is already labels into the database"
             ),
-            RestoreBackupError::NotImplemented => write!(f, "Not implemented"),
             RestoreBackupError::InvalidPsbt => write!(f, "Psbt is invalid"),
         }
     }
