@@ -43,14 +43,14 @@ fn now() -> u64 {
         .as_secs()
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Backup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default)]
     pub accounts: Vec<Account>,
     pub network: Network,
-    pub date: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<u64>,
     /// App proprietary metadata (settings, configuration, etc..)
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub proprietary: serde_json::Map<String, serde_json::Value>,
@@ -171,7 +171,7 @@ impl Backup {
             accounts: vec![account],
             network: ctx.network,
             proprietary: serde_json::Map::new(),
-            date: now,
+            date: Some(now),
             version: 0,
         })
     }
@@ -270,7 +270,7 @@ impl Backup {
             accounts: vec![account],
             network,
             proprietary: serde_json::Map::new(),
-            date: now(),
+            date: Some(now()),
             version: 0,
         })
     }
@@ -371,7 +371,7 @@ async fn get_transactions(
     Ok(vec)
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Account {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -398,13 +398,13 @@ pub struct Account {
     pub proprietary: serde_json::Map<String, serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ChainTip {
     pub block_height: i32,
     pub block_hash: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Coin {
     amount: u64,
     outpoint: String,
@@ -483,4 +483,63 @@ pub enum KeyType {
     External,
     /// Service the user pay for
     ThirdParty,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn round_trip(backup: &Backup) -> bool {
+        let serialized = serde_json::to_string(backup).unwrap();
+        let parsed: Backup = serde_json::from_str(&serialized).unwrap();
+        *backup == parsed
+    }
+
+    #[test]
+    fn backup_serde() {
+        let mut backup = Backup {
+            name: None,
+            accounts: Vec::new(),
+            network: Network::Signet,
+            date: Some(0),
+            proprietary: serde_json::Map::new(),
+            version: 0,
+        };
+        let serialized = serde_json::to_string(&backup).unwrap();
+        let expected = r#"{"accounts":[],"network":"signet","date":0,"version":0}"#;
+        assert_eq!(expected, serialized);
+        assert!(round_trip(&backup));
+
+        backup.name = Some("Liana".into());
+
+        let serialized = serde_json::to_string(&backup).unwrap();
+        let expected = r#"{"name":"Liana","accounts":[],"network":"signet","date":0,"version":0}"#;
+        assert_eq!(expected, serialized);
+        assert!(round_trip(&backup));
+
+        let descr_str = r#"wsh(or_d(pk([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<0;1>/*),and_v(v:pkh([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<2;3>/*),older(52596))))#x6u6lmej"#.to_string();
+
+        let account = Account::new(descr_str);
+        backup.accounts.push(account);
+
+        let serialized = serde_json::to_string(&backup).unwrap();
+        println!("{serialized}");
+        let expected = r#"{"name":"Liana","accounts":[{"descriptor":"wsh(or_d(pk([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<0;1>/*),and_v(v:pkh([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<2;3>/*),older(52596))))#x6u6lmej"}],"network":"signet","date":0,"version":0}"#;
+        assert_eq!(expected, serialized);
+        assert!(round_trip(&backup));
+
+        // if there is no version, the default is 0
+        let no_version = r#"{"name":"Liana","accounts":[{"descriptor":"wsh(or_d(pk([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<0;1>/*),and_v(v:pkh([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<2;3>/*),older(52596))))#x6u6lmej"}],"network":"signet","date":0}"#;
+        let parsed: Backup = serde_json::from_str(no_version).unwrap();
+        assert_eq!(parsed.version, 0);
+
+        // Network is mandatory for an account
+        let no_network = r#"{"name":"Liana","accounts":[{"descriptor":"wsh(or_d(pk([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<0;1>/*),and_v(v:pkh([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<2;3>/*),older(52596))))#x6u6lmej"}],"date":0,"version":0}"#;
+        let parsed: Result<Backup, _> = serde_json::from_str(no_network);
+        assert!(parsed.is_err());
+
+        // But it's the only mandatory field,  w/ accounts array
+        let minimal = r#"{"network":"signet","accounts":[]}"#;
+        let _parsed: Backup = serde_json::from_str(minimal).unwrap();
+    }
 }
