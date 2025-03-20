@@ -26,9 +26,8 @@ use crate::{
         wallet::Wallet,
         Config,
     },
-    backup::{self, Backup},
     daemon::{Daemon, DaemonBackend},
-    export::{self, ImportExportMessage, ImportExportType},
+    export::{ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
 };
 
@@ -246,29 +245,10 @@ impl State for WalletSettingsState {
                     let config = self.config.clone();
                     let wallet = self.wallet.clone();
                     let daemon = daemon.clone();
-                    Task::perform(
-                        async move { app_backup(datadir, network, config, wallet, daemon).await },
-                        |s| {
-                            Message::View(view::Message::Settings(
-                                view::SettingsMessage::ExportBackup(s),
-                            ))
-                        },
-                    )
-                } else {
-                    Task::none()
-                }
-            }
-            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
-                if self.modal.is_none() {
-                    let backup = match backup {
-                        Ok(b) => b,
-                        Err(e) => {
-                            self.warning = Some(Error::ImportExport(export::Error::Backup(e)));
-                            return Task::none();
-                        }
-                    };
-                    let modal =
-                        ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
+                    let modal = ExportModal::new(
+                        Some(daemon),
+                        ImportExportType::ExportProcessBackup(datadir, network, config, wallet),
+                    );
                     let launch = modal.launch(true);
                     self.modal = Modal::ImportExport(modal);
                     launch
@@ -524,15 +504,4 @@ pub async fn update_keys_aliases(
         .await?;
 
     Ok(Arc::new(wallet))
-}
-
-pub async fn app_backup(
-    datadir: PathBuf,
-    network: Network,
-    config: Arc<Config>,
-    wallet: Arc<Wallet>,
-    daemon: Arc<dyn Daemon + Sync + Send>,
-) -> Result<String, backup::Error> {
-    let backup = Backup::from_app(datadir, network, config, wallet, daemon).await?;
-    serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
 }

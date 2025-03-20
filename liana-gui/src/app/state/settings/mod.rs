@@ -10,7 +10,7 @@ use iced::Task;
 use liana_ui::{component::form, widget::Element};
 
 use bitcoind::BitcoindSettingsState;
-use wallet::{app_backup, WalletSettingsState};
+use wallet::WalletSettingsState;
 
 use crate::{
     app::{
@@ -23,7 +23,7 @@ use crate::{
         Config,
     },
     daemon::{Daemon, DaemonBackend},
-    export::{self, ImportExportMessage, ImportExportType},
+    export::{ImportExportMessage, ImportExportType},
 };
 
 use super::export::ExportModal;
@@ -260,26 +260,12 @@ impl State for ImportExportSettingsState {
                     let config = self.config.clone();
                     let wallet = self.wallet.clone();
                     let daemon = daemon.clone();
-                    return Task::perform(
-                        async move { app_backup(datadir, network, config, wallet, daemon).await },
-                        |s| {
-                            Message::View(view::Message::Settings(
-                                view::SettingsMessage::ExportBackup(s),
-                            ))
-                        },
+                    let modal = ExportModal::new(
+                        Some(daemon),
+                        ImportExportType::ExportProcessBackup(datadir, network, config, wallet),
                     );
+                    launch!(self, modal, true);
                 }
-            }
-            Message::View(view::Message::Settings(view::SettingsMessage::ExportBackup(backup))) => {
-                let backup = match backup {
-                    Ok(b) => b,
-                    Err(e) => {
-                        self.warning = Some(Error::ImportExport(export::Error::Backup(e)));
-                        return Task::none();
-                    }
-                };
-                let modal = ExportModal::new(Some(daemon), ImportExportType::ExportBackup(backup));
-                launch!(self, modal, true);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
                 if self.modal.is_none() {

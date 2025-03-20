@@ -145,6 +145,7 @@ pub enum ImportExportType {
     Transactions,
     ExportPsbt(String),
     ExportBackup(String),
+    ExportProcessBackup(PathBuf, Network, Arc<Config>, Arc<Wallet>),
     ImportBackup(
         Option<Sender<bool>>, /*overwrite_labels*/
         Option<Sender<bool>>, /*overwrite_aliases*/
@@ -163,6 +164,7 @@ impl ImportExportType {
             | ImportExportType::ExportPsbt(_)
             | ImportExportType::ExportBackup(_)
             | ImportExportType::Descriptor(_)
+            | ImportExportType::ExportProcessBackup(..)
             | ImportExportType::ExportLabels => "Export successful!",
             ImportExportType::ImportBackup(_, _)
             | ImportExportType::ImportPsbt
@@ -282,6 +284,18 @@ impl Export {
             ImportExportType::ImportPsbt => import_psbt(&sender, path).await,
             ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
             ImportExportType::ExportBackup(str) => export_string(&sender, path, str).await,
+            ImportExportType::ExportProcessBackup(datadir, network, config, wallet) => {
+                app_backup_export(
+                    datadir,
+                    network,
+                    config,
+                    wallet,
+                    daemon.clone().expect("cannot fail"),
+                    path,
+                    &sender,
+                )
+                .await
+            }
             ImportExportType::ImportBackup(..) => import_backup(&sender, path, daemon).await,
             ImportExportType::WalletFromBackup => wallet_from_backup(&sender, path).await,
         } {
@@ -1126,4 +1140,31 @@ pub async fn get_path(filename: String, write: bool) -> Option<PathBuf> {
             .await
             .map(|fh| fh.path().to_path_buf())
     }
+}
+
+pub async fn app_backup(
+    datadir: PathBuf,
+    network: Network,
+    config: Arc<Config>,
+    wallet: Arc<Wallet>,
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    sender: &UnboundedSender<Progress>,
+) -> Result<String, backup::Error> {
+    let backup = Backup::from_app(datadir, network, config, wallet, daemon, sender).await?;
+    serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
+}
+
+pub async fn app_backup_export(
+    datadir: PathBuf,
+    network: Network,
+    config: Arc<Config>,
+    wallet: Arc<Wallet>,
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    path: PathBuf,
+    sender: &UnboundedSender<Progress>,
+) -> Result<(), Error> {
+    let backup = app_backup(datadir.clone(), network, config, wallet, daemon, sender)
+        .await
+        .map_err(Error::Backup)?;
+    export_string(sender, path, backup).await
 }

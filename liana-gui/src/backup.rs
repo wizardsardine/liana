@@ -16,10 +16,12 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     app::{settings::Settings, wallet::Wallet, Config},
     daemon::{model::HistoryTransaction, Daemon, DaemonBackend, DaemonError},
+    export::Progress,
     installer::{
         extract_daemon_config, extract_local_gui_settings, extract_remote_gui_settings, Context,
         RemoteBackend,
@@ -183,6 +185,7 @@ impl Backup {
         config: Arc<Config>,
         wallet: Arc<Wallet>,
         daemon: Arc<dyn Daemon + Sync + Send>,
+        sender: &UnboundedSender<Progress>,
     ) -> Result<Self, Error> {
         let mut proprietary = serde_json::Map::new();
         proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
@@ -204,6 +207,8 @@ impl Backup {
         }
 
         let info = daemon.get_info().await?;
+
+        let _ = sender.send(Progress::Progress(20.0));
 
         let mut account = Account::new(descriptor);
 
@@ -239,18 +244,25 @@ impl Backup {
             bip329::Labels::new(buff)
         };
 
+        let _ = sender.send(Progress::Progress(30.0));
+
         account.labels = Some(labels);
         account.transactions = get_transactions(&daemon)
             .await?
             .into_iter()
             .map(|tx| miniscript::bitcoin::consensus::encode::serialize_hex(&tx.tx))
             .collect();
+
+        let _ = sender.send(Progress::Progress(40.0));
+
         account.psbts = daemon
             .list_spend_transactions(None)
             .await?
             .into_iter()
             .map(|tx| tx.psbt.to_string())
             .collect();
+
+        let _ = sender.send(Progress::Progress(50.0));
 
         let statuses = [
             CoinStatus::Unconfirmed,
@@ -264,6 +276,8 @@ impl Backup {
             .into_iter()
             .map(|c| (c.outpoint.clone().to_string(), Coin::from(c)))
             .collect();
+
+        let _ = sender.send(Progress::Progress(60.0));
 
         Ok(Backup {
             name: Some(name),
