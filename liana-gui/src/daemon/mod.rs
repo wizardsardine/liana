@@ -22,7 +22,6 @@ use lianad::{
     StartupError,
 };
 
-use crate::app::settings::Settings;
 use crate::{hw::HardwareWalletConfig, node};
 
 #[derive(Debug)]
@@ -369,30 +368,9 @@ pub trait Daemon: Debug {
     /// Reimplemented by LianaLite backend
     async fn update_wallet_metadata(
         &self,
-        fingerprint_aliases: &HashMap<Fingerprint, String>,
+        _fingerprint_aliases: &HashMap<Fingerprint, String>,
         _hws: &[HardwareWalletConfig],
     ) -> Result<(), DaemonError> {
-        if let Some(datadir) = self
-            .config()
-            .ok_or(DaemonError::Unexpected("Config missing".into()))?
-            .data_dir()
-        {
-            let network = self.get_info().await?.network;
-            let mut settings = Settings::from_file(datadir, network)
-                .map_err(|_| DaemonError::Unexpected("Fail to read Settings from file".into()))?;
-            let wallet = if settings.wallets.len() == 1 {
-                settings.wallets.get_mut(0).expect("already checked")
-            } else {
-                return Err(DaemonError::Unexpected(
-                    "Settings file contains more than one wallet".into(),
-                ));
-            };
-            for fg in wallet.keys_aliases().keys() {
-                if fingerprint_aliases.contains_key(fg) {
-                    wallet.update_alias(fg, fingerprint_aliases.get(fg).expect("checked"));
-                }
-            }
-        }
         Ok(())
     }
 }
