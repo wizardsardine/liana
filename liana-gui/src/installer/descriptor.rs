@@ -6,7 +6,7 @@ use crate::{
 };
 
 /// Whether to enable cosigner keys on all paths (excluding safety net paths).
-const ENABLE_COSIGNER_KEYS: bool = true; // FIXME: Set to false after testing.
+const ENABLE_COSIGNER_KEYS: bool = false;
 
 /// The source of a descriptor public key.
 #[derive(Debug, Clone, PartialEq, Eq)]
