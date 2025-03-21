@@ -107,7 +107,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
     );
 
     let import_export = settings_section(
-        "Import/export",
+        "Import/Export",
         None,
         icon::wallet_icon(),
         Message::Settings(SettingsMessage::ImportExportSection),
@@ -186,7 +186,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
     );
 
     let export_wallet = settings_section(
-        "Back Up Wallet",
+        "Back up wallet",
         None,
         icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportWallet),
