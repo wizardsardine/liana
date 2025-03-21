@@ -18,7 +18,7 @@ pub mod utils;
 use lianad::Version;
 
 pub const VERSION: Version = Version {
-    major: 9,
+    major: 10,
     minor: 0,
     patch: 0,
 };

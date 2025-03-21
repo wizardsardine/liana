@@ -3211,7 +3211,7 @@ dependencies = [
 
 [[package]]
 name = "liana"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bdk_coin_select",
  "bip39",
@@ -3234,7 +3234,7 @@ dependencies = [
 
 [[package]]
 name = "liana-gui"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "async-hwi",
  "async-trait",
@@ -3268,7 +3268,7 @@ dependencies = [
 
 [[package]]
 name = "liana-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitcoin",
  "chrono",
@@ -3280,7 +3280,7 @@ dependencies = [
 
 [[package]]
 name = "lianad"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "backtrace",
  "bdk_electrum",
