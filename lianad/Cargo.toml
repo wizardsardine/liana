@@ -57,4 +57,4 @@ rusqlite = { version = "0.30", features = ["bundled", "unlock_notify"] }
 jsonrpc = { version = "0.17", features = ["minreq_http"], default-features = false }
 
 # import/export labels
-bip329 = "0.3.0"
+bip329 = { version = "0.3.0", default-features = false }
