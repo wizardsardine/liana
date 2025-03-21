@@ -45,7 +45,9 @@ impl ExportModal {
             ImportExportType::ExportPsbt(_) => "Export PSBT",
             ImportExportType::ExportBackup(_) => "Export Backup",
             ImportExportType::Descriptor(_) => "Export Descriptor",
-            ImportExportType::ExportLabels => "Export Labels",
+            ImportExportType::ExportProcessBackup(..) | ImportExportType::ExportLabels => {
+                "Export Labels"
+            }
             ImportExportType::ImportPsbt => "Import PSBT",
             ImportExportType::ImportDescriptor => "Import Descriptor",
             ImportExportType::ImportBackup(..) => "Restore Backup",
@@ -72,7 +74,7 @@ impl ExportModal {
             ImportExportType::ImportPsbt => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor => "descriptor.descriptor".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
-            ImportExportType::ExportBackup(_) => {
+            ImportExportType::ExportBackup(_) | ImportExportType::ExportProcessBackup(..) => {
                 format!("liana-backup-{date}.json")
             }
             ImportExportType::WalletFromBackup | ImportExportType::ImportBackup(_, _) => {
