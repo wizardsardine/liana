@@ -122,12 +122,20 @@ pub struct BitcoindConfig {
 }
 
 /// Everything we need to know for talking to Electrum serenely.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ElectrumConfig {
     /// The URL the Electrum's RPC is listening on.
     /// Include "ssl://" for SSL. otherwise TCP will be assumed.
     /// Can optionally prefix with "tcp://".
     pub addr: String,
+    /// If validate_domain == false, domain of ssl certificate will not be validated
+    /// (useful to allow usage of self signed certificates on local network)
+    #[serde(default = "default_validate_domain")]
+    pub validate_domain: bool,
+}
+
+fn default_validate_domain() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -286,7 +294,7 @@ impl Config {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{config_file_path, BitcoindConfig, BitcoindRpcAuth, Config};
+    use super::*;
 
     // Test the format of the configuration file
     #[test]
@@ -477,6 +485,41 @@ mod tests {
         assert!(config_err
             .to_string()
             .contains("`auth` must be 'user:password'"));
+    }
+
+    // Test the format of the `electrum_config` section
+    #[test]
+    fn toml_electrum_config() {
+        // A valid config with `validate_domain`
+        let toml_str = r#"
+            addr = 'ssl://electrum.blockstream.info:60002'
+            validate_domain = false
+            "#
+        .trim_start()
+        .replace("            ", "");
+        toml::from_str::<ElectrumConfig>(&toml_str).expect("Deserializing toml_str");
+        let parsed = toml::from_str::<ElectrumConfig>(&toml_str).expect("Deserializing toml_str");
+        let serialized = toml::to_string_pretty(&parsed).expect("Serializing to toml");
+        assert_eq!(toml_str, serialized);
+        let expected = ElectrumConfig {
+            addr: "ssl://electrum.blockstream.info:60002".into(),
+            validate_domain: false,
+        };
+        assert_eq!(parsed, expected,);
+
+        // A valid config w/o `validate_domain`
+        let toml_str = r#"
+            addr = 'ssl://electrum.blockstream.info:60002'
+            "#
+        .trim_start()
+        .replace("            ", "");
+        let parsed = toml::from_str::<ElectrumConfig>(&toml_str).expect("Deserializing toml_str");
+        let expected = ElectrumConfig {
+            addr: "ssl://electrum.blockstream.info:60002".into(),
+            // `validate_domain` must default to true
+            validate_domain: true,
+        };
+        assert_eq!(parsed, expected,);
     }
 
     #[test]

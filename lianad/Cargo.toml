@@ -25,12 +25,6 @@ liana = { path = "../liana" }
 # For managing transactions (it re-exports the bitcoin crate)
 miniscript = { version = "12.0", features = ["serde", "compiler", "base64"] }
 
-# For Electrum backend.
-# We use a branch of the v1.0.0-alpha.13 tag, which corresponds to the bdk_electrum v0.15 crate,
-# in order to bump the electrum_client dependency to v0.21. This allows to use the "use-rustls-ring"
-# feature and avoid the default aws-ls-rs provider from rustls, which would break the reproducible build
-# (see https://github.com/aws/aws-lc-rs/issues/409).
-bdk_electrum = { git = "https://github.com/wizardsardine/bdk", branch = "release/1.0.0-alpha.13", default-features = false, features = [ "use-rustls-ring" ] }
 
 # Don't reinvent the wheel
 dirs = "5.0"
