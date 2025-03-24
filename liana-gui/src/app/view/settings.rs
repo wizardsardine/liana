@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
+use iced::alignment::Vertical;
+use iced::widget::{Column, Rule};
 use iced::{
     alignment,
     widget::{radio, scrollable, tooltip as iced_tooltip, Space},
@@ -67,6 +69,34 @@ fn settings_section(
                 .push(badge::badge(icon))
                 .push(text(title).bold())
                 .push_maybe(tt)
+                .padding(10)
+                .spacing(20)
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .style(theme::button::transparent_border)
+        .on_press(msg),
+    )
+    .width(Length::Fill)
+    .style(theme::card::simple)
+}
+
+fn export_section(
+    title: &str,
+    description: &str,
+    icon: liana_ui::widget::Text<'static>,
+    msg: Message,
+) -> Container<'static, Message> {
+    Container::new(
+        Button::new(
+            Row::new()
+                .push(badge::badge(icon))
+                .push(
+                    Column::new()
+                        .push(text(title).bold())
+                        .push(caption(description)),
+                )
                 .padding(10)
                 .spacing(20)
                 .align_y(Alignment::Center)
@@ -164,40 +194,55 @@ pub fn bitcoind_settings<'a>(
 pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'a, Message> {
     let header = header("Import/Export", SettingsMessage::ImportExportSection);
 
-    let export_descriptor = settings_section(
-        "Export descriptor",
-        None,
+    let description = Row::new()
+        .push(Space::with_width(15))
+        .push(text(
+            "A collection of the export and import functions present in Liana.",
+        ))
+        .push(Space::with_width(Length::Fill));
+
+    let export_descriptor = export_section(
+        "Descriptor only",
+        "Descriptor file only, to use with other wallets.",
         icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportDescriptor),
     );
 
-    let export_transactions = settings_section(
-        "Export transactions",
-        None,
+    let export_transactions = export_section(
+        "Transactions table",
+        ".CSV file of past transactions, for accounting purposes.",
         icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportTransactions),
     );
 
-    let export_labels = settings_section(
-        "Export labels",
-        None,
+    let export_labels = export_section(
+        "BIP 329 labels",
+        "Bip 329 label export, compatible with other wallets.",
         icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportLabels),
     );
 
-    let export_wallet = settings_section(
+    let export_wallet = export_section(
         "Back up wallet",
-        None,
+        "File with wallet info needed to restore on other devices (no private keys).",
         icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportWallet),
     );
 
-    let import_wallet = settings_section(
+    let import_wallet = export_section(
         "Restore wallet",
-        None,
+        "Upload a backup file to update wallet info.",
         icon::restore_icon(),
         Message::Settings(SettingsMessage::ImportWallet),
     );
+
+    let separator = Row::new()
+        .push(Space::with_width(30))
+        .push(text("Other formats"))
+        .push(Space::with_width(15))
+        .push(Rule::horizontal(2))
+        .push(Space::with_width(30))
+        .align_y(Vertical::Center);
 
     dashboard(
         &Menu::Settings,
@@ -206,11 +251,13 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
         Column::new()
             .spacing(20)
             .push(header)
-            .push(export_descriptor)
-            .push(export_transactions)
-            .push(export_labels)
+            .push(description)
             .push(export_wallet)
             .push(import_wallet)
+            .push(separator)
+            .push(export_labels)
+            .push(export_transactions)
+            .push(export_descriptor)
             .width(Length::Fill),
     )
 }
