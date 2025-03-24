@@ -92,57 +92,43 @@ def test_update_derivation_indexes(lianad):
     # Will explicitly error on invalid indexes
     with pytest.raises(
         RpcError,
-        match=re.escape(
-            "Invalid params: Invalid value for \'receive\' param"
-        ),
+        match=re.escape("Invalid params: Invalid value for 'receive' param"),
     ):
         lianad.rpc.updatederivationindexes(-1)
 
     with pytest.raises(
         RpcError,
-        match=re.escape(
-            "Invalid params: Invalid value for \'change\' param"
-        ),
+        match=re.escape("Invalid params: Invalid value for 'change' param"),
     ):
         lianad.rpc.updatederivationindexes(0, -1)
 
     with pytest.raises(
         RpcError,
-        match=re.escape(
-            "Unhardened or overflowing BIP32 derivation index."
-        ),
+        match=re.escape("Unhardened or overflowing BIP32 derivation index."),
     ):
         lianad.rpc.updatederivationindexes(MAX_DERIV + 1, 2)
 
     with pytest.raises(
         RpcError,
-        match=re.escape(
-            "Unhardened or overflowing BIP32 derivation index."
-        ),
+        match=re.escape("Unhardened or overflowing BIP32 derivation index."),
     ):
         lianad.rpc.updatederivationindexes(0, MAX_DERIV + 1)
 
     with pytest.raises(
         RpcError,
-        match=re.escape(
-            "Unhardened or overflowing BIP32 derivation index."
-        ),
+        match=re.escape("Unhardened or overflowing BIP32 derivation index."),
     ):
-        lianad.rpc.updatederivationindexes(receive=(MAX_DERIV+1))
+        lianad.rpc.updatederivationindexes(receive=(MAX_DERIV + 1))
 
     with pytest.raises(
         RpcError,
-        match=re.escape(
-            "Unhardened or overflowing BIP32 derivation index."
-        ),
+        match=re.escape("Unhardened or overflowing BIP32 derivation index."),
     ):
-        lianad.rpc.updatederivationindexes(change=(MAX_DERIV+1))
+        lianad.rpc.updatederivationindexes(change=(MAX_DERIV + 1))
 
     with pytest.raises(
         RpcError,
-        match=re.escape(
-            "Invalid params: Missing \'receive\' or \'change\' parameter"
-        ),
+        match=re.escape("Invalid params: Missing 'receive' or 'change' parameter"),
     ):
         lianad.rpc.updatederivationindexes()
 
@@ -158,7 +144,7 @@ def test_update_derivation_indexes(lianad):
     last_receive = last_derivs["receive"]
     last_change = last_derivs["change"]
 
-    ret = lianad.rpc.updatederivationindexes((MAX_DERIV -1 ), 0)
+    ret = lianad.rpc.updatederivationindexes((MAX_DERIV - 1), 0)
     assert ret["receive"] == last_receive + 1000
     assert ret["change"] == last_change
 
@@ -1214,21 +1200,21 @@ def test_labels(lianad, bitcoind):
 def test_labels_bip329(lianad, bitcoind):
     # Label 5 addresses
     addresses = []
-    for i in range(0,5):
+    for i in range(0, 5):
         addr = lianad.rpc.getnewaddress()["address"]
         addresses.append(addr)
         lianad.rpc.updatelabels({addr: f"addr{i}"})
 
     # Label 5 coin
     txids = []
-    for i in range(0,5):
+    for i in range(0, 5):
         addr = lianad.rpc.getnewaddress()["address"]
         txid = bitcoind.rpc.sendtoaddress(addr, 1)
         txids.append(txid)
-        wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == i+1 )
+        wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == i + 1)
 
     coins = lianad.rpc.listcoins()["coins"]
-    for i in range(0,5):
+    for i in range(0, 5):
         coin = coins[i]
         lianad.rpc.updatelabels({coin["outpoint"]: f"coin{i}"})
 
@@ -1237,7 +1223,7 @@ def test_labels_bip329(lianad, bitcoind):
         lianad.rpc.updatelabels({txid: f"tx{i}"})
 
     # Get Bip-0329 labels
-    bip329_labels = lianad.rpc.getlabelsbip329(0,100)["labels"]
+    bip329_labels = lianad.rpc.getlabelsbip329(0, 100)["labels"]
     assert len(bip329_labels) == 15
 
     def label_found(name, labels):
@@ -1259,13 +1245,13 @@ def test_labels_bip329(lianad, bitcoind):
         assert label_found(f"coin{i}", bip329_labels)
 
     # There is no conflict between batches
-    batch1 = lianad.rpc.getlabelsbip329(0,5)["labels"]
+    batch1 = lianad.rpc.getlabelsbip329(0, 5)["labels"]
     assert len(batch1) == 5
 
-    batch2 = lianad.rpc.getlabelsbip329(5,5)["labels"]
+    batch2 = lianad.rpc.getlabelsbip329(5, 5)["labels"]
     assert len(batch2) == 5
 
-    batch3 = lianad.rpc.getlabelsbip329(10,5)["labels"]
+    batch3 = lianad.rpc.getlabelsbip329(10, 5)["labels"]
     assert len(batch3) == 5
 
     for label in batch1:
