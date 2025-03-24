@@ -152,29 +152,35 @@ def test_update_derivation_indexes(lianad):
 def test_getaddress(lianad):
     res = lianad.rpc.getnewaddress()
     assert "address" in res
+    # The first new wallet address has index 1
+    assert res["derivation_index"] == 1
     # We'll get a new one at every call
     assert res["address"] != lianad.rpc.getnewaddress()["address"]
     # new address has derivation_index higher than the previous one
     assert lianad.rpc.getnewaddress()["derivation_index"] == res["derivation_index"] + 2
     info = lianad.rpc.getinfo()
-    assert info["receive_index"] == res["derivation_index"] + 3
+    assert info["receive_index"] == res["derivation_index"] + 2  # 3 == 1 + 2
     assert info["change_index"] == 0
 
 
 def test_listaddresses(lianad):
-    list = lianad.rpc.listaddresses(2, 5)
+    list1 = lianad.rpc.listaddresses(2, 5)
     list2 = lianad.rpc.listaddresses(start_index=2, count=5)
-    assert list == list2
-    assert "addresses" in list
-    addr = list["addresses"]
+    assert list1 == list2
+    assert "addresses" in list1
+    addr = list1["addresses"]
     assert addr[0]["index"] == 2
     assert addr[-1]["index"] == 6
 
-    list3 = lianad.rpc.listaddresses()  # start_index = 0, receive_index = 0
+    list3 = (
+        lianad.rpc.listaddresses()
+    )  # start_index = 0, receive_index = 0 (returns 1 "used" address for index 0)
     _ = lianad.rpc.getnewaddress()  # start_index = 0, receive_index = 1
     _ = lianad.rpc.getnewaddress()  # start_index = 0, receive_index = 2
+    # list4 returns all indexes from 0 up to last used.
+    # The first new address has index 1, so returned indexes are 0, 1, 2:
     list4 = lianad.rpc.listaddresses()
-    assert len(list4["addresses"]) == len(list3["addresses"]) + 2 == 2
+    assert len(list4["addresses"]) == len(list3["addresses"]) + 2 == 3
     list5 = lianad.rpc.listaddresses(0)
     assert list4 == list5
 
@@ -534,7 +540,13 @@ def test_create_spend(lianad, bitcoind):
     assert len(spend_psbt.o) == 4
     assert len(spend_psbt.tx.vout) == 4
 
-    assert lianad.rpc.getinfo()["change_index"] == 15
+    # 15 new receive addresses have been generated (starting at index 1),
+    # so last used value is 15:
+    assert lianad.rpc.getinfo()["receive_index"] == 15
+    # For each received coin, the change index has also been updated by the poller
+    # (see https://github.com/wizardsardine/liana/issues/1333), so is also 15.
+    # Then `createspend` will use the next index for change and update the DB value accordingly:
+    assert lianad.rpc.getinfo()["change_index"] == 16
 
     # The transaction must contain the spent transaction for each input for P2WSH. But not for Taproot.
     # We don't make assumptions about the ordering of PSBT inputs.

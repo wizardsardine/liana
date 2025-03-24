@@ -30,9 +30,9 @@ use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1, Address, Network, 
 pub struct Wallet {
     /// Timestamp at wallet creation time.
     pub timestamp: u32,
-    /// Derivation index for the next receiving address.
+    /// Derivation index for the last used/revealed receiving address.
     pub receive_index: bip32::ChildNumber,
-    /// Derivation index for the next change address.
+    /// Derivation index for the last used/revealed change address.
     pub change_index: bip32::ChildNumber,
     /// Timestamp to start rescanning from, if any.
     pub rescan_timestamp: Option<u32>,
@@ -73,20 +73,20 @@ pub trait DatabaseConnection {
     /// Update our best chain seen.
     fn update_tip(&mut self, tip: &BlockChainTip);
 
-    /// Get the derivation index for the next receiving address
+    /// Get the derivation index for the last used/revealed receiving address
     fn receive_index(&mut self) -> bip32::ChildNumber;
 
-    /// Set the derivation index for the next receiving address
+    /// Set the derivation index for the last used/revealed receiving address
     fn set_receive_index(
         &mut self,
         index: bip32::ChildNumber,
         secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     );
 
-    /// Get the derivation index for the next change address
+    /// Get the derivation index for the last used/revealed change address
     fn change_index(&mut self) -> bip32::ChildNumber;
 
-    /// Set the derivation index for the next change address
+    /// Set the derivation index for the last used/revealed change address
     fn set_change_index(
         &mut self,
         index: bip32::ChildNumber,
