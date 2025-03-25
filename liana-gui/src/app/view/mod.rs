@@ -140,7 +140,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                 Column::new()
                     .push(
                         Container::new(
-                            liana_grey_logo()
+                            liana_green_logo()
                                 .height(Length::Fixed(120.0))
                                 .width(Length::Fixed(60.0)),
                         )

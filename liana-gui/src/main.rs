@@ -18,7 +18,11 @@ extern crate serde;
 extern crate serde_json;
 
 use liana::miniscript::bitcoin;
-use liana_ui::{component::text, font, image, theme, widget::Element};
+use liana_ui::{
+    component::{matrix::Matrix, text},
+    font, image, theme,
+    widget::Element,
+};
 use lianad::config::Config as DaemonConfig;
 
 use liana_gui::{
@@ -96,6 +100,7 @@ Options:
 pub struct GUI {
     state: State,
     logger: Logger,
+    matrix: Matrix,
     // if set up, it overrides the level filter of the logger.
     log_level: Option<LevelFilter>,
 }
@@ -116,6 +121,7 @@ pub enum Key {
 #[derive(Debug)]
 pub enum Message {
     CtrlC,
+    MatrixTick,
     FontLoaded(Result<(), iced::font::Error>),
     Launch(Box<launcher::Message>),
     Install(Box<installer::Message>),
@@ -170,6 +176,7 @@ impl GUI {
         };
         (
             Self {
+                matrix: Matrix::default(),
                 state,
                 logger,
                 log_level,
@@ -180,6 +187,10 @@ impl GUI {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match (&mut self.state, message) {
+            (_, Message::MatrixTick) => {
+                self.matrix.tick();
+                Task::none()
+            }
             (_, Message::CtrlC)
             | (_, Message::Event(iced::Event::Window(iced::window::Event::CloseRequested))) => {
                 match &mut self.state {
@@ -427,6 +438,7 @@ impl GUI {
                 State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
                 State::Login(_) => Subscription::none(),
             },
+            iced::time::every(std::time::Duration::from_millis(50)).map(|_| Message::MatrixTick),
             iced::event::listen_with(|event, status, _| match (&event, status) {
                 (
                     Event::Keyboard(keyboard::Event::KeyPressed {
@@ -446,13 +458,19 @@ impl GUI {
     }
 
     fn view(&self) -> Element<Message> {
-        match &self.state {
-            State::Installer(v) => v.view().map(|msg| Message::Install(Box::new(msg))),
-            State::App(v) => v.view().map(|msg| Message::Run(Box::new(msg))),
-            State::Launcher(v) => v.view().map(|msg| Message::Launch(Box::new(msg))),
-            State::Loader(v) => v.view().map(|msg| Message::Load(Box::new(msg))),
-            State::Login(v) => v.view().map(|msg| Message::Login(Box::new(msg))),
-        }
+        iced::widget::stack!(
+            iced::widget::canvas(&self.matrix)
+                .width(iced::Fill)
+                .height(iced::Fill),
+            match &self.state {
+                State::Installer(v) => v.view().map(|msg| Message::Install(Box::new(msg))),
+                State::App(v) => v.view().map(|msg| Message::Run(Box::new(msg))),
+                State::Launcher(v) => v.view().map(|msg| Message::Launch(Box::new(msg))),
+                State::Loader(v) => v.view().map(|msg| Message::Load(Box::new(msg))),
+                State::Login(v) => v.view().map(|msg| Message::Login(Box::new(msg))),
+            },
+        )
+        .into()
     }
 
     fn scale_factor(&self) -> f64 {

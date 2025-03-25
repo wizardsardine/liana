@@ -87,8 +87,8 @@ pub fn home_view<'a>(
                             amount_with_size_and_colors(
                                 balance,
                                 H1_SIZE,
-                                color::GREY_4,
-                                Some(color::GREY_2),
+                                color::GREEN,
+                                Some(color::GREEN),
                             ),
                         ],
                     ))

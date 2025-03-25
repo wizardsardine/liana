@@ -6,6 +6,7 @@ pub mod collapse;
 pub mod event;
 pub mod form;
 pub mod hw;
+pub mod matrix;
 pub mod modal;
 pub mod notification;
 pub mod spinner;

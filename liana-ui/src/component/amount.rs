@@ -10,7 +10,7 @@ pub fn amount<'a, T: 'a>(a: &Amount) -> Row<'a, T> {
 
 /// Amount with default colors.
 pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
-    amount_with_size_and_colors(a, size, color::GREY_3, None)
+    amount_with_size_and_colors(a, size, color::GREEN, None)
 }
 
 /// Amount with the given size and colors.
@@ -121,8 +121,8 @@ fn render_unconfirmed_amount<'a, T: 'a>(amount: String, size: u16) -> Row<'a, T>
     let spacing = if size > P1_SIZE { 10 } else { 5 };
 
     Row::with_children(vec![
-        text(amount).size(size).color(color::GREY_3).into(),
-        text("BTC").size(size).color(color::GREY_3).into(),
+        text(amount).size(size).color(color::GREEN).into(),
+        text("BTC").size(size).color(color::GREEN).into(),
     ])
     .spacing(spacing)
     .align_y(iced::Alignment::Center)

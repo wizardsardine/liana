@@ -166,7 +166,7 @@ impl Launcher {
                     Row::new()
                         .spacing(20)
                         .push(
-                            Container::new(image::liana_brand_grey().width(Length::Fixed(200.0)))
+                            Container::new(image::liana_brand_green().width(Length::Fixed(200.0)))
                                 .width(Length::Fill),
                         )
                         .push(
@@ -267,6 +267,7 @@ impl Launcher {
                                                         .align_x(Alignment::Center)
                                                         .push(
                                                             image::create_new_wallet_icon()
+                                                                .style(theme::svg::green)
                                                                 .width(Length::Fixed(100.0)),
                                                         )
                                                         .push(
@@ -291,6 +292,7 @@ impl Launcher {
                                                         .align_x(Alignment::Center)
                                                         .push(
                                                             image::restore_wallet_icon()
+                                                                .style(theme::svg::green)
                                                                 .width(Length::Fixed(100.0)),
                                                         )
                                                         .push(

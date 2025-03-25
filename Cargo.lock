@@ -3032,6 +3032,7 @@ dependencies = [
  "iced",
  "iced_core",
  "iced_runtime",
+ "rand",
  "unicode-segmentation",
 ]
 

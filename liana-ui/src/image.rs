@@ -4,6 +4,8 @@ use iced::{widget::svg::Handle, window::icon};
 const LIANA_APP_ICON: &[u8] = include_bytes!("../static/logos/liana-app-icon.png");
 const LIANA_LOGO_GREY: &[u8] = include_bytes!("../static/logos/LIANA_SYMBOL_Gray.svg");
 const LIANA_BRAND_GREY: &[u8] = include_bytes!("../static/logos/LIANA_BRAND_Gray.svg");
+const LIANA_LOGO_GREEN: &[u8] = include_bytes!("../static/logos/LIANA_SYMBOL_Green.svg");
+const LIANA_BRAND_GREEN: &[u8] = include_bytes!("../static/logos/LIANA_BRAND_Green.svg");
 const WIZARDSARDINE_LETTERING: &[u8] = include_bytes!("../static/logos/logo-wizardsardine.svg");
 
 pub fn liana_app_icon() -> icon::Icon {
@@ -17,6 +19,16 @@ pub fn liana_grey_logo() -> Svg<'static> {
 
 pub fn liana_brand_grey() -> Svg<'static> {
     let h = Handle::from_memory(LIANA_BRAND_GREY.to_vec());
+    Svg::new(h)
+}
+
+pub fn liana_green_logo() -> Svg<'static> {
+    let h = Handle::from_memory(LIANA_LOGO_GREEN.to_vec());
+    Svg::new(h)
+}
+
+pub fn liana_brand_green() -> Svg<'static> {
+    let h = Handle::from_memory(LIANA_BRAND_GREEN.to_vec());
     Svg::new(h)
 }
 

@@ -1,5 +1,7 @@
 use iced::widget::svg::{Catalog, Status, Style, StyleFn};
 
+use crate::color;
+
 use super::Theme;
 
 impl Catalog for Theme {
@@ -16,4 +18,10 @@ impl Catalog for Theme {
 
 pub fn default(_theme: &Theme, _status: Status) -> Style {
     Style { color: None }
+}
+
+pub fn green(_theme: &Theme, _status: Status) -> Style {
+    Style {
+        color: Some(color::GREEN),
+    }
 }

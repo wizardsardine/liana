@@ -33,7 +33,7 @@ pub fn spend<T>() -> Container<'static, T> {
 
 pub fn coin<T>() -> Container<'static, T> {
     Container::new(
-        image::liana_grey_logo()
+        image::liana_green_logo()
             .height(Length::Fixed(25.0))
             .width(Length::Fixed(25.0)),
     )

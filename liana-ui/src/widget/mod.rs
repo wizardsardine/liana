@@ -20,3 +20,4 @@ pub type PickList<'a, T, L, V, Message> =
     iced::widget::PickList<'a, T, L, V, Message, Theme, Renderer>;
 pub type Scrollable<'a, Message> = iced::widget::Scrollable<'a, Message, Theme, Renderer>;
 pub type Svg<'a> = iced::widget::Svg<'a, Theme>;
+pub type Canvas<Message> = iced::widget::Canvas<Message, Theme>;
