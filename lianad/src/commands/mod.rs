@@ -257,41 +257,39 @@ impl DaemonControl {
     }
 
     // Get the change address for the next derivation index.
+    // The spend may not have a change output, so we don't update the DB value yet.
     fn next_change_addr(&self, db_conn: &mut Box<dyn DatabaseConnection>) -> SpendOutputAddress {
         let index = db_conn.change_index();
+        let next_index = index
+            .increment()
+            .expect("Must not get into hardened territory");
         let desc = self
             .config
             .main_descriptor
             .change_descriptor()
-            .derive(index, &self.secp);
+            .derive(next_index, &self.secp);
         let addr = desc.address(self.config.bitcoin_config.network);
         SpendOutputAddress {
             addr,
             info: Some(AddrInfo {
-                index,
+                index: next_index,
                 is_change: true,
             }),
         }
     }
 
-    // If we detect the given address as ours, and it has a higher derivation index than our next
-    // derivation index, update our next derivation index to the one after the address'.
-    fn maybe_increase_next_deriv_index(
+    // If we detect the given address as ours, and it has a higher derivation index than our last
+    // derivation index, update our last derivation index to the given value.
+    fn maybe_increase_last_deriv_index(
         &self,
         db_conn: &mut Box<dyn DatabaseConnection>,
         addr_info: &Option<AddrInfo>,
     ) {
         if let Some(AddrInfo { index, is_change }) = addr_info {
-            if *is_change && db_conn.change_index() <= *index {
-                let next_index = index
-                    .increment()
-                    .expect("Must not get into hardened territory");
-                db_conn.set_change_index(next_index, &self.secp);
-            } else if !is_change && db_conn.receive_index() <= *index {
-                let next_index = index
-                    .increment()
-                    .expect("Must not get into hardened territory");
-                db_conn.set_receive_index(next_index, &self.secp);
+            if *is_change && db_conn.change_index() < *index {
+                db_conn.set_change_index(*index, &self.secp);
+            } else if !is_change && db_conn.receive_index() < *index {
+                db_conn.set_receive_index(*index, &self.secp);
             }
         }
     }
@@ -352,9 +350,9 @@ impl DaemonControl {
             .config
             .main_descriptor
             .receive_descriptor()
-            .derive(index, &self.secp)
+            .derive(new_index, &self.secp)
             .address(self.config.bitcoin_config.network);
-        GetAddressResult::new(address, index)
+        GetAddressResult::new(address, new_index)
     }
 
     /// Update derivation indexes
@@ -435,7 +433,11 @@ impl DaemonControl {
                 .checked_add(c)
                 .ok_or(CommandError::InvalidDerivationIndex)?
         } else {
-            receive_index.max(change_index)
+            // `end_index` will not be included so add 1 in order to include the last used index.
+            receive_index
+                .max(change_index)
+                .checked_add(1)
+                .ok_or(CommandError::InvalidDerivationIndex)?
         };
 
         // Derive all receive and change addresses for the queried range.
@@ -667,10 +669,10 @@ impl DaemonControl {
             }
         };
         for (addr, _) in destinations_checked {
-            self.maybe_increase_next_deriv_index(&mut db_conn, &addr.info);
+            self.maybe_increase_last_deriv_index(&mut db_conn, &addr.info);
         }
         if has_change {
-            self.maybe_increase_next_deriv_index(&mut db_conn, &change_info);
+            self.maybe_increase_last_deriv_index(&mut db_conn, &change_info);
         }
 
         Ok(CreateSpendResult::Success {
@@ -1052,10 +1054,10 @@ impl DaemonControl {
                     // In case of success, make sure to update our next derivation index if any address
                     // used in the transaction outputs was from the future.
                     for (addr, _) in destinations {
-                        self.maybe_increase_next_deriv_index(&mut db_conn, &addr.info);
+                        self.maybe_increase_last_deriv_index(&mut db_conn, &addr.info);
                     }
                     if has_change {
-                        self.maybe_increase_next_deriv_index(&mut db_conn, &change_address.info);
+                        self.maybe_increase_last_deriv_index(&mut db_conn, &change_address.info);
                     }
 
                     return Ok(CreateSpendResult::Success {
@@ -1204,7 +1206,7 @@ impl DaemonControl {
             locktime,
         )?;
         if has_change {
-            self.maybe_increase_next_deriv_index(&mut db_conn, &sweep_addr_info);
+            self.maybe_increase_last_deriv_index(&mut db_conn, &sweep_addr_info);
         }
 
         Ok(CreateRecoveryResult { psbt })
@@ -1397,12 +1399,17 @@ mod tests {
         let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
 
         let control = &ms.control();
-        // We can get an address
+        // We can get an address (it will have index 1)
         let addr = control.get_new_address().address;
+        // $ bitcoin-cli deriveaddresses "wsh(or_d(pk([aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/0/*),and_v(v:pkh([aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/0/*),older(10000))))#wx6v3mks" 1
+        // [
+        // "bc1q9ksrc647hx8zp2cewl8p5f487dgux3777yees8rjcx46t4daqzzqt7yga8",
+        // "bc1qm06ceyghltr8v5cmeckh6cquhy9nks626pahapc04xd98kwf478qwmhqew"
+        // ]
         assert_eq!(
             addr,
             bitcoin::Address::from_str(
-                "bc1q9ksrc647hx8zp2cewl8p5f487dgux3777yees8rjcx46t4daqzzqt7yga8"
+                "bc1qm06ceyghltr8v5cmeckh6cquhy9nks626pahapc04xd98kwf478qwmhqew"
             )
             .unwrap()
             .assume_checked()
@@ -1426,39 +1433,38 @@ mod tests {
         assert_eq!(list.addresses.last().unwrap().index, 6);
 
         let addr0 = control.get_new_address().address;
-        let addr1 = control.get_new_address().address;
-        let _addr2 = control.get_new_address().address;
-        let addr3 = control.get_new_address().address;
+        let _addr1 = control.get_new_address().address;
+        let addr2 = control.get_new_address().address;
+        let _addr3 = control.get_new_address().address;
         let addr4 = control.get_new_address().address;
 
         let list = control.list_addresses(Some(0), None).unwrap();
 
         assert_eq!(list.addresses[0].index, 0);
-        assert_eq!(list.addresses[0].receive, addr0);
-        assert_eq!(list.addresses.last().unwrap().index, 4);
+        assert_eq!(list.addresses[1].receive, addr0); // first address has index 1
+        assert_eq!(list.addresses.last().unwrap().index, 5);
         assert_eq!(list.addresses.last().unwrap().receive, addr4);
 
         let list = control.list_addresses(None, None).unwrap();
 
         assert_eq!(list.addresses[0].index, 0);
-        assert_eq!(list.addresses[0].receive, addr0);
-        assert_eq!(list.addresses.last().unwrap().index, 4);
+        assert_eq!(list.addresses[1].index, 1);
+        assert_eq!(list.addresses[1].receive, addr0);
+        assert_eq!(list.addresses.last().unwrap().index, 5);
         assert_eq!(list.addresses.last().unwrap().receive, addr4);
 
         let list = control.list_addresses(Some(1), Some(3)).unwrap();
 
         assert_eq!(list.addresses[0].index, 1);
-        assert_eq!(list.addresses[0].receive, addr1);
+        assert_eq!(list.addresses[0].receive, addr0);
         assert_eq!(list.addresses.last().unwrap().index, 3);
-        assert_eq!(list.addresses.last().unwrap().receive, addr3);
+        assert_eq!(list.addresses.last().unwrap().receive, addr2);
 
-        let addr5 = control.get_new_address().address;
         let list = control.list_addresses(Some(5), None).unwrap();
 
+        assert_eq!(list.addresses.len(), 1);
         assert_eq!(list.addresses[0].index, 5);
-        assert_eq!(list.addresses[0].receive, addr5);
-        assert_eq!(list.addresses.last().unwrap().index, 5);
-        assert_eq!(list.addresses.last().unwrap().receive, addr5);
+        assert_eq!(list.addresses[0].receive, addr4);
 
         // We can get no address for the last unhardened index.
         let max_unhardened_index = 2u32.pow(31) - 1;

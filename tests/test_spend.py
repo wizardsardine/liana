@@ -231,9 +231,20 @@ def test_send_to_self(lianad, bitcoind):
         lianad.rpc.getnewaddress()["address"]: 0.04,
         lianad.rpc.getnewaddress()["address"]: 0.05,
     }
+    info = lianad.rpc.getinfo()
+    # We've generated 3 receive addresses, starting at index 1, so last used is 3.
+    assert info["receive_index"] == 3
+    # No change addresses used, so last index is 0.
+    assert info["change_index"] == 0
     deposit_txid = bitcoind.rpc.sendmany("", destinations)
     bitcoind.generate_block(1, wait_for_mempool=deposit_txid)
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 3)
+
+    info = lianad.rpc.getinfo()
+    assert info["receive_index"] == 3
+    # Change index has been updated by poller, even though none used
+    # (see https://github.com/wizardsardine/liana/issues/1333):
+    assert info["change_index"] == 3
 
     # Then create a send-to-self transaction (by not providing any destination) that
     # sweeps them all.
@@ -242,6 +253,12 @@ def test_send_to_self(lianad, bitcoind):
     res = lianad.rpc.createspend({}, outpoints, specified_feerate)
     spend_psbt = PSBT.from_base64(res["psbt"])
     assert len(spend_psbt.o) == len(spend_psbt.tx.vout) == 1
+
+    info = lianad.rpc.getinfo()
+    # Send to self didn't use any receive addresses...
+    assert info["receive_index"] == 3
+    # ... but it did use a new change address:
+    assert info["change_index"] == 4
 
     # Note they may ask for an impossible send-to-self. In this case we'll report missing amount.
     huge_feerate = 50_000 if USE_TAPROOT else 40_500
@@ -267,16 +284,19 @@ def test_send_to_self(lianad, bitcoind):
     )
     wait_for(lambda: len(list(unspent_coins())) == 1)
 
-    # We've used 3 receive addresses and so the DB receive index must be 3.
-    assert len(lianad.rpc.listaddresses()["addresses"]) == 3
+    info = lianad.rpc.getinfo()
+    # The poller has updated the receive index based on the change index
+    # (see https://github.com/wizardsardine/liana/issues/1333):
+    assert info["receive_index"] == 4
+    assert info["change_index"] == 4
     # Create a new spend to the receive address with index 3.
     recv_addr = lianad.rpc.listaddresses(3, 1)["addresses"][0]["receive"]
     res = lianad.rpc.createspend(
         {recv_addr: 11_965_000 if USE_TAPROOT else 11_955_000}, [], 2
     )
     assert "psbt" in res
-    # Max(receive_index, change_index) is now 4:
-    assert len(lianad.rpc.listaddresses()["addresses"]) == 4
+    # Max(receive_index, change_index) is now 4, so we return addresses 0, 1, 2, 3, 4:
+    assert len(lianad.rpc.listaddresses()["addresses"]) == 5
     # But the spend has no change:
     psbt = PSBT.from_base64(res["psbt"])
     assert len(psbt.o) == 1
