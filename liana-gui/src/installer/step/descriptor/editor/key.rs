@@ -459,6 +459,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                             hw.fingerprint() == chosen_signer,
                             self.processing,
                             hw.fingerprint() == chosen_signer,
+                            None,
                             self.device_must_support_tapminiscript,
                         ))
                     }

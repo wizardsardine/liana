@@ -584,7 +584,7 @@ pub fn share_xpubs<'a>(
 pub fn register_descriptor<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
-    descriptor: String,
+    descriptor: &'a LianaDescriptor,
     hws: &'a [HardwareWallet],
     registered: &HashSet<bitcoin::bip32::Fingerprint>,
     error: Option<&Error>,
@@ -593,8 +593,9 @@ pub fn register_descriptor<'a>(
     done: bool,
     created_desc: bool,
 ) -> Element<'a, Message> {
+    let descriptor_str = descriptor.to_string();
     let displayed_descriptor =
-        if let Ok((template, keys)) = extract_keys_and_template::<String>(&descriptor) {
+        if let Ok((template, keys)) = extract_keys_and_template::<String>(&descriptor_str) {
             let mut col = Column::new()
                 .push(
                     card::simple(
@@ -651,7 +652,7 @@ pub fn register_descriptor<'a>(
                     .push(
                         scrollable(
                             Column::new()
-                                .push(text(descriptor.to_owned()).small())
+                                .push(text(descriptor_str.to_owned()).small())
                                 .push(Space::with_height(Length::Fixed(5.0))),
                         )
                         .direction(scrollable::Direction::Horizontal(
@@ -661,7 +662,7 @@ pub fn register_descriptor<'a>(
                     .push(
                         Row::new().push(Column::new().width(Length::Fill)).push(
                             button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                .on_press(Message::Clibpboard(descriptor)),
+                                .on_press(Message::Clibpboard(descriptor_str)),
                         ),
                     )
                     .spacing(10),
@@ -705,6 +706,7 @@ pub fn register_descriptor<'a>(
                                     hw.fingerprint()
                                         .map(|fg| registered.contains(&fg))
                                         .unwrap_or(false),
+                                    Some(descriptor),
                                     false,
                                 ))
                             }),
@@ -1642,14 +1644,16 @@ pub fn defined_sequence<'a>(
     .into()
 }
 
-pub fn hw_list_view(
+pub fn hw_list_view<'a>(
     i: usize,
-    hw: &HardwareWallet,
+    hw: &'a HardwareWallet,
     chosen: bool,
     processing: bool,
     selected: bool,
+    descriptor: Option<&'a LianaDescriptor>,
     device_must_support_taproot: bool,
-) -> Element<Message> {
+) -> Element<'a, Message> {
+    let mut unrelated = false;
     let mut bttn = Button::new(match hw {
         HardwareWallet::Supported {
             kind,
@@ -1658,9 +1662,15 @@ pub fn hw_list_view(
             alias,
             ..
         } => {
+            let device_in_descriptor = descriptor
+                .map(|d| d.contains_fingerprint(*fingerprint))
+                .unwrap_or(true);
             let not_tapminiscript = device_must_support_taproot
                 && !is_compatible_with_tapminiscript(kind, version.as_ref());
-            if chosen && processing {
+            if !device_in_descriptor {
+                unrelated = true;
+                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fingerprint)
+            } else if chosen && processing {
                 hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             } else if selected {
                 hw::selected_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref(), {
@@ -1709,7 +1719,7 @@ pub fn hw_list_view(
     })
     .style(theme::button::secondary)
     .width(Length::Fill);
-    if !processing && hw.is_supported() {
+    if !processing && hw.is_supported() && !unrelated {
         bttn = bttn.on_press(Message::Select(i));
     }
     bttn.into()
