@@ -12,6 +12,7 @@ pub mod pill;
 pub mod progress_bar;
 pub mod qr_code;
 pub mod radio;
+pub mod rule;
 pub mod scrollable;
 pub mod slider;
 pub mod svg;

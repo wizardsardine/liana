@@ -15,6 +15,7 @@ pub struct Palette {
     pub radio_buttons: RadioButtons,
     pub sliders: Sliders,
     pub progress_bars: ProgressBars,
+    pub rule: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -503,6 +504,7 @@ impl std::default::Default for Palette {
                 border: color::TRANSPARENT.into(),
                 background: color::GREY_6,
             },
+            rule: color::GREY_1,
         }
     }
 }
