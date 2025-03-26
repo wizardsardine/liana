@@ -107,7 +107,8 @@ pub fn psbt_view<'a>(
                             .on_press(Message::Spend(SpendTxMessage::Save)),
                     )
                     .width(Length::Fill)
-            }),
+            })
+            .push(Space::with_height(10)),
     )
 }
 
