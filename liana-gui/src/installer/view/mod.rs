@@ -722,6 +722,7 @@ pub fn register_descriptor<'a>(
             } else {
                 button::secondary(None, "Next").width(Length::Fixed(200.0))
             })
+            .push(Space::with_height(5))
             .spacing(50),
         true,
         if !processing {
