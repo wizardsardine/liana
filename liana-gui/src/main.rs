@@ -369,7 +369,9 @@ impl GUI {
                             },
                             |r| {
                                 let r = r.map_err(loader::Error::RestoreBackup);
-                                Message::Load(Box::new(loader::Message::App(r)))
+                                Message::Load(Box::new(loader::Message::App(
+                                    r, /* restored_from_backup */ true,
+                                )))
                             },
                         )
                     } else {
@@ -380,17 +382,29 @@ impl GUI {
                             daemon,
                             loader.datadir_path.clone(),
                             bitcoind,
+                            false,
                         );
                         self.state = State::App(app);
                         command.map(|msg| Message::Run(Box::new(msg)))
                     }
                 }
-                loader::Message::App(Ok((cache, wallet, config, daemon, datadir, bitcoind))) => {
-                    let (app, command) = App::new(cache, wallet, config, daemon, datadir, bitcoind);
+                loader::Message::App(
+                    Ok((cache, wallet, config, daemon, datadir, bitcoind)),
+                    restored_from_backup,
+                ) => {
+                    let (app, command) = App::new(
+                        cache,
+                        wallet,
+                        config,
+                        daemon,
+                        datadir,
+                        bitcoind,
+                        restored_from_backup,
+                    );
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
                 }
-                loader::Message::App(Err(e)) => {
+                loader::Message::App(Err(e), _) => {
                     tracing::error!("Fail to import backup: {e}");
                     Task::none()
                 }
@@ -506,6 +520,7 @@ pub fn create_app_with_remote_backend(
         Arc::new(remote_backend),
         datadir,
         None,
+        false,
     )
 }
 

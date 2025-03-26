@@ -7,9 +7,16 @@ pub enum Menu {
     Transactions,
     TransactionPreSelected(Txid),
     Settings,
+    SettingsPreSelected(SettingsOption),
     Coins,
     CreateSpendTx,
     Recovery,
     RefreshCoins(Vec<OutPoint>),
     PsbtPreSelected(Txid),
+}
+
+/// Pre-selectable settings options.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsOption {
+    Node,
 }
