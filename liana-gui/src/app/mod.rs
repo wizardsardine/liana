@@ -38,7 +38,7 @@ use wallet::{sync_status, SyncStatus};
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
-    node::bitcoind::Bitcoind,
+    node::{bitcoind::Bitcoind, NodeType},
 };
 
 use self::state::SettingsState;
@@ -63,7 +63,15 @@ impl Panels {
         daemon_backend: DaemonBackend,
         internal_bitcoind: Option<&Bitcoind>,
         config: Arc<Config>,
+        restored_from_backup: bool,
     ) -> Panels {
+        let show_rescan_warning = restored_from_backup
+            && daemon_backend.is_lianad()
+            && daemon_backend
+                .node_type()
+                .map(|nt| nt == NodeType::Bitcoind)
+                // We don't know the node type for external lianad so assume it's bitcoind.
+                .unwrap_or(true);
         Self {
             current: Menu::Home,
             home: Home::new(
@@ -77,6 +85,7 @@ impl Panels {
                     cache.last_poll_at_startup,
                 ),
                 cache.blockheight,
+                show_rescan_warning,
             ),
             coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
@@ -106,7 +115,7 @@ impl Panels {
             Menu::PSBTs => &self.psbts,
             Menu::Transactions => &self.transactions,
             Menu::TransactionPreSelected(_) => &self.transactions,
-            Menu::Settings => &self.settings,
+            Menu::Settings | Menu::SettingsPreSelected(_) => &self.settings,
             Menu::Coins => &self.coins,
             Menu::CreateSpendTx => &self.create_spend,
             Menu::Recovery => &self.recovery,
@@ -122,7 +131,7 @@ impl Panels {
             Menu::PSBTs => &mut self.psbts,
             Menu::Transactions => &mut self.transactions,
             Menu::TransactionPreSelected(_) => &mut self.transactions,
-            Menu::Settings => &mut self.settings,
+            Menu::Settings | Menu::SettingsPreSelected(_) => &mut self.settings,
             Menu::Coins => &mut self.coins,
             Menu::CreateSpendTx => &mut self.create_spend,
             Menu::Recovery => &mut self.recovery,
@@ -150,6 +159,7 @@ impl App {
         daemon: Arc<dyn Daemon + Sync + Send>,
         data_dir: PathBuf,
         internal_bitcoind: Option<Bitcoind>,
+        restored_from_backup: bool,
     ) -> (App, Task<Message>) {
         let config = Arc::new(config);
         let mut panels = Panels::new(
@@ -159,6 +169,7 @@ impl App {
             daemon.backend(),
             internal_bitcoind.as_ref(),
             config.clone(),
+            restored_from_backup,
         );
         let cmd = panels.home.reload(daemon.clone(), wallet.clone());
         (
@@ -204,6 +215,16 @@ impl App {
                     self.panels.current = menu;
                     return Task::none();
                 };
+            }
+            menu::Menu::SettingsPreSelected(setting) => {
+                self.panels.current = menu.clone();
+                return self.panels.current_mut().update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::View(view::Message::Settings(match setting {
+                        &menu::SettingsOption::Node => view::SettingsMessage::EditBitcoindSettings,
+                    })),
+                );
             }
             menu::Menu::RefreshCoins(preselected) => {
                 self.panels.create_spend = CreateSpendPanel::new_self_send(

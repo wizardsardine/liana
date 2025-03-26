@@ -135,6 +135,7 @@ pub struct Home {
     selected_event: Option<(HistoryTransaction, usize)>,
     labels_edited: LabelsEdited,
     warning: Option<Error>,
+    show_rescan_warning: bool,
 }
 
 impl Home {
@@ -143,6 +144,7 @@ impl Home {
         coins: &[Coin],
         sync_status: SyncStatus,
         tip_height: i32,
+        show_rescan_warning: bool,
     ) -> Self {
         let (balance, unconfirmed_balance, expiring_coins, remaining_seq) = coins_summary(
             coins,
@@ -163,6 +165,7 @@ impl Home {
             warning: None,
             is_last_page: false,
             processing: false,
+            show_rescan_warning,
         }
     }
 }
@@ -191,6 +194,7 @@ impl State for Home {
                     self.is_last_page,
                     self.processing,
                     &self.sync_status,
+                    self.show_rescan_warning,
                 ),
             )
         }
@@ -276,6 +280,9 @@ impl State for Home {
                     self.warning = Some(e);
                 }
             },
+            Message::View(view::Message::HideRescanWarning) => {
+                self.show_rescan_warning = false;
+            }
             Message::View(view::Message::SelectPayment(outpoint)) => {
                 return Task::perform(
                     async move {

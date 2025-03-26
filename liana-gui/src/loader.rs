@@ -103,6 +103,7 @@ pub enum Message {
             ),
             Error,
         >,
+        /* restored_from_backup */ bool,
     ),
     Started(StartedResult),
     Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),

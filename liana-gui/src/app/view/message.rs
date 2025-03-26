@@ -24,6 +24,7 @@ pub enum Message {
     CreateRbf(CreateRbfMessage),
     ShowQrCode(usize),
     ImportExport(ImportExportMessage),
+    HideRescanWarning,
 }
 
 impl Close for Message {
