@@ -76,6 +76,21 @@ impl DaemonBackend {
     pub fn is_embedded(&self) -> bool {
         matches!(self, DaemonBackend::EmbeddedLianad(_))
     }
+
+    pub fn is_lianad(&self) -> bool {
+        matches!(
+            self,
+            DaemonBackend::EmbeddedLianad(_) | DaemonBackend::ExternalLianad
+        )
+    }
+
+    pub fn node_type(&self) -> Option<node::NodeType> {
+        if let DaemonBackend::EmbeddedLianad(node_type) = self {
+            *node_type
+        } else {
+            None
+        }
+    }
 }
 
 #[async_trait]

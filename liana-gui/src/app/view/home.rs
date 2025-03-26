@@ -4,14 +4,16 @@ use std::{collections::HashMap, time::Duration, vec};
 use iced::{
     alignment,
     widget::{Container, Row, Space},
-    Alignment, Length,
+    Alignment::{self, Center},
+    Length,
 };
 
 use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
     component::{amount::*, button, card, event, form, spinner, text::*},
-    icon, theme,
+    icon::{self, cross_icon},
+    theme,
     widget::*,
 };
 
@@ -19,12 +21,45 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        menu::Menu,
+        menu::{self, Menu},
         view::{coins, dashboard, label, message::Message},
         wallet::SyncStatus,
     },
     daemon::model::{HistoryTransaction, Payment, PaymentKind, TransactionKind},
 };
+
+const RESCAN_WARNING: &str = "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";
+
+fn rescan_warning<'a>() -> Element<'a, Message> {
+    Container::new(
+        Column::new()
+            .spacing(10)
+            .push(
+                Row::new()
+                    .spacing(5)
+                    .push(icon::warning_icon().style(theme::text::warning))
+                    .push(text(RESCAN_WARNING).style(theme::text::warning))
+                    .align_y(Center),
+            )
+            .push(
+                Row::new()
+                    .spacing(5)
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        button::secondary(None, "Go to rescan").on_press(Message::Menu(
+                            Menu::SettingsPreSelected(menu::SettingsOption::Node),
+                        )),
+                    )
+                    .push(
+                        button::secondary(Some(cross_icon()), "Dismiss")
+                            .on_press(Message::HideRescanWarning),
+                    ),
+            ),
+    )
+    .padding(25)
+    .style(theme::card::border)
+    .into()
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn home_view<'a>(
@@ -36,6 +71,7 @@ pub fn home_view<'a>(
     is_last_page: bool,
     processing: bool,
     sync_status: &SyncStatus,
+    show_rescan_warning: bool,
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
@@ -99,6 +135,7 @@ pub fn home_view<'a>(
                     },
                 ),
         )
+        .push_maybe(show_rescan_warning.then_some(rescan_warning()))
         .push_maybe(if expiring_coins.is_empty() {
             remaining_sequence.map(|sequence| {
                 Container::new(
