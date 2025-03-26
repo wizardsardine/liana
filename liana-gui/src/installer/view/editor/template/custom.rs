@@ -36,12 +36,12 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
             .max_width(800.0)
             .push(Container::new(
                 p1_regular("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.")
-                .color(color::GREY_2)
+                .style(theme::text::secondary)
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(Container::new(
                 p1_regular("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.")
-                .color(color::GREY_2)
+                .style(theme::text::secondary)
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::custom_template_description().width(Length::Fill))

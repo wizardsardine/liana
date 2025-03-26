@@ -1,5 +1,4 @@
 use crate::{
-    color,
     component::{amount, badge, text},
     theme,
     widget::*,
@@ -56,7 +55,7 @@ pub fn confirmed_outgoing_event<T: Clone + 'static>(
                                 .format("%b. %d, %Y - %T")
                                 .to_string()
                         )
-                        .color(color::GREY_3)
+                        .style(theme::text::secondary)
                     )
                 )
                 .spacing(10)
@@ -120,7 +119,7 @@ pub fn confirmed_incoming_event<T: Clone + 'static>(
                                 .format("%b. %d, %Y - %T")
                                 .to_string()
                         )
-                        .color(color::GREY_3)
+                        .style(theme::text::secondary)
                     )
                 )
                 .spacing(10)

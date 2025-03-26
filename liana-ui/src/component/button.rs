@@ -1,16 +1,16 @@
-use crate::{color, theme, widget::*};
+use crate::{theme, widget::*};
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{button, container, row};
 
 use super::text::text;
 
 pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button::Button::new(content_menu(icon.map(|i| i.color(color::GREY_3)), t).padding(10))
+    button::Button::new(content_menu(icon.map(|i| i.style(theme::text::secondary)), t).padding(10))
         .style(theme::button::menu)
 }
 
 pub fn menu_active<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button::Button::new(content_menu(icon.map(|i| i.color(color::GREY_3)), t).padding(10))
+    button::Button::new(content_menu(icon.map(|i| i.style(theme::text::secondary)), t).padding(10))
         .style(theme::button::menu_pressed)
 }
 
