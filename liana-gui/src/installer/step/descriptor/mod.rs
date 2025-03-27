@@ -306,10 +306,11 @@ impl Step for RegisterDescriptor {
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
         let desc = self.descriptor.as_ref().unwrap();
+
         view::register_descriptor(
             progress,
             email,
-            desc.to_string(),
+            desc,
             &hws.list,
             &self.registered,
             self.error.as_ref(),
