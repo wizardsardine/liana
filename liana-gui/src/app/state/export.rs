@@ -69,10 +69,10 @@ impl ExportModal {
                     .map(|(_, checksum)| checksum)
                     .expect("cannot fail")
                     .to_string();
-                format!("liana-{}.descriptor", checksum)
+                format!("liana-{}.txt", checksum)
             }
             ImportExportType::ImportPsbt => "psbt.psbt".into(),
-            ImportExportType::ImportDescriptor => "descriptor.descriptor".into(),
+            ImportExportType::ImportDescriptor => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
             ImportExportType::ExportBackup(_) | ImportExportType::ExportProcessBackup(..) => {
                 format!("liana-backup-{date}.json")
