@@ -261,7 +261,7 @@ pub fn undefined_key<'a>(
 
 fn maybe_key_from_token<'a>(
     path_kind: PathKind,
-    chosen_key_source_kind: Option<&KeySourceKind>,
+    form_key_source_kind: Option<&KeySourceKind>,
     has_chosen_signer: bool,
     form_token: &form::Value<String>,
     form_token_warning: Option<&'a String>,
@@ -271,7 +271,7 @@ fn maybe_key_from_token<'a>(
         None
     } else {
         Some(
-            match (chosen_key_source_kind, has_chosen_signer) {
+            match (form_key_source_kind, has_chosen_signer) {
                 (Some(KeySourceKind::Token(key_kind)), false) => card::simple(
                     Column::new()
                         .spacing(10)
@@ -343,13 +343,13 @@ pub fn edit_key_modal<'a>(
     provider_keys: Vec<Element<'a, Message>>,
     error: Option<&Error>,
     chosen_signer: Option<Fingerprint>,
-    chosen_key_source_kind: Option<&KeySourceKind>,
     hot_signer_fingerprint: &Fingerprint,
     signer_alias: Option<&'a String>,
     form_name: &'a form::Value<String>,
     form_xpub: &form::Value<String>,
     form_token: &form::Value<String>,
     form_token_warning: Option<&'a String>,
+    form_key_source_kind: Option<&KeySourceKind>,
     duplicate_master_fg: bool,
 ) -> Element<'a, Message> {
     let content = Column::new()
@@ -386,7 +386,7 @@ pub fn edit_key_modal<'a>(
                         )
                         .push_maybe(if !path_kind.can_choose_key_source_kind(&KeySourceKind::Manual) {
                             None
-                        } else if chosen_key_source_kind == Some(&KeySourceKind::Manual) && chosen_signer.is_none() {
+                        } else if form_key_source_kind == Some(&KeySourceKind::Manual) {
                                 Some(card::simple(Column::new()
                                     .spacing(10)
                                     .push(
@@ -433,8 +433,8 @@ pub fn edit_key_modal<'a>(
                                 ))
                                 }
                             )
-                            .push_maybe(maybe_key_from_token(path_kind, chosen_key_source_kind, chosen_signer.is_some(), form_token, form_token_warning, services::api::KeyKind::SafetyNet))
-                            .push_maybe(maybe_key_from_token(path_kind, chosen_key_source_kind, chosen_signer.is_some(), form_token, form_token_warning, services::api::KeyKind::Cosigner))
+                            .push_maybe(maybe_key_from_token(path_kind, form_key_source_kind, chosen_signer.is_some(), form_token, form_token_warning, services::api::KeyKind::SafetyNet))
+                            .push_maybe(maybe_key_from_token(path_kind, form_key_source_kind, chosen_signer.is_some(), form_token, form_token_warning, services::api::KeyKind::Cosigner))
                         .width(Length::Fill),
                 )
                 .push_maybe(
