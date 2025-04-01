@@ -23,12 +23,17 @@ in case you lose your access to your funds.
 We changed the default value of the "standard" recovery paths to ~1y, so the safety net can be quickly set with the
 maximum timelock without conflicting with an other recovery path.
 
+Due to `rust-miniscript` compiler changes, for the same keys setup the output descriptor may differ from one generated
+by a v9 Liana. Both descriptors are supported by Liana v9 and v10 versions.
+
 By right-clicking with the mouse on text input, a button "Paste" appears and allows user to paste from the clipboard.
 
 A new backup system for wallet configurations, including descriptors, has been introduced.
 Users can now back up their wallet configurations by downloading a file during the wallet creation process.
 They can also update their backup (for changes in labels, aliases, etc.) by downloading it from the Wallet settings.
 This backup file can be used to restore the wallet or keep it synchronized across different devices.
+
+This backup does not include hot keys (computer generated mnemonics).
 
 A new "Export/Import" section will be available in the settings, consolidating all export and import options.
 This section will include the backup and restore wallet functions, as well as new features like "Export Labels"
@@ -49,6 +54,11 @@ dependency `bdk_coin_select`.
 
 - We fixed some typos and wording.
 - In the installer, the gui allows now deletion of any primary key and prevents deletion of all recovery paths
+- Fixed a bug that could lead to address reuse (both deposit and change) in the case of a wallet with multiple instances
+  (such as a multisig with multiple participants). This situation could arise if a user received a coin at an address
+  revealed by another instance and this address had a higher derivation index than any address already revealed by this user.
+  Such an address would still have been shown to the user as a new deposit address or would have been used as a change address
+  when creating a new spend, depending on the type of address in question. This did not affect Liana-Connect users.
 
 ## 9.0
 
