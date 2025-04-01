@@ -109,18 +109,23 @@ pub fn import_wallet_or_descriptor<'a>(
                         .push(
                             Row::new()
                                 .spacing(5)
+                                .push(Space::with_width(15))
                                 .push(text("Accept invitation for wallet:"))
                                 .push(text(wallet).bold()),
                         )
                         .push(
-                            Row::new().push(Space::with_width(Length::Fill)).push(
-                                button::secondary(None, "Accept")
-                                    .width(Length::Fixed(200.0))
-                                    .on_press(Message::ImportRemoteWallet(
-                                        message::ImportRemoteWallet::AcceptInvitation,
-                                    )),
-                            ),
+                            Row::new()
+                                .push(Space::with_width(Length::Fill))
+                                .push(
+                                    button::secondary(None, "Accept")
+                                        .width(Length::Fixed(200.0))
+                                        .on_press(Message::ImportRemoteWallet(
+                                            message::ImportRemoteWallet::AcceptInvitation,
+                                        )),
+                                )
+                                .push(Space::with_width(Length::Fill)),
                         )
+                        .push(Space::with_width(5))
                         .spacing(20),
                 )
             } else {
