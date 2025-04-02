@@ -1,6 +1,7 @@
 use crate::{color, component::text, icon, image, theme, widget::*};
 use iced::{
-    widget::{column, container, row, tooltip},
+    alignment::Vertical,
+    widget::{column, container, row, tooltip, Space},
     Alignment, Length,
 };
 use std::borrow::Cow;
@@ -129,24 +130,27 @@ pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     version: Option<V>,
     fingerprint: F,
 ) -> Container<'a, T> {
+    let key = column(vec![
+        text::p1_regular(format!("#{}", fingerprint)).into(),
+        Row::new()
+            .spacing(5)
+            .push(text::caption(kind.to_string()))
+            .push_maybe(version.map(|v| text::caption(v.to_string())))
+            .into(),
+    ]);
     container(
-        tooltip::Tooltip::new(
-            container(
-                column(vec![
-                    text::p1_regular(format!("#{}", fingerprint)).into(),
-                    Row::new()
-                        .spacing(5)
-                        .push(text::caption(kind.to_string()))
-                        .push_maybe(version.map(|v| text::caption(v.to_string())))
-                        .into(),
-                ])
-                .width(Length::Fill),
-            )
-            .width(Length::Fill)
-            .padding(10),
-            "This signer does not have a key in this wallet.",
-            tooltip::Position::Bottom,
+        container(
+            Row::new()
+                .push(key)
+                .push(Space::with_width(Length::Fill))
+                .push(text::text(
+                    "This device key is not part of the wallet descriptor.",
+                ))
+                .push(Space::with_width(Length::Fill))
+                .align_y(Vertical::Center),
         )
+        .width(Length::Fill)
+        .padding(10)
         .style(theme::card::simple),
     )
     .width(Length::Fill)

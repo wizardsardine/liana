@@ -1,6 +1,7 @@
 use miniscript::{
     bitcoin::{
-        self, bip32,
+        self,
+        bip32::{self, Fingerprint},
         constants::WITNESS_SCALE_FACTOR,
         psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
         secp256k1,
@@ -208,6 +209,12 @@ impl LianaDescriptor {
                 false
             }
         })
+    }
+
+    /// Whether a key matching this fingerprint is part of this descriptor
+    pub fn contains_fingerprint(&self, fg: Fingerprint) -> bool {
+        self.multi_desc
+            .for_any_key(|k| k.master_fingerprint() == fg)
     }
 
     /// Get the descriptor for receiving addresses.
