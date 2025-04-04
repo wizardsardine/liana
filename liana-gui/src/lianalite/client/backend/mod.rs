@@ -1092,6 +1092,10 @@ impl Daemon for BackendWalletClient {
         Ok(spend_txs)
     }
 
+    async fn store_transactions(&self, _txs: &[Transaction]) -> Result<(), DaemonError> {
+        todo!()
+    }
+
     /// Implemented by LianaLite backend
     async fn update_wallet_metadata(
         &self,

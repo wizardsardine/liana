@@ -10,7 +10,7 @@ use std::{
     str::FromStr,
 };
 
-use miniscript::bitcoin::{self, psbt::Psbt, Txid};
+use miniscript::bitcoin::{self, psbt::Psbt, Transaction, Txid};
 
 fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let destinations = params
@@ -310,6 +310,26 @@ fn list_transactions(control: &DaemonControl, params: Params) -> Result<serde_js
     Ok(serde_json::json!(&control.list_transactions(&txids)))
 }
 
+fn store_transactions(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let txs: Vec<bitcoin::Transaction> = params
+        .get(0, "transactions")
+        .ok_or_else(|| Error::invalid_params("Missing 'transactions' parameter."))?
+        .as_array()
+        .and_then(|arr| {
+            arr.iter()
+                .map(|entry| {
+                    entry.as_str().and_then(|e| {
+                        let tx: Result<Transaction, _> =
+                            bitcoin::consensus::encode::deserialize_hex(e);
+                        tx.ok()
+                    })
+                })
+                .collect()
+        })
+        .ok_or_else(|| Error::invalid_params("Invalid 'transactions' parameter."))?;
+    Ok(serde_json::json!(&control.store_transactions(&txs)))
+}
+
 fn start_rescan(control: &mut DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
     let timestamp: u32 = params
         .get(0, "timestamp")
@@ -491,6 +511,14 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
                 )
             })?;
             list_transactions(control, params)?
+        }
+        "storetransactions" => {
+            let params = req.params.ok_or_else(|| {
+                Error::invalid_params(
+                    "The 'storetransactions' command requires 1 parameter: 'transactions'",
+                )
+            })?;
+            store_transactions(control, params)?
         }
         "startrescan" => {
             let params = req

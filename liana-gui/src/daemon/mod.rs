@@ -11,6 +11,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
+use liana::miniscript::bitcoin::Transaction;
 use liana::miniscript::bitcoin::{
     address, bip32::Fingerprint, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid,
 };
@@ -135,6 +136,7 @@ pub trait Daemon: Debug {
         _end: u32,
         _limit: u64,
     ) -> Result<model::ListTransactionsResult, DaemonError>;
+    async fn store_transactions(&self, txs: &[Transaction]) -> Result<(), DaemonError>;
     async fn create_recovery(
         &self,
         address: Address<address::NetworkUnchecked>,
