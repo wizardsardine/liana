@@ -343,7 +343,7 @@ fn create_recovery(control: &DaemonControl, params: Params) -> Result<serde_json
         })
         .transpose()?;
 
-    let res = control.create_recovery(address, feerate, timelock)?;
+    let res = control.create_recovery(address, &[], feerate, timelock)?;
     Ok(serde_json::json!(&res))
 }
 
