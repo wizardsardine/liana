@@ -244,7 +244,8 @@ fn recovery_paths(wallet: &Wallet, coins: &[Coin], blockheight: i32) -> Vec<Reco
             let (number_of_coins, total_amount) = coins
                 .iter()
                 .filter(|coin| {
-                    coin.spend_info.is_none()
+                    coin.block_height.is_some() // only confirmed coins are included in a recovery transaction
+                        && coin.spend_info.is_none()
                         && remaining_sequence(coin, blockheight as u32, sequence) <= 1
                 })
                 .fold(
