@@ -1384,6 +1384,7 @@ mod tests {
         locktime::absolute,
         Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, Witness,
     };
+    use spend::InsufficientFunds;
     use std::{collections::BTreeMap, str::FromStr};
 
     #[test]
@@ -2656,6 +2657,129 @@ mod tests {
         assert!(txs.contains(&tx1));
         assert!(txs.contains(&tx2));
         assert!(txs.contains(&tx3));
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn create_recovery() {
+        let dummy_tx = bitcoin::Transaction {
+            version: TxVersion::TWO,
+            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
+            input: vec![],
+            output: vec![],
+        };
+        let dummy_op = bitcoin::OutPoint::new(dummy_tx.compute_txid(), 0);
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DummyDatabase::new(), 10);
+        let control = &ms.control();
+        let mut db_conn = control.db().lock().unwrap().connection();
+        db_conn.new_txs(&[dummy_tx]);
+
+        // Arguments sanity checking
+        let dummy_addr =
+            bitcoin::Address::from_str("bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv").unwrap();
+        // Feerate cannot be less than 1.
+        assert_eq!(
+            control.create_recovery(dummy_addr.clone(), 0, None),
+            Err(CommandError::InvalidFeerate(0))
+        );
+        // If we ask to sweep to an address from another network, it will fail.
+        let invalid_addr =
+            bitcoin::Address::from_str("tb1qfufcrdyarcg5eph608c6l8vktrc9re6agu4se2").unwrap();
+        assert!(matches!(
+            control.create_recovery(invalid_addr, 1, None),
+            Err(CommandError::Address(
+                address::error::ParseError::NetworkValidation { .. }
+            ))
+        ));
+
+        // We have no coins to create recovery.
+        assert!(matches!(
+            control.create_recovery(dummy_addr.clone(), 1, None),
+            Err(CommandError::RecoveryNotAvailable),
+        ));
+
+        // Add unconfirmed coin.
+        let dummy_coin = Coin {
+            outpoint: dummy_op,
+            is_immature: false,
+            block_info: None,
+            amount: bitcoin::Amount::from_sat(100_000),
+            derivation_index: bip32::ChildNumber::from(13),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+            is_from_self: false,
+        };
+        db_conn.new_unspent_coins(&[dummy_coin]);
+        // Recovery not available for unconfirmed coins.
+        assert!(matches!(
+            control.create_recovery(dummy_addr.clone(), 1, None),
+            Err(CommandError::RecoveryNotAvailable),
+        ));
+
+        // Confirm coin such that timelock (10) has not expired at next block (101).
+        db_conn.confirm_coins(&[(dummy_op, 92, 100_000)]);
+        assert!(matches!(
+            control.create_recovery(dummy_addr.clone(), 1, None),
+            Err(CommandError::RecoveryNotAvailable),
+        ));
+
+        // If we use a smaller timelock value it works, even though we don't have any such
+        // recovery timelock (see https://github.com/wizardsardine/liana/issues/1089).
+        assert!(control
+            .create_recovery(dummy_addr.clone(), 1, Some(9))
+            .is_ok());
+
+        // Remove coin, re-add and confirm such that recovery available at next block.
+        db_conn.remove_coins(&[dummy_op]);
+        db_conn.new_unspent_coins(&[dummy_coin]);
+        db_conn.confirm_coins(&[(dummy_op, 91, 100_000)]);
+        let res = control.create_recovery(dummy_addr.clone(), 1, None);
+        assert!(res.is_ok());
+        let psbt = res.unwrap().psbt;
+        assert_eq!(psbt.outputs.len(), 1);
+        assert_eq!(psbt.unsigned_tx.output.len(), 1);
+        assert_eq!(
+            psbt.unsigned_tx.output.first().unwrap().script_pubkey,
+            dummy_addr.assume_checked_ref().script_pubkey()
+        );
+        // Amount is coin value minus fee.
+        assert_eq!(
+            psbt.unsigned_tx.output.first().unwrap().value,
+            Amount::from_sat(100_000 - 127)
+        );
+
+        // If we pass a larger timelock, it no longer works:
+        assert!(matches!(
+            control.create_recovery(dummy_addr.clone(), 1, Some(11)),
+            Err(CommandError::RecoveryNotAvailable),
+        ));
+
+        // If the coin is spending, it is no longer recoverable.
+        db_conn.spend_coins(&[(
+            dummy_op,
+            Txid::from_str("84f09bddfe0f036d0390edf655636ad6092c3ab8f09b2bb1503caa393463f241")
+                .unwrap(),
+        )]);
+        assert!(matches!(
+            control.create_recovery(dummy_addr.clone(), 1, None),
+            Err(CommandError::RecoveryNotAvailable),
+        ));
+
+        // Now remove the coin and re-add, but this time with an amount that is too small to create an output.
+        // This will give a coin selection error due to insufficient funds.
+        db_conn.remove_coins(&[dummy_op]);
+        let mut dummy_coin = dummy_coin;
+        dummy_coin.amount = Amount::from_sat(5_000 + 126);
+        db_conn.new_unspent_coins(&[dummy_coin]);
+        db_conn.confirm_coins(&[(dummy_op, 91, 100_000)]);
+        assert_eq!(
+            control.create_recovery(dummy_addr.clone(), 1, None),
+            Err(CommandError::SpendCreation(
+                SpendCreationError::CoinSelection(InsufficientFunds { missing: 1 })
+            )),
+        );
 
         ms.shutdown();
     }

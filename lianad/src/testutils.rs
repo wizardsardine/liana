@@ -558,6 +558,7 @@ impl DummyLiana {
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
         rpc_server: bool,
+        timelock: u16,
     ) -> DummyLiana {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
@@ -574,7 +575,7 @@ impl DummyLiana {
         let heir_key = descriptors::PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*").unwrap());
         let policy = descriptors::LianaPolicy::new_legacy(
             owner_key,
-            [(10_000, heir_key)].iter().cloned().collect(),
+            [(timelock, heir_key)].iter().cloned().collect(),
         )
         .unwrap();
         let desc = descriptors::LianaDescriptor::new(policy);
@@ -597,7 +598,16 @@ impl DummyLiana {
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
     ) -> DummyLiana {
-        Self::_new(bitcoin_interface, database, false)
+        Self::_new(bitcoin_interface, database, false, 10_000)
+    }
+
+    /// Creates a new DummyLiana interface with the specified recovery path timelock.
+    pub fn new_timelock(
+        bitcoin_interface: impl BitcoinInterface + 'static,
+        database: impl DatabaseInterface + 'static,
+        timelock: u16,
+    ) -> DummyLiana {
+        Self::_new(bitcoin_interface, database, false, timelock)
     }
 
     /// Creates a new DummyLiana interface which also spins up an RPC server.
@@ -605,7 +615,7 @@ impl DummyLiana {
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
     ) -> DummyLiana {
-        Self::_new(bitcoin_interface, database, true)
+        Self::_new(bitcoin_interface, database, true, 10_000)
     }
 
     pub fn control(&self) -> &DaemonControl {
