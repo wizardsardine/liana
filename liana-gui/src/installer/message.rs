@@ -56,6 +56,7 @@ pub enum Message {
     AllKeysRedeemed,
     BackupWallet,
     ExportWallet(Result<String, backup::Error>),
+    ExportXpub(String),
     ImportExport(ImportExportMessage),
     ImportBackup,
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
