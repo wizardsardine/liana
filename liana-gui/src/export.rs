@@ -585,6 +585,7 @@ pub async fn import_psbt(sender: &UnboundedSender<Progress>, path: PathBuf) -> R
 
     let mut psbt_str = String::new();
     file.read_to_string(&mut psbt_str)?;
+    psbt_str = psbt_str.trim().to_string();
 
     let psbt = Psbt::from_str(&psbt_str).map_err(|_| Error::ParsePsbt)?;
 
@@ -601,7 +602,9 @@ pub async fn import_descriptor(
 
     let mut descr_str = String::new();
     file.read_to_string(&mut descr_str)?;
-    let descriptor = LianaDescriptor::from_str(&descr_str).map_err(|_| Error::ParseDescriptor)?;
+    let descr_str = descr_str.trim();
+
+    let descriptor = LianaDescriptor::from_str(descr_str).map_err(|_| Error::ParseDescriptor)?;
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Descriptor(descriptor));
@@ -617,6 +620,7 @@ pub async fn import_xpub(
 
     let mut xpub_str = String::new();
     file.read_to_string(&mut xpub_str)?;
+    let xpub_str = xpub_str.trim().to_string();
 
     if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&xpub_str) {
         let valid = if network == Network::Bitcoin {
@@ -667,6 +671,7 @@ pub async fn import_backup(
 
     let mut backup_str = String::new();
     file.read_to_string(&mut backup_str)?;
+    backup_str = backup_str.trim().to_string();
 
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
@@ -971,6 +976,7 @@ pub async fn wallet_from_backup(
 
     let mut backup_str = String::new();
     file.read_to_string(&mut backup_str)?;
+    backup_str = backup_str.trim().to_string();
 
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
