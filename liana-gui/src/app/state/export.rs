@@ -43,6 +43,8 @@ impl ExportModal {
         match self.import_export_type {
             ImportExportType::Transactions => "Export Transactions",
             ImportExportType::ExportPsbt(_) => "Export PSBT",
+            ImportExportType::ExportXpub(_) => "Export Xpub",
+            ImportExportType::ImportXpub(_) => "Import Xpub",
             ImportExportType::ExportBackup(_) => "Export Backup",
             ImportExportType::Descriptor(_) => "Export Descriptor",
             ImportExportType::ExportProcessBackup(..) | ImportExportType::ExportLabels => {
@@ -62,6 +64,7 @@ impl ExportModal {
                 format!("liana-txs-{date}.csv")
             }
             ImportExportType::ExportPsbt(_) => "psbt.psbt".into(),
+            ImportExportType::ExportXpub(_) | ImportExportType::ImportXpub(_) => "liana.pub".into(),
             ImportExportType::Descriptor(descriptor) => {
                 let checksum = descriptor
                     .to_string()
@@ -126,6 +129,14 @@ impl ExportModal {
                         self.state = ImportExportState::Ended;
                     }
                     // TODO: forward PSBT
+                }
+                Progress::Xpub(xpub_str) => {
+                    if matches!(self.import_export_type, ImportExportType::ExportXpub(_)) {
+                        self.state = ImportExportState::Ended;
+                    }
+                    return Task::perform(async {}, move |_| {
+                        ImportExportMessage::Xpub(xpub_str.clone()).into()
+                    });
                 }
                 Progress::Descriptor(_) => {
                     if self.import_export_type == ImportExportType::ImportDescriptor {
@@ -214,6 +225,7 @@ impl ExportModal {
                 }
             }
             ImportExportMessage::UpdateAliases(_) => { /* unexpected */ }
+            ImportExportMessage::Xpub(_) => { /* unexpected */ }
         }
         Task::none()
     }
