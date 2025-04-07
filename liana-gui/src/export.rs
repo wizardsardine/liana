@@ -144,6 +144,7 @@ impl Display for Error {
 pub enum ImportExportType {
     Transactions,
     ExportPsbt(String),
+    ExportXpub(String),
     ExportBackup(String),
     ExportProcessBackup(PathBuf, Network, Arc<Config>, Arc<Wallet>),
     ImportBackup(
@@ -165,6 +166,7 @@ impl ImportExportType {
             | ImportExportType::ExportBackup(_)
             | ImportExportType::Descriptor(_)
             | ImportExportType::ExportProcessBackup(..)
+            | ImportExportType::ExportXpub(_)
             | ImportExportType::ExportLabels => "Export successful!",
             ImportExportType::ImportBackup(_, _)
             | ImportExportType::ImportPsbt
@@ -284,6 +286,7 @@ impl Export {
             ImportExportType::ImportPsbt => import_psbt(&sender, path).await,
             ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
             ImportExportType::ExportBackup(str) => export_string(&sender, path, str).await,
+            ImportExportType::ExportXpub(xpub_str) => export_string(&sender, path, xpub_str).await,
             ImportExportType::ExportProcessBackup(datadir, network, config, wallet) => {
                 app_backup_export(
                     datadir,
@@ -556,10 +559,10 @@ pub async fn export_descriptor(
 pub async fn export_string(
     sender: &UnboundedSender<Progress>,
     path: PathBuf,
-    psbt: String,
+    str: String,
 ) -> Result<(), Error> {
     let mut file = open_file_write(&path).await?;
-    file.write_all(psbt.as_bytes())?;
+    file.write_all(str.as_bytes())?;
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
     Ok(())

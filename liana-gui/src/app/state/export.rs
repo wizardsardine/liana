@@ -43,6 +43,7 @@ impl ExportModal {
         match self.import_export_type {
             ImportExportType::Transactions => "Export Transactions",
             ImportExportType::ExportPsbt(_) => "Export PSBT",
+            ImportExportType::ExportXpub(_) => "Export Xpub",
             ImportExportType::ExportBackup(_) => "Export Backup",
             ImportExportType::Descriptor(_) => "Export Descriptor",
             ImportExportType::ExportProcessBackup(..) | ImportExportType::ExportLabels => {
@@ -62,6 +63,7 @@ impl ExportModal {
                 format!("liana-txs-{date}.csv")
             }
             ImportExportType::ExportPsbt(_) => "psbt.psbt".into(),
+            ImportExportType::ExportXpub(_) => "liana.pub".into(),
             ImportExportType::Descriptor(descriptor) => {
                 let checksum = descriptor
                     .to_string()
