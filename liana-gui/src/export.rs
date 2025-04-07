@@ -15,7 +15,10 @@ use async_hwi::bitbox::api::btc::Fingerprint;
 use chrono::{DateTime, Duration, Utc};
 use liana::{
     descriptors::LianaDescriptor,
-    miniscript::bitcoin::{Amount, Network, Psbt, Txid},
+    miniscript::{
+        bitcoin::{Amount, Network, Psbt, Txid},
+        DescriptorPublicKey,
+    },
 };
 use lianad::{
     bip329::{error::ExportError, Labels},
@@ -80,6 +83,7 @@ pub enum ImportExportMessage {
     Overwrite,
     Ignore,
     UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
+    Xpub(String),
 }
 
 impl From<ImportExportMessage> for view::Message {
@@ -117,6 +121,8 @@ pub enum Error {
     Bip329Export(String),
     BackupImport(String),
     Backup(backup::Error),
+    ParseXpub,
+    XpubNetwork,
 }
 
 impl Display for Error {
@@ -136,6 +142,8 @@ impl Display for Error {
             Error::Bip329Export(e) => write!(f, "Bip329Export: {e}"),
             Error::BackupImport(e) => write!(f, "BackupImport: {e}"),
             Error::Backup(e) => write!(f, "Backup: {e}"),
+            Error::ParseXpub => write!(f, "Fail to parse Xpub from file"),
+            Error::XpubNetwork => write!(f, "Xpub is for another network"),
         }
     }
 }
@@ -155,6 +163,7 @@ pub enum ImportExportType {
     Descriptor(LianaDescriptor),
     ExportLabels,
     ImportPsbt,
+    ImportXpub(Network),
     ImportDescriptor,
 }
 
@@ -170,6 +179,7 @@ impl ImportExportType {
             | ImportExportType::ExportLabels => "Export successful!",
             ImportExportType::ImportBackup(_, _)
             | ImportExportType::ImportPsbt
+            | ImportExportType::ImportXpub(_)
             | ImportExportType::WalletFromBackup
             | ImportExportType::ImportDescriptor => "Import successful",
         }
@@ -231,6 +241,7 @@ pub enum Progress {
     None,
     Psbt(Psbt),
     Descriptor(LianaDescriptor),
+    Xpub(String),
     LabelsConflict(Sender<bool>),
     KeyAliasesConflict(Sender<bool>),
     UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
@@ -284,6 +295,7 @@ impl Export {
             }
             ImportExportType::ExportLabels => export_labels(&sender, daemon, path).await,
             ImportExportType::ImportPsbt => import_psbt(&sender, path).await,
+            ImportExportType::ImportXpub(network) => import_xpub(&sender, path, network).await,
             ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
             ImportExportType::ExportBackup(str) => export_string(&sender, path, str).await,
             ImportExportType::ExportXpub(xpub_str) => export_string(&sender, path, xpub_str).await,
@@ -593,6 +605,35 @@ pub async fn import_descriptor(
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Descriptor(descriptor));
+    Ok(())
+}
+
+pub async fn import_xpub(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    network: Network,
+) -> Result<(), Error> {
+    let mut file = File::open(path)?;
+
+    let mut xpub_str = String::new();
+    file.read_to_string(&mut xpub_str)?;
+
+    if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&xpub_str) {
+        let valid = if network == Network::Bitcoin {
+            key.xkey.network == Network::Bitcoin.into()
+        } else {
+            key.xkey.network == Network::Testnet.into()
+        };
+        if valid {
+            send_progress!(sender, Progress(100.0));
+            send_progress!(sender, Xpub(xpub_str));
+        } else {
+            return Err(Error::XpubNetwork);
+        }
+    } else {
+        return Err(Error::ParseXpub);
+    }
+
     Ok(())
 }
 
