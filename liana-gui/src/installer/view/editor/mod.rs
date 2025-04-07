@@ -352,6 +352,7 @@ pub fn edit_key_modal<'a>(
     form_key_source_kind: Option<&KeySourceKind>,
     duplicate_master_fg: bool,
 ) -> Element<'a, Message> {
+    let xpub_valid = form_xpub.valid && !form_xpub.value.is_empty();
     let content = Column::new()
         .padding(25)
         .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
@@ -392,8 +393,22 @@ pub fn edit_key_modal<'a>(
                                     .push(
                                         Row::new()
                                             .align_y(Alignment::Center)
-                                            .push(p1_regular("Enter an extended public key:").width(Length::Fill))
-                                            .push(image::success_mark_icon().width(Length::Fixed(50.0)))
+                                            .push(p1_regular("Enter/import an extended public key:").width(Length::Fill))
+                                            .push_maybe(if !xpub_valid{
+                                                    Some(
+                                                    button::primary(Some(icon::restore_icon()), "Import")
+                                                    .on_press(
+                                                        Message::DefineDescriptor(
+                                                            message::DefineDescriptor::KeyModal(
+                                                                message::ImportKeyModal::ImportXpub(network),),)
+                                                    ))
+                                                } else { None }
+                                            )
+                                            .push_maybe(
+                                                if xpub_valid {
+                                                    Some(image::success_mark_icon().width(Length::Fixed(50.0)))
+                                                } else {None}
+                                            )
                                     )
                                     .push(
                                         Row::new()
@@ -422,7 +437,7 @@ pub fn edit_key_modal<'a>(
                                             .align_y(Alignment::Center)
                                             .spacing(10)
                                             .push(icon::import_icon())
-                                            .push(p1_regular("Enter an extended public key"))
+                                            .push(p1_regular("Enter/import an extended public key"))
                                         )
                                         .padding(20)
                                         .width(Length::Fill)
