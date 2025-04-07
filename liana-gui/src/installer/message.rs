@@ -180,6 +180,7 @@ pub enum ImportKeyModal {
     TokenEdited(String),
     ConfirmToken,
     SelectKey(usize),
+    ImportXpub(Network),
 }
 
 #[derive(Debug, Clone)]
