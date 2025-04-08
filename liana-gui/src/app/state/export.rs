@@ -155,12 +155,6 @@ impl ExportModal {
                     self.error = Some(e.clone());
                 }
                 Progress::None => {}
-                Progress::Psbt(_) => {
-                    if self.import_export_type == ImportExportType::ImportPsbt {
-                        self.state = ImportExportState::Ended;
-                    }
-                    // TODO: forward PSBT
-                }
                 Progress::Xpub(xpub_str) => {
                     if matches!(self.import_export_type, ImportExportType::ExportXpub(_)) {
                         self.state = ImportExportState::Ended;
@@ -173,7 +167,6 @@ impl ExportModal {
                     if self.import_export_type == ImportExportType::ImportDescriptor {
                         self.state = ImportExportState::Ended;
                     }
-                    // TODO: forward Descriptor
                 }
                 Progress::UpdateAliases(map) => {
                     return Task::perform(async {}, move |_| {

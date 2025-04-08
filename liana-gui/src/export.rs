@@ -239,7 +239,6 @@ pub enum Progress {
     Finished,
     Error(Error),
     None,
-    Psbt(Psbt),
     Descriptor(LianaDescriptor),
     Xpub(String),
     LabelsConflict(Sender<bool>),
@@ -598,7 +597,6 @@ pub async fn import_psbt(
     daemon.update_spend_tx(&psbt).await?;
 
     send_progress!(sender, Progress(100.0));
-    send_progress!(sender, Psbt(psbt));
     Ok(())
 }
 
