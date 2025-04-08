@@ -35,7 +35,7 @@ use crate::{
     hw::{HardwareWallet, HardwareWallets},
 };
 
-pub trait Action {
+pub trait Modal {
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
         Task::none()
     }
@@ -53,16 +53,16 @@ pub trait Action {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message>;
 }
 
-pub enum PsbtAction {
-    Save(SaveAction),
-    Sign(SignAction),
-    Update(UpdateAction),
-    Broadcast(BroadcastAction),
-    Delete(DeleteAction),
+pub enum PsbtModal {
+    Save(SaveModal),
+    Sign(SignModal),
+    Update(UpdateModal),
+    Broadcast(BroadcastModal),
+    Delete(DeleteModal),
 }
 
-impl<'a> AsRef<dyn Action + 'a> for PsbtAction {
-    fn as_ref(&self) -> &(dyn Action + 'a) {
+impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
+    fn as_ref(&self) -> &(dyn Modal + 'a) {
         match &self {
             Self::Save(a) => a,
             Self::Sign(a) => a,
@@ -73,8 +73,8 @@ impl<'a> AsRef<dyn Action + 'a> for PsbtAction {
     }
 }
 
-impl<'a> AsMut<dyn Action + 'a> for PsbtAction {
-    fn as_mut(&mut self) -> &mut (dyn Action + 'a) {
+impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
+    fn as_mut(&mut self) -> &mut (dyn Modal + 'a) {
         match self {
             Self::Save(a) => a,
             Self::Sign(a) => a,
@@ -92,7 +92,7 @@ pub struct PsbtState {
     pub saved: bool,
     pub warning: Option<Error>,
     pub labels_edited: LabelsEdited,
-    pub action: Option<PsbtAction>,
+    pub modal: Option<PsbtModal>,
 }
 
 impl PsbtState {
@@ -102,27 +102,27 @@ impl PsbtState {
             wallet,
             labels_edited: LabelsEdited::default(),
             warning: None,
-            action: None,
+            modal: None,
             tx,
             saved,
         }
     }
 
     pub fn interrupt(&mut self) {
-        self.action = None;
+        self.modal = None;
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        if let Some(action) = &self.action {
-            action.as_ref().subscription()
+        if let Some(modal) = &self.modal {
+            modal.as_ref().subscription()
         } else {
             Subscription::none()
         }
     }
 
     pub fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
-        if let Some(action) = &self.action {
-            action.as_ref().load(daemon)
+        if let Some(modal) = &self.modal {
+            modal.as_ref().load(daemon)
         } else {
             Task::none()
         }
@@ -136,37 +136,37 @@ impl PsbtState {
     ) -> Task<Message> {
         match message {
             Message::View(view::Message::Spend(view::SpendTxMessage::Cancel)) => {
-                if let Some(PsbtAction::Sign(SignAction { display_modal, .. })) = &mut self.action {
+                if let Some(PsbtModal::Sign(SignModal { display_modal, .. })) = &mut self.modal {
                     *display_modal = false;
                     return Task::none();
                 }
 
-                self.action = None;
+                self.modal = None;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
-                self.action = Some(PsbtAction::Delete(DeleteAction::default()));
+                self.modal = Some(PsbtModal::Delete(DeleteModal::default()));
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Sign)) => {
-                if let Some(PsbtAction::Sign(SignAction { display_modal, .. })) = &mut self.action {
+                if let Some(PsbtModal::Sign(SignModal { display_modal, .. })) = &mut self.modal {
                     *display_modal = true;
                     return Task::none();
                 }
 
-                let action = SignAction::new(
+                let modal = SignModal::new(
                     self.tx.signers(),
                     self.wallet.clone(),
                     cache.datadir_path.clone(),
                     cache.network,
                     self.saved,
                 );
-                let cmd = action.load(daemon);
-                self.action = Some(PsbtAction::Sign(action));
+                let cmd = modal.load(daemon);
+                self.modal = Some(PsbtModal::Sign(modal));
                 return cmd;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::EditPsbt)) => {
-                let action = UpdateAction::new(self.wallet.clone(), self.tx.psbt.to_string());
-                let cmd = action.load(daemon);
-                self.action = Some(PsbtAction::Update(action));
+                let modal = UpdateModal::new(self.wallet.clone(), self.tx.psbt.to_string());
+                let cmd = modal.load(daemon);
+                self.modal = Some(PsbtModal::Update(modal));
                 return cmd;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
@@ -188,7 +188,7 @@ impl PsbtState {
                 );
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Save)) => {
-                self.action = Some(PsbtAction::Save(SaveAction::default()));
+                self.modal = Some(PsbtModal::Save(SaveModal::default()));
             }
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
@@ -206,15 +206,13 @@ impl PsbtState {
             }
             Message::Updated(Ok(_)) => {
                 self.saved = true;
-                if let Some(action) = self.action.as_mut() {
-                    return action
-                        .as_mut()
-                        .update(daemon.clone(), message, &mut self.tx);
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
                 }
             }
             Message::BroadcastModal(res) => match res {
                 Ok(conflicting_txids) => {
-                    self.action = Some(PsbtAction::Broadcast(BroadcastAction {
+                    self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
                         conflicting_txids,
                         ..Default::default()
                     }));
@@ -224,10 +222,8 @@ impl PsbtState {
                 }
             },
             _ => {
-                if let Some(action) = self.action.as_mut() {
-                    return action
-                        .as_mut()
-                        .update(daemon.clone(), message, &mut self.tx);
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
                 }
             }
         };
@@ -245,8 +241,8 @@ impl PsbtState {
             cache.network,
             self.warning.as_ref(),
         );
-        if let Some(action) = &self.action {
-            action.as_ref().view(content)
+        if let Some(modal) = &self.modal {
+            modal.as_ref().view(content)
         } else {
             content
         }
@@ -254,12 +250,12 @@ impl PsbtState {
 }
 
 #[derive(Default)]
-pub struct SaveAction {
+pub struct SaveModal {
     saved: bool,
     error: Option<Error>,
 }
 
-impl Action for SaveAction {
+impl Modal for SaveModal {
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -303,14 +299,14 @@ impl Action for SaveAction {
 }
 
 #[derive(Default)]
-pub struct BroadcastAction {
+pub struct BroadcastModal {
     broadcast: bool,
     error: Option<Error>,
     /// IDs of any directly conflicting transactions.
     conflicting_txids: HashSet<Txid>,
 }
 
-impl Action for BroadcastAction {
+impl Modal for BroadcastModal {
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -358,12 +354,12 @@ impl Action for BroadcastAction {
 }
 
 #[derive(Default)]
-pub struct DeleteAction {
+pub struct DeleteModal {
     deleted: bool,
     error: Option<Error>,
 }
 
-impl Action for DeleteAction {
+impl Modal for DeleteModal {
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -403,7 +399,7 @@ impl Action for DeleteAction {
     }
 }
 
-pub struct SignAction {
+pub struct SignModal {
     wallet: Arc<Wallet>,
     hws: HardwareWallets,
     error: Option<Error>,
@@ -413,7 +409,7 @@ pub struct SignAction {
     display_modal: bool,
 }
 
-impl SignAction {
+impl SignModal {
     pub fn new(
         signed: HashSet<Fingerprint>,
         wallet: Arc<Wallet>,
@@ -433,7 +429,7 @@ impl SignAction {
     }
 }
 
-impl Action for SignAction {
+impl Modal for SignModal {
     fn subscription(&self) -> Subscription<Message> {
         self.hws.refresh().map(Message::HardwareWallets)
     }
@@ -637,7 +633,7 @@ async fn sign_psbt(
     Ok(psbt)
 }
 
-pub struct UpdateAction {
+pub struct UpdateModal {
     wallet: Arc<Wallet>,
     psbt: String,
     updated: form::Value<String>,
@@ -646,7 +642,7 @@ pub struct UpdateAction {
     success: bool,
 }
 
-impl UpdateAction {
+impl UpdateModal {
     pub fn new(wallet: Arc<Wallet>, psbt: String) -> Self {
         Self {
             wallet,
@@ -659,7 +655,7 @@ impl UpdateAction {
     }
 }
 
-impl Action for UpdateAction {
+impl Modal for UpdateModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
