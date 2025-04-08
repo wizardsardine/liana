@@ -185,6 +185,7 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError> {
+        // The `outpoints` parameter is omitted, which means all recoverable coins will be used.
         let res: CreateRecoveryResult = self.call(
             "createrecovery",
             Some(vec![json!(address), json!(feerate_vb), json!(sequence)]),

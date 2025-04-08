@@ -406,8 +406,13 @@ Confirmation time is based on the timestamp of blocks.
 
 ### `createrecovery`
 
-Create a transaction that sweeps all coins for which a timelocked recovery path is
-currently available to a provided address with the provided feerate.
+Create a transaction that sweeps coins using a timelocked recovery path to a provided address
+with the provided feerate.
+
+If `outpoints` is empty or missing, then all coins for which the given recovery path is currently
+available will be used. Otherwise, only those specified will be considered. An error will
+be returned if any coins specified by `outpoints` are unknown, already spent or otherwise
+not currently recoverable using the given recovery path.
 
 The `timelock` parameter can be used to specify which recovery path to use. By default,
 we'll use the first recovery path available. If created for a later timelock a recovery
@@ -421,11 +426,13 @@ cover the requested feerate.
 
 #### Request
 
-| Field      | Type              | Description                                                                               |
-| ---------- | ----------------- | ----------------------------------------------------------------------------------------- |
-| `address`  | str               | The Bitcoin address to sweep the coins to.                                                |
-| `feerate`  | integer           | Target feerate for the transaction, in satoshis per virtual byte.                         |
-| `timelock` | int or `null`     | Recovery path to be used, identified by the number of blocks after which it is available. |
+| Field      | Type                   | Description                                                                               |
+| ---------- | ---------------------- | ----------------------------------------------------------------------------------------- |
+| `address`  | str                    | The Bitcoin address to sweep the coins to.                                                |
+| `feerate`  | integer                | Target feerate for the transaction, in satoshis per virtual byte.                         |
+| `timelock` | int or `null`          | Recovery path to be used, identified by the number of blocks after which it is available. |
+| `outpoints`| list of str (optional) | List of the coins to be recovered, as `txid:vout`.                                        |
+
 
 #### Response
 

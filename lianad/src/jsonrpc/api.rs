@@ -342,8 +342,26 @@ fn create_recovery(control: &DaemonControl, params: Params) -> Result<serde_json
                 .ok_or_else(|| Error::invalid_params("Invalid 'timelock' parameter."))
         })
         .transpose()?;
+    let outpoints = params
+        .get(3, "outpoints")
+        .map(|param| {
+            param
+                .as_array()
+                .and_then(|arr| {
+                    arr.iter()
+                        .map(|entry| {
+                            entry
+                                .as_str()
+                                .and_then(|e| bitcoin::OutPoint::from_str(e).ok())
+                        })
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| Error::invalid_params("Invalid 'outpoints' parameter."))
+        })
+        .transpose()?
+        .unwrap_or_default(); // missing is same as empty array
 
-    let res = control.create_recovery(address, &[], feerate, timelock)?;
+    let res = control.create_recovery(address, &outpoints, feerate, timelock)?;
     Ok(serde_json::json!(&res))
 }
 
