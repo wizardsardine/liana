@@ -430,7 +430,7 @@ cover the requested feerate.
 | ---------- | ---------------------- | ----------------------------------------------------------------------------------------- |
 | `address`  | str                    | The Bitcoin address to sweep the coins to.                                                |
 | `feerate`  | integer                | Target feerate for the transaction, in satoshis per virtual byte.                         |
-| `timelock` | int or `null`          | Recovery path to be used, identified by the number of blocks after which it is available. |
+| `timelock` | int (optional)         | Recovery path to be used, identified by the number of blocks after which it is available. |
 | `outpoints`| list of str (optional) | List of the coins to be recovered, as `txid:vout`.                                        |
 
 
