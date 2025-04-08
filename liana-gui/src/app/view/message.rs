@@ -26,6 +26,7 @@ pub enum Message {
     ImportExport(ImportExportMessage),
     HideRescanWarning,
     ExportPsbt,
+    ImportPsbt,
 }
 
 impl Close for Message {
