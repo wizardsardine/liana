@@ -8,7 +8,10 @@ use liana_ui::{component::modal::Modal, widget::Element};
 use tokio::task::JoinHandle;
 
 use crate::{
-    app::view::{export::export_modal, Close},
+    app::{
+        self,
+        view::{export::export_modal, Close},
+    },
     daemon::Daemon,
     export::{self, get_path, ImportExportMessage, ImportExportState, ImportExportType, Progress},
 };
@@ -21,6 +24,34 @@ pub struct ExportModal {
     error: Option<export::Error>,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     import_export_type: ImportExportType,
+}
+
+impl app::state::psbt::Modal for ExportModal {
+    fn subscription(&self) -> Subscription<app::Message> {
+        self.subscription()
+            .map(|s| s.map(|m| app::Message::Export(ImportExportMessage::Progress(m))))
+            .unwrap_or(Subscription::none())
+    }
+
+    fn update(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        message: app::Message,
+        _tx: &mut crate::daemon::model::SpendTx,
+    ) -> Task<app::Message> {
+        if let app::Message::Export(m) = message {
+            self.update(m)
+        } else {
+            Task::none()
+        }
+    }
+
+    fn view<'a>(
+        &'a self,
+        content: Element<'a, app::view::Message>,
+    ) -> Element<'a, app::view::Message> {
+        self.view(content)
+    }
 }
 
 impl ExportModal {
