@@ -123,6 +123,7 @@ pub enum Error {
     Backup(backup::Error),
     ParseXpub,
     XpubNetwork,
+    TxidNotMatch,
 }
 
 impl Display for Error {
@@ -144,6 +145,7 @@ impl Display for Error {
             Error::Backup(e) => write!(f, "Backup: {e}"),
             Error::ParseXpub => write!(f, "Failed to parse Xpub from file"),
             Error::XpubNetwork => write!(f, "Xpub is for another network"),
+            Error::TxidNotMatch => write!(f, "The imported PSBT txid do not match this PSBT"),
         }
     }
 }
@@ -162,7 +164,7 @@ pub enum ImportExportType {
     WalletFromBackup,
     Descriptor(LianaDescriptor),
     ExportLabels,
-    ImportPsbt,
+    ImportPsbt(Option<Txid>),
     ImportXpub(Network),
     ImportDescriptor,
 }
@@ -178,7 +180,7 @@ impl ImportExportType {
             | ImportExportType::ExportXpub(_)
             | ImportExportType::ExportLabels => "Export successful!",
             ImportExportType::ImportBackup(_, _)
-            | ImportExportType::ImportPsbt
+            | ImportExportType::ImportPsbt(_)
             | ImportExportType::ImportXpub(_)
             | ImportExportType::WalletFromBackup
             | ImportExportType::ImportDescriptor => "Import successful",
@@ -294,7 +296,7 @@ impl Export {
                 export_descriptor(&sender, path, descriptor).await
             }
             ImportExportType::ExportLabels => export_labels(&sender, daemon, path).await,
-            ImportExportType::ImportPsbt => import_psbt(&sender, path).await,
+            ImportExportType::ImportPsbt(txid) => import_psbt(daemon, &sender, path, txid).await,
             ImportExportType::ImportXpub(network) => import_xpub(&sender, path, network).await,
             ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
             ImportExportType::ExportBackup(str) => export_string(&sender, path, str).await,
@@ -580,14 +582,29 @@ pub async fn export_string(
     Ok(())
 }
 
-pub async fn import_psbt(sender: &UnboundedSender<Progress>, path: PathBuf) -> Result<(), Error> {
+pub async fn import_psbt(
+    daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    txid: Option<Txid>,
+) -> Result<(), Error> {
     let mut file = File::open(&path)?;
+    let daemon = daemon.ok_or(Error::DaemonMissing)?;
 
     let mut psbt_str = String::new();
     file.read_to_string(&mut psbt_str)?;
     psbt_str = psbt_str.trim().to_string();
 
     let psbt = Psbt::from_str(&psbt_str).map_err(|_| Error::ParsePsbt)?;
+    send_progress!(sender, Progress(50.0));
+
+    if let Some(txid) = txid {
+        if psbt.unsigned_tx.compute_txid() != txid {
+            return Err(Error::TxidNotMatch);
+        }
+    }
+
+    daemon.update_spend_tx(&psbt).await?;
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Psbt(psbt));

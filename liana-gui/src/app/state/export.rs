@@ -81,7 +81,7 @@ impl ExportModal {
             ImportExportType::ExportProcessBackup(..) | ImportExportType::ExportLabels => {
                 "Export Labels"
             }
-            ImportExportType::ImportPsbt => "Import PSBT",
+            ImportExportType::ImportPsbt(_) => "Import PSBT",
             ImportExportType::ImportDescriptor => "Import Descriptor",
             ImportExportType::ImportBackup(..) => "Restore Backup",
             ImportExportType::WalletFromBackup => "Import existing wallet from backup",
@@ -105,7 +105,7 @@ impl ExportModal {
                     .to_string();
                 format!("liana-{}.txt", checksum)
             }
-            ImportExportType::ImportPsbt => "psbt.psbt".into(),
+            ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
             ImportExportType::ExportBackup(_) | ImportExportType::ExportProcessBackup(..) => {
@@ -156,7 +156,7 @@ impl ExportModal {
                 }
                 Progress::None => {}
                 Progress::Psbt(_) => {
-                    if self.import_export_type == ImportExportType::ImportPsbt {
+                    if matches!(self.import_export_type, ImportExportType::ImportPsbt(_)) {
                         self.state = ImportExportState::Ended;
                     }
                     // TODO: forward PSBT
