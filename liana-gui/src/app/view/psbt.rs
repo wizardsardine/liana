@@ -346,10 +346,10 @@ pub fn spend_overview_view<'a>(
                                             )
                                             .push(
                                                 button::secondary(
-                                                    Some(icon::import_icon()),
-                                                    "Update",
+                                                    Some(icon::restore_icon()),
+                                                    "Import",
                                                 )
-                                                .on_press(Message::Spend(SpendTxMessage::EditPsbt)),
+                                                .on_press(Message::ImportPsbt),
                                             ),
                                     )
                                     .align_y(Alignment::Center),

@@ -605,9 +605,9 @@ pub async fn import_psbt(
     }
 
     daemon.update_spend_tx(&psbt).await?;
+    send_progress!(sender, Psbt(psbt));
 
     send_progress!(sender, Progress(100.0));
-    send_progress!(sender, Psbt(psbt));
     Ok(())
 }
 

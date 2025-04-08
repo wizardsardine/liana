@@ -155,12 +155,6 @@ impl ExportModal {
                     self.error = Some(e.clone());
                 }
                 Progress::None => {}
-                Progress::Psbt(_) => {
-                    if matches!(self.import_export_type, ImportExportType::ImportPsbt(_)) {
-                        self.state = ImportExportState::Ended;
-                    }
-                    // TODO: forward PSBT
-                }
                 Progress::Xpub(xpub_str) => {
                     if matches!(self.import_export_type, ImportExportType::ExportXpub(_)) {
                         self.state = ImportExportState::Ended;
@@ -181,6 +175,7 @@ impl ExportModal {
                     });
                 }
                 Progress::WalletFromBackup(_) => {}
+                Progress::Psbt(_) => {}
             },
             ImportExportMessage::TimedOut => {
                 self.stop(ImportExportState::TimedOut);
