@@ -1037,6 +1037,7 @@ def test_create_recovery(lianad, bitcoind):
     wait_for(
         lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
     )
+    first_outpoints = [c["outpoint"] for c in lianad.rpc.listcoins()["coins"]]
 
     # There's nothing to sweep
     with pytest.raises(
@@ -1044,6 +1045,26 @@ def test_create_recovery(lianad, bitcoind):
         match="No coin currently spendable through this timelocked recovery path",
     ):
         lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
+    # Same if we specify timelock:
+    with pytest.raises(
+        RpcError,
+        match="No coin currently spendable through this timelocked recovery path",
+    ):
+        lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 10)
+    # And if we use empty array for outpoints:
+    with pytest.raises(
+        RpcError,
+        match="No coin currently spendable through this timelocked recovery path",
+    ):
+        lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 10, [])
+    # If we specify a coin, the error will be different:
+    with pytest.raises(
+        RpcError,
+        match=f"Coin at '{first_outpoints[0]}' is not recoverable with timelock '10'",
+    ):
+        lianad.rpc.createrecovery(
+            bitcoind.rpc.getnewaddress(), 2, 10, [f"{first_outpoints[0]}"]
+        )
 
     # Receive another coin, it will be one block after the others
     txid = bitcoind.rpc.sendtoaddress(lianad.rpc.getnewaddress()["address"], 0.4)
@@ -1055,8 +1076,16 @@ def test_create_recovery(lianad, bitcoind):
     wait_for(
         lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
     )
-    res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 18)
+    new_outpoint = [
+        c["outpoint"] for c in lianad.rpc.listcoins()["coins"] if txid in c["outpoint"]
+    ][0]
+    reco_address = bitcoind.rpc.getnewaddress()
+    res = lianad.rpc.createrecovery(reco_address, 18)
     reco_psbt = PSBT.from_base64(res["psbt"])
+
+    # Do the same passing all three coins explicitly:
+    res_op = lianad.rpc.createrecovery(reco_address, 18, 10, first_outpoints)
+    reco_psbt_op = PSBT.from_base64(res_op["psbt"])
 
     # Check locktime being set correctly.
     tip_height = bitcoind.rpc.getblockcount()
@@ -1065,8 +1094,34 @@ def test_create_recovery(lianad, bitcoind):
     assert tip_height - 100 <= locktime <= tip_height
 
     assert len(reco_psbt.tx.vin) == 3, "The last coin's timelock hasn't matured yet"
-    assert len(reco_psbt.tx.vout) == 1
+    assert len(reco_psbt.tx.vout) == len(reco_psbt_op.tx.vout) == 1
+    # The inputs are the same for both explicit and implicit outpoints:
+    assert sorted(i.prevout.serialize() for i in reco_psbt.tx.vin) == sorted(
+        i.prevout.serialize() for i in reco_psbt_op.tx.vin
+    )
+    assert reco_psbt.tx.vout[0].nValue == reco_psbt_op.tx.vout[0].nValue
+    assert reco_psbt.tx.vout[0].scriptPubKey == reco_psbt_op.tx.vout[0].scriptPubKey
     assert int(0.5999 * COIN) < int(reco_psbt.tx.vout[0].nValue) < int(0.6 * COIN)
+
+    # Now use only 2 of the 3 coins:
+    res_op_2 = lianad.rpc.createrecovery(
+        bitcoind.rpc.getnewaddress(), 18, 10, first_outpoints[:2]
+    )
+    reco_psbt_op_2 = PSBT.from_base64(res_op_2["psbt"])
+    assert len(reco_psbt_op_2.tx.vin) == 2
+    assert sorted(
+        f"{i.prevout.hash:064x}:{i.prevout.n}" for i in reco_psbt_op_2.tx.vin
+    ) == sorted(first_outpoints[:2])
+
+    # If we try to include the newest coin, an error will be returned:
+    with pytest.raises(
+        RpcError,
+        match=f"Coin at '{new_outpoint}' is not recoverable with timelock '10'",
+    ):
+        lianad.rpc.createrecovery(
+            bitcoind.rpc.getnewaddress(), 2, 10, [first_outpoints[0], new_outpoint]
+        )
+
     txid = sign_and_broadcast(lianad, bitcoind, reco_psbt, recovery=True)
 
     # And by mining one more block we'll be able to sweep the last coin.
