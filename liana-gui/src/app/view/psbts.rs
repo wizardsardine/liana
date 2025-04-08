@@ -68,8 +68,8 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
                 .spacing(10)
                 .push(Container::new(h3("PSBTs")).width(Length::Fill))
                 .push(
-                    button::secondary(Some(icon::import_icon()), "Import")
-                        .on_press(Message::ImportSpend(ImportSpendMessage::Import)),
+                    button::secondary(Some(icon::restore_icon()), "Import")
+                        .on_press(Message::ImportPsbt),
                 )
                 .push(
                     button::secondary(Some(icon::plus_icon()), "New")

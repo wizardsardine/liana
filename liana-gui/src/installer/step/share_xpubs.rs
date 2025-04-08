@@ -9,6 +9,8 @@ use liana::miniscript::bitcoin::{
 use liana_ui::widget::Element;
 
 use crate::{
+    app::state::export::ExportModal,
+    export::{ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
         message::Message,
@@ -70,6 +72,7 @@ pub struct ShareXpubs {
     network: Network,
     hw_xpubs: Vec<HardwareWalletXpubs>,
     xpubs_signer: SignerXpubs,
+    modal: Option<ExportModal>,
 }
 
 impl ShareXpubs {
@@ -78,6 +81,7 @@ impl ShareXpubs {
             network,
             hw_xpubs: Vec::new(),
             xpubs_signer: SignerXpubs::new(signer),
+            modal: None,
         }
     }
 }
@@ -100,6 +104,24 @@ impl Step for ShareXpubs {
                             hw_xpubs.xpubs = vec![xpub.to_string()];
                         }
                     }
+                }
+            }
+            Message::ExportXpub(xpub_str) => {
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(None, ImportExportType::ExportXpub(xpub_str));
+                    let launch = modal.launch(true);
+                    self.modal = Some(modal);
+                    return launch;
+                }
+            }
+            Message::ImportExport(ImportExportMessage::Close) => {
+                if self.modal.is_some() {
+                    self.modal = None;
+                }
+            }
+            Message::ImportExport(msg) => {
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.update(msg);
                 }
             }
             Message::UseHotSigner => {
@@ -150,7 +172,14 @@ impl Step for ShareXpubs {
     }
 
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        let hw = hws.refresh().map(Message::HardwareWallets);
+        if let Some(modal) = self.modal.as_ref() {
+            if let Some(sub) = modal.subscription() {
+                let export = sub.map(|m| Message::ImportExport(ImportExportMessage::Progress(m)));
+                return Subscription::batch(vec![hw, export]);
+            }
+        }
+        hw
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
@@ -166,7 +195,7 @@ impl Step for ShareXpubs {
         _progress: (usize, usize),
         email: Option<&'a str>,
     ) -> Element<Message> {
-        view::share_xpubs(
+        let content = view::share_xpubs(
             email,
             hws.list
                 .iter()
@@ -190,7 +219,13 @@ impl Step for ShareXpubs {
                 })
                 .collect(),
             self.xpubs_signer.view(),
-        )
+        );
+
+        if let Some(modal) = &self.modal {
+            modal.view(content)
+        } else {
+            content
+        }
     }
 }
 

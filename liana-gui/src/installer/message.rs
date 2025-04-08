@@ -56,6 +56,7 @@ pub enum Message {
     AllKeysRedeemed,
     BackupWallet,
     ExportWallet(Result<String, backup::Error>),
+    ExportXpub(String),
     ImportExport(ImportExportMessage),
     ImportBackup,
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
@@ -179,6 +180,7 @@ pub enum ImportKeyModal {
     TokenEdited(String),
     ConfirmToken,
     SelectKey(usize),
+    ImportXpub(Network),
 }
 
 #[derive(Debug, Clone)]

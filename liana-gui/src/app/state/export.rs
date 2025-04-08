@@ -8,7 +8,10 @@ use liana_ui::{component::modal::Modal, widget::Element};
 use tokio::task::JoinHandle;
 
 use crate::{
-    app::view::{export::export_modal, Close},
+    app::{
+        self,
+        view::{export::export_modal, Close},
+    },
     daemon::Daemon,
     export::{self, get_path, ImportExportMessage, ImportExportState, ImportExportType, Progress},
 };
@@ -21,6 +24,34 @@ pub struct ExportModal {
     error: Option<export::Error>,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     import_export_type: ImportExportType,
+}
+
+impl app::state::psbt::Modal for ExportModal {
+    fn subscription(&self) -> Subscription<app::Message> {
+        self.subscription()
+            .map(|s| s.map(|m| app::Message::Export(ImportExportMessage::Progress(m))))
+            .unwrap_or(Subscription::none())
+    }
+
+    fn update(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        message: app::Message,
+        _tx: &mut crate::daemon::model::SpendTx,
+    ) -> Task<app::Message> {
+        if let app::Message::Export(m) = message {
+            self.update(m)
+        } else {
+            Task::none()
+        }
+    }
+
+    fn view<'a>(
+        &'a self,
+        content: Element<'a, app::view::Message>,
+    ) -> Element<'a, app::view::Message> {
+        self.view(content)
+    }
 }
 
 impl ExportModal {
@@ -43,6 +74,8 @@ impl ExportModal {
         match self.import_export_type {
             ImportExportType::Transactions => "Export Transactions",
             ImportExportType::ExportPsbt(_) => "Export PSBT",
+            ImportExportType::ExportXpub(_) => "Export Xpub",
+            ImportExportType::ImportXpub(_) => "Import Xpub",
             ImportExportType::ExportBackup(_) => "Export Backup",
             ImportExportType::Descriptor(_) => "Export Descriptor",
             ImportExportType::ExportProcessBackup(..) | ImportExportType::ExportLabels => {
@@ -62,6 +95,7 @@ impl ExportModal {
                 format!("liana-txs-{date}.csv")
             }
             ImportExportType::ExportPsbt(_) => "psbt.psbt".into(),
+            ImportExportType::ExportXpub(_) | ImportExportType::ImportXpub(_) => "liana.pub".into(),
             ImportExportType::Descriptor(descriptor) => {
                 let checksum = descriptor
                     .to_string()
@@ -121,17 +155,18 @@ impl ExportModal {
                     self.error = Some(e.clone());
                 }
                 Progress::None => {}
-                Progress::Psbt(_) => {
-                    if self.import_export_type == ImportExportType::ImportPsbt {
+                Progress::Xpub(xpub_str) => {
+                    if matches!(self.import_export_type, ImportExportType::ExportXpub(_)) {
                         self.state = ImportExportState::Ended;
                     }
-                    // TODO: forward PSBT
+                    return Task::perform(async {}, move |_| {
+                        ImportExportMessage::Xpub(xpub_str.clone()).into()
+                    });
                 }
                 Progress::Descriptor(_) => {
                     if self.import_export_type == ImportExportType::ImportDescriptor {
                         self.state = ImportExportState::Ended;
                     }
-                    // TODO: forward Descriptor
                 }
                 Progress::UpdateAliases(map) => {
                     return Task::perform(async {}, move |_| {
@@ -214,6 +249,7 @@ impl ExportModal {
                 }
             }
             ImportExportMessage::UpdateAliases(_) => { /* unexpected */ }
+            ImportExportMessage::Xpub(_) => { /* unexpected */ }
         }
         Task::none()
     }
