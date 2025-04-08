@@ -19,6 +19,7 @@ use liana_ui::{
 };
 
 use crate::daemon::model::LabelsLoader;
+use crate::export::{ImportExportMessage, ImportExportType};
 use crate::{
     app::{
         cache::Cache,
@@ -34,6 +35,8 @@ use crate::{
     },
     hw::{HardwareWallet, HardwareWallets},
 };
+
+use super::export::ExportModal;
 
 pub trait Modal {
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
@@ -59,6 +62,7 @@ pub enum PsbtModal {
     Update(UpdateModal),
     Broadcast(BroadcastModal),
     Delete(DeleteModal),
+    Export(ExportModal),
 }
 
 impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
@@ -69,6 +73,7 @@ impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
             Self::Update(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
+            Self::Export(a) => a,
         }
     }
 }
@@ -81,6 +86,7 @@ impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
             Self::Update(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
+            Self::Export(a) => a,
         }
     }
 }
@@ -135,6 +141,25 @@ impl PsbtState {
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::View(view::Message::ExportPsbt) => {
+                if self.modal.is_none() {
+                    let psbt_str = self.tx.psbt.to_string();
+                    let modal = ExportModal::new(None, ImportExportType::ExportPsbt(psbt_str));
+                    let launch = modal.launch(true);
+                    self.modal = Some(PsbtModal::Export(modal));
+                    return launch;
+                }
+            }
+            Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
+                if matches!(self.modal, Some(PsbtModal::Export(_))) {
+                    self.modal = None;
+                }
+            }
+            Message::View(view::Message::ImportExport(m)) => {
+                if let Some(PsbtModal::Export(modal)) = self.modal.as_mut() {
+                    return modal.update(m);
+                }
+            }
             Message::View(view::Message::Spend(view::SpendTxMessage::Cancel)) => {
                 if let Some(PsbtModal::Sign(SignModal { display_modal, .. })) = &mut self.modal {
                     *display_modal = false;

@@ -339,10 +339,10 @@ pub fn spend_overview_view<'a>(
                                             .spacing(5)
                                             .push(
                                                 button::secondary(
-                                                    Some(icon::clipboard_icon()),
-                                                    "Copy",
+                                                    Some(icon::backup_icon()),
+                                                    "Export",
                                                 )
-                                                .on_press(Message::Clipboard(tx.psbt.to_string())),
+                                                .on_press(Message::ExportPsbt),
                                             )
                                             .push(
                                                 button::secondary(

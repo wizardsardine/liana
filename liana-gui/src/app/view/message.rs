@@ -25,6 +25,7 @@ pub enum Message {
     ShowQrCode(usize),
     ImportExport(ImportExportMessage),
     HideRescanWarning,
+    ExportPsbt,
 }
 
 impl Close for Message {
