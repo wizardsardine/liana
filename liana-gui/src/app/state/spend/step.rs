@@ -825,8 +825,8 @@ impl Step for SaveSpend {
             cache.network,
             psbt_state.warning.as_ref(),
         );
-        if let Some(action) = &psbt_state.action {
-            action.as_ref().view(content)
+        if let Some(modal) = &psbt_state.modal {
+            modal.as_ref().view(content)
         } else {
             content
         }
