@@ -167,7 +167,6 @@ impl ExportModal {
                     if self.import_export_type == ImportExportType::ImportDescriptor {
                         self.state = ImportExportState::Ended;
                     }
-                    // TODO: forward Descriptor
                 }
                 Progress::UpdateAliases(map) => {
                     return Task::perform(async {}, move |_| {
