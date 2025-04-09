@@ -12,7 +12,7 @@ use liana::miniscript::bitcoin::{
 
 use liana_ui::{
     component::{amount::*, button, form, text::*},
-    icon, theme,
+    theme,
     widget::*,
 };
 
@@ -37,26 +37,11 @@ pub fn recovery<'a>(
 ) -> Element<'a, Message> {
     let no_recovery_paths = recovery_paths.is_empty();
     dashboard(
-        &Menu::Settings,
+        &Menu::Recovery,
         cache,
         warning,
         Column::new()
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(
-                        Button::new(text("Settings").size(30).bold())
-                            .style(theme::button::transparent)
-                            .on_press(Message::Menu(Menu::Settings)),
-                    )
-                    .push(icon::chevron_right().size(30))
-                    .push(
-                        Button::new(text("Recovery").size(30).bold())
-                            .style(theme::button::transparent)
-                            .on_press(Message::Menu(Menu::Recovery)),
-                    ),
-            )
+            .push(Container::new(h3("Recovery")).width(Length::Fill))
             .push(Space::with_height(Length::Fixed(20.0)))
             .push(
                 Row::new()

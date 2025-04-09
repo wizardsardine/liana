@@ -143,13 +143,6 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
         Message::Settings(SettingsMessage::ImportExportSection),
     );
 
-    let recovery = settings_section(
-        "Recovery",
-        Some("In case of loss of the main key, the recovery key can move the funds after a certain time."),
-        icon::recovery_icon(),
-        Message::Menu(Menu::Recovery),
-    );
-
     let about = settings_section(
         "About",
         None,
@@ -168,7 +161,6 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
             .push(if !is_remote_backend { node } else { backend })
             .push(wallet)
             .push(import_export)
-            .push(recovery)
             .push(about),
     )
 }
