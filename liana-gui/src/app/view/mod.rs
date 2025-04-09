@@ -26,7 +26,8 @@ use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        coins_icon, cross_icon, history_icon, home_icon, receive_icon, send_icon, settings_icon,
+        coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon, send_icon,
+        settings_icon,
     },
     image::*,
     theme,
@@ -121,6 +122,19 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .width(iced::Length::Fill))
     };
 
+    let recovery_button = if *menu == Menu::Recovery {
+        row!(
+            button::menu_active(Some(recovery_icon()), "Recovery")
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_green_bar()
+        )
+    } else {
+        row!(button::menu(Some(recovery_icon()), "Recovery")
+            .on_press(Message::Menu(Menu::Recovery))
+            .width(iced::Length::Fill))
+    };
+
     let settings_button = if *menu == Menu::Settings {
         row!(
             button::menu_active(Some(settings_icon()), "Settings")
@@ -163,6 +177,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                                 .padding(5)
                                 .style(theme::pill::simple)
                         }))
+                        .push(recovery_button)
                         .push(settings_button),
                 )
                 .height(Length::Shrink),
