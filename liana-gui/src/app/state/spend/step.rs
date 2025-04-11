@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    convert::TryInto,
     iter::FromIterator,
     str::FromStr,
     sync::Arc,
@@ -10,7 +11,10 @@ use iced::{Subscription, Task};
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
-        address, psbt::Psbt, secp256k1, Address, Amount, Denomination, Network, OutPoint,
+        address,
+        bip32::{DerivationPath, Fingerprint},
+        psbt::Psbt,
+        secp256k1, Address, Amount, Denomination, Network, OutPoint,
     },
     spend::{SpendCreationError, MAX_FEERATE},
 };
@@ -37,10 +41,16 @@ pub struct TransactionDraft {
     generated: Option<(Psbt, Vec<String>)>,
     batch_label: Option<String>,
     labels: HashMap<String, String>,
+    /// The timelock of the recovery path to use for spending.
+    ///
+    /// If the primary path will be used, this value will remain as `None`.
+    /// Otherwise, its value should always be set to a recovery path,
+    /// which may change from one to another.
+    recovery_timelock: Option<u16>,
 }
 
 impl TransactionDraft {
-    pub fn new(network: Network) -> Self {
+    pub fn new(network: Network, recovery_timelock: Option<u16>) -> Self {
         Self {
             network,
             inputs: Vec::new(),
@@ -48,7 +58,12 @@ impl TransactionDraft {
             generated: None,
             batch_label: None,
             labels: HashMap::new(),
+            recovery_timelock,
         }
+    }
+
+    pub fn is_recovery(&self) -> bool {
+        self.recovery_timelock.is_some()
     }
 }
 
@@ -62,7 +77,7 @@ pub trait Step {
     ) -> Task<Message>;
     fn apply(&self, _draft: &mut TransactionDraft) {}
     fn interrupt(&mut self) {}
-    fn load(&mut self, _draft: &TransactionDraft) {}
+    fn load(&mut self, _coins: &[Coin], _tip_height: i32, _draft: &TransactionDraft) {}
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
     }
@@ -71,19 +86,41 @@ pub trait Step {
 /// Filter the coins that should be available for selection.
 ///
 /// `selected` will be `None` if the coins are being filtered for the first time.
-/// In that case, no coins will be selected.
-fn filter_coins(coins: &[Coin], selected: Option<HashSet<OutPoint>>) -> Vec<(Coin, bool)> {
+/// In that case, all suitable coins will be selected for a recovery spend,
+/// while for a primary path spend, no coins will be selected.
+fn filter_coins(
+    coins: &[Coin],
+    recovery_timelock: Option<u16>,
+    tip_height: i32,
+    selected: Option<HashSet<OutPoint>>,
+) -> Vec<(Coin, bool)> {
     coins
         .iter()
         .filter_map(|c| {
             if c.spend_info.is_none() && !c.is_immature {
-                Some((
-                    c.clone(),
-                    selected
-                        .as_ref()
-                        .map(|sel| sel.contains(&c.outpoint))
-                        .unwrap_or(false),
-                ))
+                if let Some(recovery_timelock) = recovery_timelock {
+                    c.block_height
+                        .filter(|bh| {
+                            tip_height + 1 >= bh + <u16 as Into<i32>>::into(recovery_timelock)
+                        })
+                        .map(|_| {
+                            (
+                                c.clone(),
+                                selected
+                                    .as_ref()
+                                    .map(|sel| sel.contains(&c.outpoint))
+                                    .unwrap_or(true),
+                            )
+                        })
+                } else {
+                    Some((
+                        c.clone(),
+                        selected
+                            .as_ref()
+                            .map(|sel| sel.contains(&c.outpoint))
+                            .unwrap_or(false),
+                    ))
+                }
             } else {
                 None
             }
@@ -97,7 +134,7 @@ pub struct DefineSpend {
     /// receive the max amount.
     send_max_to_recipient: Option<usize>,
     /// Will be `true` if coins for spend were manually selected by user.
-    /// Otherwise, will be `false` (including for self-send).
+    /// Otherwise, will be `false` (including for self-send & recovery).
     is_user_coin_selection: bool,
     is_valid: bool,
     is_duplicate: bool,
@@ -105,6 +142,13 @@ pub struct DefineSpend {
     network: Network,
     descriptor: LianaDescriptor,
     curve: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    /// Leave as `None` for a primary path spend. Otherwise, this is the timelock
+    /// corresponding to the recovery path to use for the spend.
+    ///
+    /// For a recovery path spend, this value can change from one timelock to another, but
+    /// it must never be set to `None`.
+    recovery_timelock: Option<u16>,
+    tip_height: u32,
     coins: Vec<(Coin, bool)>,
     coins_labels: HashMap<String, String>,
     batch_label: form::Value<String>,
@@ -113,29 +157,48 @@ pub struct DefineSpend {
     fee_amount: Option<Amount>,
     generated: Option<(Psbt, Vec<String>)>,
     warning: Option<Error>,
+    /// Whether this is the first step of the spend creation.
+    /// Required in order to know whether the user can navigate to a previous step.
+    is_first_step: bool,
 }
 
 impl DefineSpend {
-    pub fn new(network: Network, descriptor: LianaDescriptor, coins: &[Coin]) -> Self {
-        let coins = filter_coins(coins, None);
+    pub fn new(
+        network: Network,
+        descriptor: LianaDescriptor,
+        coins: &[Coin],
+        tip_height: u32,
+        recovery_timelock: Option<u16>,
+        is_first_step: bool,
+    ) -> Self {
+        let coins = filter_coins(
+            coins,
+            recovery_timelock,
+            tip_height.try_into().expect("i32 by consensus"),
+            None,
+        );
 
         Self {
             network,
             descriptor,
             curve: secp256k1::Secp256k1::verification_only(),
+            recovery_timelock,
+            tip_height,
             generated: None,
             coins,
             coins_labels: HashMap::new(),
             batch_label: form::Value::default(),
-            recipients: vec![Recipient::default()],
-            send_max_to_recipient: None,
-            is_user_coin_selection: false, // Start with auto-selection until user edits selection.
+            recipients: vec![Recipient::new(recovery_timelock.is_some())],
+            // For recovery, send max to the (single) recipient.
+            send_max_to_recipient: recovery_timelock.map(|_| 0),
+            is_user_coin_selection: false,
             is_valid: false,
             is_duplicate: false,
             feerate: form::Value::default(),
             fee_amount: None,
             amount_left_to_select: None,
             warning: None,
+            is_first_step,
         }
     }
 
@@ -175,9 +238,11 @@ impl DefineSpend {
 
     /// This is used for calculating a coin's remaining sequence.
     ///
-    /// It returns the descriptor's first timelock.
+    /// Use the first timelock if this is a primary path spend and otherwise the same
+    /// timelock as used for the recovery.
     pub fn timelock(&self) -> u16 {
-        self.descriptor.first_timelock_value()
+        self.recovery_timelock
+            .unwrap_or_else(|| self.descriptor.first_timelock_value())
     }
 
     // If `is_redraft`, the validation of recipients will take into account
@@ -235,6 +300,9 @@ impl DefineSpend {
             return;
         }
         let is_self_transfer = self.recipients.is_empty();
+        // Define the destinations for a primary path spend from all non-max recipients.
+        // TODO: Set this variable only in the non-recovery case. For now, we use it later below
+        // for setting `amount_left_to_select`, which is only required in the non-recovery case.
         let destinations: HashMap<Address<address::NetworkUnchecked>, u64> = self
             .recipients
             .iter()
@@ -266,7 +334,14 @@ impl DefineSpend {
         } else {
             None
         };
-        let outpoints = if self.is_user_coin_selection || is_self_transfer {
+        let outpoints = if self.is_user_coin_selection
+            || is_self_transfer
+            || self.recovery_timelock.is_some()
+        {
+            // If user has edited selection, or otherwise for self-transfers and recovery spends, we pass the outpoints list.
+            // (We could also in principle pass an empty outpoints list for a recovery spend if all should
+            // be selected, i.e. not user edited, but this way we don't need to worry about checking selected
+            // coins match those used in the recovery).
             let outpoints: Vec<_> = self
                 .coins
                 .iter()
@@ -291,6 +366,7 @@ impl DefineSpend {
                 // Simply set the amount left to select as the total destination value. Note this
                 // doesn't take account of the fee, but passing an empty list to `create_spend_tx`
                 // would use auto-selection and so we settle for this approximation.
+                // Note that for a recovery, the amount left to select is ignored by the view.
                 self.amount_left_to_select = Some(Amount::from_sat(destinations.values().sum()));
                 self.fee_amount = None;
                 return;
@@ -307,10 +383,10 @@ impl DefineSpend {
         };
 
         // If sending the max to a recipient, use that recipient's address as the
-        // change address.
-        // Otherwise, use a fixed change address from the user's own wallet so that
-        // we don't increment the change index.
-        let change_address = if let Some((_, recipient)) = &recipient_with_max {
+        // change/recovery address.
+        // Otherwise, for a primary path spend, use a fixed change address from the user's
+        // own wallet so that we don't increment the change index.
+        let max_address = if let Some((_, recipient)) = &recipient_with_max {
             Address::from_str(&recipient.address.value)
                 .expect("Checked before")
                 .as_unchecked()
@@ -325,20 +401,34 @@ impl DefineSpend {
         };
 
         let feerate_vb = self.feerate.value.parse::<u64>().expect("Checked before");
+        let recovery_timelock = self.recovery_timelock;
         match tokio::runtime::Handle::current().block_on(async {
-            daemon
-                .create_spend_tx(
-                    &outpoints,
-                    &destinations,
-                    feerate_vb,
-                    Some(change_address.clone()),
-                )
-                .await
+            // If recovery timelock is set, create a recovery transaction. Otherwise, a regular spend.
+            if let Some(reco_tl) = recovery_timelock {
+                daemon
+                    .create_recovery(max_address.clone(), &outpoints, feerate_vb, Some(reco_tl))
+                    .await
+                    // Map the PSBT to `CreateSpendResult` result. We only need the PSBT below.
+                    .map(|psbt| CreateSpendResult::Success {
+                        psbt,
+                        warnings: vec![],
+                    })
+            } else {
+                daemon
+                    .create_spend_tx(
+                        &outpoints,
+                        &destinations,
+                        feerate_vb,
+                        Some(max_address.clone()),
+                    )
+                    .await
+            }
         }) {
             Ok(CreateSpendResult::Success { psbt, .. }) => {
                 self.warning = None;
                 self.fee_amount = Some(psbt.fee().expect("Valid fees"));
-                if !self.is_user_coin_selection {
+                // Update selected coins for auto-selection (non-recovery case).
+                if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
                     let selected_coins: Vec<OutPoint> = psbt
                         .unsigned_tx
                         .input
@@ -360,8 +450,7 @@ impl DefineSpend {
                         .output
                         .iter()
                         .find(|o| {
-                            o.script_pubkey
-                                == change_address.clone().assume_checked().script_pubkey()
+                            o.script_pubkey == max_address.clone().assume_checked().script_pubkey()
                         })
                         .map(|change_output| change_output.value.to_btc())
                         .unwrap_or(0.0)
@@ -375,7 +464,9 @@ impl DefineSpend {
             Ok(CreateSpendResult::InsufficientFunds { missing }) => {
                 self.fee_amount = None;
                 self.amount_left_to_select = Some(Amount::from_sat(missing));
-                if !self.is_user_coin_selection {
+                // To be sure, we exclude recovery transactions here, although they
+                // can't currently reach this part of code.
+                if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
                     // The missing amount is based on all candidates for coin selection
                     // being used, which are all owned coins.
                     for (coin, selected) in &mut self.coins {
@@ -411,6 +502,46 @@ impl DefineSpend {
 }
 
 impl Step for DefineSpend {
+    fn load(&mut self, coins: &[Coin], tip_height: i32, draft: &TransactionDraft) {
+        self.tip_height = tip_height as u32;
+        match (self.recovery_timelock, draft.recovery_timelock) {
+            (Some(old_tl), Some(new_tl)) => {
+                if old_tl != new_tl {
+                    // If the timelock has changed, reinitialise this step.
+                    let new = Self::new(
+                        self.network,
+                        self.descriptor.clone(),
+                        coins,
+                        tip_height as u32,
+                        Some(new_tl),
+                        self.is_first_step,
+                    );
+                    *self = new;
+                    return;
+                } else {
+                    // If the timelock has not changed, we keep the existing coins selection if it has already been edited
+                    // by the user or otherwise if the form values are valid. The form values being valid means a redraft has
+                    // been performed and so we keep the currently selected coins in order that the recipient amount displayed
+                    // matches the selection.
+                    let selected = (self.is_user_coin_selection
+                        || self.form_values_are_valid(true))
+                    .then_some(
+                        self.coins
+                            .iter()
+                            .filter_map(|(coin, sel)| sel.then_some(coin.outpoint))
+                            .collect(),
+                    );
+                    self.coins = filter_coins(coins, self.recovery_timelock, tip_height, selected);
+                }
+            }
+            _ => {
+                // We don't handle the case of a recovery timelock being added or removed:
+                // A spend is either primary or recovery and cannot change from one to the other.
+            }
+        }
+        self.check_valid();
+    }
+
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -433,6 +564,9 @@ impl Step for DefineSpend {
                                 .map(|(c, _)| c.clone())
                                 .collect::<Vec<ListCoinsEntry>>()
                                 .as_slice(),
+                            self.tip_height,
+                            self.recovery_timelock,
+                            self.is_first_step,
                         );
                         return Task::none();
                     }
@@ -495,35 +629,61 @@ impl Step for DefineSpend {
                             .collect();
                         let mut outputs: HashMap<Address<address::NetworkUnchecked>, u64> =
                             HashMap::new();
-                        for recipient in &self.recipients {
-                            outputs.insert(
-                                Address::from_str(&recipient.address.value)
-                                    .expect("Checked before"),
-                                recipient.amount().expect("Checked before"),
-                            );
-                        }
                         let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
                         self.warning = None;
-                        return Task::perform(
-                            async move {
-                                daemon
-                                    .create_spend_tx(&inputs, &outputs, feerate_vb, None)
-                                    .await
-                                    .map_err(|e| e.into())
-                                    .and_then(|res| match res {
-                                        CreateSpendResult::Success { psbt, warnings } => {
-                                            Ok((psbt, warnings))
-                                        }
-                                        CreateSpendResult::InsufficientFunds { missing } => {
-                                            Err(SpendCreationError::CoinSelection(
-                                                liana::spend::InsufficientFunds { missing },
-                                            )
-                                            .into())
-                                        }
-                                    })
-                            },
-                            Message::Psbt,
-                        );
+                        if let Some(reco_tl) = self.recovery_timelock {
+                            let recovery_address = Address::from_str(
+                                &self
+                                    .recipients
+                                    .first()
+                                    .expect("recovery spend has a recipient")
+                                    .address
+                                    .value,
+                            )
+                            .expect("Checked before");
+                            return Task::perform(
+                                async move {
+                                    daemon
+                                        .create_recovery(
+                                            recovery_address,
+                                            &inputs,
+                                            feerate_vb,
+                                            Some(reco_tl),
+                                        )
+                                        .await
+                                        .map_err(|e| e.into())
+                                        .map(|psbt| (psbt, vec![]))
+                                },
+                                Message::Psbt,
+                            );
+                        } else {
+                            for recipient in &self.recipients {
+                                let address = Address::from_str(&recipient.address.value)
+                                    .expect("Checked before");
+                                outputs
+                                    .insert(address, recipient.amount().expect("Checked before"));
+                            }
+                            return Task::perform(
+                                async move {
+                                    daemon
+                                        .create_spend_tx(&inputs, &outputs, feerate_vb, None)
+                                        .await
+                                        .map_err(|e| e.into())
+                                        .and_then(|res| match res {
+                                            CreateSpendResult::Success { psbt, warnings } => {
+                                                Ok((psbt, warnings))
+                                            }
+                                            CreateSpendResult::InsufficientFunds { missing } => {
+                                                Err(SpendCreationError::CoinSelection(
+                                                    liana::spend::InsufficientFunds { missing },
+                                                )
+                                                .into())
+                                            }
+                                        })
+                                },
+                                Message::Psbt,
+                            );
+                        }
                     }
                     view::CreateSpendMessage::SelectCoin(i) => {
                         if let Some(coin) = self.coins.get_mut(i) {
@@ -568,15 +728,21 @@ impl Step for DefineSpend {
             },
             Message::CoinsTipHeight(res_coins, res_tip) => match (res_coins, res_tip) {
                 (Ok(coins), Ok(tip)) => {
-                    let selected: HashSet<OutPoint> =
-                        HashSet::from_iter(self.coins.iter().filter_map(|(c, selected)| {
-                            if *selected {
-                                Some(c.outpoint)
-                            } else {
-                                None
-                            }
-                        }));
-                    self.coins = filter_coins(&coins, Some(selected));
+                    self.tip_height = tip as u32;
+                    // If it's a recovery spend and user has never edited the selection, then we won't pass
+                    // any selection and will let `filter_coins` select all by default.
+                    let selected = (self.recovery_timelock.is_none()
+                        || self.is_user_coin_selection)
+                        .then_some(HashSet::from_iter(self.coins.iter().filter_map(
+                            |(c, selected)| {
+                                if *selected {
+                                    Some(c.outpoint)
+                                } else {
+                                    None
+                                }
+                            },
+                        )));
+                    self.coins = filter_coins(&coins, self.recovery_timelock, tip, selected);
                     self.sort_coins(tip as u32);
                     // In case some selected coins are not spendable anymore and
                     // new coins make more sense to be selected. A redraft is triggered
@@ -647,6 +813,7 @@ impl Step for DefineSpend {
             self.is_valid,
             self.is_duplicate,
             self.timelock(),
+            self.recovery_timelock,
             &self.coins,
             &self.coins_labels,
             &self.batch_label,
@@ -654,6 +821,7 @@ impl Step for DefineSpend {
             &self.feerate,
             self.fee_amount.as_ref(),
             self.warning.as_ref(),
+            self.is_first_step,
         )
     }
 }
@@ -663,9 +831,17 @@ struct Recipient {
     label: form::Value<String>,
     address: form::Value<String>,
     amount: form::Value<String>,
+    is_recovery: bool,
 }
 
 impl Recipient {
+    fn new(is_recovery: bool) -> Self {
+        Self {
+            is_recovery,
+            ..Default::default()
+        }
+    }
+
     fn amount(&self) -> Result<u64, Error> {
         if self.amount.value.is_empty() {
             return Err(Error::Unexpected("Amount should be non-zero".to_string()));
@@ -738,7 +914,14 @@ impl Recipient {
     }
 
     fn view(&self, i: usize, is_max_selected: bool) -> Element<view::CreateSpendMessage> {
-        view::spend::recipient_view(i, &self.address, &self.amount, &self.label, is_max_selected)
+        view::spend::recipient_view(
+            i,
+            &self.address,
+            &self.amount,
+            &self.label,
+            is_max_selected,
+            self.is_recovery,
+        )
     }
 }
 
@@ -759,7 +942,7 @@ impl SaveSpend {
 }
 
 impl Step for SaveSpend {
-    fn load(&mut self, draft: &TransactionDraft) {
+    fn load(&mut self, _coins: &[Coin], _tip_height: i32, draft: &TransactionDraft) {
         let (psbt, warnings) = draft.generated.clone().unwrap();
         let mut tx = SpendTx::new(
             None,
@@ -838,4 +1021,150 @@ impl Step for SaveSpend {
             content
         }
     }
+}
+
+pub struct SelectRecoveryPath {
+    wallet: Arc<Wallet>,
+    recovery_paths: Vec<RecoveryPath>,
+    selected_path: Option<usize>,
+    warning: Option<Error>,
+}
+
+impl SelectRecoveryPath {
+    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], tip_height: i32) -> Self {
+        Self {
+            recovery_paths: recovery_paths(&wallet, coins, tip_height),
+            wallet,
+            selected_path: None,
+            warning: None,
+        }
+    }
+
+    pub fn load_from_coins_and_tip_height(&mut self, coins: &[Coin], tip_height: i32) {
+        self.warning = None;
+        // Update the available recovery paths, maintaining any selected path.
+        let selected_seq = self.selected_path.and_then(|selected| {
+            self.recovery_paths
+                .get(selected)
+                .map(|reco_path| reco_path.sequence)
+        });
+        self.recovery_paths = recovery_paths(&self.wallet, coins, tip_height);
+        self.selected_path = selected_seq.and_then(|seq| {
+            self.recovery_paths
+                .iter()
+                .enumerate()
+                .find_map(|(i, path)| (path.sequence == seq).then_some(i))
+        });
+    }
+}
+
+impl Step for SelectRecoveryPath {
+    fn load(&mut self, coins: &[Coin], tip_height: i32, _draft: &TransactionDraft) {
+        self.load_from_coins_and_tip_height(coins, tip_height);
+    }
+
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        view::recovery::recovery(
+            cache,
+            self.recovery_paths
+                .iter()
+                .enumerate()
+                .filter_map(|(i, path)| {
+                    if path.number_of_coins > 0 {
+                        Some(view::recovery::recovery_path_view(
+                            i,
+                            path.threshold,
+                            &path.origins,
+                            path.total_amount,
+                            path.number_of_coins,
+                            &self.wallet.keys_aliases,
+                            self.selected_path == Some(i),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            self.selected_path,
+            self.warning.as_ref(),
+        )
+    }
+
+    fn update(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        message: Message,
+    ) -> Task<Message> {
+        match message {
+            Message::CoinsTipHeight(res_coins, res_tip) => match (res_coins, res_tip) {
+                (Ok(coins), Ok(tip)) => {
+                    self.load_from_coins_and_tip_height(&coins, tip);
+                }
+                (Err(e), _) | (Ok(_), Err(e)) => {
+                    self.warning = Some(e);
+                }
+            },
+            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::SelectPath(
+                index,
+            ))) => {
+                if Some(index) == self.selected_path {
+                    self.selected_path = None;
+                } else {
+                    self.selected_path = Some(index);
+                }
+            }
+            _ => {}
+        };
+        Task::none()
+    }
+
+    fn apply(&self, draft: &mut TransactionDraft) {
+        if let Some(selected_path) = self.selected_path {
+            if let Some(path) = self.recovery_paths.get(selected_path) {
+                draft.recovery_timelock = Some(path.sequence);
+            }
+        }
+    }
+}
+
+pub struct RecoveryPath {
+    threshold: usize,
+    sequence: u16,
+    origins: Vec<(Fingerprint, HashSet<DerivationPath>)>,
+    total_amount: Amount,
+    number_of_coins: usize,
+}
+
+fn recovery_paths(wallet: &Wallet, coins: &[Coin], tip_height: i32) -> Vec<RecoveryPath> {
+    wallet
+        .main_descriptor
+        .policy()
+        .recovery_paths()
+        .iter()
+        .map(|(&sequence, path)| {
+            let (number_of_coins, total_amount) = coins
+                .iter()
+                .filter(|coin| {
+                    coin.block_height.is_some() // only confirmed coins are included in a recovery transaction
+                        && coin.spend_info.is_none()
+                        && remaining_sequence(coin, tip_height as u32, sequence) <= 1
+                })
+                .fold(
+                    (0, Amount::from_sat(0)),
+                    |(number_of_coins, total_amount), coin| {
+                        (number_of_coins + 1, total_amount + coin.amount)
+                    },
+                );
+
+            let (threshold, origins) = path.thresh_origins();
+            RecoveryPath {
+                total_amount,
+                number_of_coins,
+                sequence,
+                threshold,
+                origins: origins.into_iter().collect(),
+            }
+        })
+        .collect()
 }
