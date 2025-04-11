@@ -39,13 +39,26 @@ pub fn spend_view<'a>(
     network: Network,
     warning: Option<&Error>,
 ) -> Element<'a, Message> {
+    let is_recovery = tx
+        .psbt
+        .unsigned_tx
+        .input
+        .iter()
+        .any(|txin| txin.sequence.is_relative_lock_time());
     dashboard(
-        &Menu::CreateSpendTx,
+        if is_recovery {
+            &Menu::Recovery
+        } else {
+            &Menu::CreateSpendTx
+        },
         cache,
         warning,
         Column::new()
             .spacing(20)
-            .push(Container::new(h3("Send")).width(Length::Fill))
+            .push(
+                Container::new(h3(if is_recovery { "Recovery" } else { "Send" }))
+                    .width(Length::Fill),
+            )
             .push(psbt::spend_header(tx, labels_editing))
             .push_maybe(if spend_warnings.is_empty() || saved {
                 None
@@ -114,20 +127,28 @@ pub fn create_spend_tx<'a>(
     is_valid: bool,
     duplicate: bool,
     timelock: u16,
+    recovery_timelock: Option<u16>,
     coins: &[(Coin, bool)],
     coins_labels: &'a HashMap<String, String>,
     batch_label: &form::Value<String>,
     amount_left: Option<&Amount>,
     feerate: &form::Value<String>,
     error: Option<&Error>,
+    is_first_step: bool,
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
     dashboard(
-        &Menu::CreateSpendTx,
+        if recovery_timelock.is_some() {
+            &Menu::Recovery
+        } else {
+            &Menu::CreateSpendTx
+        },
         cache,
         error,
         Column::new()
-            .push(h3(if is_self_send {
+            .push(h3(if recovery_timelock.is_some() {
+                "Recovery"
+            } else if is_self_send {
                 "Self-transfer"
             } else {
                 "Send"
@@ -161,7 +182,8 @@ pub fn create_spend_tx<'a>(
                                 None
                             })
                             .push(Space::with_width(Length::Fill))
-                            .push_maybe(if is_self_send {
+                            .push_maybe(if is_self_send || recovery_timelock.is_some() {
+                                // Recipients cannot be added for self-send (zero recipients) and recovery (exactly one recipient).
                                 None
                             } else {
                                 Some(
@@ -207,7 +229,7 @@ pub fn create_spend_tx<'a>(
                             Row::new()
                                 .align_y(Alignment::Center)
                                 .push(p1_bold("Coins selection").width(Length::Fill))
-                                .push(if is_self_send {
+                                .push(if is_self_send || recovery_timelock.is_some() {
                                     Row::new()
                                         .spacing(5)
                                         .push(amount_with_size(
@@ -290,6 +312,13 @@ pub fn create_spend_tx<'a>(
                 Row::new()
                     .spacing(20)
                     .align_y(Alignment::Center)
+                    .push_maybe(
+                        (!is_first_step).then_some(
+                            button::secondary(None, "< Previous")
+                                .width(Length::Fixed(150.0))
+                                .on_press(Message::Previous),
+                        ),
+                    )
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::secondary(None, "Clear")
@@ -300,7 +329,9 @@ pub fn create_spend_tx<'a>(
                         if is_valid
                             && !duplicate
                             && error.is_none()
-                            && (is_self_send || Some(&Amount::from_sat(0)) == amount_left)
+                            && (is_self_send
+                                || recovery_timelock.is_some()
+                                || Some(&Amount::from_sat(0)) == amount_left)
                         {
                             button::secondary(None, "Next")
                                 .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
@@ -321,16 +352,20 @@ pub fn recipient_view<'a>(
     amount: &'a form::Value<String>,
     label: &'a form::Value<String>,
     is_max_selected: bool,
+    is_recovery: bool,
 ) -> Element<'a, CreateSpendMessage> {
     Container::new(
         Column::new()
             .spacing(10)
-            .push(
-                Row::new().push(Space::with_width(Length::Fill)).push(
-                    Button::new(icon::cross_icon())
-                        .style(theme::button::transparent)
-                        .on_press(CreateSpendMessage::DeleteRecipient(index))
-                        .width(Length::Shrink),
+            .push_maybe(
+                // Recipient for recovery cannot be deleted.
+                (!is_recovery).then_some(
+                    Row::new().push(Space::with_width(Length::Fill)).push(
+                        Button::new(icon::cross_icon())
+                            .style(theme::button::transparent)
+                            .on_press(CreateSpendMessage::DeleteRecipient(index))
+                            .width(Length::Shrink),
+                    ),
                 ),
             )
             .push(
@@ -408,13 +443,16 @@ pub fn recipient_view<'a>(
                     } else {
                         None
                     })
-                    .push(tooltip::Tooltip::new(
-                        checkbox("MAX", is_max_selected)
-                            .on_toggle(move |_| CreateSpendMessage::SendMaxToRecipient(index)),
-                        // Add spaces at end so that text is padded at screen edge.
-                        "Total amount remaining after paying fee and any other recipients     ",
-                        tooltip::Position::Bottom,
-                    ))
+                    .push_maybe(
+                        // The MAX option cannot be edited for recovery recipients.
+                        (!is_recovery).then_some(tooltip::Tooltip::new(
+                            checkbox("MAX", is_max_selected)
+                                .on_toggle(move |_| CreateSpendMessage::SendMaxToRecipient(index)),
+                            // Add spaces at end so that text is padded at screen edge.
+                            "Total amount remaining after paying fee and any other recipients     ",
+                            tooltip::Position::Bottom,
+                        )),
+                    )
                     .width(Length::Fill),
             ),
     )
