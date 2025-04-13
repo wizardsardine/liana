@@ -102,7 +102,9 @@ impl Download {
 /// Default prune value used by internal bitcoind.
 pub const PRUNE_DEFAULT: u32 = 15_000;
 /// Default ports used by bitcoind across all networks.
-pub const BITCOIND_DEFAULT_PORTS: [u16; 10] = [8332, 8333, 18332, 18333, 18443, 18444, 48332, 48333, 38332, 38333];
+pub const BITCOIND_DEFAULT_PORTS: [u16; 10] = [
+    8332, 8333, 18332, 18333, 18443, 18444, 48332, 48333, 38332, 38333,
+];
 
 #[derive(Debug)]
 pub enum InstallState {
