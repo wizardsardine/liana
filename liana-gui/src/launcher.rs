@@ -16,9 +16,10 @@ use lianad::config::ConfigError;
 
 use crate::{app, installer::UserFlow};
 
-const NETWORKS: [Network; 4] = [
+const NETWORKS: [Network; 5] = [
     Network::Bitcoin,
     Network::Testnet,
+    Network::Testnet4,
     Network::Signet,
     Network::Regtest,
 ];
@@ -214,6 +215,7 @@ impl Launcher {
                                                                 Network::Bitcoin => "Bitcoin",
                                                                 Network::Signet => "Signet",
                                                                 Network::Testnet => "Testnet",
+                                                                Network::Testnet4 => "Testnet4",
                                                                 Network::Regtest => "Regtest",
                                                                 _ => "",
                                                             }
