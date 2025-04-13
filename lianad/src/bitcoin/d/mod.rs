@@ -718,6 +718,7 @@ impl BitcoinD {
         let bip70_net = match config_network {
             bitcoin::Network::Bitcoin => "main",
             bitcoin::Network::Testnet => "test",
+            bitcoin::Network::Testnet4 => "testnet4",
             bitcoin::Network::Regtest => "regtest",
             bitcoin::Network::Signet => "signet",
             _ => "Unknown network, undefined at the time of writing",

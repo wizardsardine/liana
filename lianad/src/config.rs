@@ -141,7 +141,7 @@ fn default_validate_domain() -> bool {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BitcoinConfig {
-    /// The network we are operating on, one of "bitcoin", "testnet", "regtest", "signet"
+    /// The network we are operating on, one of "bitcoin", "testnet", "testnet4", "regtest", "signet"
     pub network: Network,
     /// The poll interval for the Bitcoin interface
     #[serde(

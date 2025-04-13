@@ -33,6 +33,7 @@ impl Step for WalletAlias {
                         Network::Bitcoin => "Bitcoin",
                         Network::Signet => "Signet",
                         Network::Testnet => "Testnet",
+                        Network::Testnet4 => "Testnet4",
                         Network::Regtest => "Regtest",
                         _ => "",
                     }
