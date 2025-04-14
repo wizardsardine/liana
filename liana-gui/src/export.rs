@@ -124,6 +124,7 @@ pub enum Error {
     ParseXpub,
     XpubNetwork,
     TxidNotMatch,
+    InsanePsbt,
 }
 
 impl Display for Error {
@@ -145,7 +146,8 @@ impl Display for Error {
             Error::Backup(e) => write!(f, "Backup: {e}"),
             Error::ParseXpub => write!(f, "Failed to parse Xpub from file"),
             Error::XpubNetwork => write!(f, "Xpub is for another network"),
-            Error::TxidNotMatch => write!(f, "The imported PSBT txid do not match this PSBT"),
+            Error::TxidNotMatch => write!(f, "The imported PSBT txid doesn't match this PSBT"),
+            Error::InsanePsbt => write!(f, "The Psbt is not sane"),
         }
     }
 }
@@ -591,12 +593,17 @@ pub async fn import_psbt(
     let mut file = File::open(&path)?;
     let daemon = daemon.ok_or(Error::DaemonMissing)?;
 
+    let descr = daemon.get_info().await?.descriptors.main;
+
     let mut psbt_str = String::new();
     file.read_to_string(&mut psbt_str)?;
     psbt_str = psbt_str.trim().to_string();
 
     let psbt = Psbt::from_str(&psbt_str).map_err(|_| Error::ParsePsbt)?;
     send_progress!(sender, Progress(50.0));
+    descr
+        .partial_spend_info(&psbt)
+        .map_err(|_| Error::InsanePsbt)?;
 
     if let Some(txid) = txid {
         if psbt.unsigned_tx.compute_txid() != txid {

@@ -250,9 +250,7 @@ impl PsbtState {
                     .wallet
                     .main_descriptor
                     .partial_spend_info(&self.tx.psbt)
-                    // FIXME: we should not unwrap here, it seems importing a PSBT w/ an
-                    // non-owned input will trigger a panic
-                    .unwrap();
+                    .expect("already check in psbt import logic");
             }
             _ => {
                 if let Some(modal) = self.modal.as_mut() {
