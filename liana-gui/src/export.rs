@@ -142,7 +142,7 @@ impl Display for Error {
             Error::Bip329Export(e) => write!(f, "Bip329Export: {e}"),
             Error::BackupImport(e) => write!(f, "BackupImport: {e}"),
             Error::Backup(e) => write!(f, "Backup: {e}"),
-            Error::ParseXpub => write!(f, "Fail to parse Xpub from file"),
+            Error::ParseXpub => write!(f, "Failed to parse Xpub from file"),
             Error::XpubNetwork => write!(f, "Xpub is for another network"),
         }
     }
@@ -736,7 +736,7 @@ pub async fn import_backup(
         let db_labels = match daemon.get_labels_bip329(0, u32::MAX).await {
             Ok(l) => l,
             Err(_) => {
-                return Err(Error::BackupImport("Fail to dump DB labels".into()));
+                return Err(Error::BackupImport("Failed to dump DB labels".into()));
             }
         };
 
@@ -759,7 +759,7 @@ pub async fn import_backup(
             write_labels = match ack_receiver.recv().await {
                 Some(b) => b,
                 None => {
-                    return Err(Error::BackupImport("Fail to receive labels ACK".into()));
+                    return Err(Error::BackupImport("Failed to receive labels ACK".into()));
                 }
             }
         }
@@ -773,11 +773,11 @@ pub async fn import_backup(
         Some(c) => match &c.data_dir {
             Some(dd) => dd,
             None => {
-                return Err(Error::BackupImport("Fail to get Daemon config".into()));
+                return Err(Error::BackupImport("Failed to get Daemon config".into()));
             }
         },
         None => {
-            return Err(Error::BackupImport("Fail to get Daemon config".into()));
+            return Err(Error::BackupImport("Failed to get Daemon config".into()));
         }
     };
 
@@ -787,7 +787,7 @@ pub async fn import_backup(
         let settings = match Settings::from_file(datadir.to_path_buf(), network) {
             Ok(s) => s,
             Err(_) => {
-                return Err(Error::BackupImport("Fail to get App Settings".into()));
+                return Err(Error::BackupImport("Failed to get App Settings".into()));
             }
         };
 
@@ -825,7 +825,7 @@ pub async fn import_backup(
             write_aliases = match ack_receiver.recv().await {
                 Some(a) => a,
                 None => {
-                    return Err(Error::BackupImport("Fail to receive aliases ACK".into()));
+                    return Err(Error::BackupImport("Failed to receive aliases ACK".into()));
                 }
             };
         }
@@ -846,7 +846,7 @@ pub async fn import_backup(
 
     if daemon.update_deriv_indexes(receive, change).await.is_err() {
         return Err(Error::BackupImport(
-            "Fail to update derivation indexes".into(),
+            "Failed to update derivation indexes".into(),
         ));
     }
 
@@ -858,7 +858,7 @@ pub async fn import_backup(
                 psbts.push(p);
             }
             Err(_) => {
-                return Err(Error::BackupImport("Fail to parse PSBT".into()));
+                return Err(Error::BackupImport("Failed to parse PSBT".into()));
             }
         }
     }
@@ -866,7 +866,7 @@ pub async fn import_backup(
     // import PSBTs
     for psbt in psbts {
         if daemon.update_spend_tx(&psbt).await.is_err() {
-            return Err(Error::BackupImport("Fail to store PSBT".into()));
+            return Err(Error::BackupImport("Failed to store PSBT".into()));
         }
     }
 
@@ -883,7 +883,7 @@ pub async fn import_backup(
             })
             .collect();
         if daemon.update_labels(&labels).await.is_err() {
-            return Err(Error::BackupImport("Fail to import labels".into()));
+            return Err(Error::BackupImport("Failed to import labels".into()));
         }
     }
 
@@ -904,7 +904,7 @@ pub async fn import_backup(
         settings.wallets.get_mut(0).expect("already checked").keys =
             settings_aliases.clone().into_values().collect();
         if settings.to_file(datadir.to_path_buf(), network).is_err() {
-            return Err(Error::BackupImport("Fail to import keys aliases".into()));
+            return Err(Error::BackupImport("Failed to import keys aliases".into()));
         } else {
             // Update wallet state
             send_progress!(sender, UpdateAliases(settings_aliases));
@@ -1137,7 +1137,7 @@ pub async fn import_backup_at_launch(
     // import PSBTs
     for psbt in psbts {
         if let Err(e) = daemon.update_spend_tx(&psbt).await {
-            tracing::error!("Fail to restore PSBT: {e}")
+            tracing::error!("Failed to restore PSBT: {e}")
         }
     }
 
