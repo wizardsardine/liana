@@ -15,7 +15,10 @@ use async_hwi::bitbox::api::btc::Fingerprint;
 use chrono::{DateTime, Duration, Utc};
 use liana::{
     descriptors::LianaDescriptor,
-    miniscript::bitcoin::{Amount, Network, Psbt, Txid},
+    miniscript::{
+        bitcoin::{Amount, Network, Psbt, Txid},
+        DescriptorPublicKey,
+    },
 };
 use lianad::{
     bip329::{error::ExportError, Labels},
@@ -80,6 +83,7 @@ pub enum ImportExportMessage {
     Overwrite,
     Ignore,
     UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
+    Xpub(String),
 }
 
 impl From<ImportExportMessage> for view::Message {
@@ -117,6 +121,8 @@ pub enum Error {
     Bip329Export(String),
     BackupImport(String),
     Backup(backup::Error),
+    ParseXpub,
+    XpubNetwork,
 }
 
 impl Display for Error {
@@ -136,6 +142,8 @@ impl Display for Error {
             Error::Bip329Export(e) => write!(f, "Bip329Export: {e}"),
             Error::BackupImport(e) => write!(f, "BackupImport: {e}"),
             Error::Backup(e) => write!(f, "Backup: {e}"),
+            Error::ParseXpub => write!(f, "Failed to parse Xpub from file"),
+            Error::XpubNetwork => write!(f, "Xpub is for another network"),
         }
     }
 }
@@ -144,6 +152,7 @@ impl Display for Error {
 pub enum ImportExportType {
     Transactions,
     ExportPsbt(String),
+    ExportXpub(String),
     ExportBackup(String),
     ExportProcessBackup(PathBuf, Network, Arc<Config>, Arc<Wallet>),
     ImportBackup(
@@ -154,6 +163,7 @@ pub enum ImportExportType {
     Descriptor(LianaDescriptor),
     ExportLabels,
     ImportPsbt,
+    ImportXpub(Network),
     ImportDescriptor,
 }
 
@@ -165,9 +175,11 @@ impl ImportExportType {
             | ImportExportType::ExportBackup(_)
             | ImportExportType::Descriptor(_)
             | ImportExportType::ExportProcessBackup(..)
+            | ImportExportType::ExportXpub(_)
             | ImportExportType::ExportLabels => "Export successful!",
             ImportExportType::ImportBackup(_, _)
             | ImportExportType::ImportPsbt
+            | ImportExportType::ImportXpub(_)
             | ImportExportType::WalletFromBackup
             | ImportExportType::ImportDescriptor => "Import successful",
         }
@@ -229,6 +241,7 @@ pub enum Progress {
     None,
     Psbt(Psbt),
     Descriptor(LianaDescriptor),
+    Xpub(String),
     LabelsConflict(Sender<bool>),
     KeyAliasesConflict(Sender<bool>),
     UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
@@ -282,8 +295,10 @@ impl Export {
             }
             ImportExportType::ExportLabels => export_labels(&sender, daemon, path).await,
             ImportExportType::ImportPsbt => import_psbt(&sender, path).await,
+            ImportExportType::ImportXpub(network) => import_xpub(&sender, path, network).await,
             ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
             ImportExportType::ExportBackup(str) => export_string(&sender, path, str).await,
+            ImportExportType::ExportXpub(xpub_str) => export_string(&sender, path, xpub_str).await,
             ImportExportType::ExportProcessBackup(datadir, network, config, wallet) => {
                 app_backup_export(
                     datadir,
@@ -556,10 +571,10 @@ pub async fn export_descriptor(
 pub async fn export_string(
     sender: &UnboundedSender<Progress>,
     path: PathBuf,
-    psbt: String,
+    str: String,
 ) -> Result<(), Error> {
     let mut file = open_file_write(&path).await?;
-    file.write_all(psbt.as_bytes())?;
+    file.write_all(str.as_bytes())?;
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
     Ok(())
@@ -570,6 +585,7 @@ pub async fn import_psbt(sender: &UnboundedSender<Progress>, path: PathBuf) -> R
 
     let mut psbt_str = String::new();
     file.read_to_string(&mut psbt_str)?;
+    psbt_str = psbt_str.trim().to_string();
 
     let psbt = Psbt::from_str(&psbt_str).map_err(|_| Error::ParsePsbt)?;
 
@@ -586,10 +602,42 @@ pub async fn import_descriptor(
 
     let mut descr_str = String::new();
     file.read_to_string(&mut descr_str)?;
-    let descriptor = LianaDescriptor::from_str(&descr_str).map_err(|_| Error::ParseDescriptor)?;
+    let descr_str = descr_str.trim();
+
+    let descriptor = LianaDescriptor::from_str(descr_str).map_err(|_| Error::ParseDescriptor)?;
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Descriptor(descriptor));
+    Ok(())
+}
+
+pub async fn import_xpub(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    network: Network,
+) -> Result<(), Error> {
+    let mut file = File::open(path)?;
+
+    let mut xpub_str = String::new();
+    file.read_to_string(&mut xpub_str)?;
+    let xpub_str = xpub_str.trim().to_string();
+
+    if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&xpub_str) {
+        let valid = if network == Network::Bitcoin {
+            key.xkey.network == Network::Bitcoin.into()
+        } else {
+            key.xkey.network == Network::Testnet.into()
+        };
+        if valid {
+            send_progress!(sender, Progress(100.0));
+            send_progress!(sender, Xpub(xpub_str));
+        } else {
+            return Err(Error::XpubNetwork);
+        }
+    } else {
+        return Err(Error::ParseXpub);
+    }
+
     Ok(())
 }
 
@@ -623,6 +671,7 @@ pub async fn import_backup(
 
     let mut backup_str = String::new();
     file.read_to_string(&mut backup_str)?;
+    backup_str = backup_str.trim().to_string();
 
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
@@ -687,7 +736,7 @@ pub async fn import_backup(
         let db_labels = match daemon.get_labels_bip329(0, u32::MAX).await {
             Ok(l) => l,
             Err(_) => {
-                return Err(Error::BackupImport("Fail to dump DB labels".into()));
+                return Err(Error::BackupImport("Failed to dump DB labels".into()));
             }
         };
 
@@ -710,7 +759,7 @@ pub async fn import_backup(
             write_labels = match ack_receiver.recv().await {
                 Some(b) => b,
                 None => {
-                    return Err(Error::BackupImport("Fail to receive labels ACK".into()));
+                    return Err(Error::BackupImport("Failed to receive labels ACK".into()));
                 }
             }
         }
@@ -724,11 +773,11 @@ pub async fn import_backup(
         Some(c) => match &c.data_dir {
             Some(dd) => dd,
             None => {
-                return Err(Error::BackupImport("Fail to get Daemon config".into()));
+                return Err(Error::BackupImport("Failed to get Daemon config".into()));
             }
         },
         None => {
-            return Err(Error::BackupImport("Fail to get Daemon config".into()));
+            return Err(Error::BackupImport("Failed to get Daemon config".into()));
         }
     };
 
@@ -738,7 +787,7 @@ pub async fn import_backup(
         let settings = match Settings::from_file(datadir.to_path_buf(), network) {
             Ok(s) => s,
             Err(_) => {
-                return Err(Error::BackupImport("Fail to get App Settings".into()));
+                return Err(Error::BackupImport("Failed to get App Settings".into()));
             }
         };
 
@@ -776,7 +825,7 @@ pub async fn import_backup(
             write_aliases = match ack_receiver.recv().await {
                 Some(a) => a,
                 None => {
-                    return Err(Error::BackupImport("Fail to receive aliases ACK".into()));
+                    return Err(Error::BackupImport("Failed to receive aliases ACK".into()));
                 }
             };
         }
@@ -797,7 +846,7 @@ pub async fn import_backup(
 
     if daemon.update_deriv_indexes(receive, change).await.is_err() {
         return Err(Error::BackupImport(
-            "Fail to update derivation indexes".into(),
+            "Failed to update derivation indexes".into(),
         ));
     }
 
@@ -809,7 +858,7 @@ pub async fn import_backup(
                 psbts.push(p);
             }
             Err(_) => {
-                return Err(Error::BackupImport("Fail to parse PSBT".into()));
+                return Err(Error::BackupImport("Failed to parse PSBT".into()));
             }
         }
     }
@@ -817,7 +866,7 @@ pub async fn import_backup(
     // import PSBTs
     for psbt in psbts {
         if daemon.update_spend_tx(&psbt).await.is_err() {
-            return Err(Error::BackupImport("Fail to store PSBT".into()));
+            return Err(Error::BackupImport("Failed to store PSBT".into()));
         }
     }
 
@@ -834,7 +883,7 @@ pub async fn import_backup(
             })
             .collect();
         if daemon.update_labels(&labels).await.is_err() {
-            return Err(Error::BackupImport("Fail to import labels".into()));
+            return Err(Error::BackupImport("Failed to import labels".into()));
         }
     }
 
@@ -855,7 +904,7 @@ pub async fn import_backup(
         settings.wallets.get_mut(0).expect("already checked").keys =
             settings_aliases.clone().into_values().collect();
         if settings.to_file(datadir.to_path_buf(), network).is_err() {
-            return Err(Error::BackupImport("Fail to import keys aliases".into()));
+            return Err(Error::BackupImport("Failed to import keys aliases".into()));
         } else {
             // Update wallet state
             send_progress!(sender, UpdateAliases(settings_aliases));
@@ -927,6 +976,7 @@ pub async fn wallet_from_backup(
 
     let mut backup_str = String::new();
     file.read_to_string(&mut backup_str)?;
+    backup_str = backup_str.trim().to_string();
 
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
@@ -1087,7 +1137,7 @@ pub async fn import_backup_at_launch(
     // import PSBTs
     for psbt in psbts {
         if let Err(e) = daemon.update_spend_tx(&psbt).await {
-            tracing::error!("Fail to restore PSBT: {e}")
+            tracing::error!("Failed to restore PSBT: {e}")
         }
     }
 

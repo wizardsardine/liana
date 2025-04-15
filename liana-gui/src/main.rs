@@ -405,7 +405,7 @@ impl GUI {
                     command.map(|msg| Message::Run(Box::new(msg)))
                 }
                 loader::Message::App(Err(e), _) => {
-                    tracing::error!("Fail to import backup: {e}");
+                    tracing::error!("Failed to import backup: {e}");
                     Task::none()
                 }
 

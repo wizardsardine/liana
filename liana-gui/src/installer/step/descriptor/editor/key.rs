@@ -14,6 +14,8 @@ use liana::miniscript::{
 
 use liana_ui::{component::form, widget::Element};
 
+use crate::app::state::export::ExportModal;
+use crate::export::{ImportExportMessage, ImportExportType};
 use crate::{
     app::settings::ProviderKey,
     hw::{HardwareWallet, HardwareWallets},
@@ -86,6 +88,7 @@ pub struct EditXpubModal {
     hot_signer: Arc<Mutex<Signer>>,
     hot_signer_fingerprint: Fingerprint,
     chosen_signer: Option<Key>,
+    modal: Option<ExportModal>,
 }
 
 impl EditXpubModal {
@@ -135,6 +138,7 @@ impl EditXpubModal {
             hot_signer_fingerprint,
             hot_signer,
             duplicate_master_fg: false,
+            modal: None,
         }
     }
 
@@ -243,6 +247,28 @@ impl super::DescriptorEditModal for EditXpubModal {
                     .unwrap_or_default();
                 self.form_name.valid = true;
             }
+            Message::ImportExport(import_msg) => match import_msg {
+                ImportExportMessage::Close => {
+                    if self.modal.is_some() {
+                        self.modal = None;
+                    }
+                }
+                ImportExportMessage::Xpub(xpub_str) => {
+                    if self.modal.is_some() {
+                        self.modal = None;
+                        return Task::perform(async move { xpub_str }, |xpub_str| {
+                            Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
+                                message::ImportKeyModal::XPubEdited(xpub_str),
+                            ))
+                        });
+                    }
+                }
+                m => {
+                    if let Some(modal) = self.modal.as_mut() {
+                        return modal.update(m);
+                    }
+                }
+            },
             Message::DefineDescriptor(message::DefineDescriptor::KeyModal(msg)) => match msg {
                 message::ImportKeyModal::FetchedKey(res) => {
                     self.processing = false;
@@ -322,6 +348,14 @@ impl super::DescriptorEditModal for EditXpubModal {
                         };
                     self.form_token.valid = s.is_empty() || self.form_token_warning.is_none();
                     self.form_token.value = s;
+                }
+                message::ImportKeyModal::ImportXpub(network) => {
+                    if self.modal.is_none() {
+                        let modal = ExportModal::new(None, ImportExportType::ImportXpub(network));
+                        let launch = modal.launch(false);
+                        self.modal = Some(modal);
+                        return launch;
+                    }
                 }
                 message::ImportKeyModal::XPubEdited(s) => {
                     self.chosen_signer = None;
@@ -416,7 +450,14 @@ impl super::DescriptorEditModal for EditXpubModal {
     }
 
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        let hw = hws.refresh().map(Message::HardwareWallets);
+        if let Some(modal) = self.modal.as_ref() {
+            if let Some(sub) = modal.subscription() {
+                let import = sub.map(|m| Message::ImportExport(ImportExportMessage::Progress(m)));
+                return Subscription::batch(vec![hw, import]);
+            }
+        }
+        hw
     }
 
     fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
@@ -436,7 +477,7 @@ impl super::DescriptorEditModal for EditXpubModal {
             })
             .collect();
         let chosen_signer = self.chosen_signer.as_ref().map(|s| s.fingerprint);
-        view::editor::edit_key_modal(
+        let content = view::editor::edit_key_modal(
             "Set your key",
             self.network,
             self.path_kind,
@@ -512,7 +553,12 @@ impl super::DescriptorEditModal for EditXpubModal {
             self.form_token_warning.as_ref(),
             self.form_key_source_kind.as_ref(),
             self.duplicate_master_fg,
-        )
+        );
+        if let Some(modal) = &self.modal {
+            modal.view(content)
+        } else {
+            content
+        }
     }
 }
 
