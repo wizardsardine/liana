@@ -300,6 +300,7 @@ pub fn create_spend_tx<'a>(
                     .push(
                         if is_valid
                             && !duplicate
+                            && error.is_none()
                             && (is_self_send || Some(&Amount::from_sat(0)) == amount_left)
                         {
                             button::secondary(None, "Next")
