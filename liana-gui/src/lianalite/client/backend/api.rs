@@ -407,7 +407,7 @@ pub mod payload {
         pub recipients: Vec<Recipient>,
         /// The outpoints of coins to use as transaction inputs. If empty,
         /// coins will be selected automatically from the set of confirmed coins
-        /// and those unconfirmed coins at a change address, excluding immature
+        /// and those unconfirmed coins that are from self, excluding immature
         /// coins.
         pub inputs: &'a [bitcoin::OutPoint],
         // The feerate to use for this transaction.

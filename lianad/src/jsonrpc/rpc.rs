@@ -163,7 +163,8 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::InvalidDerivationIndex
             | commands::CommandError::RbfError(..)
             | commands::CommandError::EmptyFilterList
-            | commands::CommandError::RecoveryNotAvailable => {
+            | commands::CommandError::RecoveryNotAvailable
+            | commands::CommandError::OutpointNotRecoverable(..) => {
                 Error::new(ErrorCode::InvalidParams, e.to_string())
             }
             commands::CommandError::RescanTrigger(..) => {

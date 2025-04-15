@@ -217,7 +217,7 @@ impl Daemon for EmbeddedDaemon {
     ) -> Result<Psbt, DaemonError> {
         self.command(|daemon| {
             daemon
-                .create_recovery(address, feerate_vb, sequence)
+                .create_recovery(address, &[], feerate_vb, sequence)
                 .map(|res| res.psbt)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
