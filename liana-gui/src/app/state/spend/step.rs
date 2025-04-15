@@ -68,6 +68,29 @@ pub trait Step {
     }
 }
 
+/// Filter the coins that should be available for selection.
+///
+/// `selected` will be `None` if the coins are being filtered for the first time.
+/// In that case, no coins will be selected.
+fn filter_coins(coins: &[Coin], selected: Option<HashSet<OutPoint>>) -> Vec<(Coin, bool)> {
+    coins
+        .iter()
+        .filter_map(|c| {
+            if c.spend_info.is_none() && !c.is_immature {
+                Some((
+                    c.clone(),
+                    selected
+                        .as_ref()
+                        .map(|sel| sel.contains(&c.outpoint))
+                        .unwrap_or(false),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 pub struct DefineSpend {
     recipients: Vec<Recipient>,
     /// If set, this is the index of a recipient that should
@@ -100,16 +123,7 @@ impl DefineSpend {
         coins: &[Coin],
         timelock: u16,
     ) -> Self {
-        let coins: Vec<(Coin, bool)> = coins
-            .iter()
-            .filter_map(|c| {
-                if c.spend_info.is_none() && !c.is_immature {
-                    Some((c.clone(), false))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let coins = filter_coins(coins, None);
 
         Self {
             network,
@@ -563,17 +577,7 @@ impl Step for DefineSpend {
                                 None
                             }
                         }));
-                    self.coins = coins
-                        .into_iter()
-                        .filter_map(|coin| {
-                            if coin.spend_info.is_none() && !coin.is_immature {
-                                let selected = selected.contains(&coin.outpoint);
-                                Some((coin, selected))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
+                    self.coins = filter_coins(&coins, Some(selected));
                     self.sort_coins(cache.blockheight as u32);
                     // In case some selected coins are not spendable anymore and
                     // new coins make more sense to be selected. A redraft is triggered
