@@ -105,7 +105,6 @@ pub struct DefineSpend {
     network: Network,
     descriptor: LianaDescriptor,
     curve: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-    timelock: u16,
     coins: Vec<(Coin, bool)>,
     coins_labels: HashMap<String, String>,
     batch_label: form::Value<String>,
@@ -117,19 +116,13 @@ pub struct DefineSpend {
 }
 
 impl DefineSpend {
-    pub fn new(
-        network: Network,
-        descriptor: LianaDescriptor,
-        coins: &[Coin],
-        timelock: u16,
-    ) -> Self {
+    pub fn new(network: Network, descriptor: LianaDescriptor, coins: &[Coin]) -> Self {
         let coins = filter_coins(coins, None);
 
         Self {
             network,
             descriptor,
             curve: secp256k1::Secp256k1::verification_only(),
-            timelock,
             generated: None,
             coins,
             coins_labels: HashMap::new(),
@@ -159,7 +152,7 @@ impl DefineSpend {
     }
 
     fn sort_coins(&mut self, blockheight: u32) {
-        let timelock = self.timelock;
+        let timelock = self.timelock();
         self.coins.sort_by(|(a, a_selected), (b, b_selected)| {
             if *a_selected && !b_selected || !a_selected && *b_selected {
                 b_selected.cmp(a_selected)
@@ -178,6 +171,13 @@ impl DefineSpend {
     pub fn self_send(mut self) -> Self {
         self.recipients = Vec::new();
         self
+    }
+
+    /// This is used for calculating a coin's remaining sequence.
+    ///
+    /// It returns the descriptor's first timelock.
+    pub fn timelock(&self) -> u16 {
+        self.descriptor.first_timelock_value()
     }
 
     // If `is_redraft`, the validation of recipients will take into account
@@ -433,7 +433,6 @@ impl Step for DefineSpend {
                                 .map(|(c, _)| c.clone())
                                 .collect::<Vec<ListCoinsEntry>>()
                                 .as_slice(),
-                            self.timelock,
                         );
                         return Task::none();
                     }
@@ -647,7 +646,7 @@ impl Step for DefineSpend {
                 .collect(),
             self.is_valid,
             self.is_duplicate,
-            self.timelock,
+            self.timelock(),
             &self.coins,
             &self.coins_labels,
             &self.batch_label,
