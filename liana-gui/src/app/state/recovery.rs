@@ -156,7 +156,7 @@ impl State for RecoveryPanel {
                     return Task::perform(
                         async move {
                             let psbt = daemon
-                                .create_recovery(address, feerate_vb, sequence)
+                                .create_recovery(address, &[], feerate_vb, sequence)
                                 .await?;
                             let outpoints: Vec<_> = psbt
                                 .unsigned_tx

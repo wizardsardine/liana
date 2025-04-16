@@ -418,9 +418,12 @@ pub mod payload {
     }
 
     #[derive(Serialize)]
-    pub struct GenerateRecoveryPsbt {
+    pub struct GenerateRecoveryPsbt<'a> {
         /// The address to sweep funds to.
         pub address: bitcoin::Address<bitcoin::address::NetworkUnchecked>,
+        /// The outpoints of coins to use as transaction inputs. If empty, all
+        /// coins that are recoverable on the chosen recovery path will be used.
+        pub inputs: &'a [bitcoin::OutPoint],
         // The feerate to use for this transaction.
         pub feerate: u64,
         /// Timelock of the recovery path to use.
