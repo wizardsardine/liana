@@ -687,10 +687,9 @@ impl DaemonControl {
 
         // If the transaction already exists in DB, merge the signatures for each input on a best
         // effort basis.
-        // We work on the newly provided PSBT, in case its content was updated.
         let txid = tx.compute_txid();
-        if let Some(db_psbt) = db_conn.spend_tx(&txid) {
-            let db_tx = db_psbt.unsigned_tx;
+        if let Some(mut db_psbt) = db_conn.spend_tx(&txid) {
+            let db_tx = db_psbt.unsigned_tx.clone();
             for i in 0..db_tx.input.len() {
                 if tx
                     .input
@@ -700,24 +699,25 @@ impl DaemonControl {
                 {
                     continue;
                 }
-                let psbtin = match psbt.inputs.get_mut(i) {
+                let psbtin = match psbt.inputs.get(i) {
                     Some(psbtin) => psbtin,
                     None => continue,
                 };
-                let db_psbtin = match db_psbt.inputs.get(i) {
+                let db_psbtin = match db_psbt.inputs.get_mut(i) {
                     Some(db_psbtin) => db_psbtin,
                     None => continue,
                 };
-                psbtin
+                db_psbtin
                     .partial_sigs
-                    .extend(db_psbtin.partial_sigs.clone().into_iter());
-                psbtin
+                    .extend(psbtin.partial_sigs.clone().into_iter());
+                db_psbtin
                     .tap_script_sigs
-                    .extend(db_psbtin.tap_script_sigs.clone().into_iter());
-                if psbtin.tap_key_sig.is_none() {
-                    psbtin.tap_key_sig = db_psbtin.tap_key_sig;
+                    .extend(psbtin.tap_script_sigs.clone().into_iter());
+                if db_psbtin.tap_key_sig.is_none() {
+                    db_psbtin.tap_key_sig = psbtin.tap_key_sig;
                 }
             }
+            psbt = db_psbt;
         } else {
             // If the transaction doesn't exist in DB already, sanity check its inputs.
             // FIXME: should we allow for external inputs?
