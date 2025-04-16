@@ -27,13 +27,12 @@ pub struct CreateSpendPanel {
 impl CreateSpendPanel {
     pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: u32, network: Network) -> Self {
         let descriptor = wallet.main_descriptor.clone();
-        let timelock = descriptor.first_timelock_value();
         Self {
             draft: step::TransactionDraft::new(network),
             current: 0,
             steps: vec![
                 Box::new(
-                    step::DefineSpend::new(network, descriptor, coins, timelock)
+                    step::DefineSpend::new(network, descriptor, coins)
                         .with_coins_sorted(blockheight),
                 ),
                 Box::new(step::SaveSpend::new(wallet)),
@@ -49,13 +48,12 @@ impl CreateSpendPanel {
         network: Network,
     ) -> Self {
         let descriptor = wallet.main_descriptor.clone();
-        let timelock = descriptor.first_timelock_value();
         Self {
             draft: step::TransactionDraft::new(network),
             current: 0,
             steps: vec![
                 Box::new(
-                    step::DefineSpend::new(network, descriptor, coins, timelock)
+                    step::DefineSpend::new(network, descriptor, coins)
                         .with_preselected_coins(preselected_coins)
                         .with_coins_sorted(blockheight)
                         .self_send(),
