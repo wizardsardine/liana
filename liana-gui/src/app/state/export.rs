@@ -232,7 +232,7 @@ impl ExportModal {
 
     pub fn view<'a, M>(&'a self, content: Element<'a, M>) -> Element<M>
     where
-        M: 'a + Close + Clone + From<export::ImportExportMessage>,
+        M: 'a + Close + Clone + From<export::ImportExportMessage> + 'static,
     {
         let modal = Modal::new(
             content,

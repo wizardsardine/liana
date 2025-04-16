@@ -1,5 +1,5 @@
 use iced::{
-    alignment::Horizontal,
+    alignment::{self, Horizontal},
     widget::{progress_bar, Column, Container, Row, Space},
     Length,
 };
@@ -8,6 +8,7 @@ use liana_ui::{
         button, card,
         text::{h4_bold, text},
     },
+    icon,
     widget::Element,
 };
 
@@ -15,7 +16,7 @@ use crate::export::ImportExportState;
 use crate::export::{Error, ImportExportMessage, ImportExportType};
 
 /// Return the modal view for an export task
-pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
+pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
     state: &ImportExportState,
     error: Option<&'a Error>,
     title: &str,
@@ -31,6 +32,16 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
         _ => None,
     }
     .map(Container::new);
+
+    let cross = match state {
+        ImportExportState::Ended | ImportExportState::TimedOut | ImportExportState::Aborted => {
+            Some(
+                button::transparent(Some(icon::cross_icon().size(30)), "")
+                    .on_press(ImportExportMessage::Close.into()),
+            )
+        }
+        _ => None,
+    };
 
     let msg = if let Some(error) = error {
         format!("{}", error)
@@ -114,7 +125,14 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
     card::simple(
         Column::new()
             .spacing(10)
-            .push(Container::new(h4_bold(title)).width(Length::Fill))
+            .push(
+                Row::new()
+                    .push(Space::with_width(20))
+                    .push(h4_bold(title))
+                    .push(Space::with_width(Length::Fill))
+                    .push_maybe(cross)
+                    .align_y(alignment::Vertical::Center),
+            )
             .push(Space::with_height(Length::Fill))
             .push(progress_bar_row)
             .push(Space::with_height(Length::Fill))
@@ -124,6 +142,6 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
             .push(Space::with_height(5)),
     )
     .width(Length::Fixed(500.0))
-    .height(Length::Fixed(250.0))
+    .height(Length::Fixed(300.0))
     .into()
 }
