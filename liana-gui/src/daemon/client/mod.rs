@@ -182,12 +182,13 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
     async fn create_recovery(
         &self,
         address: Address<address::NetworkUnchecked>,
+        coins_outpoints: &[OutPoint],
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError> {
-        // The `outpoints` parameter is omitted, which means all recoverable coins will be used.
         let mut params = serde_json::Map::new();
         params.insert("address".to_string(), json!(address));
+        params.insert("outpoints".to_string(), json!(coins_outpoints));
         params.insert("feerate".to_string(), json!(feerate_vb));
         if let Some(sequence) = sequence {
             params.insert("timelock".to_string(), json!(sequence));

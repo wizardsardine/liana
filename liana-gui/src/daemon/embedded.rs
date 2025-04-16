@@ -212,12 +212,13 @@ impl Daemon for EmbeddedDaemon {
     async fn create_recovery(
         &self,
         address: Address<address::NetworkUnchecked>,
+        coins_outpoints: &[OutPoint],
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError> {
         self.command(|daemon| {
             daemon
-                .create_recovery(address, &[], feerate_vb, sequence)
+                .create_recovery(address, coins_outpoints, feerate_vb, sequence)
                 .map(|res| res.psbt)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
