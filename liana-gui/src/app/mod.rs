@@ -318,9 +318,7 @@ impl App {
                         daemon.is_alive(&datadir_path, network).await?;
 
                         let info = daemon.get_info().await?;
-                        let coins = daemon
-                            .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
-                            .await?;
+                        let coins = cache::coins_to_cache(daemon).await?;
                         Ok(Cache {
                             datadir_path,
                             coins: coins.coins,

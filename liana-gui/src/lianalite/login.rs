@@ -8,9 +8,13 @@ use liana_ui::{
     icon, theme,
     widget::*,
 };
+use lianad::commands::ListCoinsResult;
 
 use crate::{
-    app::settings::{AuthConfig, Settings, SettingsError, WalletSetting},
+    app::{
+        cache::coins_to_cache,
+        settings::{AuthConfig, Settings, SettingsError, WalletSetting},
+    },
     daemon::DaemonError,
 };
 
@@ -68,7 +72,16 @@ pub enum Message {
     // redirect to the installer with the remote backend connection.
     Install(Option<BackendClient>),
     // redirect to the app runner with the remote backend connection.
-    Run(Result<(BackendWalletClient, api::Wallet), Error>),
+    Run(
+        Result<
+            (
+                BackendWalletClient,
+                api::Wallet,
+                /* coins to cache */ ListCoinsResult,
+            ),
+            Error,
+        >,
+    ),
 }
 
 #[derive(Debug, Clone)]
@@ -83,7 +96,7 @@ pub enum ViewMessage {
 #[derive(Debug, Clone)]
 pub enum BackendState {
     NoWallet(BackendClient),
-    WalletExists(BackendWalletClient, api::Wallet),
+    WalletExists(BackendWalletClient, api::Wallet, ListCoinsResult),
 }
 
 pub struct LianaLiteLogin {
@@ -182,10 +195,11 @@ impl LianaLiteLogin {
                         Ok(BackendState::NoWallet(_)) => {
                             self.auth_error = Some("No wallet found for the given email");
                         }
-                        Ok(BackendState::WalletExists(client, wallet)) => {
-                            return Task::perform(async move { (client, wallet) }, |(c, w)| {
-                                Message::Run(Ok((c, w)))
-                            });
+                        Ok(BackendState::WalletExists(client, wallet, coins)) => {
+                            return Task::perform(
+                                async move { (client, wallet, coins) },
+                                |(c, w, coins)| Message::Run(Ok((c, w, coins))),
+                            );
                         }
                         Err(e) => {
                             self.connection_error = Some(e);
@@ -323,7 +337,7 @@ impl LianaLiteLogin {
                         Ok(BackendState::NoWallet(client)) => {
                             return Task::perform(async move { Some(client) }, Message::Install);
                         }
-                        Ok(BackendState::WalletExists(client, wallet)) => {
+                        Ok(BackendState::WalletExists(client, wallet, coins)) => {
                             let datadir = self.datadir.clone();
                             let network = self.network;
                             return Task::perform(
@@ -337,7 +351,7 @@ impl LianaLiteLogin {
                                     )
                                     .await?;
 
-                                    Ok((client, wallet))
+                                    Ok((client, wallet, coins))
                                 },
                                 Message::Run,
                             );
@@ -545,10 +559,12 @@ pub async fn connect(
     if wallet_id.is_empty() {
         let first = wallets.first().cloned().ok_or(DaemonError::NoAnswer)?;
         let (wallet_client, wallet) = client.connect_wallet(first);
-        Ok(BackendState::WalletExists(wallet_client, wallet))
+        let coins = coins_to_cache(Arc::new(wallet_client.clone())).await?;
+        Ok(BackendState::WalletExists(wallet_client, wallet, coins))
     } else if let Some(wallet) = wallets.into_iter().find(|w| w.id == wallet_id) {
         let (wallet_client, wallet) = client.connect_wallet(wallet);
-        Ok(BackendState::WalletExists(wallet_client, wallet))
+        let coins = coins_to_cache(Arc::new(wallet_client.clone())).await?;
+        Ok(BackendState::WalletExists(wallet_client, wallet, coins))
     } else {
         Ok(BackendState::NoWallet(client))
     }
@@ -571,7 +587,8 @@ pub async fn connect_with_refresh_token(
         .find(|w| w.id == wallet_id)
     {
         let (wallet_client, wallet) = client.connect_wallet(wallet);
-        Ok(BackendState::WalletExists(wallet_client, wallet))
+        let coins = coins_to_cache(Arc::new(wallet_client.clone())).await?;
+        Ok(BackendState::WalletExists(wallet_client, wallet, coins))
     } else {
         Ok(BackendState::NoWallet(client))
     }
