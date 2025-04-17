@@ -1,6 +1,11 @@
-use crate::daemon::model::Coin;
+use crate::daemon::{
+    model::{Coin, ListCoinsResult},
+    Daemon, DaemonError,
+};
 use liana::miniscript::bitcoin::Network;
+use lianad::commands::CoinStatus;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Cache {
@@ -30,4 +35,13 @@ impl std::default::Default for Cache {
             last_poll_at_startup: None,
         }
     }
+}
+
+/// Get the coins that should be cached.
+pub async fn coins_to_cache(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+) -> Result<ListCoinsResult, DaemonError> {
+    daemon
+        .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+        .await
 }

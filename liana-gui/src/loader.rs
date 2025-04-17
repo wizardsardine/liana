@@ -18,7 +18,6 @@ use liana_ui::{
     widget::*,
 };
 use lianad::{
-    commands::CoinStatus,
     config::{BitcoinBackend, Config, ConfigError},
     StartupError,
 };
@@ -28,7 +27,7 @@ use crate::backup::Backup;
 use crate::export::RestoreBackupError;
 use crate::{
     app::{
-        cache::Cache,
+        cache::{coins_to_cache, Cache},
         config::Config as GUIConfig,
         wallet::{Wallet, WalletError},
     },
@@ -429,10 +428,7 @@ pub async fn load_application(
         .load_from_settings(&datadir_path, network)?
         .load_hotsigners(&datadir_path, network)?;
 
-    let coins = daemon
-        .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
-        .await
-        .map(|res| res.coins)?;
+    let coins = coins_to_cache(daemon.clone()).await.map(|res| res.coins)?;
 
     let cache = Cache {
         datadir_path,
