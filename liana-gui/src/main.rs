@@ -19,7 +19,7 @@ extern crate serde_json;
 
 use liana::miniscript::bitcoin;
 use liana_ui::{component::text, font, image, theme, widget::Element};
-use lianad::config::Config as DaemonConfig;
+use lianad::{commands::ListCoinsResult, config::Config as DaemonConfig};
 
 use liana_gui::{
     app::{self, cache::Cache, config::default_datadir, wallet::Wallet, App},
@@ -272,7 +272,7 @@ impl GUI {
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
-                login::Message::Run(Ok((backend_client, wallet))) => {
+                login::Message::Run(Ok((backend_client, wallet, coins))) => {
                     let config = app::Config::from_file(
                         &l.datadir
                             .join(l.network.to_string())
@@ -288,6 +288,7 @@ impl GUI {
                     let (app, command) = create_app_with_remote_backend(
                         backend_client,
                         wallet,
+                        coins,
                         l.datadir.clone(),
                         l.network,
                         config,
@@ -463,6 +464,7 @@ impl GUI {
 pub fn create_app_with_remote_backend(
     remote_backend: BackendWalletClient,
     wallet: api::Wallet,
+    coins: ListCoinsResult,
     datadir: PathBuf,
     network: bitcoin::Network,
     config: app::Config,
@@ -498,7 +500,7 @@ pub fn create_app_with_remote_backend(
     App::new(
         Cache {
             network,
-            coins: Vec::new(),
+            coins: coins.coins,
             rescan_progress: None,
             sync_progress: 1.0, // Remote backend is always synced
             datadir_path: datadir.clone(),
