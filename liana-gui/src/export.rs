@@ -125,6 +125,7 @@ pub enum Error {
     XpubNetwork,
     TxidNotMatch,
     InsanePsbt,
+    OutpointNotOwned,
 }
 
 impl Display for Error {
@@ -148,6 +149,10 @@ impl Display for Error {
             Error::XpubNetwork => write!(f, "Xpub is for another network"),
             Error::TxidNotMatch => write!(f, "The imported PSBT txid doesn't match this PSBT"),
             Error::InsanePsbt => write!(f, "The Psbt is not sane"),
+            Error::OutpointNotOwned => write!(
+                f,
+                "Import failed. The PSBT either doesn't belong to the wallet or has already been spent."
+            ),
         }
     }
 }
@@ -605,13 +610,24 @@ pub async fn import_psbt(
         .partial_spend_info(&psbt)
         .map_err(|_| Error::InsanePsbt)?;
 
-    if let Some(txid) = txid {
-        if psbt.unsigned_tx.compute_txid() != txid {
+    if let Some(txid) = &txid {
+        if psbt.unsigned_tx.compute_txid() != *txid {
             return Err(Error::TxidNotMatch);
         }
     }
 
-    daemon.update_spend_tx(&psbt).await?;
+    let e = daemon.update_spend_tx(&psbt).await;
+    if let (None, Err(error)) = (txid, &e) {
+        if let DaemonError::Unexpected(e) = error {
+            if e.contains("Unknown outpoint") {
+                return Err(Error::OutpointNotOwned);
+            } else {
+                return Err(Error::Daemon(error.to_string()));
+            }
+        }
+    } else {
+        e?;
+    }
     send_progress!(sender, Psbt(psbt));
 
     send_progress!(sender, Progress(100.0));
