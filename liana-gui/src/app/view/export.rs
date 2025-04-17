@@ -22,12 +22,9 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
     title: &str,
     import_export_type: &ImportExportType,
 ) -> Element<'a, Message> {
-    let cancel_close = match state {
+    let cancel = match state {
         ImportExportState::Started | ImportExportState::Progress(_) => {
             Some(button::secondary(None, "Cancel").on_press(ImportExportMessage::UserStop.into()))
-        }
-        ImportExportState::Ended | ImportExportState::TimedOut | ImportExportState::Aborted => {
-            Some(button::secondary(None, "Close").on_press(ImportExportMessage::Close.into()))
         }
         _ => None,
     }
@@ -93,9 +90,9 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
             (Some(_), _) => labels_btn,
 
             (_, Some(_)) => aliases_btn,
-            _ => (msg, cancel_close),
+            _ => (msg, cancel),
         },
-        _ => (msg, cancel_close),
+        _ => (msg, cancel),
     };
     let button = button.map(|b| {
         Container::new(b)
