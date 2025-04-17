@@ -912,6 +912,7 @@ impl Daemon for BackendWalletClient {
     async fn create_recovery(
         &self,
         address: Address<address::NetworkUnchecked>,
+        coins_outpoints: &[OutPoint],
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError> {
@@ -931,6 +932,7 @@ impl Daemon for BackendWalletClient {
                 timelock: sequence
                     .ok_or(DaemonError::Unexpected("Missing sequence".to_string()))?,
                 address,
+                inputs: coins_outpoints,
             })
             .send()
             .await?;

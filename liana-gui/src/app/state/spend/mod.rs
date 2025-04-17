@@ -1,6 +1,7 @@
 mod step;
 
 use std::collections::HashSet;
+use std::convert::TryInto;
 use std::sync::Arc;
 
 use iced::Task;
@@ -20,21 +21,65 @@ use crate::{
 
 pub struct CreateSpendPanel {
     draft: step::TransactionDraft,
+    /// The timelock of the recovery path to use for spending.
+    ///
+    /// If the primary path will be used, this value will remain as `None`.
+    /// Otherwise, its value should always be set to a recovery path,
+    /// which may change from one to another.
+    recovery_timelock: Option<u16>,
     current: usize,
     steps: Vec<Box<dyn step::Step>>,
 }
 
 impl CreateSpendPanel {
+    /// Create a new instance to be used for a primary path spend.
     pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: u32, network: Network) -> Self {
+        let descriptor = wallet.main_descriptor.clone();
+        Self {
+            draft: step::TransactionDraft::new(network),
+            recovery_timelock: None,
+            current: 0,
+            steps: vec![
+                Box::new(
+                    step::DefineSpend::new(network, descriptor, coins, blockheight, None, true)
+                        .with_coins_sorted(blockheight),
+                ),
+                Box::new(step::SaveSpend::new(wallet)),
+            ],
+        }
+    }
+
+    /// Create a new instance to be used for a recovery spend.
+    ///
+    /// By default, the wallet's first timelock value is used for `DefineSpend`.
+    pub fn new_recovery(
+        wallet: Arc<Wallet>,
+        coins: &[Coin],
+        blockheight: u32,
+        network: Network,
+    ) -> Self {
         let descriptor = wallet.main_descriptor.clone();
         let timelock = descriptor.first_timelock_value();
         Self {
             draft: step::TransactionDraft::new(network),
+            recovery_timelock: Some(timelock),
             current: 0,
             steps: vec![
+                Box::new(step::SelectRecoveryPath::new(
+                    wallet.clone(),
+                    coins,
+                    blockheight.try_into().expect("i32 by consensus"),
+                )),
                 Box::new(
-                    step::DefineSpend::new(network, descriptor, coins, timelock)
-                        .with_coins_sorted(blockheight),
+                    step::DefineSpend::new(
+                        network,
+                        descriptor,
+                        coins,
+                        blockheight,
+                        Some(timelock), // the recovery timelock must always be set to a value
+                        false,
+                    )
+                    .with_coins_sorted(blockheight),
                 ),
                 Box::new(step::SaveSpend::new(wallet)),
             ],
@@ -49,13 +94,13 @@ impl CreateSpendPanel {
         network: Network,
     ) -> Self {
         let descriptor = wallet.main_descriptor.clone();
-        let timelock = descriptor.first_timelock_value();
         Self {
             draft: step::TransactionDraft::new(network),
+            recovery_timelock: None,
             current: 0,
             steps: vec![
                 Box::new(
-                    step::DefineSpend::new(network, descriptor, coins, timelock)
+                    step::DefineSpend::new(network, descriptor, coins, blockheight, None, true)
                         .with_preselected_coins(preselected_coins)
                         .with_coins_sorted(blockheight)
                         .self_send(),
@@ -65,8 +110,14 @@ impl CreateSpendPanel {
         }
     }
 
-    pub fn is_first_step(&self) -> bool {
-        self.current == 0
+    pub fn keep_state(&self) -> bool {
+        if self.recovery_timelock.is_some() {
+            // For recovery spend, retain the state if user is on the first two steps
+            // (choosing recovery path and defining spend)
+            self.current < 2
+        } else {
+            self.current == 0
+        }
     }
 }
 
@@ -95,12 +146,12 @@ impl State for CreateSpendPanel {
 
         if matches!(message, Message::View(view::Message::Next)) {
             if let Some(step) = self.steps.get(self.current) {
-                step.apply(&mut self.draft);
+                step.apply(&mut self.draft, &mut self.recovery_timelock);
             }
 
             if let Some(step) = self.steps.get_mut(self.current + 1) {
                 self.current += 1;
-                step.load(&self.draft);
+                step.load(cache, &self.draft, self.recovery_timelock);
             }
         }
 

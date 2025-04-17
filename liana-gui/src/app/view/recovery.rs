@@ -11,7 +11,7 @@ use liana::miniscript::bitcoin::{
 };
 
 use liana_ui::{
-    component::{amount::*, button, form, text::*},
+    component::{amount::*, button, text::*},
     theme,
     widget::*,
 };
@@ -31,8 +31,6 @@ pub fn recovery<'a>(
     cache: &'a Cache,
     recovery_paths: Vec<Element<'a, Message>>,
     selected_path: Option<usize>,
-    feerate: &form::Value<String>,
-    address: &'a form::Value<String>,
     warning: Option<&Error>,
 ) -> Element<'a, Message> {
     let no_recovery_paths = recovery_paths.is_empty();
@@ -43,38 +41,6 @@ pub fn recovery<'a>(
         Column::new()
             .push(Container::new(h3("Recovery")).width(Length::Fill))
             .push(Space::with_height(Length::Fixed(20.0)))
-            .push(
-                Row::new()
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .push(text("Destination").bold())
-                    .push(
-                        Container::new(
-                            form::Form::new_trimmed("Address", address, move |msg| {
-                                Message::CreateSpend(CreateSpendMessage::RecipientEdited(
-                                    0, "address", msg,
-                                ))
-                            })
-                            .warning("Invalid Bitcoin address")
-                            .size(P1_SIZE)
-                            .padding(10),
-                        )
-                        .max_width(500)
-                        .width(Length::Fill),
-                    )
-                    .push(text("Feerate").bold())
-                    .push(
-                        Container::new(
-                            form::Form::new_trimmed("42 (sats/vbyte)", feerate, move |msg| {
-                                Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
-                            })
-                            .warning("Invalid feerate")
-                            .size(P1_SIZE)
-                            .padding(10),
-                        )
-                        .width(Length::Fixed(200.0)),
-                    ),
-            )
             .push(if no_recovery_paths {
                 Container::new(text("No recovery path is currently available"))
             } else {
@@ -97,18 +63,9 @@ pub fn recovery<'a>(
                     Row::new()
                         .push(Space::with_width(Length::Fill))
                         .push(
-                            if feerate.valid
-                                && !feerate.value.is_empty()
-                                && address.valid
-                                && !address.value.is_empty()
-                                && selected_path.is_some()
-                            {
-                                button::secondary(None, "Next")
-                                    .on_press(Message::Next)
-                                    .width(Length::Fixed(200.0))
-                            } else {
-                                button::secondary(None, "Next").width(Length::Fixed(200.0))
-                            },
+                            button::secondary(None, "Next")
+                                .on_press_maybe(selected_path.map(|_| Message::Next))
+                                .width(Length::Fixed(200.0)),
                         )
                         .spacing(20)
                         .align_y(Alignment::Center),
