@@ -1,5 +1,5 @@
 use iced::{
-    alignment::Horizontal,
+    alignment::{self, Horizontal},
     widget::{progress_bar, Column, Container, Row, Space},
     Length,
 };
@@ -8,6 +8,7 @@ use liana_ui::{
         button, card,
         text::{h4_bold, text},
     },
+    icon,
     widget::Element,
 };
 
@@ -15,22 +16,29 @@ use crate::export::ImportExportState;
 use crate::export::{Error, ImportExportMessage, ImportExportType};
 
 /// Return the modal view for an export task
-pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
+pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
     state: &ImportExportState,
     error: Option<&'a Error>,
     title: &str,
     import_export_type: &ImportExportType,
 ) -> Element<'a, Message> {
-    let cancel_close = match state {
+    let cancel = match state {
         ImportExportState::Started | ImportExportState::Progress(_) => {
             Some(button::secondary(None, "Cancel").on_press(ImportExportMessage::UserStop.into()))
-        }
-        ImportExportState::Ended | ImportExportState::TimedOut | ImportExportState::Aborted => {
-            Some(button::secondary(None, "Close").on_press(ImportExportMessage::Close.into()))
         }
         _ => None,
     }
     .map(Container::new);
+
+    let cross = match state {
+        ImportExportState::Ended | ImportExportState::TimedOut | ImportExportState::Aborted => {
+            Some(
+                button::transparent(Some(icon::cross_icon().size(30)), "")
+                    .on_press(ImportExportMessage::Close.into()),
+            )
+        }
+        _ => None,
+    };
 
     let msg = if let Some(error) = error {
         format!("{}", error)
@@ -82,9 +90,9 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
             (Some(_), _) => labels_btn,
 
             (_, Some(_)) => aliases_btn,
-            _ => (msg, cancel_close),
+            _ => (msg, cancel),
         },
-        _ => (msg, cancel_close),
+        _ => (msg, cancel),
     };
     let button = button.map(|b| {
         Container::new(b)
@@ -114,7 +122,14 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
     card::simple(
         Column::new()
             .spacing(10)
-            .push(Container::new(h4_bold(title)).width(Length::Fill))
+            .push(
+                Row::new()
+                    .push(Space::with_width(20))
+                    .push(h4_bold(title))
+                    .push(Space::with_width(Length::Fill))
+                    .push_maybe(cross)
+                    .align_y(alignment::Vertical::Center),
+            )
             .push(Space::with_height(Length::Fill))
             .push(progress_bar_row)
             .push(Space::with_height(Length::Fill))
@@ -124,6 +139,6 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'a>(
             .push(Space::with_height(5)),
     )
     .width(Length::Fixed(500.0))
-    .height(Length::Fixed(250.0))
+    .height(Length::Fixed(300.0))
     .into()
 }
