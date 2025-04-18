@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use iced::Subscription;
@@ -13,12 +12,10 @@ use liana::{
 use lianad::commands::CoinStatus;
 
 use liana_ui::component::toast;
-use liana_ui::{
-    component::{form, modal},
-    widget::Element,
-};
+use liana_ui::{component::modal, widget::Element};
 
 use crate::daemon::model::LabelsLoader;
+use crate::export::{ImportExportMessage, ImportExportType, Progress};
 use crate::{
     app::{
         cache::Cache,
@@ -35,7 +32,9 @@ use crate::{
     hw::{HardwareWallet, HardwareWallets},
 };
 
-pub trait Action {
+use super::export::ExportModal;
+
+pub trait Modal {
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
         Task::none()
     }
@@ -53,34 +52,34 @@ pub trait Action {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message>;
 }
 
-pub enum PsbtAction {
-    Save(SaveAction),
-    Sign(SignAction),
-    Update(UpdateAction),
-    Broadcast(BroadcastAction),
-    Delete(DeleteAction),
+pub enum PsbtModal {
+    Save(SaveModal),
+    Sign(SignModal),
+    Broadcast(BroadcastModal),
+    Delete(DeleteModal),
+    Export(ExportModal),
 }
 
-impl<'a> AsRef<dyn Action + 'a> for PsbtAction {
-    fn as_ref(&self) -> &(dyn Action + 'a) {
+impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
+    fn as_ref(&self) -> &(dyn Modal + 'a) {
         match &self {
             Self::Save(a) => a,
             Self::Sign(a) => a,
-            Self::Update(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
+            Self::Export(a) => a,
         }
     }
 }
 
-impl<'a> AsMut<dyn Action + 'a> for PsbtAction {
-    fn as_mut(&mut self) -> &mut (dyn Action + 'a) {
+impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
+    fn as_mut(&mut self) -> &mut (dyn Modal + 'a) {
         match self {
             Self::Save(a) => a,
             Self::Sign(a) => a,
-            Self::Update(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
+            Self::Export(a) => a,
         }
     }
 }
@@ -92,7 +91,7 @@ pub struct PsbtState {
     pub saved: bool,
     pub warning: Option<Error>,
     pub labels_edited: LabelsEdited,
-    pub action: Option<PsbtAction>,
+    pub modal: Option<PsbtModal>,
 }
 
 impl PsbtState {
@@ -102,27 +101,27 @@ impl PsbtState {
             wallet,
             labels_edited: LabelsEdited::default(),
             warning: None,
-            action: None,
+            modal: None,
             tx,
             saved,
         }
     }
 
     pub fn interrupt(&mut self) {
-        self.action = None;
+        self.modal = None;
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        if let Some(action) = &self.action {
-            action.as_ref().subscription()
+        if let Some(modal) = &self.modal {
+            modal.as_ref().subscription()
         } else {
             Subscription::none()
         }
     }
 
     pub fn load(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
-        if let Some(action) = &self.action {
-            action.as_ref().load(daemon)
+        if let Some(modal) = &self.modal {
+            modal.as_ref().load(daemon)
         } else {
             Task::none()
         }
@@ -135,38 +134,62 @@ impl PsbtState {
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::View(view::Message::ExportPsbt) => {
+                if self.modal.is_none() {
+                    let psbt_str = self.tx.psbt.to_string();
+                    let modal = ExportModal::new(None, ImportExportType::ExportPsbt(psbt_str));
+                    let launch = modal.launch(true);
+                    self.modal = Some(PsbtModal::Export(modal));
+                    return launch;
+                }
+            }
+            Message::View(view::Message::ImportPsbt) => {
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(
+                        Some(daemon.clone()),
+                        ImportExportType::ImportPsbt(Some(self.tx.psbt.unsigned_tx.compute_txid())),
+                    );
+                    let launch = modal.launch(false);
+                    self.modal = Some(PsbtModal::Export(modal));
+                    return launch;
+                }
+            }
+            Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
+                if matches!(self.modal, Some(PsbtModal::Export(_))) {
+                    self.modal = None;
+                }
+            }
+            Message::View(view::Message::ImportExport(m)) => {
+                if let Some(PsbtModal::Export(modal)) = self.modal.as_mut() {
+                    return modal.update(m);
+                }
+            }
             Message::View(view::Message::Spend(view::SpendTxMessage::Cancel)) => {
-                if let Some(PsbtAction::Sign(SignAction { display_modal, .. })) = &mut self.action {
+                if let Some(PsbtModal::Sign(SignModal { display_modal, .. })) = &mut self.modal {
                     *display_modal = false;
                     return Task::none();
                 }
 
-                self.action = None;
+                self.modal = None;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
-                self.action = Some(PsbtAction::Delete(DeleteAction::default()));
+                self.modal = Some(PsbtModal::Delete(DeleteModal::default()));
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Sign)) => {
-                if let Some(PsbtAction::Sign(SignAction { display_modal, .. })) = &mut self.action {
+                if let Some(PsbtModal::Sign(SignModal { display_modal, .. })) = &mut self.modal {
                     *display_modal = true;
                     return Task::none();
                 }
 
-                let action = SignAction::new(
+                let modal = SignModal::new(
                     self.tx.signers(),
                     self.wallet.clone(),
                     cache.datadir_path.clone(),
                     cache.network,
                     self.saved,
                 );
-                let cmd = action.load(daemon);
-                self.action = Some(PsbtAction::Sign(action));
-                return cmd;
-            }
-            Message::View(view::Message::Spend(view::SpendTxMessage::EditPsbt)) => {
-                let action = UpdateAction::new(self.wallet.clone(), self.tx.psbt.to_string());
-                let cmd = action.load(daemon);
-                self.action = Some(PsbtAction::Update(action));
+                let cmd = modal.load(daemon);
+                self.modal = Some(PsbtModal::Sign(modal));
                 return cmd;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
@@ -188,7 +211,7 @@ impl PsbtState {
                 );
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Save)) => {
-                self.action = Some(PsbtAction::Save(SaveAction::default()));
+                self.modal = Some(PsbtModal::Save(SaveModal::default()));
             }
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
@@ -206,15 +229,13 @@ impl PsbtState {
             }
             Message::Updated(Ok(_)) => {
                 self.saved = true;
-                if let Some(action) = self.action.as_mut() {
-                    return action
-                        .as_mut()
-                        .update(daemon.clone(), message, &mut self.tx);
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
                 }
             }
             Message::BroadcastModal(res) => match res {
                 Ok(conflicting_txids) => {
-                    self.action = Some(PsbtAction::Broadcast(BroadcastAction {
+                    self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
                         conflicting_txids,
                         ..Default::default()
                     }));
@@ -223,11 +244,17 @@ impl PsbtState {
                     self.warning = Some(e);
                 }
             },
+            Message::Export(ImportExportMessage::Progress(Progress::Psbt(psbt))) => {
+                merge_signatures(&mut self.tx.psbt, &psbt);
+                self.tx.sigs = self
+                    .wallet
+                    .main_descriptor
+                    .partial_spend_info(&self.tx.psbt)
+                    .expect("already check in psbt import logic");
+            }
             _ => {
-                if let Some(action) = self.action.as_mut() {
-                    return action
-                        .as_mut()
-                        .update(daemon.clone(), message, &mut self.tx);
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
                 }
             }
         };
@@ -245,8 +272,8 @@ impl PsbtState {
             cache.network,
             self.warning.as_ref(),
         );
-        if let Some(action) = &self.action {
-            action.as_ref().view(content)
+        if let Some(modal) = &self.modal {
+            modal.as_ref().view(content)
         } else {
             content
         }
@@ -254,12 +281,12 @@ impl PsbtState {
 }
 
 #[derive(Default)]
-pub struct SaveAction {
+pub struct SaveModal {
     saved: bool,
     error: Option<Error>,
 }
 
-impl Action for SaveAction {
+impl Modal for SaveModal {
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -303,14 +330,14 @@ impl Action for SaveAction {
 }
 
 #[derive(Default)]
-pub struct BroadcastAction {
+pub struct BroadcastModal {
     broadcast: bool,
     error: Option<Error>,
     /// IDs of any directly conflicting transactions.
     conflicting_txids: HashSet<Txid>,
 }
 
-impl Action for BroadcastAction {
+impl Modal for BroadcastModal {
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -358,12 +385,12 @@ impl Action for BroadcastAction {
 }
 
 #[derive(Default)]
-pub struct DeleteAction {
+pub struct DeleteModal {
     deleted: bool,
     error: Option<Error>,
 }
 
-impl Action for DeleteAction {
+impl Modal for DeleteModal {
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -403,7 +430,7 @@ impl Action for DeleteAction {
     }
 }
 
-pub struct SignAction {
+pub struct SignModal {
     wallet: Arc<Wallet>,
     hws: HardwareWallets,
     error: Option<Error>,
@@ -413,7 +440,7 @@ pub struct SignAction {
     display_modal: bool,
 }
 
-impl SignAction {
+impl SignModal {
     pub fn new(
         signed: HashSet<Fingerprint>,
         wallet: Arc<Wallet>,
@@ -433,7 +460,7 @@ impl SignAction {
     }
 }
 
-impl Action for SignAction {
+impl Modal for SignModal {
     fn subscription(&self) -> Subscription<Message> {
         self.hws.refresh().map(Message::HardwareWallets)
     }
@@ -635,97 +662,6 @@ async fn sign_psbt(
         hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
     }
     Ok(psbt)
-}
-
-pub struct UpdateAction {
-    wallet: Arc<Wallet>,
-    psbt: String,
-    updated: form::Value<String>,
-    processing: bool,
-    error: Option<Error>,
-    success: bool,
-}
-
-impl UpdateAction {
-    pub fn new(wallet: Arc<Wallet>, psbt: String) -> Self {
-        Self {
-            wallet,
-            psbt,
-            updated: form::Value::default(),
-            processing: false,
-            error: None,
-            success: false,
-        }
-    }
-}
-
-impl Action for UpdateAction {
-    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        modal::Modal::new(
-            content,
-            if self.success {
-                view::psbt::update_spend_success_view()
-            } else {
-                view::psbt::update_spend_view(
-                    self.psbt.clone(),
-                    &self.updated,
-                    self.error.as_ref(),
-                    self.processing,
-                )
-            },
-        )
-        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
-        .into()
-    }
-
-    fn update(
-        &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        message: Message,
-        tx: &mut SpendTx,
-    ) -> Task<Message> {
-        match message {
-            Message::Updated(res) => {
-                self.processing = false;
-                match res {
-                    Ok(()) => {
-                        self.success = true;
-                        self.error = None;
-                        let psbt = Psbt::from_str(&self.updated.value).expect("Already checked");
-                        merge_signatures(&mut tx.psbt, &psbt);
-                        tx.sigs = self
-                            .wallet
-                            .main_descriptor
-                            .partial_spend_info(&tx.psbt)
-                            .unwrap();
-                    }
-                    Err(e) => self.error = e.into(),
-                }
-            }
-            Message::View(view::Message::ImportSpend(view::ImportSpendMessage::PsbtEdited(s))) => {
-                self.updated.value = s;
-                if let Ok(psbt) = Psbt::from_str(&self.updated.value) {
-                    self.updated.valid =
-                        tx.psbt.unsigned_tx.compute_txid() == psbt.unsigned_tx.compute_txid();
-                } else {
-                    self.updated.valid = false;
-                }
-            }
-            Message::View(view::Message::ImportSpend(view::ImportSpendMessage::Confirm)) => {
-                self.processing = true;
-                self.error = None;
-                if let Ok(updated) = Psbt::from_str(&self.updated.value) {
-                    return Task::perform(
-                        async move { daemon.update_spend_tx(&updated).await.map_err(|e| e.into()) },
-                        Message::Updated,
-                    );
-                }
-            }
-            _ => {}
-        }
-
-        Task::none()
-    }
 }
 
 #[cfg(test)]
