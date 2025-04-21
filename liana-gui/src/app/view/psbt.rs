@@ -339,17 +339,17 @@ pub fn spend_overview_view<'a>(
                                             .spacing(5)
                                             .push(
                                                 button::secondary(
-                                                    Some(icon::clipboard_icon()),
-                                                    "Copy",
+                                                    Some(icon::backup_icon()),
+                                                    "Export",
                                                 )
-                                                .on_press(Message::Clipboard(tx.psbt.to_string())),
+                                                .on_press(Message::ExportPsbt),
                                             )
                                             .push(
                                                 button::secondary(
-                                                    Some(icon::import_icon()),
-                                                    "Update",
+                                                    Some(icon::restore_icon()),
+                                                    "Import",
                                                 )
-                                                .on_press(Message::Spend(SpendTxMessage::EditPsbt)),
+                                                .on_press(Message::ImportPsbt),
                                             ),
                                     )
                                     .align_y(Alignment::Center),
