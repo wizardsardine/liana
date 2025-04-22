@@ -27,6 +27,8 @@ pub enum Message {
     Info(Result<GetInfoResult, Error>),
     ReceiveAddress(Result<(Address, ChildNumber), Error>),
     Coins(Result<Vec<Coin>, Error>),
+    /// When we want both coins and tip height together.
+    CoinsTipHeight(Result<Vec<Coin>, Error>, Result<i32, Error>),
     Labels(Result<HashMap<String, String>, Error>),
     SpendTxs(Result<Vec<SpendTx>, Error>),
     Psbt(Result<(Psbt, Vec<String>), Error>),

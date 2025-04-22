@@ -566,8 +566,8 @@ impl Step for DefineSpend {
                 }
                 Err(e) => self.warning = Some(e),
             },
-            Message::Coins(res) => match res {
-                Ok(coins) => {
+            Message::CoinsTipHeight(res_coins, res_tip) => match (res_coins, res_tip) {
+                (Ok(coins), Ok(tip)) => {
                     let selected: HashSet<OutPoint> =
                         HashSet::from_iter(self.coins.iter().filter_map(|(c, selected)| {
                             if *selected {
@@ -577,14 +577,14 @@ impl Step for DefineSpend {
                             }
                         }));
                     self.coins = filter_coins(&coins, Some(selected));
-                    self.sort_coins(cache.blockheight as u32);
+                    self.sort_coins(tip as u32);
                     // In case some selected coins are not spendable anymore and
                     // new coins make more sense to be selected. A redraft is triggered
                     // if all forms are valid (checked in the redraft method)
                     self.redraft(daemon);
                     self.check_valid();
                 }
-                Err(e) => self.warning = Some(e),
+                (Err(e), _) | (Ok(_), Err(e)) => self.warning = Some(e),
             },
             _ => {}
         };

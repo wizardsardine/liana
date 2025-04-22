@@ -126,13 +126,21 @@ impl State for CreateSpendPanel {
         Task::batch(vec![
             Task::perform(
                 async move {
-                    daemon1
-                        .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
-                        .await
-                        .map(|res| res.coins)
-                        .map_err(|e| e.into())
+                    (
+                        daemon1
+                            .clone()
+                            .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
+                            .await
+                            .map(|res| res.coins)
+                            .map_err(|e| e.into()),
+                        daemon1
+                            .get_info()
+                            .await
+                            .map(|res| res.block_height)
+                            .map_err(|e| e.into()),
+                    )
                 },
-                Message::Coins,
+                |(res_coins, res_tip)| Message::CoinsTipHeight(res_coins, res_tip),
             ),
             Task::perform(
                 async move {
