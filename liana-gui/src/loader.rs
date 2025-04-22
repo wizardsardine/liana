@@ -119,10 +119,7 @@ impl Loader {
         internal_bitcoind: Option<Bitcoind>,
         backup: Option<Backup>,
     ) -> (Self, Task<Message>) {
-        let path = gui_config
-            .daemon_rpc_path
-            .clone()
-            .unwrap_or_else(|| socket_path(&datadir_path, network));
+        let path = socket_path(&datadir_path, network);
         (
             Loader {
                 network,
@@ -185,22 +182,18 @@ impl Loader {
                 Error::Daemon(DaemonError::ClientNotSupported)
                 | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::ConnectionRefused), _))
                 | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::NotFound), _)) => {
-                    if let Some(daemon_config_path) = self.gui_config.daemon_config_path.clone() {
-                        self.step = Step::StartingDaemon;
-                        self.daemon_started = true;
-                        self.waiting_daemon_bitcoind = true;
-                        return Task::perform(
-                            start_bitcoind_and_daemon(
-                                daemon_config_path,
-                                self.datadir_path.clone(),
-                                self.gui_config.start_internal_bitcoind
-                                    && self.internal_bitcoind.is_none(),
-                            ),
-                            Message::Started,
-                        );
-                    } else {
-                        self.step = Step::Error(Box::new(e));
-                    }
+                    self.step = Step::StartingDaemon;
+                    self.daemon_started = true;
+                    self.waiting_daemon_bitcoind = true;
+                    return Task::perform(
+                        start_bitcoind_and_daemon(
+                            self.datadir_path.clone(),
+                            self.gui_config.start_internal_bitcoind
+                                && self.internal_bitcoind.is_none(),
+                            self.network,
+                        ),
+                        Message::Started,
+                    );
                 }
                 _ => {
                     self.step = Step::Error(Box::new(e));
@@ -291,7 +284,10 @@ impl Loader {
             bitcoind.stop();
             log::info!("Managed bitcoind stopped.");
         } else if self.waiting_daemon_bitcoind && self.gui_config.start_internal_bitcoind {
-            if let Ok(config) = Config::from_file(self.gui_config.daemon_config_path.clone()) {
+            let mut daemon_config_path = self.datadir_path.clone();
+            daemon_config_path.push(self.network.to_string());
+            daemon_config_path.push("daemon.toml");
+            if let Ok(config) = Config::from_file(Some(daemon_config_path)) {
                 if let Some(BitcoinBackend::Bitcoind(bitcoind_config)) = &config.bitcoin_backend {
                     let mut retry = 0;
                     while !stop_bitcoind(bitcoind_config) && retry < 10 {
@@ -551,10 +547,13 @@ async fn connect(
 
 // Daemon can start only if a config path is given.
 pub async fn start_bitcoind_and_daemon(
-    config_path: PathBuf,
     liana_datadir_path: PathBuf,
     start_internal_bitcoind: bool,
+    network: bitcoin::Network,
 ) -> StartedResult {
+    let mut config_path = liana_datadir_path.clone();
+    config_path.push(network.to_string());
+    config_path.push("daemon.toml");
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
     let mut bitcoind: Option<Bitcoind> = None;
     if start_internal_bitcoind {
