@@ -102,10 +102,11 @@ impl State for CreateSpendPanel {
             }
         }
 
-        if matches!(message, Message::View(view::Message::Previous))
-            && self.steps.get(self.current - 1).is_some()
-        {
-            self.current -= 1;
+        if matches!(message, Message::View(view::Message::Previous)) {
+            let previous = self.current.saturating_sub(1);
+            if self.steps.get(previous).is_some() {
+                self.current = previous;
+            }
         }
 
         if let Some(step) = self.steps.get_mut(self.current) {
