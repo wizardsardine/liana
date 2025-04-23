@@ -118,7 +118,7 @@ pub fn recovery_path_view<'a>(
                                                 .padding(5)
                                                 .style(theme::pill::simple),
                                             liana_ui::widget::Text::new(fg.to_string()),
-                                            tooltip::Position::Bottom,
+                                            tooltip::Position::Top,
                                         )
                                         .style(theme::card::simple),
                                     )
