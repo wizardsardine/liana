@@ -142,7 +142,6 @@ impl Panels {
 
 pub struct App {
     cache: Cache,
-    config: Arc<Config>,
     wallet: Arc<Wallet>,
     daemon: Arc<dyn Daemon + Sync + Send>,
     internal_bitcoind: Option<Bitcoind>,
@@ -175,7 +174,6 @@ impl App {
             Self {
                 panels,
                 cache,
-                config,
                 daemon,
                 wallet,
                 internal_bitcoind,
@@ -365,10 +363,7 @@ impl App {
                 Task::none()
             }
             Message::LoadDaemonConfig(cfg) => {
-                let path = self.config.daemon_config_path.clone().expect(
-                    "Application config must have a daemon configuration file path at this point.",
-                );
-                let res = self.load_daemon_config(&path, *cfg);
+                let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
                 self.update(Message::DaemonConfigLoaded(res))
             }
             Message::WalletUpdated(Ok(wallet)) => {
@@ -390,12 +385,16 @@ impl App {
 
     pub fn load_daemon_config(
         &mut self,
-        daemon_config_path: &PathBuf,
+        datadir_path: PathBuf,
         cfg: DaemonConfig,
     ) -> Result<(), Error> {
         Handle::current().block_on(async { self.daemon.stop().await })?;
+        let network = cfg.bitcoin_config.network;
         let daemon = EmbeddedDaemon::start(cfg)?;
         self.daemon = Arc::new(daemon);
+        let mut daemon_config_path = datadir_path;
+        daemon_config_path.push(network.to_string());
+        daemon_config_path.push("daemon.toml");
 
         let content =
             toml::to_string(&self.daemon.config()).map_err(|e| Error::Config(e.to_string()))?;

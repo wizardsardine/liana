@@ -19,7 +19,7 @@ extern crate serde_json;
 
 use liana::miniscript::bitcoin;
 use liana_ui::{component::text, font, image, theme, widget::Element};
-use lianad::{commands::ListCoinsResult, config::Config as DaemonConfig};
+use lianad::commands::ListCoinsResult;
 
 use liana_gui::{
     app::{self, cache::Cache, config::default_datadir, wallet::Wallet, App},
@@ -39,7 +39,6 @@ use liana_gui::{
 
 #[derive(Debug, PartialEq)]
 enum Arg {
-    ConfigPath(PathBuf),
     DatadirPath(PathBuf),
     Network(bitcoin::Network),
 }
@@ -58,7 +57,6 @@ fn parse_args(args: Vec<String>) -> Result<Vec<Arg>, Box<dyn Error>> {
 Usage: liana-gui [OPTIONS]
 
 Options:
-    --conf <PATH>       Path of configuration file (gui.toml)
     --datadir <PATH>    Path of liana datadir
     -v, --version       Display liana-gui version
     -h, --help          Print help
@@ -72,13 +70,7 @@ Options:
     }
 
     for (i, arg) in args.iter().enumerate() {
-        if arg == "--conf" {
-            if let Some(a) = args.get(i + 1) {
-                res.push(Arg::ConfigPath(PathBuf::from(a)));
-            } else {
-                return Err("missing arg to --conf".into());
-            }
-        } else if arg == "--datadir" {
+        if arg == "--datadir" {
             if let Some(a) = args.get(i + 1) {
                 res.push(Arg::DatadirPath(PathBuf::from(a)));
             } else {
@@ -315,27 +307,20 @@ impl GUI {
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
                         let cfg = app::Config::from_file(&path).expect("A config file was created");
-                        let daemon_cfg =
-                            DaemonConfig::from_file(cfg.daemon_config_path.clone()).unwrap();
-                        let datadir_path = daemon_cfg
-                            .data_dir
-                            .as_ref()
-                            .expect("Installer must have set it")
-                            .clone();
 
                         self.logger.set_running_mode(
-                            datadir_path.clone(),
-                            daemon_cfg.bitcoin_config.network,
+                            i.datadir.clone(),
+                            i.network,
                             self.log_level
                                 .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                         );
                         if remove_log {
-                            self.logger.remove_install_log_file(datadir_path.clone());
+                            self.logger.remove_install_log_file(i.datadir.clone());
                         }
                         let (loader, command) = Loader::new(
-                            datadir_path,
+                            i.datadir.clone(),
                             cfg,
-                            daemon_cfg.bitcoin_config.network,
+                            i.network,
                             internal_bitcoind,
                             i.context.backup.take(),
                         );
@@ -561,39 +546,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             let datadir_path = default_datadir().unwrap();
             Config::new(datadir_path, Some(*network))
         }
-        [Arg::ConfigPath(path)] => {
-            let cfg = app::Config::from_file(path)?;
-            if let Some(daemon_config_path) = cfg.daemon_config_path.clone() {
-                let daemon_cfg = DaemonConfig::from_file(Some(daemon_config_path))?;
-                let datadir_path = daemon_cfg
-                    .data_dir
-                    .unwrap_or_else(|| default_datadir().unwrap());
-                Ok(Config::Run(
-                    datadir_path,
-                    cfg,
-                    daemon_cfg.bitcoin_config.network,
-                ))
-            } else {
-                Err("Application cannot guess network".into())
-            }
-        }
-        [Arg::ConfigPath(path), Arg::Network(network)]
-        | [Arg::Network(network), Arg::ConfigPath(path)] => {
-            let cfg = app::Config::from_file(path)?;
-            if let Some(daemon_config_path) = cfg.daemon_config_path.clone() {
-                let daemon_cfg = DaemonConfig::from_file(Some(daemon_config_path))?;
-                let datadir_path = daemon_cfg
-                    .data_dir
-                    .unwrap_or_else(|| default_datadir().unwrap());
-                Ok(Config::Run(
-                    datadir_path,
-                    cfg,
-                    daemon_cfg.bitcoin_config.network,
-                ))
-            } else {
-                Ok(Config::Run(default_datadir().unwrap(), cfg, *network))
-            }
-        }
         [Arg::DatadirPath(datadir_path)] => Config::new(datadir_path.clone(), None),
         [Arg::DatadirPath(datadir_path), Arg::Network(network)]
         | [Arg::Network(network), Arg::DatadirPath(datadir_path)] => {
@@ -692,20 +644,6 @@ mod tests {
     fn test_parse_args() {
         assert!(parse_args(vec!["--meth".into()]).is_err());
         assert!(parse_args(vec!["--datadir".into()]).is_err());
-        assert!(parse_args(vec!["--conf".into()]).is_err());
-        assert_eq!(
-            Some(vec![
-                Arg::DatadirPath(PathBuf::from(".")),
-                Arg::ConfigPath(PathBuf::from("hello.toml")),
-            ]),
-            parse_args(
-                "--datadir . --conf hello.toml"
-                    .split(' ')
-                    .map(|a| a.to_string())
-                    .collect()
-            )
-            .ok()
-        );
         assert_eq!(
             Some(vec![Arg::Network(bitcoin::Network::Regtest)]),
             parse_args(vec!["--regtest".into()]).ok()

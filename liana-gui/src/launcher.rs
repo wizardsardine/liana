@@ -464,21 +464,22 @@ async fn check_network_datadir(path: PathBuf, network: Network) -> Result<State,
     config_path.push(network.to_string());
     config_path.push(app::config::DEFAULT_FILE_NAME);
 
-    let cfg = match app::Config::from_file(&config_path) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            if e == app::config::ConfigError::NotFound {
-                return Ok(State::NoWallet);
-            } else {
-                return Err(format!(
-                    "Failed to read GUI configuration file in the directory: {}",
-                    path.to_string_lossy()
-                ));
-            }
+    if let Err(e) = app::Config::from_file(&config_path) {
+        if e == app::config::ConfigError::NotFound {
+            return Ok(State::NoWallet);
+        } else {
+            return Err(format!(
+                "Failed to read GUI configuration file in the directory: {}",
+                path.to_string_lossy()
+            ));
         }
     };
 
-    if let Some(daemon_config_path) = cfg.daemon_config_path {
+    let mut daemon_config_path = path.clone();
+    daemon_config_path.push(network.to_string());
+    daemon_config_path.push("daemon.toml");
+
+    if daemon_config_path.exists() {
         lianad::config::Config::from_file(Some(daemon_config_path.clone())).map_err(|e| match e {
         ConfigError::FileNotFound
         | ConfigError::DatadirNotFound => {

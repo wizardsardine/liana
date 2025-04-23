@@ -380,7 +380,7 @@ pub async fn install_local_wallet(
         .map_err(|e| Error::Unexpected(format!("Failed to serialize daemon config: {}", e)))?;
 
     // create lianad configuration file
-    let daemon_config_path = create_and_write_file(
+    let _daemon_config_path = create_and_write_file(
         network_datadir_path.clone(),
         "daemon.toml",
         daemon_config.to_string().as_bytes(),
@@ -421,9 +421,6 @@ pub async fn install_local_wallet(
         network_datadir_path.clone(),
         gui_config::DEFAULT_FILE_NAME,
         toml::to_string(&gui_config::Config::new(
-            daemon_config_path.canonicalize().map_err(|e| {
-                Error::Unexpected(format!("Failed to canonicalize daemon config path: {}", e))
-            })?,
             // Installer started a bitcoind, it is expected that gui will start it on startup
             ctx.internal_bitcoind.is_some(),
         ))
@@ -497,8 +494,6 @@ pub async fn create_remote_wallet(
         network_datadir_path.clone(),
         gui_config::DEFAULT_FILE_NAME,
         toml::to_string(&gui_config::Config {
-            daemon_config_path: None,
-            daemon_rpc_path: None,
             log_level: Some("info".to_string()),
             debug: Some(false),
             start_internal_bitcoind: false,
@@ -613,8 +608,6 @@ pub async fn import_remote_wallet(
         network_datadir_path.clone(),
         gui_config::DEFAULT_FILE_NAME,
         toml::to_string(&gui_config::Config {
-            daemon_config_path: None,
-            daemon_rpc_path: None,
             log_level: Some("info".to_string()),
             debug: Some(false),
             start_internal_bitcoind: false,
