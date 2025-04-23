@@ -119,6 +119,7 @@ pub fn create_spend_tx<'a>(
     batch_label: &form::Value<String>,
     amount_left: Option<&Amount>,
     feerate: &form::Value<String>,
+    fee_amount: Option<&Amount>,
     error: Option<&Error>,
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
@@ -176,28 +177,28 @@ pub fn create_spend_tx<'a>(
             )
             .push(
                 Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .push(Container::new(p1_bold("Feerate:")).padding(10))
                     .push(
-                        Row::new()
-                            .push(Container::new(p1_bold("Feerate")).padding(10))
-                            .spacing(10)
-                            .push(
-                                form::Form::new_trimmed(
-                                    "42 (in sats/vbyte)",
-                                    feerate,
-                                    move |msg| {
-                                        Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
-                                    },
-                                )
-                                .warning(
-                                    "Feerate must be an integer less than \
-                                    or equal to 1000 sats/vbyte",
-                                )
-                                .size(P1_SIZE)
-                                .padding(10),
+                        Container::new(
+                            form::Form::new_trimmed("42 (in sats/vbyte)", feerate, move |msg| {
+                                Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
+                            })
+                            .warning(
+                                "Feerate must be an integer less than or equal to 1000 sats/vbyte",
                             )
-                            .width(Length::FillPortion(1)),
+                            .size(P1_SIZE)
+                            .padding(10),
+                        )
+                        .width(Length::Fixed(150.0)),
                     )
-                    .push(Space::with_width(Length::FillPortion(1))),
+                    .push_maybe(fee_amount.map(|fee| {
+                        Row::new()
+                            .spacing(10)
+                            .push(p1_regular("Fee:").style(theme::text::secondary))
+                            .push(amount_with_size(fee, P1_SIZE))
+                    })),
             )
             .push(
                 Container::new(

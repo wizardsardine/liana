@@ -88,6 +88,7 @@ pub struct DefineSpend {
     batch_label: form::Value<String>,
     amount_left_to_select: Option<Amount>,
     feerate: form::Value<String>,
+    fee_amount: Option<Amount>,
     generated: Option<(Psbt, Vec<String>)>,
     warning: Option<Error>,
 }
@@ -125,6 +126,7 @@ impl DefineSpend {
             is_valid: false,
             is_duplicate: false,
             feerate: form::Value::default(),
+            fee_amount: None,
             amount_left_to_select: None,
             warning: None,
         }
@@ -197,10 +199,7 @@ impl DefineSpend {
     /// redraft calculates the amount left to select and auto selects coins
     /// if the user did not select a coin manually
     fn redraft(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) {
-        if !self.form_values_are_valid(true)
-            || self.exists_duplicate()
-            || self.recipients.is_empty()
-        {
+        if !self.form_values_are_valid(true) || self.exists_duplicate() {
             // The current form details are not valid to draft a spend, so remove any previously
             // calculated amount as it will no longer be valid and could be misleading, e.g. if
             // the user removes the amount from one of the recipients.
@@ -218,9 +217,10 @@ impl DefineSpend {
                         view::CreateSpendMessage::RecipientEdited(i, "amount", "".to_string()),
                     );
             }
+            self.fee_amount = None;
             return;
         }
-
+        let is_self_transfer = self.recipients.is_empty();
         let destinations: HashMap<Address<address::NetworkUnchecked>, u64> = self
             .recipients
             .iter()
@@ -252,8 +252,7 @@ impl DefineSpend {
         } else {
             None
         };
-
-        let outpoints = if self.is_user_coin_selection {
+        let outpoints = if self.is_user_coin_selection || is_self_transfer {
             let outpoints: Vec<_> = self
                 .coins
                 .iter()
@@ -279,10 +278,11 @@ impl DefineSpend {
                 // doesn't take account of the fee, but passing an empty list to `create_spend_tx`
                 // would use auto-selection and so we settle for this approximation.
                 self.amount_left_to_select = Some(Amount::from_sat(destinations.values().sum()));
+                self.fee_amount = None;
                 return;
             }
             outpoints
-        } else if self.send_max_to_recipient.is_some() {
+        } else if !self.is_user_coin_selection && self.send_max_to_recipient.is_some() {
             // If user has not selected coins, send the max available from all owned coins.
             self.coins
                 .iter()
@@ -323,6 +323,7 @@ impl DefineSpend {
         }) {
             Ok(CreateSpendResult::Success { psbt, .. }) => {
                 self.warning = None;
+                self.fee_amount = Some(psbt.fee().expect("Valid fees"));
                 if !self.is_user_coin_selection {
                     let selected_coins: Vec<OutPoint> = psbt
                         .unsigned_tx
@@ -358,6 +359,7 @@ impl DefineSpend {
                 }
             }
             Ok(CreateSpendResult::InsufficientFunds { missing }) => {
+                self.fee_amount = None;
                 self.amount_left_to_select = Some(Amount::from_sat(missing));
                 if !self.is_user_coin_selection {
                     // The missing amount is based on all candidates for coin selection
@@ -388,6 +390,7 @@ impl DefineSpend {
             }
             Err(e) => {
                 self.warning = Some(e.into());
+                self.fee_amount = None;
             }
         }
     }
@@ -646,6 +649,7 @@ impl Step for DefineSpend {
             &self.batch_label,
             self.amount_left_to_select.as_ref(),
             &self.feerate,
+            self.fee_amount.as_ref(),
             self.warning.as_ref(),
         )
     }
