@@ -278,9 +278,9 @@ def test_coinbase_deposit(lianad, bitcoind):
     BITCOIN_BACKEND_TYPE is not BitcoinBackendType.Bitcoind,
     reason="Only bitcoind backend was available for older lianad versions.",
 )
-def test_migration(lianad_multisig, bitcoind):
+def test_migration(lianad_multisig_legacy_datadir, bitcoind):
     """Test we can start a newer lianad on a datadir created by an older lianad."""
-    lianad = lianad_multisig
+    lianad = lianad_multisig_legacy_datadir
 
     # Set the old binary and re-create the datadir.
     lianad.cmd_line[0] = OLD_LIANAD_PATH

@@ -308,6 +308,33 @@ def lianad_multisig(bitcoin_backend, directory):
 
     lianad.cleanup()
 
+@pytest.fixture
+def lianad_multisig_legacy_datadir(bitcoin_backend, directory):
+    datadir = os.path.join(directory, "lianad")
+    os.makedirs(datadir, exist_ok=True)
+
+    # A 3-of-4 that degrades into a 2-of-5 after 10 blocks
+    csv_value = 10
+    signer = MultiSigner(4, {csv_value: 5}, is_taproot=USE_TAPROOT)
+    main_desc = Descriptor.from_str(multisig_desc(signer, csv_value, USE_TAPROOT, 3, 2))
+
+    lianad = Lianad(
+        datadir,
+        signer,
+        main_desc,
+        bitcoin_backend,
+        legacy_datadir=True
+    )
+
+    try:
+        lianad.start()
+        yield lianad
+    except Exception:
+        lianad.cleanup()
+        raise
+
+    lianad.cleanup()
+
 
 @pytest.fixture
 def lianad_multisig_2_of_2(bitcoin_backend, directory):

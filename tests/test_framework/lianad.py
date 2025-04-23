@@ -31,6 +31,7 @@ class Lianad(TailableProc):
         signer,
         multi_desc,
         bitcoin_backend,
+        legacy_datadir=False
     ):
         TailableProc.__init__(self, datadir, verbose=VERBOSE)
 
@@ -44,12 +45,17 @@ class Lianad(TailableProc):
 
         self.conf_file = os.path.join(datadir, "config.toml")
         self.cmd_line = [LIANAD_PATH, "--conf", f"{self.conf_file}"]
-        socket_path = os.path.join(os.path.join(datadir, "regtest"), "lianad_rpc")
+        data_directory = os.path.join(datadir, "regtest")
+        socket_path = os.path.join(data_directory, "lianad_rpc")
         self.rpc = UnixDomainSocketRpc(socket_path)
         self.bitcoin_backend = bitcoin_backend
 
         with open(self.conf_file, "w") as f:
-            f.write(f"data_dir = '{datadir}'\n")
+            if legacy_datadir:
+                f.write(f"data_dir = '{datadir}'\n")
+            else:
+                f.write(f"data_directory = '{data_directory}'\n")
+
             f.write(f"log_level = '{LOG_LEVEL}'\n")
 
             f.write(f'main_descriptor = "{multi_desc}"\n')
