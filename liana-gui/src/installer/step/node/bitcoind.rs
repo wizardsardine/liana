@@ -531,7 +531,7 @@ impl Step for InternalBitcoindStep {
         if self.exe_path.is_none() {
             // Check if current managed bitcoind version is already installed.
             // For new installations, we ignore any previous managed bitcoind versions that might be installed.
-            let exe_path = bitcoind::internal_bitcoind_exe_path(&ctx.data_dir, VERSION);
+            let exe_path = bitcoind::internal_bitcoind_exe_path(&ctx.root_directory, VERSION);
             if exe_path.exists() {
                 self.exe_path = Some(exe_path)
             } else if self.exe_download.is_none() {

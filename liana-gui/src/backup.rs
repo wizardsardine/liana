@@ -128,7 +128,7 @@ impl Backup {
         let mut proprietary = serde_json::Map::new();
         proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
 
-        let config = extract_daemon_config(&ctx);
+        let config = extract_daemon_config(&ctx).map_err(|e| Error::Daemon(e.to_string()))?;
         if let Ok(config) = serde_json::to_value(config) {
             proprietary.insert(CONFIG_KEY.to_string(), config);
         }

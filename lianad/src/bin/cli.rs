@@ -1,6 +1,6 @@
 #![cfg(not(target_os = "windows"))]
 
-use lianad::config::{config_folder_path, Config};
+use lianad::config::Config;
 
 use std::{
     env,
@@ -89,17 +89,9 @@ fn socket_file(conf_file: Option<PathBuf>) -> PathBuf {
         process::exit(1);
     });
     let data_dir = config
-        .data_dir
-        .unwrap_or_else(|| config_folder_path().unwrap());
-    let data_dir = data_dir.to_str().expect("Datadir is valid unicode");
-
-    [
-        data_dir,
-        config.bitcoin_config.network.to_string().as_str(),
-        "lianad_rpc",
-    ]
-    .iter()
-    .collect()
+        .data_directory()
+        .expect("Wallet datadir is not properly defined");
+    data_dir.lianad_rpc_socket_path()
 }
 
 fn trimmed(mut vec: Vec<u8>, bytes_read: usize) -> Vec<u8> {
