@@ -137,7 +137,7 @@ pub fn recovery_path_view<'a>(
                         .push(text(format!(
                             "{} coin{} totalling",
                             number_of_coins,
-                            if number_of_coins > 0 { "s" } else { "" }
+                            if number_of_coins > 1 { "s" } else { "" }
                         )))
                         .push(amount(&total_amount)),
                 )
