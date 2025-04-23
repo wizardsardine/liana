@@ -48,8 +48,13 @@ pub fn recovery<'a>(
                     Column::new()
                         .spacing(20)
                         .push(text(format!(
-                            "{} recovery paths will be available at the next block, select one:",
-                            recovery_paths.len()
+                            "{} recovery path{} available:",
+                            recovery_paths.len(),
+                            if recovery_paths.len() > 1 {
+                                "s are"
+                            } else {
+                                " is"
+                            },
                         )))
                         .push(Column::with_children(recovery_paths).spacing(20)),
                 )
