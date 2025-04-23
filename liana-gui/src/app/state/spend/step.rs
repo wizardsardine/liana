@@ -78,6 +78,7 @@ pub trait Step {
     fn apply(&self, _draft: &mut TransactionDraft) {}
     fn interrupt(&mut self) {}
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, _draft: &TransactionDraft) {}
+    fn reload_wallet(&mut self, _wallet: Arc<Wallet>) {}
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
     }
@@ -975,6 +976,10 @@ impl Step for SaveSpend {
         ));
     }
 
+    fn reload_wallet(&mut self, wallet: Arc<Wallet>) {
+        self.wallet = wallet;
+    }
+
     fn interrupt(&mut self) {
         if let Some((psbt_state, _)) = &mut self.spend {
             psbt_state.interrupt()
@@ -1061,6 +1066,10 @@ impl SelectRecoveryPath {
 impl Step for SelectRecoveryPath {
     fn load(&mut self, coins: &[Coin], tip_height: i32, _draft: &TransactionDraft) {
         self.load_from_coins_and_tip_height(coins, tip_height);
+    }
+
+    fn reload_wallet(&mut self, wallet: Arc<Wallet>) {
+        self.wallet = wallet;
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
