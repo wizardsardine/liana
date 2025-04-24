@@ -6,8 +6,8 @@ use std::time::Duration;
 use crate::{
     app::settings::KeySetting,
     backup::Backup,
-    lianalite::client::backend::{BackendClient, BackendWalletClient},
     node::bitcoind::{Bitcoind, InternalBitcoindConfig},
+    services::connect::client::backend::{BackendClient, BackendWalletClient},
     signer::Signer,
 };
 use async_hwi::DeviceKind;

@@ -15,12 +15,14 @@ use crate::{
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
     installer::descriptor::{Key, PathKind},
-    lianalite::client::{auth::AuthClient, backend::api},
     node::{
         bitcoind::{Bitcoind, ConfigField, RpcAuthType},
         electrum, NodeType,
     },
-    services,
+    services::{
+        self,
+        connect::client::{auth::AuthClient, backend::api},
+    },
 };
 
 #[derive(Debug, Clone)]

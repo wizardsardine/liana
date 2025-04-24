@@ -12,8 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backup::{Key, KeyRole, KeyType},
     hw::HardwareWalletConfig,
-    lianalite::client::backend,
-    services,
+    services::{self, connect::client::backend},
 };
 
 pub const DEFAULT_FILE_NAME: &str = "settings.json";

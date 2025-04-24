@@ -29,14 +29,16 @@ use crate::{
     daemon::DaemonError,
     datadir::create_directory,
     hw::{HardwareWalletConfig, HardwareWallets},
-    lianalite::client::{
-        auth::AuthError,
-        backend::{
-            api::payload::{Provider, ProviderKey},
-            BackendClient, BackendWalletClient,
+    services::{
+        self,
+        connect::client::{
+            auth::AuthError,
+            backend::{
+                api::payload::{Provider, ProviderKey},
+                BackendClient, BackendWalletClient,
+            },
         },
     },
-    services,
     signer::Signer,
 };
 

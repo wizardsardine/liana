@@ -26,7 +26,7 @@ use crate::{
         extract_daemon_config, extract_local_gui_settings, extract_remote_gui_settings, Context,
         RemoteBackend,
     },
-    lianalite::client::backend::api::DEFAULT_LIMIT,
+    services::connect::client::backend::api::DEFAULT_LIMIT,
     VERSION,
 };
 
