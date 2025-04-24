@@ -47,10 +47,15 @@ pub fn recovery<'a>(
                 Container::new(
                     Column::new()
                         .spacing(20)
-                        .push(text(format!(
-                            "{} recovery paths will be available at the next block, select one:",
-                            recovery_paths.len()
-                        )))
+                        .push(text({
+                            let nb_recovery_paths = recovery_paths.len();
+                            format!(
+                                "{} recovery {} {} available, select one:",
+                                nb_recovery_paths,
+                                if nb_recovery_paths > 1 { "paths" } else { "path" },
+                                if nb_recovery_paths > 1 { "are" } else { "is" },
+                            )
+                        }))
                         .push(Column::with_children(recovery_paths).spacing(20)),
                 )
                 .style(theme::card::simple)
@@ -113,7 +118,7 @@ pub fn recovery_path_view<'a>(
                                                 .padding(5)
                                                 .style(theme::pill::simple),
                                             liana_ui::widget::Text::new(fg.to_string()),
-                                            tooltip::Position::Bottom,
+                                            tooltip::Position::Right,
                                         )
                                         .style(theme::card::simple),
                                     )
@@ -132,7 +137,7 @@ pub fn recovery_path_view<'a>(
                         .push(text(format!(
                             "{} coin{} totalling",
                             number_of_coins,
-                            if number_of_coins > 0 { "s" } else { "" }
+                            if number_of_coins > 1 { "s" } else { "" }
                         )))
                         .push(amount(&total_amount)),
                 )

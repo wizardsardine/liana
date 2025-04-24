@@ -138,8 +138,9 @@ pub fn create_spend_tx<'a>(
     is_first_step: bool,
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
+    let is_recovery = recovery_timelock.is_some();
     dashboard(
-        if recovery_timelock.is_some() {
+        if is_recovery {
             &Menu::Recovery
         } else {
             &Menu::CreateSpendTx
@@ -147,13 +148,21 @@ pub fn create_spend_tx<'a>(
         cache,
         error,
         Column::new()
-            .push(h3(if recovery_timelock.is_some() {
+            .push(h3(if is_recovery {
                 "Recovery"
             } else if is_self_send {
                 "Self-transfer"
             } else {
                 "Send"
             }))
+            .push_maybe(if is_recovery {
+                Some(
+                    Container::new(
+                        text("Send your funds to another wallet's address if you have lost access to your primary spending path.")
+                            .style(theme::text::warning),
+                    )
+                )
+            } else { None })
             .push_maybe(if recipients.len() > 1 {
                 Some(
                     form::Form::new("Batch label", batch_label, |s| {
