@@ -185,8 +185,11 @@ impl State for CreateSpendPanel {
     fn reload(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        wallet: Arc<Wallet>,
     ) -> Task<Message> {
+        for step in self.steps.iter_mut() {
+            step.reload_wallet(wallet.clone());
+        }
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
         let coin_statuses_1 = if self.draft.is_recovery() {
