@@ -143,8 +143,8 @@ impl From<backend::api::Provider> for Provider {
     }
 }
 
-impl From<services::api::Provider> for Provider {
-    fn from(provider: services::api::Provider) -> Self {
+impl From<services::keys::api::Provider> for Provider {
+    fn from(provider: services::keys::api::Provider) -> Self {
         Self {
             uuid: provider.uuid,
             name: provider.name,

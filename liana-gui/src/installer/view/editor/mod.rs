@@ -265,7 +265,7 @@ fn maybe_key_from_token<'a>(
     has_chosen_signer: bool,
     form_token: &form::Value<String>,
     form_token_warning: Option<&'a String>,
-    key_kind: services::api::KeyKind,
+    key_kind: services::keys::api::KeyKind,
 ) -> Option<Element<'a, Message>> {
     if !path_kind.can_choose_key_source_kind(&KeySourceKind::Token(key_kind)) {
         None
@@ -448,8 +448,8 @@ pub fn edit_key_modal<'a>(
                                 ))
                                 }
                             )
-                            .push_maybe(maybe_key_from_token(path_kind, form_key_source_kind, chosen_signer.is_some(), form_token, form_token_warning, services::api::KeyKind::SafetyNet))
-                            .push_maybe(maybe_key_from_token(path_kind, form_key_source_kind, chosen_signer.is_some(), form_token, form_token_warning, services::api::KeyKind::Cosigner))
+                            .push_maybe(maybe_key_from_token(path_kind, form_key_source_kind, chosen_signer.is_some(), form_token, form_token_warning, services::keys::api::KeyKind::SafetyNet))
+                            .push_maybe(maybe_key_from_token(path_kind, form_key_source_kind, chosen_signer.is_some(), form_token, form_token_warning, services::keys::api::KeyKind::Cosigner))
                         .width(Length::Fill),
                 )
                 .push_maybe(

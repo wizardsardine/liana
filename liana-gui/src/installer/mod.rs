@@ -719,7 +719,7 @@ pub enum Error {
     // DaemonError does not implement Clone.
     // TODO: maybe Arc is overkill
     Backend(Arc<DaemonError>),
-    Services(services::Error),
+    Services(services::keys::Error),
     Settings(SettingsError),
     Bitcoind(String),
     Electrum(String),
