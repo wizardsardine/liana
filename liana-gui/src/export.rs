@@ -44,8 +44,8 @@ use crate::{
         model::{HistoryTransaction, Labelled},
         Daemon, DaemonBackend, DaemonError,
     },
-    lianalite::client::backend::api::DEFAULT_LIMIT,
     node::bitcoind::Bitcoind,
+    services::connect::client::backend::api::DEFAULT_LIMIT,
 };
 
 const DUMP_LABELS_LIMIT: u32 = 100;

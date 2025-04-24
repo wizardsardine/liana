@@ -2,7 +2,7 @@ use async_hwi::{DeviceKind, Version};
 use liana::miniscript::{bitcoin::bip32::Fingerprint, descriptor::DescriptorPublicKey};
 
 use crate::{
-    app::settings::ProviderKey, hw::is_compatible_with_tapminiscript, services::api::KeyKind,
+    app::settings::ProviderKey, hw::is_compatible_with_tapminiscript, services::keys::api::KeyKind,
 };
 
 /// Whether to enable cosigner keys on all paths (excluding safety net paths).

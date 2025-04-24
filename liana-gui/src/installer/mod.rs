@@ -29,14 +29,16 @@ use crate::{
     daemon::DaemonError,
     datadir::create_directory,
     hw::{HardwareWalletConfig, HardwareWallets},
-    lianalite::client::{
-        auth::AuthError,
-        backend::{
-            api::payload::{Provider, ProviderKey},
-            BackendClient, BackendWalletClient,
+    services::{
+        self,
+        connect::client::{
+            auth::AuthError,
+            backend::{
+                api::payload::{Provider, ProviderKey},
+                BackendClient, BackendWalletClient,
+            },
         },
     },
-    services,
     signer::Signer,
 };
 
@@ -701,7 +703,7 @@ pub enum Error {
     // DaemonError does not implement Clone.
     // TODO: maybe Arc is overkill
     Backend(Arc<DaemonError>),
-    Services(services::Error),
+    Services(services::keys::Error),
     Settings(SettingsError),
     Bitcoind(String),
     Electrum(String),

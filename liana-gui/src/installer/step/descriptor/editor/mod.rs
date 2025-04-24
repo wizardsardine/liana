@@ -30,7 +30,7 @@ use crate::{
         step::{Context, Step},
         view,
     },
-    services::api::KeyKind,
+    services::keys::api::KeyKind,
     signer::Signer,
 };
 

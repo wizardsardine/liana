@@ -406,7 +406,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                 message::ImportKeyModal::ConfirmToken => {
                     // We have checked that the token has not already been fetched and saved.
                     let token = self.form_token.value.clone();
-                    let client = services::Client::new();
+                    let client = services::keys::Client::new();
                     return Task::perform(
                         async move { (token.clone(), client.get_key_by_token(token).await) },
                         |(token, res)| {

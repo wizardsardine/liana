@@ -28,12 +28,12 @@ use liana_gui::{
     hw::HardwareWalletConfig,
     installer::{self, Installer},
     launcher::{self, Launcher},
-    lianalite::{
+    loader::{self, Loader},
+    logger::Logger,
+    services::connect::{
         client::backend::{api, BackendWalletClient},
         login,
     },
-    loader::{self, Loader},
-    logger::Logger,
     VERSION,
 };
 

@@ -12,8 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backup::{Key, KeyRole, KeyType},
     hw::HardwareWalletConfig,
-    lianalite::client::backend,
-    services,
+    services::{self, connect::client::backend},
 };
 
 pub const DEFAULT_FILE_NAME: &str = "settings.json";
@@ -143,8 +142,8 @@ impl From<backend::api::Provider> for Provider {
     }
 }
 
-impl From<services::api::Provider> for Provider {
-    fn from(provider: services::api::Provider) -> Self {
+impl From<services::keys::api::Provider> for Provider {
+    fn from(provider: services::keys::api::Provider) -> Self {
         Self {
             uuid: provider.uuid,
             name: provider.name,

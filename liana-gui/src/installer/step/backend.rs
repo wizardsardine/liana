@@ -14,7 +14,7 @@ use crate::{
         step::Step,
         view, Error,
     },
-    lianalite::client::{
+    services::connect::client::{
         self,
         auth::{AuthClient, AuthError},
         backend::{api, BackendClient},

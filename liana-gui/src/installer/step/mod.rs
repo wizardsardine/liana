@@ -68,7 +68,7 @@ pub struct Final {
     internal_bitcoind: Option<Bitcoind>,
     warning: Option<String>,
     config_path: Option<PathBuf>,
-    key_redemptions: HashMap<ProviderKey, Option<Result<(), services::Error>>>,
+    key_redemptions: HashMap<ProviderKey, Option<Result<(), services::keys::Error>>>,
 }
 
 impl Final {
@@ -109,7 +109,7 @@ impl Step for Final {
         match message {
             Message::RedeemNextKey => {
                 if let Some((pk, _)) = self.key_redemptions.iter().find(|(_, v)| v.is_none()) {
-                    let client = services::Client::new();
+                    let client = services::keys::Client::new();
                     let pk = pk.clone();
                     return Task::perform(
                         async move { (pk.clone(), client.redeem_key(pk.uuid, pk.token).await) },

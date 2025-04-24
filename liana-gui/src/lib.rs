@@ -7,7 +7,6 @@ pub mod export;
 pub mod hw;
 pub mod installer;
 pub mod launcher;
-pub mod lianalite;
 pub mod loader;
 pub mod logger;
 pub mod node;
