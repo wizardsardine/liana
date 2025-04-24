@@ -50,13 +50,9 @@ pub fn recovery<'a>(
                         .push(text({
                             let nb_recovery_paths = recovery_paths.len();
                             format!(
-                                "{} recovery {} {} available, select one:",
+                                "{} recovery path{} {} available, select one:",
                                 nb_recovery_paths,
-                                if nb_recovery_paths > 1 {
-                                    "paths"
-                                } else {
-                                    "path"
-                                },
+                                if nb_recovery_paths > 1 { "s" } else { "" },
                                 if nb_recovery_paths > 1 { "are" } else { "is" },
                             )
                         }))
