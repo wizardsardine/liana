@@ -2,6 +2,7 @@ mod bitcoin;
 pub mod commands;
 pub mod config;
 mod database;
+pub mod datadir;
 mod jsonrpc;
 #[cfg(test)]
 mod testutils;
@@ -9,6 +10,7 @@ mod testutils;
 pub use bdk_electrum::electrum_client;
 pub use bip329;
 use bitcoin::electrum;
+use datadir::DataDirectory;
 pub use miniscript;
 
 pub use crate::bitcoin::{
@@ -27,7 +29,7 @@ use crate::{
 };
 
 use std::{
-    error, fmt, fs, io, path,
+    error, fmt, io, path,
     sync::{self, mpsc},
     thread,
 };
@@ -166,40 +168,16 @@ impl From<BitcoindError> for StartupError {
     }
 }
 
-fn create_datadir(datadir_path: &path::Path) -> Result<(), StartupError> {
-    #[cfg(unix)]
-    return {
-        use fs::DirBuilder;
-        use std::os::unix::fs::DirBuilderExt;
-
-        let mut builder = DirBuilder::new();
-        builder
-            .mode(0o700)
-            .recursive(true)
-            .create(datadir_path)
-            .map_err(|e| StartupError::DatadirCreation(datadir_path.to_path_buf(), e))
-    };
-
-    // TODO: permissions on Windows..
-    #[cfg(not(unix))]
-    return {
-        fs::create_dir_all(datadir_path)
-            .map_err(|e| StartupError::DatadirCreation(datadir_path.to_path_buf(), e))
-    };
-}
-
 // Connect to the SQLite database. Create it if starting fresh, and do some sanity checks.
 // If all went well, returns the interface to the SQLite database.
 fn setup_sqlite(
     config: &Config,
-    data_dir: &path::Path,
+    data_dir: &DataDirectory,
     fresh_data_dir: bool,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     bitcoind: &Option<BitcoinD>,
 ) -> Result<SqliteDb, StartupError> {
-    let db_path: path::PathBuf = [data_dir, path::Path::new("lianad.sqlite3")]
-        .iter()
-        .collect();
+    let db_path = data_dir.sqlite_db_file_path();
     let options = if fresh_data_dir {
         Some(FreshDbOptions::new(
             config.bitcoin_config.network,
@@ -242,12 +220,10 @@ fn setup_sqlite(
 // If all went well, returns the interface to bitcoind.
 fn setup_bitcoind(
     config: &Config,
-    data_dir: &path::Path,
+    data_dir: &DataDirectory,
     fresh_data_dir: bool,
 ) -> Result<BitcoinD, StartupError> {
-    let wo_path: path::PathBuf = [data_dir, path::Path::new("lianad_watchonly_wallet")]
-        .iter()
-        .collect();
+    let wo_path: path::PathBuf = data_dir.lianad_watchonly_wallet_path();
     let wo_path_str = wo_path.to_str().expect("Must be valid unicode").to_string();
     // NOTE: On Windows, paths are canonicalized with a "\\?\" prefix to tell Windows to interpret
     // the string "as is" and to ignore the maximum size of a path. HOWEVER this is not properly
@@ -426,14 +402,18 @@ impl DaemonHandle {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // First, check the data directory
-        let mut data_dir = config
-            .data_dir()
+        let data_dir = config
+            .data_directory()
             .ok_or(StartupError::DefaultDataDirNotFound)?;
-        data_dir.push(config.bitcoin_config.network.to_string());
-        let fresh_data_dir = !data_dir.as_path().exists();
+        let fresh_data_dir = !data_dir.exists();
         if fresh_data_dir {
-            create_datadir(&data_dir)?;
-            log::info!("Created a new data directory at '{}'", data_dir.display());
+            data_dir
+                .init()
+                .map_err(|e| StartupError::DatadirCreation(data_dir.path().to_path_buf(), e))?;
+            log::info!(
+                "Created a new data directory at '{}'",
+                data_dir.path().to_string_lossy()
+            );
         }
 
         // Set up the connection to bitcoind (if using it) first as we may need it for the database
@@ -501,9 +481,7 @@ impl DaemonHandle {
                 .spawn({
                     let shutdown = rpcserver_shutdown.clone();
                     move || {
-                        let mut rpc_socket = data_dir;
-                        rpc_socket.push("lianad_rpc");
-                        server::run(&rpc_socket, control, shutdown)?;
+                        server::run(&data_dir.lianad_rpc_socket_path(), control, shutdown)?;
                         Ok(())
                     }
                 })
@@ -776,6 +754,7 @@ mod tests {
         let data_dir: path::PathBuf = [tmp_dir.as_path(), path::Path::new("datadir")]
             .iter()
             .collect();
+        fs::create_dir_all(&data_dir).unwrap();
         let wo_path: path::PathBuf = [
             data_dir.as_path(),
             path::Path::new("bitcoin"),
@@ -815,13 +794,15 @@ mod tests {
         let desc = LianaDescriptor::from_str(desc_str).unwrap();
         let receive_desc = desc.receive_descriptor().clone();
         let change_desc = desc.change_descriptor().clone();
-        let config = Config {
+        let mut data_directory = data_dir.clone();
+        data_directory.push("bitcoin");
+        let config = Config::new(
             bitcoin_config,
-            bitcoin_backend: Some(config::BitcoinBackend::Bitcoind(bitcoind_config)),
-            data_dir: Some(data_dir),
-            log_level: log::LevelFilter::Debug,
-            main_descriptor: desc,
-        };
+            Some(config::BitcoinBackend::Bitcoind(bitcoind_config)),
+            log::LevelFilter::Debug,
+            desc,
+            DataDirectory::new(data_directory),
+        );
 
         // Start the daemon in a new thread so the current one acts as the bitcoind server.
         let t = thread::spawn({

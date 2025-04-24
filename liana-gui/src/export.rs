@@ -809,22 +809,17 @@ pub async fn import_backup(
         Vec::new()
     };
 
-    let datadir = match daemon.config() {
-        Some(c) => match &c.data_dir {
-            Some(dd) => dd,
-            None => {
-                return Err(Error::BackupImport("Failed to get Daemon config".into()));
-            }
-        },
-        None => {
-            return Err(Error::BackupImport("Failed to get Daemon config".into()));
-        }
-    };
+    let lianad_datadir = daemon
+        .config()
+        .and_then(|c| c.data_directory())
+        .ok_or(Error::BackupImport("Failed to get Daemon config".into()))?;
 
     // check if key aliases can be imported w/o conflict
     let mut write_aliases = true;
     let settings = if !account.keys.is_empty() {
-        let settings = match Settings::from_file(datadir.to_path_buf(), network) {
+        // TODO: change lianad_datadir is common to gui datadir only for legacy wallet before
+        // multiple wallet
+        let settings = match Settings::from_file(lianad_datadir.path().to_path_buf(), network) {
             Ok(s) => s,
             Err(_) => {
                 return Err(Error::BackupImport("Failed to get App Settings".into()));
@@ -943,7 +938,10 @@ pub async fn import_backup(
 
         settings.wallets.get_mut(0).expect("already checked").keys =
             settings_aliases.clone().into_values().collect();
-        if settings.to_file(datadir.to_path_buf(), network).is_err() {
+        if settings
+            .to_file(lianad_datadir.path().to_path_buf(), network)
+            .is_err()
+        {
             return Err(Error::BackupImport("Failed to import keys aliases".into()));
         } else {
             // Update wallet state

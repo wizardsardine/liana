@@ -4,6 +4,7 @@ use crate::{
     database::{
         BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem, Wallet,
     },
+    datadir::DataDirectory,
     DaemonControl, DaemonHandle,
 };
 use liana::descriptors;
@@ -563,7 +564,11 @@ impl DummyLiana {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
         // Use a shorthand for 'datadir', to avoid overflowing SUN_LEN on MacOS.
-        let data_dir: path::PathBuf = [tmp_dir.as_path(), path::Path::new("d")].iter().collect();
+        let root_directory: path::PathBuf =
+            [tmp_dir.as_path(), path::Path::new("d")].iter().collect();
+        fs::create_dir_all(&root_directory).unwrap();
+        let mut data_directory = root_directory.clone();
+        data_directory.push("bitcoin");
 
         let network = bitcoin::Network::Bitcoin;
         let bitcoin_config = BitcoinConfig {
@@ -579,13 +584,13 @@ impl DummyLiana {
         )
         .unwrap();
         let desc = descriptors::LianaDescriptor::new(policy);
-        let config = Config {
+        let config = Config::new(
             bitcoin_config,
-            bitcoin_backend: None,
-            data_dir: Some(data_dir),
-            log_level: log::LevelFilter::Debug,
-            main_descriptor: desc,
-        };
+            None,
+            log::LevelFilter::Debug,
+            desc,
+            DataDirectory::new(data_directory),
+        );
 
         let handle =
             DaemonHandle::start(config, Some(bitcoin_interface), Some(database), rpc_server)

@@ -133,7 +133,7 @@ impl Installer {
                     ChooseBackend::new(network).into(),
                     RemoteBackendLogin::new(network).into(),
                     SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&context.data_dir).into(),
+                    InternalBitcoindStep::new(&context.root_directory).into(),
                     DefineNode::default().into(),
                     Final::new().into(),
                 ],
@@ -146,7 +146,7 @@ impl Installer {
                     RecoverMnemonic::default().into(),
                     RegisterDescriptor::new_import_wallet().into(),
                     SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&context.data_dir).into(),
+                    InternalBitcoindStep::new(&context.root_directory).into(),
                     DefineNode::default().into(),
                     Final::new().into(),
                 ],
@@ -167,7 +167,7 @@ impl Installer {
     }
 
     pub fn destination_path(&self) -> PathBuf {
-        self.context.data_dir.clone()
+        self.context.root_directory.clone()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -270,21 +270,21 @@ impl Installer {
                 }
             }
             Message::Installed(Err(e)) => {
-                let mut data_dir = self.context.data_dir.clone();
-                data_dir.push(self.context.bitcoin_config.network.to_string());
+                let mut network_directory = self.context.root_directory.clone();
+                network_directory.push(self.context.bitcoin_config.network.to_string());
                 // In case of failure during install, block the thread to
                 // deleted the data_dir/network directory in order to start clean again.
                 warn!("Installation failed. Cleaning up the leftover data directory.");
-                if let Err(e) = std::fs::remove_dir_all(&data_dir) {
+                if let Err(e) = std::fs::remove_dir_all(&network_directory) {
                     error!(
                         "Failed to completely delete the data directory (path: '{}'): {}",
-                        data_dir.to_string_lossy(),
+                        network_directory.to_string_lossy(),
                         e
                     );
                 } else {
                     warn!(
                         "Successfully deleted data directory at '{}'.",
-                        data_dir.to_string_lossy()
+                        network_directory.to_string_lossy()
                     );
                 };
                 self.steps
@@ -358,19 +358,13 @@ pub async fn install_local_wallet(
     ctx: Context,
     signer: Arc<Mutex<Signer>>,
 ) -> Result<PathBuf, Error> {
-    let mut cfg: lianad::config::Config = extract_daemon_config(&ctx);
-    let data_dir = cfg.data_dir.unwrap();
-
-    let data_dir = data_dir
-        .canonicalize()
-        .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e)))?;
-    cfg.data_dir = Some(data_dir.clone());
+    let cfg: lianad::config::Config = extract_daemon_config(&ctx)?;
 
     daemon_check(cfg.clone())?;
 
     info!("daemon checked");
 
-    let mut network_datadir_path = data_dir;
+    let mut network_datadir_path = ctx.root_directory.clone();
     network_datadir_path.push(cfg.bitcoin_config.network.to_string());
     create_directory(&network_datadir_path)
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
@@ -396,10 +390,7 @@ pub async fn install_local_wallet(
         signer
             .lock()
             .unwrap()
-            .store(
-                &cfg.data_dir().expect("Already checked"),
-                cfg.bitcoin_config.network,
-            )
+            .store(&ctx.root_directory, cfg.bitcoin_config.network)
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Hot signer mnemonic stored");
@@ -407,10 +398,7 @@ pub async fn install_local_wallet(
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(
-                &cfg.data_dir().expect("Already checked"),
-                cfg.bitcoin_config.network,
-            )
+            .store(&ctx.root_directory, cfg.bitcoin_config.network)
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
@@ -450,12 +438,7 @@ pub async fn create_remote_wallet(
     signer: Arc<Mutex<Signer>>,
     remote_backend: BackendClient,
 ) -> Result<PathBuf, Error> {
-    let data_dir = ctx
-        .data_dir
-        .canonicalize()
-        .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e)))?;
-
-    let mut network_datadir_path = data_dir.clone();
+    let mut network_datadir_path = ctx.root_directory.clone();
     network_datadir_path.push(ctx.network.to_string());
     create_directory(&network_datadir_path)
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
@@ -472,7 +455,7 @@ pub async fn create_remote_wallet(
         signer
             .lock()
             .unwrap()
-            .store(&data_dir, ctx.network)
+            .store(&ctx.root_directory, ctx.network)
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Hot signer mnemonic stored");
@@ -480,13 +463,13 @@ pub async fn create_remote_wallet(
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&data_dir, ctx.network)
+            .store(&ctx.root_directory, ctx.network)
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
     }
 
-    let mut network_datadir_path = data_dir;
+    let mut network_datadir_path = ctx.root_directory.clone();
     network_datadir_path.push(ctx.network.to_string());
 
     // create liana GUI configuration file
@@ -573,20 +556,15 @@ pub async fn import_remote_wallet(
 ) -> Result<PathBuf, Error> {
     tracing::info!("Importing wallet from remote backend");
 
-    let data_dir = ctx
-        .data_dir
-        .canonicalize()
-        .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e)))?;
-
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&data_dir, ctx.network)
+            .store(&ctx.root_directory, ctx.network)
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
     }
 
-    let mut network_datadir_path = data_dir;
+    let mut network_datadir_path = ctx.root_directory.clone();
     network_datadir_path.push(ctx.network.to_string());
     create_directory(&network_datadir_path)
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
@@ -700,17 +678,21 @@ pub fn extract_local_gui_settings(ctx: &Context) -> Settings {
     }
 }
 
-pub fn extract_daemon_config(ctx: &Context) -> Config {
-    Config {
-        log_level: log::LevelFilter::Info,
-        main_descriptor: ctx
-            .descriptor
+pub fn extract_daemon_config(ctx: &Context) -> Result<Config, Error> {
+    let mut data_directory = ctx
+        .root_directory
+        .canonicalize()
+        .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e)))?;
+    data_directory.push(ctx.bitcoin_config.network.to_string());
+    Ok(Config::new(
+        ctx.bitcoin_config.clone(),
+        ctx.bitcoin_backend.clone(),
+        log::LevelFilter::Info,
+        ctx.descriptor
             .clone()
             .expect("Context must have a descriptor at this point"),
-        data_dir: Some(ctx.data_dir.clone()),
-        bitcoin_config: ctx.bitcoin_config.clone(),
-        bitcoin_backend: ctx.bitcoin_backend.clone(),
-    }
+        lianad::datadir::DataDirectory::new(data_directory),
+    ))
 }
 
 #[derive(Debug, Clone)]

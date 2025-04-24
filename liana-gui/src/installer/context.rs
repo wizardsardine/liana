@@ -60,7 +60,7 @@ pub struct Context {
     pub descriptor: Option<LianaDescriptor>,
     pub keys: HashMap<bitcoin::bip32::Fingerprint, KeySetting>,
     pub hws: Vec<(DeviceKind, bitcoin::bip32::Fingerprint, Option<[u8; 32]>)>,
-    pub data_dir: PathBuf,
+    pub root_directory: PathBuf,
     pub network: bitcoin::Network,
     pub hw_is_used: bool,
     // In case a user entered a mnemonic,
@@ -76,7 +76,7 @@ pub struct Context {
 impl Context {
     pub fn new(
         network: bitcoin::Network,
-        data_dir: PathBuf,
+        root_directory: PathBuf,
         remote_backend: RemoteBackend,
     ) -> Self {
         Self {
@@ -89,7 +89,7 @@ impl Context {
             keys: HashMap::new(),
             bitcoin_backend: None,
             descriptor: None,
-            data_dir,
+            root_directory,
             network,
             hw_is_used: false,
             recovered_signer: None,

@@ -317,6 +317,7 @@ impl GUI {
                         if remove_log {
                             self.logger.remove_install_log_file(i.datadir.clone());
                         }
+
                         let (loader, command) = Loader::new(
                             i.datadir.clone(),
                             cfg,

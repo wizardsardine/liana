@@ -2,6 +2,7 @@ use liana::descriptors::LianaDescriptor;
 
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
+use crate::datadir::DataDirectory;
 use miniscript::bitcoin::Network;
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
@@ -146,8 +147,10 @@ pub struct BitcoinConfig {
 /// Static informations we require to operate
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    /// An optional custom data directory
-    pub data_dir: Option<PathBuf>,
+    /// legacy: An optional custom data directory
+    data_dir: Option<PathBuf>,
+    /// Current: A direct point to the current datadir
+    data_directory: Option<PathBuf>,
     /// What messages to log
     #[serde(
         deserialize_with = "deserialize_fromstr",
@@ -169,8 +172,35 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn data_dir(&self) -> Option<PathBuf> {
-        self.data_dir.clone().or_else(config_folder_path)
+    pub fn new(
+        bitcoin_config: BitcoinConfig,
+        bitcoin_backend: Option<BitcoinBackend>,
+        log_level: log::LevelFilter,
+        main_descriptor: LianaDescriptor,
+        data_directory: DataDirectory,
+    ) -> Self {
+        Self {
+            bitcoin_config,
+            bitcoin_backend,
+            log_level,
+            main_descriptor,
+            data_directory: Some(data_directory.path().to_path_buf()),
+            data_dir: None,
+        }
+    }
+
+    pub fn data_directory(&self) -> Option<DataDirectory> {
+        if self.data_directory.is_some() {
+            self.data_directory.clone().map(DataDirectory::new)
+        } else if let Some(mut dir) = self.data_dir.clone() {
+            dir.push(self.bitcoin_config.network.to_string());
+            Some(DataDirectory::new(dir))
+        } else {
+            config_folder_path().map(|mut dir| {
+                dir.push(self.bitcoin_config.network.to_string());
+                DataDirectory::new(dir)
+            })
+        }
     }
 }
 
