@@ -52,7 +52,11 @@ pub fn recovery<'a>(
                             format!(
                                 "{} recovery {} {} available, select one:",
                                 nb_recovery_paths,
-                                if nb_recovery_paths > 1 { "paths" } else { "path" },
+                                if nb_recovery_paths > 1 {
+                                    "paths"
+                                } else {
+                                    "path"
+                                },
                                 if nb_recovery_paths > 1 { "are" } else { "is" },
                             )
                         }))

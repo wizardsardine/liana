@@ -1121,7 +1121,7 @@ impl Step for SelectRecoveryPath {
                 Err(e) => {
                     self.warning = Some(e);
                 }
-            }
+            },
             _ => {}
         };
         Task::none()
