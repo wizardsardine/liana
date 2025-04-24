@@ -497,7 +497,7 @@ impl std::default::Default for Palette {
                 background: color::GREEN,
                 border: color::GREEN,
                 rail_border: None,
-                rail_backgrounds: (color::GREEN, color::TRANSPARENT),
+                rail_backgrounds: (color::GREEN, color::BLACK),
             },
             progress_bars: ProgressBars {
                 bar: color::GREEN,
