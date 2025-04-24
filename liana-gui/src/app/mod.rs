@@ -368,6 +368,11 @@ impl App {
             }
             Message::WalletUpdated(Ok(wallet)) => {
                 self.wallet = wallet.clone();
+                let _ = self.panels.recovery.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::WalletUpdated(Ok(wallet.clone())),
+                );
                 self.panels.current_mut().update(
                     self.daemon.clone(),
                     &self.cache,

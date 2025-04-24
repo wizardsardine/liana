@@ -1114,6 +1114,14 @@ impl Step for SelectRecoveryPath {
                     self.selected_path = Some(index);
                 }
             }
+            Message::WalletUpdated(res_wallet) => match res_wallet {
+                Ok(wallet) => {
+                    self.wallet = wallet;
+                }
+                Err(e) => {
+                    self.warning = Some(e);
+                }
+            }
             _ => {}
         };
         Task::none()
