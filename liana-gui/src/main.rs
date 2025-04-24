@@ -22,8 +22,8 @@ use liana_ui::{component::text, font, image, theme, widget::Element};
 use lianad::commands::ListCoinsResult;
 
 use liana_gui::{
-    app::{self, cache::Cache, config::default_datadir, wallet::Wallet, App},
-    datadir,
+    app::{self, cache::Cache, wallet::Wallet, App},
+    dir::LianaDirectory,
     export::import_backup_at_launch,
     hw::HardwareWalletConfig,
     installer::{self, Installer},
@@ -39,7 +39,7 @@ use liana_gui::{
 
 #[derive(Debug, PartialEq)]
 enum Arg {
-    DatadirPath(PathBuf),
+    DatadirPath(LianaDirectory),
     Network(bitcoin::Network),
 }
 
@@ -72,7 +72,7 @@ Options:
     for (i, arg) in args.iter().enumerate() {
         if arg == "--datadir" {
             if let Some(a) = args.get(i + 1) {
-                res.push(Arg::DatadirPath(PathBuf::from(a)));
+                res.push(Arg::DatadirPath(LianaDirectory::new(PathBuf::from(a))));
             } else {
                 return Err("missing arg to --datadir".into());
             }
@@ -192,25 +192,25 @@ impl GUI {
                 }
             }
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
-                launcher::Message::Install(datadir_path, network, init) => {
-                    if !datadir_path.exists() {
+                launcher::Message::Install(datadir, network, init) => {
+                    if !datadir.exists() {
                         // datadir is created right before launching the installer
                         // so logs can go in <datadir_path>/installer.log
-                        if let Err(e) = datadir::create_directory(&datadir_path) {
+                        if let Err(e) = datadir.init() {
                             error!("Failed to create datadir: {}", e);
                         } else {
                             info!(
                                 "Created a fresh data directory at {}",
-                                &datadir_path.to_string_lossy()
+                                &datadir.path().to_string_lossy()
                             );
                         }
                     }
                     self.logger.set_installer_mode(
-                        datadir_path.clone(),
+                        datadir.clone(),
                         self.log_level.unwrap_or(LevelFilter::INFO),
                     );
 
-                    let (install, command) = Installer::new(datadir_path, network, None, init);
+                    let (install, command) = Installer::new(datadir, network, None, init);
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
@@ -221,9 +221,8 @@ impl GUI {
                         self.log_level
                             .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                     );
-                    if let Ok(settings) =
-                        app::settings::Settings::from_file(datadir_path.clone(), network)
-                    {
+                    let network_dir = datadir_path.network_directory(network);
+                    if let Ok(settings) = app::settings::Settings::from_file(&network_dir) {
                         if settings
                             .wallets
                             .first()
@@ -267,7 +266,8 @@ impl GUI {
                 login::Message::Run(Ok((backend_client, wallet, coins))) => {
                     let config = app::Config::from_file(
                         &l.datadir
-                            .join(l.network.to_string())
+                            .network_directory(l.network)
+                            .path()
                             .join(app::config::DEFAULT_FILE_NAME),
                     )
                     .expect("A gui configuration file must be present");
@@ -293,7 +293,8 @@ impl GUI {
             },
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(path, internal_bitcoind, remove_log) = *msg {
-                    let settings = app::settings::Settings::from_file(i.datadir.clone(), i.network)
+                    let network_dir = i.datadir.network_directory(i.network);
+                    let settings = app::settings::Settings::from_file(&network_dir)
                         .expect("A settings file was created");
                     if settings
                         .wallets
@@ -451,7 +452,7 @@ pub fn create_app_with_remote_backend(
     remote_backend: BackendWalletClient,
     wallet: api::Wallet,
     coins: ListCoinsResult,
-    datadir: PathBuf,
+    datadir: LianaDirectory,
     network: bitcoin::Network,
     config: app::Config,
 ) -> (app::App, iced::Task<app::Message>) {
@@ -513,18 +514,17 @@ pub fn create_app_with_remote_backend(
 }
 
 pub enum Config {
-    Run(PathBuf, app::Config, bitcoin::Network),
-    Launcher(PathBuf),
+    Run(LianaDirectory, app::Config, bitcoin::Network),
+    Launcher(LianaDirectory),
 }
 
 impl Config {
     pub fn new(
-        datadir_path: PathBuf,
+        datadir_path: LianaDirectory,
         network: Option<bitcoin::Network>,
     ) -> Result<Self, Box<dyn Error>> {
         if let Some(network) = network {
-            let mut path = datadir_path.clone();
-            path.push(network.to_string());
+            let mut path = datadir_path.network_directory(network).path().to_path_buf();
             path.push(app::config::DEFAULT_FILE_NAME);
             match app::Config::from_file(&path) {
                 Ok(cfg) => Ok(Config::Run(datadir_path, cfg, network)),
@@ -540,11 +540,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = parse_args(std::env::args().collect())?;
     let config = match args.as_slice() {
         [] => {
-            let datadir_path = default_datadir().unwrap();
+            let datadir_path = LianaDirectory::new_default().unwrap();
             Config::new(datadir_path, None)
         }
         [Arg::Network(network)] => {
-            let datadir_path = default_datadir().unwrap();
+            let datadir_path = LianaDirectory::new_default().unwrap();
             Config::new(datadir_path, Some(*network))
         }
         [Arg::DatadirPath(datadir_path)] => Config::new(datadir_path.clone(), None),
@@ -640,6 +640,7 @@ fn setup_panic_hook() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use liana_gui::dir::LianaDirectory;
 
     #[test]
     fn test_parse_args() {
@@ -651,7 +652,7 @@ mod tests {
         );
         assert_eq!(
             Some(vec![
-                Arg::DatadirPath(PathBuf::from("hello")),
+                Arg::DatadirPath(LianaDirectory::new(PathBuf::from("hello"))),
                 Arg::Network(bitcoin::Network::Testnet)
             ]),
             parse_args(
@@ -665,7 +666,7 @@ mod tests {
         assert_eq!(
             Some(vec![
                 Arg::Network(bitcoin::Network::Testnet),
-                Arg::DatadirPath(PathBuf::from("hello"))
+                Arg::DatadirPath(LianaDirectory::new(PathBuf::from("hello"))),
             ]),
             parse_args(
                 "--testnet --datadir hello"

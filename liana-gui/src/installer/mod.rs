@@ -27,7 +27,7 @@ use crate::{
     },
     backup,
     daemon::DaemonError,
-    datadir::create_directory,
+    dir::{LianaDirectory, NetworkDirectory},
     hw::{HardwareWalletConfig, HardwareWallets},
     services::{
         self,
@@ -60,7 +60,7 @@ pub enum UserFlow {
 
 pub struct Installer {
     pub network: bitcoin::Network,
-    pub datadir: PathBuf,
+    pub datadir: LianaDirectory,
 
     current: usize,
     steps: Vec<Box<dyn Step>>,
@@ -101,7 +101,7 @@ impl Installer {
     }
 
     pub fn new(
-        destination_path: PathBuf,
+        destination_path: LianaDirectory,
         network: bitcoin::Network,
         remote_backend: Option<BackendClient>,
         user_flow: UserFlow,
@@ -135,7 +135,7 @@ impl Installer {
                     ChooseBackend::new(network).into(),
                     RemoteBackendLogin::new(network).into(),
                     SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&context.root_directory).into(),
+                    InternalBitcoindStep::new(&context.liana_directory).into(),
                     DefineNode::default().into(),
                     Final::new().into(),
                 ],
@@ -148,7 +148,7 @@ impl Installer {
                     RecoverMnemonic::default().into(),
                     RegisterDescriptor::new_import_wallet().into(),
                     SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&context.root_directory).into(),
+                    InternalBitcoindStep::new(&context.liana_directory).into(),
                     DefineNode::default().into(),
                     Final::new().into(),
                 ],
@@ -168,8 +168,8 @@ impl Installer {
         (installer, command)
     }
 
-    pub fn destination_path(&self) -> PathBuf {
-        self.context.root_directory.clone()
+    pub fn destination_path(&self) -> LianaDirectory {
+        self.context.liana_directory.clone()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -272,21 +272,23 @@ impl Installer {
                 }
             }
             Message::Installed(Err(e)) => {
-                let mut network_directory = self.context.root_directory.clone();
-                network_directory.push(self.context.bitcoin_config.network.to_string());
+                let network_directory = self
+                    .context
+                    .liana_directory
+                    .network_directory(self.context.bitcoin_config.network);
                 // In case of failure during install, block the thread to
                 // deleted the data_dir/network directory in order to start clean again.
                 warn!("Installation failed. Cleaning up the leftover data directory.");
-                if let Err(e) = std::fs::remove_dir_all(&network_directory) {
+                if let Err(e) = std::fs::remove_dir_all(network_directory.path()) {
                     error!(
                         "Failed to completely delete the data directory (path: '{}'): {}",
-                        network_directory.to_string_lossy(),
+                        network_directory.path().to_string_lossy(),
                         e
                     );
                 } else {
                     warn!(
                         "Successfully deleted data directory at '{}'.",
-                        network_directory.to_string_lossy()
+                        network_directory.path().to_string_lossy()
                     );
                 };
                 self.steps
@@ -360,16 +362,18 @@ pub async fn install_local_wallet(
     ctx: Context,
     signer: Arc<Mutex<Signer>>,
 ) -> Result<PathBuf, Error> {
+    let network_datadir = ctx
+        .liana_directory
+        .network_directory(ctx.bitcoin_config.network);
+    network_datadir
+        .init()
+        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
+
     let cfg: lianad::config::Config = extract_daemon_config(&ctx)?;
 
     daemon_check(cfg.clone())?;
 
     info!("daemon checked");
-
-    let mut network_datadir_path = ctx.root_directory.clone();
-    network_datadir_path.push(cfg.bitcoin_config.network.to_string());
-    create_directory(&network_datadir_path)
-        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
 
     // Step needed because of ValueAfterTable error in the toml serialize implementation.
     let daemon_config = toml::Value::try_from(&cfg)
@@ -377,7 +381,7 @@ pub async fn install_local_wallet(
 
     // create lianad configuration file
     let _daemon_config_path = create_and_write_file(
-        network_datadir_path.clone(),
+        &network_datadir,
         "daemon.toml",
         daemon_config.to_string().as_bytes(),
     )?;
@@ -392,7 +396,7 @@ pub async fn install_local_wallet(
         signer
             .lock()
             .unwrap()
-            .store(&ctx.root_directory, cfg.bitcoin_config.network)
+            .store(&ctx.liana_directory, cfg.bitcoin_config.network)
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Hot signer mnemonic stored");
@@ -400,7 +404,7 @@ pub async fn install_local_wallet(
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&ctx.root_directory, cfg.bitcoin_config.network)
+            .store(&ctx.liana_directory, cfg.bitcoin_config.network)
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
@@ -408,7 +412,7 @@ pub async fn install_local_wallet(
 
     // create liana GUI configuration file
     let gui_config_path = create_and_write_file(
-        network_datadir_path.clone(),
+        &network_datadir,
         gui_config::DEFAULT_FILE_NAME,
         toml::to_string(&gui_config::Config::new(
             // Installer started a bitcoind, it is expected that gui will start it on startup
@@ -423,7 +427,7 @@ pub async fn install_local_wallet(
     // create liana GUI settings file
     let settings: gui_settings::Settings = extract_local_gui_settings(&ctx);
     create_and_write_file(
-        network_datadir_path,
+        &network_datadir,
         gui_settings::DEFAULT_FILE_NAME,
         serde_json::to_string_pretty(&settings)
             .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
@@ -440,9 +444,9 @@ pub async fn create_remote_wallet(
     signer: Arc<Mutex<Signer>>,
     remote_backend: BackendClient,
 ) -> Result<PathBuf, Error> {
-    let mut network_datadir_path = ctx.root_directory.clone();
-    network_datadir_path.push(ctx.network.to_string());
-    create_directory(&network_datadir_path)
+    let network_datadir = ctx.liana_directory.network_directory(ctx.network);
+    network_datadir
+        .init()
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
 
     let descriptor = ctx
@@ -457,7 +461,7 @@ pub async fn create_remote_wallet(
         signer
             .lock()
             .unwrap()
-            .store(&ctx.root_directory, ctx.network)
+            .store(&ctx.liana_directory, ctx.network)
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Hot signer mnemonic stored");
@@ -465,18 +469,15 @@ pub async fn create_remote_wallet(
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&ctx.root_directory, ctx.network)
+            .store(&ctx.liana_directory, ctx.network)
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
     }
 
-    let mut network_datadir_path = ctx.root_directory.clone();
-    network_datadir_path.push(ctx.network.to_string());
-
     // create liana GUI configuration file
     let gui_config_path = create_and_write_file(
-        network_datadir_path.clone(),
+        &network_datadir,
         gui_config::DEFAULT_FILE_NAME,
         toml::to_string(&gui_config::Config {
             log_level: Some("info".to_string()),
@@ -540,7 +541,7 @@ pub async fn create_remote_wallet(
     // create liana GUI settings file
     let settings: gui_settings::Settings = extract_remote_gui_settings(&ctx, &remote_backend).await;
     create_and_write_file(
-        network_datadir_path.clone(),
+        &network_datadir,
         gui_settings::DEFAULT_FILE_NAME,
         serde_json::to_string_pretty(&settings)
             .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
@@ -560,21 +561,21 @@ pub async fn import_remote_wallet(
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&ctx.root_directory, ctx.network)
+            .store(&ctx.liana_directory, ctx.network)
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
     }
 
-    let mut network_datadir_path = ctx.root_directory.clone();
-    network_datadir_path.push(ctx.network.to_string());
-    create_directory(&network_datadir_path)
+    let network_datadir = ctx.liana_directory.network_directory(ctx.network);
+    network_datadir
+        .init()
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
 
     // create liana GUI settings file
     let settings: gui_settings::Settings = extract_remote_gui_settings(&ctx, &backend).await;
     create_and_write_file(
-        network_datadir_path.clone(),
+        &network_datadir,
         gui_settings::DEFAULT_FILE_NAME,
         serde_json::to_string_pretty(&settings)
             .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
@@ -585,7 +586,7 @@ pub async fn import_remote_wallet(
 
     // create liana GUI configuration file
     let gui_config_path = create_and_write_file(
-        network_datadir_path.clone(),
+        &network_datadir,
         gui_config::DEFAULT_FILE_NAME,
         toml::to_string(&gui_config::Config {
             log_level: Some("info".to_string()),
@@ -602,12 +603,12 @@ pub async fn import_remote_wallet(
 }
 
 pub fn create_and_write_file(
-    mut network_datadir: PathBuf,
+    network_datadir: &NetworkDirectory,
     file_name: &str,
     data: &[u8],
 ) -> Result<PathBuf, Error> {
-    network_datadir.push(file_name);
-    let path = network_datadir;
+    let mut path = network_datadir.path().to_path_buf();
+    path.push(file_name);
     let mut file =
         std::fs::File::create(&path).map_err(|e| Error::CannotCreateFile(e.to_string()))?;
     file.write_all(data)
@@ -681,11 +682,13 @@ pub fn extract_local_gui_settings(ctx: &Context) -> Settings {
 }
 
 pub fn extract_daemon_config(ctx: &Context) -> Result<Config, Error> {
-    let mut data_directory = ctx
-        .root_directory
+    let data_directory = ctx
+        .liana_directory
+        .network_directory(ctx.bitcoin_config.network)
+        .path()
+        .to_path_buf()
         .canonicalize()
         .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e)))?;
-    data_directory.push(ctx.bitcoin_config.network.to_string());
     Ok(Config::new(
         ctx.bitcoin_config.clone(),
         ctx.bitcoin_backend.clone(),

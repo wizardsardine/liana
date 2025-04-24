@@ -44,6 +44,7 @@ use crate::{
         model::{HistoryTransaction, Labelled},
         Daemon, DaemonBackend, DaemonError,
     },
+    dir::{LianaDirectory, NetworkDirectory},
     node::bitcoind::Bitcoind,
     services::connect::client::backend::api::DEFAULT_LIMIT,
 };
@@ -163,7 +164,7 @@ pub enum ImportExportType {
     ExportPsbt(String),
     ExportXpub(String),
     ExportBackup(String),
-    ExportProcessBackup(PathBuf, Network, Arc<Config>, Arc<Wallet>),
+    ExportProcessBackup(LianaDirectory, Network, Arc<Config>, Arc<Wallet>),
     ImportBackup(
         Option<Sender<bool>>, /*overwrite_labels*/
         Option<Sender<bool>>, /*overwrite_aliases*/
@@ -819,7 +820,8 @@ pub async fn import_backup(
     let settings = if !account.keys.is_empty() {
         // TODO: change lianad_datadir is common to gui datadir only for legacy wallet before
         // multiple wallet
-        let settings = match Settings::from_file(lianad_datadir.path().to_path_buf(), network) {
+        let network_dir = NetworkDirectory::new(lianad_datadir.path().to_path_buf());
+        let settings = match Settings::from_file(&network_dir) {
             Ok(s) => s,
             Err(_) => {
                 return Err(Error::BackupImport("Failed to get App Settings".into()));
@@ -938,10 +940,8 @@ pub async fn import_backup(
 
         settings.wallets.get_mut(0).expect("already checked").keys =
             settings_aliases.clone().into_values().collect();
-        if settings
-            .to_file(lianad_datadir.path().to_path_buf(), network)
-            .is_err()
-        {
+        let network_dir = NetworkDirectory::new(lianad_datadir.path().to_path_buf());
+        if settings.to_file(&network_dir).is_err() {
             return Err(Error::BackupImport("Failed to import keys aliases".into()));
         } else {
             // Update wallet state
@@ -1085,7 +1085,7 @@ pub async fn import_backup_at_launch(
     wallet: Arc<Wallet>,
     config: Config,
     daemon: Arc<dyn Daemon + Sync + Send>,
-    datadir: PathBuf,
+    datadir: LianaDirectory,
     internal_bitcoind: Option<Bitcoind>,
     backup: Backup,
 ) -> Result<
@@ -1094,7 +1094,7 @@ pub async fn import_backup_at_launch(
         Arc<Wallet>,
         Config,
         Arc<dyn Daemon + Sync + Send>,
-        PathBuf,
+        LianaDirectory,
         Option<Bitcoind>,
     ),
     RestoreBackupError,
@@ -1231,7 +1231,7 @@ pub async fn get_path(filename: String, write: bool) -> Option<PathBuf> {
 }
 
 pub async fn app_backup(
-    datadir: PathBuf,
+    datadir: LianaDirectory,
     network: Network,
     config: Arc<Config>,
     wallet: Arc<Wallet>,
@@ -1243,7 +1243,7 @@ pub async fn app_backup(
 }
 
 pub async fn app_backup_export(
-    datadir: PathBuf,
+    datadir: LianaDirectory,
     network: Network,
     config: Arc<Config>,
     wallet: Arc<Wallet>,

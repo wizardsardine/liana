@@ -2,7 +2,6 @@ mod bitcoind;
 mod wallet;
 
 use std::convert::From;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use iced::Task;
@@ -23,13 +22,14 @@ use crate::{
         Config,
     },
     daemon::{Daemon, DaemonBackend},
+    dir::LianaDirectory,
     export::{ImportExportMessage, ImportExportType},
 };
 
 use super::export::ExportModal;
 
 pub struct SettingsState {
-    data_dir: PathBuf,
+    data_dir: LianaDirectory,
     wallet: Arc<Wallet>,
     setting: Option<Box<dyn State>>,
     daemon_backend: DaemonBackend,
@@ -39,7 +39,7 @@ pub struct SettingsState {
 
 impl SettingsState {
     pub fn new(
-        data_dir: PathBuf,
+        data_dir: LianaDirectory,
         wallet: Arc<Wallet>,
         daemon_backend: DaemonBackend,
         internal_bitcoind: bool,

@@ -1,11 +1,13 @@
 use iced::Task;
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
-use crate::app::{settings, wallet::Wallet};
+use crate::{
+    app::{settings, wallet::Wallet},
+    dir::LianaDirectory,
+};
 use async_hwi::{
     bitbox::{api::runtime, BitBox02, PairingBitbox02},
     coldcard,
@@ -156,7 +158,7 @@ pub struct HardwareWallets {
     pub list: Vec<HardwareWallet>,
     pub aliases: HashMap<Fingerprint, String>,
     wallet: Option<Arc<Wallet>>,
-    datadir_path: PathBuf,
+    datadir_path: LianaDirectory,
 }
 
 impl std::fmt::Debug for HardwareWallets {
@@ -166,7 +168,7 @@ impl std::fmt::Debug for HardwareWallets {
 }
 
 impl HardwareWallets {
-    pub fn new(datadir_path: PathBuf, network: Network) -> Self {
+    pub fn new(datadir_path: LianaDirectory, network: Network) -> Self {
         Self {
             network,
             list: Vec::new(),
@@ -380,7 +382,7 @@ struct State {
     wallet: Option<Arc<Wallet>>,
     connected_supported_hws: Vec<String>,
     api: Option<ledger::HidApi>,
-    datadir_path: PathBuf,
+    datadir_path: LianaDirectory,
 }
 
 fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {

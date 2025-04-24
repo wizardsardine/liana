@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::iter::FromIterator;
-use std::path::Path;
 
 use async_trait::async_trait;
 use lianad::bip329::Labels;
@@ -21,6 +20,7 @@ use lianad::{
 };
 
 use super::{model::*, Daemon, DaemonBackend, DaemonError};
+use crate::dir::LianaDirectory;
 
 pub trait Client {
     type Error: Into<DaemonError> + Debug;
@@ -65,7 +65,11 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         None
     }
 
-    async fn is_alive(&self, _datadir: &Path, _network: Network) -> Result<(), DaemonError> {
+    async fn is_alive(
+        &self,
+        _datadir: &LianaDirectory,
+        _network: Network,
+    ) -> Result<(), DaemonError> {
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use iced::{Alignment, Length, Task};
 
@@ -16,6 +16,7 @@ use crate::{
         settings::{AuthConfig, Settings, SettingsError, WalletSetting},
     },
     daemon::DaemonError,
+    dir::LianaDirectory,
 };
 
 use super::client::{
@@ -100,7 +101,7 @@ pub enum BackendState {
 }
 
 pub struct LianaLiteLogin {
-    pub datadir: PathBuf,
+    pub datadir: LianaDirectory,
     pub network: Network,
 
     wallet_id: String,
@@ -128,7 +129,11 @@ pub enum ConnectionStep {
 }
 
 impl LianaLiteLogin {
-    pub fn new(datadir: PathBuf, network: Network, settings: Settings) -> (Self, Task<Message>) {
+    pub fn new(
+        datadir: LianaDirectory,
+        network: Network,
+        settings: Settings,
+    ) -> (Self, Task<Message>) {
         match settings
             .wallets
             .first()
@@ -490,13 +495,14 @@ impl LianaLiteLogin {
 }
 
 async fn update_wallet_auth_settings(
-    datadir: PathBuf,
+    datadir: LianaDirectory,
     network: Network,
     wallet: api::Wallet,
     email: String,
     refresh_token: String,
 ) -> Result<(), Error> {
-    let mut settings = Settings::from_file(datadir.clone(), network)?;
+    let network_dir = datadir.network_directory(network);
+    let mut settings = Settings::from_file(&network_dir)?;
 
     let descriptor_checksum = wallet
         .descriptor
@@ -534,7 +540,7 @@ async fn update_wallet_auth_settings(
         );
     }
 
-    settings.to_file(datadir, network).map_err(|e| {
+    settings.to_file(&network_dir).map_err(|e| {
         DaemonError::Unexpected(format!("Cannot access to settings.json file: {}", e))
     })?;
 

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing_subscriber::filter;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -107,30 +107,3 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
-
-// Get the absolute path to the liana configuration folder.
-///
-/// This a "liana" directory in the XDG standard configuration directory for all OSes but
-/// Linux-based ones, for which it's `~/.liana`.
-/// Rationale: we want to have the database, RPC socket, etc.. in the same folder as the
-/// configuration file but for Linux the XDG specify a data directory (`~/.local/share/`) different
-/// from the configuration one (`~/.config/`).
-pub fn default_datadir() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    #[cfg(target_os = "linux")]
-    let configs_dir = dirs::home_dir();
-
-    #[cfg(not(target_os = "linux"))]
-    let configs_dir = dirs::config_dir();
-
-    if let Some(mut path) = configs_dir {
-        #[cfg(target_os = "linux")]
-        path.push(".liana");
-
-        #[cfg(not(target_os = "linux"))]
-        path.push("Liana");
-
-        return Ok(path);
-    }
-
-    Err("Failed to get default data directory".into())
-}

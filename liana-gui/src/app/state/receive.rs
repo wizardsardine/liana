@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use iced::{widget::qr_code, Subscription, Task};
@@ -10,6 +9,7 @@ use liana::miniscript::bitcoin::{
 use liana_ui::{component::modal, widget::*};
 
 use crate::daemon::model::LabelsLoader;
+use crate::dir::LianaDirectory;
 use crate::{
     app::{
         cache::Cache,
@@ -54,7 +54,7 @@ impl Labelled for Addresses {
 }
 
 pub struct ReceivePanel {
-    data_dir: PathBuf,
+    data_dir: LianaDirectory,
     wallet: Arc<Wallet>,
     addresses: Addresses,
     labels_edited: LabelsEdited,
@@ -63,7 +63,7 @@ pub struct ReceivePanel {
 }
 
 impl ReceivePanel {
-    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>) -> Self {
+    pub fn new(data_dir: LianaDirectory, wallet: Arc<Wallet>) -> Self {
         Self {
             data_dir,
             wallet,
@@ -217,7 +217,7 @@ pub struct VerifyAddressModal {
 
 impl VerifyAddressModal {
     pub fn new(
-        data_dir: PathBuf,
+        data_dir: LianaDirectory,
         wallet: Arc<Wallet>,
         network: Network,
         address: Address,
@@ -338,7 +338,7 @@ mod tests {
 
     use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::Address};
     use serde_json::json;
-    use std::str::FromStr;
+    use std::{path::PathBuf, str::FromStr};
 
     const DESC: &str = "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp";
 
@@ -356,8 +356,10 @@ mod tests {
             ))),
         )]);
         let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
-        let sandbox: Sandbox<ReceivePanel> =
-            Sandbox::new(ReceivePanel::new(PathBuf::new(), wallet.clone()));
+        let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::new(
+            LianaDirectory::new(PathBuf::new()),
+            wallet.clone(),
+        ));
         let client = Arc::new(Lianad::new(daemon.run()));
         let cache = Cache::default();
         let sandbox = sandbox.load(client.clone(), &cache, wallet).await;

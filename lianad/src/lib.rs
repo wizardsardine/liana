@@ -405,8 +405,8 @@ impl DaemonHandle {
         let data_dir = config
             .data_directory()
             .ok_or(StartupError::DefaultDataDirNotFound)?;
-        let fresh_data_dir = !data_dir.exists();
-        if fresh_data_dir {
+        let fresh_data_dir = !data_dir.exists() || !data_dir.sqlite_db_file_path().exists();
+        if !data_dir.exists() {
             data_dir
                 .init()
                 .map_err(|e| StartupError::DatadirCreation(data_dir.path().to_path_buf(), e))?;

@@ -1,15 +1,17 @@
-use crate::daemon::{
-    model::{Coin, ListCoinsResult},
-    Daemon, DaemonError,
+use crate::{
+    daemon::{
+        model::{Coin, ListCoinsResult},
+        Daemon, DaemonError,
+    },
+    dir::LianaDirectory,
 };
 use liana::miniscript::bitcoin::Network;
 use lianad::commands::CoinStatus;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Cache {
-    pub datadir_path: PathBuf,
+    pub datadir_path: LianaDirectory,
     pub network: Network,
     pub blockheight: i32,
     pub coins: Vec<Coin>,
@@ -25,7 +27,7 @@ pub struct Cache {
 impl std::default::Default for Cache {
     fn default() -> Self {
         Self {
-            datadir_path: std::path::PathBuf::new(),
+            datadir_path: LianaDirectory::new(std::path::PathBuf::new()),
             network: Network::Bitcoin,
             blockheight: 0,
             coins: Vec::new(),

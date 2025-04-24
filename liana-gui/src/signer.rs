@@ -9,6 +9,8 @@ use liana::{
     signer::HotSigner,
 };
 
+use crate::dir::LianaDirectory;
+
 pub struct Signer {
     curve: secp256k1::Secp256k1<secp256k1::All>,
     key: HotSigner,
@@ -58,9 +60,9 @@ impl Signer {
 
     pub fn store(
         &self,
-        datadir_root: &std::path::Path,
+        datadir_root: &LianaDirectory,
         network: Network,
     ) -> Result<(), SignerError> {
-        self.key.store(datadir_root, network, &self.curve)
+        self.key.store(datadir_root.path(), network, &self.curve)
     }
 }

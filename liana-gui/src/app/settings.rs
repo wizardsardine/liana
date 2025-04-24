@@ -3,14 +3,14 @@
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
 
-use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
+use liana::miniscript::bitcoin::bip32::Fingerprint;
 use liana_ui::component::form;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backup::{Key, KeyRole, KeyType},
+    dir::NetworkDirectory,
     hw::HardwareWalletConfig,
     services::{self, connect::client::backend},
 };
@@ -23,9 +23,8 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn from_file(datadir: PathBuf, network: Network) -> Result<Self, SettingsError> {
-        let mut path = datadir;
-        path.push(network.to_string());
+    pub fn from_file(network_dir: &NetworkDirectory) -> Result<Self, SettingsError> {
+        let mut path = network_dir.path().to_path_buf();
         path.push(DEFAULT_FILE_NAME);
 
         let config = std::fs::read(path)
@@ -41,9 +40,8 @@ impl Settings {
         Ok(config)
     }
 
-    pub fn to_file(&self, datadir: PathBuf, network: Network) -> Result<(), SettingsError> {
-        let mut path = datadir;
-        path.push(network.to_string());
+    pub fn to_file(&self, network_dir: &NetworkDirectory) -> Result<(), SettingsError> {
+        let mut path = network_dir.path().to_path_buf();
         path.push(DEFAULT_FILE_NAME);
 
         let content = serde_json::to_string_pretty(&self).map_err(|e| {
@@ -257,10 +255,11 @@ impl std::fmt::Display for SettingsError {
 
 /// global settings.
 pub mod global {
+    use crate::dir::LianaDirectory;
     use async_hwi::bitbox::{ConfigError, NoiseConfig, NoiseConfigData};
     use serde::{Deserialize, Serialize};
     use std::io::{Read, Write};
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     pub const DEFAULT_FILE_NAME: &str = "global_settings.json";
 
@@ -283,9 +282,9 @@ pub mod global {
     impl PersistedBitboxNoiseConfig {
         /// Creates a new persisting noise config, which stores the pairing information in "bitbox.json"
         /// in the provided directory.
-        pub fn new(global_datadir: &Path) -> PersistedBitboxNoiseConfig {
+        pub fn new(global_datadir: &LianaDirectory) -> PersistedBitboxNoiseConfig {
             PersistedBitboxNoiseConfig {
-                file_path: global_datadir.join(DEFAULT_FILE_NAME),
+                file_path: global_datadir.path().join(DEFAULT_FILE_NAME),
             }
         }
     }
