@@ -34,28 +34,40 @@ pub fn recovery<'a>(
     warning: Option<&Error>,
 ) -> Element<'a, Message> {
     let no_recovery_paths = recovery_paths.is_empty();
+    const INFO_TEXT: &str = "Recover your funds by sending them to another wallet if you have lost access to your primary spending path.";
     dashboard(
         &Menu::Recovery,
         cache,
         warning,
         Column::new()
             .push(Container::new(h3("Recovery")).width(Length::Fill))
+            .push(Container::new(text(INFO_TEXT)))
             .push(Space::with_height(Length::Fixed(20.0)))
-            .push(if no_recovery_paths {
-                Container::new(text("No recovery path is currently available"))
-            } else {
+            .push(
                 Container::new(
                     Column::new()
-                        .spacing(20)
-                        .push(text(format!(
-                            "{} recovery paths will be available at the next block, select one:",
-                            recovery_paths.len()
-                        )))
+                        .push(
+                            text(if no_recovery_paths {
+                                "No recovery path is currently available.".to_string()
+                            } else {
+                                format!(
+                                    "{} recovery path{} available:",
+                                    recovery_paths.len(),
+                                    if recovery_paths.len() > 1 {
+                                        "s are"
+                                    } else {
+                                        " is"
+                                    },
+                                )
+                            })
+                            .width(Length::Fill),
+                        )
+                        .push_maybe((!no_recovery_paths).then_some(Space::with_height(20)))
                         .push(Column::with_children(recovery_paths).spacing(20)),
                 )
                 .style(theme::card::simple)
-                .padding(20)
-            })
+                .padding(20),
+            )
             .push_maybe(if no_recovery_paths {
                 None
             } else {
@@ -113,7 +125,7 @@ pub fn recovery_path_view<'a>(
                                                 .padding(5)
                                                 .style(theme::pill::simple),
                                             liana_ui::widget::Text::new(fg.to_string()),
-                                            tooltip::Position::Bottom,
+                                            tooltip::Position::Top,
                                         )
                                         .style(theme::card::simple),
                                     )
@@ -132,7 +144,7 @@ pub fn recovery_path_view<'a>(
                         .push(text(format!(
                             "{} coin{} totalling",
                             number_of_coins,
-                            if number_of_coins > 0 { "s" } else { "" }
+                            if number_of_coins > 1 { "s" } else { "" }
                         )))
                         .push(amount(&total_amount)),
                 )
