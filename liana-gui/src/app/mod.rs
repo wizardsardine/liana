@@ -11,7 +11,6 @@ mod error;
 
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,6 +36,7 @@ use wallet::{sync_status, SyncStatus};
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
+    dir::LianaDirectory,
     node::{bitcoind::Bitcoind, NodeType},
 };
 
@@ -58,7 +58,7 @@ impl Panels {
     fn new(
         cache: &Cache,
         wallet: Arc<Wallet>,
-        data_dir: PathBuf,
+        data_dir: LianaDirectory,
         daemon_backend: DaemonBackend,
         internal_bitcoind: Option<&Bitcoind>,
         config: Arc<Config>,
@@ -155,7 +155,7 @@ impl App {
         wallet: Arc<Wallet>,
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        data_dir: PathBuf,
+        data_dir: LianaDirectory,
         internal_bitcoind: Option<Bitcoind>,
         restored_from_backup: bool,
     ) -> (App, Task<Message>) {
@@ -385,15 +385,14 @@ impl App {
 
     pub fn load_daemon_config(
         &mut self,
-        datadir_path: PathBuf,
+        datadir_path: LianaDirectory,
         cfg: DaemonConfig,
     ) -> Result<(), Error> {
         Handle::current().block_on(async { self.daemon.stop().await })?;
         let network = cfg.bitcoin_config.network;
         let daemon = EmbeddedDaemon::start(cfg)?;
         self.daemon = Arc::new(daemon);
-        let mut daemon_config_path = datadir_path;
-        daemon_config_path.push(network.to_string());
+        let mut daemon_config_path = datadir_path.network_directory(network).path().to_path_buf();
         daemon_config_path.push("daemon.toml");
 
         let content =

@@ -1,10 +1,10 @@
 use lianad::bip329::Labels;
 use lianad::commands::UpdateDerivIndexesResult;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use tokio::sync::Mutex;
 
 use super::{model::*, node, Daemon, DaemonBackend, DaemonError};
+use crate::dir::LianaDirectory;
 use async_trait::async_trait;
 use liana::miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid};
 use lianad::{
@@ -67,7 +67,11 @@ impl Daemon for EmbeddedDaemon {
         Some(&self.config)
     }
 
-    async fn is_alive(&self, _datadir: &Path, _network: Network) -> Result<(), DaemonError> {
+    async fn is_alive(
+        &self,
+        _datadir: &LianaDirectory,
+        _network: Network,
+    ) -> Result<(), DaemonError> {
         let mut handle = self.handle.lock().await;
         if let Some(h) = handle.as_ref() {
             if h.is_alive() {

@@ -12,7 +12,6 @@ use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{Debug, Display},
-    path::PathBuf,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -21,6 +20,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     app::{settings::Settings, wallet::Wallet, Config},
     daemon::{model::HistoryTransaction, Daemon, DaemonBackend, DaemonError},
+    dir::LianaDirectory,
     export::Progress,
     installer::{
         extract_daemon_config, extract_local_gui_settings, extract_remote_gui_settings, Context,
@@ -180,7 +180,7 @@ impl Backup {
 
     /// Create a Backup from the Liana App context
     pub async fn from_app(
-        datadir: PathBuf,
+        datadir: LianaDirectory,
         network: Network,
         config: Arc<Config>,
         wallet: Arc<Wallet>,
@@ -194,8 +194,8 @@ impl Backup {
         let descriptor = wallet.main_descriptor.to_string();
         let keys = wallet.keys();
 
-        let settings =
-            Settings::from_file(datadir, network).map_err(|_| Error::SettingsFromFile)?;
+        let network_dir = datadir.network_directory(network);
+        let settings = Settings::from_file(&network_dir).map_err(|_| Error::SettingsFromFile)?;
         if settings.wallets.len() == 1 {
             if let Ok(settings) = serde_json::to_value(settings.wallets[0].clone()) {
                 proprietary.insert(SETTINGS_KEY.to_string(), settings);

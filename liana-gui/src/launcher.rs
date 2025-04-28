@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use iced::{
     alignment::Horizontal,
     widget::{pick_list, scrollable, Button, Space},
@@ -14,7 +12,11 @@ use liana_ui::{
 };
 use lianad::config::ConfigError;
 
-use crate::{app, installer::UserFlow};
+use crate::{
+    app,
+    dir::{LianaDirectory, NetworkDirectory},
+    installer::UserFlow,
+};
 
 const NETWORKS: [Network; 4] = [
     Network::Bitcoin,
@@ -37,20 +39,21 @@ pub enum State {
 pub struct Launcher {
     state: State,
     network: Network,
-    datadir_path: PathBuf,
+    datadir_path: LianaDirectory,
     error: Option<String>,
     delete_wallet_modal: Option<DeleteWalletModal>,
 }
 
 impl Launcher {
-    pub fn new(datadir_path: PathBuf, network: Option<Network>) -> (Self, Task<Message>) {
+    pub fn new(datadir_path: LianaDirectory, network: Option<Network>) -> (Self, Task<Message>) {
         let network = network.unwrap_or(
             NETWORKS
                 .iter()
-                .find(|net| datadir_path.join(net.to_string()).exists())
+                .find(|net| datadir_path.path().join(net.to_string()).exists())
                 .cloned()
                 .unwrap_or(Network::Bitcoin),
         );
+        let network_dir = datadir_path.network_directory(network);
         (
             Self {
                 state: State::Unchecked,
@@ -59,10 +62,7 @@ impl Launcher {
                 error: None,
                 delete_wallet_modal: None,
             },
-            Task::perform(
-                check_network_datadir(datadir_path.clone(), network),
-                Message::Checked,
-            ),
+            Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
     }
 
@@ -96,8 +96,8 @@ impl Launcher {
                 })
             }
             Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal)) => {
-                let wallet_datadir = self.datadir_path.join(self.network.to_string());
-                let config_path = wallet_datadir.join(app::config::DEFAULT_FILE_NAME);
+                let wallet_datadir = self.datadir_path.network_directory(self.network);
+                let config_path = wallet_datadir.path().join(app::config::DEFAULT_FILE_NAME);
                 let internal_bitcoind = if let Ok(cfg) = app::Config::from_file(&config_path) {
                     Some(cfg.start_internal_bitcoind)
                 } else {
@@ -112,10 +112,8 @@ impl Launcher {
             }
             Message::View(ViewMessage::SelectNetwork(network)) => {
                 self.network = network;
-                Task::perform(
-                    check_network_datadir(self.datadir_path.clone(), self.network),
-                    Message::Checked,
-                )
+                let network_dir = self.datadir_path.network_directory(self.network);
+                Task::perform(check_network_datadir(network_dir), Message::Checked)
             }
             Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted)) => {
                 self.state = State::NoWallet;
@@ -138,8 +136,11 @@ impl Launcher {
             Message::View(ViewMessage::Run) => {
                 if matches!(self.state, State::Wallet { .. }) {
                     let datadir_path = self.datadir_path.clone();
-                    let mut path = self.datadir_path.clone();
-                    path.push(self.network.to_string());
+                    let mut path = self
+                        .datadir_path
+                        .network_directory(self.network)
+                        .path()
+                        .to_path_buf();
                     path.push(app::config::DEFAULT_FILE_NAME);
                     let cfg = app::Config::from_file(&path).expect("Already checked");
                     let network = self.network;
@@ -340,9 +341,9 @@ impl Launcher {
 #[derive(Debug, Clone)]
 pub enum Message {
     View(ViewMessage),
-    Install(PathBuf, Network, UserFlow),
+    Install(LianaDirectory, Network, UserFlow),
     Checked(Result<State, String>),
-    Run(PathBuf, app::config::Config, Network),
+    Run(LianaDirectory, app::config::Config, Network),
 }
 
 #[derive(Debug, Clone)]
@@ -367,7 +368,7 @@ pub enum DeleteWalletMessage {
 
 struct DeleteWalletModal {
     network: Network,
-    wallet_datadir: PathBuf,
+    wallet_datadir: NetworkDirectory,
     warning: Option<std::io::Error>,
     deleted: bool,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
@@ -375,7 +376,11 @@ struct DeleteWalletModal {
 }
 
 impl DeleteWalletModal {
-    fn new(network: Network, wallet_datadir: PathBuf, internal_bitcoind: Option<bool>) -> Self {
+    fn new(
+        network: Network,
+        wallet_datadir: NetworkDirectory,
+        internal_bitcoind: Option<bool>,
+    ) -> Self {
         Self {
             network,
             wallet_datadir,
@@ -388,7 +393,7 @@ impl DeleteWalletModal {
     fn update(&mut self, message: Message) -> Task<Message> {
         if let Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm)) = message {
             self.warning = None;
-            if let Err(e) = std::fs::remove_dir_all(&self.wallet_datadir) {
+            if let Err(e) = std::fs::remove_dir_all(self.wallet_datadir.path()) {
                 self.warning = Some(e);
             } else {
                 self.deleted = true;
@@ -459,9 +464,8 @@ impl DeleteWalletModal {
     }
 }
 
-async fn check_network_datadir(path: PathBuf, network: Network) -> Result<State, String> {
-    let mut config_path = path.clone();
-    config_path.push(network.to_string());
+async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> {
+    let mut config_path = path.clone().path().to_path_buf();
     config_path.push(app::config::DEFAULT_FILE_NAME);
 
     if let Err(e) = app::Config::from_file(&config_path) {
@@ -470,13 +474,12 @@ async fn check_network_datadir(path: PathBuf, network: Network) -> Result<State,
         } else {
             return Err(format!(
                 "Failed to read GUI configuration file in the directory: {}",
-                path.to_string_lossy()
+                path.path().to_string_lossy()
             ));
         }
     };
 
-    let mut daemon_config_path = path.clone();
-    daemon_config_path.push(network.to_string());
+    let mut daemon_config_path = path.clone().path().to_path_buf();
     daemon_config_path.push("daemon.toml");
 
     if daemon_config_path.exists() {
@@ -510,7 +513,7 @@ async fn check_network_datadir(path: PathBuf, network: Network) -> Result<State,
     })?;
     }
 
-    if let Ok(settings) = app::settings::Settings::from_file(path, network) {
+    if let Ok(settings) = app::settings::Settings::from_file(&path) {
         if let Some(wallet) = settings.wallets.first().cloned() {
             return Ok(State::Wallet {
                 name: Some(wallet.name),

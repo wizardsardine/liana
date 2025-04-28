@@ -627,7 +627,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
-    use crate::installer::descriptor::KeySource;
+    use crate::{dir::LianaDirectory, installer::descriptor::KeySource};
 
     pub struct Sandbox<S: Step> {
         step: Arc<Mutex<S>>,
@@ -646,7 +646,10 @@ mod tests {
         }
 
         pub async fn update(&self, message: Message) {
-            let mut hws = HardwareWallets::new(PathBuf::from_str("/").unwrap(), Network::Bitcoin);
+            let mut hws = HardwareWallets::new(
+                LianaDirectory::new(PathBuf::from_str("/").unwrap()),
+                Network::Bitcoin,
+            );
             let cmd = self.step.lock().unwrap().update(&mut hws, message);
             if let Some(mut stream) = into_stream(cmd) {
                 while let Some(action) = stream.next().await {
@@ -665,7 +668,7 @@ mod tests {
     async fn test_define_descriptor_use_hotkey() {
         let mut ctx = Context::new(
             Network::Signet,
-            PathBuf::from_str("/").unwrap(),
+            LianaDirectory::new(PathBuf::from_str("/").unwrap()),
             crate::installer::context::RemoteBackend::None,
         );
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
@@ -746,7 +749,7 @@ mod tests {
     async fn test_define_descriptor_stores_if_hw_is_used() {
         let mut ctx = Context::new(
             Network::Testnet,
-            PathBuf::from_str("/").unwrap(),
+            LianaDirectory::new(PathBuf::from_str("/").unwrap()),
             crate::installer::context::RemoteBackend::None,
         );
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(

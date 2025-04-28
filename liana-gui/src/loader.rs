@@ -1,7 +1,7 @@
 use std::convert::From;
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,6 +24,7 @@ use lianad::{
 
 use crate::app;
 use crate::backup::Backup;
+use crate::dir::LianaDirectory;
 use crate::export::RestoreBackupError;
 use crate::{
     app::{
@@ -52,7 +53,7 @@ type StartedResult = Result<
 >;
 
 pub struct Loader {
-    pub datadir_path: PathBuf,
+    pub datadir_path: LianaDirectory,
     pub network: bitcoin::Network,
     pub gui_config: GUIConfig,
     pub daemon_started: bool,
@@ -97,7 +98,7 @@ pub enum Message {
                 Arc<Wallet>,
                 app::Config,
                 Arc<dyn Daemon + Sync + Send>,
-                PathBuf,
+                LianaDirectory,
                 Option<Bitcoind>,
             ),
             Error,
@@ -113,7 +114,7 @@ pub enum Message {
 
 impl Loader {
     pub fn new(
-        datadir_path: PathBuf,
+        datadir_path: LianaDirectory,
         gui_config: GUIConfig,
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
@@ -284,8 +285,11 @@ impl Loader {
             bitcoind.stop();
             log::info!("Managed bitcoind stopped.");
         } else if self.waiting_daemon_bitcoind && self.gui_config.start_internal_bitcoind {
-            let mut daemon_config_path = self.datadir_path.clone();
-            daemon_config_path.push(self.network.to_string());
+            let mut daemon_config_path = self
+                .datadir_path
+                .network_directory(self.network)
+                .path()
+                .to_path_buf();
             daemon_config_path.push("daemon.toml");
             if let Ok(config) = Config::from_file(Some(daemon_config_path)) {
                 if let Some(BitcoinBackend::Bitcoind(bitcoind_config)) = &config.bitcoin_backend {
@@ -406,7 +410,7 @@ fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>> {
 pub async fn load_application(
     daemon: Arc<dyn Daemon + Sync + Send>,
     info: GetInfoResult,
-    datadir_path: PathBuf,
+    datadir_path: LianaDirectory,
     network: bitcoin::Network,
     internal_bitcoind: Option<Bitcoind>,
     backup: Option<Backup>,
@@ -420,8 +424,9 @@ pub async fn load_application(
     ),
     Error,
 > {
+    let network_dir = datadir_path.network_directory(network);
     let wallet = Wallet::new(info.descriptors.main)
-        .load_from_settings(&datadir_path, network)?
+        .load_from_settings(&network_dir)?
         .load_hotsigners(&datadir_path, network)?;
 
     let coins = coins_to_cache(daemon.clone()).await.map(|res| res.coins)?;
@@ -547,12 +552,14 @@ async fn connect(
 
 // Daemon can start only if a config path is given.
 pub async fn start_bitcoind_and_daemon(
-    liana_datadir_path: PathBuf,
+    liana_datadir_path: LianaDirectory,
     start_internal_bitcoind: bool,
     network: bitcoin::Network,
 ) -> StartedResult {
-    let mut config_path = liana_datadir_path.clone();
-    config_path.push(network.to_string());
+    let mut config_path = liana_datadir_path
+        .network_directory(network)
+        .path()
+        .to_path_buf();
     config_path.push("daemon.toml");
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
     let mut bitcoind: Option<Bitcoind> = None;
@@ -637,9 +644,8 @@ impl From<DaemonError> for Error {
 }
 
 /// default lianad socket path is .liana/bitcoin/lianad_rpc
-fn socket_path(datadir: &Path, network: bitcoin::Network) -> PathBuf {
-    let mut path = datadir.to_path_buf();
-    path.push(network.to_string());
+fn socket_path(datadir: &LianaDirectory, network: bitcoin::Network) -> PathBuf {
+    let mut path = datadir.network_directory(network).path().to_path_buf();
     path.push("lianad_rpc");
     path
 }

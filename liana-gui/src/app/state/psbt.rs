@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use iced::Subscription;
@@ -29,6 +28,7 @@ use crate::{
         model::{LabelItem, Labelled, SpendStatus, SpendTx},
         Daemon,
     },
+    dir::LianaDirectory,
     hw::{HardwareWallet, HardwareWallets},
 };
 
@@ -444,7 +444,7 @@ impl SignModal {
     pub fn new(
         signed: HashSet<Fingerprint>,
         wallet: Arc<Wallet>,
-        datadir_path: PathBuf,
+        datadir_path: LianaDirectory,
         network: Network,
         is_saved: bool,
     ) -> Self {

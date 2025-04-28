@@ -9,6 +9,8 @@ use tracing_subscriber::{
     reload, Registry,
 };
 
+use crate::dir::LianaDirectory;
+
 const INSTALLER_LOG_FILE_NAME: &str = "installer.log";
 const GUI_LOG_FILE_NAME: &str = "liana-gui.log";
 
@@ -77,7 +79,8 @@ impl Logger {
         }
     }
 
-    pub fn set_installer_mode(&self, mut datadir: PathBuf, log_level: filter::LevelFilter) {
+    pub fn set_installer_mode(&self, datadir: LianaDirectory, log_level: filter::LevelFilter) {
+        let mut datadir = datadir.path().to_path_buf();
         datadir.push(INSTALLER_LOG_FILE_NAME);
         if let Err(e) = self.set_layer(datadir, log_level) {
             error!("Failed to change logger settings: {:#?}", e);
@@ -86,10 +89,11 @@ impl Logger {
 
     pub fn set_running_mode(
         &self,
-        mut datadir: PathBuf,
+        datadir: LianaDirectory,
         network: Network,
         log_level: filter::LevelFilter,
     ) {
+        let mut datadir = datadir.path().to_path_buf();
         datadir.push(network.to_string());
         datadir.push(GUI_LOG_FILE_NAME);
         if let Err(e) = self.set_layer(datadir, log_level) {
@@ -97,7 +101,8 @@ impl Logger {
         }
     }
 
-    pub fn remove_install_log_file(&self, mut datadir: PathBuf) {
+    pub fn remove_install_log_file(&self, datadir: LianaDirectory) {
+        let mut datadir = datadir.path().to_path_buf();
         datadir.push(INSTALLER_LOG_FILE_NAME);
         if let Err(e) = std::fs::remove_file(&datadir) {
             error!(

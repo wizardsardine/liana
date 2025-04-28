@@ -7,7 +7,6 @@ use std::convert::TryInto;
 use std::fmt::Debug;
 use std::io::ErrorKind;
 use std::iter::FromIterator;
-use std::path::Path;
 
 use async_trait::async_trait;
 
@@ -97,7 +96,11 @@ impl DaemonBackend {
 pub trait Daemon: Debug {
     fn backend(&self) -> DaemonBackend;
     fn config(&self) -> Option<&Config>;
-    async fn is_alive(&self, datadir: &Path, network: Network) -> Result<(), DaemonError>;
+    async fn is_alive(
+        &self,
+        datadir: &crate::dir::LianaDirectory,
+        network: Network,
+    ) -> Result<(), DaemonError>;
     async fn stop(&self) -> Result<(), DaemonError>;
     async fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;
     async fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;

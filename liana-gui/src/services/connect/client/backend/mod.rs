@@ -2,7 +2,6 @@ pub mod api;
 
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
     sync::Arc,
 };
 
@@ -23,6 +22,7 @@ use tokio::sync::RwLock;
 use crate::{
     app::settings::{AuthConfig, Settings},
     daemon::{model::*, Daemon, DaemonBackend, DaemonError},
+    dir::LianaDirectory,
     hw::HardwareWalletConfig,
 };
 
@@ -519,7 +519,11 @@ impl Daemon for BackendWalletClient {
     }
 
     /// refresh the token if close to expiration.
-    async fn is_alive(&self, datadir: &Path, network: Network) -> Result<(), DaemonError> {
+    async fn is_alive(
+        &self,
+        datadir: &LianaDirectory,
+        network: Network,
+    ) -> Result<(), DaemonError> {
         let auth = self.auth().await;
         if auth.expires_at < Utc::now().timestamp() + 60 {
             match self.inner.auth.try_write() {
@@ -534,13 +538,13 @@ impl Daemon for BackendWalletClient {
                         .refresh_token(&auth.refresh_token)
                         .await?;
 
-                    let mut settings = Settings::from_file(datadir.to_path_buf(), network)
-                        .map_err(|e| {
-                            DaemonError::Unexpected(format!(
-                                "Cannot access to settings.json file: {}",
-                                e
-                            ))
-                        })?;
+                    let network_dir = datadir.network_directory(network);
+                    let mut settings = Settings::from_file(&network_dir).map_err(|e| {
+                        DaemonError::Unexpected(format!(
+                            "Cannot access to settings.json file: {}",
+                            e
+                        ))
+                    })?;
 
                     if let Some(wallet_settings) = settings.wallets.iter_mut().find(|w| {
                         if let Some(auth) = &w.remote_backend_auth {
@@ -558,14 +562,12 @@ impl Daemon for BackendWalletClient {
                         tracing::info!("Wallet id was not found in the settings");
                     }
 
-                    settings
-                        .to_file(datadir.to_path_buf(), network)
-                        .map_err(|e| {
-                            DaemonError::Unexpected(format!(
-                                "Cannot access to settings.json file: {}",
-                                e
-                            ))
-                        })?;
+                    settings.to_file(&network_dir).map_err(|e| {
+                        DaemonError::Unexpected(format!(
+                            "Cannot access to settings.json file: {}",
+                            e
+                        ))
+                    })?;
 
                     *old = new;
                     tracing::info!("Liana backend access was refreshed");

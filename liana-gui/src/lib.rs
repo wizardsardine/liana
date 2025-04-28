@@ -1,7 +1,7 @@
 pub mod app;
 pub mod backup;
 pub mod daemon;
-pub mod datadir;
+pub mod dir;
 pub mod download;
 pub mod export;
 pub mod hw;

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 
+use crate::dir::{LianaDirectory, NetworkDirectory};
 use crate::{
     app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
 };
@@ -101,12 +101,8 @@ impl Wallet {
             .to_string()
     }
 
-    pub fn load_from_settings(
-        self,
-        datadir_path: &Path,
-        network: bitcoin::Network,
-    ) -> Result<Self, WalletError> {
-        let wallet = match settings::Settings::from_file(datadir_path.to_path_buf(), network) {
+    pub fn load_from_settings(self, dir: &NetworkDirectory) -> Result<Self, WalletError> {
+        let wallet = match settings::Settings::from_file(dir) {
             Ok(settings) => {
                 if let Some(wallet_setting) = settings.wallets.first() {
                     self.with_name(wallet_setting.name.clone())
@@ -140,7 +136,7 @@ impl Wallet {
                 };
 
                 tracing::info!("Settings file not found, creating one");
-                s.to_file(datadir_path.to_path_buf(), network)?;
+                s.to_file(dir)?;
                 self
             }
             Err(e) => return Err(e.into()),
@@ -151,10 +147,10 @@ impl Wallet {
 
     pub fn load_hotsigners(
         self,
-        datadir_path: &Path,
+        datadir_path: &LianaDirectory,
         network: bitcoin::Network,
     ) -> Result<Self, WalletError> {
-        let hot_signers = match HotSigner::from_datadir(datadir_path, network) {
+        let hot_signers = match HotSigner::from_datadir(datadir_path.path(), network) {
             Ok(signers) => signers,
             Err(e) => match e {
                 liana::signer::SignerError::MnemonicStorage(e) => {

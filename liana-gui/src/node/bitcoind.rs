@@ -19,6 +19,8 @@ use tracing::{info, warn};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+use crate::dir::LianaDirectory;
+
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -68,21 +70,22 @@ pub fn download_url() -> String {
     )
 }
 
-pub fn internal_bitcoind_directory(liana_datadir: &PathBuf) -> PathBuf {
-    let mut datadir = PathBuf::from(liana_datadir);
-    datadir.push("bitcoind");
-    datadir
+pub fn internal_bitcoind_directory(liana_datadir: &LianaDirectory) -> PathBuf {
+    liana_datadir.bitcoind_directory().path().to_path_buf()
 }
 
 /// Data directory used by internal bitcoind.
-pub fn internal_bitcoind_datadir(liana_datadir: &PathBuf) -> PathBuf {
+pub fn internal_bitcoind_datadir(liana_datadir: &LianaDirectory) -> PathBuf {
     let mut datadir = internal_bitcoind_directory(liana_datadir);
     datadir.push("datadir");
     datadir
 }
 
 /// Internal bitcoind executable path.
-pub fn internal_bitcoind_exe_path(liana_datadir: &PathBuf, bitcoind_version: &str) -> PathBuf {
+pub fn internal_bitcoind_exe_path(
+    liana_datadir: &LianaDirectory,
+    bitcoind_version: &str,
+) -> PathBuf {
     internal_bitcoind_directory(liana_datadir)
         .join(format!("bitcoin-{}", bitcoind_version))
         .join("bin")
@@ -94,7 +97,7 @@ pub fn internal_bitcoind_exe_path(liana_datadir: &PathBuf, bitcoind_version: &st
 }
 
 /// Path of the `bitcoin.conf` file used by internal bitcoind.
-pub fn internal_bitcoind_config_path(bitcoind_datadir: &PathBuf) -> PathBuf {
+pub fn internal_bitcoind_config_path(bitcoind_datadir: &Path) -> PathBuf {
     let mut config_path = PathBuf::from(bitcoind_datadir);
     config_path.push("bitcoin.conf");
     config_path
@@ -111,7 +114,10 @@ pub fn internal_bitcoind_cookie_path(bitcoind_datadir: &Path, network: &Network)
 }
 
 /// Path of the cookie file used by internal bitcoind on a given network.
-pub fn internal_bitcoind_debug_log_path(lianad_datadir: &PathBuf, network: Network) -> PathBuf {
+pub fn internal_bitcoind_debug_log_path(
+    lianad_datadir: &LianaDirectory,
+    network: Network,
+) -> PathBuf {
     let mut debug_log_path = internal_bitcoind_datadir(lianad_datadir);
     if let Some(dir) = bitcoind_network_dir(&network) {
         debug_log_path.push(dir);
@@ -400,7 +406,7 @@ impl Bitcoind {
     pub fn start(
         network: &bitcoin::Network,
         config: BitcoindConfig,
-        liana_datadir: &PathBuf,
+        liana_datadir: &LianaDirectory,
     ) -> Result<Self, StartInternalBitcoindError> {
         let bitcoind_datadir = internal_bitcoind_datadir(liana_datadir);
         // Find most recent bitcoind version available.

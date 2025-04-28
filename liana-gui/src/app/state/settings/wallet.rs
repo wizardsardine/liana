@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::convert::From;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use iced::{Subscription, Task};
@@ -27,6 +26,7 @@ use crate::{
         Config,
     },
     daemon::{Daemon, DaemonBackend},
+    dir::LianaDirectory,
     export::{ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
 };
@@ -44,7 +44,7 @@ impl Modal {
 }
 
 pub struct WalletSettingsState {
-    data_dir: PathBuf,
+    data_dir: LianaDirectory,
     warning: Option<Error>,
     descriptor: LianaDescriptor,
     keys_aliases: Vec<(Fingerprint, form::Value<String>)>,
@@ -56,7 +56,7 @@ pub struct WalletSettingsState {
 }
 
 impl WalletSettingsState {
-    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>, config: Arc<Config>) -> Self {
+    pub fn new(data_dir: LianaDirectory, wallet: Arc<Wallet>, config: Arc<Config>) -> Self {
         WalletSettingsState {
             data_dir,
             descriptor: wallet.main_descriptor.clone(),
@@ -296,7 +296,7 @@ impl From<WalletSettingsState> for Box<dyn State> {
 }
 
 pub struct RegisterWalletModal {
-    data_dir: PathBuf,
+    data_dir: LianaDirectory,
     wallet: Arc<Wallet>,
     warning: Option<Error>,
     chosen_hw: Option<usize>,
@@ -306,7 +306,7 @@ pub struct RegisterWalletModal {
 }
 
 impl RegisterWalletModal {
-    pub fn new(data_dir: PathBuf, wallet: Arc<Wallet>, network: Network) -> Self {
+    pub fn new(data_dir: LianaDirectory, wallet: Arc<Wallet>, network: Network) -> Self {
         let mut registered = HashSet::new();
         for hw in &wallet.hardware_wallets {
             registered.insert(hw.fingerprint);
@@ -406,7 +406,7 @@ impl RegisterWalletModal {
 }
 
 async fn register_wallet(
-    data_dir: PathBuf,
+    data_dir: LianaDirectory,
     network: Network,
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     fingerprint: Fingerprint,
@@ -427,7 +427,8 @@ async fn register_wallet(
         };
 
         if daemon.backend() != DaemonBackend::RemoteBackend {
-            let mut settings = settings::Settings::from_file(data_dir.clone(), network)?;
+            let network_dir = data_dir.network_directory(network);
+            let mut settings = settings::Settings::from_file(&network_dir)?;
             let checksum = wallet.descriptor_checksum();
 
             if let Some(wallet_setting) = settings
@@ -446,7 +447,7 @@ async fn register_wallet(
                 }
             }
 
-            settings.to_file(data_dir, network)?;
+            settings.to_file(&network_dir)?;
         }
 
         let mut wallet = wallet.as_ref().clone();
@@ -469,14 +470,15 @@ async fn register_wallet(
 }
 
 pub async fn update_keys_aliases(
-    data_dir: PathBuf,
+    data_dir: LianaDirectory,
     network: Network,
     wallet: Arc<Wallet>,
     keys_aliases: Vec<(Fingerprint, String)>,
     daemon: Arc<dyn Daemon + Sync + Send>,
 ) -> Result<Arc<Wallet>, Error> {
     if daemon.backend() != DaemonBackend::RemoteBackend {
-        let mut settings = settings::Settings::from_file(data_dir.clone(), network)?;
+        let network_dir = data_dir.network_directory(network);
+        let mut settings = settings::Settings::from_file(&network_dir)?;
         let checksum = wallet.descriptor_checksum();
         if let Some(wallet_setting) = settings
             .wallets
@@ -493,7 +495,7 @@ pub async fn update_keys_aliases(
                 .collect();
         }
 
-        settings.to_file(data_dir, network)?;
+        settings.to_file(&network_dir)?;
     }
 
     let mut wallet = wallet.as_ref().clone();

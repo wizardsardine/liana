@@ -18,6 +18,7 @@ use jsonrpc::{client::Client, simple_http::SimpleHttpTransport};
 
 use liana_ui::{component::form, widget::*};
 
+use crate::dir::LianaDirectory;
 use crate::{
     download,
     hw::HardwareWallets,
@@ -489,7 +490,7 @@ impl Default for DefineBitcoind {
 }
 
 pub struct InternalBitcoindStep {
-    liana_datadir: PathBuf,
+    liana_datadir: LianaDirectory,
     bitcoind_datadir: PathBuf,
     network: Network,
     started: Option<Result<(), StartInternalBitcoindError>>,
@@ -509,7 +510,7 @@ impl From<InternalBitcoindStep> for Box<dyn Step> {
 }
 
 impl InternalBitcoindStep {
-    pub fn new(liana_datadir: &PathBuf) -> Self {
+    pub fn new(liana_datadir: &LianaDirectory) -> Self {
         Self {
             liana_datadir: liana_datadir.clone(),
             bitcoind_datadir: internal_bitcoind_datadir(liana_datadir),
@@ -531,7 +532,7 @@ impl Step for InternalBitcoindStep {
         if self.exe_path.is_none() {
             // Check if current managed bitcoind version is already installed.
             // For new installations, we ignore any previous managed bitcoind versions that might be installed.
-            let exe_path = bitcoind::internal_bitcoind_exe_path(&ctx.root_directory, VERSION);
+            let exe_path = bitcoind::internal_bitcoind_exe_path(&ctx.liana_directory, VERSION);
             if exe_path.exists() {
                 self.exe_path = Some(exe_path)
             } else if self.exe_download.is_none() {
