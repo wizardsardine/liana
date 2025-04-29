@@ -66,7 +66,21 @@ impl Settings {
 pub struct AuthConfig {
     pub email: String,
     pub wallet_id: String,
-    pub refresh_token: String,
+    // legacy field, refresh_token is now stored in the connect cache file
+    // Keep it in case, user want to open the wallet with a previous Liana-GUI version.
+    // Field cannot be ignored as the settings file is override during settings update.
+    // TODO: remove later after multiple versions.
+    pub refresh_token: Option<String>,
+}
+
+impl AuthConfig {
+    pub fn new(email: String, wallet_id: String) -> Self {
+        Self {
+            email,
+            wallet_id,
+            refresh_token: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -241,7 +255,6 @@ pub enum SettingsError {
     WritingFile(String),
     Unexpected(String),
 }
-
 impl std::fmt::Display for SettingsError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {

@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod backend;
+pub mod cache;
 
 use liana::miniscript::bitcoin;
 
