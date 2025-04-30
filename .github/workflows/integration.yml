@@ -1,0 +1,140 @@
+name: Functional Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  functional-tests:
+    runs-on: self-hosted
+    timeout-minutes: 90
+
+    # NOTE: uncomment this to enable docker
+    # container:
+    #   image: rust:1-bookworm
+
+    strategy:
+      matrix:
+        include:
+          - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'bitcoind'
+            USE_MIN_BITCOIN_VERSION: 'TRUE'
+          - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'bitcoind'
+          - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: 'bitcoind'
+          - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'electrs'
+            USE_MIN_BITCOIN_VERSION: 'TRUE'
+          - USE_TAPROOT: 0
+            BITCOIN_BACKEND_TYPE: 'electrs'
+          - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: 'electrs'
+
+    env:
+      EXECUTOR_WORKERS: 3
+      VERBOSE: 0
+      LOG_LEVEL: debug
+      TIMEOUT: 120
+      USE_MIN_BITCOIN_VERSION: ${{ matrix.USE_MIN_BITCOIN_VERSION }}
+      USE_TAPROOT: ${{ matrix.USE_TAPROOT }}
+      BITCOIN_BACKEND_TYPE: ${{ matrix.BITCOIN_BACKEND_TYPE }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # NOTE: uncomment this if docker enabled
+      # - name: Install system dependencies
+      #   run: |
+      #     apt update
+      #     apt install -y python3 python3-pip unzip curl
+
+      - name: cleanup /tmp 
+        run: |
+          find /tmp -maxdepth 1 -type d -name 'lianad*' -mtime +0 -exec rm -rf {} +
+
+      - name: Setup Python dependencies
+        run: |
+          pip install --break-system-packages -r tests/requirements.txt
+
+      - name: Add local bin to PATH
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+
+      - name: Cache target/
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('tests/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Build lianad and taproot_signer
+        run: |
+          cd lianad
+          cargo build --release
+          cd ../tests/tools/taproot_signer
+          cargo build --release
+
+      - name: Prepare and run functional tests
+        run: |
+          set -xe
+
+          if [ "$USE_MIN_BITCOIN_VERSION" = "TRUE" ]; then
+            curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
+            echo "49df6e444515d457ea0b885d66f521f2a26ca92ccf73d5296082e633544253bf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+            tar -xzf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
+            export BITCOIND_PATH=bitcoin-24.0.1/bin/bitcoind
+            export IS_NOT_BITCOIND_24=0
+          else
+            curl -O https://bitcoincore.org/bin/bitcoin-core-28.1/bitcoin-28.1-x86_64-linux-gnu.tar.gz
+            echo "07f77afd326639145b9ba9562912b2ad2ccec47b8a305bd075b4f4cb127b7ed7 bitcoin-28.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+            tar -xzf bitcoin-28.1-x86_64-linux-gnu.tar.gz
+            export BITCOIND_PATH=bitcoin-28.1/bin/bitcoind
+          fi
+
+          echo "BITCOIN_BACKEND_TYPE = $BITCOIN_BACKEND_TYPE"
+
+          if [ "$BITCOIN_BACKEND_TYPE" = "electrs" ]; then
+            curl -OL https://github.com/jp1ac4/electrsd/releases/download/electrs-v0.10.6-ubuntu-20.04/electrs_linux_v0.10.6.zip
+            echo "34934bedbc4003867353f23c7983d4aa2d901dfccfd0bd74167f9fd305c56f7b electrs_linux_v0.10.6.zip" | sha256sum -c
+            unzip electrs_linux_v0.10.6.zip
+            chmod 754 electrs
+            export ELECTRS_PATH=$PWD/electrs
+          fi
+
+          curl -LO https://github.com/wizardsardine/liana/releases/download/0.3.1/liana-0.3.1-x86_64-linux-gnu.tar.gz
+          echo "70c8595554b6f78ccc7b66ef5f5ebc5bac03a7b1ce28afe8a076f69adf59c583 liana-0.3.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+          tar -xzf liana-0.3.1-x86_64-linux-gnu.tar.gz
+          export OLD_LIANAD_PATH="$PWD/liana-0.3.1-x86_64-linux-gnu/lianad"
+
+          # Clean Cargo index before cache save
+          rm -rf ~/.cargo/registry/index
+
+          # Run the functional tests
+          LIANAD_PATH=$PWD/target/release/lianad pytest tests/ -vvv -n 8
