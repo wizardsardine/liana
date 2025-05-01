@@ -350,7 +350,17 @@ impl App {
             }
             Message::UpdateCache(res) => {
                 match res {
-                    Ok(cache) => {
+                    Ok(mut cache) => {
+                        cache.coins.sort_by(|a, b| a.outpoint.cmp(&b.outpoint));
+                        let home_reload = if (self.cache.coins != cache.coins)
+                            && self.panels.current == Menu::Home
+                        {
+                            let task =
+                                Task::perform(async {}, |_| Message::View(view::Message::Reload));
+                            Some(task)
+                        } else {
+                            None
+                        };
                         self.cache.clone_from(&cache);
                         let current = &self.panels.current;
                         let daemon = self.daemon.clone();
@@ -359,7 +369,7 @@ impl App {
                             (&mut self.panels.home as &mut dyn State, Menu::Home),
                             (&mut self.panels.settings as &mut dyn State, Menu::Settings),
                         ];
-                        let commands: Vec<_> = panels
+                        let mut commands: Vec<_> = panels
                             .iter_mut()
                             .map(|(panel, menu)| {
                                 panel.update(
@@ -369,6 +379,9 @@ impl App {
                                 )
                             })
                             .collect();
+                        if let Some(reload) = home_reload {
+                            commands.push(reload);
+                        }
                         return Task::batch(commands);
                     }
                     Err(e) => tracing::error!("Failed to update cache: {}", e),
