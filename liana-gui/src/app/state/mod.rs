@@ -127,10 +127,10 @@ pub struct Home {
     unconfirmed_balance: Amount,
     remaining_sequence: Option<u32>,
     expiring_coins: Vec<OutPoint>,
-    events: Vec<Payment>,
+    payments: Vec<Payment>,
     is_last_page: bool,
     processing: bool,
-    selected_event: Option<(HistoryTransaction, usize)>,
+    selected_payment: Option<(HistoryTransaction, usize)>,
     labels_edited: LabelsEdited,
     warning: Option<Error>,
     show_rescan_warning: bool,
@@ -157,8 +157,8 @@ impl Home {
             unconfirmed_balance,
             remaining_sequence: remaining_seq,
             expiring_coins,
-            selected_event: None,
-            events: Vec::new(),
+            selected_payment: None,
+            payments: Vec::new(),
             labels_edited: LabelsEdited::default(),
             warning: None,
             is_last_page: false,
@@ -170,7 +170,7 @@ impl Home {
 
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Some((tx, output_index)) = &self.selected_event {
+        if let Some((tx, output_index)) = &self.selected_payment {
             view::home::payment_view(
                 cache,
                 tx,
@@ -188,7 +188,7 @@ impl State for Home {
                     &self.unconfirmed_balance,
                     &self.remaining_sequence,
                     &self.expiring_coins,
-                    &self.events,
+                    &self.payments,
                     self.is_last_page,
                     self.processing,
                     &self.sync_status,
@@ -223,10 +223,10 @@ impl State for Home {
             },
             Message::Payments(res) => match res {
                 Err(e) => self.warning = Some(e),
-                Ok(events) => {
+                Ok(payments) => {
                     self.warning = None;
-                    self.events = events;
-                    self.is_last_page = (self.events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.payments = payments;
+                    self.is_last_page = (self.payments.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                 }
             },
             Message::PaymentsExtension(res) => match res {
@@ -237,21 +237,21 @@ impl State for Home {
                     self.is_last_page = (events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                     if let Some(event) = events.first() {
                         if let Some(position) = self
-                            .events
+                            .payments
                             .iter()
                             .position(|event2| event2.outpoint == event.outpoint)
                         {
-                            let len = self.events.len();
+                            let len = self.payments.len();
                             for event in events {
-                                if !self.events[position..len]
+                                if !self.payments[position..len]
                                     .iter()
                                     .any(|event2| event2.outpoint == event.outpoint)
                                 {
-                                    self.events.push(event);
+                                    self.payments.push(event);
                                 }
                             }
                         } else {
-                            self.events.extend(events);
+                            self.payments.extend(events);
                         }
                     }
                 }
@@ -272,7 +272,7 @@ impl State for Home {
             }
             Message::Payment(res) => match res {
                 Ok(event) => {
-                    self.selected_event = Some(event);
+                    self.selected_payment = Some(event);
                 }
                 Err(e) => {
                     self.warning = Some(e);
@@ -294,11 +294,11 @@ impl State for Home {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    self.events
+                    self.payments
                         .iter_mut()
                         .map(|tx| tx as &mut dyn LabelsLoader)
                         .chain(
-                            self.selected_event
+                            self.selected_payment
                                 .iter_mut()
                                 .map(|(tx, _)| tx as &mut dyn LabelsLoader),
                         ),
@@ -315,11 +315,11 @@ impl State for Home {
                 return self.reload(daemon, self.wallet.clone());
             }
             Message::View(view::Message::Close) => {
-                self.selected_event = None;
+                self.selected_payment = None;
             }
 
             Message::View(view::Message::Next) => {
-                if let Some(last) = self.events.last() {
+                if let Some(last) = self.payments.last() {
                     let daemon = daemon.clone();
                     let last_event_date = last.time.unwrap();
                     self.processing = true;
@@ -379,7 +379,7 @@ impl State for Home {
         if self.sync_status.wallet_is_syncing() {
             return Task::none();
         }
-        self.selected_event = None;
+        self.selected_payment = None;
         self.wallet = wallet;
         let daemon2 = daemon.clone();
         let now: u32 = SystemTime::now()
