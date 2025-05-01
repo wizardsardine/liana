@@ -1317,14 +1317,14 @@ impl ListAddressesResult {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LCSpendInfo {
     pub txid: bitcoin::Txid,
     /// The block height this spending transaction was confirmed at.
     pub height: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListCoinsEntry {
     #[serde(
         serialize_with = "ser_amount",
