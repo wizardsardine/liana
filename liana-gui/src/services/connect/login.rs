@@ -13,7 +13,7 @@ use lianad::commands::ListCoinsResult;
 use crate::{
     app::{
         cache::coins_to_cache,
-        settings::{Settings, SettingsError},
+        settings::{AuthConfig, SettingsError},
     },
     daemon::DaemonError,
     dir::LianaDirectory,
@@ -99,8 +99,6 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub enum ViewMessage {
     RequestOTP,
-    EditEmail,
-    EmailEdited(String),
     OTPEdited(String),
     BackToLauncher(Network),
 }
@@ -116,6 +114,7 @@ pub struct LianaLiteLogin {
     pub network: Network,
 
     wallet_id: String,
+    email: String,
 
     processing: bool,
     step: ConnectionStep,
@@ -128,13 +127,10 @@ pub struct LianaLiteLogin {
 
 pub enum ConnectionStep {
     CheckingAuthFile,
-    EnterEmail {
-        email: form::Value<String>,
-    },
+    CheckEmail,
     EnterOtp {
         client: AuthClient,
         backend_api_url: String,
-        email: String,
         otp: form::Value<String>,
     },
 }
@@ -143,63 +139,41 @@ impl LianaLiteLogin {
     pub fn new(
         datadir: LianaDirectory,
         network: Network,
-        settings: Settings,
+        setting: AuthConfig,
     ) -> (Self, Task<Message>) {
-        match settings
-            .wallets
-            .first()
-            .cloned()
-            .and_then(|w| w.remote_backend_auth)
-            .ok_or(Error::Unexpected(
-                "Missing auth configuration in settings.json".to_string(),
-            )) {
-            Err(e) => (
-                Self {
-                    network,
-                    datadir,
-                    step: ConnectionStep::EnterEmail {
-                        email: form::Value::default(),
-                    },
-                    wallet_id: String::new(),
-                    connection_error: Some(e),
-                    auth_error: None,
-                    processing: true,
-                },
-                Task::none(),
-            ),
-            Ok(setting) => (
-                Self {
-                    network,
-                    datadir: datadir.clone(),
-                    step: ConnectionStep::CheckingAuthFile,
-                    connection_error: None,
-                    wallet_id: setting.wallet_id.clone(),
-                    auth_error: None,
-                    processing: true,
-                },
-                Task::perform(
-                    async move {
-                        let service_config = super::client::get_service_config(network)
-                            .await
-                            .map_err(|e| Error::Unexpected(e.to_string()))?;
-                        let client = AuthClient::new(
-                            service_config.auth_api_url,
-                            service_config.auth_api_public_key,
-                            setting.email,
-                        );
-                        connect_with_credentials(
-                            client,
-                            setting.wallet_id,
-                            service_config.backend_api_url,
-                            network,
-                            datadir,
-                        )
+        (
+            Self {
+                network,
+                datadir: datadir.clone(),
+                step: ConnectionStep::CheckingAuthFile,
+                connection_error: None,
+                wallet_id: setting.wallet_id.clone(),
+                email: setting.email.clone(),
+                auth_error: None,
+                processing: true,
+            },
+            Task::perform(
+                async move {
+                    let service_config = super::client::get_service_config(network)
                         .await
-                    },
-                    Message::Connected,
-                ),
+                        .map_err(|e| Error::Unexpected(e.to_string()))?;
+                    let client = AuthClient::new(
+                        service_config.auth_api_url,
+                        service_config.auth_api_public_key,
+                        setting.email,
+                    );
+                    connect_with_credentials(
+                        client,
+                        setting.wallet_id,
+                        service_config.backend_api_url,
+                        network,
+                        datadir,
+                    )
+                    .await
+                },
+                Message::Connected,
             ),
-        }
+        )
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -218,36 +192,27 @@ impl LianaLiteLogin {
                             );
                         }
                         Err(e) => {
-                            self.connection_error = Some(e);
-                            self.step = ConnectionStep::EnterEmail {
-                                email: form::Value::default(),
-                            };
+                            // Do not display error, if the Liana-Connect cache does not exist,
+                            // simply ask user to do the authentication steps.
+                            if !matches!(e, Error::CredentialsMissing) {
+                                self.connection_error = Some(e);
+                            }
+                            self.step = ConnectionStep::CheckEmail;
                         }
                     }
                 }
             }
-            ConnectionStep::EnterEmail { email } => match message {
-                Message::View(ViewMessage::EmailEdited(value)) => {
-                    email.valid = value.is_empty()
-                        || email_address::EmailAddress::parse_with_options(
-                            &value,
-                            email_address::Options::default().with_required_tld(),
-                        )
-                        .is_ok();
-                    email.value = value;
-                }
+            ConnectionStep::CheckEmail => match message {
                 Message::View(ViewMessage::RequestOTP) => {
-                    if email.value.is_empty() {
-                        email.valid = false;
-                    } else if email.valid {
-                        let email = email.value.clone();
-                        let network = self.network;
-                        self.processing = true;
-                        self.connection_error = None;
-                        self.auth_error = None;
-                        return Task::perform(
-                            async move {
-                                let config = super::client::get_service_config(network)
+                    let email = self.email.clone();
+                    let network = self.network;
+                    self.processing = true;
+                    self.connection_error = None;
+                    self.auth_error = None;
+                    return Task::perform(
+                        async move {
+                            let config =
+                                super::client::get_service_config(network)
                                     .await
                                     .map_err(|e| {
                                         if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
@@ -258,24 +223,22 @@ impl LianaLiteLogin {
                                             Error::Unexpected(e.to_string())
                                         }
                                     })?;
-                                let client = AuthClient::new(
-                                    config.auth_api_url,
-                                    config.auth_api_public_key,
-                                    email,
-                                );
-                                client.sign_in_otp().await?;
-                                Ok((client, config.backend_api_url))
-                            },
-                            Message::OTPRequested,
-                        );
-                    }
+                            let client = AuthClient::new(
+                                config.auth_api_url,
+                                config.auth_api_public_key,
+                                email,
+                            );
+                            client.sign_in_otp().await?;
+                            Ok((client, config.backend_api_url))
+                        },
+                        Message::OTPRequested,
+                    );
                 }
                 Message::OTPRequested(res) => {
                     self.processing = false;
                     match res {
                         Ok((client, backend_api_url)) => {
                             self.step = ConnectionStep::EnterOtp {
-                                email: email.value.to_owned(),
                                 otp: form::Value::default(),
                                 client,
                                 backend_api_url,
@@ -290,18 +253,9 @@ impl LianaLiteLogin {
             },
             ConnectionStep::EnterOtp {
                 client,
-                email,
                 otp,
                 backend_api_url,
             } => match message {
-                Message::View(ViewMessage::EditEmail) => {
-                    self.step = ConnectionStep::EnterEmail {
-                        email: form::Value {
-                            value: email.clone(),
-                            valid: true,
-                        },
-                    };
-                }
                 Message::View(ViewMessage::RequestOTP) => {
                     *otp = form::Value::default();
                     let client = client.clone();
@@ -390,88 +344,66 @@ impl LianaLiteLogin {
     pub fn view(&self) -> Element<Message> {
         let content = Into::<Element<ViewMessage>>::into(
             Container::new(
-                Column::new()
-                    .spacing(100)
-                    .align_x(Alignment::Center)
-                    .push(
-                        Column::new()
-                            .align_x(Alignment::Center)
-                            .spacing(20)
-                            .width(Length::Fill)
-                            .push(h2("Liana Connect"))
-                            .push(
-                                Column::new()
-                                    .max_width(500)
-                                    .spacing(20)
-                                    .push(match &self.step {
-                                        ConnectionStep::CheckingAuthFile => Column::new(),
-                                        ConnectionStep::EnterEmail { email } => Column::new()
-                                            .spacing(20)
-                                            .push_maybe(
-                                                self.auth_error
-                                                    .map(|e| text(e).style(theme::text::warning)),
-                                            )
-                                            .push(
-                                                form::Form::new_trimmed("email", email, |msg| {
-                                                    ViewMessage::EmailEdited(msg)
-                                                })
-                                                .size(P1_SIZE)
-                                                .padding(10)
-                                                .warning("Email is not valid"),
-                                            )
-                                            .push(button::secondary(None, "Next").on_press_maybe(
-                                                if self.processing {
+                Column::new().spacing(100).align_x(Alignment::Center).push(
+                    Column::new()
+                        .align_x(Alignment::Center)
+                        .spacing(20)
+                        .width(Length::Fill)
+                        .push(h2("Liana Connect"))
+                        .push(
+                            Column::new()
+                                .max_width(500)
+                                .spacing(20)
+                                .push(match &self.step {
+                                    ConnectionStep::CheckingAuthFile => Column::new(),
+                                    ConnectionStep::CheckEmail => Column::new()
+                                        .spacing(20)
+                                        .align_x(Alignment::Center)
+                                        .push_maybe(
+                                            self.auth_error
+                                                .map(|e| text(e).style(theme::text::warning)),
+                                        )
+                                        .push(text(&self.email))
+                                        .push(
+                                            button::secondary(None, "Login")
+                                                .width(Length::Fixed(200.0))
+                                                .on_press_maybe(if self.processing {
                                                     None
                                                 } else {
                                                     Some(ViewMessage::RequestOTP)
-                                                },
-                                            )),
-                                        ConnectionStep::EnterOtp { otp, .. } => Column::new()
-                                            .push(text("An authentication was send to your email"))
-                                            .push_maybe(
-                                                self.auth_error
-                                                    .map(|e| text(e).style(theme::text::warning)),
-                                            )
-                                            .spacing(20)
-                                            .push(
-                                                form::Form::new_trimmed("Token", otp, |msg| {
-                                                    ViewMessage::OTPEdited(msg)
-                                                })
-                                                .size(P1_SIZE)
-                                                .padding(10)
-                                                .warning("Token is not valid"),
-                                            )
-                                            .push(
-                                                Row::new()
-                                                    .spacing(10)
-                                                    .push(
-                                                        button::secondary(
-                                                            Some(icon::previous_icon()),
-                                                            "Change email",
-                                                        )
-                                                        .on_press(ViewMessage::EditEmail),
-                                                    )
-                                                    .push(
-                                                        button::secondary(None, "Resend token")
-                                                            .on_press_maybe(if self.processing {
-                                                                None
-                                                            } else {
-                                                                Some(ViewMessage::RequestOTP)
-                                                            }),
-                                                    ),
+                                                }),
+                                        ),
+                                    ConnectionStep::EnterOtp { otp, .. } => Column::new()
+                                        .spacing(20)
+                                        .align_x(Alignment::Center)
+                                        .push(text("An authentication was sent to your email:"))
+                                        .push(text(&self.email))
+                                        .push_maybe(
+                                            self.auth_error
+                                                .map(|e| text(e).style(theme::text::warning)),
+                                        )
+                                        .push(
+                                            form::Form::new_trimmed("Token", otp, |msg| {
+                                                ViewMessage::OTPEdited(msg)
+                                            })
+                                            .size(P1_SIZE)
+                                            .padding(10)
+                                            .warning("Token is not valid"),
+                                        )
+                                        .push(
+                                            Row::new().spacing(10).push(
+                                                button::secondary(None, "Resend token")
+                                                    .width(Length::Fixed(200.0))
+                                                    .on_press_maybe(if self.processing {
+                                                        None
+                                                    } else {
+                                                        Some(ViewMessage::RequestOTP)
+                                                    }),
                                             ),
-                                    }),
-                            ),
-                    )
-                    .push_maybe(if !matches!(self.step, ConnectionStep::CheckingAuthFile) {
-                        Some(
-                            button::secondary(Some(icon::previous_icon()), "Change network")
-                                .width(Length::Fixed(200.0))
-                                .on_press(ViewMessage::BackToLauncher(self.network)),
-                        )
-                    } else {
-                        None
-                    }),
+                                        ),
+                                }),
+                        ),
+                ),
             )
             .padding(50)
             .center_x(Length::Fill)
@@ -490,7 +422,20 @@ impl LianaLiteLogin {
             );
         }
 
-        col.push(content).into()
+        col.push_maybe(if !matches!(self.step, ConnectionStep::CheckingAuthFile) {
+            Some(
+                Container::new(
+                    button::secondary(Some(icon::previous_icon()), "Go back")
+                        .width(Length::Fixed(200.0))
+                        .on_press(Message::View(ViewMessage::BackToLauncher(self.network))),
+                )
+                .padding(20),
+            )
+        } else {
+            None
+        })
+        .push(content)
+        .into()
     }
 }
 
@@ -538,7 +483,11 @@ pub async fn connect_with_credentials(
     liana_directory: LianaDirectory,
 ) -> Result<BackendState, Error> {
     let network_dir = liana_directory.network_directory(network);
-    let mut tokens = cache::Credential::from_cache(&network_dir, &auth.email)?
+    let mut tokens = cache::Account::from_cache(&network_dir, &auth.email)
+        .map_err(|e| match e {
+            ConnectCacheError::NotFound => Error::CredentialsMissing,
+            _ => e.into(),
+        })?
         .ok_or(Error::CredentialsMissing)?
         .tokens;
 
