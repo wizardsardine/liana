@@ -143,26 +143,11 @@ impl GUI {
     fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {
         let logger = Logger::setup(log_level.unwrap_or(LevelFilter::INFO));
         let mut cmds = vec![Task::perform(ctrl_c(), |_| Message::CtrlC)];
-        let state = match config {
-            Config::Launcher(datadir_path) => {
-                let (launcher, command) = Launcher::new(datadir_path, None);
-                cmds.push(command.map(|msg| Message::Launch(Box::new(msg))));
-                State::Launcher(Box::new(launcher))
-            }
-            Config::Run(datadir_path, cfg, network) => {
-                logger.set_running_mode(
-                    datadir_path.clone(),
-                    network,
-                    log_level.unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
-                );
-                let (loader, command) = Loader::new(datadir_path, cfg, network, None, None);
-                cmds.push(command.map(|msg| Message::Load(Box::new(msg))));
-                State::Loader(Box::new(loader))
-            }
-        };
+        let (launcher, command) = Launcher::new(config.liana_directory, config.network);
+        cmds.push(command.map(|msg| Message::Launch(Box::new(msg))));
         (
             Self {
-                state,
+                state: State::Launcher(Box::new(launcher)),
                 logger,
                 log_level,
             },
@@ -511,25 +496,16 @@ pub fn create_app_with_remote_backend(
     )
 }
 
-pub enum Config {
-    Run(LianaDirectory, app::Config, bitcoin::Network),
-    Launcher(LianaDirectory),
+pub struct Config {
+    liana_directory: LianaDirectory,
+    network: Option<bitcoin::Network>,
 }
 
 impl Config {
-    pub fn new(
-        datadir_path: LianaDirectory,
-        network: Option<bitcoin::Network>,
-    ) -> Result<Self, Box<dyn Error>> {
-        if let Some(network) = network {
-            let mut path = datadir_path.network_directory(network).path().to_path_buf();
-            path.push(app::config::DEFAULT_FILE_NAME);
-            match app::Config::from_file(&path) {
-                Ok(cfg) => Ok(Config::Run(datadir_path, cfg, network)),
-                Err(e) => Err(format!("Failed to read configuration file: {}", e).into()),
-            }
-        } else {
-            Ok(Config::Launcher(datadir_path))
+    pub fn new(liana_directory: LianaDirectory, network: Option<bitcoin::Network>) -> Self {
+        Self {
+            liana_directory,
+            network,
         }
     }
 }
@@ -553,7 +529,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => {
             return Err("Unknown args combination".into());
         }
-    }?;
+    };
 
     let log_level = if let Ok(l) = std::env::var("LOG_LEVEL") {
         Some(LevelFilter::from_str(&l)?)
