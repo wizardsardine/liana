@@ -77,7 +77,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(daemon, wallet, false))
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(
@@ -97,7 +97,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(daemon, wallet, false))
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditWalletSettings)) => {
@@ -112,7 +112,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(daemon, wallet, false))
                     .unwrap_or_else(Task::none)
             }
             Message::WalletUpdated(Ok(wallet)) => {
@@ -150,6 +150,7 @@ impl State for SettingsState {
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         self.setting = None;
         self.wallet = wallet;
@@ -343,6 +344,7 @@ impl State for AboutSettingsState {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         Task::perform(
             async move { daemon.get_info().await.map_err(|e| e.into()) },

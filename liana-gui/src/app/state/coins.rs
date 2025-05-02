@@ -157,6 +157,7 @@ impl State for CoinsPanel {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
