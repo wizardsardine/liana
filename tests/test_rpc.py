@@ -201,6 +201,234 @@ def test_listaddresses(lianad):
         lianad.rpc.listaddresses(0, "blb")
 
 
+def test_listrevealedaddresses(lianad, bitcoind):
+
+    # Get addresses for reference:
+    addresses = lianad.rpc.listaddresses(0, 10)["addresses"]
+
+    # We start with index 0 already "revealed":
+    list_rec = lianad.rpc.listrevealedaddresses(False, False, 10)
+    assert list_rec["continue_from"] is None  # there are no more addresses to list
+    assert len(list_rec["addresses"]) == 1
+    assert list_rec["addresses"][0]["index"] == 0
+    assert list_rec["addresses"][0]["address"] == addresses[0]["receive"]
+    assert list_rec["addresses"][0]["used_count"] == 0
+    assert list_rec["addresses"][0]["label"] is None
+
+    # Generate some addresses.
+    addr_1 = lianad.rpc.getnewaddress()["address"]
+    addr_2 = lianad.rpc.getnewaddress()["address"]
+    addr_3 = lianad.rpc.getnewaddress()["address"]
+    addr_4 = lianad.rpc.getnewaddress()["address"]
+    addr_5 = lianad.rpc.getnewaddress()["address"]
+    addr_6 = lianad.rpc.getnewaddress()["address"]
+    addr_7 = lianad.rpc.getnewaddress()["address"]
+
+    # Last revealed receive index is 7.
+    assert lianad.rpc.getinfo()["receive_index"] == 7
+
+    # Set some labels
+    lianad.rpc.updatelabels(
+        {addr_1: "my test label 1", addr_5: "my test label 5"},
+    )
+
+    # Passing None or omitting start_index parameter is the same:
+    assert lianad.rpc.listrevealedaddresses(
+        False, False, 10
+    ) == lianad.rpc.listrevealedaddresses(False, False, 10, None)
+
+    # If we continue_from a value above our last revealed index, we'll start from the last index.
+    assert lianad.rpc.listrevealedaddresses(
+        False, False, 10
+    ) == lianad.rpc.listrevealedaddresses(False, False, 10, 100)
+
+    # Similarly if we start from a hardened index:
+    assert lianad.rpc.listrevealedaddresses(
+        False, False, 10
+    ) == lianad.rpc.listrevealedaddresses(False, False, 10, 4_294_967_295)
+
+    # Get 3 addresses starting at last revealed index:
+    list_rec = lianad.rpc.listrevealedaddresses(False, False, 3)
+    assert list_rec["continue_from"] == 4
+    assert len(list_rec["addresses"]) == 3
+    assert list_rec["addresses"][0]["index"] == 7
+    assert list_rec["addresses"][0]["address"] == addr_7
+    assert list_rec["addresses"][0]["used_count"] == 0
+    assert list_rec["addresses"][0]["label"] is None
+    assert list_rec["addresses"][1]["index"] == 6
+    assert list_rec["addresses"][1]["address"] == addr_6
+    assert list_rec["addresses"][1]["used_count"] == 0
+    assert list_rec["addresses"][1]["label"] is None
+    assert list_rec["addresses"][2]["index"] == 5
+    assert list_rec["addresses"][2]["address"] == addr_5
+    assert list_rec["addresses"][2]["used_count"] == 0
+    assert list_rec["addresses"][2]["label"] == "my test label 5"
+
+    # Get next 3 using continue_from returned above as start_index:
+    list_rec = lianad.rpc.listrevealedaddresses(False, False, 3, 4)
+    assert list_rec["continue_from"] == 1
+    assert len(list_rec["addresses"]) == 3
+    assert list_rec["addresses"][0]["index"] == 4
+    assert list_rec["addresses"][0]["address"] == addr_4
+    assert list_rec["addresses"][0]["used_count"] == 0
+    assert list_rec["addresses"][0]["label"] is None
+    assert list_rec["addresses"][1]["index"] == 3
+    assert list_rec["addresses"][1]["address"] == addr_3
+    assert list_rec["addresses"][1]["used_count"] == 0
+    assert list_rec["addresses"][1]["label"] is None
+    assert list_rec["addresses"][2]["index"] == 2
+    assert list_rec["addresses"][2]["address"] == addr_2
+    assert list_rec["addresses"][2]["used_count"] == 0
+    assert list_rec["addresses"][2]["label"] is None
+
+    # Get final page of results consisting of 2 addresses:
+    list_rec = lianad.rpc.listrevealedaddresses(False, False, 3, 1)
+    assert list_rec["continue_from"] is None  # final page
+    assert len(list_rec["addresses"]) == 2  # num addresses remaining is below limit
+    assert list_rec["addresses"][0]["index"] == 1
+    assert list_rec["addresses"][0]["address"] == addr_1
+    assert list_rec["addresses"][0]["used_count"] == 0
+    assert list_rec["addresses"][0]["label"] == "my test label 1"
+    assert list_rec["addresses"][1]["index"] == 0
+    assert list_rec["addresses"][1]["address"] == addresses[0]["receive"]
+    assert list_rec["addresses"][1]["used_count"] == 0
+    assert list_rec["addresses"][1]["label"] is None
+
+    # Receive funds at a couple of addresses.
+    destinations = {
+        addr_2: 0.003,
+        addr_4: 0.004,
+        addr_7: 0.005,
+    }
+    txid = bitcoind.rpc.sendmany("", destinations)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 3)
+
+    # The addresses are shown as used.
+    list_rec = lianad.rpc.listrevealedaddresses(False, False, 3)
+    assert list_rec["continue_from"] == 4
+    assert len(list_rec["addresses"]) == 3
+    assert list_rec["addresses"][0]["index"] == 7
+    assert list_rec["addresses"][0]["address"] == addr_7
+    assert list_rec["addresses"][0]["used_count"] == 1
+    assert list_rec["addresses"][0]["label"] is None
+    assert list_rec["addresses"][1]["index"] == 6
+    assert list_rec["addresses"][1]["address"] == addr_6
+    assert list_rec["addresses"][1]["used_count"] == 0
+    assert list_rec["addresses"][1]["label"] is None
+    assert list_rec["addresses"][2]["index"] == 5
+    assert list_rec["addresses"][2]["address"] == addr_5
+    assert list_rec["addresses"][2]["used_count"] == 0
+    assert list_rec["addresses"][2]["label"] == "my test label 5"
+
+    list_rec = lianad.rpc.listrevealedaddresses(False, False, 3, 4)
+    assert list_rec["continue_from"] == 1
+    assert len(list_rec["addresses"]) == 3
+    assert list_rec["addresses"][0]["index"] == 4
+    assert list_rec["addresses"][0]["address"] == addr_4
+    assert list_rec["addresses"][0]["used_count"] == 1
+    assert list_rec["addresses"][0]["label"] is None
+    assert list_rec["addresses"][1]["index"] == 3
+    assert list_rec["addresses"][1]["address"] == addr_3
+    assert list_rec["addresses"][1]["used_count"] == 0
+    assert list_rec["addresses"][1]["label"] is None
+    assert list_rec["addresses"][2]["index"] == 2
+    assert list_rec["addresses"][2]["address"] == addr_2
+    assert list_rec["addresses"][2]["used_count"] == 1
+    assert list_rec["addresses"][2]["label"] is None
+
+    # We can exclude used addresses:
+    list_rec = lianad.rpc.listrevealedaddresses(False, True, 3)
+    assert list_rec["continue_from"] == 2
+    assert len(list_rec["addresses"]) == 3
+    assert list_rec["addresses"][0]["index"] == 6
+    assert list_rec["addresses"][0]["address"] == addr_6
+    assert list_rec["addresses"][0]["used_count"] == 0
+    assert list_rec["addresses"][0]["label"] is None
+    assert list_rec["addresses"][1]["index"] == 5
+    assert list_rec["addresses"][1]["address"] == addr_5
+    assert list_rec["addresses"][1]["used_count"] == 0
+    assert list_rec["addresses"][1]["label"] == "my test label 5"
+    assert list_rec["addresses"][2]["index"] == 3  # index 4 was skipped
+    assert list_rec["addresses"][2]["address"] == addr_3
+    assert list_rec["addresses"][2]["used_count"] == 0
+    assert list_rec["addresses"][2]["label"] is None
+
+    # We can exclude used also if we continue from the value in the response above:
+    list_rec = lianad.rpc.listrevealedaddresses(False, True, 3, 2)
+    assert list_rec["continue_from"] is None
+    assert len(list_rec["addresses"]) == 2
+    assert list_rec["addresses"][0]["index"] == 1  # index 2 was skipped
+    assert list_rec["addresses"][0]["address"] == addr_1
+    assert list_rec["addresses"][0]["used_count"] == 0
+    assert list_rec["addresses"][0]["label"] == "my test label 1"
+    assert list_rec["addresses"][1]["index"] == 0
+    assert list_rec["addresses"][1]["address"] == addresses[0]["receive"]
+    assert list_rec["addresses"][1]["used_count"] == 0
+    assert list_rec["addresses"][1]["label"] is None
+
+    # Receive funds at some of the same addresses again.
+    destinations = {
+        addr_2: 0.0031,
+        addr_4: 0.0041,
+    }
+    txid = bitcoind.rpc.sendmany("", destinations)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 5)
+
+    # One more coin to addr_2.
+    destinations = {
+        addr_2: 0.0032,
+    }
+    txid = bitcoind.rpc.sendmany("", destinations)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 6)
+
+    # The counts have updated:
+    list_rec = lianad.rpc.listrevealedaddresses(False, False, 3, 4)
+    assert list_rec["continue_from"] == 1
+    assert len(list_rec["addresses"]) == 3
+    assert list_rec["addresses"][0]["index"] == 4
+    assert list_rec["addresses"][0]["address"] == addr_4
+    assert list_rec["addresses"][0]["used_count"] == 2
+    assert list_rec["addresses"][0]["label"] is None
+    assert list_rec["addresses"][1]["index"] == 3
+    assert list_rec["addresses"][1]["address"] == addr_3
+    assert list_rec["addresses"][1]["used_count"] == 0
+    assert list_rec["addresses"][1]["label"] is None
+    assert list_rec["addresses"][2]["index"] == 2
+    assert list_rec["addresses"][2]["address"] == addr_2
+    assert list_rec["addresses"][2]["used_count"] == 3
+    assert list_rec["addresses"][2]["label"] is None
+
+    # If we request limit 0, we get empty list:
+    list_rec = lianad.rpc.listrevealedaddresses(False, False, 0)
+    assert list_rec["continue_from"] == 7  # same as starting index
+    assert len(list_rec["addresses"]) == 0
+
+    # The poller currently sets the change index to match the receive index.
+    # See https://github.com/wizardsardine/liana/issues/1333.
+    assert lianad.rpc.getinfo()["receive_index"] == 7
+    assert lianad.rpc.getinfo()["change_index"] == 7
+
+    # We can get change addresses:
+    list_cha = lianad.rpc.listrevealedaddresses(True, False, 3)
+    assert list_cha["continue_from"] == 4
+    assert len(list_cha["addresses"]) == 3
+    assert list_cha["addresses"][0]["index"] == 7
+    assert list_cha["addresses"][0]["address"] == addresses[7]["change"]
+    assert list_cha["addresses"][0]["used_count"] == 0
+    assert list_cha["addresses"][0]["label"] is None
+    assert list_cha["addresses"][1]["index"] == 6
+    assert list_cha["addresses"][1]["address"] == addresses[6]["change"]
+    assert list_cha["addresses"][1]["used_count"] == 0
+    assert list_cha["addresses"][1]["label"] is None
+    assert list_cha["addresses"][2]["index"] == 5
+    assert list_cha["addresses"][2]["address"] == addresses[5]["change"]
+    assert list_cha["addresses"][2]["used_count"] == 0
+    assert list_cha["addresses"][2]["label"] is None
+
+
 def test_listcoins(lianad, bitcoind):
     # Initially empty
     res = lianad.rpc.listcoins()
