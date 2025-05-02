@@ -10,19 +10,22 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::thread;
 use std::time;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use tracing::{info, warn};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-use crate::dir::LianaDirectory;
+use crate::dir::{BitcoindDirectory, LianaDirectory};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+const DETACHED_PROCESS: u32 = 0x00000008;
 
 /// Current and previous managed bitcoind versions, in order of descending version.
 pub const VERSIONS: [&str; 6] = ["28.0", "27.1", "26.1", "26.0", "25.1", "25.0"];
@@ -371,6 +374,7 @@ impl InternalBitcoindConfig {
 /// Possible errors when starting bitcoind.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum StartInternalBitcoindError {
+    Lock(String),
     CommandError(String),
     CouldNotCanonicalizeDataDir(String),
     BitcoinDError(String),
@@ -381,6 +385,9 @@ pub enum StartInternalBitcoindError {
 impl std::fmt::Display for StartInternalBitcoindError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            Self::Lock(e) => {
+                write!(f, "lock file error: {}", e)
+            }
             Self::CommandError(e) => {
                 write!(f, "Command to start bitcoind returned an error: {}", e)
             }
@@ -397,17 +404,25 @@ impl std::fmt::Display for StartInternalBitcoindError {
 }
 #[derive(Debug, Clone)]
 pub struct Bitcoind {
-    _process: Arc<std::process::Child>,
     pub config: BitcoindConfig,
+    lock: LockFile,
 }
 
 impl Bitcoind {
     /// Start internal bitcoind for the given network.
-    pub fn start(
-        network: &bitcoin::Network,
+    pub fn maybe_start(
+        network: bitcoin::Network,
         config: BitcoindConfig,
         liana_datadir: &LianaDirectory,
     ) -> Result<Self, StartInternalBitcoindError> {
+        if lianad::BitcoinD::new(&config, "internal_bitcoind_start".to_string()).is_ok() {
+            info!("Internal bitcoind is already running");
+            return Ok(Bitcoind {
+                config,
+                lock: LockFile::create(liana_datadir.bitcoind_directory(), network)
+                    .map_err(|e| StartInternalBitcoindError::Lock(format!("{:?}", e)))?,
+            });
+        }
         let bitcoind_datadir = internal_bitcoind_datadir(liana_datadir);
         // Find most recent bitcoind version available.
         let bitcoind_exe_path = VERSIONS
@@ -448,7 +463,19 @@ impl Bitcoind {
         let mut command = std::process::Command::new(bitcoind_exe_path);
 
         #[cfg(target_os = "windows")]
-        let command = command.creation_flags(CREATE_NO_WINDOW);
+        let command = command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // Create a new session to detach the child from the main process.
+            unsafe {
+                command.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+        }
 
         let mut process = command
             .args(&args)
@@ -474,7 +501,8 @@ impl Bitcoind {
                     log::info!("Bitcoind seems to have successfully started.");
                     return Ok(Self {
                         config,
-                        _process: Arc::new(process),
+                        lock: LockFile::create(liana_datadir.bitcoind_directory(), network)
+                            .map_err(|e| StartInternalBitcoindError::Lock(format!("{:?}", e)))?,
                     });
                 }
                 Err(lianad::BitcoindError::CookieFile(_)) => {
@@ -498,22 +526,92 @@ impl Bitcoind {
     }
 
     /// Stop (internal) bitcoind.
-    pub fn stop(&self) {
-        stop_bitcoind(&self.config);
+    pub fn stop(self) {
+        match self.lock.delete() {
+            Err(e) => {
+                tracing::error!("Failed to release bitcoind lock: {}", e);
+            }
+            Ok(false) => {
+                info!("Other processes are using internal bitcoind. Process lock has been deleted");
+            }
+            Ok(true) => {
+                match lianad::BitcoinD::new(&self.config, "internal_bitcoind_stop".to_string()) {
+                    Ok(bitcoind) => {
+                        info!("Stopping internal bitcoind...");
+                        bitcoind.stop();
+                        info!("Stopped liana managed bitcoind");
+                    }
+                    Err(e) => {
+                        warn!("Could not create interface to internal bitcoind: '{}'.", e);
+                    }
+                }
+            }
+        }
     }
 }
 
-pub fn stop_bitcoind(config: &BitcoindConfig) -> bool {
-    match lianad::BitcoinD::new(config, "internal_bitcoind_stop".to_string()) {
-        Ok(bitcoind) => {
-            info!("Stopping internal bitcoind...");
-            bitcoind.stop();
-            info!("Stopped liana managed bitcoind");
-            true
-        }
-        Err(e) => {
-            warn!("Could not create interface to internal bitcoind: '{}'.", e);
-            false
+const LOCK_DIRECTORY_NAME: &str = "locks";
+
+#[derive(Debug, Clone)]
+struct LockFile {
+    path: PathBuf,
+    directory: BitcoindDirectory,
+    network: Network,
+}
+
+impl LockFile {
+    fn create(
+        directory: BitcoindDirectory,
+        network: Network,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut path = directory.clone().path().to_path_buf();
+        path.push(LOCK_DIRECTORY_NAME);
+        path.push(network.to_string());
+        std::fs::create_dir_all(&path)?;
+
+        path.push(format!(
+            "{}-{}.lock",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
+        ));
+
+        std::fs::File::create(&path)?;
+        Ok(Self {
+            path,
+            directory,
+            network,
+        })
+    }
+
+    // returns true if the lock directory is removed because empty.
+    fn delete(self) -> Result<bool, Box<dyn std::error::Error>> {
+        std::fs::remove_file(self.path)?;
+        if std::fs::read_dir(
+            self.directory
+                .path()
+                .join(LOCK_DIRECTORY_NAME)
+                .join(self.network.to_string()),
+        )?
+        .next()
+        .is_none()
+        {
+            std::fs::remove_dir(
+                self.directory
+                    .path()
+                    .join(LOCK_DIRECTORY_NAME)
+                    .join(self.network.to_string()),
+            )?;
+
+            if std::fs::read_dir(self.directory.path().join(LOCK_DIRECTORY_NAME))?
+                .next()
+                .is_none()
+            {
+                std::fs::remove_dir(self.directory.path().join(LOCK_DIRECTORY_NAME))?;
+            }
+
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
 }

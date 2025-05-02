@@ -554,10 +554,9 @@ impl Step for InternalBitcoindStep {
         if let Message::InternalBitcoind(msg) = message {
             match msg {
                 message::InternalBitcoindMsg::Previous => {
-                    if let Some(bitcoind) = &self.internal_bitcoind {
+                    if let Some(bitcoind) = self.internal_bitcoind.take() {
                         bitcoind.stop();
                     }
-                    self.internal_bitcoind = None;
                     if let Some(download) = self.exe_download.as_ref() {
                         // Clear exe_download if not Finished.
                         if let DownloadState::Finished { .. } = download.state {
@@ -707,7 +706,8 @@ impl Step for InternalBitcoindStep {
                         .as_ref()
                         .expect("already added")
                         .clone();
-                    match Bitcoind::start(&self.network, bitcoind_config, &self.liana_datadir) {
+                    match Bitcoind::maybe_start(self.network, bitcoind_config, &self.liana_datadir)
+                    {
                         Err(e) => {
                             self.started =
                                 Some(Err(StartInternalBitcoindError::CommandError(e.to_string())));
@@ -785,9 +785,9 @@ impl Step for InternalBitcoindStep {
         )
     }
 
-    fn stop(&self) {
+    fn stop(&mut self) {
         // In case the installer is closed before changes written to context, stop bitcoind.
-        if let Some(bitcoind) = &self.internal_bitcoind {
+        if let Some(bitcoind) = self.internal_bitcoind.take() {
             bitcoind.stop();
         }
     }

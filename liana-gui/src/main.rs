@@ -208,10 +208,9 @@ impl GUI {
                     );
                     let network_dir = datadir_path.network_directory(network);
                     if let Ok(settings) = app::settings::Settings::from_file(&network_dir) {
-                        if let Some(setting) = settings
-                            .wallets
-                            .into_iter()
-                            .find_map(|w| w.remote_backend_auth)
+                        let setting = settings.wallets.into_iter().next();
+                        if let Some(setting) =
+                            setting.as_ref().and_then(|w| w.remote_backend_auth.clone())
                         {
                             let (login, command) =
                                 login::LianaLiteLogin::new(datadir_path, network, setting);
@@ -219,12 +218,13 @@ impl GUI {
                             command.map(|msg| Message::Login(Box::new(msg)))
                         } else {
                             let (loader, command) =
-                                Loader::new(datadir_path, cfg, network, None, None);
+                                Loader::new(datadir_path, cfg, network, None, None, setting);
                             self.state = State::Loader(Box::new(loader));
                             command.map(|msg| Message::Load(Box::new(msg)))
                         }
                     } else {
-                        let (loader, command) = Loader::new(datadir_path, cfg, network, None, None);
+                        let (loader, command) =
+                            Loader::new(datadir_path, cfg, network, None, None, None);
                         self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))
                     }
@@ -280,10 +280,9 @@ impl GUI {
                     let network_dir = i.datadir.network_directory(i.network);
                     let settings = app::settings::Settings::from_file(&network_dir)
                         .expect("A settings file was created");
-                    if let Some(setting) = settings
-                        .wallets
-                        .into_iter()
-                        .find_map(|w| w.remote_backend_auth)
+                    let setting = settings.wallets.into_iter().next();
+                    if let Some(setting) =
+                        setting.as_ref().and_then(|w| w.remote_backend_auth.clone())
                     {
                         let (login, command) =
                             login::LianaLiteLogin::new(i.datadir.clone(), i.network, setting);
@@ -308,6 +307,7 @@ impl GUI {
                             i.network,
                             internal_bitcoind,
                             i.context.backup.take(),
+                            setting,
                         );
                         self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))

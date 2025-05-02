@@ -47,6 +47,7 @@ toml = "0.5"
 chrono = "0.4.38"
 
 # Used for managing internal bitcoind
+libc = "0.2"
 base64 = "0.21"
 bitcoin_hashes = "0.12"
 reqwest = { version = "0.11", default-features=false, features = ["json", "rustls-tls", "stream"] }

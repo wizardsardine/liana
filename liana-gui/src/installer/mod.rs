@@ -188,10 +188,9 @@ impl Installer {
             .expect("There is always a step")
             .stop();
         // Now use context to determine what to stop.
-        if let Some(bitcoind) = &self.context.internal_bitcoind {
+        if let Some(bitcoind) = self.context.internal_bitcoind.take() {
             bitcoind.stop();
         }
-        self.context.internal_bitcoind = None;
     }
 
     fn skip_steps(&mut self) {
@@ -675,6 +674,7 @@ pub async fn extract_remote_gui_settings(ctx: &Context, backend: &BackendWalletC
                 backend.user_email().to_string(),
                 backend.wallet_id(),
             )),
+            start_internal_bitcoind: None,
         }],
     }
 }
@@ -708,6 +708,7 @@ pub fn extract_local_gui_settings(ctx: &Context) -> Settings {
             keys: ctx.keys.values().cloned().collect(),
             hardware_wallets,
             remote_backend_auth: None,
+            start_internal_bitcoind: Some(ctx.internal_bitcoind.is_some()),
         }],
     }
 }

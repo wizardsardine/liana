@@ -11,6 +11,7 @@ pub struct Config {
     /// Use iced debug feature if true.
     pub debug: Option<bool>,
     /// Start internal bitcoind executable.
+    /// Legacy field, replaced by settings.json start_internal_bitcoind field
     #[serde(default)]
     pub start_internal_bitcoind: bool,
 }

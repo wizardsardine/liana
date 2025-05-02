@@ -23,6 +23,7 @@ use lianad::{
 };
 
 use crate::app;
+use crate::app::settings::WalletSetting;
 use crate::backup::Backup;
 use crate::dir::LianaDirectory;
 use crate::export::RestoreBackupError;
@@ -33,9 +34,7 @@ use crate::{
         wallet::{Wallet, WalletError},
     },
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
-    node::bitcoind::{
-        internal_bitcoind_debug_log_path, stop_bitcoind, Bitcoind, StartInternalBitcoindError,
-    },
+    node::bitcoind::{internal_bitcoind_debug_log_path, Bitcoind, StartInternalBitcoindError},
 };
 
 const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster.";
@@ -60,6 +59,7 @@ pub struct Loader {
     pub internal_bitcoind: Option<Bitcoind>,
     pub waiting_daemon_bitcoind: bool,
     pub backup: Option<Backup>,
+    pub wallet_setting: Option<WalletSetting>,
     step: Step,
 }
 
@@ -119,6 +119,7 @@ impl Loader {
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
         backup: Option<Backup>,
+        wallet_setting: Option<WalletSetting>,
     ) -> (Self, Task<Message>) {
         let path = socket_path(&datadir_path, network);
         (
@@ -130,10 +131,25 @@ impl Loader {
                 daemon_started: false,
                 internal_bitcoind,
                 waiting_daemon_bitcoind: false,
+                wallet_setting,
                 backup,
             },
             Task::perform(connect(path), Message::Loaded),
         )
+    }
+
+    fn start_bitcoind(&self) -> bool {
+        if self.internal_bitcoind.is_some() {
+            false
+        } else if let Some(start) = self
+            .wallet_setting
+            .as_ref()
+            .and_then(|setting| setting.start_internal_bitcoind)
+        {
+            start
+        } else {
+            self.gui_config.start_internal_bitcoind
+        }
     }
 
     fn maybe_skip_syncing(
@@ -189,8 +205,7 @@ impl Loader {
                     return Task::perform(
                         start_bitcoind_and_daemon(
                             self.datadir_path.clone(),
-                            self.gui_config.start_internal_bitcoind
-                                && self.internal_bitcoind.is_none(),
+                            self.start_bitcoind(),
                             self.network,
                         ),
                         Message::Started,
@@ -281,25 +296,7 @@ impl Loader {
         // NOTE: we take() the internal_bitcoind here to make sure the debug.log reader
         // subscription is dropped.
         if let Some(bitcoind) = self.internal_bitcoind.take() {
-            log::info!("Stopping managed bitcoind..");
             bitcoind.stop();
-            log::info!("Managed bitcoind stopped.");
-        } else if self.waiting_daemon_bitcoind && self.gui_config.start_internal_bitcoind {
-            let mut daemon_config_path = self
-                .datadir_path
-                .network_directory(self.network)
-                .path()
-                .to_path_buf();
-            daemon_config_path.push("daemon.toml");
-            if let Ok(config) = Config::from_file(Some(daemon_config_path)) {
-                if let Some(BitcoinBackend::Bitcoind(bitcoind_config)) = &config.bitcoin_backend {
-                    let mut retry = 0;
-                    while !stop_bitcoind(bitcoind_config) && retry < 10 {
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        retry += 1;
-                    }
-                }
-            }
         }
     }
 
@@ -312,6 +309,7 @@ impl Loader {
                     self.network,
                     self.internal_bitcoind.clone(),
                     self.backup.clone(),
+                    self.wallet_setting.clone(),
                 );
                 *self = loader;
                 cmd
@@ -562,26 +560,17 @@ pub async fn start_bitcoind_and_daemon(
         .to_path_buf();
     config_path.push("daemon.toml");
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
-    let mut bitcoind: Option<Bitcoind> = None;
-    if start_internal_bitcoind {
-        if let Some(BitcoinBackend::Bitcoind(bitcoind_config)) = &config.bitcoin_backend {
-            // Check if bitcoind is already running before trying to start it.
-            if lianad::BitcoinD::new(bitcoind_config, "internal_bitcoind_start".to_string()).is_ok()
-            {
-                info!("Internal bitcoind is already running");
-            } else {
-                info!("Starting internal bitcoind");
-                bitcoind = Some(
-                    Bitcoind::start(
-                        &config.bitcoin_config.network,
-                        bitcoind_config.clone(),
-                        &liana_datadir_path,
-                    )
-                    .map_err(Error::Bitcoind)?,
-                );
-            }
-        }
-    }
+    let bitcoind = match (start_internal_bitcoind, &config.bitcoin_backend) {
+        (true, Some(BitcoinBackend::Bitcoind(bitcoind_config))) => Some(
+            Bitcoind::maybe_start(
+                config.bitcoin_config.network,
+                bitcoind_config.clone(),
+                &liana_datadir_path,
+            )
+            .map_err(Error::Bitcoind)?,
+        ),
+        _ => None,
+    };
 
     debug!("starting liana daemon");
 

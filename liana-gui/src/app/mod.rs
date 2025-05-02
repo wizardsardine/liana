@@ -300,7 +300,7 @@ impl App {
             } else {
                 info!("Internal daemon stopped");
             }
-            if let Some(bitcoind) = &self.internal_bitcoind {
+            if let Some(bitcoind) = self.internal_bitcoind.take() {
                 bitcoind.stop();
             }
         }
