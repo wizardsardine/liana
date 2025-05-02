@@ -1,6 +1,7 @@
 pub mod client;
 pub mod embedded;
 pub mod model;
+pub mod utils;
 
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
