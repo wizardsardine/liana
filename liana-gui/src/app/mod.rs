@@ -169,7 +169,7 @@ impl App {
             config.clone(),
             restored_from_backup,
         );
-        let cmd = panels.home.reload(daemon.clone(), wallet.clone());
+        let cmd = panels.home.reload(daemon.clone(), wallet.clone(), false);
         (
             Self {
                 panels,
@@ -254,7 +254,7 @@ impl App {
         self.panels.current = menu;
         self.panels
             .current_mut()
-            .reload(self.daemon.clone(), self.wallet.clone())
+            .reload(self.daemon.clone(), self.wallet.clone(), true)
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -341,8 +341,9 @@ impl App {
                         let home_reload = if (self.cache.coins != cache.coins)
                             && self.panels.current == Menu::Home
                         {
-                            let task =
-                                Task::perform(async {}, |_| Message::View(view::Message::Reload));
+                            let task = Task::perform(async {}, |_| {
+                                Message::View(view::Message::Reload(false))
+                            });
                             Some(task)
                         } else {
                             None
