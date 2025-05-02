@@ -61,6 +61,7 @@ pub trait State {
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         Task::none()
     }
@@ -270,7 +271,7 @@ impl State for Home {
                 );
                 // If this is the current panel, reload it if wallet is no longer syncing.
                 if is_current && wallet_was_syncing && self.sync_status.is_synced() {
-                    return self.reload(daemon, self.wallet.clone());
+                    return self.reload(daemon, self.wallet.clone(), false);
                 }
             }
             Message::Payment(res) => match res {
@@ -314,8 +315,8 @@ impl State for Home {
                     }
                 };
             }
-            Message::View(view::Message::Reload) => {
-                return self.reload(daemon, self.wallet.clone());
+            Message::View(view::Message::Reload(reset)) => {
+                return self.reload(daemon, self.wallet.clone(), reset);
             }
             Message::View(view::Message::Close) => {
                 self.selected_payment = None;
@@ -375,6 +376,7 @@ impl State for Home {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
+        reset: bool,
     ) -> Task<Message> {
         // If the wallet is syncing, we expect it to finish soon and so better to wait for
         // updated data before reloading. Besides, if the wallet is syncing, the DB may be
@@ -382,6 +384,9 @@ impl State for Home {
         // syncing completes anyway.
         if self.sync_status.wallet_is_syncing() {
             return Task::none();
+        }
+        if reset {
+            self.displayed_payments = HISTORY_EVENT_PAGE_SIZE as usize;
         }
         self.selected_payment = None;
         self.wallet = wallet;

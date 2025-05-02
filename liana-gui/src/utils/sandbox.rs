@@ -44,7 +44,7 @@ impl<S: State + 'static> Sandbox<S> {
         cache: &Cache,
         wallet: Arc<Wallet>,
     ) -> Self {
-        let cmd = self.state.reload(daemon.clone(), wallet);
+        let cmd = self.state.reload(daemon.clone(), wallet, false);
         if let Some(mut stream) = into_stream(cmd) {
             while let Some(action) = stream.next().await {
                 if let Action::Output(msg) = action {

@@ -68,8 +68,11 @@ impl State for PsbtsPanel {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
-                return self.reload(daemon, self.wallet.clone());
+            Message::View(view::Message::Reload(reset)) => {
+                return self.reload(daemon, self.wallet.clone(), reset);
+            }
+            Message::View(view::Message::Close) => {
+                return self.reload(daemon, self.wallet.clone(), false);
             }
             Message::SpendTxs(res) => match res {
                 Err(e) => self.warning = Some(e),
@@ -105,7 +108,9 @@ impl State for PsbtsPanel {
                     return tx.update(daemon, cache, message);
                 } else if self.modal.is_some() {
                     self.modal = None;
-                    return Task::perform(async {}, |_| Message::View(view::Message::Reload));
+                    return Task::perform(async {}, |_| {
+                        Message::View(view::Message::Reload(false))
+                    });
                 }
             }
             Message::View(view::Message::ImportExport(m)) => {
@@ -157,6 +162,7 @@ impl State for PsbtsPanel {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         self.wallet = wallet;
         self.selected_tx = None;
