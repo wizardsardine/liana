@@ -29,6 +29,7 @@ iced_runtime = "0.13.1"
 email_address = "0.2.7"
 
 tokio = {version = "1.21.0", features = ["signal"]}
+async-fd-lock = "0.2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

@@ -20,7 +20,6 @@ use reqwest::{Error, IntoUrl, Method, RequestBuilder, Response};
 use tokio::sync::RwLock;
 
 use crate::{
-    app::settings::{AuthConfig, Settings},
     daemon::{model::*, Daemon, DaemonBackend, DaemonError},
     dir::LianaDirectory,
     hw::HardwareWalletConfig,
@@ -28,7 +27,10 @@ use crate::{
 
 use self::api::{UTXOKind, DEFAULT_OUTPOINTS_LIMIT};
 
-use super::auth::{self, AccessTokenResponse, AuthError};
+use super::{
+    auth::{self, AccessTokenResponse, AuthError},
+    cache::update_connect_cache,
+};
 
 impl From<Error> for DaemonError {
     fn from(value: Error) -> Self {
@@ -99,6 +101,10 @@ impl BackendClient {
             user_id,
             http,
         })
+    }
+
+    pub fn auth_client(&self) -> &auth::AuthClient {
+        &self.auth_client
     }
 
     pub fn user_email(&self) -> &str {
@@ -532,45 +538,20 @@ impl Daemon for BackendWalletClient {
                     return Ok(());
                 }
                 Ok(mut old) => {
-                    let new = self
-                        .inner
-                        .auth_client
-                        .refresh_token(&auth.refresh_token)
-                        .await?;
-
                     let network_dir = datadir.network_directory(network);
-                    let mut settings = Settings::from_file(&network_dir).map_err(|e| {
-                        DaemonError::Unexpected(format!(
-                            "Cannot access to settings.json file: {}",
-                            e
-                        ))
-                    })?;
 
-                    if let Some(wallet_settings) = settings.wallets.iter_mut().find(|w| {
-                        if let Some(auth) = &w.remote_backend_auth {
-                            auth.wallet_id == self.wallet_uuid
-                        } else {
-                            false
-                        }
-                    }) {
-                        wallet_settings.remote_backend_auth = Some(AuthConfig {
-                            email: self.inner.auth_client.email.clone(),
-                            wallet_id: self.wallet_id(),
-                            refresh_token: new.refresh_token.clone(),
-                        });
-                    } else {
-                        tracing::info!("Wallet id was not found in the settings");
-                    }
-
-                    settings.to_file(&network_dir).map_err(|e| {
-                        DaemonError::Unexpected(format!(
-                            "Cannot access to settings.json file: {}",
-                            e
-                        ))
+                    let new = update_connect_cache(
+                        &network_dir,
+                        &old,
+                        &self.inner.auth_client,
+                        true, // refresh the token
+                    )
+                    .await
+                    .map_err(|e| {
+                        DaemonError::Unexpected(format!("Cannot update Liana-connect cache: {}", e))
                     })?;
 
                     *old = new;
-                    tracing::info!("Liana backend access was refreshed");
                 }
             }
         }

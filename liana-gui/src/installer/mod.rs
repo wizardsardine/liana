@@ -13,6 +13,7 @@ use liana_ui::{
     widget::{Column, Element},
 };
 use lianad::config::Config;
+use std::ops::Deref;
 use tracing::{error, info, warn};
 
 use std::io::Write;
@@ -37,6 +38,7 @@ use crate::{
                 api::payload::{Provider, ProviderKey},
                 BackendClient, BackendWalletClient,
             },
+            cache::update_connect_cache,
         },
     },
     signer::Signer,
@@ -550,6 +552,22 @@ pub async fn create_remote_wallet(
 
     info!("Settings file created");
 
+    let backend = remote_backend.inner_client();
+    if let Err(e) = update_connect_cache(
+        &network_datadir,
+        backend.auth.read().await.deref(),
+        backend.auth_client(),
+        false,
+    )
+    .await
+    {
+        // this error is not critical, the liana-connect backend stored the wallet
+        // and user can reauthenticate.
+        tracing::error!("Failed to update Liana-Connect cache: {}", e);
+    } else {
+        info!("Liana-Connect cache updated");
+    };
+
     Ok(gui_config_path)
 }
 
@@ -599,6 +617,22 @@ pub async fn import_remote_wallet(
 
     info!("Gui configuration file created");
 
+    let backend = backend.inner_client();
+    if let Err(e) = update_connect_cache(
+        &network_datadir,
+        backend.auth.read().await.deref(),
+        backend.auth_client(),
+        false,
+    )
+    .await
+    {
+        // this error is not critical, the liana-connect backend stored the wallet
+        // and user can reauthenticate.
+        tracing::error!("Failed to update Liana-Connect cache: {}", e);
+    } else {
+        info!("Liana-Connect cache updated");
+    };
+
     Ok(gui_config_path)
 }
 
@@ -631,19 +665,16 @@ pub async fn extract_remote_gui_settings(ctx: &Context, backend: &BackendWalletC
         .expect("LianaDescriptor.to_string() always include the checksum")
         .to_string();
 
-    let auth = backend.inner_client().auth.read().await;
-
     Settings {
         wallets: vec![WalletSetting {
             name: wallet_name(descriptor),
             descriptor_checksum,
             keys: Vec::new(),
             hardware_wallets: Vec::new(),
-            remote_backend_auth: Some(AuthConfig {
-                email: backend.user_email().to_string(),
-                wallet_id: backend.wallet_id(),
-                refresh_token: auth.refresh_token.clone(),
-            }),
+            remote_backend_auth: Some(AuthConfig::new(
+                backend.user_email().to_string(),
+                backend.wallet_id(),
+            )),
         }],
     }
 }

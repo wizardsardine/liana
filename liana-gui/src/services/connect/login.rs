@@ -13,7 +13,7 @@ use lianad::commands::ListCoinsResult;
 use crate::{
     app::{
         cache::coins_to_cache,
-        settings::{AuthConfig, Settings, SettingsError, WalletSetting},
+        settings::{AuthConfig, SettingsError},
     },
     daemon::DaemonError,
     dir::LianaDirectory,
@@ -22,15 +22,18 @@ use crate::{
 use super::client::{
     auth::{AuthClient, AuthError},
     backend::{api, BackendClient, BackendWalletClient},
+    cache::{self, update_connect_cache, ConnectCacheError},
 };
 
 #[derive(Debug, Clone)]
 pub enum Error {
     Auth(AuthError),
+    CredentialsMissing,
     // DaemonError does not implement Clone.
     // TODO: maybe Arc is overkill
     Backend(Arc<DaemonError>),
     Settings(SettingsError),
+    Cache(cache::ConnectCacheError),
     Unexpected(String),
 }
 
@@ -38,8 +41,10 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Auth(e) => write!(f, "Authentication error: {}", e),
+            Self::CredentialsMissing => write!(f, "credentials missing"),
             Self::Backend(e) => write!(f, "Remote backend error: {}", e),
             Self::Settings(e) => write!(f, "Settings file error: {}", e),
+            Self::Cache(e) => write!(f, "Connect cache file error: {}", e),
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
         }
     }
@@ -60,6 +65,12 @@ impl From<AuthError> for Error {
 impl From<SettingsError> for Error {
     fn from(value: SettingsError) -> Self {
         Self::Settings(value)
+    }
+}
+
+impl From<ConnectCacheError> for Error {
+    fn from(value: ConnectCacheError) -> Self {
+        Self::Cache(value)
     }
 }
 
@@ -88,8 +99,6 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub enum ViewMessage {
     RequestOTP,
-    EditEmail,
-    EmailEdited(String),
     OTPEdited(String),
     BackToLauncher(Network),
 }
@@ -105,6 +114,7 @@ pub struct LianaLiteLogin {
     pub network: Network,
 
     wallet_id: String,
+    email: String,
 
     processing: bool,
     step: ConnectionStep,
@@ -117,13 +127,10 @@ pub struct LianaLiteLogin {
 
 pub enum ConnectionStep {
     CheckingAuthFile,
-    EnterEmail {
-        email: form::Value<String>,
-    },
+    CheckEmail,
     EnterOtp {
         client: AuthClient,
         backend_api_url: String,
-        email: String,
         otp: form::Value<String>,
     },
 }
@@ -132,63 +139,41 @@ impl LianaLiteLogin {
     pub fn new(
         datadir: LianaDirectory,
         network: Network,
-        settings: Settings,
+        setting: AuthConfig,
     ) -> (Self, Task<Message>) {
-        match settings
-            .wallets
-            .first()
-            .cloned()
-            .and_then(|w| w.remote_backend_auth)
-            .ok_or(Error::Unexpected(
-                "Missing auth configuration in settings.json".to_string(),
-            )) {
-            Err(e) => (
-                Self {
-                    network,
-                    datadir,
-                    step: ConnectionStep::EnterEmail {
-                        email: form::Value::default(),
-                    },
-                    wallet_id: String::new(),
-                    connection_error: Some(e),
-                    auth_error: None,
-                    processing: true,
-                },
-                Task::none(),
-            ),
-            Ok(auth_config) => (
-                Self {
-                    network,
-                    datadir,
-                    step: ConnectionStep::CheckingAuthFile,
-                    connection_error: None,
-                    wallet_id: auth_config.wallet_id.clone(),
-                    auth_error: None,
-                    processing: true,
-                },
-                Task::perform(
-                    async move {
-                        let service_config = super::client::get_service_config(network)
-                            .await
-                            .map_err(|e| Error::Unexpected(e.to_string()))?;
-                        let client = AuthClient::new(
-                            service_config.auth_api_url,
-                            service_config.auth_api_public_key,
-                            auth_config.email,
-                        );
-                        connect_with_refresh_token(
-                            client,
-                            auth_config.refresh_token,
-                            auth_config.wallet_id,
-                            service_config.backend_api_url,
-                            network,
-                        )
+        (
+            Self {
+                network,
+                datadir: datadir.clone(),
+                step: ConnectionStep::CheckingAuthFile,
+                connection_error: None,
+                wallet_id: setting.wallet_id.clone(),
+                email: setting.email.clone(),
+                auth_error: None,
+                processing: true,
+            },
+            Task::perform(
+                async move {
+                    let service_config = super::client::get_service_config(network)
                         .await
-                    },
-                    Message::Connected,
-                ),
+                        .map_err(|e| Error::Unexpected(e.to_string()))?;
+                    let client = AuthClient::new(
+                        service_config.auth_api_url,
+                        service_config.auth_api_public_key,
+                        setting.email,
+                    );
+                    connect_with_credentials(
+                        client,
+                        setting.wallet_id,
+                        service_config.backend_api_url,
+                        network,
+                        datadir,
+                    )
+                    .await
+                },
+                Message::Connected,
             ),
-        }
+        )
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -207,36 +192,27 @@ impl LianaLiteLogin {
                             );
                         }
                         Err(e) => {
-                            self.connection_error = Some(e);
-                            self.step = ConnectionStep::EnterEmail {
-                                email: form::Value::default(),
-                            };
+                            // Do not display error, if the Liana-Connect cache does not exist,
+                            // simply ask user to do the authentication steps.
+                            if !matches!(e, Error::CredentialsMissing) {
+                                self.connection_error = Some(e);
+                            }
+                            self.step = ConnectionStep::CheckEmail;
                         }
                     }
                 }
             }
-            ConnectionStep::EnterEmail { email } => match message {
-                Message::View(ViewMessage::EmailEdited(value)) => {
-                    email.valid = value.is_empty()
-                        || email_address::EmailAddress::parse_with_options(
-                            &value,
-                            email_address::Options::default().with_required_tld(),
-                        )
-                        .is_ok();
-                    email.value = value;
-                }
+            ConnectionStep::CheckEmail => match message {
                 Message::View(ViewMessage::RequestOTP) => {
-                    if email.value.is_empty() {
-                        email.valid = false;
-                    } else if email.valid {
-                        let email = email.value.clone();
-                        let network = self.network;
-                        self.processing = true;
-                        self.connection_error = None;
-                        self.auth_error = None;
-                        return Task::perform(
-                            async move {
-                                let config = super::client::get_service_config(network)
+                    let email = self.email.clone();
+                    let network = self.network;
+                    self.processing = true;
+                    self.connection_error = None;
+                    self.auth_error = None;
+                    return Task::perform(
+                        async move {
+                            let config =
+                                super::client::get_service_config(network)
                                     .await
                                     .map_err(|e| {
                                         if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
@@ -247,24 +223,22 @@ impl LianaLiteLogin {
                                             Error::Unexpected(e.to_string())
                                         }
                                     })?;
-                                let client = AuthClient::new(
-                                    config.auth_api_url,
-                                    config.auth_api_public_key,
-                                    email,
-                                );
-                                client.sign_in_otp().await?;
-                                Ok((client, config.backend_api_url))
-                            },
-                            Message::OTPRequested,
-                        );
-                    }
+                            let client = AuthClient::new(
+                                config.auth_api_url,
+                                config.auth_api_public_key,
+                                email,
+                            );
+                            client.sign_in_otp().await?;
+                            Ok((client, config.backend_api_url))
+                        },
+                        Message::OTPRequested,
+                    );
                 }
                 Message::OTPRequested(res) => {
                     self.processing = false;
                     match res {
                         Ok((client, backend_api_url)) => {
                             self.step = ConnectionStep::EnterOtp {
-                                email: email.value.to_owned(),
                                 otp: form::Value::default(),
                                 client,
                                 backend_api_url,
@@ -279,18 +253,9 @@ impl LianaLiteLogin {
             },
             ConnectionStep::EnterOtp {
                 client,
-                email,
                 otp,
                 backend_api_url,
             } => match message {
-                Message::View(ViewMessage::EditEmail) => {
-                    self.step = ConnectionStep::EnterEmail {
-                        email: form::Value {
-                            value: email.clone(),
-                            valid: true,
-                        },
-                    };
-                }
                 Message::View(ViewMessage::RequestOTP) => {
                     *otp = form::Value::default();
                     let client = client.clone();
@@ -327,9 +292,11 @@ impl LianaLiteLogin {
                         self.auth_error = None;
                         let wallet_id = self.wallet_id.clone();
                         let network = self.network;
+                        let datadir = self.datadir.clone();
                         return Task::perform(
                             async move {
-                                connect(client, otp, wallet_id, backend_api_url, network).await
+                                connect(client, otp, wallet_id, backend_api_url, network, datadir)
+                                    .await
                             },
                             Message::Connected,
                         );
@@ -343,21 +310,8 @@ impl LianaLiteLogin {
                             return Task::perform(async move { Some(client) }, Message::Install);
                         }
                         Ok(BackendState::WalletExists(client, wallet, coins)) => {
-                            let datadir = self.datadir.clone();
-                            let network = self.network;
                             return Task::perform(
-                                async move {
-                                    update_wallet_auth_settings(
-                                        datadir,
-                                        network,
-                                        wallet.clone(),
-                                        client.user_email().to_string(),
-                                        client.auth().await.refresh_token,
-                                    )
-                                    .await?;
-
-                                    Ok((client, wallet, coins))
-                                },
+                                async move { Ok((client, wallet, coins)) },
                                 Message::Run,
                             );
                         }
@@ -390,88 +344,66 @@ impl LianaLiteLogin {
     pub fn view(&self) -> Element<Message> {
         let content = Into::<Element<ViewMessage>>::into(
             Container::new(
-                Column::new()
-                    .spacing(100)
-                    .align_x(Alignment::Center)
-                    .push(
-                        Column::new()
-                            .align_x(Alignment::Center)
-                            .spacing(20)
-                            .width(Length::Fill)
-                            .push(h2("Liana Connect"))
-                            .push(
-                                Column::new()
-                                    .max_width(500)
-                                    .spacing(20)
-                                    .push(match &self.step {
-                                        ConnectionStep::CheckingAuthFile => Column::new(),
-                                        ConnectionStep::EnterEmail { email } => Column::new()
-                                            .spacing(20)
-                                            .push_maybe(
-                                                self.auth_error
-                                                    .map(|e| text(e).style(theme::text::warning)),
-                                            )
-                                            .push(
-                                                form::Form::new_trimmed("email", email, |msg| {
-                                                    ViewMessage::EmailEdited(msg)
-                                                })
-                                                .size(P1_SIZE)
-                                                .padding(10)
-                                                .warning("Email is not valid"),
-                                            )
-                                            .push(button::secondary(None, "Next").on_press_maybe(
-                                                if self.processing {
+                Column::new().spacing(100).align_x(Alignment::Center).push(
+                    Column::new()
+                        .align_x(Alignment::Center)
+                        .spacing(20)
+                        .width(Length::Fill)
+                        .push(h2("Liana Connect"))
+                        .push(
+                            Column::new()
+                                .max_width(500)
+                                .spacing(20)
+                                .push(match &self.step {
+                                    ConnectionStep::CheckingAuthFile => Column::new(),
+                                    ConnectionStep::CheckEmail => Column::new()
+                                        .spacing(20)
+                                        .align_x(Alignment::Center)
+                                        .push_maybe(
+                                            self.auth_error
+                                                .map(|e| text(e).style(theme::text::warning)),
+                                        )
+                                        .push(text(&self.email))
+                                        .push(
+                                            button::secondary(None, "Login")
+                                                .width(Length::Fixed(200.0))
+                                                .on_press_maybe(if self.processing {
                                                     None
                                                 } else {
                                                     Some(ViewMessage::RequestOTP)
-                                                },
-                                            )),
-                                        ConnectionStep::EnterOtp { otp, .. } => Column::new()
-                                            .push(text("An authentication was send to your email"))
-                                            .push_maybe(
-                                                self.auth_error
-                                                    .map(|e| text(e).style(theme::text::warning)),
-                                            )
-                                            .spacing(20)
-                                            .push(
-                                                form::Form::new_trimmed("Token", otp, |msg| {
-                                                    ViewMessage::OTPEdited(msg)
-                                                })
-                                                .size(P1_SIZE)
-                                                .padding(10)
-                                                .warning("Token is not valid"),
-                                            )
-                                            .push(
-                                                Row::new()
-                                                    .spacing(10)
-                                                    .push(
-                                                        button::secondary(
-                                                            Some(icon::previous_icon()),
-                                                            "Change email",
-                                                        )
-                                                        .on_press(ViewMessage::EditEmail),
-                                                    )
-                                                    .push(
-                                                        button::secondary(None, "Resend token")
-                                                            .on_press_maybe(if self.processing {
-                                                                None
-                                                            } else {
-                                                                Some(ViewMessage::RequestOTP)
-                                                            }),
-                                                    ),
+                                                }),
+                                        ),
+                                    ConnectionStep::EnterOtp { otp, .. } => Column::new()
+                                        .spacing(20)
+                                        .align_x(Alignment::Center)
+                                        .push(text("An authentication was sent to your email:"))
+                                        .push(text(&self.email))
+                                        .push_maybe(
+                                            self.auth_error
+                                                .map(|e| text(e).style(theme::text::warning)),
+                                        )
+                                        .push(
+                                            form::Form::new_trimmed("Token", otp, |msg| {
+                                                ViewMessage::OTPEdited(msg)
+                                            })
+                                            .size(P1_SIZE)
+                                            .padding(10)
+                                            .warning("Token is not valid"),
+                                        )
+                                        .push(
+                                            Row::new().spacing(10).push(
+                                                button::secondary(None, "Resend token")
+                                                    .width(Length::Fixed(200.0))
+                                                    .on_press_maybe(if self.processing {
+                                                        None
+                                                    } else {
+                                                        Some(ViewMessage::RequestOTP)
+                                                    }),
                                             ),
-                                    }),
-                            ),
-                    )
-                    .push_maybe(if !matches!(self.step, ConnectionStep::CheckingAuthFile) {
-                        Some(
-                            button::secondary(Some(icon::previous_icon()), "Change network")
-                                .width(Length::Fixed(200.0))
-                                .on_press(ViewMessage::BackToLauncher(self.network)),
-                        )
-                    } else {
-                        None
-                    }),
+                                        ),
+                                }),
+                        ),
+                ),
             )
             .padding(50)
             .center_x(Length::Fill)
@@ -490,61 +422,21 @@ impl LianaLiteLogin {
             );
         }
 
-        col.push(content).into()
-    }
-}
-
-async fn update_wallet_auth_settings(
-    datadir: LianaDirectory,
-    network: Network,
-    wallet: api::Wallet,
-    email: String,
-    refresh_token: String,
-) -> Result<(), Error> {
-    let network_dir = datadir.network_directory(network);
-    let mut settings = Settings::from_file(&network_dir)?;
-
-    let descriptor_checksum = wallet
-        .descriptor
-        .to_string()
-        .split_once('#')
-        .map(|(_, checksum)| checksum)
-        .expect("Failed to get checksum from a valid LianaDescriptor")
-        .to_string();
-
-    let remote_backend_auth = Some(AuthConfig {
-        email,
-        wallet_id: wallet.id.clone(),
-        refresh_token,
-    });
-
-    if let Some(wallet_settings) = settings.wallets.iter_mut().find(|w| {
-        if let Some(auth) = &w.remote_backend_auth {
-            auth.wallet_id == wallet.id
+        col.push_maybe(if !matches!(self.step, ConnectionStep::CheckingAuthFile) {
+            Some(
+                Container::new(
+                    button::secondary(Some(icon::previous_icon()), "Go back")
+                        .width(Length::Fixed(200.0))
+                        .on_press(Message::View(ViewMessage::BackToLauncher(self.network))),
+                )
+                .padding(20),
+            )
         } else {
-            false
-        }
-    }) {
-        wallet_settings.remote_backend_auth = remote_backend_auth;
-    } else {
-        tracing::info!("Wallet id was not found in the settings, adding now the wallet settings to the settings.json file");
-        settings.wallets.insert(
-            0,
-            WalletSetting {
-                name: wallet.name,
-                descriptor_checksum,
-                keys: Vec::new(),
-                hardware_wallets: Vec::new(),
-                remote_backend_auth,
-            },
-        );
+            None
+        })
+        .push(content)
+        .into()
     }
-
-    settings.to_file(&network_dir).map_err(|e| {
-        DaemonError::Unexpected(format!("Cannot access to settings.json file: {}", e))
-    })?;
-
-    Ok(())
 }
 
 pub async fn connect(
@@ -553,9 +445,14 @@ pub async fn connect(
     wallet_id: String,
     backend_api_url: String,
     network: Network,
+    liana_directory: LianaDirectory,
 ) -> Result<BackendState, Error> {
+    let network_dir = liana_directory.network_directory(network);
     let access = auth.verify_otp(token.trim_end()).await?;
-    let client = BackendClient::connect(auth, backend_api_url, access.clone(), network).await?;
+    let client =
+        BackendClient::connect(auth.clone(), backend_api_url, access.clone(), network).await?;
+
+    update_connect_cache(&network_dir, &access, &auth, false).await?;
 
     let wallets = client.list_wallets().await?;
     if wallets.is_empty() {
@@ -566,25 +463,39 @@ pub async fn connect(
         let first = wallets.first().cloned().ok_or(DaemonError::NoAnswer)?;
         let (wallet_client, wallet) = client.connect_wallet(first);
         let coins = coins_to_cache(Arc::new(wallet_client.clone())).await?;
+
         Ok(BackendState::WalletExists(wallet_client, wallet, coins))
     } else if let Some(wallet) = wallets.into_iter().find(|w| w.id == wallet_id) {
         let (wallet_client, wallet) = client.connect_wallet(wallet);
         let coins = coins_to_cache(Arc::new(wallet_client.clone())).await?;
+
         Ok(BackendState::WalletExists(wallet_client, wallet, coins))
     } else {
         Ok(BackendState::NoWallet(client))
     }
 }
 
-pub async fn connect_with_refresh_token(
+pub async fn connect_with_credentials(
     auth: AuthClient,
-    refresh_token: String,
     wallet_id: String,
     backend_api_url: String,
     network: Network,
+    liana_directory: LianaDirectory,
 ) -> Result<BackendState, Error> {
-    let access = auth.refresh_token(&refresh_token).await?;
-    let client = BackendClient::connect(auth, backend_api_url, access.clone(), network).await?;
+    let network_dir = liana_directory.network_directory(network);
+    let mut tokens = cache::Account::from_cache(&network_dir, &auth.email)
+        .map_err(|e| match e {
+            ConnectCacheError::NotFound => Error::CredentialsMissing,
+            _ => e.into(),
+        })?
+        .ok_or(Error::CredentialsMissing)?
+        .tokens;
+
+    if tokens.expires_at < chrono::Utc::now().timestamp() {
+        tokens = cache::update_connect_cache(&network_dir, &tokens, &auth, true).await?;
+    }
+
+    let client = BackendClient::connect(auth, backend_api_url, tokens, network).await?;
 
     if let Some(wallet) = client
         .list_wallets()

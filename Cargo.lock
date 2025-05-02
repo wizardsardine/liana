@@ -255,6 +255,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-fd-lock"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7569377d7062165f6f7834d9cb3051974a2d141433cc201c2f94c149e993cccf"
+dependencies = [
+ "async-trait",
+ "cfg-if",
+ "pin-project",
+ "rustix",
+ "thiserror 1.0.69",
+ "tokio",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "async-fs"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2993,6 +3008,7 @@ dependencies = [
 name = "liana-gui"
 version = "10.0.0"
 dependencies = [
+ "async-fd-lock",
  "async-hwi",
  "async-trait",
  "backtrace",

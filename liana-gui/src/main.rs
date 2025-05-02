@@ -223,14 +223,13 @@ impl GUI {
                     );
                     let network_dir = datadir_path.network_directory(network);
                     if let Ok(settings) = app::settings::Settings::from_file(&network_dir) {
-                        if settings
+                        if let Some(setting) = settings
                             .wallets
-                            .first()
-                            .map(|w| w.remote_backend_auth.is_some())
-                            == Some(true)
+                            .into_iter()
+                            .find_map(|w| w.remote_backend_auth)
                         {
                             let (login, command) =
-                                login::LianaLiteLogin::new(datadir_path, network, settings);
+                                login::LianaLiteLogin::new(datadir_path, network, setting);
                             self.state = State::Login(Box::new(login));
                             command.map(|msg| Message::Login(Box::new(msg)))
                         } else {
@@ -296,14 +295,13 @@ impl GUI {
                     let network_dir = i.datadir.network_directory(i.network);
                     let settings = app::settings::Settings::from_file(&network_dir)
                         .expect("A settings file was created");
-                    if settings
+                    if let Some(setting) = settings
                         .wallets
-                        .first()
-                        .map(|w| w.remote_backend_auth.is_some())
-                        == Some(true)
+                        .into_iter()
+                        .find_map(|w| w.remote_backend_auth)
                     {
                         let (login, command) =
-                            login::LianaLiteLogin::new(i.datadir.clone(), i.network, settings);
+                            login::LianaLiteLogin::new(i.datadir.clone(), i.network, setting);
                         self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
