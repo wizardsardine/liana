@@ -26,12 +26,7 @@ from test_framework.serializations import (
 
 class Lianad(TailableProc):
     def __init__(
-        self,
-        datadir,
-        signer,
-        multi_desc,
-        bitcoin_backend,
-        legacy_datadir=False
+        self, datadir, signer, multi_desc, bitcoin_backend, legacy_datadir=False
     ):
         TailableProc.__init__(self, datadir, verbose=VERBOSE)
 
