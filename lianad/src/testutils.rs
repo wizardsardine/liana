@@ -152,6 +152,7 @@ struct DummyDbState {
     coins: HashMap<bitcoin::OutPoint, Coin>,
     txs: HashMap<bitcoin::Txid, bitcoin::Transaction>,
     spend_txs: HashMap<bitcoin::Txid, (Psbt, Option<u32>)>,
+    labels: HashMap<LabelItem, String>,
     timestamp: u32,
     rescan_timestamp: Option<u32>,
     last_poll_timestamp: Option<u32>,
@@ -186,6 +187,7 @@ impl DummyDatabase {
                 coins: HashMap::new(),
                 txs: HashMap::new(),
                 spend_txs: HashMap::new(),
+                labels: HashMap::new(),
                 timestamp: now,
                 rescan_timestamp: None,
                 last_poll_timestamp: None,
@@ -438,12 +440,32 @@ impl DatabaseConnection for DummyDatabase {
         self.db.write().unwrap().last_poll_timestamp = Some(timestamp);
     }
 
-    fn update_labels(&mut self, _items: &HashMap<LabelItem, Option<String>>) {
-        todo!()
+    fn update_labels(&mut self, items: &HashMap<LabelItem, Option<String>>) {
+        for (lab_item, lab_val) in items {
+            if let Some(val) = lab_val {
+                self.db
+                    .write()
+                    .unwrap()
+                    .labels
+                    .insert(lab_item.clone(), val.clone());
+            } else {
+                self.db.write().unwrap().labels.remove_entry(lab_item);
+            }
+        }
     }
 
-    fn labels(&mut self, _items: &HashSet<LabelItem>) -> HashMap<String, String> {
-        todo!()
+    fn labels(&mut self, items: &HashSet<LabelItem>) -> HashMap<String, String> {
+        self.db
+            .read()
+            .unwrap()
+            .labels
+            .iter()
+            .filter_map(|(lab_item, lab_val)| {
+                items
+                    .contains(lab_item)
+                    .then_some((lab_item.to_string(), lab_val.clone()))
+            })
+            .collect()
     }
 
     fn list_txids(&mut self, start: u32, end: u32, limit: u64) -> Vec<bitcoin::Txid> {
