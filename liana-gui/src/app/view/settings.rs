@@ -915,7 +915,7 @@ pub fn rescan<'a>(
                                     && is_ok_and(&u32::from_str(&day.value), |&v| v > 0 && v <= 31))
                             {
                                 Row::new().push(Column::new().width(Length::Fill)).push(
-                                    button::secondary(None, "Start rescan")
+                                    button::primary(None, "Start rescan")
                                         .on_press(SettingsEditMessage::Confirm)
                                         .width(Length::Shrink),
                                 )

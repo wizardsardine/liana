@@ -174,10 +174,9 @@ pub fn home_view<'a>(
                             .width(Length::Fill),
                         )
                         .push(
-                            button::secondary(Some(icon::arrow_repeat()), "Refresh coins")
-                                .on_press(Message::Menu(Menu::RefreshCoins(
-                                    expiring_coins.to_owned(),
-                                ))),
+                            button::primary(Some(icon::arrow_repeat()), "Refresh coins").on_press(
+                                Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned())),
+                            ),
                         ),
                 )
                 .padding(25)

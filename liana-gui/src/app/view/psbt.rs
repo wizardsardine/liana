@@ -215,7 +215,7 @@ pub fn broadcast_action<'a>(
                 })
                 .push(
                     Row::new().push(Column::new().width(Length::Fill)).push(
-                        button::secondary(None, "Broadcast")
+                        button::primary(None, "Broadcast")
                             .on_press(Message::Spend(SpendTxMessage::Confirm)),
                     ),
                 ),
@@ -383,13 +383,13 @@ pub fn spend_overview_view<'a>(
                     .push(Space::with_width(Length::Fill))
                     .push_maybe(if tx.path_ready().is_none() {
                         Some(
-                            button::secondary(None, "Sign")
+                            button::primary(None, "Sign")
                                 .on_press(Message::Spend(SpendTxMessage::Sign))
                                 .width(Length::Fixed(150.0)),
                         )
                     } else {
                         Some(
-                            button::secondary(None, "Broadcast")
+                            button::primary(None, "Broadcast")
                                 .on_press(Message::Spend(SpendTxMessage::Broadcast))
                                 .width(Length::Fixed(150.0)),
                         )
