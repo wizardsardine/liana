@@ -347,6 +347,21 @@ pub struct Address {
     pub derivation_index: bip32::ChildNumber,
 }
 
+#[derive(Deserialize)]
+pub struct RevealedAddress {
+    #[serde(deserialize_with = "deser_addr_assume_checked")]
+    pub address: bitcoin::Address,
+    pub derivation_index: bip32::ChildNumber,
+    pub label: Option<String>,
+    pub used_count: u32,
+}
+
+#[derive(Deserialize)]
+pub struct ListRevealedAddresses {
+    pub addresses: Vec<RevealedAddress>,
+    pub continue_from: Option<bip32::ChildNumber>,
+}
+
 pub mod payload {
     use liana::{descriptors::LianaDescriptor, miniscript::bitcoin};
     use serde::{Serialize, Serializer};

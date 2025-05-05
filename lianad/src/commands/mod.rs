@@ -1412,11 +1412,12 @@ impl ListAddressesResult {
 }
 
 /// A revealed address entry in the list returned by [`DaemonControl::list_revealed_addresses`].
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListRevealedAddressesEntry {
     /// The address's derivation index.
     pub index: ChildNumber,
     /// The address.
+    #[serde(deserialize_with = "deser_addr_assume_checked")]
     pub address: bitcoin::Address,
     /// Label assigned to the address, if any.
     pub label: Option<String>,
@@ -1428,7 +1429,7 @@ pub struct ListRevealedAddressesEntry {
 }
 
 /// Result of a [`DaemonControl::list_revealed_addresses`] request.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListRevealedAddressesResult {
     /// Revealed addresses in order of descending derivation index.
     pub addresses: Vec<ListRevealedAddressesEntry>,

@@ -12,7 +12,8 @@ pub use liana::{
 };
 pub use lianad::commands::{
     CreateSpendResult, GetAddressResult, GetInfoResult, GetLabelsResult, LabelItem, ListCoinsEntry,
-    ListCoinsResult, ListSpendEntry, ListSpendResult, ListTransactionsResult, TransactionInfo,
+    ListCoinsResult, ListRevealedAddressesEntry, ListRevealedAddressesResult, ListSpendEntry,
+    ListSpendResult, ListTransactionsResult, TransactionInfo,
 };
 
 pub type Coin = ListCoinsEntry;

@@ -11,7 +11,10 @@ use std::iter::FromIterator;
 use async_trait::async_trait;
 
 use liana::miniscript::bitcoin::{
-    address, bip32::Fingerprint, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid,
+    address,
+    bip32::{ChildNumber, Fingerprint},
+    psbt::Psbt,
+    secp256k1, Address, Network, OutPoint, Txid,
 };
 use lianad::bip329::Labels;
 use lianad::commands::UpdateDerivIndexesResult;
@@ -104,6 +107,13 @@ pub trait Daemon: Debug {
     async fn stop(&self) -> Result<(), DaemonError>;
     async fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;
     async fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;
+    async fn list_revealed_addresses(
+        &self,
+        is_change: bool,
+        exclude_used: bool,
+        limit: usize,
+        start_index: Option<ChildNumber>,
+    ) -> Result<model::ListRevealedAddressesResult, DaemonError>;
     async fn update_deriv_indexes(
         &self,
         receive: Option<u32>,

@@ -9,7 +9,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 use liana::{
     descriptors::LianaDescriptor,
-    miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid},
+    miniscript::bitcoin::{
+        address, bip32::ChildNumber, psbt::Psbt, Address, Network, OutPoint, Txid,
+    },
 };
 use lianad::{
     bip329::Labels,
@@ -607,6 +609,57 @@ impl Daemon for BackendWalletClient {
         Ok(GetAddressResult {
             address: res.address,
             derivation_index: res.derivation_index,
+        })
+    }
+
+    async fn list_revealed_addresses(
+        &self,
+        is_change: bool,
+        exclude_used: bool,
+        limit: usize,
+        start_index: Option<ChildNumber>,
+    ) -> Result<ListRevealedAddressesResult, DaemonError> {
+        let mut query = Vec::<(&str, String)>::new();
+        query.push(("is_change_address", is_change.to_string()));
+        query.push(("exclude_used", exclude_used.to_string()));
+        query.push(("limit", limit.to_string()));
+        if let Some(start) = start_index {
+            query.push(("start_derivation_index", start.to_string()));
+        }
+        let response: Response = self
+            .inner
+            .request(
+                Method::GET,
+                &format!(
+                    "{}/v1/wallets/{}/addresses",
+                    self.inner.url, self.wallet_uuid
+                ),
+            )
+            .await
+            .query(&query)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(DaemonError::Http(
+                Some(response.status().into()),
+                response.text().await?,
+            ));
+        }
+
+        let res: api::ListRevealedAddresses = response.json().await?;
+        Ok(ListRevealedAddressesResult {
+            addresses: res
+                .addresses
+                .into_iter()
+                .map(|addr| ListRevealedAddressesEntry {
+                    index: addr.derivation_index,
+                    address: addr.address,
+                    label: addr.label,
+                    used_count: addr.used_count,
+                })
+                .collect(),
+            continue_from: res.continue_from,
         })
     }
 
