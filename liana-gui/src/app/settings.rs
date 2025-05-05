@@ -394,7 +394,6 @@ pub mod global {
 
     #[derive(Debug, Deserialize, Serialize, Default)]
     pub struct GlobalSettings {
-        #[serde(skip)]
         pub bitbox: Option<BitboxSettings>,
         pub window_config: Option<WindowConfig>,
     }
