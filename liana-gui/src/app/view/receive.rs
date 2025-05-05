@@ -44,7 +44,7 @@ pub fn receive<'a>(
                 .align_y(Alignment::Center)
                 .push(Container::new(h3("Receive")).width(Length::Fill))
                 .push(
-                    button::secondary(Some(icon::plus_icon()), "Generate address")
+                    button::primary(Some(icon::plus_icon()), "Generate address")
                         .on_press(Message::Next),
                 ),
         )

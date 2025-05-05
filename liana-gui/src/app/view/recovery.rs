@@ -75,7 +75,7 @@ pub fn recovery<'a>(
                     Row::new()
                         .push(Space::with_width(Length::Fill))
                         .push(
-                            button::secondary(None, "Next")
+                            button::primary(None, "Next")
                                 .on_press_maybe(selected_path.map(|_| Message::Next))
                                 .width(Length::Fixed(200.0)),
                         )

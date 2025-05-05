@@ -63,6 +63,7 @@ fn coin_list_view<'a>(
     let outpoint = coin.outpoint.to_string();
     let address = coin.address.to_string();
     let txid = coin.outpoint.txid.to_string();
+    let seq = remaining_sequence(coin, blockheight, timelock);
     Container::new(
         Column::new()
             .push(
@@ -120,7 +121,6 @@ fn coin_list_view<'a>(
                                 } else if coin.block_height.is_none() {
                                     badge::unconfirmed()
                                 } else {
-                                    let seq = remaining_sequence(coin, blockheight, timelock);
                                     coin_sequence_label(seq, timelock as u32)
                                 })
                                 .spacing(10)
@@ -298,12 +298,18 @@ fn coin_list_view<'a>(
                                 .spacing(5)
                         } else {
                             Column::new().push(
-                                Row::new().push(Space::with_width(Length::Fill)).push(
-                                    button::secondary(Some(icon::arrow_repeat()), "Refresh coin")
-                                        .on_press(Message::Menu(Menu::RefreshCoins(vec![
-                                            coin.outpoint,
-                                        ]))),
-                                ),
+                                Row::new().push(Space::with_width(Length::Fill)).push({
+                                    let (icon, label) =
+                                        (Some(icon::arrow_repeat()), "Refresh coin");
+                                    let refresh_btn = if seq == 0 {
+                                        button::primary(icon, label)
+                                    } else {
+                                        button::secondary(icon, label)
+                                    };
+                                    refresh_btn.on_press(Message::Menu(Menu::RefreshCoins(vec![
+                                        coin.outpoint,
+                                    ])))
+                                }),
                             )
                         }),
                 )

@@ -334,7 +334,7 @@ pub fn create_spend_tx<'a>(
                                 || recovery_timelock.is_some()
                                 || Some(&Amount::from_sat(0)) == amount_left)
                         {
-                            button::secondary(None, "Next")
+                            button::primary(None, "Next")
                                 .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
                                 .width(Length::Fixed(100.0))
                         } else {
