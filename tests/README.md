@@ -24,6 +24,14 @@ repository.
 
 ### Test dependencies
 
+Before running the tests, you might need to install some system packages. Here's an example for Ubuntu:
+
+```
+sudo apt update
+sudo apt install build-essential libssl-dev libffi-dev python3-dev
+sudo apt install autoconf automake libtool
+```
+
 Functional tests dependencies can be installed using `pip`. Use a virtual environment.
 ```
 # Create a new virtual environment, preferably.
