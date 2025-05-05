@@ -10,6 +10,7 @@ use iced::{
     event::{self, Event},
     keyboard,
     widget::{focus_next, focus_previous},
+    window::{self},
     Settings, Size, Subscription, Task,
 };
 use tracing::{error, info};
@@ -90,6 +91,8 @@ pub struct GUI {
     logger: Logger,
     // if set up, it overrides the level filter of the logger.
     log_level: Option<LevelFilter>,
+    id: Option<window::Id>,
+    window_init: Option<bool>,
 }
 
 enum State {
@@ -116,6 +119,8 @@ pub enum Message {
     Login(Box<login::Message>),
     KeyPressed(Key),
     Event(iced::Event),
+    Window(Option<window::Id>),
+    WindowSize(Size),
 }
 
 impl From<Result<(), iced::font::Error>> for Message {
@@ -142,7 +147,10 @@ impl GUI {
 
     fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {
         let logger = Logger::setup(log_level.unwrap_or(LevelFilter::INFO));
-        let mut cmds = vec![Task::perform(ctrl_c(), |_| Message::CtrlC)];
+        let mut cmds = vec![
+            window::get_oldest().map(Message::Window),
+            Task::perform(ctrl_c(), |_| Message::CtrlC),
+        ];
         let (launcher, command) = Launcher::new(config.liana_directory, config.network);
         cmds.push(command.map(|msg| Message::Launch(Box::new(msg))));
         (
@@ -150,6 +158,8 @@ impl GUI {
                 state: State::Launcher(Box::new(launcher)),
                 logger,
                 log_level,
+                id: None,
+                window_init: None,
             },
             Task::batch(cmds),
         )
@@ -157,6 +167,38 @@ impl GUI {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match (&mut self.state, message) {
+            (_, Message::WindowSize(monitor_size)) => match (&self.window_init, &self.id) {
+                (Some(false), Some(id)) => {
+                    self.window_init = Some(true);
+                    let mut batch = vec![window::maximize(*id, false)];
+                    if monitor_size.height >= 1200.0 {
+                        batch.push(window::resize(
+                            *id,
+                            Size {
+                                width: 1200.0,
+                                height: 950.0,
+                            },
+                        ));
+                    } else {
+                        batch.push(window::resize(*id, window::Settings::default().size));
+                    }
+                    Task::batch(batch)
+                }
+                _ => {
+                    if self.window_init.is_none() {
+                        self.window_init = Some(false);
+                    }
+                    Task::none()
+                }
+            },
+            (_, Message::Window(id)) => {
+                self.id = id;
+                if let Some(id) = &self.id {
+                    window::maximize(*id, true)
+                } else {
+                    Task::none()
+                }
+            }
             (_, Message::CtrlC)
             | (_, Message::Event(iced::Event::Window(iced::window::Event::CloseRequested))) => {
                 match &mut self.state {
@@ -411,6 +453,9 @@ impl GUI {
                     iced::Event::Window(iced::window::Event::CloseRequested),
                     event::Status::Ignored,
                 ) => Some(Message::Event(event)),
+                (iced::Event::Window(iced::window::Event::Resized(size)), _) => {
+                    Some(Message::WindowSize(*size))
+                }
                 _ => None,
             }),
         ])
