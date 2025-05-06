@@ -5,7 +5,7 @@ use std::{
     process, thread, time,
 };
 
-use lianad::{config::Config, DaemonHandle, VERSION};
+use lianad::{config::Config, setup_panic_hook, DaemonHandle, VERSION};
 
 fn print_help_exit(code: i32) {
     eprintln!("lianad version {}", VERSION);
@@ -79,6 +79,8 @@ fn main() {
         eprintln!("Error setting up logger: {}", e);
         process::exit(1);
     });
+
+    setup_panic_hook();
 
     let handle = DaemonHandle::start_default(config, cfg!(unix)).unwrap_or_else(|e| {
         log::error!("Error starting Liana daemon: {}", e);

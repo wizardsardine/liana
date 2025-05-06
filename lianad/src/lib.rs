@@ -40,7 +40,7 @@ use miniscript::bitcoin::{constants::ChainHash, hashes::Hash, secp256k1, BlockHa
 use std::panic;
 // A panic in any thread should stop the main thread, and print the panic.
 #[cfg(not(test))]
-fn setup_panic_hook() {
+pub fn setup_panic_hook() {
     panic::set_hook(Box::new(move |panic_info| {
         let file = panic_info
             .location()
@@ -396,9 +396,6 @@ impl DaemonHandle {
         db: Option<impl DatabaseInterface + 'static>,
         with_rpc_server: bool,
     ) -> Result<Self, StartupError> {
-        #[cfg(not(test))]
-        setup_panic_hook();
-
         let secp = secp256k1::Secp256k1::verification_only();
 
         // First, check the data directory
