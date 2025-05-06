@@ -34,7 +34,7 @@ use iced::futures::{SinkExt, Stream};
 use crate::{
     app::{
         cache::Cache,
-        settings::{self, KeySetting, Settings},
+        settings::{self, update_settings_file, KeySetting, WalletSettings},
         view,
         wallet::Wallet,
         Config,
@@ -815,35 +815,34 @@ pub async fn import_backup(
         .and_then(|c| c.data_directory())
         .ok_or(Error::BackupImport("Failed to get Daemon config".into()))?;
 
+    let descriptor_checksum = descriptor
+        .to_string()
+        .split_once('#')
+        .map(|(_, checksum)| checksum)
+        .unwrap()
+        .to_string();
+
     // check if key aliases can be imported w/o conflict
     let mut write_aliases = true;
     let settings = if !account.keys.is_empty() {
         // TODO: change lianad_datadir is common to gui datadir only for legacy wallet before
         // multiple wallet
         let network_dir = NetworkDirectory::new(lianad_datadir.path().to_path_buf());
-        let settings = match Settings::from_file(&network_dir) {
-            Ok(s) => s,
-            Err(_) => {
+        let wallet_settings = match WalletSettings::from_file(&network_dir, |w| {
+            w.descriptor_checksum == descriptor_checksum
+        }) {
+            Ok(Some(s)) => s,
+            _ => {
                 return Err(Error::BackupImport("Failed to get App Settings".into()));
             }
         };
 
-        let settings_aliases: HashMap<_, _> = match settings.wallets.len() {
-            1 => settings
-                .wallets
-                .first()
-                .expect("already checked")
-                .keys
-                .clone()
-                .into_iter()
-                .map(|s| (s.master_fingerprint, s))
-                .collect(),
-            _ => {
-                return Err(Error::BackupImport(
-                    "Settings.wallets.len() is not 1".into(),
-                ));
-            }
-        };
+        let settings_aliases: HashMap<_, _> = wallet_settings
+            .keys
+            .clone()
+            .into_iter()
+            .map(|s| (s.master_fingerprint, s))
+            .collect();
 
         let (ack_sender, mut ack_receiver) = channel(1);
         let mut conflict = false;
@@ -867,7 +866,7 @@ pub async fn import_backup(
             };
         }
 
-        Some((settings, settings_aliases))
+        Some(settings_aliases)
     } else {
         None
     };
@@ -925,7 +924,7 @@ pub async fn import_backup(
     }
 
     // update aliases if no conflict or user ACK
-    if let (true, Some((mut settings, mut settings_aliases))) = (write_aliases, settings) {
+    if let (true, Some(mut settings_aliases)) = (write_aliases, settings) {
         for (k, v) in &account.keys {
             if let Some(ks) = KeySetting::from_backup(
                 v.alias.clone().unwrap_or("".into()),
@@ -938,11 +937,25 @@ pub async fn import_backup(
             }
         }
 
-        settings.wallets.get_mut(0).expect("already checked").keys =
-            settings_aliases.clone().into_values().collect();
-        let network_dir = NetworkDirectory::new(lianad_datadir.path().to_path_buf());
-        if settings.to_file(&network_dir).is_err() {
-            return Err(Error::BackupImport("Failed to import keys aliases".into()));
+        if let Err(e) = update_settings_file(
+            &NetworkDirectory::new(lianad_datadir.path().to_path_buf()),
+            |mut settings| {
+                if let Some(wallet) = settings
+                    .wallets
+                    .iter_mut()
+                    .find(|w| w.descriptor_checksum == descriptor_checksum)
+                {
+                    wallet.keys = settings_aliases.clone().into_values().collect();
+                }
+                settings
+            },
+        )
+        .await
+        {
+            return Err(Error::BackupImport(format!(
+                "Failed to import keys aliases: {}",
+                e
+            )));
         } else {
             // Update wallet state
             send_progress!(sender, UpdateAliases(settings_aliases));

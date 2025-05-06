@@ -23,7 +23,7 @@ use lianad::{
 };
 
 use crate::app;
-use crate::app::settings::WalletSetting;
+use crate::app::settings::WalletSettings;
 use crate::backup::Backup;
 use crate::dir::LianaDirectory;
 use crate::export::RestoreBackupError;
@@ -59,7 +59,7 @@ pub struct Loader {
     pub internal_bitcoind: Option<Bitcoind>,
     pub waiting_daemon_bitcoind: bool,
     pub backup: Option<Backup>,
-    pub wallet_setting: Option<WalletSetting>,
+    pub wallet_setting: Option<WalletSettings>,
     step: Step,
 }
 
@@ -119,7 +119,7 @@ impl Loader {
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
         backup: Option<Backup>,
-        wallet_setting: Option<WalletSetting>,
+        wallet_setting: Option<WalletSettings>,
     ) -> (Self, Task<Message>) {
         let path = socket_path(&datadir_path, network);
         (

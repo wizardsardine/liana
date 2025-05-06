@@ -18,7 +18,11 @@ use std::{
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    app::{settings::Settings, wallet::Wallet, Config},
+    app::{
+        settings::{Settings, WalletSettings},
+        wallet::Wallet,
+        Config,
+    },
     daemon::{model::HistoryTransaction, Daemon, DaemonBackend, DaemonError},
     dir::LianaDirectory,
     export::Progress,
@@ -195,12 +199,15 @@ impl Backup {
         let keys = wallet.keys();
 
         let network_dir = datadir.network_directory(network);
-        let settings = Settings::from_file(&network_dir).map_err(|_| Error::SettingsFromFile)?;
-        if settings.wallets.len() == 1 {
-            if let Ok(settings) = serde_json::to_value(settings.wallets[0].clone()) {
+        if let Some(settings) = WalletSettings::from_file(&network_dir, |settings| {
+            wallet.descriptor_checksum() == settings.descriptor_checksum
+        })
+        .map_err(|_| Error::SettingsFromFile)?
+        {
+            if let Ok(settings) = serde_json::to_value(settings) {
                 proprietary.insert(SETTINGS_KEY.to_string(), settings);
             }
-        }
+        };
 
         if let Ok(config) = serde_json::to_value((*config).clone()) {
             proprietary.insert(CONFIG_KEY.to_string(), config);

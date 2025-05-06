@@ -513,14 +513,12 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     })?;
     }
 
-    if let Ok(settings) = app::settings::Settings::from_file(&path) {
-        if let Some(wallet) = settings.wallets.first().cloned() {
-            return Ok(State::Wallet {
-                name: Some(wallet.name),
-                checksum: Some(wallet.descriptor_checksum),
-                email: wallet.remote_backend_auth.map(|auth| auth.email),
-            });
-        }
+    if let Ok(Some(wallet)) = app::settings::WalletSettings::from_file(&path, |_w| true) {
+        return Ok(State::Wallet {
+            name: Some(wallet.name),
+            checksum: Some(wallet.descriptor_checksum),
+            email: wallet.remote_backend_auth.map(|auth| auth.email),
+        });
     }
     Ok(State::Wallet {
         name: None,

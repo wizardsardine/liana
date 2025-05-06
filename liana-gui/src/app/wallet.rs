@@ -102,48 +102,17 @@ impl Wallet {
     }
 
     pub fn load_from_settings(self, dir: &NetworkDirectory) -> Result<Self, WalletError> {
-        let wallet = match settings::Settings::from_file(dir) {
-            Ok(settings) => {
-                if let Some(wallet_setting) = settings.wallets.first() {
-                    self.with_name(wallet_setting.name.clone())
-                        .with_hardware_wallets(wallet_setting.hardware_wallets.clone())
-                        .with_key_aliases(wallet_setting.keys_aliases())
-                        .with_provider_keys(wallet_setting.provider_keys())
-                } else {
-                    self
-                }
-            }
-            Err(settings::SettingsError::NotFound) => {
-                let s = settings::Settings {
-                    wallets: vec![settings::WalletSetting {
-                        name: self.name.clone(),
-                        hardware_wallets: self.hardware_wallets.clone(),
-                        keys: self
-                            .keys_aliases
-                            .clone()
-                            .into_iter()
-                            .map(|(master_fingerprint, name)| settings::KeySetting {
-                                name,
-                                master_fingerprint,
-                                provider_key: self.provider_keys.get(&master_fingerprint).cloned(),
-                            })
-                            .collect(),
-                        descriptor_checksum: self.descriptor_checksum(),
-                        // Only local wallet from previous version of Liana GUI may not have a
-                        // settings.json file
-                        remote_backend_auth: None,
-                        start_internal_bitcoind: None,
-                    }],
-                };
-
-                tracing::info!("Settings file not found, creating one");
-                s.to_file(dir)?;
-                self
-            }
-            Err(e) => return Err(e.into()),
-        };
-
-        Ok(wallet)
+        if let Some(wallet_settings) = settings::WalletSettings::from_file(dir, |w| {
+            w.descriptor_checksum == self.descriptor_checksum()
+        })? {
+            Ok(self
+                .with_key_aliases(wallet_settings.keys_aliases())
+                .with_provider_keys(wallet_settings.provider_keys())
+                .with_name(wallet_settings.name)
+                .with_hardware_wallets(wallet_settings.hardware_wallets))
+        } else {
+            Ok(self)
+        }
     }
 
     pub fn load_hotsigners(

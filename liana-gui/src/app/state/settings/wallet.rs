@@ -19,7 +19,7 @@ use crate::{
         cache::Cache,
         error::Error,
         message::Message,
-        settings,
+        settings::{self, update_settings_file},
         state::{export::ExportModal, State},
         view,
         wallet::Wallet,
@@ -428,26 +428,27 @@ async fn register_wallet(
 
         if daemon.backend() != DaemonBackend::RemoteBackend {
             let network_dir = data_dir.network_directory(network);
-            let mut settings = settings::Settings::from_file(&network_dir)?;
             let checksum = wallet.descriptor_checksum();
-
-            if let Some(wallet_setting) = settings
-                .wallets
-                .iter_mut()
-                .find(|w| w.descriptor_checksum == checksum)
-            {
-                if let Some(hw_config) = wallet_setting
-                    .hardware_wallets
+            update_settings_file(&network_dir, |mut settings| {
+                if let Some(wallet_setting) = settings
+                    .wallets
                     .iter_mut()
-                    .find(|cfg| cfg.kind == kind && cfg.fingerprint == fingerprint)
+                    .find(|w| w.descriptor_checksum == checksum)
                 {
-                    *hw_config = hw_cfg.clone();
-                } else {
-                    wallet_setting.hardware_wallets.push(hw_cfg.clone())
+                    if let Some(hw_config) = wallet_setting
+                        .hardware_wallets
+                        .iter_mut()
+                        .find(|cfg| cfg.kind == kind && cfg.fingerprint == fingerprint)
+                    {
+                        *hw_config = hw_cfg.clone();
+                    } else {
+                        wallet_setting.hardware_wallets.push(hw_cfg.clone())
+                    }
                 }
-            }
 
-            settings.to_file(&network_dir)?;
+                settings
+            })
+            .await?;
         }
 
         let mut wallet = wallet.as_ref().clone();
@@ -478,24 +479,26 @@ pub async fn update_keys_aliases(
 ) -> Result<Arc<Wallet>, Error> {
     if daemon.backend() != DaemonBackend::RemoteBackend {
         let network_dir = data_dir.network_directory(network);
-        let mut settings = settings::Settings::from_file(&network_dir)?;
         let checksum = wallet.descriptor_checksum();
-        if let Some(wallet_setting) = settings
-            .wallets
-            .iter_mut()
-            .find(|w| w.descriptor_checksum == checksum)
-        {
-            wallet_setting.keys = keys_aliases
-                .iter()
-                .map(|(master_fingerprint, name)| settings::KeySetting {
-                    master_fingerprint: *master_fingerprint,
-                    name: name.clone(),
-                    provider_key: wallet.provider_keys.get(master_fingerprint).cloned(),
-                })
-                .collect();
-        }
+        update_settings_file(&network_dir, |mut settings| {
+            if let Some(wallet_setting) = settings
+                .wallets
+                .iter_mut()
+                .find(|w| w.descriptor_checksum == checksum)
+            {
+                wallet_setting.keys = keys_aliases
+                    .iter()
+                    .map(|(master_fingerprint, name)| settings::KeySetting {
+                        master_fingerprint: *master_fingerprint,
+                        name: name.clone(),
+                        provider_key: wallet.provider_keys.get(master_fingerprint).cloned(),
+                    })
+                    .collect();
+            }
 
-        settings.to_file(&network_dir)?;
+            settings
+        })
+        .await?;
     }
 
     let mut wallet = wallet.as_ref().clone();
