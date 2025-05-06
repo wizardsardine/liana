@@ -67,11 +67,11 @@ pub fn home_view<'a>(
     unconfirmed_balance: &'a bitcoin::Amount,
     remaining_sequence: &Option<u32>,
     expiring_coins: &[bitcoin::OutPoint],
-    events: &'a [Payment],
-    is_last_page: bool,
+    payments: Vec<&'a Payment>,
     processing: bool,
     sync_status: &SyncStatus,
     show_rescan_warning: bool,
+    see_more: bool,
 ) -> Element<'a, Message> {
     Column::new()
         .push(h3("Balance"))
@@ -187,24 +187,24 @@ pub fn home_view<'a>(
             Column::new()
                 .spacing(10)
                 .push(h4_bold("Last payments"))
-                .push(events.iter().fold(Column::new().spacing(10), |col, event| {
-                    if event.kind != PaymentKind::SendToSelf {
-                        col.push(event_list_view(event))
-                    } else {
-                        col
-                    }
-                }))
-                .push_maybe(if !is_last_page && !events.is_empty() {
+                .push(
+                    payments
+                        .iter()
+                        .fold(Column::new().spacing(10), |col, event| {
+                            if event.kind != PaymentKind::SendToSelf {
+                                col.push(event_list_view(event))
+                            } else {
+                                col
+                            }
+                        }),
+                )
+                .push_maybe(if see_more {
                     Some(
                         Container::new(
                             Button::new(
-                                text(if processing {
-                                    "Fetching ..."
-                                } else {
-                                    "See more"
-                                })
-                                .width(Length::Fill)
-                                .align_x(alignment::Horizontal::Center),
+                                text("See more")
+                                    .width(Length::Fill)
+                                    .align_x(alignment::Horizontal::Center),
                             )
                             .width(Length::Fill)
                             .padding(15)
