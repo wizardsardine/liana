@@ -971,7 +971,7 @@ impl Step for SaveSpend {
         }
 
         self.spend = Some((
-            psbt::PsbtState::new(self.wallet.clone(), tx, false),
+            psbt::PsbtState::new(self.wallet.clone(), tx, false, draft.recovery_timelock),
             warnings,
         ));
     }
