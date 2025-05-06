@@ -112,10 +112,10 @@ jobs:
             export BITCOIND_PATH=bitcoin-24.0.1/bin/bitcoind
             export IS_NOT_BITCOIND_24=0
           else
-            curl -O https://bitcoincore.org/bin/bitcoin-core-28.1/bitcoin-28.1-x86_64-linux-gnu.tar.gz
-            echo "07f77afd326639145b9ba9562912b2ad2ccec47b8a305bd075b4f4cb127b7ed7 bitcoin-28.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
-            tar -xzf bitcoin-28.1-x86_64-linux-gnu.tar.gz
-            export BITCOIND_PATH=bitcoin-28.1/bin/bitcoind
+            curl -O https://bitcoincore.org/bin/bitcoin-core-29.0/bitcoin-29.0-x86_64-linux-gnu.tar.gz
+            echo "a681e4f6ce524c338a105f214613605bac6c33d58c31dc5135bbc02bc458bb6c bitcoin-29.0-x86_64-linux-gnu.tar.gz" | sha256sum -c
+            tar -xzf bitcoin-29.0-x86_64-linux-gnu.tar.gz
+            export BITCOIND_PATH=bitcoin-29.0/bin/bitcoind
           fi
 
           echo "BITCOIN_BACKEND_TYPE = $BITCOIN_BACKEND_TYPE"
