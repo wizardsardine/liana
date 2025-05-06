@@ -616,6 +616,37 @@ impl LockFile {
     }
 }
 
+// In case of panic, we remove all the bitcoind locks created by the process.
+pub fn delete_all_bitcoind_locks_for_process(
+    directory: BitcoindDirectory,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let locks_directory = directory.path().join(LOCK_DIRECTORY_NAME);
+    if !locks_directory.exists() {
+        tracing::debug!("No internal bitcoind locks for the current process");
+        return Ok(());
+    }
+    tracing::info!("Deleting all internal bitcoind locks for the current process");
+    let process_prefix = format!("{}-", std::process::id());
+    for network_dir in std::fs::read_dir(&locks_directory)? {
+        let dir = network_dir?.path();
+        for lock_file in std::fs::read_dir(&dir)? {
+            let file = lock_file?.path();
+            if let Some(name) = file.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with(&process_prefix) {
+                    std::fs::remove_file(file)?;
+                }
+            }
+        }
+        if std::fs::read_dir(&dir)?.next().is_none() {
+            std::fs::remove_dir(dir)?;
+        }
+    }
+    if std::fs::read_dir(&locks_directory)?.next().is_none() {
+        std::fs::remove_dir(locks_directory)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum RpcAuthType {
     CookieFile,

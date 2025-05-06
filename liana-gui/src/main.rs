@@ -30,6 +30,7 @@ use liana_gui::{
     launcher::{self, Launcher},
     loader::{self, Loader},
     logger::Logger,
+    node::bitcoind::delete_all_bitcoind_locks_for_process,
     services::connect::{
         client::backend::{api, BackendWalletClient},
         login,
@@ -537,7 +538,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         None
     };
 
-    setup_panic_hook();
+    setup_panic_hook(&config.liana_directory);
 
     let settings = Settings {
         id: Some("Liana".to_string()),
@@ -584,8 +585,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 // A panic in any thread should stop the main thread, and print the panic.
-fn setup_panic_hook() {
+fn setup_panic_hook(liana_directory: &LianaDirectory) {
+    let bitcoind_dir = liana_directory.bitcoind_directory();
     std::panic::set_hook(Box::new(move |panic_info| {
+        error!("Panic occured");
+        if let Err(e) = delete_all_bitcoind_locks_for_process(bitcoind_dir.clone()) {
+            error!("Failed to delete internal bitcoind locks: {}", e);
+        }
         let file = panic_info
             .location()
             .map(|l| l.file())
