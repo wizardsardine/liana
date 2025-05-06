@@ -6,6 +6,7 @@ use liana::miniscript::{
 use lianad::{
     bip329,
     commands::{CoinStatus, ListCoinsEntry},
+    LIANA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,16 +28,11 @@ use crate::{
         RemoteBackend,
     },
     services::connect::client::backend::api::DEFAULT_LIMIT,
-    VERSION,
 };
 
 const CONFIG_KEY: &str = "config";
 const SETTINGS_KEY: &str = "settings";
 const LIANA_VERSION_KEY: &str = "liana_version";
-
-pub fn liana_version() -> String {
-    format!("{}.{}.{}", VERSION.major, VERSION.minor, VERSION.patch)
-}
 
 fn now() -> u64 {
     SystemTime::now()
@@ -126,7 +122,7 @@ impl Backup {
         let mut account = Account::new(descriptor);
 
         let mut proprietary = serde_json::Map::new();
-        proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
+        proprietary.insert(LIANA_VERSION_KEY.to_string(), LIANA_VERSION.into());
 
         let config = extract_daemon_config(&ctx).map_err(|e| Error::Daemon(e.to_string()))?;
         if let Ok(config) = serde_json::to_value(config) {
@@ -188,7 +184,7 @@ impl Backup {
         sender: &UnboundedSender<Progress>,
     ) -> Result<Self, Error> {
         let mut proprietary = serde_json::Map::new();
-        proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
+        proprietary.insert(LIANA_VERSION_KEY.to_string(), LIANA_VERSION.into());
 
         let name = wallet.name.clone();
         let descriptor = wallet.main_descriptor.to_string();

@@ -13,11 +13,3 @@ pub mod node;
 pub mod services;
 pub mod signer;
 pub mod utils;
-
-use lianad::Version;
-
-pub const VERSION: Version = Version {
-    major: 10,
-    minor: 0,
-    patch: 0,
-};

@@ -55,6 +55,10 @@
             pkgsCross.mingwW64.windows.pthreads
           ];
 
+          preBuild = ''
+            export LIANA_VERSION=${builtins.getEnv "LIANA_VERSION"}
+          '';
+
           installPhaseCommand = ''
             mkdir -p $out/x86_64-pc-windows-gnu
             cp target/x86_64-pc-windows-gnu/release/liana-gui.exe $out/x86_64-pc-windows-gnu
@@ -74,6 +78,8 @@
           ];
 
           preBuild = ''
+            export LIANA_VERSION=${builtins.getEnv "LIANA_VERSION"}
+
             export SDKROOT=${pkgs.darwin.xcode_12_2}/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
 
             export XDG_CACHE_HOME=$TMPDIR/xdg_cache
@@ -108,6 +114,8 @@
           ];
 
           preBuild = ''
+            export LIANA_VERSION=${builtins.getEnv "LIANA_VERSION"}
+
             export SDKROOT=${pkgs.darwin.xcode_12_2}/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
 
             export XDG_CACHE_HOME=$TMPDIR/xdg_cache

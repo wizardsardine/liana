@@ -67,31 +67,15 @@ pub fn setup_panic_hook() {
     }));
 }
 
-#[derive(Debug, Clone)]
-pub struct Version {
-    pub major: u32,
-    pub minor: u32,
-    pub patch: u32,
-}
-
-impl fmt::Display for Version {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}.{}.{}-{}",
-            self.major,
-            self.minor,
-            self.patch,
-            env!("GIT_HASH")
-        )
+const fn get_version() -> &'static str {
+    if let Some(version) = option_env!("LIANA_VERSION") {
+        version
+    } else {
+        env!("GIT_HASH")
     }
 }
 
-pub const VERSION: Version = Version {
-    major: 10,
-    minor: 0,
-    patch: 0,
-};
+pub const LIANA_VERSION: &str = get_version();
 
 #[derive(Debug)]
 pub enum StartupError {
