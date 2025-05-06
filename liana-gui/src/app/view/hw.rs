@@ -13,6 +13,7 @@ pub fn hw_list_view(
     hw: &HardwareWallet,
     signed: bool,
     signing: bool,
+    can_sign: bool,
 ) -> Element<Message> {
     let mut bttn = Button::new(match hw {
         HardwareWallet::Supported {
@@ -40,6 +41,8 @@ pub fn hw_list_view(
                     alias.as_ref(),
                     "The wallet descriptor is not registered on the device.\n You can register it in the settings.",
                 )
+            } else if !can_sign {
+                hw::disabled_hardware_wallet(kind, version.as_ref(), fingerprint, "This signing device is not part of this spending path.")
             } else {
                 hw::supported_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             }
@@ -71,7 +74,7 @@ pub fn hw_list_view(
     })
     .style(theme::button::secondary)
     .width(Length::Fill);
-    if !signing {
+    if can_sign && !signing {
         if let HardwareWallet::Supported { registered, .. } = hw {
             if *registered != Some(false) {
                 bttn = bttn.on_press(Message::SelectHardwareWallet(i));

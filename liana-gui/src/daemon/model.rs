@@ -204,6 +204,10 @@ impl SpendTx {
             .find(|&path| path.sigs_count >= path.threshold)
     }
 
+    pub fn recovery_timelock(&self) -> Option<u16> {
+        self.sigs.recovery_paths().keys().max().cloned()
+    }
+
     pub fn signers(&self) -> HashSet<Fingerprint> {
         let mut signers = HashSet::new();
         for fg in self.sigs.primary_path().signed_pubkeys.keys() {
