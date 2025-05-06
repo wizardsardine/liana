@@ -8,6 +8,7 @@
 set -ex
 
 VERSION="${VERSION:-"12.0"}"
+export LIANA_VERSION="$VERSION"
 LIANA_PREFIX="liana-$VERSION"
 LINUX_DIR_NAME="$LIANA_PREFIX-x86_64-linux-gnu"
 LINUX_ARCHIVE="$LINUX_DIR_NAME.tar.gz"
@@ -42,7 +43,7 @@ create_dir "$BUILD_DIR"
 
 OUT_DIR="$BUILD_DIR" ./contrib/reproducible/guix/guix-build.sh
 
-nix build .#release
+LIANA_VERSION="$VERSION" nix build .#release --impure
 NIX_BUILD_DIR="$(nix path-info .#release)"
 
 #Create the Linux archive and Debian binary package.

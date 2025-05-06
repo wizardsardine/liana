@@ -9,6 +9,7 @@ use liana::{
 use lianad::{
     bip329,
     commands::{CoinStatus, ListCoinsEntry},
+    LIANA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,16 +32,11 @@ use crate::{
     installer::Context,
     services::connect::client::backend::api::DEFAULT_LIMIT,
     utils::now,
-    VERSION,
 };
 
 const CONFIG_KEY: &str = "config";
 const SETTINGS_KEY: &str = "settings";
 const LIANA_VERSION_KEY: &str = "liana_version";
-
-pub fn liana_version() -> String {
-    format!("{}.{}", VERSION.major, VERSION.minor)
-}
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Backup {
@@ -139,7 +135,7 @@ impl Backup {
         account.timestamp = Some(now);
         account
             .proprietary
-            .insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
+            .insert(LIANA_VERSION_KEY.to_string(), LIANA_VERSION.into());
 
         ctx.keys.iter().for_each(|(k, s)| {
             account.keys.insert(*k, s.to_backup());
@@ -166,7 +162,7 @@ impl Backup {
         sender: &UnboundedSender<Progress>,
     ) -> Result<Self, Error> {
         let mut proprietary = serde_json::Map::new();
-        proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
+        proprietary.insert(LIANA_VERSION_KEY.to_string(), LIANA_VERSION.into());
 
         let name = wallet.name.clone();
         let descriptor = wallet.main_descriptor.to_string();
