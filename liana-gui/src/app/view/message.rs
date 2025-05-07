@@ -14,6 +14,7 @@ pub enum Message {
     Select(usize),
     SelectPayment(OutPoint),
     Label(Vec<String>, LabelMessage),
+    NextReceiveAddress,
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),

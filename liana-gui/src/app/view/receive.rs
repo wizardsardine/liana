@@ -45,7 +45,7 @@ pub fn receive<'a>(
                 .push(Container::new(h3("Receive")).width(Length::Fill))
                 .push(
                     button::primary(Some(icon::plus_icon()), "Generate address")
-                        .on_press(Message::Next),
+                        .on_press(Message::NextReceiveAddress),
                 ),
         )
         .push(p1_bold("New and never used reception addresses"))

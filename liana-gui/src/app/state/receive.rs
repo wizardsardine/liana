@@ -156,7 +156,7 @@ impl State for ReceivePanel {
                 ));
                 Task::none()
             }
-            Message::View(view::Message::Next) => {
+            Message::View(view::Message::NextReceiveAddress) => {
                 let daemon = daemon.clone();
                 Task::perform(
                     async move {
@@ -364,7 +364,11 @@ mod tests {
         let cache = Cache::default();
         let sandbox = sandbox.load(client.clone(), &cache, wallet).await;
         let sandbox = sandbox
-            .update(client, &cache, Message::View(viewMessage::Next))
+            .update(
+                client,
+                &cache,
+                Message::View(viewMessage::NextReceiveAddress),
+            )
             .await;
 
         let panel = sandbox.state();
