@@ -3025,6 +3025,7 @@ dependencies = [
  "liana",
  "liana-ui",
  "lianad",
+ "libc",
  "log",
  "reqwest",
  "rfd",

@@ -132,6 +132,7 @@ impl Wallet {
                         // Only local wallet from previous version of Liana GUI may not have a
                         // settings.json file
                         remote_backend_auth: None,
+                        start_internal_bitcoind: None,
                     }],
                 };
 

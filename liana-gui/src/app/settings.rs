@@ -96,6 +96,9 @@ pub struct WalletSetting {
     #[serde(default)]
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub remote_backend_auth: Option<AuthConfig>,
+    /// Start internal bitcoind executable.
+    /// if None, the app must refer to the gui.toml start_internal_bitcoind field.
+    pub start_internal_bitcoind: Option<bool>,
 }
 
 impl WalletSetting {

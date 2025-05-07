@@ -60,7 +60,7 @@ pub trait Step {
         true
     }
     fn revert(&self, _ctx: &mut Context) {}
-    fn stop(&self) {}
+    fn stop(&mut self) {}
 }
 
 pub struct Final {
