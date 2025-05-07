@@ -33,6 +33,62 @@ use crate::{
 
 use super::message::Message;
 
+fn address_card<'a>(
+    row_index: usize,
+    address: &'a bitcoin::Address,
+    labels: &'a HashMap<String, String>,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+) -> Container<'a, Message> {
+    let addr = address.to_string();
+    card::simple(
+        Column::new()
+            .push(if let Some(label) = labels_editing.get(&addr) {
+                label::label_editing(vec![addr.clone()], label, text::P1_SIZE)
+            } else {
+                label::label_editable(vec![addr.clone()], labels.get(&addr), text::P1_SIZE)
+            })
+            .push(
+                Row::new()
+                    .push(
+                        Container::new(
+                            scrollable(
+                                Column::new()
+                                    .push(Space::with_height(Length::Fixed(10.0)))
+                                    .push(p2_regular(address).small().style(theme::text::secondary))
+                                    // Space between the address and the scrollbar
+                                    .push(Space::with_height(Length::Fixed(10.0))),
+                            )
+                            .direction(
+                                scrollable::Direction::Horizontal(
+                                    scrollable::Scrollbar::new().width(2).scroller_width(2),
+                                ),
+                            ),
+                        )
+                        .width(Length::Fill),
+                    )
+                    .push(
+                        Button::new(icon::clipboard_icon().style(theme::text::secondary))
+                            .on_press(Message::Clipboard(addr))
+                            .style(theme::button::transparent_border),
+                    )
+                    .align_y(Alignment::Center),
+            )
+            .push(
+                Row::new()
+                    .push(
+                        button::secondary(None, "Verify on hardware device")
+                            .on_press(Message::Select(row_index)),
+                    )
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        button::secondary(None, "Show QR Code")
+                            .on_press(Message::ShowQrCode(row_index)),
+                    ),
+            )
+            .spacing(10),
+    )
+}
+
 pub fn receive<'a>(
     addresses: &'a [bitcoin::Address],
     labels: &'a HashMap<String, String>,
@@ -54,81 +110,7 @@ pub fn receive<'a>(
                 .spacing(10)
                 .push(addresses.iter().enumerate().rev().fold(
                     Column::new().spacing(10).width(Length::Fill),
-                    |col, (i, address)| {
-                        let addr = address.to_string();
-                        col.push(
-                            card::simple(
-                                Column::new()
-                                    .push(if let Some(label) = labels_editing.get(&addr) {
-                                        label::label_editing(
-                                            vec![addr.clone()],
-                                            label,
-                                            text::P1_SIZE,
-                                        )
-                                    } else {
-                                        label::label_editable(
-                                            vec![addr.clone()],
-                                            labels.get(&addr),
-                                            text::P1_SIZE,
-                                        )
-                                    })
-                                    .push(
-                                        Row::new()
-                                            .push(
-                                                Container::new(
-                                                    scrollable(
-                                                        Column::new()
-                                                            .push(Space::with_height(
-                                                                Length::Fixed(10.0),
-                                                            ))
-                                                            .push(
-                                                                p2_regular(addr)
-                                                                    .small()
-                                                                    .style(theme::text::secondary),
-                                                            )
-                                                            // Space between the address and the scrollbar
-                                                            .push(Space::with_height(
-                                                                Length::Fixed(10.0),
-                                                            )),
-                                                    )
-                                                    .direction(scrollable::Direction::Horizontal(
-                                                        scrollable::Scrollbar::new()
-                                                            .width(2)
-                                                            .scroller_width(2),
-                                                    )),
-                                                )
-                                                .width(Length::Fill),
-                                            )
-                                            .push(
-                                                Button::new(
-                                                    icon::clipboard_icon()
-                                                        .style(theme::text::secondary),
-                                                )
-                                                .on_press(Message::Clipboard(address.to_string()))
-                                                .style(theme::button::transparent_border),
-                                            )
-                                            .align_y(Alignment::Center),
-                                    )
-                                    .push(
-                                        Row::new()
-                                            .push(
-                                                button::secondary(
-                                                    None,
-                                                    "Verify on hardware device",
-                                                )
-                                                .on_press(Message::Select(i)),
-                                            )
-                                            .push(Space::with_width(Length::Fill))
-                                            .push(
-                                                button::secondary(None, "Show QR Code")
-                                                    .on_press(Message::ShowQrCode(i)),
-                                            ),
-                                    )
-                                    .spacing(10),
-                            )
-                            .padding(20),
-                        )
-                    },
+                    |col, (i, address)| col.push(address_card(i, address, labels, labels_editing)),
                 )),
         )
         .spacing(20)
